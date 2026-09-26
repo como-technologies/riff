@@ -1,0 +1,437 @@
+//! The in-memory state of `riff-server`. No I/O: the HTTP layer passes
+//! the time in, so tests control it.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::{Duration, Instant};
+
+use riff_core::name::{SessionName, ThreadName};
+use riff_core::wire::{
+    ClaimReply, Message, SessionInfo, Tailed, ThreadInfo, Wake, WakeReason,
+};
+
+/// A claim stays with a session this long after the session stops (R9).
+pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Default)]
+pub struct State {
+    sessions: BTreeMap<SessionName, Presence>,
+    threads: BTreeMap<ThreadName, Thread>,
+    /// The last sequence number that each session read in each thread.
+    cursors: HashMap<(SessionName, ThreadName), u64>,
+    claims: HashMap<(ThreadName, String), SessionName>,
+}
+
+struct Presence {
+    /// The number of open watch streams.
+    watchers: usize,
+    last_seen: Instant,
+}
+
+#[derive(Default)]
+struct Thread {
+    members: BTreeSet<SessionName>,
+    messages: Vec<Message>,
+}
+
+/// What a new message causes: sessions to wake and a line for `tail`.
+pub struct Delivery {
+    pub wakes: Vec<(SessionName, Wake)>,
+    pub tailed: Tailed,
+}
+
+impl State {
+    /// Records that a session exists and joins it to its default thread.
+    pub fn register(&mut self, name: &SessionName, now: Instant) {
+        self.touch(name, now);
+        if let Some(thread) = name.default_thread() {
+            self.join(name, &thread, now);
+        }
+    }
+
+    pub fn watch_started(&mut self, name: &SessionName, now: Instant) {
+        self.touch(name, now).watchers += 1;
+    }
+
+    pub fn watch_ended(&mut self, name: &SessionName, now: Instant) {
+        let presence = self.touch(name, now);
+        presence.watchers = presence.watchers.saturating_sub(1);
+    }
+
+    pub fn who(&self) -> Vec<SessionInfo> {
+        self.sessions
+            .iter()
+            .map(|(name, presence)| SessionInfo {
+                name: name.clone(),
+                live: presence.watchers > 0,
+            })
+            .collect()
+    }
+
+    pub fn threads(&self, name: &SessionName) -> Vec<ThreadInfo> {
+        self.threads
+            .iter()
+            .filter(|(thread, t)| !thread.is_direct() || t.members.contains(name))
+            .map(|(thread, t)| {
+                let read = self.cursor(name, thread);
+                ThreadInfo {
+                    thread: thread.clone(),
+                    members: t.members.iter().cloned().collect(),
+                    unread: t.messages.iter().filter(|m| m.seq > read).count(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn join(&mut self, name: &SessionName, thread: &ThreadName, now: Instant) {
+        self.touch(name, now);
+        self.threads
+            .entry(thread.clone())
+            .or_default()
+            .members
+            .insert(name.clone());
+    }
+
+    pub fn leave(&mut self, name: &SessionName, thread: &ThreadName, now: Instant) {
+        self.touch(name, now);
+        if let Some(t) = self.threads.get_mut(thread) {
+            t.members.remove(name);
+        }
+    }
+
+    /// Adds a message to a thread. The sender joins the thread. A mention
+    /// wakes the named session (R26).
+    pub fn post(
+        &mut self,
+        from: &SessionName,
+        thread: &ThreadName,
+        body: String,
+        now: Instant,
+        at_ms: u64,
+    ) -> Delivery {
+        self.join(from, thread, now);
+        let message = self.append(from, thread, body, at_ms);
+        let wakes = self
+            .mentioned(&message.body)
+            .into_iter()
+            .filter(|name| name != from)
+            .map(|name| {
+                let wake = wake(thread, &message, WakeReason::Mention);
+                (name, wake)
+            })
+            .collect();
+        Delivery {
+            wakes,
+            tailed: tailed(thread, message),
+        }
+    }
+
+    /// Sends a direct message. It always wakes the receiver (R26).
+    pub fn tell(
+        &mut self,
+        from: &SessionName,
+        to: &SessionName,
+        body: String,
+        now: Instant,
+        at_ms: u64,
+    ) -> Delivery {
+        let thread = ThreadName::direct(from, to);
+        self.join(from, &thread, now);
+        self.join(to, &thread, now);
+        let message = self.append(from, &thread, body, at_ms);
+        let wakes = vec![(to.clone(), wake(&thread, &message, WakeReason::Direct))];
+        Delivery {
+            wakes,
+            tailed: tailed(&thread, message),
+        }
+    }
+
+    /// Returns unread messages (or all of them) and marks them as read.
+    pub fn read(
+        &mut self,
+        name: &SessionName,
+        thread: &ThreadName,
+        all: bool,
+        now: Instant,
+    ) -> Result<Vec<Message>, String> {
+        self.touch(name, now);
+        let t = self
+            .threads
+            .get(thread)
+            .ok_or_else(|| format!("no thread named {thread}"))?;
+        if thread.is_direct() && !t.members.contains(name) {
+            return Err(format!("no thread named {thread}"));
+        }
+        let from = if all { 0 } else { self.cursor(name, thread) };
+        let messages: Vec<Message> = t
+            .messages
+            .iter()
+            .filter(|m| m.seq > from)
+            .cloned()
+            .collect();
+        if let Some(last) = t.messages.last() {
+            self.cursors
+                .insert((name.clone(), thread.clone()), last.seq);
+        }
+        Ok(messages)
+    }
+
+    /// Takes a claim if nobody holds it, or if its holder stopped more than
+    /// [`CLAIM_GRACE`] ago.
+    pub fn claim(
+        &mut self,
+        name: &SessionName,
+        thread: &ThreadName,
+        item: &str,
+        now: Instant,
+    ) -> ClaimReply {
+        self.touch(name, now);
+        let key = (thread.clone(), item.to_owned());
+        if let Some(holder) = self.claims.get(&key)
+            && holder != name
+            && self.holds(holder, now)
+        {
+            return ClaimReply {
+                granted: false,
+                holder: holder.clone(),
+            };
+        }
+        self.claims.insert(key, name.clone());
+        ClaimReply {
+            granted: true,
+            holder: name.clone(),
+        }
+    }
+
+    pub fn release(
+        &mut self,
+        name: &SessionName,
+        thread: &ThreadName,
+        item: &str,
+        now: Instant,
+    ) -> Result<(), String> {
+        self.touch(name, now);
+        let key = (thread.clone(), item.to_owned());
+        match self.claims.get(&key) {
+            Some(holder) if holder == name => {
+                self.claims.remove(&key);
+                Ok(())
+            }
+            Some(holder) => Err(format!("{item} is held by {}", holder.short())),
+            None => Err(format!("nobody holds {item}")),
+        }
+    }
+
+    fn holds(&self, holder: &SessionName, now: Instant) -> bool {
+        self.sessions.get(holder).is_some_and(|p| {
+            p.watchers > 0 || now.saturating_duration_since(p.last_seen) < CLAIM_GRACE
+        })
+    }
+
+    fn touch(&mut self, name: &SessionName, now: Instant) -> &mut Presence {
+        let presence = self.sessions.entry(name.clone()).or_insert(Presence {
+            watchers: 0,
+            last_seen: now,
+        });
+        presence.last_seen = now;
+        presence
+    }
+
+    fn cursor(&self, name: &SessionName, thread: &ThreadName) -> u64 {
+        self.cursors
+            .get(&(name.clone(), thread.clone()))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn append(
+        &mut self,
+        from: &SessionName,
+        thread: &ThreadName,
+        body: String,
+        at_ms: u64,
+    ) -> Message {
+        let t = self.threads.entry(thread.clone()).or_default();
+        let message = Message {
+            seq: t.messages.last().map_or(1, |m| m.seq + 1),
+            from: from.clone(),
+            body,
+            at_ms,
+        };
+        t.messages.push(message.clone());
+        message
+    }
+
+    /// The known sessions that a body mentions, in short form or in full
+    /// (`@mike@pangolin:riff#api`).
+    fn mentioned(&self, body: &str) -> BTreeSet<SessionName> {
+        body.split_whitespace()
+            .filter_map(|word| word.strip_prefix('@'))
+            .map(|word| word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')']))
+            .filter_map(|word| {
+                self.sessions
+                    .keys()
+                    .find(|name| name.short() == word || name.to_string() == word)
+                    .cloned()
+            })
+            .collect()
+    }
+}
+
+fn wake(thread: &ThreadName, message: &Message, reason: WakeReason) -> Wake {
+    Wake {
+        thread: thread.clone(),
+        seq: message.seq,
+        from: message.from.clone(),
+        reason,
+    }
+}
+
+fn tailed(thread: &ThreadName, message: Message) -> Tailed {
+    Tailed {
+        thread: thread.clone(),
+        message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(text: &str) -> SessionName {
+        text.parse().unwrap()
+    }
+
+    fn thread(text: &str) -> ThreadName {
+        text.parse().unwrap()
+    }
+
+    fn api() -> SessionName {
+        name("riff://mike@pangolin/como-technologies/riff#api")
+    }
+
+    fn tests() -> SessionName {
+        name("riff://brett@heron/como-technologies/riff#tests")
+    }
+
+    fn docs() -> SessionName {
+        name("riff://mike@pangolin/como-technologies/riff#docs")
+    }
+
+    fn setup(now: Instant) -> State {
+        let mut state = State::default();
+        for n in [api(), tests(), docs()] {
+            state.register(&n, now);
+        }
+        state
+    }
+
+    #[test]
+    fn register_joins_the_repository_thread() {
+        let now = Instant::now();
+        let state = setup(now);
+        let threads = state.threads(&api());
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].thread, thread("como-technologies/riff"));
+        assert_eq!(threads[0].members.len(), 3);
+    }
+
+    #[test]
+    fn a_mention_wakes_only_the_named_session() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let delivery = state.post(
+            &api(),
+            &thread("como-technologies/riff"),
+            "@brett@heron:riff#tests, the API is ready".into(),
+            now,
+            0,
+        );
+        let woken: Vec<_> = delivery.wakes.iter().map(|(n, _)| n.clone()).collect();
+        assert_eq!(woken, vec![tests()]);
+        assert_eq!(delivery.wakes[0].1.reason, WakeReason::Mention);
+    }
+
+    #[test]
+    fn a_session_does_not_wake_itself() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let delivery = state.post(&api(), &thread("x"), "@mike@pangolin:riff#api".into(), now, 0);
+        assert!(delivery.wakes.is_empty());
+    }
+
+    #[test]
+    fn tell_wakes_the_receiver_and_hides_the_thread_from_others() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let delivery = state.tell(&api(), &tests(), "hi".into(), now, 0);
+        assert_eq!(delivery.wakes[0].0, tests());
+        assert_eq!(delivery.wakes[0].1.reason, WakeReason::Direct);
+        let dm = delivery.tailed.thread;
+        assert!(state.read(&docs(), &dm, true, now).is_err());
+        assert_eq!(state.read(&tests(), &dm, false, now).unwrap().len(), 1);
+        assert!(!state.threads(&docs()).iter().any(|t| t.thread == dm));
+    }
+
+    #[test]
+    fn read_returns_only_unread_messages() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = thread("como-technologies/riff");
+        state.post(&api(), &t, "one".into(), now, 0);
+        assert_eq!(state.read(&tests(), &t, false, now).unwrap().len(), 1);
+        state.post(&api(), &t, "two".into(), now, 0);
+        let unread = state.read(&tests(), &t, false, now).unwrap();
+        assert_eq!(unread.len(), 1);
+        assert_eq!(unread[0].body, "two");
+        assert_eq!(state.read(&tests(), &t, true, now).unwrap().len(), 2);
+        assert!(state.read(&tests(), &t, false, now).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_claim_blocks_others_while_its_holder_is_live() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = thread("como-technologies/riff");
+        state.watch_started(&api(), now);
+        assert!(state.claim(&api(), &t, "issue-12", now).granted);
+        let later = now + CLAIM_GRACE * 2;
+        let reply = state.claim(&tests(), &t, "issue-12", later);
+        assert!(!reply.granted);
+        assert_eq!(reply.holder, api());
+    }
+
+    #[test]
+    fn a_claim_survives_a_short_gap_and_ends_after_the_grace_period() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = thread("como-technologies/riff");
+        state.watch_started(&api(), now);
+        assert!(state.claim(&api(), &t, "issue-12", now).granted);
+        state.watch_ended(&api(), now);
+        let soon = now + Duration::from_secs(60);
+        assert!(!state.claim(&tests(), &t, "issue-12", soon).granted);
+        let late = now + CLAIM_GRACE + Duration::from_secs(1);
+        assert!(state.claim(&tests(), &t, "issue-12", late).granted);
+    }
+
+    #[test]
+    fn only_the_holder_releases_a_claim() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = thread("como-technologies/riff");
+        state.claim(&api(), &t, "issue-12", now);
+        assert!(state.release(&tests(), &t, "issue-12", now).is_err());
+        assert!(state.release(&api(), &t, "issue-12", now).is_ok());
+        assert!(state.claim(&tests(), &t, "issue-12", now).granted);
+    }
+
+    #[test]
+    fn who_shows_live_sessions() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.watch_started(&tests(), now);
+        let live: Vec<_> = state.who().into_iter().filter(|s| s.live).collect();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].name, tests());
+    }
+}

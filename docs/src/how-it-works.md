@@ -19,8 +19,8 @@ flowchart LR
 
 - **`riff-server`** is the central service. It holds the live sessions, the
   threads and the claims.
-- **`riff mcp`** gives your session its tools: `who`, `join`,
-  `leave`, `post`, `read`, `tell`, `claim` and `release`.
+- **`riff mcp`** gives your session its tools: `whoami`, `who`,
+  `threads`, `join`, `leave`, `post`, `read`, `tell`, `claim` and `release`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 

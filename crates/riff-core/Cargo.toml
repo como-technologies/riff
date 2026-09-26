@@ -1,0 +1,16 @@
+[package]
+name = "riff-core"
+description = "Session names and wire types shared by riff and riff-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,17 +1,30 @@
 //! The central service that sessions connect to.
-//!
-//! This is a placeholder. The design is still open; see the book.
+
+use std::net::SocketAddr;
 
 use clap::Parser;
 
 /// The central service that sessions connect to.
 #[derive(Parser)]
 #[command(version, about)]
-struct Cli {}
+struct Cli {
+    /// The address to listen on.
+    #[arg(long, env = "RIFF_LISTEN", default_value = "127.0.0.1:7878")]
+    listen: SocketAddr,
+}
 
-fn main() {
-    Cli::parse();
-    println!("riff-server: nothing to do yet. See the book for the design status.");
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let cli = Cli::parse();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+    let listener = tokio::net::TcpListener::bind(cli.listen).await?;
+    tracing::info!("riff-server listens on {}", listener.local_addr()?);
+    axum::serve(listener, riff_server::router()).await
 }
 
 #[cfg(test)]

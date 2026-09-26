@@ -56,6 +56,15 @@ crate-audit:
 crate-update:
     cargo update
 
+# Install riff and riff-server into ~/.cargo/bin
+install:
+    cargo install --locked --path crates/riff
+    cargo install --locked --path crates/riff-server
+
+# Run riff-server on this machine (memory only, no sign-in)
+serve:
+    cargo run -p riff-server
+
 # Clean build artifacts
 clean:
     cargo clean

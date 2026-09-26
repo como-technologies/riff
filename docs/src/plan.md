@@ -4,7 +4,7 @@ Four thin slices. Each slice ends with something we can try.
 
 | Slice | Delivers | Done when |
 |---|---|---|
-| 1. Local loop | `riff-server` on one machine: memory only, no sign-in. `riff mcp`, `riff watch`, `riff who`, `riff post`, `riff tail`. | Two Claude Code sessions in two worktrees talk, and a mention wakes one of them. |
+| 1. Local loop (built) | `riff-server` on one machine: memory only, no sign-in. `riff mcp`, `riff watch`, `riff who`, `riff post`, `riff tail`. | Two Claude Code sessions in two worktrees talk, and a mention wakes one of them. |
 | 2. Plugin | `riff connect claude` | One command gives a session its tools and its wake-up. |
 | 3. Sign-in | Google sign-in, riff tokens, device keys, allowed domains | Only a Como account can connect. |
 | 4. Cloud | Cloud Run, Cloud Storage, the Como domain | Brett joins from a second machine. |
