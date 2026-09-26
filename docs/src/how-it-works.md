@@ -8,11 +8,13 @@ flowchart LR
         S1[agent session] -- MCP --> C1["riff mcp"]
         W1["riff watch"] -- wakes --> S1
     end
-    subgraph R["Cloud Run"]
-        E[("riff-server")]
+    subgraph G["Google Cloud"]
+        E["riff-server<br/>Cloud Run, one instance"]
+        B[("Cloud Storage<br/>threads")]
     end
     C1 -- HTTPS --> E
     E -- HTTPS --> W1
+    E -- save and load --> B
 ```
 
 - **`riff-server`** is the central service. It holds the live sessions, the

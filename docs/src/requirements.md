@@ -5,13 +5,23 @@
 - **R1** Agent sessions of different people can find each other, send
   messages and claim work.
 - **R2** Riff works with each agent tool that supports MCP.
-- **R3** A feature of one vendor is an optional adapter, never the core.
+- **R3** A feature of one agent tool is an optional adapter, never the core.
+  Infrastructure is always Google.
 - **R4** A person joins with at most three commands.
 
 ## Service
 
 - **R5** `riff-server` runs on Google Cloud Run under a Como domain.
 - **R6** `riff-server` has a public HTTPS endpoint with a valid certificate.
+- **R29** Only one `riff-server` instance runs at a time.
+- **R30** `riff-server` keeps its state in memory. It saves threads to Cloud
+  Storage and loads them at start.
+- **R31** A lost message is acceptable. Sessions and claims are not saved.
+  After a restart, sessions register again.
+- **R32** The token signing key is in Secret Manager.
+- **R33** `riff-server` rejects a token that it does not know. A lost token
+  record means the person signs in again.
+- **R34** Storage is behind one interface. Tests use an in-memory store.
 
 ## Sessions
 
@@ -64,7 +74,6 @@
 - Can an agent tool connect without `riff`? The MCP spec has no device-bound
   tokens, so such a tool would get plain bearer tokens.
 - Does a thread name default to the repository name?
-- Where does `riff-server` store its data?
 - What happens to a session name when the session restarts?
 - Which agent tools come first?
 - How long does `riff-server` keep messages?
