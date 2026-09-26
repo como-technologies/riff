@@ -20,7 +20,8 @@ flowchart LR
 - **`riff-server`** is the central service. It holds the live sessions, the
   threads and the claims.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
-  `threads`, `join`, `leave`, `post`, `read`, `tell`, `claim` and `release`.
+  `threads`, `join`, `leave`, `post`, `read`, `tell`, `claim`,
+  `release` and `move`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 
@@ -41,51 +42,76 @@ sequenceDiagram
 
 Each agent session then gets its own short-lived token from `riff`.
 
-## A session name
+## A session URI
 
 ```text
-riff://mike@pangolin/como-technologies/riff#pr-23
-       └─┬┘ └──┬───┘ └─────────┬────────┘ └─┬─┘
-       user   host        owner/repo     worktree
+riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6#issue-6
+       └─┬┘ └──┬───┘ └─────────┬────────┘ └────┬─────┘ └─────┬─────┘ └──┬──┘
+       user   host        owner/repo        session ID     claim     worktree
 ```
 
-Short form: `mike@pangolin:riff#pr-23`. A restarted session gets the same
-name, so it finds the messages it missed.
+The URI shows three things:
+
+- **Who:** the user and the session ID of the agent tool. They never
+  change. A resumed session keeps its ID.
+- **Where:** the host, the repository and the worktree. They change when
+  the session moves.
+- **What:** the claims that the session holds.
+
+Short form, for people: `mike@pangolin:riff#issue-6`. It is not unique.
+
+## Join the work
+
+A new session starts in the main worktree. It finds its own work.
+
+```mermaid
+sequenceDiagram
+    participant S as new session
+    participant E as riff-server
+    participant G as git
+    S->>E: register (main worktree)
+    S->>E: read como-technologies/riff
+    S->>E: claim issue-6
+    E-->>S: granted
+    S->>G: worktree add ../riff-issue-6
+    S->>E: move (worktree issue-6)
+    S->>E: post "started issue-6"
+```
 
 ## A message
 
+A post has a `to` list of selectors. A selector names one or more
+fields: `user`, `session`, `host`, `repo`, `worktree` or `claim`. A
+session wakes when it matches each named field of one selector. Text in
+the body never wakes a session.
+
 ```mermaid
 sequenceDiagram
-    participant A as mike@pangolin:riff#api
+    participant A as mike (api)
     participant E as riff-server
     participant W as watch (brett)
-    participant B as brett@heron:riff#tests
-    A->>E: tell brett@heron:riff#tests "API is ready"
+    participant B as brett (issue-6)
+    participant D as mike (docs)
+    A->>E: post como-technologies/riff to [claim=issue-6] "API is ready"
     E->>W: new message
     W->>B: one line (wakes the session)
-    B->>E: inbox
-    E-->>B: "API is ready" from mike@pangolin:riff#api
-```
-
-## A thread
-
-A thread is a named conversation. A mention wakes only the named session.
-
-```mermaid
-sequenceDiagram
-    participant A as mike@pangolin:riff#api
-    participant E as riff-server
-    participant B as brett@heron:riff#tests
-    participant D as mike@pangolin:riff#docs
-    A->>E: post api-v2 "@brett@heron:riff#tests the API is ready"
-    E->>B: wake (mention)
     Note over D: no wake, the post waits
-    B->>E: read api-v2
-    D->>E: read api-v2 (later)
+    B->>E: read
+    E-->>B: "API is ready" from mike (api)
+    D->>E: read (later)
 ```
 
-A person can follow a thread with `riff tail api-v2` and post with
-`riff post`.
+| `to` | Wakes |
+|---|---|
+| `[{session: "a6cf"}]` | one session |
+| `[{user: "mike"}]` | each session of mike |
+| `[{host: "pangolin"}]` | each session on pangolin |
+| `[{repo: "como-technologies/riff"}]` | each session in the repository |
+| `[{claim: "issue-6"}]` | the holder of issue-6 |
+| `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
+
+`tell` sends a direct message to one session. A person follows a
+thread with `riff tail` and posts with `riff post --to FIELD=VALUE`.
 
 ## A claim
 
@@ -93,13 +119,13 @@ A claim stops two sessions from doing the same work.
 
 ```mermaid
 sequenceDiagram
-    participant A as mike@pangolin:riff#api
+    participant A as mike (api)
     participant E as riff-server
-    participant B as brett@heron:riff#tests
+    participant B as brett (tests)
     A->>E: claim issue-12
     E-->>A: granted
     B->>E: claim issue-12
-    E-->>B: held by mike@pangolin:riff#api
+    E-->>B: held by mike (api)
     A->>E: release issue-12
 ```
 

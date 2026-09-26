@@ -49,10 +49,10 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
-use riff_core::name::{SessionName, ThreadName};
+use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Tailed, Tell, Threads,
-    ThreadsReply, Wake, Who, WhoReply,
+    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Tailed, Threads,
+    ThreadsReply, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -68,7 +68,7 @@ type Reply<T> = Result<Json<T>, (StatusCode, String)>;
 
 struct Server {
     state: Mutex<State>,
-    wakes: broadcast::Sender<(SessionName, Wake)>,
+    wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
 }
 
@@ -105,7 +105,6 @@ pub fn router() -> Router {
         .route("/v1/join", post(join))
         .route("/v1/leave", post(leave))
         .route("/v1/post", post(post_message))
-        .route("/v1/tell", post(tell))
         .route("/v1/read", post(read))
         .route("/v1/claim", post(claim))
         .route("/v1/release", post(release))
@@ -115,11 +114,11 @@ pub fn router() -> Router {
 }
 
 async fn register(AxumState(s): AxumState<Shared>, Json(r): Json<Register>) -> Reply<()> {
-    s.state().register(&r.name, Instant::now());
+    s.state().register(&r.me, Instant::now());
     Ok(Json(()))
 }
 
-async fn who(AxumState(s): AxumState<Shared>, Json(_): Json<Who>) -> Reply<WhoReply> {
+async fn who(AxumState(s): AxumState<Shared>, Json(_): Json<WhoRequest>) -> Reply<WhoReply> {
     Ok(Json(WhoReply {
         sessions: s.state().who(),
     }))
@@ -127,64 +126,54 @@ async fn who(AxumState(s): AxumState<Shared>, Json(_): Json<Who>) -> Reply<WhoRe
 
 async fn threads(AxumState(s): AxumState<Shared>, Json(r): Json<Threads>) -> Reply<ThreadsReply> {
     Ok(Json(ThreadsReply {
-        threads: s.state().threads(&r.name),
+        threads: s.state().threads(&r.me, Instant::now()),
     }))
 }
 
 async fn join(AxumState(s): AxumState<Shared>, Json(r): Json<Membership>) -> Reply<()> {
-    s.state().join(&r.name, &r.thread, Instant::now());
+    s.state().join(&r.me, &r.thread, Instant::now());
     Ok(Json(()))
 }
 
 async fn leave(AxumState(s): AxumState<Shared>, Json(r): Json<Membership>) -> Reply<()> {
-    s.state().leave(&r.name, &r.thread, Instant::now());
+    s.state().leave(&r.me, &r.thread, Instant::now());
     Ok(Json(()))
 }
 
 async fn post_message(AxumState(s): AxumState<Shared>, Json(r): Json<Post>) -> Reply<Posted> {
-    if r.thread.is_direct() {
-        return Err(bad_request("use tell for direct messages".into()));
-    }
     let delivery = s
         .state()
-        .post(&r.from, &r.thread, r.body, Instant::now(), now_ms());
-    Ok(Json(posted(&s, delivery)))
-}
-
-async fn tell(AxumState(s): AxumState<Shared>, Json(r): Json<Tell>) -> Reply<Posted> {
-    let delivery = s
-        .state()
-        .tell(&r.from, &r.to, r.body, Instant::now(), now_ms());
+        .post(&r.me, r.thread, r.to, r.body, Instant::now(), now_ms())
+        .map_err(bad_request)?;
     Ok(Json(posted(&s, delivery)))
 }
 
 async fn read(AxumState(s): AxumState<Shared>, Json(r): Json<Read>) -> Reply<ReadReply> {
     let messages = s
         .state()
-        .read(&r.name, &r.thread, r.all, Instant::now())
+        .read(&r.me, &r.thread, r.all, Instant::now())
         .map_err(not_found)?;
     Ok(Json(ReadReply { messages }))
 }
 
 async fn claim(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply<ClaimReply> {
-    Ok(Json(s.state().claim(
-        &r.name,
-        &r.thread,
-        &r.item,
-        Instant::now(),
-    )))
+    let reply = s
+        .state()
+        .claim(&r.me, &r.thread, &r.item, Instant::now())
+        .map_err(bad_request)?;
+    Ok(Json(reply))
 }
 
 async fn release(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply<()> {
     s.state()
-        .release(&r.name, &r.thread, &r.item, Instant::now())
+        .release(&r.me, &r.thread, &r.item, Instant::now())
         .map_err(bad_request)?;
     Ok(Json(()))
 }
 
 #[derive(Deserialize)]
 struct WatchQuery {
-    name: SessionName,
+    uri: SessionUri,
 }
 
 /// Streams the wakes for one session. The session is live while the
@@ -197,18 +186,17 @@ async fn watch(
     let missed = {
         let mut state = s.state();
         let now = Instant::now();
-        state.register(&q.name, now);
-        state.watch_started(&q.name, now);
-        state.missed(&q.name)
+        state.watch_started(&q.uri, now);
+        state.missed(q.uri.who())
     };
     let guard = WatchGuard {
         server: s.clone(),
-        name: q.name.clone(),
+        who: q.uri.who().clone(),
     };
     let live = BroadcastStream::new(rx).filter_map(move |event| {
         let _alive = &guard;
         let wake = match event {
-            Ok((to, wake)) if to == guard.name => Some(wake),
+            Ok((to, wake)) if to == guard.who => Some(wake),
             _ => None,
         };
         std::future::ready(wake)
@@ -222,12 +210,12 @@ async fn watch(
 /// Marks the session as stopped when its watch stream closes.
 struct WatchGuard {
     server: Shared,
-    name: SessionName,
+    who: Who,
 }
 
 impl Drop for WatchGuard {
     fn drop(&mut self) {
-        self.server.state().watch_ended(&self.name, Instant::now());
+        self.server.state().watch_ended(&self.who, Instant::now());
     }
 }
 
@@ -255,11 +243,7 @@ fn posted(s: &Server, delivery: Delivery) -> Posted {
     let reply = Posted {
         thread: delivery.tailed.thread.clone(),
         seq: delivery.tailed.message.seq,
-        woken: delivery
-            .wakes
-            .iter()
-            .map(|(name, _)| name.clone())
-            .collect(),
+        woken: delivery.woken.clone(),
         unmatched: delivery.unmatched.clone(),
     };
     s.deliver(delivery);

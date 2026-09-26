@@ -1,5 +1,5 @@
-//! `riff claim` and `riff release` from the command line, in the
-//! repository thread, against a real server.
+//! `riff claim`, `riff release` and `riff post` from the command line,
+//! in the repository thread, against a real server.
 
 use std::path::Path;
 use std::process::Command as Git;
@@ -43,14 +43,16 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// Runs `riff` as one user in `dir`. Returns stdout and the exit code.
+/// Runs `riff` as one person in `dir`, outside any agent session. Returns stdout and the exit code.
 async fn riff(server: &str, dir: &Path, user: &str, args: &[&str]) -> (String, i32) {
     let mut cmd = Command::cargo_bin("riff").unwrap();
     cmd.args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
         .env("RIFF_USER", user)
-        .env("RIFF_HOST", "pangolin");
+        .env("RIFF_HOST", "pangolin")
+        .env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
     let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
         .await
         .unwrap();
@@ -73,7 +75,7 @@ async fn claim_and_release_work_in_the_repository_thread() {
     let (out, code) = riff(&server, dir, "brett", &["claim", "issue-12"]).await;
     assert_eq!(
         out,
-        "mike@pangolin:riff holds issue-12 in como-technologies/riff.\n"
+        "mike@pangolin holds issue-12 in como-technologies/riff.\n"
     );
     assert_eq!(code, 1, "a held item must fail the command");
 
@@ -102,4 +104,51 @@ async fn claim_takes_a_named_thread() {
     .await;
     assert_eq!(out, "You hold issue-12 in api-v2.\n");
     assert_eq!(code, 0);
+}
+
+#[tokio::test]
+async fn post_wakes_the_holder_of_a_claim() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+
+    riff(&server, dir, "mike", &["claim", "issue-6"]).await;
+    let (out, code) = riff(
+        &server,
+        dir,
+        "brett",
+        &[
+            "post",
+            "--to",
+            "claim=issue-6",
+            "--to",
+            "user=ghost",
+            "status?",
+        ],
+    )
+    .await;
+    assert_eq!(
+        out,
+        "Posted message 1 to como-technologies/riff. Woke mike@pangolin. \
+         No session matches user=ghost.\n"
+    );
+    assert_eq!(code, 0);
+}
+
+#[tokio::test]
+async fn watch_needs_a_session_id() {
+    let server = start_server().await;
+    let dir = repo();
+    let mut cmd = Command::cargo_bin("riff").unwrap();
+    cmd.arg("watch")
+        .current_dir(dir.path())
+        .env("RIFF_SERVER", server)
+        .env("RIFF_USER", "mike")
+        .env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no session ID"));
 }

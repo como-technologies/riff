@@ -7,7 +7,8 @@ use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use riff::api::{Api, DEFAULT_SERVER};
 use riff::{identity, mcp, text};
-use riff_core::name::{SessionName, ThreadName};
+use riff_core::name::{Place, ThreadName};
+use riff_core::selector::Selector;
 
 /// The time between two tries to reach the server.
 const RETRY: Duration = Duration::from_secs(5);
@@ -26,7 +27,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Show the session name for this directory.
+    /// Show your URI. Inside Claude Code, it is the URI of the session.
     Whoami,
     /// List the sessions in the riff.
     Who,
@@ -35,6 +36,12 @@ enum Command {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
         thread: Option<String>,
+        /// Wake the sessions that match: FIELD=VALUE pairs with commas
+        /// between them, for example user=mike,claim=issue-6. The fields
+        /// are user, session, host, repo, worktree and claim. Give --to
+        /// again to wake more sessions.
+        #[arg(long)]
+        to: Vec<Selector>,
         /// The message.
         #[arg(required = true)]
         body: Vec<String>,
@@ -61,7 +68,7 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// Print one line each time a direct message or a mention arrives.
+    /// Print one line each time a post wakes this session.
     Watch,
     /// Serve the riff tools to an agent session over stdio.
     Mcp,
@@ -71,17 +78,18 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let api = Api::new(&cli.server);
-    let me = identity::session_name(&std::env::current_dir()?)?;
+    let here = identity::place(&std::env::current_dir()?)?;
+    let me = identity::me(&here)?;
     match cli.command {
-        Command::Whoami => println!("{}  {me}", me.short()),
+        Command::Whoami => println!("{}  {me}", text::name(&me)),
         Command::Who => print!("{}", text::who(&api.who().await?, &me)),
-        Command::Post { thread, body } => {
-            let thread = thread_or_default(thread, &me)?;
-            let posted = api.post(&me, &thread, &body.join(" ")).await?;
+        Command::Post { thread, to, body } => {
+            let thread = thread_or_default(thread, &here)?;
+            let posted = api.post(&me, Some(&thread), &to, &body.join(" ")).await?;
             println!("{}", text::posted(&posted));
         }
         Command::Claim { thread, item } => {
-            let thread = thread_or_default(thread, &me)?;
+            let thread = thread_or_default(thread, &here)?;
             let reply = api.claim(&me, &thread, &item).await?;
             println!("{}", text::claimed(&reply, &thread, &item));
             if !reply.granted {
@@ -89,21 +97,21 @@ async fn main() -> Result<()> {
             }
         }
         Command::Release { thread, item } => {
-            let thread = thread_or_default(thread, &me)?;
+            let thread = thread_or_default(thread, &here)?;
             api.release(&me, &thread, &item).await?;
             println!("{}", text::released(&thread, &item));
         }
-        Command::Tail { thread } => tail(&api, &thread_or_default(thread, &me)?).await?,
-        Command::Watch => watch(&api, &me).await,
-        Command::Mcp => mcp::serve(api, me).await?,
+        Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await?,
+        Command::Watch => watch(&api, &identity::session(&here)?).await,
+        Command::Mcp => mcp::serve(api, identity::session(&here)?).await?,
     }
     Ok(())
 }
 
-fn thread_or_default(given: Option<String>, me: &SessionName) -> Result<ThreadName> {
+fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> {
     match given {
         Some(t) => Ok(t.parse()?),
-        None => me
+        None => here
             .default_thread()
             .ok_or_else(|| anyhow::anyhow!("name a thread: this directory is not in git")),
     }
@@ -119,7 +127,7 @@ async fn tail(api: &Api, thread: &ThreadName) -> Result<()> {
 }
 
 /// Runs until stopped. It connects again after the server goes away.
-async fn watch(api: &Api, me: &SessionName) {
+async fn watch(api: &Api, me: &riff_core::name::SessionUri) {
     let mut reported = false;
     loop {
         match api.watch(me).await {

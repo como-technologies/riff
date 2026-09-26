@@ -7,22 +7,24 @@
 //!
 //! - `riff-server` holds the state: sessions, threads, messages, read
 //!   cursors and claims.
-//! - `riff` runs next to each agent session. It works out the session
-//!   name, serves the tools over MCP, and prints a line when the session
-//!   must wake.
+//! - `riff` runs next to each agent session. It finds the session ID and
+//!   the place, serves the tools over MCP, and prints a line when the
+//!   session must wake.
 //!
 //! This crate holds what both sides must agree on:
 //!
-//! - [`name`]: session names and thread names.
-//! - [`mention`]: which text in a message is a mention.
+//! - [`name`]: session URIs and thread names.
+//! - [`selector`]: the address of a post.
 //! - [`wire`]: the requests, replies and events on the HTTP API.
 //!
 //! ## Sessions
 //!
-//! A session name is a URI (see [`name::SessionName`]). A name outlives
-//! the process that uses it. A restarted session works out the same name,
-//! so it finds the messages that it missed. A session is *live* while it
-//! has an open watch stream, and *idle* otherwise.
+//! A session URI (see [`name::SessionUri`]) shows who a session is, where
+//! it works and what it works on. *Who* is the user and the session ID
+//! of the agent tool. It never changes, so the server keys each session
+//! by it. *Where* changes when the session moves. *What* is the set of
+//! claims. A session is *live* while it has an open watch stream, and
+//! *idle* otherwise.
 //!
 //! ## Threads
 //!
@@ -34,10 +36,11 @@
 //!
 //! ## Wakes
 //!
-//! A post does not wake the members of a thread. Only two things wake a
-//! session: a direct message, and a mention (`@` followed by the short
-//! name or the full name, outside code; see [`mention`]). The server sends a [`wire::Wake`] on the watch
-//! stream of the woken session.
+//! A post has a `to` list of selectors. The server matches them against
+//! each known session when the message is posted. Each session that
+//! matches wakes and joins the thread. Text in the body never wakes a
+//! session. The server sends a [`wire::Wake`] on the watch stream of
+//! each woken session.
 //!
 //! ## Claims
 //!
@@ -48,20 +51,25 @@
 //! # Example
 //!
 //! ```
-//! use riff_core::name::{Repo, SessionName, ThreadName};
+//! use riff_core::name::{SessionUri, ThreadName};
+//! use riff_core::selector::Selector;
 //!
-//! let mike: SessionName = "riff://mike@pangolin/como-technologies/riff#api".parse()?;
-//! let brett: SessionName = "riff://brett@heron/como-technologies/riff#tests".parse()?;
+//! let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?;
+//! let brett: SessionUri = "riff://brett@heron/como-technologies/riff?session=77e0#tests".parse()?;
 //!
 //! // Both sessions meet in the thread of their repository.
 //! assert_eq!(mike.default_thread(), brett.default_thread());
 //!
+//! // A selector for everyone in the repository picks both.
+//! let everyone: Selector = "repo=como-technologies/riff".parse()?;
+//! assert!(everyone.matches(&mike) && everyone.matches(&brett));
+//!
 //! // Their direct messages go to one private thread.
-//! let direct = ThreadName::direct(&mike, &brett);
+//! let direct = ThreadName::direct(mike.who(), brett.who());
 //! assert!(direct.is_direct());
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
-pub mod mention;
 pub mod name;
+pub mod selector;
 pub mod wire;

@@ -3,10 +3,11 @@
 
 use anyhow::{Context, Result, bail};
 use futures::{Stream, StreamExt};
-use riff_core::name::{SessionName, ThreadName};
+use riff_core::name::{SessionUri, ThreadName};
+use riff_core::selector::Selector;
 use riff_core::wire::{
     Claim, ClaimReply, Membership, Message, Post, Posted, Read, ReadReply, Register, SessionInfo,
-    Tailed, Tell, ThreadInfo, Threads, ThreadsReply, Wake, Who, WhoReply,
+    Tailed, ThreadInfo, Threads, ThreadsReply, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -29,62 +30,56 @@ impl Api {
         }
     }
 
-    pub async fn register(&self, name: &SessionName) -> Result<()> {
-        self.call("register", &Register { name: name.clone() })
-            .await
+    /// Says where the session works now. Call it at the start and after
+    /// each move.
+    pub async fn register(&self, me: &SessionUri) -> Result<()> {
+        self.call("register", &Register { me: me.clone() }).await
     }
 
     pub async fn who(&self) -> Result<Vec<SessionInfo>> {
-        let reply: WhoReply = self.call("who", &Who {}).await?;
+        let reply: WhoReply = self.call("who", &WhoRequest {}).await?;
         Ok(reply.sessions)
     }
 
-    pub async fn threads(&self, name: &SessionName) -> Result<Vec<ThreadInfo>> {
-        let reply: ThreadsReply = self
-            .call("threads", &Threads { name: name.clone() })
-            .await?;
+    pub async fn threads(&self, me: &SessionUri) -> Result<Vec<ThreadInfo>> {
+        let reply: ThreadsReply = self.call("threads", &Threads { me: me.clone() }).await?;
         Ok(reply.threads)
     }
 
-    pub async fn join(&self, name: &SessionName, thread: &ThreadName) -> Result<()> {
-        self.call("join", &membership(name, thread)).await
+    pub async fn join(&self, me: &SessionUri, thread: &ThreadName) -> Result<()> {
+        self.call("join", &membership(me, thread)).await
     }
 
-    pub async fn leave(&self, name: &SessionName, thread: &ThreadName) -> Result<()> {
-        self.call("leave", &membership(name, thread)).await
+    pub async fn leave(&self, me: &SessionUri, thread: &ThreadName) -> Result<()> {
+        self.call("leave", &membership(me, thread)).await
     }
 
+    /// Posts to a thread and wakes each session that `to` selects. With
+    /// no thread, it sends a direct message to one session.
     pub async fn post(
         &self,
-        from: &SessionName,
-        thread: &ThreadName,
+        me: &SessionUri,
+        thread: Option<&ThreadName>,
+        to: &[Selector],
         body: &str,
     ) -> Result<Posted> {
         let request = Post {
-            from: from.clone(),
-            thread: thread.clone(),
+            me: me.clone(),
+            thread: thread.cloned(),
+            to: to.to_vec(),
             body: body.to_owned(),
         };
         self.call("post", &request).await
     }
 
-    pub async fn tell(&self, from: &SessionName, to: &SessionName, body: &str) -> Result<Posted> {
-        let request = Tell {
-            from: from.clone(),
-            to: to.clone(),
-            body: body.to_owned(),
-        };
-        self.call("tell", &request).await
-    }
-
     pub async fn read(
         &self,
-        name: &SessionName,
+        me: &SessionUri,
         thread: &ThreadName,
         all: bool,
     ) -> Result<Vec<Message>> {
         let request = Read {
-            name: name.clone(),
+            me: me.clone(),
             thread: thread.clone(),
             all,
         };
@@ -94,21 +89,21 @@ impl Api {
 
     pub async fn claim(
         &self,
-        name: &SessionName,
+        me: &SessionUri,
         thread: &ThreadName,
         item: &str,
     ) -> Result<ClaimReply> {
-        self.call("claim", &claim(name, thread, item)).await
+        self.call("claim", &claim(me, thread, item)).await
     }
 
-    pub async fn release(&self, name: &SessionName, thread: &ThreadName, item: &str) -> Result<()> {
-        self.call("release", &claim(name, thread, item)).await
+    pub async fn release(&self, me: &SessionUri, thread: &ThreadName, item: &str) -> Result<()> {
+        self.call("release", &claim(me, thread, item)).await
     }
 
     /// The wakes for one session. The session is live while the stream
     /// is open.
-    pub async fn watch(&self, name: &SessionName) -> Result<impl Stream<Item = Result<Wake>>> {
-        self.events("watch", &[("name", name.to_string())]).await
+    pub async fn watch(&self, me: &SessionUri) -> Result<impl Stream<Item = Result<Wake>>> {
+        self.events("watch", &[("uri", me.to_string())]).await
     }
 
     /// Each new message in one thread.
@@ -177,16 +172,16 @@ impl Api {
     }
 }
 
-fn membership(name: &SessionName, thread: &ThreadName) -> Membership {
+fn membership(me: &SessionUri, thread: &ThreadName) -> Membership {
     Membership {
-        name: name.clone(),
+        me: me.clone(),
         thread: thread.clone(),
     }
 }
 
-fn claim(name: &SessionName, thread: &ThreadName, item: &str) -> Claim {
+fn claim(me: &SessionUri, thread: &ThreadName, item: &str) -> Claim {
     Claim {
-        name: name.clone(),
+        me: me.clone(),
         thread: thread.clone(),
         item: item.to_owned(),
     }

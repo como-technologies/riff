@@ -15,9 +15,9 @@
 //! The Claude Code plugin is in [`plugin`].
 //!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
-//! agree on the session name because both work it out the same way from
-//! the directory (see [`identity`]). Slice 1 allows one live session for
-//! each name.
+//! agree on the session because both read its session ID from the
+//! environment (see [`identity`]). The session can move; the server keeps
+//! its place, so a watch that started in the old place still works.
 //!
 //! ## Wake line
 //!
@@ -26,21 +26,7 @@
 //! exactly one line for each wake and nothing else on stdout. Errors go
 //! to stderr. The line tells the agent what to do next:
 //!
-//! ```
-//! use riff_core::wire::{Wake, WakeReason};
-//!
-//! let wake = Wake {
-//!     thread: "como-technologies/riff".parse()?,
-//!     seq: 7,
-//!     from: "riff://mike@pangolin/como-technologies/riff#api".parse()?,
-//!     reason: WakeReason::Mention,
-//! };
-//! assert_eq!(
-//!     riff::text::wake_line(&wake),
-//!     "riff: mike@pangolin:riff#api mentioned you (message 7). Use the riff read tool."
-//! );
-//! # Ok::<(), riff_core::name::NameError>(())
-//! ```
+//! See [`text::wake_line`] for the line.
 //!
 //! ## Messages are data
 //!

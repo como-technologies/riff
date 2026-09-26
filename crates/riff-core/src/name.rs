@@ -1,29 +1,39 @@
-//! Session names and thread names.
+//! Session URIs and thread names.
 //!
-//! # Session names
+//! # Session URIs
 //!
-//! A session name is a URI with four parts:
+//! A session URI shows who a session is, where it works, and what it
+//! works on:
 //!
 //! ```text
-//! riff://mike@pangolin/como-technologies/riff#pr-23
-//!        user  host     owner/repo            worktree
+//! riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6#pr-23
+//!        └─┬┘ └──┬───┘ └─────────┬────────┘ └────┬─────┘ └────┬────┘ └─┬─┘
+//!        user   host        owner/repo        session ID    claim    worktree
 //! ```
 //!
-//! | Part | Source |
-//! |---|---|
-//! | user | The sign-in. The only part that the server checks. |
-//! | host | The machine name, without its domain. |
-//! | owner/repo | The `origin` remote of the git repository. |
-//! | worktree | The directory name of a linked worktree. The main worktree has none. |
+//! | Part | Kind | Source |
+//! |---|---|---|
+//! | user | who | The sign-in. |
+//! | session | who | The session ID of the agent tool. A person has none. |
+//! | host | where | The machine name, without its domain. |
+//! | owner/repo | where | The `origin` remote of the git repository. |
+//! | worktree | where | The directory name of a linked worktree. The main worktree has none. |
+//! | claim | what | One part for each claim that the session holds. |
+//!
+//! *Who* ([`Who`]) never changes. *Where* ([`Place`]) changes when the
+//! session moves. *What* changes with each claim. The server keys each
+//! session by its [`Who`].
 //!
 //! Outside git, the repository part is `-` and the worktree part is the
-//! directory name: `riff://mike@pangolin/-#notes`.
+//! directory name: `riff://mike@pangolin/-?session=a6cf#notes`. A person
+//! who posts from the command line has no session and no place:
+//! `riff://mike@pangolin`.
 //!
 //! Each part holds only ASCII letters, digits, `-`, `_`, `.` and `~`.
 //! [`sanitize`] makes any text fit.
 //!
-//! The *short form* drops `riff://` and the owner:
-//! `mike@pangolin:riff#pr-23`. People and mentions use it.
+//! The *short form* is for people: `mike@pangolin:riff#pr-23`. It drops
+//! the owner, the session and the claims, so it is not unique.
 //!
 //! # Thread names
 //!
@@ -38,42 +48,15 @@ use serde::{Deserialize, Serialize};
 
 const SCHEME: &str = "riff://";
 
-/// The repository part of a session name.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Repo {
-    /// A git repository, named by its `origin` remote.
-    Git { owner: String, name: String },
-    /// No git repository (`-`).
-    None,
-}
-
-/// The name of one agent session.
-///
-/// It serializes as its full URI.
-///
-/// ```
-/// use riff_core::name::SessionName;
-///
-/// let name: SessionName = "riff://mike@pangolin/como-technologies/riff#pr-23".parse()?;
-/// assert_eq!(name.short(), "mike@pangolin:riff#pr-23");
-/// assert_eq!(
-///     serde_json::to_string(&name).unwrap(),
-///     r#""riff://mike@pangolin/como-technologies/riff#pr-23""#
-/// );
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct SessionName {
-    user: String,
-    host: String,
-    repo: Repo,
-    worktree: Option<String>,
-}
-
 /// Why a name did not parse or validate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameError(String);
+
+impl NameError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
 
 impl fmt::Display for NameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -83,33 +66,86 @@ impl fmt::Display for NameError {
 
 impl std::error::Error for NameError {}
 
-impl SessionName {
-    /// Makes a name from its parts. A name outside git needs a worktree
-    /// part (the directory name).
-    ///
-    /// ```
-    /// use riff_core::name::{Repo, SessionName};
-    ///
-    /// let main = SessionName::new("mike", "pangolin", Repo::Git {
-    ///     owner: "como-technologies".into(),
-    ///     name: "riff".into(),
-    /// }, None)?;
-    /// assert_eq!(main.to_string(), "riff://mike@pangolin/como-technologies/riff");
-    ///
-    /// let notes = SessionName::new("mike", "pangolin", Repo::None, Some("notes"))?;
-    /// assert_eq!(notes.to_string(), "riff://mike@pangolin/-#notes");
-    ///
-    /// assert!(SessionName::new("mike", "pangolin", Repo::None, None).is_err());
-    /// assert!(SessionName::new("mi ke", "pangolin", Repo::None, Some("x")).is_err());
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
-    pub fn new(
-        user: &str,
-        host: &str,
-        repo: Repo,
-        worktree: Option<&str>,
-    ) -> Result<Self, NameError> {
+/// Who a session is: a user, and the session ID of the agent tool.
+/// A person on the command line has no session ID.
+///
+/// ```
+/// use riff_core::name::Who;
+///
+/// let agent = Who::new("mike", Some("a6cf"))?;
+/// assert_eq!(agent.to_string(), "mike/a6cf");
+/// assert_eq!(Who::new("mike", None)?.to_string(), "mike");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Who {
+    user: String,
+    session: Option<String>,
+}
+
+impl Who {
+    pub fn new(user: &str, session: Option<&str>) -> Result<Self, NameError> {
         check("user", user)?;
+        if let Some(session) = session {
+            check("session", session)?;
+        }
+        Ok(Self {
+            user: user.into(),
+            session: session.map(Into::into),
+        })
+    }
+
+    pub fn user(&self) -> &str {
+        &self.user
+    }
+
+    pub fn session(&self) -> Option<&str> {
+        self.session.as_deref()
+    }
+}
+
+impl fmt::Display for Who {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.user)?;
+        if let Some(session) = &self.session {
+            write!(f, "/{session}")?;
+        }
+        Ok(())
+    }
+}
+
+/// The repository part of a place.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Repo {
+    /// A git repository, named by its `origin` remote.
+    Git { owner: String, name: String },
+    /// No git repository (`-`).
+    None,
+}
+
+/// Where a session works: a host, a repository and a worktree.
+///
+/// ```
+/// use riff_core::name::{Place, Repo};
+///
+/// let repo = Repo::Git { owner: "como-technologies".into(), name: "riff".into() };
+/// let place = Place::new("pangolin", repo, Some("pr-23"))?;
+/// assert_eq!(place.repo_text(), "como-technologies/riff");
+/// assert_eq!(place.default_thread().unwrap().to_string(), "como-technologies/riff");
+///
+/// // A person has a host and nothing else.
+/// assert!(Place::host_only("pangolin")?.default_thread().is_none());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Place {
+    host: String,
+    repo: Repo,
+    worktree: Option<String>,
+}
+
+impl Place {
+    pub fn new(host: &str, repo: Repo, worktree: Option<&str>) -> Result<Self, NameError> {
         check("host", host)?;
         if let Repo::Git { owner, name } = &repo {
             check("owner", owner)?;
@@ -117,106 +153,219 @@ impl SessionName {
         }
         if let Some(worktree) = worktree {
             check("worktree", worktree)?;
-        } else if repo == Repo::None {
-            return Err(NameError(
-                "a name outside git needs a directory part".into(),
-            ));
         }
         Ok(Self {
-            user: user.into(),
             host: host.into(),
             repo,
             worktree: worktree.map(Into::into),
         })
     }
 
-    /// The repository part.
+    /// The place of a person on the command line: a host only.
+    pub fn host_only(host: &str) -> Result<Self, NameError> {
+        Self::new(host, Repo::None, None)
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
     pub fn repo(&self) -> &Repo {
         &self.repo
     }
 
-    /// The short form for display and mentions: `USER@HOST:REPO#WORKTREE`.
+    pub fn worktree(&self) -> Option<&str> {
+        self.worktree.as_deref()
+    }
+
+    /// `OWNER/REPO`, or `-` outside git.
+    pub fn repo_text(&self) -> String {
+        match &self.repo {
+            Repo::Git { owner, name } => format!("{owner}/{name}"),
+            Repo::None => "-".into(),
+        }
+    }
+
+    /// The thread that a session joins in this place: OWNER/REPO.
+    /// Outside git there is none.
+    pub fn default_thread(&self) -> Option<ThreadName> {
+        match &self.repo {
+            Repo::Git { .. } => Some(ThreadName(self.repo_text())),
+            Repo::None => None,
+        }
+    }
+
+    fn has_path(&self) -> bool {
+        self.repo != Repo::None || self.worktree.is_some()
+    }
+}
+
+/// The URI of one session: who, where and what.
+///
+/// It serializes as its full URI. Two URIs of one session differ when
+/// the session moves or claims.
+///
+/// ```
+/// use riff_core::name::SessionUri;
+///
+/// let text = "riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6#pr-23";
+/// let uri: SessionUri = text.parse()?;
+/// assert_eq!(uri.to_string(), text);
+/// assert_eq!(uri.short(), "mike@pangolin:riff#pr-23");
+/// assert_eq!(uri.who().session(), Some("a6cf"));
+/// assert_eq!(uri.claims(), ["issue-6"]);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct SessionUri {
+    who: Who,
+    place: Place,
+    claims: Vec<String>,
+}
+
+impl SessionUri {
+    /// A URI with no claims.
+    pub fn new(who: Who, place: Place) -> Self {
+        Self {
+            who,
+            place,
+            claims: Vec::new(),
+        }
+    }
+
+    /// The same URI with these claims, in sorted order.
+    pub fn with_claims(mut self, mut claims: Vec<String>) -> Self {
+        claims.sort();
+        claims.dedup();
+        self.claims = claims;
+        self
+    }
+
+    pub fn who(&self) -> &Who {
+        &self.who
+    }
+
+    pub fn place(&self) -> &Place {
+        &self.place
+    }
+
+    pub fn claims(&self) -> &[String] {
+        &self.claims
+    }
+
+    /// The same URI in a new place.
+    pub fn moved(mut self, place: Place) -> Self {
+        self.place = place;
+        self
+    }
+
+    /// The short form for people: `USER@HOST:REPO#WORKTREE`.
     ///
     /// ```
-    /// # use riff_core::name::SessionName;
-    /// let main: SessionName = "riff://mike@pangolin/como-technologies/riff".parse()?;
+    /// # use riff_core::name::SessionUri;
+    /// let main: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// assert_eq!(main.short(), "mike@pangolin:riff");
-    /// let notes: SessionName = "riff://mike@pangolin/-#notes".parse()?;
+    /// let notes: SessionUri = "riff://mike@pangolin/-?session=a6cf#notes".parse()?;
     /// assert_eq!(notes.short(), "mike@pangolin:-#notes");
+    /// let person: SessionUri = "riff://mike@pangolin".parse()?;
+    /// assert_eq!(person.short(), "mike@pangolin");
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn short(&self) -> String {
-        let repo = match &self.repo {
-            Repo::Git { name, .. } => name.as_str(),
-            Repo::None => "-",
-        };
-        let mut out = format!("{}@{}:{}", self.user, self.host, repo);
-        if let Some(worktree) = &self.worktree {
+        let mut out = format!("{}@{}", self.who.user, self.place.host);
+        if !self.place.has_path() {
+            return out;
+        }
+        out.push(':');
+        match &self.place.repo {
+            Repo::Git { name, .. } => out.push_str(name),
+            Repo::None => out.push('-'),
+        }
+        if let Some(worktree) = &self.place.worktree {
             out.push('#');
             out.push_str(worktree);
         }
         out
     }
 
-    /// The thread that this session joins when it registers: OWNER/REPO.
-    /// A session outside git has none.
-    ///
-    /// ```
-    /// # use riff_core::name::SessionName;
-    /// let name: SessionName = "riff://mike@pangolin/como-technologies/riff#pr-23".parse()?;
-    /// assert_eq!(name.default_thread().unwrap().to_string(), "como-technologies/riff");
-    /// let notes: SessionName = "riff://mike@pangolin/-#notes".parse()?;
-    /// assert!(notes.default_thread().is_none());
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
+    /// The thread that this session joins by default: OWNER/REPO.
     pub fn default_thread(&self) -> Option<ThreadName> {
-        match &self.repo {
-            Repo::Git { owner, name } => Some(ThreadName(format!("{owner}/{name}"))),
-            Repo::None => None,
-        }
+        self.place.default_thread()
     }
 }
 
-impl fmt::Display for SessionName {
+impl fmt::Display for SessionUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{SCHEME}{}@{}/", self.user, self.host)?;
-        match &self.repo {
-            Repo::Git { owner, name } => write!(f, "{owner}/{name}")?,
-            Repo::None => f.write_str("-")?,
+        write!(f, "{SCHEME}{}@{}", self.who.user, self.place.host)?;
+        let query: Vec<String> = self
+            .who
+            .session
+            .iter()
+            .map(|s| format!("session={s}"))
+            .chain(self.claims.iter().map(|c| format!("claim={c}")))
+            .collect();
+        if self.place.has_path() || !query.is_empty() {
+            write!(f, "/{}", self.place.repo_text())?;
         }
-        if let Some(worktree) = &self.worktree {
+        if !query.is_empty() {
+            write!(f, "?{}", query.join("&"))?;
+        }
+        if let Some(worktree) = &self.place.worktree {
             write!(f, "#{worktree}")?;
         }
         Ok(())
     }
 }
 
-impl FromStr for SessionName {
+impl FromStr for SessionUri {
     type Err = NameError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bad = || NameError(format!("not a session name: {s}"));
+        let bad = || NameError(format!("not a session URI: {s}"));
         let rest = s.strip_prefix(SCHEME).ok_or_else(bad)?;
-        let (authority, path) = rest.split_once('/').ok_or_else(bad)?;
-        let (user, host) = authority.split_once('@').ok_or_else(bad)?;
-        let (path, worktree) = match path.split_once('#') {
-            Some((path, worktree)) => (path, Some(worktree)),
-            None => (path, None),
+        let (rest, worktree) = match rest.split_once('#') {
+            Some((rest, worktree)) => (rest, Some(worktree)),
+            None => (rest, None),
         };
-        let repo = if path == "-" {
-            Repo::None
-        } else {
-            let (owner, name) = path.split_once('/').ok_or_else(bad)?;
-            Repo::Git {
-                owner: owner.into(),
-                name: name.into(),
+        let (rest, query) = match rest.split_once('?') {
+            Some((rest, query)) => (rest, Some(query)),
+            None => (rest, None),
+        };
+        let (authority, path) = match rest.split_once('/') {
+            Some((authority, path)) => (authority, Some(path)),
+            None => (rest, None),
+        };
+        let (user, host) = authority.split_once('@').ok_or_else(bad)?;
+        let repo = match path {
+            None | Some("-") => Repo::None,
+            Some(path) => {
+                let (owner, name) = path.split_once('/').ok_or_else(bad)?;
+                Repo::Git {
+                    owner: owner.into(),
+                    name: name.into(),
+                }
             }
         };
-        Self::new(user, host, repo, worktree)
+        let mut session = None;
+        let mut claims = Vec::new();
+        for pair in query.into_iter().flat_map(|q| q.split('&')) {
+            match pair.split_once('=') {
+                Some(("session", value)) if session.is_none() => session = Some(value),
+                Some(("claim", value)) => {
+                    check("claim", value)?;
+                    claims.push(value.to_owned());
+                }
+                _ => return Err(bad()),
+            }
+        }
+        let who = Who::new(user, session)?;
+        let place = Place::new(host, repo, worktree)?;
+        Ok(Self::new(who, place).with_claims(claims))
     }
 }
 
-impl TryFrom<String> for SessionName {
+impl TryFrom<String> for SessionUri {
     type Error = NameError;
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
@@ -224,13 +373,13 @@ impl TryFrom<String> for SessionName {
     }
 }
 
-impl From<SessionName> for String {
-    fn from(name: SessionName) -> Self {
-        name.to_string()
+impl From<SessionUri> for String {
+    fn from(uri: SessionUri) -> Self {
+        uri.to_string()
     }
 }
 
-/// Replaces each character that a name part cannot hold with `-`.
+/// Replaces each character that a URI part cannot hold with `-`.
 ///
 /// ```
 /// assert_eq!(riff_core::name::sanitize("feat/login page"), "feat-login-page");
@@ -245,7 +394,9 @@ fn allowed(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~')
 }
 
-fn check(what: &str, part: &str) -> Result<(), NameError> {
+/// Checks that one URI part is not empty and holds only allowed
+/// characters. `what` names the part in the error.
+pub fn check(what: &str, part: &str) -> Result<(), NameError> {
     if part.is_empty() {
         return Err(NameError(format!("the {what} part is empty")));
     }
@@ -269,14 +420,14 @@ impl ThreadName {
     /// The order of the two sessions does not matter.
     ///
     /// ```
-    /// use riff_core::name::{SessionName, ThreadName};
+    /// use riff_core::name::{ThreadName, Who};
     ///
-    /// let a: SessionName = "riff://mike@pangolin/o/r#a".parse()?;
-    /// let b: SessionName = "riff://brett@heron/o/r#b".parse()?;
+    /// let a = Who::new("mike", Some("a6cf"))?;
+    /// let b = Who::new("brett", Some("77e0"))?;
     /// assert_eq!(ThreadName::direct(&a, &b), ThreadName::direct(&b, &a));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn direct(a: &SessionName, b: &SessionName) -> Self {
+    pub fn direct(a: &Who, b: &Who) -> Self {
         let (first, second) = if a <= b { (a, b) } else { (b, a) };
         Self(format!("{DIRECT_PREFIX}{first}|{second}"))
     }
@@ -311,7 +462,7 @@ impl FromStr for ThreadName {
             return Err(NameError(format!("not a thread name: {s:?}")));
         }
         if s.starts_with(DIRECT_PREFIX) {
-            return Err(NameError("use the tell command for direct messages".into()));
+            return Err(NameError("use tell for direct messages".into()));
         }
         Ok(Self(s.into()))
     }
@@ -339,48 +490,69 @@ impl From<ThreadName> for String {
 mod tests {
     use super::*;
 
-    fn git(worktree: Option<&str>) -> SessionName {
-        let repo = Repo::Git {
+    fn riff() -> Repo {
+        Repo::Git {
             owner: "como-technologies".into(),
             name: "riff".into(),
-        };
-        SessionName::new("mike", "pangolin", repo, worktree).unwrap()
+        }
+    }
+
+    fn uri(session: Option<&str>, worktree: Option<&str>) -> SessionUri {
+        SessionUri::new(
+            Who::new("mike", session).unwrap(),
+            Place::new("pangolin", riff(), worktree).unwrap(),
+        )
     }
 
     #[test]
-    fn a_worktree_name_round_trips() {
-        let name = git(Some("pr-23"));
-        let text = "riff://mike@pangolin/como-technologies/riff#pr-23";
-        assert_eq!(name.to_string(), text);
-        assert_eq!(text.parse::<SessionName>().unwrap(), name);
-        assert_eq!(name.short(), "mike@pangolin:riff#pr-23");
+    fn a_full_uri_round_trips() {
+        let text = "riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=a&claim=b#pr-23";
+        let parsed: SessionUri = text.parse().unwrap();
+        assert_eq!(parsed.to_string(), text);
+        assert_eq!(parsed.claims(), ["a", "b"]);
+        assert_eq!(parsed.place().worktree(), Some("pr-23"));
     }
 
     #[test]
     fn the_main_worktree_has_no_fragment() {
-        let name = git(None);
+        let main = uri(Some("a6cf"), None);
         assert_eq!(
-            name.to_string(),
-            "riff://mike@pangolin/como-technologies/riff"
+            main.to_string(),
+            "riff://mike@pangolin/como-technologies/riff?session=a6cf"
         );
-        assert_eq!(name.short(), "mike@pangolin:riff");
-        assert_eq!(
-            name.default_thread().unwrap().to_string(),
-            "como-technologies/riff"
-        );
+        assert_eq!(main.short(), "mike@pangolin:riff");
     }
 
     #[test]
-    fn a_name_outside_git_uses_a_dash() {
-        let name: SessionName = "riff://mike@pangolin/-#notes".parse().unwrap();
-        assert_eq!(name.repo(), &Repo::None);
-        assert_eq!(name.short(), "mike@pangolin:-#notes");
-        assert!(name.default_thread().is_none());
-        assert!("riff://mike@pangolin/-".parse::<SessionName>().is_err());
+    fn two_sessions_in_one_worktree_differ() {
+        assert_ne!(uri(Some("a"), None), uri(Some("b"), None));
+        assert_eq!(uri(Some("a"), None).short(), uri(Some("b"), None).short());
     }
 
     #[test]
-    fn bad_names_do_not_parse() {
+    fn a_uri_outside_git_uses_a_dash() {
+        let text = "riff://mike@pangolin/-?session=a6cf#notes";
+        let parsed: SessionUri = text.parse().unwrap();
+        assert_eq!(parsed.place().repo(), &Repo::None);
+        assert_eq!(parsed.to_string(), text);
+        assert!(parsed.default_thread().is_none());
+    }
+
+    #[test]
+    fn a_person_has_only_user_and_host() {
+        let person: SessionUri = "riff://mike@pangolin".parse().unwrap();
+        assert_eq!(person.who().session(), None);
+        assert_eq!(person.to_string(), "riff://mike@pangolin");
+    }
+
+    #[test]
+    fn claims_come_out_sorted_and_once() {
+        let claimed = uri(Some("a"), None).with_claims(vec!["b".into(), "a".into(), "b".into()]);
+        assert_eq!(claimed.claims(), ["a", "b"]);
+    }
+
+    #[test]
+    fn bad_uris_do_not_parse() {
         for bad in [
             "",
             "mike@pangolin/o/r",
@@ -388,20 +560,18 @@ mod tests {
             "riff://mike@pangolin/norepo",
             "riff://mike@pan golin/o/r",
             "riff://@pangolin/o/r",
+            "riff://mike@pangolin/o/r?other=x",
+            "riff://mike@pangolin/o/r?session=a&session=b",
+            "riff://mike@pangolin/o/r?claim=a b",
         ] {
-            assert!(bad.parse::<SessionName>().is_err(), "{bad}");
+            assert!(bad.parse::<SessionUri>().is_err(), "{bad}");
         }
     }
 
     #[test]
-    fn sanitize_replaces_characters_that_are_not_allowed() {
-        assert_eq!(sanitize("feat/login page"), "feat-login-page");
-    }
-
-    #[test]
     fn a_direct_thread_does_not_depend_on_order() {
-        let a = git(Some("a"));
-        let b = git(Some("b"));
+        let a = Who::new("mike", Some("a")).unwrap();
+        let b = Who::new("mike", Some("b")).unwrap();
         let thread = ThreadName::direct(&a, &b);
         assert_eq!(thread, ThreadName::direct(&b, &a));
         assert!(thread.is_direct());

@@ -1,9 +1,10 @@
-//! The naming rules against real git repositories and worktrees.
+//! The place rules against real git repositories and worktrees.
 
 use std::path::Path;
 use std::process::Command;
 
-use riff::identity::name_in;
+use riff::identity::place_in;
+use riff_core::name::{SessionUri, Who};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -26,7 +27,8 @@ fn repo(dir: &Path, remote: Option<&str>) {
 }
 
 fn name(dir: &Path) -> String {
-    name_in(dir, "mike", "pangolin").unwrap().to_string()
+    let who = Who::new("mike", Some("a6cf")).unwrap();
+    SessionUri::new(who, place_in(dir, "pangolin").unwrap()).to_string()
 }
 
 #[test]
@@ -38,7 +40,7 @@ fn the_main_worktree_has_no_worktree_part() {
     );
     assert_eq!(
         name(tmp.path()),
-        "riff://mike@pangolin/como-technologies/riff"
+        "riff://mike@pangolin/como-technologies/riff?session=a6cf"
     );
 }
 
@@ -62,7 +64,7 @@ fn a_linked_worktree_adds_its_directory_name() {
     let worktree = main.join(".claude/worktrees/pr-23");
     assert_eq!(
         name(&worktree),
-        "riff://mike@pangolin/como-technologies/riff#pr-23"
+        "riff://mike@pangolin/como-technologies/riff?session=a6cf#pr-23"
     );
     // A subdirectory of the worktree gives the same name.
     let sub = worktree.join("src");
@@ -76,7 +78,10 @@ fn a_repository_without_a_remote_is_local() {
     let main = tmp.path().join("scratch");
     std::fs::create_dir(&main).unwrap();
     repo(&main, None);
-    assert_eq!(name(&main), "riff://mike@pangolin/local/scratch");
+    assert_eq!(
+        name(&main),
+        "riff://mike@pangolin/local/scratch?session=a6cf"
+    );
 }
 
 #[test]
@@ -84,5 +89,5 @@ fn a_directory_outside_git_uses_a_dash() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("notes");
     std::fs::create_dir(&dir).unwrap();
-    assert_eq!(name(&dir), "riff://mike@pangolin/-#notes");
+    assert_eq!(name(&dir), "riff://mike@pangolin/-?session=a6cf#notes");
 }

@@ -1,12 +1,13 @@
-//! The slice 1 loop over real HTTP: a mention and a direct message wake
-//! a watching session, `tail` shows posts, and claims block.
+//! The loop over real HTTP: an address and a direct message wake a
+//! watching session, `tail` shows posts, claims block, and a moved
+//! session keeps its watch.
 
 use std::time::Duration;
 
 use futures::StreamExt;
 use riff::api::Api;
-use riff_core::name::{SessionName, ThreadName};
-use riff_core::wire::WakeReason;
+use riff_core::name::{SessionUri, ThreadName};
+use riff_core::selector::Selector;
 
 const WAIT: Duration = Duration::from_secs(5);
 
@@ -19,36 +20,53 @@ async fn start_server() -> Api {
     Api::new(&format!("http://{addr}"))
 }
 
-fn name(text: &str) -> SessionName {
+fn uri(text: &str) -> SessionUri {
     text.parse().unwrap()
 }
 
+fn to(text: &str) -> Vec<Selector> {
+    vec![text.parse().unwrap()]
+}
+
+fn mike() -> SessionUri {
+    uri("riff://mike@pangolin/como-technologies/riff?session=a1#api")
+}
+
+fn brett() -> SessionUri {
+    uri("riff://brett@heron/como-technologies/riff?session=b2#tests")
+}
+
+fn repo() -> ThreadName {
+    "como-technologies/riff".parse().unwrap()
+}
+
 #[tokio::test]
-async fn mentions_and_direct_messages_wake_a_watching_session() {
+async fn addresses_and_direct_messages_wake_a_watching_session() {
     let api = start_server().await;
-    let mike = name("riff://mike@pangolin/como-technologies/riff#api");
-    let brett = name("riff://brett@heron/como-technologies/riff#tests");
-    let thread: ThreadName = "como-technologies/riff".parse().unwrap();
+    let (mike, brett, thread) = (mike(), brett(), repo());
     api.register(&mike).await.unwrap();
 
     let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
     let mut tail = Box::pin(api.tail(&thread).await.unwrap());
 
     let who = api.who().await.unwrap();
-    assert!(who.iter().any(|s| s.name == brett && s.live));
-    assert!(who.iter().any(|s| s.name == mike && !s.live));
+    assert!(who.iter().any(|s| s.uri == brett && s.live));
+    assert!(who.iter().any(|s| s.uri == mike && !s.live));
 
-    api.post(&mike, &thread, "no mention here").await.unwrap();
-    api.post(&mike, &thread, "@brett@heron:riff#tests the API is ready")
+    api.post(&mike, Some(&thread), &[], "@brett in text does not wake")
         .await
         .unwrap();
+    let posted = api
+        .post(&mike, Some(&thread), &to("user=brett"), "the API is ready")
+        .await
+        .unwrap();
+    assert_eq!(posted.woken, vec![brett.clone()]);
     let wake = tokio::time::timeout(WAIT, wakes.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(wake.reason, WakeReason::Mention);
-    assert_eq!(wake.seq, 2, "the post without a mention must not wake");
+    assert_eq!(wake.seq, 2, "the post without an address must not wake");
     assert_eq!(wake.from, mike);
 
     let first = tokio::time::timeout(WAIT, tail.next())
@@ -56,15 +74,17 @@ async fn mentions_and_direct_messages_wake_a_watching_session() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(first.message.body, "no mention here");
+    assert_eq!(first.message.body, "@brett in text does not wake");
 
-    api.tell(&mike, &brett, "a direct message").await.unwrap();
+    api.post(&mike, None, &to("session=b2"), "a direct message")
+        .await
+        .unwrap();
     let wake = tokio::time::timeout(WAIT, wakes.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(wake.reason, WakeReason::Direct);
+    assert!(wake.thread.is_direct());
 
     let unread = api.read(&brett, &wake.thread, false).await.unwrap();
     assert_eq!(unread.len(), 1);
@@ -72,16 +92,45 @@ async fn mentions_and_direct_messages_wake_a_watching_session() {
 }
 
 #[tokio::test]
-async fn a_claim_blocks_a_second_session() {
+async fn a_moved_session_keeps_its_watch() {
     let api = start_server().await;
-    let mike = name("riff://mike@pangolin/como-technologies/riff#api");
-    let brett = name("riff://brett@heron/como-technologies/riff#tests");
-    let thread: ThreadName = "como-technologies/riff".parse().unwrap();
+    let (mike, brett, thread) = (mike(), brett(), repo());
+    api.register(&brett).await.unwrap();
+    let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
+
+    let moved = uri("riff://brett@heron/como-technologies/riff?session=b2#issue-6");
+    api.register(&moved).await.unwrap();
+    let who = api.who().await.unwrap();
+    assert_eq!(who.len(), 1, "a move must not make a second session");
+
+    api.post(&mike, Some(&thread), &to("worktree=issue-6"), "hi")
+        .await
+        .unwrap();
+    let wake = tokio::time::timeout(WAIT, wakes.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake.from.who(), mike.who());
+}
+
+#[tokio::test]
+async fn a_claim_blocks_a_second_session_and_is_addressable() {
+    let api = start_server().await;
+    let (mike, brett, thread) = (mike(), brett(), repo());
 
     assert!(api.claim(&mike, &thread, "issue-12").await.unwrap().granted);
     let reply = api.claim(&brett, &thread, "issue-12").await.unwrap();
     assert!(!reply.granted);
-    assert_eq!(reply.holder, mike);
+    assert_eq!(reply.holder.who(), mike.who());
+    assert_eq!(reply.holder.claims(), ["issue-12"]);
+
+    let posted = api
+        .post(&brett, Some(&thread), &to("claim=issue-12"), "status?")
+        .await
+        .unwrap();
+    assert_eq!(posted.woken[0].who(), mike.who());
+
     assert!(api.release(&brett, &thread, "issue-12").await.is_err());
     api.release(&mike, &thread, "issue-12").await.unwrap();
     assert!(
@@ -93,16 +142,15 @@ async fn a_claim_blocks_a_second_session() {
 }
 
 #[tokio::test]
-async fn a_watch_starts_with_a_wake_for_a_missed_mention() {
+async fn a_watch_starts_with_a_wake_for_a_missed_message() {
     let api = start_server().await;
-    let mike = name("riff://mike@pangolin/como-technologies/riff#api");
-    let brett = name("riff://brett@heron/como-technologies/riff#tests");
-    let thread: ThreadName = "como-technologies/riff".parse().unwrap();
+    let (mike, brett, thread) = (mike(), brett(), repo());
     api.register(&brett).await.unwrap();
     api.post(
         &mike,
-        &thread,
-        "@brett@heron:riff#tests while you were away",
+        Some(&thread),
+        &to("user=brett"),
+        "while you were away",
     )
     .await
     .unwrap();
@@ -113,7 +161,6 @@ async fn a_watch_starts_with_a_wake_for_a_missed_mention() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(wake.reason, WakeReason::Mention);
     assert_eq!(wake.seq, 1);
 
     // After a read, a new watch has nothing to report.

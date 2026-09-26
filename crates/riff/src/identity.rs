@@ -1,10 +1,12 @@
-//! Works out the session name from the user, the machine and git.
+//! Works out the session URI from the agent tool, the user, the machine
+//! and git.
 //!
 //! # Rules
 //!
 //! | Part | Source, in order |
 //! |---|---|
 //! | user | `RIFF_USER`, then `USER`. Sign-in replaces this in slice 3. |
+//! | session | `RIFF_SESSION`, then `CLAUDE_CODE_SESSION_ID`. A person has none. |
 //! | host | `RIFF_HOST`, then the machine name without its domain. |
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
 //! | worktree | The directory name of a linked worktree. The main worktree has none. |
@@ -13,31 +15,67 @@
 //! directory name. Each part goes through
 //! [`riff_core::name::sanitize`].
 //!
-//! The rules depend only on the directory. So `riff mcp` and `riff watch`
-//! get the same name, and a restarted session gets its old name back.
+//! Claude Code gives the session ID to each process that it starts for
+//! a session: `riff mcp`, a `riff watch` under the Monitor tool, and the
+//! hooks. So they all find the same session, in any directory (R57).
+//!
+//! A person on the command line has no session ID. The URI of a person
+//! is `riff://USER@HOST` (R65). The directory still gives the default
+//! thread.
 
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{Context, Result};
-use riff_core::name::{Repo, SessionName, sanitize};
+use anyhow::{Context, Result, bail};
+use riff_core::name::{Place, Repo, SessionUri, Who, sanitize};
 
-/// The session name for a session that runs in `dir`, with the user and
-/// host from the environment.
-pub fn session_name(dir: &Path) -> Result<SessionName> {
+/// The environment variables that hold the session ID, in order.
+pub const SESSION_VARS: [&str; 2] = ["RIFF_SESSION", "CLAUDE_CODE_SESSION_ID"];
+
+/// The session ID from the environment, if there is one.
+pub fn session_id() -> Option<String> {
+    SESSION_VARS
+        .iter()
+        .find_map(|var| std::env::var(var).ok())
+        .filter(|id| !id.is_empty())
+}
+
+/// The URI of the caller: an agent session when there is a session ID,
+/// otherwise a person. `place` is where the caller works.
+pub fn me(place: &Place) -> Result<SessionUri> {
     let user = std::env::var("RIFF_USER")
         .or_else(|_| std::env::var("USER"))
         .context("set RIFF_USER or USER")?;
+    let user = sanitize(&user.to_lowercase());
+    Ok(match session_id() {
+        Some(id) => SessionUri::new(Who::new(&user, Some(&sanitize(&id)))?, place.clone()),
+        None => SessionUri::new(Who::new(&user, None)?, Place::host_only(place.host())?),
+    })
+}
+
+/// The URI of an agent session. It fails when there is no session ID.
+pub fn session(place: &Place) -> Result<SessionUri> {
+    let me = me(place)?;
+    if me.who().session().is_none() {
+        bail!(
+            "no session ID: run this inside Claude Code, or set {}",
+            SESSION_VARS[0]
+        );
+    }
+    Ok(me)
+}
+
+/// The place for `dir`, with the host from the environment.
+pub fn place(dir: &Path) -> Result<Place> {
     let host = match std::env::var("RIFF_HOST") {
         Ok(host) => host,
         Err(_) => short_host(&gethostname::gethostname().to_string_lossy()),
     };
-    name_in(dir, &user, &host)
+    place_in(dir, &host)
 }
 
-/// The session name for a session that runs in `dir`, for a known user
-/// and host.
-pub fn name_in(dir: &Path, user: &str, host: &str) -> Result<SessionName> {
+/// The place for `dir` on a known host.
+pub fn place_in(dir: &Path, host: &str) -> Result<Place> {
     let (repo, worktree) = match git(dir, &["rev-parse", "--show-toplevel"]) {
         Some(top) => (
             repo_of(dir, &top),
@@ -45,8 +83,7 @@ pub fn name_in(dir: &Path, user: &str, host: &str) -> Result<SessionName> {
         ),
         None => (Repo::None, Some(base_name(&dir.to_string_lossy()))),
     };
-    Ok(SessionName::new(
-        &sanitize(&user.to_lowercase()),
+    Ok(Place::new(
         &sanitize(host),
         repo,
         worktree.as_deref().map(sanitize).as_deref(),
