@@ -159,6 +159,9 @@
   session.
 - **R20** A person or an admin can revoke all tokens of a person at once.
 - **R21** A client keeps tokens and keys only in the OS keyring.
+- **R82** `riff` keeps each secret under the keyring service `riff`.
+  On Linux, it needs a Secret Service, for example GNOME Keyring or
+  KWallet.
 - **R22** `riff-server` follows the MCP authorization spec, revision
   2026-07-28.
 - **R47** Each session connects through `riff`. Direct connections from an

@@ -30,6 +30,11 @@
 //!
 //! See [`text::wake_line`] for the line.
 //!
+//! ## Secrets
+//!
+//! `riff` keeps tokens and keys only in the OS keyring, through
+//! [`secrets`].
+//!
 //! ## Messages are data
 //!
 //! Each `read` result starts with [`text::DATA_NOTE`] (see [`text::inbox`]). It tells the agent
@@ -41,4 +46,5 @@ pub mod hook;
 pub mod identity;
 pub mod mcp;
 pub mod plugin;
+pub mod secrets;
 pub mod text;
