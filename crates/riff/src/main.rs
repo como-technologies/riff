@@ -101,7 +101,10 @@ async fn watch(api: &Api, me: &SessionName) {
                 }
             }
             Err(e) if !reported => {
-                eprintln!("riff: {e:#}. Trying again every {} seconds.", RETRY.as_secs());
+                eprintln!(
+                    "riff: {e:#}. Trying again every {} seconds.",
+                    RETRY.as_secs()
+                );
                 reported = true;
             }
             Err(_) => {}

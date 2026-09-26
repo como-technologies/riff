@@ -5,9 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
 use riff_core::name::{SessionName, ThreadName};
-use riff_core::wire::{
-    ClaimReply, Message, SessionInfo, Tailed, ThreadInfo, Wake, WakeReason,
-};
+use riff_core::wire::{ClaimReply, Message, SessionInfo, Tailed, ThreadInfo, Wake, WakeReason};
 
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
@@ -355,7 +353,13 @@ mod tests {
     fn a_session_does_not_wake_itself() {
         let now = Instant::now();
         let mut state = setup(now);
-        let delivery = state.post(&api(), &thread("x"), "@mike@pangolin:riff#api".into(), now, 0);
+        let delivery = state.post(
+            &api(),
+            &thread("x"),
+            "@mike@pangolin:riff#api".into(),
+            now,
+            0,
+        );
         assert!(delivery.wakes.is_empty());
     }
 

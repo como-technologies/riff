@@ -51,7 +51,11 @@ async fn mentions_and_direct_messages_wake_a_watching_session() {
     assert_eq!(wake.seq, 2, "the post without a mention must not wake");
     assert_eq!(wake.from, mike);
 
-    let first = tokio::time::timeout(WAIT, tail.next()).await.unwrap().unwrap().unwrap();
+    let first = tokio::time::timeout(WAIT, tail.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
     assert_eq!(first.message.body, "no mention here");
 
     api.tell(&mike, &brett, "a direct message").await.unwrap();
@@ -80,5 +84,10 @@ async fn a_claim_blocks_a_second_session() {
     assert_eq!(reply.holder, mike);
     assert!(api.release(&brett, &thread, "issue-12").await.is_err());
     api.release(&mike, &thread, "issue-12").await.unwrap();
-    assert!(api.claim(&brett, &thread, "issue-12").await.unwrap().granted);
+    assert!(
+        api.claim(&brett, &thread, "issue-12")
+            .await
+            .unwrap()
+            .granted
+    );
 }

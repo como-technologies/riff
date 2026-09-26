@@ -212,9 +212,7 @@ impl FromStr for ThreadName {
             return Err(NameError(format!("not a thread name: {s:?}")));
         }
         if s.starts_with(DIRECT_PREFIX) {
-            return Err(NameError(
-                "use the tell command for direct messages".into(),
-            ));
+            return Err(NameError("use the tell command for direct messages".into()));
         }
         Ok(Self(s.into()))
     }
@@ -308,8 +306,8 @@ mod tests {
         let thread = ThreadName::direct(&a, &b);
         assert_eq!(thread, ThreadName::direct(&b, &a));
         assert!(thread.is_direct());
-        let wire: ThreadName = serde_json::from_str(&serde_json::to_string(&thread).unwrap())
-            .unwrap();
+        let wire: ThreadName =
+            serde_json::from_str(&serde_json::to_string(&thread).unwrap()).unwrap();
         assert_eq!(wire, thread);
     }
 

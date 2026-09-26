@@ -50,13 +50,16 @@ fn repo_of(dir: &Path, top: &str) -> Repo {
             name: sanitize(&name),
         };
     }
-    let main = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .and_then(|common| {
-            Path::new(&common)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| top.to_owned());
+    let main = git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .and_then(|common| {
+        Path::new(&common)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .unwrap_or_else(|| top.to_owned());
     Repo::Git {
         owner: "local".into(),
         name: sanitize(&base_name(&main)),
@@ -66,7 +69,10 @@ fn repo_of(dir: &Path, top: &str) -> Repo {
 /// True when `dir` is in a linked worktree, not the main one.
 fn linked_worktree(dir: &Path) -> bool {
     let git_dir = git(dir, &["rev-parse", "--path-format=absolute", "--git-dir"]);
-    let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let common = git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
     matches!((git_dir, common), (Some(a), Some(b)) if a != b)
 }
 

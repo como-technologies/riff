@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 use futures::{Stream, StreamExt};
 use riff_core::name::{SessionName, ThreadName};
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Message, Post, Posted, Read, ReadReply, Register,
-    SessionInfo, Tailed, Tell, ThreadInfo, Threads, ThreadsReply, Wake, Who, WhoReply,
+    Claim, ClaimReply, Membership, Message, Post, Posted, Read, ReadReply, Register, SessionInfo,
+    Tailed, Tell, ThreadInfo, Threads, ThreadsReply, Wake, Who, WhoReply,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -28,7 +28,8 @@ impl Api {
     }
 
     pub async fn register(&self, name: &SessionName) -> Result<()> {
-        self.call("register", &Register { name: name.clone() }).await
+        self.call("register", &Register { name: name.clone() })
+            .await
     }
 
     pub async fn who(&self) -> Result<Vec<SessionInfo>> {
@@ -37,7 +38,9 @@ impl Api {
     }
 
     pub async fn threads(&self, name: &SessionName) -> Result<Vec<ThreadInfo>> {
-        let reply: ThreadsReply = self.call("threads", &Threads { name: name.clone() }).await?;
+        let reply: ThreadsReply = self
+            .call("threads", &Threads { name: name.clone() })
+            .await?;
         Ok(reply.threads)
     }
 
@@ -49,7 +52,12 @@ impl Api {
         self.call("leave", &membership(name, thread)).await
     }
 
-    pub async fn post(&self, from: &SessionName, thread: &ThreadName, body: &str) -> Result<Posted> {
+    pub async fn post(
+        &self,
+        from: &SessionName,
+        thread: &ThreadName,
+        body: &str,
+    ) -> Result<Posted> {
         let request = Post {
             from: from.clone(),
             thread: thread.clone(),
@@ -67,7 +75,12 @@ impl Api {
         self.call("tell", &request).await
     }
 
-    pub async fn read(&self, name: &SessionName, thread: &ThreadName, all: bool) -> Result<Vec<Message>> {
+    pub async fn read(
+        &self,
+        name: &SessionName,
+        thread: &ThreadName,
+        all: bool,
+    ) -> Result<Vec<Message>> {
         let request = Read {
             name: name.clone(),
             thread: thread.clone(),
@@ -77,7 +90,12 @@ impl Api {
         Ok(reply.messages)
     }
 
-    pub async fn claim(&self, name: &SessionName, thread: &ThreadName, item: &str) -> Result<ClaimReply> {
+    pub async fn claim(
+        &self,
+        name: &SessionName,
+        thread: &ThreadName,
+        item: &str,
+    ) -> Result<ClaimReply> {
         self.call("claim", &claim(name, thread, item)).await
     }
 
@@ -96,7 +114,11 @@ impl Api {
         self.events("tail", &[("thread", thread.to_string())]).await
     }
 
-    async fn call<Req: Serialize, Rep: DeserializeOwned>(&self, op: &str, request: &Req) -> Result<Rep> {
+    async fn call<Req: Serialize, Rep: DeserializeOwned>(
+        &self,
+        op: &str,
+        request: &Req,
+    ) -> Result<Rep> {
         let response = self
             .http
             .post(format!("{}/v1/{op}", self.base))

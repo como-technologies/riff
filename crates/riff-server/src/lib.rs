@@ -16,8 +16,8 @@ use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use riff_core::name::{SessionName, ThreadName};
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Tailed, Tell,
-    Threads, ThreadsReply, Wake, Who, WhoReply,
+    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Tailed, Tell, Threads,
+    ThreadsReply, Wake, Who, WhoReply,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -40,7 +40,9 @@ struct Server {
 impl Server {
     fn state(&self) -> MutexGuard<'_, State> {
         // A panic while the lock is held leaves plain data behind; keep going.
-        self.state.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     fn deliver(&self, delivery: Delivery) {
@@ -130,9 +132,12 @@ async fn read(AxumState(s): AxumState<Shared>, Json(r): Json<Read>) -> Reply<Rea
 }
 
 async fn claim(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply<ClaimReply> {
-    Ok(Json(
-        s.state().claim(&r.name, &r.thread, &r.item, Instant::now()),
-    ))
+    Ok(Json(s.state().claim(
+        &r.name,
+        &r.thread,
+        &r.item,
+        Instant::now(),
+    )))
 }
 
 async fn release(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply<()> {
