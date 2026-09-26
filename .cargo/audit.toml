@@ -1,0 +1,6 @@
+# cargo-audit configuration (used by `just crate-audit` locally and in CI).
+# Each accepted advisory gets a dated entry: what was accepted, why, and
+# what event removes it.
+
+[advisories]
+ignore = []

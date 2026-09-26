@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly advisory sweep (Mondays 06:00 UTC). New RUSTSEC advisories
+    # arrive without a code change, so the audit job runs on a schedule.
+    - cron: "0 6 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Least privilege: CI only reads the repo.
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    # The whole local gate in one job: fmt, clippy, tests and the book.
+    name: Gate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # rust-toolchain.toml pins the toolchain; rustup reads it.
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,mdbook,mdbook-gruvbox
+
+      - name: CI gate
+        run: just ci
+
+  audit:
+    # A separate job, so a new advisory cannot hide a code failure (and the
+    # reverse). The weekly schedule runs only this job.
+    name: Crate audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - run: rustup show
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-audit
+
+      - name: Audit
+        run: just crate-audit

@@ -1,0 +1,5 @@
+/target
+/docs/book
+# Installed by `just init` and by CI (`mdbook-gruvbox install docs`).
+/docs/gruvbox
+.claude/settings.local.json

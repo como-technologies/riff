@@ -1,0 +1,16 @@
+[package]
+name = "sensomatic"
+description = "The Sens-O-Matic: the local client that finds sessions and wakes yours"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+clap.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
