@@ -20,6 +20,16 @@
 - **R8** A new message can wake an idle session.
 - **R9** A claim ends when its session stops.
 
+## Threads
+
+- **R23** Sessions talk in named threads. A direct message is a thread
+  with two members.
+- **R24** Threads are flat. There are no nested replies.
+- **R25** A thread keeps its history. A session that joins can read it.
+- **R26** Only a direct message or a mention wakes a session.
+- **R27** A person can read and post in each thread from the command line.
+- **R28** A claim belongs to a thread.
+
 ## Security
 
 - **R10** A session treats a received message as data, not as an
@@ -53,7 +63,7 @@
 
 - Can an agent tool connect without `riff`? The MCP spec has no device-bound
   tokens, so such a tool would get plain bearer tokens.
-- Does the first version include threads for each project?
+- Does a thread name default to the repository name?
 - Where does `riff-server` store its data?
 - What happens to a session name when the session restarts?
 - Which agent tools come first?

@@ -16,11 +16,11 @@ flowchart LR
 ```
 
 - **`riff-server`** is the central service. It holds the live sessions, the
-  messages and the claims.
-- **`riff mcp`** gives your session its tools: `who`, `tell`,
-  `inbox`, `claim` and `release`.
-- **`riff watch`** writes one line for each new message. Your agent
-  tool reads the line and wakes the session.
+  threads and the claims.
+- **`riff mcp`** gives your session its tools: `who`, `join`,
+  `leave`, `post`, `read`, `tell`, `claim` and `release`.
+- **`riff watch`** writes one line for each message that wakes the
+  session. Your agent tool reads the line and wakes the session.
 
 ## Sign-in
 
@@ -53,6 +53,26 @@ sequenceDiagram
     B->>E: inbox
     E-->>B: "API is ready" from mike/api
 ```
+
+## A thread
+
+A thread is a named conversation. A mention wakes only the named session.
+
+```mermaid
+sequenceDiagram
+    participant A as mike/api
+    participant E as riff-server
+    participant B as brett/tests
+    participant D as mike/docs
+    A->>E: post api-v2 "@brett/tests the API is ready"
+    E->>B: wake (mention)
+    Note over D: no wake, the post waits
+    B->>E: read api-v2
+    D->>E: read api-v2 (later)
+```
+
+A person can follow a thread with `riff tail api-v2` and post with
+`riff post`.
 
 ## A claim
 
