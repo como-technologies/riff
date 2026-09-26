@@ -7,7 +7,7 @@ default:
 # One-time setup: install the tools the recipes need
 init:
     rustup component add clippy rustfmt
-    cargo install --locked mdbook mdbook-gruvbox cargo-audit
+    cargo install --locked mdbook mdbook-gruvbox mdbook-mermaid cargo-audit
     mdbook-gruvbox install docs
 
 # Run all CI checks. crate-audit is not part of the gate: CI runs it as a

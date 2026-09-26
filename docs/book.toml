@@ -4,6 +4,11 @@ authors = ["Como Technologies"]
 language = "en"
 src = "src"
 
+# mermaid.min.js and mermaid-init.js are committed. mermaid-init.js has a
+# Como patch (gruvbox is a dark theme). Do not reinstall it without the patch.
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
 [output.html]
 git-repository-url = "https://github.com/como-technologies/sensomatic"
 edit-url-template = "https://github.com/como-technologies/sensomatic/edit/main/docs/src/{path}"
@@ -12,7 +17,7 @@ sidebar-header-nav = false
 default-theme = "gruvbox"
 preferred-dark-theme = "gruvbox"
 additional-css = ["gruvbox/css/variables.css", "gruvbox/highlight.css"]
-additional-js = ["gruvbox/gruvbox.js"]
+additional-js = ["gruvbox/gruvbox.js", "mermaid.min.js", "mermaid-init.js"]
 
 [output.html.fold]
 enable = true

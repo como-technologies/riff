@@ -1,32 +1,20 @@
-# Sensomatic — working notes for agents
+# Sensomatic — notes for agents
 
-Read `docs/src/` first. The book is the source of truth for the design
-and for the settled and open decisions.
+The book in `docs/src/` is the source of truth.
+`docs/src/requirements.md` is binding.
 
-## What it is
+## Work
 
-Sensomatic lets AI agent sessions that belong to different people work
-together. `subetha` is the central service. `sensomatic` is the local
-client. It is an experiment, and it is not part of a larger suite.
-
-## Rules
-
-- **All code is Rust.** Scripts are shell or `just` recipes.
-- **Stay vendor-neutral.** The core uses MCP and a plain command-line
-  client. A feature that only one agent vendor has can be an optional
-  adapter, never the core.
-- **Zero warnings.** `just ci` must pass before you push. It runs fmt,
-  clippy with `-D warnings`, the tests and the book build.
-- **Docs change with the code.** Update the book in the same commit as
-  the change. Record each settled decision on the Decisions page.
-- **Pre-GA.** No users yet, so change any schema or interface freely. Do
-  not add compatibility shims.
-- **Trunk-based.** Work on `main`, or on a local branch that you
-  fast-forward into `main`.
+- `just ci` passes before each push. Zero warnings.
+- Update the book in the same commit as the change.
+- A new decision is a new requirement statement. Do not write the
+  reasoning.
+- No users yet. Change any interface freely. No compatibility shims.
+- Work on `main`, or fast-forward a local branch into it.
 
 ## Writing
 
-Prose follows ASD-STE100 (Simplified Technical English): short
-sentences, active voice, one idea per sentence, plain words. This applies
-to the book, code comments, CLI output and commit messages. Do not coin
-jargon. If a term is not defined where the reader stands, do not use it.
+- Use ASD-STE100: short sentences, active voice, plain words.
+- Less is more. Say each thing in one place only.
+- Explain how things work with mermaid diagrams.
+- Keep the quick start ("Join the Sub-Etha") short and current.
