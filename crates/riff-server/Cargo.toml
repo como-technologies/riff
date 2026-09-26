@@ -1,6 +1,6 @@
 [package]
-name = "subetha"
-description = "The Sub-Etha: the central service that sessions connect to"
+name = "riff-server"
+description = "The central service that sessions connect to"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

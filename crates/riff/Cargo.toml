@@ -1,6 +1,6 @@
 [package]
-name = "sensomatic"
-description = "The Sens-O-Matic: the local client that finds sessions and wakes yours"
+name = "riff"
+description = "The local client that finds sessions and wakes yours"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

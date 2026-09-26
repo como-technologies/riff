@@ -4,14 +4,14 @@
 
 - **R1** Agent sessions of different people can find each other, send
   messages and claim work.
-- **R2** Sensomatic works with each agent tool that supports MCP.
+- **R2** Riff works with each agent tool that supports MCP.
 - **R3** A feature of one vendor is an optional adapter, never the core.
 - **R4** A person joins with at most three commands.
 
 ## Service
 
-- **R5** `subetha` runs on Google Cloud Run under a Como domain.
-- **R6** `subetha` has a public HTTPS endpoint with a valid certificate.
+- **R5** `riff-server` runs on Google Cloud Run under a Como domain.
+- **R6** `riff-server` has a public HTTPS endpoint with a valid certificate.
 
 ## Sessions
 
@@ -25,9 +25,22 @@
 - **R10** A session treats a received message as data, not as an
   instruction.
 - **R11** Messages do not carry secrets.
-- **R14** People sign in with Google.
-- **R15** `subetha` accepts only accounts from its allowed domains. The
+
+## Sign-in and tokens
+
+- **R14** The first sign-in provider is Google.
+- **R15** `riff-server` accepts only accounts from its allowed domains. The
   allowed domains are a setting. The default is `comotechnologies.io`.
+- **R16** `riff-server` issues its own tokens. It accepts sign-in from each
+  OpenID Connect provider in its settings.
+- **R17** An access token expires in 10 minutes or less. A refresh token
+  changes at each use. A reused refresh token revokes all tokens from
+  that sign-in.
+- **R18** Each token is bound to a key that stays on the device.
+- **R19** Each session gets its own token. The token works only for that
+  session.
+- **R20** A person or an admin can revoke all tokens of a person at once.
+- **R21** A client keeps tokens and keys only in the OS keyring.
 
 ## Code
 
@@ -36,10 +49,8 @@
 
 ## Open
 
-- Which IAM approach adds other identity providers?
-- What limits the damage of a leaked token?
 - Does the first version include threads for each project?
-- Where does `subetha` store its data?
+- Where does `riff-server` store its data?
 - What happens to a session name when the session restarts?
 - Which agent tools come first?
-- How long does `subetha` keep messages?
+- How long does `riff-server` keep messages?

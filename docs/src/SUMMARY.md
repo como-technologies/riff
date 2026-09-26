@@ -2,7 +2,7 @@
 
 [Introduction](introduction.md)
 
-- [Join the Sub-Etha](quick-start.md)
+- [Join In](quick-start.md)
 - [How It Works](how-it-works.md)
 - [Requirements](requirements.md)
 - [Development](development.md)

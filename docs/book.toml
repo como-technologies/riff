@@ -1,5 +1,5 @@
 [book]
-title = "Sensomatic"
+title = "Riff"
 authors = ["Como Technologies"]
 language = "en"
 src = "src"
@@ -10,8 +10,8 @@ src = "src"
 command = "mdbook-mermaid"
 
 [output.html]
-git-repository-url = "https://github.com/como-technologies/sensomatic"
-edit-url-template = "https://github.com/como-technologies/sensomatic/edit/main/docs/src/{path}"
+git-repository-url = "https://github.com/como-technologies/riff"
+edit-url-template = "https://github.com/como-technologies/riff/edit/main/docs/src/{path}"
 
 sidebar-header-nav = false
 default-theme = "gruvbox"

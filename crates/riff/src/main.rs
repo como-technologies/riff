@@ -1,17 +1,17 @@
-//! The Sub-Etha: the central service that sessions connect to.
+//! The local client that finds sessions and wakes yours.
 //!
 //! This is a placeholder. The design is still open; see the book.
 
 use clap::Parser;
 
-/// The Sub-Etha: the central service that sessions connect to.
+/// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {}
 
 fn main() {
     Cli::parse();
-    println!("subetha: nothing to do yet. See the book for the design status.");
+    println!("riff: nothing to do yet. See the book for the design status.");
 }
 
 #[cfg(test)]

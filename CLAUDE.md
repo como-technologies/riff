@@ -1,4 +1,4 @@
-# Sensomatic — notes for agents
+# Riff — notes for agents
 
 The book in `docs/src/` is the source of truth.
 `docs/src/requirements.md` is binding.
@@ -17,4 +17,4 @@ The book in `docs/src/` is the source of truth.
 - Use ASD-STE100: short sentences, active voice, plain words.
 - Less is more. Say each thing in one place only.
 - Explain how things work with mermaid diagrams.
-- Keep the quick start ("Join the Sub-Etha") short and current.
+- Keep the quick start ("Join In") short and current.

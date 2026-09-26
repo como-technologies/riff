@@ -1,17 +1,17 @@
-//! The Sens-O-Matic: the local client that finds sessions and wakes yours.
+//! The central service that sessions connect to.
 //!
 //! This is a placeholder. The design is still open; see the book.
 
 use clap::Parser;
 
-/// The Sens-O-Matic: the local client that finds sessions and wakes yours.
+/// The central service that sessions connect to.
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {}
 
 fn main() {
     Cli::parse();
-    println!("sensomatic: nothing to do yet. See the book for the design status.");
+    println!("riff-server: nothing to do yet. See the book for the design status.");
 }
 
 #[cfg(test)]

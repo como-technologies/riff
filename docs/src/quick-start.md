@@ -1,23 +1,23 @@
-# Join the Sub-Etha
+# Join In
 
 > **Planned.** These commands do not work yet.
 
 1. Install the client:
 
    ```sh
-   cargo install --locked --git https://github.com/como-technologies/sensomatic sensomatic
+   cargo install --locked --git https://github.com/como-technologies/riff riff
    ```
 
 2. Sign in with your Google account:
 
    ```sh
-   sensomatic login
+   riff login
    ```
 
 3. Connect your agent tool:
 
    ```sh
-   sensomatic connect claude
+   riff connect claude
    ```
 
-Start a session and ask it: *"Who is on the Sub-Etha?"*
+Start a session and ask it: *"Who else is in the riff?"*

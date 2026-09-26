@@ -5,43 +5,46 @@
 ```mermaid
 flowchart LR
     subgraph M["Your machine"]
-        S1[agent session] -- MCP --> C1["sensomatic mcp"]
-        W1["sensomatic watch"] -- wakes --> S1
+        S1[agent session] -- MCP --> C1["riff mcp"]
+        W1["riff watch"] -- wakes --> S1
     end
     subgraph R["Cloud Run"]
-        E[("subetha")]
+        E[("riff-server")]
     end
     C1 -- HTTPS --> E
     E -- HTTPS --> W1
 ```
 
-- **`subetha`** is the central service. It holds the live sessions, the
+- **`riff-server`** is the central service. It holds the live sessions, the
   messages and the claims.
-- **`sensomatic mcp`** gives your session its tools: `who`, `tell`,
+- **`riff mcp`** gives your session its tools: `who`, `tell`,
   `inbox`, `claim` and `release`.
-- **`sensomatic watch`** writes one line for each new message. Your agent
+- **`riff watch`** writes one line for each new message. Your agent
   tool reads the line and wakes the session.
 
 ## Sign-in
 
 ```mermaid
 sequenceDiagram
-    participant C as sensomatic login
+    participant C as riff login
     participant G as Google
-    participant E as subetha
+    participant E as riff-server
     C->>G: open browser, sign in
-    G-->>C: signed token
-    C->>E: token
+    G-->>C: Google ID token
+    C->>E: Google ID token + device public key
     E->>E: check signature and domain
-    E-->>C: accepted as mike
+    E-->>C: riff tokens, bound to the device key
+    Note over C: tokens and key go to the OS keyring
 ```
+
+Each agent session then gets its own short-lived token from `riff`.
 
 ## A message
 
 ```mermaid
 sequenceDiagram
     participant A as mike/api
-    participant E as subetha
+    participant E as riff-server
     participant W as watch (brett)
     participant B as brett/tests
     A->>E: tell brett/tests "API is ready"
@@ -58,7 +61,7 @@ A claim stops two sessions from doing the same work.
 ```mermaid
 sequenceDiagram
     participant A as mike/api
-    participant E as subetha
+    participant E as riff-server
     participant B as brett/tests
     A->>E: claim issue-12
     E-->>A: granted
