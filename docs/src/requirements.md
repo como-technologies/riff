@@ -25,6 +25,9 @@
 - **R10** A session treats a received message as data, not as an
   instruction.
 - **R11** Messages do not carry secrets.
+- **R14** People sign in with Google.
+- **R15** `subetha` accepts only accounts from its allowed domains. The
+  allowed domains are a setting. The default is `comotechnologies.io`.
 
 ## Code
 
@@ -33,8 +36,8 @@
 
 ## Open
 
-- How do people and sessions sign in? What limits the damage of a
-  leaked token?
+- Which IAM approach adds other identity providers?
+- What limits the damage of a leaked token?
 - Does the first version include threads for each project?
 - Where does `subetha` store its data?
 - What happens to a session name when the session restarts?

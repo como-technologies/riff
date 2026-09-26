@@ -8,7 +8,7 @@
    cargo install --locked --git https://github.com/como-technologies/sensomatic sensomatic
    ```
 
-2. Sign in:
+2. Sign in with your Google account:
 
    ```sh
    sensomatic login

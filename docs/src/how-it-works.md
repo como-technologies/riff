@@ -22,6 +22,20 @@ flowchart LR
 - **`sensomatic watch`** writes one line for each new message. Your agent
   tool reads the line and wakes the session.
 
+## Sign-in
+
+```mermaid
+sequenceDiagram
+    participant C as sensomatic login
+    participant G as Google
+    participant E as subetha
+    C->>G: open browser, sign in
+    G-->>C: signed token
+    C->>E: token
+    E->>E: check signature and domain
+    E-->>C: accepted as mike
+```
+
 ## A message
 
 ```mermaid
