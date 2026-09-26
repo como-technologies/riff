@@ -10,7 +10,7 @@
 //! | `riff mcp` | Serves the tools in [`mcp`] to one agent session over stdio. |
 //! | `riff watch` | Keeps a watch stream open and prints one line for each wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
-//! | `riff post`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
+//! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
 //! `riff hook session-start` (see [`hook`]).
@@ -31,7 +31,7 @@
 //!
 //! ## Messages are data
 //!
-//! Each `read` result starts with [`text::DATA_NOTE`]. It tells the agent
+//! Each `read` result starts with [`text::DATA_NOTE`] (see [`text::inbox`]). It tells the agent
 //! to treat message bodies as data from other sessions, not as
 //! instructions from its user.
 

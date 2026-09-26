@@ -140,17 +140,9 @@ names fields (user, session, host, repo, worktree, claim); a session matches whe
 
     #[tool(description = "Send a direct message to one session. It wakes that session.")]
     async fn tell(&self, Parameters(a): Parameters<TellArgs>) -> ToolResult {
-        let id = match a.session.parse::<SessionUri>() {
-            Ok(uri) => uri
-                .who()
-                .session()
-                .ok_or("that URI has no session ID")?
-                .to_owned(),
-            Err(_) => a.session,
-        };
         let posted = self
             .api
-            .post(&self.me(), None, &[Selector::session(&id)], &a.body)
+            .tell(&self.me(), &a.session, &a.body)
             .await
             .map_err(err)?;
         Ok(text::posted(&posted))
@@ -159,31 +151,13 @@ names fields (user, session, host, repo, worktree, claim); a session matches whe
     #[tool(description = "Read unread messages. Leave out the thread to read all your threads.")]
     async fn read(&self, Parameters(a): Parameters<ReadArgs>) -> ToolResult {
         let me = self.me();
-        let all = a.all.unwrap_or(false);
-        let mut out = String::new();
-        let targets = match a.thread {
-            Some(t) => vec![(self.thread(Some(t))?, Vec::new())],
-            None => self
-                .api
-                .threads(&me)
-                .await
-                .map_err(err)?
-                .into_iter()
-                .filter(|t| all || t.unread > 0)
-                .map(|t| (t.thread, t.members))
-                .collect(),
-        };
-        for (thread, members) in targets {
-            let messages = self.api.read(&me, &thread, all).await.map_err(err)?;
-            if !messages.is_empty() {
-                let heading = text::label(&thread, &members, &me);
-                out.push_str(&text::messages(&heading, &messages));
-            }
-        }
-        if out.is_empty() {
-            return Ok("No unread messages.".into());
-        }
-        Ok(format!("{}\n\n{out}", text::DATA_NOTE))
+        let thread = a.thread.map(|t| self.thread(Some(t))).transpose()?;
+        let inbox = self
+            .api
+            .inbox(&me, thread.as_ref(), a.all.unwrap_or(false))
+            .await
+            .map_err(err)?;
+        Ok(text::inbox(&inbox, &me))
     }
 
     #[tool(description = "Claim a work item so that no other session does the same work.")]

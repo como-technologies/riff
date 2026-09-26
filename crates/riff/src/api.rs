@@ -72,6 +72,52 @@ impl Api {
         self.call("post", &request).await
     }
 
+    /// Sends a direct message (R62). `session` is a session ID or a full
+    /// session URI.
+    pub async fn tell(&self, me: &SessionUri, session: &str, body: &str) -> Result<Posted> {
+        let id = match session.parse::<SessionUri>() {
+            Ok(uri) => match uri.who().session() {
+                Some(id) => id.to_owned(),
+                None => bail!("that URI has no session ID"),
+            },
+            Err(_) => session.to_owned(),
+        };
+        self.post(me, None, &[Selector::session(&id)], body).await
+    }
+
+    /// The unread messages (or all of them) of one thread. With no
+    /// thread, those of each thread that `me` joined. Leaves out each
+    /// thread with no messages to show.
+    pub async fn inbox(
+        &self,
+        me: &SessionUri,
+        thread: Option<&ThreadName>,
+        all: bool,
+    ) -> Result<Vec<Inbox>> {
+        let targets = match thread {
+            Some(t) => vec![(t.clone(), Vec::new())],
+            None => self
+                .threads(me)
+                .await?
+                .into_iter()
+                .filter(|t| all || t.unread > 0)
+                .map(|t| (t.thread, t.members))
+                .collect(),
+        };
+        let mut out = Vec::new();
+        for (thread, members) in targets {
+            let messages = self.read(me, &thread, all).await?;
+            if !messages.is_empty() {
+                out.push(Inbox {
+                    thread,
+                    members,
+                    messages,
+                });
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn read(
         &self,
         me: &SessionUri,
@@ -170,6 +216,14 @@ impl Api {
             }
         }))
     }
+}
+
+/// The messages to show from one thread.
+pub struct Inbox {
+    pub thread: ThreadName,
+    /// Empty when the caller named the thread.
+    pub members: Vec<SessionUri>,
+    pub messages: Vec<Message>,
 }
 
 fn membership(me: &SessionUri, thread: &ThreadName) -> Membership {

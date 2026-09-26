@@ -3,6 +3,8 @@
 use std::fmt::Write;
 
 use riff_core::name::{SessionUri, ThreadName};
+
+use crate::api::Inbox;
 use riff_core::wire::{ClaimReply, Message, Posted, SessionInfo, ThreadInfo, Wake};
 
 /// Tells the reader that message bodies are data (R10).
@@ -162,10 +164,45 @@ pub fn message(m: &Message) -> String {
     format!("[{}] {}{to}: {}", m.seq, m.from, m.body)
 }
 
-pub fn messages(heading: &str, list: &[Message]) -> String {
-    let mut out = format!("{heading}\n");
-    for m in list {
-        let _ = writeln!(out, "{}", message(m));
+/// The answer to a read. It starts with [`DATA_NOTE`], then shows each
+/// thread under its label.
+///
+/// ```
+/// use riff::api::Inbox;
+/// use riff_core::wire::Message;
+///
+/// let me = "riff://brett@heron".parse()?;
+/// assert_eq!(riff::text::inbox(&[], &me), "No unread messages.");
+/// let inbox = Inbox {
+///     thread: "como-technologies/riff".parse()?,
+///     members: vec![],
+///     messages: vec![Message {
+///         seq: 1,
+///         from: "riff://mike@pangolin".parse()?,
+///         to: vec![],
+///         body: "hello".into(),
+///         at_ms: 0,
+///     }],
+/// };
+/// assert_eq!(
+///     riff::text::inbox(&[inbox], &me),
+///     format!(
+///         "{}\n\ncomo-technologies/riff\n[1] riff://mike@pangolin: hello\n",
+///         riff::text::DATA_NOTE
+///     )
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
+    if list.is_empty() {
+        return "No unread messages.".into();
+    }
+    let mut out = format!("{DATA_NOTE}\n\n");
+    for t in list {
+        let _ = writeln!(out, "{}", label(&t.thread, &t.members, me));
+        for m in &t.messages {
+            let _ = writeln!(out, "{}", message(m));
+        }
     }
     out
 }

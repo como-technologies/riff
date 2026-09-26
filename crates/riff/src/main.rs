@@ -47,6 +47,25 @@ enum Command {
         #[arg(required = true)]
         body: Vec<String>,
     },
+    /// Send a direct message to one session. It wakes that session.
+    Tell {
+        /// The session: its session ID, or its full riff:// URI from
+        /// `riff who`.
+        session: String,
+        /// The message.
+        #[arg(required = true)]
+        body: Vec<String>,
+    },
+    /// Show the unread messages of your threads. You join the thread of
+    /// your repository first.
+    Read {
+        /// Read only this thread. It need not be one of your threads.
+        #[arg(long, short)]
+        thread: Option<String>,
+        /// Show the full history, not only the unread messages.
+        #[arg(long)]
+        all: bool,
+    },
     /// Show each new message in a thread.
     Tail {
         /// The thread. The default is your repository thread.
@@ -107,6 +126,18 @@ async fn main() -> Result<()> {
             let thread = thread_or_default(thread, &here)?;
             let posted = api.post(&me, Some(&thread), &to, &body.join(" ")).await?;
             println!("{}", text::posted(&posted));
+        }
+        Command::Tell { session, body } => {
+            let posted = api.tell(&me, &session, &body.join(" ")).await?;
+            println!("{}", text::posted(&posted));
+        }
+        Command::Read { thread, all } => {
+            if let Some(repo) = here.default_thread() {
+                api.join(&me, &repo).await?;
+            }
+            let thread = thread.map(|t| t.parse::<ThreadName>()).transpose()?;
+            let inbox = api.inbox(&me, thread.as_ref(), all).await?;
+            println!("{}", text::inbox(&inbox, &me).trim_end());
         }
         Command::Claim { thread, item } => {
             let thread = thread_or_default(thread, &here)?;

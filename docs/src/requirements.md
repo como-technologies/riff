@@ -116,6 +116,11 @@
   selector that matched no session.
 - **R62** A direct message is a post with one `session` selector.
 - **R63** A person addresses a post with `riff post --to FIELD=VALUE`.
+- **R78** A person sends a direct message with `riff tell SESSION`.
+  SESSION is a session ID or a full session URI.
+- **R79** `riff read` shows the unread messages of the threads of the
+  person. It joins the person to the thread of the directory first.
+  `--thread` reads one thread. `--all` shows the full history.
 
 ## Security
 

@@ -114,7 +114,9 @@ sequenceDiagram
 | `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
 
 `tell` sends a direct message to one session. A person follows a
-thread with `riff tail` and posts with `riff post --to FIELD=VALUE`.
+thread with `riff tail`, reads it with `riff read`, posts with
+`riff post --to FIELD=VALUE`, and sends a direct message with
+`riff tell SESSION`.
 
 ## A claim
 
