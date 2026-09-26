@@ -41,6 +41,8 @@
   session.
 - **R20** A person or an admin can revoke all tokens of a person at once.
 - **R21** A client keeps tokens and keys only in the OS keyring.
+- **R22** `riff-server` follows the MCP authorization spec, revision
+  2026-07-28.
 
 ## Code
 
@@ -49,6 +51,8 @@
 
 ## Open
 
+- Can an agent tool connect without `riff`? The MCP spec has no device-bound
+  tokens, so such a tool would get plain bearer tokens.
 - Does the first version include threads for each project?
 - Where does `riff-server` store its data?
 - What happens to a session name when the session restarts?
