@@ -10,7 +10,7 @@
 //! | `riff mcp` | Serves the tools in [`mcp`] to one agent session over stdio. |
 //! | `riff watch` | Keeps a watch stream open and prints one line for each wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
-//! | `riff post`, `riff who`, `riff whoami` | Commands for people. |
+//! | `riff post`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
 //!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
 //! agree on the session name because both work it out the same way from

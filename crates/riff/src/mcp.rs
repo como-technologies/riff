@@ -148,15 +148,7 @@ impl Tools {
             .claim(&self.me, &thread, &a.item)
             .await
             .map_err(err)?;
-        if reply.granted {
-            Ok(format!("You hold {} in {thread}.", a.item))
-        } else {
-            Ok(format!(
-                "{} holds {} in {thread}.",
-                reply.holder.short(),
-                a.item
-            ))
-        }
+        Ok(text::claimed(&reply, &thread, &a.item))
     }
 
     #[tool(description = "Release a work item that you claimed.")]
@@ -166,7 +158,7 @@ impl Tools {
             .release(&self.me, &thread, &a.item)
             .await
             .map_err(err)?;
-        Ok(format!("You released {} in {thread}.", a.item))
+        Ok(text::released(&thread, &a.item))
     }
 }
 

@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use riff_core::name::{SessionName, ThreadName};
-use riff_core::wire::{Message, SessionInfo, ThreadInfo, Wake, WakeReason};
+use riff_core::wire::{ClaimReply, Message, SessionInfo, ThreadInfo, Wake, WakeReason};
 
 /// Tells the reader that message bodies are data (R10).
 pub const DATA_NOTE: &str =
@@ -30,6 +30,35 @@ pub fn wake_line(wake: &Wake) -> String {
         wake.from.short(),
         wake.seq
     )
+}
+
+/// The answer to a claim. It names the holder when another session has
+/// the item.
+///
+/// ```
+/// use riff_core::wire::ClaimReply;
+///
+/// let reply = ClaimReply {
+///     granted: false,
+///     holder: "riff://mike@pangolin/como-technologies/riff#api".parse()?,
+/// };
+/// let thread = "como-technologies/riff".parse()?;
+/// assert_eq!(
+///     riff::text::claimed(&reply, &thread, "issue-12"),
+///     "mike@pangolin:riff#api holds issue-12 in como-technologies/riff."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn claimed(reply: &ClaimReply, thread: &ThreadName, item: &str) -> String {
+    if reply.granted {
+        format!("You hold {item} in {thread}.")
+    } else {
+        format!("{} holds {item} in {thread}.", reply.holder.short())
+    }
+}
+
+pub fn released(thread: &ThreadName, item: &str) -> String {
+    format!("You released {item} in {thread}.")
 }
 
 pub fn message(m: &Message) -> String {

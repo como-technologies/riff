@@ -44,6 +44,23 @@ enum Command {
         /// The thread. The default is your repository thread.
         thread: Option<String>,
     },
+    /// Claim a work item so that no other session does the same work.
+    /// Exits with status 1 when another session holds it.
+    Claim {
+        /// The thread. The default is your repository thread.
+        #[arg(long, short)]
+        thread: Option<String>,
+        /// The work item, for example issue-12.
+        item: String,
+    },
+    /// Release a work item that you claimed.
+    Release {
+        /// The thread. The default is your repository thread.
+        #[arg(long, short)]
+        thread: Option<String>,
+        /// The work item, for example issue-12.
+        item: String,
+    },
     /// Print one line each time a direct message or a mention arrives.
     Watch,
     /// Serve the riff tools to an agent session over stdio.
@@ -62,6 +79,19 @@ async fn main() -> Result<()> {
             let thread = thread_or_default(thread, &me)?;
             let posted = api.post(&me, &thread, &body.join(" ")).await?;
             println!("Posted message {} to {thread}.", posted.seq);
+        }
+        Command::Claim { thread, item } => {
+            let thread = thread_or_default(thread, &me)?;
+            let reply = api.claim(&me, &thread, &item).await?;
+            println!("{}", text::claimed(&reply, &thread, &item));
+            if !reply.granted {
+                std::process::exit(1);
+            }
+        }
+        Command::Release { thread, item } => {
+            let thread = thread_or_default(thread, &me)?;
+            api.release(&me, &thread, &item).await?;
+            println!("{}", text::released(&thread, &item));
         }
         Command::Tail { thread } => tail(&api, &thread_or_default(thread, &me)?).await?,
         Command::Watch => watch(&api, &me).await,

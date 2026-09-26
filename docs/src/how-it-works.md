@@ -102,3 +102,6 @@ sequenceDiagram
     E-->>B: held by mike@pangolin:riff#api
     A->>E: release issue-12
 ```
+
+A person claims with `riff claim issue-12` and releases with
+`riff release issue-12`.
