@@ -11,6 +11,7 @@
 //! | `riff watch` | Keeps a watch stream open and prints one line for each wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
+//! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
 //! `riff hook session-start` (see [`hook`]).

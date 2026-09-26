@@ -40,6 +40,16 @@
   context tells it to keep the watch that runs.
 - **R69** The start hook never stops a session start. It exits with
   status 0, also when riff cannot find the session.
+- **R74** `riff connect claude` writes the plugin to
+  `$XDG_DATA_HOME/riff/claude-plugin`. Without `XDG_DATA_HOME`, it uses
+  `~/.local/share/riff/claude-plugin`.
+- **R75** `riff connect claude` removes the user-scope MCP server entry
+  `riff`, if it exists. The plugin gives the riff tools instead.
+- **R76** `riff connect claude` installs the plugin in user scope. It
+  runs the `claude` command on the PATH. `--claude PATH` names another
+  one.
+- **R77** `riff connect claude` does not need a riff session or a git
+  repository. It works in any directory.
 
 ## Service
 

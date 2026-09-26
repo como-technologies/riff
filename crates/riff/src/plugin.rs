@@ -5,8 +5,16 @@
 //! The plugin files live in `crates/riff/claude-plugin/`. That directory
 //! is a local marketplace with one plugin, `riff`. The binary holds a copy
 //! of each file, so the plugin always matches the binary.
-//! `riff connect claude` writes the files with [`write()`] and installs
-//! them through the `claude` command.
+//! [`connect()`] writes the files with [`write()`] to [`dir()`] and
+//! installs them through the `claude` command:
+//!
+//! 1. `claude mcp remove --scope user riff` removes an old entry, if any.
+//! 2. `claude plugin marketplace add DIR` adds the marketplace `riff`.
+//! 3. `claude plugin install --scope user riff@riff` installs the plugin.
+//!
+//! Claude Code loads a plugin from a local marketplace in place. So a new
+//! `riff` binary and one more `riff connect claude` update the plugin.
+//! Both `claude` steps succeed when they have nothing to do.
 //!
 //! | File | Gives the session |
 //! |---|---|
@@ -22,8 +30,12 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
+use std::ffi::OsStr;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use anyhow::{Context, Result, bail};
 
 /// The name of the marketplace and of the plugin.
 pub const NAME: &str = "riff";
@@ -58,6 +70,98 @@ pub fn write(dir: &Path) -> io::Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(target, text)?;
+    }
+    Ok(())
+}
+
+/// The directory for the marketplace: `$XDG_DATA_HOME/riff/claude-plugin`,
+/// or `$HOME/.local/share/riff/claude-plugin` (R74).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let dir = riff::plugin::dir_from(None, Some("/home/mike".into()))?;
+/// assert_eq!(dir, Path::new("/home/mike/.local/share/riff/claude-plugin"));
+/// let dir = riff::plugin::dir_from(Some("/data".into()), None)?;
+/// assert_eq!(dir, Path::new("/data/riff/claude-plugin"));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn dir_from(
+    data_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf> {
+    let data = match (data_home.filter(|d| !d.is_empty()), home) {
+        (Some(data), _) => PathBuf::from(data),
+        (None, Some(home)) => Path::new(&home).join(".local/share"),
+        (None, None) => bail!("set HOME or XDG_DATA_HOME"),
+    };
+    Ok(data.join(NAME).join("claude-plugin"))
+}
+
+/// [`dir_from`] with the values from the environment.
+pub fn dir() -> Result<PathBuf> {
+    dir_from(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
+}
+
+/// What [`connect()`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Connected {
+    /// The marketplace directory.
+    pub dir: PathBuf,
+    /// True when it removed an old `riff` MCP server entry (R75).
+    pub removed_old: bool,
+}
+
+/// Writes the marketplace to `dir` and installs the plugin in user scope
+/// with the `claude` command at `claude` (R53). It first removes an old
+/// user-scope MCP server entry named `riff`, from `claude mcp add`, so a
+/// session does not get the riff tools twice (R75).
+pub fn connect(claude: &Path, dir: &Path) -> Result<Connected> {
+    write(dir).with_context(|| format!("write the plugin to {}", dir.display()))?;
+    let removed_old = run(
+        claude,
+        ["mcp", "remove", "--scope", "user", NAME].map(OsStr::new),
+    )
+    .is_ok();
+    run(
+        claude,
+        [
+            OsStr::new("plugin"),
+            OsStr::new("marketplace"),
+            OsStr::new("add"),
+            dir.as_os_str(),
+        ],
+    )?;
+    let plugin = format!("{NAME}@{NAME}");
+    run(
+        claude,
+        ["plugin", "install", "--scope", "user", &plugin].map(OsStr::new),
+    )?;
+    Ok(Connected {
+        dir: dir.to_owned(),
+        removed_old,
+    })
+}
+
+/// Runs `claude` with `args`. It fails with the output of `claude` when
+/// the command fails.
+fn run<'a>(claude: &Path, args: impl IntoIterator<Item = &'a OsStr>) -> Result<()> {
+    let args: Vec<&OsStr> = args.into_iter().collect();
+    let line = || {
+        let args: Vec<_> = args.iter().map(|a| a.to_string_lossy()).collect();
+        format!("{} {}", claude.display(), args.join(" "))
+    };
+    let out = Command::new(claude)
+        .args(&args)
+        .output()
+        .with_context(|| format!("run {}", line()))?;
+    if !out.status.success() {
+        bail!(
+            "{} failed: {}{}",
+            line(),
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(())
 }
@@ -107,6 +211,25 @@ mod tests {
         assert_eq!(start[0].get("matcher"), None, "each source runs the hook");
         assert_eq!(start[0]["hooks"][0]["type"], "command");
         assert_eq!(start[0]["hooks"][0]["command"], "riff hook session-start");
+    }
+
+    #[test]
+    fn an_empty_data_home_uses_home() {
+        let dir = dir_from(Some("".into()), Some("/h".into())).unwrap();
+        assert_eq!(dir, Path::new("/h/.local/share/riff/claude-plugin"));
+    }
+
+    #[test]
+    fn no_home_is_an_error() {
+        assert!(dir_from(None, None).is_err());
+    }
+
+    #[test]
+    fn a_missing_claude_command_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = connect(Path::new("/no/such/claude"), dir.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("/no/such/claude plugin marketplace add"));
+        assert!(dir.path().join("riff/.mcp.json").is_file());
     }
 
     #[test]

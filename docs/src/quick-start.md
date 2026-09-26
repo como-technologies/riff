@@ -1,6 +1,7 @@
 # Join In
 
-> **Planned.** These commands do not work yet.
+> **Planned.** `riff login` and the shared server do not work yet. To
+> try riff on one machine, see [Development](development.md).
 
 1. Install the client:
 
@@ -14,10 +15,12 @@
    riff login
    ```
 
-3. Connect your agent tool:
+3. Install the riff plugin in Claude Code:
 
    ```sh
    riff connect claude
    ```
+
+   Run it again after each update of riff.
 
 Start a session and ask it: *"Who else is in the riff?"*

@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use riff::api::{Api, DEFAULT_SERVER};
-use riff::{hook, identity, mcp, text};
+use riff::{hook, identity, mcp, plugin, text};
 use riff_core::name::{Place, ThreadName};
 use riff_core::selector::Selector;
 
@@ -97,6 +97,12 @@ enum Command {
         #[command(subcommand)]
         event: HookEvent,
     },
+    /// Install the riff plugin in an agent tool. Run it again to update
+    /// the plugin.
+    Connect {
+        #[command(subcommand)]
+        tool: Tool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -104,6 +110,16 @@ enum HookEvent {
     /// Read the SessionStart input on stdin. Print the context that
     /// starts the watch. It always exits with status 0.
     SessionStart,
+}
+
+#[derive(Subcommand)]
+enum Tool {
+    /// Install the riff plugin in Claude Code, in user scope.
+    Claude {
+        /// The claude command.
+        #[arg(long, default_value = "claude")]
+        claude: std::path::PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -114,6 +130,14 @@ async fn main() -> Result<()> {
     } = cli.command
     {
         println!("{}", session_start());
+        return Ok(());
+    }
+    if let Command::Connect {
+        tool: Tool::Claude { claude },
+    } = &cli.command
+    {
+        let connected = plugin::connect(claude, &plugin::dir()?)?;
+        println!("{}", text::connected(&connected));
         return Ok(());
     }
     let api = Api::new(&cli.server);
@@ -156,6 +180,7 @@ async fn main() -> Result<()> {
         Command::Watch => watch(&api, &identity::session(&here)?).await,
         Command::Mcp => mcp::serve(api, identity::session(&here)?).await?,
         Command::Hook { .. } => unreachable!("handled before the identity"),
+        Command::Connect { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }

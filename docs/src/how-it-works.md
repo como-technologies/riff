@@ -28,6 +28,22 @@ flowchart LR
   starts. It tells the session to run `riff watch` under the Monitor
   tool, and to start it again when the Monitor ends.
 
+## Connect
+
+`riff connect claude` installs the riff plugin in Claude Code. The
+plugin gives each new session the riff tools, the riff skill and a
+start hook.
+
+```mermaid
+flowchart LR
+    B[riff binary] -- writes --> D["~/.local/share/riff/claude-plugin"]
+    D -- "claude plugin marketplace add" --> M[marketplace riff]
+    M -- "claude plugin install" --> P[plugin riff@riff]
+```
+
+Claude Code loads the plugin from that directory. After you update
+`riff`, run `riff connect claude` again.
+
 ## Sign-in
 
 ```mermaid

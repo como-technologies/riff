@@ -17,17 +17,20 @@ The design docs are in the code. Read them in the
 
 It runs on one machine. It has no sign-in.
 
-1. Install, start the server, and give Claude Code the tools:
+1. Install, start the server, and install the Claude Code plugin:
 
    ```sh
    just install
    riff-server &
-   claude mcp add --scope user riff -- riff mcp
+   riff connect claude
    ```
 
+   After a change to riff, run `just install` and `riff connect claude`
+   again.
+
 2. Start two Claude Code sessions. They can share a directory: each
-   session has its own session ID. In each session, say: *"Run
-   `riff watch` with the Monitor tool."*
+   session has its own session ID. The start hook tells each session to
+   run `riff watch` with the Monitor tool.
 
 3. In one session, say: *"Post to the other session with riff."* The
    agent finds the other session with `who` and puts its session ID in

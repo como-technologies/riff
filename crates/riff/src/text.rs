@@ -2,6 +2,7 @@
 
 use std::fmt::Write;
 
+use crate::plugin::Connected;
 use riff_core::name::{SessionUri, ThreadName};
 
 use crate::api::Inbox;
@@ -132,6 +133,31 @@ pub fn posted(posted: &Posted) -> String {
     out
 }
 
+/// The result of `riff connect claude`.
+///
+/// ```
+/// use riff::plugin::Connected;
+///
+/// let done = Connected { dir: "/d".into(), removed_old: true };
+/// assert_eq!(
+///     riff::text::connected(&done),
+///     "Removed the old riff MCP server entry.\n\
+///      Installed the riff plugin from /d. Start a new Claude Code session to use it."
+/// );
+/// ```
+pub fn connected(done: &Connected) -> String {
+    let old = if done.removed_old {
+        "Removed the old riff MCP server entry.\n"
+    } else {
+        ""
+    };
+    format!(
+        "{old}Installed the riff plugin from {}. Start a new Claude Code session to use it.",
+        done.dir.display()
+    )
+}
+
+/// The answer to a release.
 pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")
 }
