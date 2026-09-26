@@ -18,7 +18,9 @@
 //!
 //! `POST /v1/token` is an OAuth 2.1 token endpoint. Its request is a
 //! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
-//! [`TokenError`] with status 400.
+//! [`TokenError`] with status 400. `GET /v1/sign-in` gives
+//! [`SignInConfig`], or status 404 when the server has no sign-in
+//! provider.
 //!
 //! `POST /v1/revoke` ends each sign-in of one person (R20). It needs
 //! `Authorization: Bearer <access token>`. Its request is [`Revoke`] and
@@ -40,8 +42,8 @@
 //! | `GET /v1/watch` | `uri=<session URI>` | [`Wake`] |
 //! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
 //!
-//! A session is live while its watch stream is open. There is no
-//! sign-in yet: each request carries the session URI of its sender as
+//! A session is live while its watch stream is open. The routes do
+//! not check tokens yet: each request carries the session URI of its sender as
 //! `me`. The server finds the session by the *who* part of that URI.
 //! Only `register` sets the place of a known session; each other call
 //! uses the URI only to make a session that the server does not know.
@@ -205,16 +207,31 @@ pub struct Tailed {
     pub message: Message,
 }
 
-/// `POST /v1/token`, as `application/x-www-form-urlencoded`: swaps a
-/// refresh token for a new pair of tokens. The only grant type is
-/// `refresh_token`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// The grant type that swaps an ID token of the sign-in provider for
+/// a first pair of riff tokens (RFC 8693 token exchange).
+pub const TOKEN_EXCHANGE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
+
+/// The subject token type of a [`TOKEN_EXCHANGE`] request.
+pub const ID_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:id_token";
+
+/// `POST /v1/token`, as `application/x-www-form-urlencoded`.
+///
+/// | `grant_type` | Fields |
+/// |---|---|
+/// | `refresh_token` | `refresh_token` |
+/// | [`TOKEN_EXCHANGE`] | `subject_token` (an ID token), `subject_token_type` = [`ID_TOKEN_TYPE`] |
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TokenRequest {
     pub grant_type: String,
-    pub refresh_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_token_type: Option<String>,
     /// The server that the token is for (RFC 8707). When it is set, it
     /// must be the public URL of the server.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource: Option<String>,
 }
 
@@ -228,6 +245,51 @@ pub struct TokenReply {
     /// Seconds until the access token expires.
     pub expires_in: u64,
     pub refresh_token: String,
+    /// The user part of the session URI, from the sign-in (R36).
+    pub user: String,
+}
+
+/// `GET /v1/sign-in`: the OpenID Connect provider that `riff login`
+/// signs in with.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignInConfig {
+    /// The issuer. Its discovery document is at
+    /// `<issuer>/.well-known/openid-configuration`.
+    pub issuer: String,
+    pub client_id: String,
+    /// Google asks for the secret of a desktop client too. It is not a
+    /// secret: it ships to each person who signs in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
+/// The fields that riff uses from the discovery document of an OpenID
+/// Connect provider.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Discovery {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub jwks_uri: String,
+}
+
+impl Discovery {
+    /// The URL of the discovery document of `issuer`.
+    ///
+    /// ```
+    /// use riff_core::wire::Discovery;
+    ///
+    /// assert_eq!(
+    ///     Discovery::url("https://accounts.google.com/"),
+    ///     "https://accounts.google.com/.well-known/openid-configuration"
+    /// );
+    /// ```
+    pub fn url(issuer: &str) -> String {
+        format!(
+            "{}/.well-known/openid-configuration",
+            issuer.trim_end_matches('/')
+        )
+    }
 }
 
 /// `POST /v1/revoke`: ends each sign-in of a person.

@@ -7,7 +7,8 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Claim, ClaimReply, Membership, Message, Post, Posted, Read, ReadReply, Register, Revoke,
-    Revoked, SessionInfo, Tailed, ThreadInfo, Threads, ThreadsReply, Wake, WhoReply, WhoRequest,
+    Revoked, SessionInfo, SignInConfig, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError,
+    TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -28,6 +29,44 @@ impl Api {
             http: reqwest::Client::new(),
             base: base.trim_end_matches('/').to_owned(),
         }
+    }
+
+    /// The URL of the server.
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
+    /// The sign-in provider of the server.
+    pub async fn sign_in_config(&self) -> Result<SignInConfig> {
+        let response = self
+            .http
+            .get(format!("{}/v1/sign-in", self.base))
+            .send()
+            .await
+            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            bail!("riff-server at {} has no sign-in provider", self.base);
+        }
+        Ok(response.error_for_status()?.json().await?)
+    }
+
+    /// Calls the token endpoint. See [`TokenRequest`] for the grants.
+    pub async fn token(&self, request: &TokenRequest) -> Result<TokenReply> {
+        let response = self
+            .http
+            .post(format!("{}/v1/token", self.base))
+            .form(request)
+            .send()
+            .await
+            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+        if response.status().is_success() {
+            return Ok(response.json().await?);
+        }
+        let error = response
+            .json::<TokenError>()
+            .await
+            .map_or_else(|_| "no reason".to_owned(), |e| e.error);
+        bail!("riff-server refused the token request: {error}")
     }
 
     /// Says where the session works now. Call it at the start and after

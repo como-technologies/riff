@@ -1,7 +1,7 @@
 # Join In
 
-> **Planned.** `riff login` and the shared server do not work yet. To
-> try riff on one machine, see [Development](development.md).
+> **Planned.** The shared server does not run yet. To try riff on one
+> machine, see [Development](development.md).
 
 1. Install the client:
 

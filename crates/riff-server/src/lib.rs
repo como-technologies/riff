@@ -32,6 +32,9 @@
 //!   token itself. The admins are a setting ([`auth::Config::admins`]).
 //! - With [`auth::Config::require_sign_in`], a layer checks the access
 //!   token of each other `/v1` route. See [`auth`] for the OAuth rules.
+//! - `POST /v1/token` also swaps an ID token of the sign-in provider for
+//!   a first pair (see [`oidc`]). `GET /v1/sign-in` names the provider.
+//!   A server with no provider ([`auth::Config::provider`]) refuses both.
 //!
 //! The server keeps state only in memory. The wire protocol is in
 //! [`riff_core::wire`].
@@ -46,6 +49,7 @@
 //! ```
 
 pub mod auth;
+pub mod oidc;
 pub mod state;
 pub mod token;
 
@@ -63,9 +67,9 @@ use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, ResourceMetadata,
-    Revoke, Revoked, ServerMetadata, Tailed, Threads, ThreadsReply, TokenError, TokenRequest, Wake,
-    WhoReply, WhoRequest,
+    Claim, ClaimReply, ID_TOKEN_TYPE, Membership, Post, Posted, Read, ReadReply, Register,
+    ResourceMetadata, Revoke, Revoked, ServerMetadata, SignInConfig, TOKEN_EXCHANGE, Tailed,
+    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -87,6 +91,7 @@ struct Server {
     tokens: Mutex<Tokens>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
+    http: reqwest::Client,
 }
 
 impl Server {
@@ -145,6 +150,7 @@ impl Service {
             tokens: Mutex::new(Tokens::default()),
             wakes,
             tail,
+            http: reqwest::Client::new(),
         }))
     }
 
@@ -170,6 +176,7 @@ impl Service {
         }
         routes
             .route(auth::TOKEN_PATH, post(token))
+            .route("/v1/sign-in", get(sign_in_config))
             .route("/v1/revoke", post(revoke))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
@@ -250,7 +257,7 @@ async fn release(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply
     Ok(Json(()))
 }
 
-/// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
+/// The OAuth 2.1 token endpoint. See [`TokenRequest`] for the grants.
 async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> impl IntoResponse {
     let no_store = || [(header::CACHE_CONTROL, "no-store")];
     let refuse = |error: &str| {
@@ -259,17 +266,26 @@ async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> 
         };
         (StatusCode::BAD_REQUEST, no_store(), Json(error)).into_response()
     };
-    if r.grant_type != "refresh_token" {
-        return refuse("unsupported_grant_type");
-    }
     if r.resource
-        .is_some_and(|resource| !s.config.is_resource(&resource))
+        .as_ref()
+        .is_some_and(|resource| !s.config.is_resource(resource))
     {
         return refuse("invalid_target");
     }
-    match s.tokens().refresh(&r.refresh_token, Instant::now()) {
+    let reply = match r.grant_type.as_str() {
+        "refresh_token" => s
+            .tokens()
+            .refresh(
+                r.refresh_token.as_deref().unwrap_or_default(),
+                Instant::now(),
+            )
+            .map_err(|_| "invalid_grant"),
+        TOKEN_EXCHANGE => exchange(&s, &r).await,
+        _ => Err("unsupported_grant_type"),
+    };
+    match reply {
         Ok(pair) => (no_store(), Json(pair)).into_response(),
-        Err(_) => refuse("invalid_grant"),
+        Err(error) => refuse(error),
     }
 }
 
@@ -340,6 +356,31 @@ async fn resource_metadata(AxumState(s): AxumState<Shared>) -> Json<ResourceMeta
 
 async fn server_metadata(AxumState(s): AxumState<Shared>) -> Json<ServerMetadata> {
     Json(s.config.server_metadata())
+}
+
+/// Swaps an ID token of the provider for a first pair of riff tokens.
+async fn exchange(s: &Server, r: &TokenRequest) -> Result<TokenReply, &'static str> {
+    let provider = s.config.provider.as_ref().ok_or("unsupported_grant_type")?;
+    let id_token = match (&r.subject_token, r.subject_token_type.as_deref()) {
+        (Some(token), Some(ID_TOKEN_TYPE)) => token,
+        _ => return Err("invalid_request"),
+    };
+    let identity = provider.sign_in(&s.http, id_token).await.map_err(|e| {
+        tracing::info!("sign-in refused: {e}");
+        "invalid_grant"
+    })?;
+    tracing::info!("{} signed in as {}", identity.email, identity.user);
+    s.tokens()
+        .sign_in(&identity.user, Instant::now())
+        .map_err(|_| "invalid_grant")
+}
+
+/// Names the sign-in provider, for `riff login`.
+async fn sign_in_config(AxumState(s): AxumState<Shared>) -> Reply<SignInConfig> {
+    match &s.config.provider {
+        Some(provider) => Ok(Json(provider.config())),
+        None => Err(not_found("this riff-server has no sign-in provider".into())),
+    }
 }
 
 #[derive(Deserialize)]

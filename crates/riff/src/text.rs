@@ -177,6 +177,34 @@ pub fn revoked(done: &Revoked) -> String {
     )
 }
 
+/// The answer to `riff login`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::signed_in("mike", "http://127.0.0.1:7878"),
+///     "You signed in to http://127.0.0.1:7878 as mike."
+/// );
+/// ```
+pub fn signed_in(user: &str, server: &str) -> String {
+    format!("You signed in to {server} as {user}.")
+}
+
+/// The answer to `riff logout`. `had` is false when there was no
+/// sign-in.
+///
+/// ```
+/// let server = "http://127.0.0.1:7878";
+/// assert_eq!(riff::text::signed_out(true, server), "You signed out of http://127.0.0.1:7878.");
+/// assert_eq!(riff::text::signed_out(false, server), "You were not signed in to http://127.0.0.1:7878.");
+/// ```
+pub fn signed_out(had: bool, server: &str) -> String {
+    if had {
+        format!("You signed out of {server}.")
+    } else {
+        format!("You were not signed in to {server}.")
+    }
+}
+
 /// The answer to a release.
 pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")

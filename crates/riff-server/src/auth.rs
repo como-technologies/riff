@@ -46,7 +46,9 @@
 //! assert!(config.is_resource("https://RIFF.example.com/"));
 //! ```
 
-use riff_core::wire::{ResourceMetadata, ServerMetadata};
+use riff_core::wire::{ResourceMetadata, ServerMetadata, TOKEN_EXCHANGE};
+
+use crate::oidc::Provider;
 
 /// The path of the protected resource metadata (RFC 9728).
 pub const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
@@ -57,7 +59,8 @@ pub const SERVER_METADATA_PATH: &str = "/.well-known/oauth-authorization-server"
 /// The path of the token endpoint.
 pub const TOKEN_PATH: &str = "/v1/token";
 
-/// Each grant type that the token endpoint takes.
+/// Each grant type that the token endpoint takes. It takes
+/// [`TOKEN_EXCHANGE`] too when the server has a provider.
 pub const GRANT_TYPES: &[&str] = &["refresh_token"];
 
 /// The settings of one `riff-server`.
@@ -70,6 +73,9 @@ pub struct Config {
     pub require_sign_in: bool,
     /// The people who may revoke the tokens of any person (R20).
     pub admins: Vec<String>,
+    /// The OpenID Connect provider that people sign in with. Without
+    /// it, nobody can sign in.
+    pub provider: Option<Provider>,
 }
 
 impl Default for Config {
@@ -86,6 +92,7 @@ impl Config {
             public_url: public_url.trim_end_matches('/').to_owned(),
             require_sign_in: false,
             admins: Vec::new(),
+            provider: None,
         }
     }
 
@@ -103,7 +110,12 @@ impl Config {
         ServerMetadata {
             issuer: self.public_url.clone(),
             token_endpoint: format!("{}{TOKEN_PATH}", self.public_url),
-            grant_types_supported: GRANT_TYPES.iter().map(|g| (*g).into()).collect(),
+            grant_types_supported: GRANT_TYPES
+                .iter()
+                .copied()
+                .chain(self.provider.as_ref().map(|_| TOKEN_EXCHANGE))
+                .map(Into::into)
+                .collect(),
             response_types_supported: vec![],
             code_challenge_methods_supported: vec!["S256".into()],
             token_endpoint_auth_methods_supported: vec!["none".into()],
@@ -160,6 +172,24 @@ mod tests {
         assert_eq!(server.token_endpoint, "https://riff.example.com/v1/token");
         assert_eq!(server.code_challenge_methods_supported, ["S256"]);
         assert!(server.response_types_supported.is_empty());
+    }
+
+    #[test]
+    fn a_provider_adds_the_token_exchange_grant() {
+        let mut config = Config::new("http://h");
+        assert_eq!(
+            config.server_metadata().grant_types_supported,
+            ["refresh_token"]
+        );
+        config.provider = Some(Provider {
+            issuer: "https://accounts.google.com".into(),
+            client_id: "riff".into(),
+            client_secret: None,
+        });
+        assert_eq!(
+            config.server_metadata().grant_types_supported,
+            ["refresh_token", TOKEN_EXCHANGE]
+        );
     }
 
     #[test]

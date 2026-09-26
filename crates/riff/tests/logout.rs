@@ -1,71 +1,84 @@
-//! `riff logout --all` against a real server (R20).
+//! `riff logout --all` against a real server (R20, R101). The sign-in
+//! is in the mock store of `keyring-core`, so the tests run in process.
 
+use std::sync::Once;
 use std::time::Instant;
 
-use assert_cmd::Command;
+use riff::api::Api;
+use riff::login::{self, SignIn};
+use riff::text;
+use riff_core::wire::TokenReply;
 use riff_server::Service;
 use riff_server::auth::Config;
 
-async fn start(admins: &[&str]) -> (Service, String) {
+static MOCK_KEYRING: Once = Once::new();
+
+async fn start(admins: &[&str]) -> (Service, Api) {
+    MOCK_KEYRING.call_once(|| {
+        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+    });
     let service = Service::new(Config {
         admins: admins.iter().map(|a| a.to_string()).collect(),
         ..Config::default()
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    (service, format!("http://{addr}"))
+    (service, api)
 }
 
-/// Runs `riff` with `token`. Returns stdout, stderr and the exit code.
-async fn riff(server: &str, token: &str, args: &[&str]) -> (String, String, i32) {
-    let mut cmd = Command::cargo_bin("riff").unwrap();
-    cmd.args(args)
-        .env("RIFF_SERVER", server)
-        .env("RIFF_TOKEN", token);
-    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
-        .await
-        .unwrap();
-    (
-        String::from_utf8(out.stdout).unwrap(),
-        String::from_utf8(out.stderr).unwrap(),
-        out.status.code().unwrap(),
-    )
+/// Keeps `pair` as the sign-in of this device.
+fn keep(api: &Api, pair: &TokenReply) {
+    let sign_in = SignIn {
+        user: pair.user.clone(),
+        access_token: pair.access_token.clone(),
+        refresh_token: pair.refresh_token.clone(),
+        expires_at: u64::MAX,
+    };
+    login::store(api.base(), &sign_in).unwrap();
 }
 
 #[tokio::test]
 async fn logout_all_ends_each_sign_in_of_the_caller() {
-    let (service, server) = start(&[]).await;
+    let (service, api) = start(&[]).await;
     let now = Instant::now();
     let laptop = service.tokens().sign_in("mike", now).unwrap();
     let desktop = service.tokens().sign_in("mike", now).unwrap();
+    keep(&api, &laptop);
 
-    let (out, _, code) = riff(&server, &laptop.access_token, &["logout", "--all"]).await;
-    assert_eq!(code, 0);
+    let done = login::logout_all(&api, None).await.unwrap();
     assert_eq!(
-        out,
-        "Ended 2 sign-ins of mike. Each device of mike must sign in again.\n"
+        text::revoked(&done),
+        "Ended 2 sign-ins of mike. Each device of mike must sign in again."
     );
     assert!(service.tokens().check(&desktop.access_token, now).is_err());
+    assert_eq!(login::stored(api.base()).unwrap(), None);
 }
 
 #[tokio::test]
 async fn an_admin_logs_out_another_person() {
-    let (service, server) = start(&["mike"]).await;
+    let (service, api) = start(&["mike"]).await;
     let now = Instant::now();
     let mike = service.tokens().sign_in("mike", now).unwrap();
     let brett = service.tokens().sign_in("brett", now).unwrap();
 
-    let args = ["logout", "--all", "--user", "mike"];
-    let (_, err, code) = riff(&server, &brett.access_token, &args).await;
-    assert_ne!(code, 0);
-    assert!(err.contains("not an admin"), "{err}");
+    keep(&api, &brett);
+    let error = login::logout_all(&api, Some("mike")).await.unwrap_err();
+    assert!(error.to_string().contains("not an admin"), "{error}");
 
-    let args = ["logout", "--all", "--user", "brett"];
-    let (out, _, code) = riff(&server, &mike.access_token, &args).await;
-    assert_eq!(code, 0);
-    assert!(out.starts_with("Ended 1 sign-in of brett."), "{out}");
+    keep(&api, &mike);
+    let done = login::logout_all(&api, Some("brett")).await.unwrap();
+    assert!(text::revoked(&done).starts_with("Ended 1 sign-in of brett."));
     assert!(service.tokens().check(&brett.access_token, now).is_err());
     assert_eq!(service.tokens().check(&mike.access_token, now), Ok("mike"));
+    // The admin stays signed in on this device.
+    assert!(login::stored(api.base()).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn logout_all_needs_a_sign_in() {
+    let (_, api) = start(&[]).await;
+    let error = login::logout_all(&api, None).await.unwrap_err();
+    assert!(error.to_string().contains("run riff login"), "{error}");
 }

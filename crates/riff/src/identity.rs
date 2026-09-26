@@ -5,7 +5,7 @@
 //!
 //! | Part | Source, in order |
 //! |---|---|
-//! | user | `RIFF_USER`, then `USER`. Sign-in replaces this in slice 3. |
+//! | user | `RIFF_USER`, then the sign-in at the server (see [`crate::login`]), then `USER`. |
 //! | session | `RIFF_SESSION`, then `CLAUDE_CODE_SESSION_ID`. A person has none. |
 //! | host | `RIFF_HOST`, then `cloud` in a cloud session, then the machine name without its domain. |
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
@@ -30,6 +30,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use riff_core::name::{Place, Repo, SessionUri, Who, sanitize};
 
+use crate::login;
+
 /// The environment variables that hold the session ID, in order.
 pub const SESSION_VARS: [&str; 2] = ["RIFF_SESSION", "CLAUDE_CODE_SESSION_ID"];
 
@@ -42,12 +44,13 @@ pub fn session_id() -> Option<String> {
 }
 
 /// The URI of the caller: an agent session when there is a session ID,
-/// otherwise a person. `place` is where the caller works.
-pub fn me(place: &Place) -> Result<SessionUri> {
+/// otherwise a person. `place` is where the caller works. `server` is
+/// the riff-server, for the user of its sign-in.
+pub fn me(place: &Place, server: &str) -> Result<SessionUri> {
     match session_id() {
-        Some(id) => agent(place, &id),
+        Some(id) => agent(place, &id, server),
         None => Ok(SessionUri::new(
-            Who::new(&user()?, None)?,
+            Who::new(&user(server)?, None)?,
             Place::host_only(place.host())?,
         )),
     }
@@ -55,24 +58,55 @@ pub fn me(place: &Place) -> Result<SessionUri> {
 
 /// The URI of the agent session `id` at `place`. A hook uses it: Claude
 /// Code gives a hook the session ID on stdin.
-pub fn agent(place: &Place, id: &str) -> Result<SessionUri> {
+pub fn agent(place: &Place, id: &str, server: &str) -> Result<SessionUri> {
     Ok(SessionUri::new(
-        Who::new(&user()?, Some(&sanitize(id)))?,
+        Who::new(&user(server)?, Some(&sanitize(id)))?,
         place.clone(),
     ))
 }
 
-/// The user from the environment.
-fn user() -> Result<String> {
-    let user = std::env::var("RIFF_USER")
-        .or_else(|_| std::env::var("USER"))
-        .context("set RIFF_USER or USER")?;
+/// The user for `server`: from `RIFF_USER`, the sign-in, or `USER`.
+/// Only a missing `RIFF_USER` makes it read the keyring.
+fn user(server: &str) -> Result<String> {
+    let riff_user = std::env::var("RIFF_USER").ok();
+    let signed_in = match riff_user {
+        Some(_) => None,
+        None => login::user(server),
+    };
+    pick_user(
+        riff_user.as_deref(),
+        signed_in.as_deref(),
+        std::env::var("USER").ok().as_deref(),
+    )
+}
+
+/// The user from `RIFF_USER`, the user of the sign-in, and `USER`, in
+/// that order (R36). Without a sign-in, `USER` stands in until the
+/// server checks tokens.
+///
+/// ```
+/// use riff::identity::pick_user;
+///
+/// assert_eq!(pick_user(None, Some("mike"), Some("sandman")).unwrap(), "mike");
+/// assert_eq!(pick_user(Some("brett"), Some("mike"), None).unwrap(), "brett");
+/// assert_eq!(pick_user(None, None, Some("Sandman")).unwrap(), "sandman");
+/// assert!(pick_user(None, None, None).is_err());
+/// ```
+pub fn pick_user(
+    riff_user: Option<&str>,
+    signed_in: Option<&str>,
+    os_user: Option<&str>,
+) -> Result<String> {
+    let user = riff_user
+        .or(signed_in)
+        .or(os_user)
+        .context("run riff login, or set RIFF_USER")?;
     Ok(sanitize(&user.to_lowercase()))
 }
 
 /// The URI of an agent session. It fails when there is no session ID.
-pub fn session(place: &Place) -> Result<SessionUri> {
-    let me = me(place)?;
+pub fn session(place: &Place, server: &str) -> Result<SessionUri> {
+    let me = me(place, server)?;
     if me.who().session().is_none() {
         bail!(
             "no session ID: run this inside Claude Code, or set {}",

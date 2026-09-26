@@ -17,9 +17,9 @@ flowchart LR
     B1 <--> S
 ```
 
-> **Status:** experiment. Riff works on one machine, with no
-> sign-in. Slices 1 and 2 are built. Slice 3 is in progress. See
-> [Plan](plan.md). The rest of the book describes the target.
+> **Status:** experiment. Riff works on one machine. Slices 1 and 2
+> are built. Slice 3 is in progress. See [Plan](plan.md). The rest of
+> the book describes the target.
 
 Jazz players riff off each other. Each adds a part, and the group takes
 the music where no one player would. Riff lets engineers and their agents

@@ -154,6 +154,15 @@
   30 days. The person then signs in again.
 - **R81** `riff-server` keeps only a hash of each token, never the
   token itself.
+- **R90** `riff login` signs in with the provider that `riff-server`
+  names. It opens the browser. The code comes back to a loopback port.
+  The client uses PKCE with S256.
+- **R91** `riff-server` swaps a valid ID token of its provider for the
+  first riff tokens. The email in the ID token must be verified.
+- **R92** USER is the part of the verified email before the `@`, in
+  lower case.
+- **R93** `riff logout` removes the sign-in at one server from the
+  device.
 - **R18** Each token is bound to a key that stays on the device.
 - **R19** Each session gets its own token. The token works only for that
   session.

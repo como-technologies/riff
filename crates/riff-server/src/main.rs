@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use riff_server::Service;
 use riff_server::auth::Config;
+use riff_server::oidc::Provider;
 
 /// The central service that sessions connect to.
 #[derive(Parser)]
@@ -27,6 +28,25 @@ struct Cli {
     /// Refuse each request that has no live riff access token.
     #[arg(long, env = "RIFF_REQUIRE_SIGN_IN")]
     require_sign_in: bool,
+
+    /// The OpenID Connect issuer that people sign in with.
+    #[arg(
+        long,
+        env = "RIFF_OIDC_ISSUER",
+        default_value = "https://accounts.google.com"
+    )]
+    issuer: String,
+
+    /// The OAuth client ID of riff at the issuer. Without it, the server
+    /// has no sign-in.
+    #[arg(long, env = "RIFF_OIDC_CLIENT_ID")]
+    client_id: Option<String>,
+
+    /// The client secret, when the issuer asks for one. Google asks for
+    /// it for a desktop client. It is not a secret: each `riff login`
+    /// gets it.
+    #[arg(long, env = "RIFF_OIDC_CLIENT_SECRET", requires = "client_id")]
+    client_secret: Option<String>,
 }
 
 #[tokio::main]
@@ -45,6 +65,16 @@ async fn main() -> std::io::Result<()> {
     config.require_sign_in = cli.require_sign_in;
     config.admins = cli.admins;
     tracing::info!("riff-server listens on {}", listener.local_addr()?);
+    if let Some(client_id) = cli.client_id {
+        tracing::info!("sign-in with {}", cli.issuer);
+        config.provider = Some(Provider {
+            issuer: cli.issuer,
+            client_id,
+            client_secret: cli.client_secret,
+        });
+    } else {
+        tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");
+    }
     axum::serve(listener, Service::new(config).router()).await
 }
 

@@ -12,6 +12,7 @@
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
+//! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
 //! `riff hook session-start` (see [`hook`]).
@@ -44,6 +45,7 @@
 pub mod api;
 pub mod hook;
 pub mod identity;
+pub mod login;
 pub mod mcp;
 pub mod plugin;
 pub mod secrets;

@@ -187,6 +187,10 @@ impl Tokens {
     }
 
     fn issue(&mut self, sign_in: u64, now: Instant) -> TokenReply {
+        let user = self
+            .sign_ins
+            .get(&sign_in)
+            .map_or_else(String::new, |s| s.user.clone());
         let access_token = random_token();
         let refresh_token = random_token();
         self.access.insert(
@@ -208,6 +212,7 @@ impl Tokens {
             token_type: "Bearer".into(),
             expires_in: ACCESS_TTL.as_secs(),
             refresh_token,
+            user,
         }
     }
 
@@ -257,6 +262,7 @@ mod tests {
         assert_eq!(tokens.check(&pair.access_token, now), Ok("mike"));
         assert_eq!(pair.token_type, "Bearer");
         assert_eq!(pair.expires_in, 600);
+        assert_eq!(pair.user, "mike");
     }
 
     #[test]

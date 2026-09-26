@@ -1,0 +1,145 @@
+//! `GET /v1/sign-in` and the token exchange, with a fake provider that
+//! serves a discovery document and a JWKS.
+
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use axum::routing::get;
+use axum::{Json, Router};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use riff_core::wire::{
+    Discovery, ID_TOKEN_TYPE, SignInConfig, TOKEN_EXCHANGE, TokenError, TokenReply, TokenRequest,
+};
+use riff_server::Service;
+use riff_server::auth::Config;
+use riff_server::oidc::Provider;
+use serde_json::{Value, json};
+
+const KEY: &str = include_str!("../testdata/test-only-rsa-key.pem");
+const JWKS: &str = include_str!("../testdata/test-only-jwks.json");
+
+async fn serve(router: Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    url
+}
+
+/// A provider with only the two documents that the server fetches.
+async fn fake_provider() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let discovery = Discovery {
+        issuer: issuer.clone(),
+        authorization_endpoint: format!("{issuer}/authorize"),
+        token_endpoint: format!("{issuer}/token"),
+        jwks_uri: format!("{issuer}/jwks"),
+    };
+    let jwks: Value = serde_json::from_str(JWKS).unwrap();
+    let router = Router::new()
+        .route(
+            "/.well-known/openid-configuration",
+            get(move || async move { Json(discovery) }),
+        )
+        .route("/jwks", get(move || async move { Json(jwks) }));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    issuer
+}
+
+fn id_token(issuer: &str, email: &str) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("test".into());
+    let claims = json!({
+        "iss": issuer,
+        "aud": "riff-client",
+        "exp": now + 3600,
+        "email": email,
+        "email_verified": true,
+    });
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_rsa_pem(KEY.as_bytes()).unwrap(),
+    )
+    .unwrap()
+}
+
+async fn exchange(server: &str, token: &str) -> reqwest::Response {
+    let form = TokenRequest {
+        grant_type: TOKEN_EXCHANGE.into(),
+        subject_token: Some(token.into()),
+        subject_token_type: Some(ID_TOKEN_TYPE.into()),
+        ..TokenRequest::default()
+    };
+    reqwest::Client::new()
+        .post(format!("{server}/v1/token"))
+        .form(&form)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn start() -> (Service, String, String) {
+    let issuer = fake_provider().await;
+    let service = Service::new(Config {
+        provider: Some(Provider {
+            issuer: issuer.clone(),
+            client_id: "riff-client".into(),
+            client_secret: Some("not-secret".into()),
+        }),
+        ..Config::default()
+    });
+    let server = serve(service.router()).await;
+    (service, server, issuer)
+}
+
+#[tokio::test]
+async fn sign_in_names_the_provider() {
+    let (_, server, issuer) = start().await;
+    let config: SignInConfig = reqwest::get(format!("{server}/v1/sign-in"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config.issuer, issuer);
+    assert_eq!(config.client_id, "riff-client");
+    assert_eq!(config.client_secret.as_deref(), Some("not-secret"));
+}
+
+#[tokio::test]
+async fn an_id_token_gives_riff_tokens_for_its_user() {
+    let (service, server, issuer) = start().await;
+    let reply = exchange(&server, &id_token(&issuer, "Mike@comotechnologies.io")).await;
+    assert_eq!(reply.status(), 200);
+    assert_eq!(reply.headers()["cache-control"], "no-store");
+    let pair: TokenReply = reply.json().await.unwrap();
+    assert_eq!(pair.user, "mike");
+    assert_eq!(
+        service.tokens().check(&pair.access_token, Instant::now()),
+        Ok("mike")
+    );
+}
+
+#[tokio::test]
+async fn a_bad_id_token_is_refused() {
+    let (_, server, _) = start().await;
+    let other = id_token("https://other.test", "mike@comotechnologies.io");
+    let reply = exchange(&server, &other).await;
+    assert_eq!(reply.status(), 400);
+    let error: TokenError = reply.json().await.unwrap();
+    assert_eq!(error.error, "invalid_grant");
+}
+
+#[tokio::test]
+async fn a_server_without_a_provider_has_no_sign_in() {
+    let server = serve(Service::default().router()).await;
+    let reply = reqwest::get(format!("{server}/v1/sign-in")).await.unwrap();
+    assert_eq!(reply.status(), 404);
+    let reply = exchange(&server, "any").await;
+    let error: TokenError = reply.json().await.unwrap();
+    assert_eq!(error.error, "unsupported_grant_type");
+}

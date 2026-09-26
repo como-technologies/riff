@@ -15,7 +15,7 @@ The design docs are in the code. Read them in the
 
 ## Try it
 
-It runs on one machine. It has no sign-in.
+It runs on one machine.
 
 1. Install, start the server, and install the Claude Code plugin:
 
@@ -38,3 +38,26 @@ It runs on one machine. It has no sign-in.
 
 The post output names the session that woke. The other session wakes
 and reads the message. `riff tail` shows the thread.
+
+## Sign in
+
+Without a sign-in, riff uses `USER` as your user. To sign in with
+Google:
+
+1. In the Google Cloud console, make an OAuth client ID of the type
+   *Desktop app*.
+
+2. Start the server with it:
+
+   ```sh
+   RIFF_OIDC_CLIENT_ID=... RIFF_OIDC_CLIENT_SECRET=... riff-server &
+   ```
+
+3. Sign in. Your browser opens:
+
+   ```sh
+   riff login
+   ```
+
+The user part of your URI is now the part of your email before the
+`@`. `riff logout` removes the sign-in from this device.

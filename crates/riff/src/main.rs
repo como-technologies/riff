@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use riff::api::{Api, DEFAULT_SERVER};
-use riff::{hook, identity, mcp, plugin, text};
+use riff::{hook, identity, login, mcp, plugin, text};
 use riff_core::name::{Place, ThreadName};
 use riff_core::selector::Selector;
 
@@ -28,6 +28,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Sign in with the provider of riff-server. It opens the browser.
+    Login,
     /// Show your URI. Inside Claude Code, it is the URI of the session.
     Whoami,
     /// List the sessions in the riff.
@@ -92,15 +94,15 @@ enum Command {
     Watch,
     /// Serve the riff tools to an agent session over stdio.
     Mcp,
-    /// Sign out. With --all, end each sign-in of a person on each
-    /// device.
+    /// Remove the sign-in at riff-server from this device. With --all,
+    /// end each sign-in of a person on each device.
     Logout {
         /// End each sign-in, on each device.
-        #[arg(long, required = true)]
-        all: bool,
-        /// The person. The default is you. Only an admin names another
-        /// person.
         #[arg(long)]
+        all: bool,
+        /// With --all: the person. The default is you. Only an admin
+        /// names another person.
+        #[arg(long, requires = "all")]
         user: Option<String>,
     },
     /// Run a Claude Code hook. The riff plugin calls it.
@@ -133,15 +135,6 @@ enum Tool {
     },
 }
 
-/// A live access token. For now it comes from `RIFF_TOKEN`; `riff login`
-/// (issue 7) replaces this with the stored sign-in.
-fn access_token() -> Result<String> {
-    std::env::var("RIFF_TOKEN")
-        .ok()
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("not signed in: set RIFF_TOKEN"))
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -161,13 +154,30 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let api = Api::new(&cli.server);
-    if let Command::Logout { user, .. } = &cli.command {
-        let done = api.revoke(&access_token()?, user.as_deref()).await?;
-        println!("{}", text::revoked(&done));
-        return Ok(());
+    match &cli.command {
+        Command::Login => {
+            let sign_in = login::login(&api, |url| {
+                eprintln!("riff: sign in with your browser. If it does not open, go to:\n{url}");
+                let _ = open::that_detached(url);
+            })
+            .await?;
+            println!("{}", text::signed_in(&sign_in.user, api.base()));
+            return Ok(());
+        }
+        Command::Logout { all: false, .. } => {
+            let had = login::logout(api.base())?;
+            println!("{}", text::signed_out(had, api.base()));
+            return Ok(());
+        }
+        Command::Logout { all: true, user } => {
+            let done = login::logout_all(&api, user.as_deref()).await?;
+            println!("{}", text::revoked(&done));
+            return Ok(());
+        }
+        _ => {}
     }
     let here = identity::place(&std::env::current_dir()?)?;
-    let me = identity::me(&here)?;
+    let me = identity::me(&here, api.base())?;
     match cli.command {
         Command::Whoami => println!("{}  {me}", text::name(&me)),
         Command::Who => print!("{}", text::who(&api.who().await?, &me)),
@@ -202,11 +212,15 @@ async fn main() -> Result<()> {
             println!("{}", text::released(&thread, &item));
         }
         Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await?,
-        Command::Watch => watch(&api, &identity::session(&here)?).await,
-        Command::Mcp => mcp::serve(api, identity::session(&here)?).await?,
-        Command::Hook { .. } => unreachable!("handled before the identity"),
-        Command::Connect { .. } => unreachable!("handled before the identity"),
-        Command::Logout { .. } => unreachable!("handled before the identity"),
+        Command::Watch => watch(&api, &identity::session(&here, api.base())?).await,
+        Command::Mcp => {
+            let me = identity::session(&here, api.base())?;
+            mcp::serve(api, me).await?
+        }
+        Command::Hook { .. }
+        | Command::Connect { .. }
+        | Command::Login
+        | Command::Logout { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }
@@ -228,7 +242,8 @@ fn session_start() -> String {
     let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
     let uri = input.session_id.as_deref().and_then(|id| {
         let here = identity::place(&std::env::current_dir().ok()?).ok()?;
-        identity::agent(&here, id).ok()
+        let server = std::env::var("RIFF_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.into());
+        identity::agent(&here, id, Api::new(&server).base()).ok()
     });
     hook::start_output(&hook::start_context(uri.as_ref(), input.source))
 }

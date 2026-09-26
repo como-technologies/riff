@@ -65,3 +65,17 @@ fn session_start_hook_never_fails() {
         .clone();
     assert!(String::from_utf8(out).unwrap().contains("riff watch"));
 }
+
+#[test]
+fn login_says_when_it_cannot_reach_the_server() {
+    let stderr = Command::cargo_bin("riff")
+        .unwrap()
+        .args(["login", "--server", "http://127.0.0.1:9"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let stderr = String::from_utf8(stderr).unwrap();
+    assert!(stderr.contains("cannot reach riff-server"), "{stderr}");
+}
