@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::oidc::Provider;
+use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 
 /// The central service that sessions connect to.
 #[derive(Parser)]
@@ -47,6 +47,16 @@ struct Cli {
     /// gets it.
     #[arg(long, env = "RIFF_OIDC_CLIENT_SECRET", requires = "client_id")]
     client_secret: Option<String>,
+
+    /// A Workspace domain whose accounts may sign in. Repeat it for more
+    /// domains.
+    #[arg(
+        long = "allowed-domain",
+        env = "RIFF_ALLOWED_DOMAINS",
+        value_delimiter = ',',
+        default_value = DEFAULT_DOMAIN
+    )]
+    allowed_domains: Vec<String>,
 }
 
 #[tokio::main]
@@ -71,6 +81,7 @@ async fn main() -> std::io::Result<()> {
             issuer: cli.issuer,
             client_id,
             client_secret: cli.client_secret,
+            allowed_domains: cli.allowed_domains,
         });
     } else {
         tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");

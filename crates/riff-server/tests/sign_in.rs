@@ -11,7 +11,7 @@ use riff_core::wire::{
 };
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::oidc::Provider;
+use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 use serde_json::{Value, json};
 
 const KEY: &str = include_str!("../testdata/test-only-rsa-key.pem");
@@ -45,7 +45,7 @@ async fn fake_provider() -> String {
     issuer
 }
 
-fn id_token(issuer: &str, email: &str) -> String {
+fn id_token(issuer: &str, email: &str, domain: &str) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -58,6 +58,7 @@ fn id_token(issuer: &str, email: &str) -> String {
         "exp": now + 3600,
         "email": email,
         "email_verified": true,
+        "hd": domain,
     });
     encode(
         &header,
@@ -89,6 +90,7 @@ async fn start() -> (Service, String, String) {
             issuer: issuer.clone(),
             client_id: "riff-client".into(),
             client_secret: Some("not-secret".into()),
+            allowed_domains: vec![DEFAULT_DOMAIN.into()],
         }),
         ..Config::default()
     });
@@ -113,7 +115,11 @@ async fn sign_in_names_the_provider() {
 #[tokio::test]
 async fn an_id_token_gives_riff_tokens_for_its_user() {
     let (service, server, issuer) = start().await;
-    let reply = exchange(&server, &id_token(&issuer, "Mike@comotechnologies.io")).await;
+    let reply = exchange(
+        &server,
+        &id_token(&issuer, "Mike@comotechnologies.io", DEFAULT_DOMAIN),
+    )
+    .await;
     assert_eq!(reply.status(), 200);
     assert_eq!(reply.headers()["cache-control"], "no-store");
     let pair: TokenReply = reply.json().await.unwrap();
@@ -127,7 +133,11 @@ async fn an_id_token_gives_riff_tokens_for_its_user() {
 #[tokio::test]
 async fn a_bad_id_token_is_refused() {
     let (_, server, _) = start().await;
-    let other = id_token("https://other.test", "mike@comotechnologies.io");
+    let other = id_token(
+        "https://other.test",
+        "mike@comotechnologies.io",
+        DEFAULT_DOMAIN,
+    );
     let reply = exchange(&server, &other).await;
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
@@ -142,4 +152,15 @@ async fn a_server_without_a_provider_has_no_sign_in() {
     let reply = exchange(&server, "any").await;
     let error: TokenError = reply.json().await.unwrap();
     assert_eq!(error.error, "unsupported_grant_type");
+}
+
+#[tokio::test]
+async fn an_account_from_another_domain_is_refused() {
+    let (service, server, issuer) = start().await;
+    let reply = exchange(&server, &id_token(&issuer, "mike@gmail.com", "gmail.com")).await;
+    assert_eq!(reply.status(), 400);
+    let error: TokenError = reply.json().await.unwrap();
+    assert_eq!(error.error, "invalid_grant");
+    // No sign-in started.
+    assert_eq!(service.tokens().revoke_user("mike"), 0);
 }

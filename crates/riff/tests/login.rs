@@ -17,7 +17,7 @@ use riff::login::{self, SignIn};
 use riff_core::wire::Discovery;
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::oidc::Provider;
+use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 use serde_json::{Value, json};
 
 const KEY: &str = include_str!("../../riff-server/testdata/test-only-rsa-key.pem");
@@ -74,6 +74,7 @@ async fn provider_token(
         "exp": now + 3600,
         "email": "Mike@comotechnologies.io",
         "email_verified": true,
+        "hd": "comotechnologies.io",
     });
     let id_token = encode(
         &header,
@@ -117,6 +118,7 @@ async fn start() -> (Service, Api) {
             issuer: fake_provider().await,
             client_id: CLIENT.into(),
             client_secret: None,
+            allowed_domains: vec![DEFAULT_DOMAIN.into()],
         }),
         ..Config::default()
     });

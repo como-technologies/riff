@@ -53,6 +53,10 @@ Google:
    RIFF_OIDC_CLIENT_ID=... RIFF_OIDC_CLIENT_SECRET=... riff-server &
    ```
 
+   Only accounts of `comotechnologies.io` can sign in. To allow other
+   Workspace domains, set `RIFF_ALLOWED_DOMAINS`, with commas between
+   the domains.
+
 3. Sign in. Your browser opens:
 
    ```sh

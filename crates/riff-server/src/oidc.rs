@@ -24,6 +24,9 @@
 //! - `iss` is the issuer, `aud` is the client ID, and `exp` is in the
 //!   future.
 //! - `email_verified` is true.
+//! - `hd`, the Google Workspace domain of the account, is one of
+//!   [`Provider::allowed_domains`] (R15). An account with no `hd` is
+//!   refused.
 //!
 //! The user part of the session URI is the part of the email before
 //! the `@`, in lower case (see [`user_of`]). The server fetches the
@@ -53,7 +56,13 @@ pub struct Provider {
     pub issuer: String,
     pub client_id: String,
     pub client_secret: Option<String>,
+    /// The Workspace domains whose accounts may sign in. The default is
+    /// [`DEFAULT_DOMAIN`].
+    pub allowed_domains: Vec<String>,
 }
+
+/// The allowed domain when the settings name none (R15).
+pub const DEFAULT_DOMAIN: &str = "comotechnologies.io";
 
 /// Who signed in.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +96,7 @@ impl std::error::Error for SignInError {}
 struct Claims {
     email: Option<String>,
     email_verified: Option<bool>,
+    hd: Option<String>,
 }
 
 impl Provider {
@@ -131,6 +141,16 @@ impl Provider {
             .claims;
         if claims.email_verified != Some(true) {
             return Err(SignInError::Invalid("the email is not verified".into()));
+        }
+        let domain = claims.hd.unwrap_or_default();
+        if !self
+            .allowed_domains
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(&domain))
+        {
+            return Err(SignInError::Invalid(format!(
+                "the domain {domain:?} is not allowed"
+            )));
         }
         let email = claims
             .email
@@ -195,6 +215,7 @@ mod tests {
             issuer: ISSUER.into(),
             client_id: "riff-client".into(),
             client_secret: None,
+            allowed_domains: vec![DEFAULT_DOMAIN.into()],
         }
     }
 
@@ -216,6 +237,7 @@ mod tests {
             "exp": now() + 3600,
             "email": "Mike@comotechnologies.io",
             "email_verified": true,
+            "hd": "comotechnologies.io",
         })
     }
 
@@ -256,6 +278,15 @@ mod tests {
     }
 
     #[test]
+    fn each_allowed_domain_may_sign_in() {
+        let mut provider = provider();
+        provider.allowed_domains = vec!["example.com".into(), "ComoTechnologies.io".into()];
+        assert!(provider.verify(&jwks(), &sign(&claims(), "test")).is_ok());
+        provider.allowed_domains = vec!["example.com".into()];
+        assert!(provider.verify(&jwks(), &sign(&claims(), "test")).is_err());
+    }
+
+    #[test]
     fn the_host_alone_is_a_valid_issuer() {
         let claims = with("iss", json!("issuer.test"));
         assert!(provider().verify(&jwks(), &sign(&claims, "test")).is_ok());
@@ -267,6 +298,10 @@ mod tests {
         assert!(refused(&with("aud", json!("other-client"))));
         assert!(refused(&with("exp", json!(now() - 3600))));
         assert!(refused(&with("email_verified", json!(false))));
+        assert!(refused(&with("hd", json!("gmail.com"))));
+        let mut no_domain = claims();
+        no_domain.as_object_mut().unwrap().remove("hd");
+        assert!(refused(&no_domain));
         let mut no_email = claims();
         no_email.as_object_mut().unwrap().remove("email");
         assert!(refused(&no_email));

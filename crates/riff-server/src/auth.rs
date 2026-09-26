@@ -185,6 +185,7 @@ mod tests {
             issuer: "https://accounts.google.com".into(),
             client_id: "riff".into(),
             client_secret: None,
+            allowed_domains: vec![],
         });
         assert_eq!(
             config.server_metadata().grant_types_supported,

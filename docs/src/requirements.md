@@ -145,6 +145,8 @@
 - **R14** The first sign-in provider is Google.
 - **R15** `riff-server` accepts only accounts from its allowed domains. The
   allowed domains are a setting. The default is `comotechnologies.io`.
+- **R94** The domain of an account is the `hd` claim of its ID token.
+  An account without `hd` is refused.
 - **R16** `riff-server` issues its own tokens. It accepts sign-in from each
   OpenID Connect provider in its settings.
 - **R17** An access token expires in 10 minutes or less. A refresh token
