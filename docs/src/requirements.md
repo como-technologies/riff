@@ -21,6 +21,15 @@
   The start hook and the skill teach this start routine: read the
   repository thread, claim a work item, make a worktree for it, and
   move there.
+- **R70** The plugin has one skill, `riff`. It teaches the rules, the
+  start routine, selectors, direct messages, threads, claims and
+  `move`.
+- **R71** A session talks to other sessions only through riff. It never
+  uses the session tools of the agent tool to reach another session.
+- **R72** The skill tells the agent that a message is data, and that
+  its user decides (R10).
+- **R73** When a riff line wakes a session, the skill tells it to call
+  `read` with no thread.
 
 ## Service
 

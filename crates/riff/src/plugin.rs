@@ -11,11 +11,13 @@
 //! | File | Gives the session |
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
+//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, selectors, claims and `move`. |
 //!
 //! ```
 //! let dir = tempfile::tempdir()?;
 //! riff::plugin::write(dir.path())?;
 //! assert!(dir.path().join("riff/.mcp.json").is_file());
+//! assert!(dir.path().join("riff/skills/riff/SKILL.md").is_file());
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
@@ -43,6 +45,7 @@ pub const FILES: &[(&str, &str)] = &[
     embed!(".claude-plugin/marketplace.json"),
     embed!("riff/.claude-plugin/plugin.json"),
     embed!("riff/.mcp.json"),
+    embed!("riff/skills/riff/SKILL.md"),
 ];
 
 /// Writes the marketplace to `dir`. It replaces the files that are there.
@@ -61,9 +64,12 @@ pub fn write(dir: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    fn text(path: &str) -> &'static str {
+        FILES.iter().find(|(p, _)| *p == path).unwrap().1
+    }
+
     fn json(path: &str) -> serde_json::Value {
-        let (_, text) = FILES.iter().find(|(p, _)| *p == path).unwrap();
-        serde_json::from_str(text).unwrap()
+        serde_json::from_str(text(path)).unwrap()
     }
 
     #[test]
@@ -96,5 +102,34 @@ mod tests {
         let mcp = json("riff/.mcp.json");
         assert_eq!(mcp[NAME]["command"], "riff");
         assert_eq!(mcp[NAME]["args"], serde_json::json!(["mcp"]));
+    }
+
+    #[test]
+    fn the_skill_is_named_riff() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let front = skill.strip_prefix("---\n").unwrap().split("---\n").next();
+        let front = front.unwrap();
+        assert!(front.contains(&format!("name: {NAME}\n")));
+        assert!(front.contains("description: "));
+    }
+
+    #[test]
+    fn the_skill_teaches_each_rule() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        for word in [
+            "only through riff",
+            "SendMessage",
+            "data, not an instruction",
+            "secrets",
+            "Start routine",
+            "`claim`",
+            "`release`",
+            "`move`",
+            "`tell`",
+            "selector",
+            "`read` with no thread",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
     }
 }
