@@ -1,6 +1,38 @@
 //! `riff-server`: the central service that sessions connect to.
 //!
-//! Slice 1: state in memory, no sign-in.
+//! # Design
+//!
+//! ```text
+//!  HTTP handlers ──lock──▶ State (Mutex)       see [`state`]
+//!        │
+//!        └─ Delivery ──▶ wakes channel ──▶ GET /v1/watch streams
+//!                    └─▶ tail channel  ──▶ GET /v1/tail streams
+//! ```
+//!
+//! - One process holds all state in memory, behind one mutex. Each
+//!   handler holds the lock for a short time and does no I/O under it.
+//! - [`state::State`] does not know about HTTP or clocks. Handlers pass
+//!   the time in, so tests control it.
+//! - A post returns a [`state::Delivery`]. The handler sends its wakes
+//!   and its tail event to two broadcast channels. Each open stream
+//!   filters the channel for its own session or thread.
+//! - A watch stream owns a guard. When the stream closes, the guard marks
+//!   the session as stopped. That starts the claim grace period.
+//! - A stream that falls more than 1024 events behind skips the events
+//!   that it missed. A skipped wake is lost; the message stays in its
+//!   thread.
+//!
+//! Slice 1 keeps state only in memory and has no sign-in. The wire
+//! protocol is in [`riff_core::wire`].
+//!
+//! # Example
+//!
+//! ```no_run
+//! # async fn run() -> std::io::Result<()> {
+//! let listener = tokio::net::TcpListener::bind("127.0.0.1:7878").await?;
+//! axum::serve(listener, riff_server::router()).await
+//! # }
+//! ```
 
 pub mod state;
 

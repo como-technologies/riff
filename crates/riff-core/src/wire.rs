@@ -1,7 +1,52 @@
 //! Requests, replies and events between `riff` and `riff-server`.
 //!
-//! Each request is a JSON `POST /v1/<op>`. Streams are server-sent events
-//! on `GET /v1/watch` and `GET /v1/tail`.
+//! # Protocol
+//!
+//! Each call is `POST /v1/<op>` with a JSON body. A reply is JSON with
+//! status 200. An error is plain text with status 400 or 404.
+//!
+//! | Op | Request | Reply |
+//! |---|---|---|
+//! | `register` | [`Register`] | `null` |
+//! | `who` | [`Who`] | [`WhoReply`] |
+//! | `threads` | [`Threads`] | [`ThreadsReply`] |
+//! | `join`, `leave` | [`Membership`] | `null` |
+//! | `post` | [`Post`] | [`Posted`] |
+//! | `tell` | [`Tell`] | [`Posted`] |
+//! | `read` | [`Read`] | [`ReadReply`] |
+//! | `claim` | [`Claim`] | [`ClaimReply`] |
+//! | `release` | [`Claim`] | `null` |
+//!
+//! Two streams use server-sent events. Each event is one `data:` line
+//! that holds JSON:
+//!
+//! | Stream | Query | Event |
+//! |---|---|---|
+//! | `GET /v1/watch` | `name=<session name>` | [`Wake`] |
+//! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
+//!
+//! A session is live while its watch stream is open. Slice 1 has no
+//! sign-in: a request names its session in the body.
+//!
+//! # Example
+//!
+//! The event that wakes a session after a mention:
+//!
+//! ```
+//! use riff_core::wire::{Wake, WakeReason};
+//!
+//! let wake = Wake {
+//!     thread: "como-technologies/riff".parse()?,
+//!     seq: 2,
+//!     from: "riff://mike@pangolin/como-technologies/riff#api".parse()?,
+//!     reason: WakeReason::Mention,
+//! };
+//! assert_eq!(
+//!     serde_json::to_string(&wake).unwrap(),
+//!     r#"{"thread":"como-technologies/riff","seq":2,"from":"riff://mike@pangolin/como-technologies/riff#api","reason":"mention"}"#
+//! );
+//! # Ok::<(), riff_core::name::NameError>(())
+//! ```
 
 use serde::{Deserialize, Serialize};
 

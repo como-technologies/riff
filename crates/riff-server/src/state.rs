@@ -1,5 +1,63 @@
-//! The in-memory state of `riff-server`. No I/O: the HTTP layer passes
-//! the time in, so tests control it.
+//! The in-memory state of `riff-server`.
+//!
+//! # Model
+//!
+//! | Data | Key | Notes |
+//! |---|---|---|
+//! | Presence | session | Open watch streams and the last time the session called. |
+//! | Threads | thread name | Members, and messages with a sequence number that starts at 1. |
+//! | Read cursors | session and thread | The last sequence number that the session read. |
+//! | Claims | thread and item | The session that holds the item. |
+//!
+//! # Rules
+//!
+//! - Each call records the session as seen at `now`.
+//! - A post joins its sender to the thread. It wakes each known session
+//!   that it mentions, except the sender.
+//! - A direct message joins both sessions to their direct thread and
+//!   always wakes the receiver. Other sessions cannot see that thread.
+//! - `read` returns the messages after the cursor, then moves the cursor
+//!   to the end.
+//! - A claim is free, or held. A held claim goes back to free when its
+//!   holder releases it, or when the holder has no watch stream and was
+//!   last seen more than [`CLAIM_GRACE`] ago. A claim of a free item
+//!   succeeds.
+//!
+//! The state does no I/O and reads no clock. The caller passes `now`.
+//!
+//! # Example
+//!
+//! ```
+//! use std::time::Instant;
+//! use riff_core::name::SessionName;
+//! use riff_core::wire::WakeReason;
+//! use riff_server::state::State;
+//!
+//! let mike: SessionName = "riff://mike@pangolin/como-technologies/riff#api".parse()?;
+//! let brett: SessionName = "riff://brett@heron/como-technologies/riff#tests".parse()?;
+//! let now = Instant::now();
+//! let mut state = State::default();
+//! state.register(&mike, now);
+//! state.register(&brett, now);
+//! let thread = mike.default_thread().unwrap();
+//!
+//! // A post without a mention wakes nobody.
+//! assert!(state.post(&mike, &thread, "working".into(), now, 0).wakes.is_empty());
+//!
+//! // A mention wakes the named session.
+//! let delivery = state.post(&mike, &thread, "@brett@heron:riff#tests ready".into(), now, 0);
+//! assert_eq!(delivery.wakes[0].0, brett);
+//! assert_eq!(delivery.wakes[0].1.reason, WakeReason::Mention);
+//!
+//! // Brett reads both messages once.
+//! assert_eq!(state.read(&brett, &thread, false, now).unwrap().len(), 2);
+//! assert!(state.read(&brett, &thread, false, now).unwrap().is_empty());
+//!
+//! // The first claim wins.
+//! assert!(state.claim(&mike, &thread, "issue-12", now).granted);
+//! assert!(!state.claim(&brett, &thread, "issue-12", now).granted);
+//! # Ok::<(), riff_core::name::NameError>(())
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
@@ -10,6 +68,7 @@ use riff_core::wire::{ClaimReply, Message, SessionInfo, Tailed, ThreadInfo, Wake
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 
+/// All state of one `riff-server`. See the module docs for the rules.
 #[derive(Default)]
 pub struct State {
     sessions: BTreeMap<SessionName, Presence>,
@@ -33,7 +92,9 @@ struct Thread {
 
 /// What a new message causes: sessions to wake and a line for `tail`.
 pub struct Delivery {
+    /// Each session to wake, with its event.
     pub wakes: Vec<(SessionName, Wake)>,
+    /// The event for the `tail` streams of the thread.
     pub tailed: Tailed,
 }
 
@@ -46,15 +107,19 @@ impl State {
         }
     }
 
+    /// Records that a watch stream opened. The session is live.
     pub fn watch_started(&mut self, name: &SessionName, now: Instant) {
         self.touch(name, now).watchers += 1;
     }
 
+    /// Records that a watch stream closed. The session is idle when it
+    /// has no open stream.
     pub fn watch_ended(&mut self, name: &SessionName, now: Instant) {
         let presence = self.touch(name, now);
         presence.watchers = presence.watchers.saturating_sub(1);
     }
 
+    /// Each known session, and whether it is live.
     pub fn who(&self) -> Vec<SessionInfo> {
         self.sessions
             .iter()
@@ -65,6 +130,7 @@ impl State {
             .collect()
     }
 
+    /// The threads that `name` can see, with its unread counts.
     pub fn threads(&self, name: &SessionName) -> Vec<ThreadInfo> {
         self.threads
             .iter()
@@ -80,6 +146,7 @@ impl State {
             .collect()
     }
 
+    /// Adds a session to a thread. It makes the thread if it is new.
     pub fn join(&mut self, name: &SessionName, thread: &ThreadName, now: Instant) {
         self.touch(name, now);
         self.threads
@@ -89,6 +156,7 @@ impl State {
             .insert(name.clone());
     }
 
+    /// Removes a session from a thread.
     pub fn leave(&mut self, name: &SessionName, thread: &ThreadName, now: Instant) {
         self.touch(name, now);
         if let Some(t) = self.threads.get_mut(thread) {
@@ -200,6 +268,7 @@ impl State {
         }
     }
 
+    /// Frees a claim. Only its holder can.
     pub fn release(
         &mut self,
         name: &SessionName,

@@ -1,5 +1,20 @@
-//! Works out the session name from the sign-in, the machine and git
-//! (R35–R37, R43).
+//! Works out the session name from the user, the machine and git.
+//!
+//! # Rules
+//!
+//! | Part | Source, in order |
+//! |---|---|
+//! | user | `RIFF_USER`, then `USER`. Sign-in replaces this in slice 3. |
+//! | host | `RIFF_HOST`, then the machine name without its domain. |
+//! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
+//! | worktree | The directory name of a linked worktree. The main worktree has none. |
+//!
+//! Outside git, the repository part is `-` and the worktree part is the
+//! directory name. Each part goes through
+//! [`riff_core::name::sanitize`].
+//!
+//! The rules depend only on the directory. So `riff mcp` and `riff watch`
+//! get the same name, and a restarted session gets its old name back.
 
 use std::path::Path;
 use std::process::Command;
@@ -7,10 +22,8 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use riff_core::name::{Repo, SessionName, sanitize};
 
-/// The session name for a session that runs in `dir`.
-///
-/// Slice 1 has no sign-in, so the user part comes from `RIFF_USER`, then
-/// `USER`. `RIFF_HOST` overrides the host name.
+/// The session name for a session that runs in `dir`, with the user and
+/// host from the environment.
 pub fn session_name(dir: &Path) -> Result<SessionName> {
     let user = std::env::var("RIFF_USER")
         .or_else(|_| std::env::var("USER"))
@@ -19,6 +32,12 @@ pub fn session_name(dir: &Path) -> Result<SessionName> {
         Ok(host) => host,
         Err(_) => short_host(&gethostname::gethostname().to_string_lossy()),
     };
+    name_in(dir, &user, &host)
+}
+
+/// The session name for a session that runs in `dir`, for a known user
+/// and host.
+pub fn name_in(dir: &Path, user: &str, host: &str) -> Result<SessionName> {
     let (repo, worktree) = match git(dir, &["rev-parse", "--show-toplevel"]) {
         Some(top) => (
             repo_of(dir, &top),
@@ -28,7 +47,7 @@ pub fn session_name(dir: &Path) -> Result<SessionName> {
     };
     Ok(SessionName::new(
         &sanitize(&user.to_lowercase()),
-        &sanitize(&host),
+        &sanitize(host),
         repo,
         worktree.as_deref().map(sanitize).as_deref(),
     )?)
@@ -79,6 +98,15 @@ fn linked_worktree(dir: &Path) -> bool {
 /// OWNER and REPO from a remote URL, for example
 /// `https://github.com/como-technologies/riff.git` or
 /// `git@github.com:como-technologies/riff.git`.
+///
+/// ```
+/// use riff::identity::parse_remote;
+///
+/// let expected = Some(("como-technologies".to_owned(), "riff".to_owned()));
+/// assert_eq!(parse_remote("https://github.com/como-technologies/riff.git"), expected);
+/// assert_eq!(parse_remote("git@github.com:como-technologies/riff.git"), expected);
+/// assert_eq!(parse_remote("riff"), None);
+/// ```
 pub fn parse_remote(url: &str) -> Option<(String, String)> {
     let path = url.trim_end_matches('/').trim_end_matches(".git");
     let mut parts = path.rsplit(['/', ':']);

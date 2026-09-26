@@ -12,7 +12,7 @@ init:
 
 # Run all CI checks. crate-audit is not part of the gate: CI runs it as a
 # separate job (and weekly), so a new advisory cannot hide a code failure.
-ci: fmt-check lint test book
+ci: fmt-check lint test doc book
 
 # House vocabulary for the full local gate
 alias gate := ci
@@ -36,6 +36,10 @@ build:
 # Run all tests
 test *ARGS:
     cargo test --workspace {{ARGS}}
+
+# Build the API docs; a broken doc link fails
+doc:
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
 
 # Build the book (installs the gitignored gruvbox theme if it is missing)
 book:

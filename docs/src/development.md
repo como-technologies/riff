@@ -10,6 +10,9 @@ just ci     # the gate: fmt, clippy, tests, book
 CI runs the same gate on each push. It publishes this book to GitHub
 Pages.
 
+The design docs are in the code. Read them in the
+[API docs](api/riff_core/index.html).
+
 ## Try slice 1
 
 Slice 1 runs on one machine. It has no sign-in.

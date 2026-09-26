@@ -1,4 +1,5 @@
-//! The HTTP client for `riff-server`.
+//! The HTTP client for `riff-server`. The protocol is in
+//! [`riff_core::wire`].
 
 use anyhow::{Context, Result, bail};
 use futures::{Stream, StreamExt};
@@ -13,6 +14,7 @@ use serde::de::DeserializeOwned;
 /// The server that `riff` uses when nothing else is set.
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
+/// A connection to one `riff-server`. Cheap to clone.
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,

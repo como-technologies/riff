@@ -1,7 +1,35 @@
-//! Session names (R35–R43) and thread names.
+//! Session names and thread names.
 //!
-//! A session name is a URI: `riff://USER@HOST/OWNER/REPO#WORKTREE`.
-//! Outside git it is `riff://USER@HOST/-#DIRECTORY`.
+//! # Session names
+//!
+//! A session name is a URI with four parts:
+//!
+//! ```text
+//! riff://mike@pangolin/como-technologies/riff#pr-23
+//!        user  host     owner/repo            worktree
+//! ```
+//!
+//! | Part | Source |
+//! |---|---|
+//! | user | The sign-in. The only part that the server checks. |
+//! | host | The machine name, without its domain. |
+//! | owner/repo | The `origin` remote of the git repository. |
+//! | worktree | The directory name of a linked worktree. The main worktree has none. |
+//!
+//! Outside git, the repository part is `-` and the worktree part is the
+//! directory name: `riff://mike@pangolin/-#notes`.
+//!
+//! Each part holds only ASCII letters, digits, `-`, `_`, `.` and `~`.
+//! [`sanitize`] makes any text fit.
+//!
+//! The *short form* drops `riff://` and the owner:
+//! `mike@pangolin:riff#pr-23`. People and mentions use it.
+//!
+//! # Thread names
+//!
+//! A thread name is free text without spaces, for example
+//! `como-technologies/riff`. The names that start with `dm:` belong to
+//! direct-message threads. Only [`ThreadName::direct`] makes them.
 
 use std::fmt;
 use std::str::FromStr;
@@ -20,6 +48,20 @@ pub enum Repo {
 }
 
 /// The name of one agent session.
+///
+/// It serializes as its full URI.
+///
+/// ```
+/// use riff_core::name::SessionName;
+///
+/// let name: SessionName = "riff://mike@pangolin/como-technologies/riff#pr-23".parse()?;
+/// assert_eq!(name.short(), "mike@pangolin:riff#pr-23");
+/// assert_eq!(
+///     serde_json::to_string(&name).unwrap(),
+///     r#""riff://mike@pangolin/como-technologies/riff#pr-23""#
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct SessionName {
@@ -44,6 +86,23 @@ impl std::error::Error for NameError {}
 impl SessionName {
     /// Makes a name from its parts. A name outside git needs a worktree
     /// part (the directory name).
+    ///
+    /// ```
+    /// use riff_core::name::{Repo, SessionName};
+    ///
+    /// let main = SessionName::new("mike", "pangolin", Repo::Git {
+    ///     owner: "como-technologies".into(),
+    ///     name: "riff".into(),
+    /// }, None)?;
+    /// assert_eq!(main.to_string(), "riff://mike@pangolin/como-technologies/riff");
+    ///
+    /// let notes = SessionName::new("mike", "pangolin", Repo::None, Some("notes"))?;
+    /// assert_eq!(notes.to_string(), "riff://mike@pangolin/-#notes");
+    ///
+    /// assert!(SessionName::new("mike", "pangolin", Repo::None, None).is_err());
+    /// assert!(SessionName::new("mi ke", "pangolin", Repo::None, Some("x")).is_err());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn new(
         user: &str,
         host: &str,
@@ -77,6 +136,15 @@ impl SessionName {
     }
 
     /// The short form for display and mentions: `USER@HOST:REPO#WORKTREE`.
+    ///
+    /// ```
+    /// # use riff_core::name::SessionName;
+    /// let main: SessionName = "riff://mike@pangolin/como-technologies/riff".parse()?;
+    /// assert_eq!(main.short(), "mike@pangolin:riff");
+    /// let notes: SessionName = "riff://mike@pangolin/-#notes".parse()?;
+    /// assert_eq!(notes.short(), "mike@pangolin:-#notes");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn short(&self) -> String {
         let repo = match &self.repo {
             Repo::Git { name, .. } => name.as_str(),
@@ -90,7 +158,17 @@ impl SessionName {
         out
     }
 
-    /// The thread that this session joins by default (R41).
+    /// The thread that this session joins when it registers: OWNER/REPO.
+    /// A session outside git has none.
+    ///
+    /// ```
+    /// # use riff_core::name::SessionName;
+    /// let name: SessionName = "riff://mike@pangolin/como-technologies/riff#pr-23".parse()?;
+    /// assert_eq!(name.default_thread().unwrap().to_string(), "como-technologies/riff");
+    /// let notes: SessionName = "riff://mike@pangolin/-#notes".parse()?;
+    /// assert!(notes.default_thread().is_none());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn default_thread(&self) -> Option<ThreadName> {
         match &self.repo {
             Repo::Git { owner, name } => Some(ThreadName(format!("{owner}/{name}"))),
@@ -153,6 +231,10 @@ impl From<SessionName> for String {
 }
 
 /// Replaces each character that a name part cannot hold with `-`.
+///
+/// ```
+/// assert_eq!(riff_core::name::sanitize("feat/login page"), "feat-login-page");
+/// ```
 pub fn sanitize(part: &str) -> String {
     part.chars()
         .map(|c| if allowed(c) { c } else { '-' })
@@ -185,6 +267,15 @@ const DIRECT_PREFIX: &str = "dm:";
 impl ThreadName {
     /// The thread that holds the direct messages between two sessions.
     /// The order of the two sessions does not matter.
+    ///
+    /// ```
+    /// use riff_core::name::{SessionName, ThreadName};
+    ///
+    /// let a: SessionName = "riff://mike@pangolin/o/r#a".parse()?;
+    /// let b: SessionName = "riff://brett@heron/o/r#b".parse()?;
+    /// assert_eq!(ThreadName::direct(&a, &b), ThreadName::direct(&b, &a));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn direct(a: &SessionName, b: &SessionName) -> Self {
         let (first, second) = if a <= b { (a, b) } else { (b, a) };
         Self(format!("{DIRECT_PREFIX}{first}|{second}"))
@@ -207,6 +298,14 @@ impl FromStr for ThreadName {
 
     /// Parses a thread name that a person or an agent typed. Direct-message
     /// threads come only from [`ThreadName::direct`].
+    ///
+    /// ```
+    /// use riff_core::name::ThreadName;
+    ///
+    /// assert!("como-technologies/riff".parse::<ThreadName>().is_ok());
+    /// assert!("two words".parse::<ThreadName>().is_err());
+    /// assert!("dm:someone".parse::<ThreadName>().is_err());
+    /// ```
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.is_empty() || s.chars().any(char::is_whitespace) {
             return Err(NameError(format!("not a thread name: {s:?}")));
