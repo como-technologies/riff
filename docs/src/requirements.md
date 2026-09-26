@@ -166,6 +166,14 @@
 - **R93** `riff logout` removes the sign-in at one server from the
   device.
 - **R18** Each token is bound to a key that stays on the device.
+- **R86** Tokens use DPoP (RFC 9449) with ES256. Each request with a
+  token carries a new proof from the device key. A proof is valid for
+  5 minutes, and up to 60 seconds in the future.
+- **R87** `riff-server` refuses a bearer token, a proof that it saw
+  before, and a proof for another method or URL. The URL is the public
+  URL of the server and the path.
+- **R88** `riff` keeps one device key for each server, in the OS
+  keyring.
 - **R19** Each session gets its own token. The token works only for that
   session.
 - **R20** A person or an admin can revoke all tokens of a person at once.

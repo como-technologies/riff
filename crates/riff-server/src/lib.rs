@@ -28,13 +28,18 @@
 //!
 //! - `POST /v1/token` swaps a refresh token for a new pair. The token
 //!   store has its own lock, so a refresh never waits for the state.
-//! - `POST /v1/revoke` ends each sign-in of a person. It checks the
-//!   token itself. The admins are a setting ([`auth::Config::admins`]).
-//! - With [`auth::Config::require_sign_in`], a layer checks the access
-//!   token of each other `/v1` route. See [`auth`] for the OAuth rules.
+//! - `POST /v1/revoke` ends each sign-in of a person. The admins are a
+//!   setting ([`auth::Config::admins`]).
+//! - A layer checks the access token and its DPoP proof. It guards
+//!   `/v1/revoke` always, and each other `/v1` route except `/v1/token`
+//!   with [`auth::Config::require_sign_in`]. It puts the
+//!   [`auth::SignedIn`] user in the request. See [`auth`] for the OAuth
+//!   rules.
 //! - `POST /v1/token` also swaps an ID token of the sign-in provider for
 //!   a first pair (see [`oidc`]). `GET /v1/sign-in` names the provider.
 //!   A server with no provider ([`auth::Config::provider`]) refuses both.
+//!   Each grant needs a DPoP proof; the first pair binds the sign-in to
+//!   its key.
 //!
 //! The server keeps state only in memory. The wire protocol is in
 //! [`riff_core::wire`].
@@ -63,8 +68,9 @@ use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use futures::{Stream, StreamExt};
+use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
     Claim, ClaimReply, ID_TOKEN_TYPE, Membership, Post, Posted, Read, ReadReply, Register,
@@ -75,7 +81,7 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::auth::{Config, SignedIn};
+use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::state::{Delivery, State};
 use crate::token::Tokens;
 
@@ -89,6 +95,7 @@ struct Server {
     config: Config,
     state: Mutex<State>,
     tokens: Mutex<Tokens>,
+    replay: Mutex<Replay>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
     http: reqwest::Client,
@@ -104,6 +111,57 @@ impl Server {
 
     fn tokens(&self) -> MutexGuard<'_, Tokens> {
         self.tokens
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Checks the `DPoP` header of a request to `path` (R18). `token` is
+    /// the access token that the request carries, if any. The proof
+    /// must be new.
+    fn proof(
+        &self,
+        headers: &HeaderMap,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+    ) -> Result<dpop::Proof, Refusal> {
+        let mut values = headers.get_all("dpop").iter();
+        let (Some(value), None) = (values.next(), values.next()) else {
+            return Err(Refusal::proof("send one DPoP header"));
+        };
+        let value = value.to_str().map_err(Refusal::proof)?;
+        let now = now_ms() / 1000;
+        let url = self.config.url(path);
+        let proof = dpop::verify(value, method, &url, token, now).map_err(Refusal::proof)?;
+        if !self.replay().first_use(&proof.jti, proof.iat, now) {
+            return Err(Refusal::proof("the proof was used before"));
+        }
+        Ok(proof)
+    }
+
+    /// Finds the user of a request from its access token and its proof.
+    /// `Err(None)` means that the request has no token.
+    fn authenticate(
+        &self,
+        headers: &HeaderMap,
+        method: &str,
+        path: &str,
+    ) -> Result<SignedIn, Option<Refusal>> {
+        let token = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(auth::dpop_token)
+            .ok_or(None)?;
+        let proof = self.proof(headers, method, path, Some(token))?;
+        let tokens = self.tokens();
+        let user = tokens
+            .check(token, &proof.jkt, Instant::now())
+            .map_err(Refusal::token)?;
+        Ok(SignedIn(user.to_owned()))
+    }
+
+    fn replay(&self) -> MutexGuard<'_, Replay> {
+        self.replay
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -126,7 +184,7 @@ impl Server {
 ///
 /// let service = Service::default();
 /// assert!(!service.config().require_sign_in);
-/// let pair = service.tokens().sign_in("mike", Instant::now()).unwrap();
+/// let pair = service.tokens().sign_in("mike", "jkt", Instant::now()).unwrap();
 /// let router = service.router();
 /// # let _ = (pair, router);
 /// ```
@@ -148,6 +206,7 @@ impl Service {
             config,
             state: Mutex::new(State::default()),
             tokens: Mutex::new(Tokens::default()),
+            replay: Mutex::new(Replay::default()),
             wakes,
             tail,
             http: reqwest::Client::new(),
@@ -168,16 +227,17 @@ impl Service {
             .route("/v1/release", post(release))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
+        let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
         if self.0.config.require_sign_in {
-            routes = routes.route_layer(middleware::from_fn_with_state(
-                self.0.clone(),
-                require_token,
-            ));
+            routes = routes.route_layer(guard());
         }
+        let revoke = Router::new()
+            .route("/v1/revoke", post(revoke))
+            .route_layer(guard());
         routes
+            .merge(revoke)
             .route(auth::TOKEN_PATH, post(token))
             .route("/v1/sign-in", get(sign_in_config))
-            .route("/v1/revoke", post(revoke))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
             .with_state(self.0.clone())
@@ -257,8 +317,12 @@ async fn release(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply
     Ok(Json(()))
 }
 
-/// The OAuth 2.1 token endpoint. See [`TokenRequest`] for the grants.
-async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> impl IntoResponse {
+/// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
+async fn token(
+    AxumState(s): AxumState<Shared>,
+    headers: HeaderMap,
+    Form(r): Form<TokenRequest>,
+) -> impl IntoResponse {
     let no_store = || [(header::CACHE_CONTROL, "no-store")];
     let refuse = |error: &str| {
         let error = TokenError {
@@ -272,15 +336,19 @@ async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> 
     {
         return refuse("invalid_target");
     }
+    let Ok(proof) = s.proof(&headers, "POST", auth::TOKEN_PATH, None) else {
+        return refuse("invalid_dpop_proof");
+    };
     let reply = match r.grant_type.as_str() {
         "refresh_token" => s
             .tokens()
             .refresh(
                 r.refresh_token.as_deref().unwrap_or_default(),
+                &proof.jkt,
                 Instant::now(),
             )
             .map_err(|_| "invalid_grant"),
-        TOKEN_EXCHANGE => exchange(&s, &r).await,
+        TOKEN_EXCHANGE => exchange(&s, &r, &proof.jkt).await,
         _ => Err("unsupported_grant_type"),
     };
     match reply {
@@ -289,23 +357,13 @@ async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> 
     }
 }
 
-/// Ends each sign-in of a person. The caller is the user of the bearer
+/// Ends each sign-in of a person. The caller is the user of the access
 /// token. Only an admin names another person.
 async fn revoke(
     AxumState(s): AxumState<Shared>,
-    headers: HeaderMap,
+    Extension(SignedIn(caller)): Extension<SignedIn>,
     Json(r): Json<Revoke>,
 ) -> Reply<Revoked> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(auth::bearer)
-        .ok_or((StatusCode::UNAUTHORIZED, "send a bearer token".to_owned()))?;
-    let mut tokens = s.tokens();
-    let caller = tokens
-        .check(token, Instant::now())
-        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?
-        .to_owned();
     let user = r.user.unwrap_or_else(|| caller.clone());
     if user != caller && !s.config.admins.contains(&caller) {
         return Err((
@@ -313,35 +371,28 @@ async fn revoke(
             format!("{caller} is not an admin; only an admin revokes another person"),
         ));
     }
-    let sign_ins = tokens.revoke_user(&user);
+    let sign_ins = s.tokens().revoke_user(&user);
     tracing::info!(%caller, %user, sign_ins, "revoked");
     Ok(Json(Revoked { user, sign_ins }))
 }
 
 /// Lets a request through only with a live access token in the
-/// `Authorization` header. Else it replies 401 with a challenge.
+/// `Authorization` header and a proof from its device key. Else it
+/// replies 401 with a challenge.
 async fn require_token(
     AxumState(s): AxumState<Shared>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    let token = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(auth::bearer);
-    let checked = token.map(|token| {
-        s.tokens()
-            .check(token, Instant::now())
-            .map(|user| SignedIn(user.to_owned()))
-    });
+    let method = request.method().as_str().to_owned();
+    let path = request.uri().path().to_owned();
+    let checked = s.authenticate(request.headers(), &method, &path);
     let challenge = match checked {
-        Some(Ok(user)) => {
+        Ok(user) => {
             request.extensions_mut().insert(user);
             return next.run(request).await;
         }
-        Some(Err(refused)) => s.config.challenge(Some(&refused.to_string())),
-        None => s.config.challenge(None),
+        Err(refusal) => s.config.challenge(refusal.as_ref()),
     };
     (
         StatusCode::UNAUTHORIZED,
@@ -359,7 +410,7 @@ async fn server_metadata(AxumState(s): AxumState<Shared>) -> Json<ServerMetadata
 }
 
 /// Swaps an ID token of the provider for a first pair of riff tokens.
-async fn exchange(s: &Server, r: &TokenRequest) -> Result<TokenReply, &'static str> {
+async fn exchange(s: &Server, r: &TokenRequest, jkt: &str) -> Result<TokenReply, &'static str> {
     let provider = s.config.provider.as_ref().ok_or("unsupported_grant_type")?;
     let id_token = match (&r.subject_token, r.subject_token_type.as_deref()) {
         (Some(token), Some(ID_TOKEN_TYPE)) => token,
@@ -371,7 +422,7 @@ async fn exchange(s: &Server, r: &TokenRequest) -> Result<TokenReply, &'static s
     })?;
     tracing::info!("{} signed in as {}", identity.email, identity.user);
     s.tokens()
-        .sign_in(&identity.user, Instant::now())
+        .sign_in(&identity.user, jkt, Instant::now())
         .map_err(|_| "invalid_grant")
 }
 

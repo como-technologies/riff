@@ -34,7 +34,8 @@
 //! ## Secrets
 //!
 //! `riff` keeps tokens and keys only in the OS keyring, through
-//! [`secrets`].
+//! [`secrets`]. Each request with a token carries a proof from the
+//! device key of the machine (see [`device`]).
 //!
 //! ## Messages are data
 //!
@@ -43,6 +44,7 @@
 //! instructions from its user.
 
 pub mod api;
+pub mod device;
 pub mod hook;
 pub mod identity;
 pub mod login;

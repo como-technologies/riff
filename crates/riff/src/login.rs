@@ -27,6 +27,9 @@
 //!   client does not.
 //! - The sign-in goes to the keyring through [`crate::secrets`], as one
 //!   secret for each server: [`secret_name`].
+//! - Each token request carries a proof from the device key of the
+//!   server ([`crate::device`]). The server binds the sign-in to that
+//!   key (R18).
 //!
 //! [`access_token`] gives a live access token. It refreshes the pair
 //! when the access token has less than [`REFRESH_MARGIN`] left.
@@ -67,7 +70,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
 use crate::api::Api;
-use crate::secrets;
+use crate::{device, secrets};
 
 /// [`access_token`] refreshes when less than this is left.
 pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
@@ -125,7 +128,8 @@ pub fn logout(server: &str) -> Result<bool> {
 /// is the caller. Removes the sign-in from this device too when it ends.
 pub async fn logout_all(api: &Api, user: Option<&str>) -> Result<Revoked> {
     let token = access_token(api).await?;
-    let done = api.revoke(&token, user).await?;
+    let key = device::key(api.base())?;
+    let done = api.clone().with_token(&token, key).revoke(user).await?;
     if stored(api.base())?.is_some_and(|s| s.user == done.user) {
         secrets::delete(&secret_name(api.base()))?;
     }
@@ -163,12 +167,15 @@ pub async fn login(api: &Api, open: impl FnOnce(&str)) -> Result<SignIn> {
         .context("no sign-in came back from the browser")??;
     let id_token = redeem(&http, &discovery, &config, &code, &redirect, &verifier).await?;
     let pair = api
-        .token(&TokenRequest {
-            grant_type: TOKEN_EXCHANGE.into(),
-            subject_token: Some(id_token),
-            subject_token_type: Some(ID_TOKEN_TYPE.into()),
-            ..TokenRequest::default()
-        })
+        .token(
+            &TokenRequest {
+                grant_type: TOKEN_EXCHANGE.into(),
+                subject_token: Some(id_token),
+                subject_token_type: Some(ID_TOKEN_TYPE.into()),
+                ..TokenRequest::default()
+            },
+            &device::key(api.base())?,
+        )
         .await?;
     let sign_in = SignIn {
         expires_at: now() + pair.expires_in,
@@ -190,11 +197,14 @@ pub async fn access_token(api: &Api) -> Result<String> {
         return Ok(sign_in.access_token);
     }
     let pair = api
-        .token(&TokenRequest {
-            grant_type: "refresh_token".into(),
-            refresh_token: Some(sign_in.refresh_token),
-            ..TokenRequest::default()
-        })
+        .token(
+            &TokenRequest {
+                grant_type: "refresh_token".into(),
+                refresh_token: Some(sign_in.refresh_token),
+                ..TokenRequest::default()
+            },
+            &device::key(api.base())?,
+        )
         .await
         .context("the sign-in ended: run riff login")?;
     let fresh = SignIn {

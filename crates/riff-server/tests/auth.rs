@@ -1,31 +1,24 @@
 //! The MCP authorization spec, over HTTP (R22).
 
+mod common;
+
 use std::time::Instant;
 
+use riff_core::dpop::Key;
 use riff_core::wire::{ResourceMetadata, ServerMetadata, TokenError};
-use riff_server::Service;
-use riff_server::auth::Config;
 
-async fn start(require_sign_in: bool) -> (Service, String) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let mut config = Config::new(&url);
-    config.require_sign_in = require_sign_in;
-    let service = Service::new(config);
-    let router = service.router();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    (service, url)
-}
-
-async fn who(url: &str, token: Option<&str>) -> reqwest::Response {
-    let mut request = reqwest::Client::new()
-        .post(format!("{url}/v1/who"))
+async fn who(base: &str, auth: Option<(&Key, &str)>) -> reqwest::Response {
+    let url = format!("{base}/v1/who");
+    let request = match auth {
+        Some((key, token)) => common::post(&url, key, Some(token)),
+        None => reqwest::Client::new().post(&url),
+    };
+    request
         .header("content-type", "application/json")
-        .body("{}");
-    if let Some(token) = token {
-        request = request.header("authorization", format!("Bearer {token}"));
-    }
-    request.send().await.unwrap()
+        .body("{}")
+        .send()
+        .await
+        .unwrap()
 }
 
 fn challenge(reply: &reqwest::Response) -> String {
@@ -37,7 +30,7 @@ fn challenge(reply: &reqwest::Response) -> String {
 
 #[tokio::test]
 async fn discovery_leads_from_a_401_to_the_token_endpoint() {
-    let (_, url) = start(true).await;
+    let (_, url) = common::start(true, &[]).await;
 
     // 1. No token: 401 names the resource metadata.
     let reply = who(&url, None).await;
@@ -45,7 +38,7 @@ async fn discovery_leads_from_a_401_to_the_token_endpoint() {
     let metadata_url = format!("{url}/.well-known/oauth-protected-resource");
     assert_eq!(
         challenge(&reply),
-        format!(r#"Bearer resource_metadata="{metadata_url}""#)
+        format!(r#"DPoP algs="ES256", resource_metadata="{metadata_url}""#)
     );
 
     // 2. The resource metadata names the issuer.
@@ -57,6 +50,7 @@ async fn discovery_leads_from_a_401_to_the_token_endpoint() {
         .unwrap();
     assert_eq!(resource.resource, url);
     assert_eq!(resource.authorization_servers, [url.as_str()]);
+    assert!(resource.dpop_bound_access_tokens_required);
 
     // 3. The issuer metadata names the token endpoint.
     let issuer = &resource.authorization_servers[0];
@@ -75,26 +69,43 @@ async fn discovery_leads_from_a_401_to_the_token_endpoint() {
             .contains(&"refresh_token".into())
     );
     assert_eq!(server.code_challenge_methods_supported, ["S256"]);
+    assert_eq!(server.dpop_signing_alg_values_supported, ["ES256"]);
 }
 
 #[tokio::test]
 async fn a_live_token_passes_and_a_bad_one_gets_invalid_token() {
-    let (service, url) = start(true).await;
-    let pair = service.tokens().sign_in("mike", Instant::now()).unwrap();
+    let (service, url) = common::start(true, &[]).await;
+    let key = Key::generate();
+    let pair = service
+        .tokens()
+        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .unwrap();
 
-    assert_eq!(who(&url, Some(&pair.access_token)).await.status(), 200);
+    assert_eq!(
+        who(&url, Some((&key, &pair.access_token))).await.status(),
+        200
+    );
 
-    let reply = who(&url, Some("nope")).await;
+    let reply = who(&url, Some((&key, "nope"))).await;
     assert_eq!(reply.status(), 401);
-    assert!(challenge(&reply).starts_with(r#"Bearer error="invalid_token""#));
+    assert!(challenge(&reply).starts_with(r#"DPoP error="invalid_token""#));
 }
 
 #[tokio::test]
 async fn a_token_in_the_query_string_does_not_count() {
-    let (service, url) = start(true).await;
-    let pair = service.tokens().sign_in("mike", Instant::now()).unwrap();
+    let (service, url) = common::start(true, &[]).await;
+    let key = Key::generate();
+    let pair = service
+        .tokens()
+        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .unwrap();
+    let who_url = format!("{url}/v1/who");
     let reply = reqwest::Client::new()
-        .post(format!("{url}/v1/who?access_token={}", pair.access_token))
+        .post(format!("{who_url}?access_token={}", pair.access_token))
+        .header(
+            "dpop",
+            key.proof("POST", &who_url, Some(&pair.access_token), common::now()),
+        )
         .header("content-type", "application/json")
         .body("{}")
         .send()
@@ -105,39 +116,31 @@ async fn a_token_in_the_query_string_does_not_count() {
 
 #[tokio::test]
 async fn without_the_setting_no_token_is_needed() {
-    let (_, url) = start(false).await;
+    let (_, url) = common::start(false, &[]).await;
     assert_eq!(who(&url, None).await.status(), 200);
 }
 
 #[tokio::test]
 async fn the_token_endpoint_checks_the_resource() {
-    let (service, url) = start(true).await;
-    let pair = service.tokens().sign_in("mike", Instant::now()).unwrap();
-    let refresh = |resource: String, token: String| {
-        let url = url.clone();
-        async move {
-            let form =
-                format!("grant_type=refresh_token&refresh_token={token}&resource={resource}");
-            reqwest::Client::new()
-                .post(format!("{url}/v1/token"))
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(form)
-                .send()
-                .await
-                .unwrap()
-        }
+    let (service, url) = common::start(true, &[]).await;
+    let key = Key::generate();
+    let pair = service
+        .tokens()
+        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .unwrap();
+    let form = |resource: &str| {
+        format!(
+            "grant_type=refresh_token&refresh_token={}&resource={resource}",
+            pair.refresh_token
+        )
     };
 
-    let other = refresh(
-        "https://evil.example.com".into(),
-        pair.refresh_token.clone(),
-    )
-    .await;
+    let other = common::refresh(&url, &key, &form("https://evil.example.com")).await;
     assert_eq!(other.status(), 400);
     let error: TokenError = other.json().await.unwrap();
     assert_eq!(error.error, "invalid_target");
 
     // The refused request did not use the refresh token.
-    let ours = refresh(url.clone(), pair.refresh_token).await;
+    let ours = common::refresh(&url, &key, &form(&url)).await;
     assert_eq!(ours.status(), 200);
 }

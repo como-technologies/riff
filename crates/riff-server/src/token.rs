@@ -10,12 +10,16 @@
 //!    └─ refresh 2   not used yet
 //! ```
 //!
-//! A sign-in holds the user. Each pair of tokens belongs to one sign-in.
+//! A sign-in holds the user and the thumbprint of the device key (R18).
+//! Each pair of tokens belongs to one sign-in.
 //! A token is 32 random bytes in URL-safe base64. The server keeps only
 //! the SHA-256 hash of each token, never the token.
 //!
 //! # Rules
 //!
+//! - Each token works only with the device key of its sign-in. The
+//!   caller checks the DPoP proof and passes the thumbprint of its key
+//!   (see [`riff_core::dpop`]).
 //! - An access token expires [`ACCESS_TTL`] after it is issued.
 //! - A refresh token works once. It gives a new pair, and the server
 //!   marks it as used.
@@ -38,16 +42,19 @@
 //!
 //! let now = Instant::now();
 //! let mut tokens = Tokens::default();
-//! let first = tokens.sign_in("mike", now).unwrap();
-//! assert_eq!(tokens.check(&first.access_token, now).unwrap(), "mike");
+//! let first = tokens.sign_in("mike", "jkt-laptop", now).unwrap();
+//! assert_eq!(tokens.check(&first.access_token, "jkt-laptop", now).unwrap(), "mike");
+//!
+//! // Another device key cannot use the token.
+//! assert_eq!(tokens.check(&first.access_token, "jkt-thief", now), Err(Refused::WrongKey));
 //!
 //! // A refresh token gives a new pair once.
-//! let second = tokens.refresh(&first.refresh_token, now).unwrap();
-//! assert_eq!(tokens.check(&second.access_token, now).unwrap(), "mike");
+//! let second = tokens.refresh(&first.refresh_token, "jkt-laptop", now).unwrap();
+//! assert_eq!(tokens.check(&second.access_token, "jkt-laptop", now).unwrap(), "mike");
 //!
 //! // A second use revokes the sign-in.
-//! assert_eq!(tokens.refresh(&first.refresh_token, now), Err(Refused::Reused));
-//! assert_eq!(tokens.check(&second.access_token, now), Err(Refused::Unknown));
+//! assert_eq!(tokens.refresh(&first.refresh_token, "jkt-laptop", now), Err(Refused::Reused));
+//! assert_eq!(tokens.check(&second.access_token, "jkt-laptop", now), Err(Refused::Unknown));
 //! ```
 
 use std::collections::HashMap;
@@ -75,6 +82,8 @@ pub enum Refused {
     Expired,
     /// The refresh token was used before. The sign-in is now revoked.
     Reused,
+    /// The token belongs to another device key.
+    WrongKey,
 }
 
 impl fmt::Display for Refused {
@@ -83,6 +92,7 @@ impl fmt::Display for Refused {
             Refused::Unknown => "the token is not known",
             Refused::Expired => "the token expired",
             Refused::Reused => "the refresh token was used before; sign in again",
+            Refused::WrongKey => "the token belongs to another device key",
         })
     }
 }
@@ -102,6 +112,8 @@ pub struct Tokens {
 
 struct SignIn {
     user: String,
+    /// The thumbprint of the device key.
+    jkt: String,
     last_used: Instant,
 }
 
@@ -116,9 +128,15 @@ struct Refresh {
 }
 
 impl Tokens {
-    /// Starts a sign-in for `user` and issues its first pair. The caller
-    /// has checked the identity of the user.
-    pub fn sign_in(&mut self, user: &str, now: Instant) -> Result<TokenReply, NameError> {
+    /// Starts a sign-in for `user` on the device key `jkt`, and issues
+    /// its first pair. The caller has checked the identity of the user
+    /// and the proof of the key.
+    pub fn sign_in(
+        &mut self,
+        user: &str,
+        jkt: &str,
+        now: Instant,
+    ) -> Result<TokenReply, NameError> {
         check("user", user)?;
         self.sweep(now);
         let id = self.next_sign_in;
@@ -127,14 +145,16 @@ impl Tokens {
             id,
             SignIn {
                 user: user.to_owned(),
+                jkt: jkt.to_owned(),
                 last_used: now,
             },
         );
         Ok(self.issue(id, now))
     }
 
-    /// Swaps a refresh token for a new pair. A refresh token works once.
-    pub fn refresh(&mut self, token: &str, now: Instant) -> Result<TokenReply, Refused> {
+    /// Swaps a refresh token for a new pair. A refresh token works once,
+    /// and only with the device key `jkt` of its sign-in.
+    pub fn refresh(&mut self, token: &str, jkt: &str, now: Instant) -> Result<TokenReply, Refused> {
         self.sweep(now);
         let refresh = self.refresh.get_mut(&hash(token)).ok_or(Refused::Unknown)?;
         let id = refresh.sign_in;
@@ -142,16 +162,23 @@ impl Tokens {
             self.revoke(id);
             return Err(Refused::Reused);
         }
-        refresh.used = true;
         let sign_in = self.sign_ins.get_mut(&id).ok_or(Refused::Unknown)?;
+        if sign_in.jkt != jkt {
+            return Err(Refused::WrongKey);
+        }
         sign_in.last_used = now;
+        refresh.used = true;
         Ok(self.issue(id, now))
     }
 
-    /// Returns the user of a live access token.
-    pub fn check(&self, token: &str, now: Instant) -> Result<&str, Refused> {
+    /// Returns the user of a live access token, used with the device key
+    /// `jkt`.
+    pub fn check(&self, token: &str, jkt: &str, now: Instant) -> Result<&str, Refused> {
         let access = self.access.get(&hash(token)).ok_or(Refused::Unknown)?;
         let sign_in = self.sign_ins.get(&access.sign_in).ok_or(Refused::Unknown)?;
+        if sign_in.jkt != jkt {
+            return Err(Refused::WrongKey);
+        }
         if now >= access.expires {
             return Err(Refused::Expired);
         }
@@ -167,11 +194,11 @@ impl Tokens {
     ///
     /// let now = Instant::now();
     /// let mut tokens = Tokens::default();
-    /// let laptop = tokens.sign_in("mike", now).unwrap();
-    /// let desktop = tokens.sign_in("mike", now).unwrap();
+    /// let laptop = tokens.sign_in("mike", "k", now).unwrap();
+    /// let desktop = tokens.sign_in("mike", "k", now).unwrap();
     /// assert_eq!(tokens.revoke_user("mike"), 2);
-    /// assert_eq!(tokens.check(&laptop.access_token, now), Err(Refused::Unknown));
-    /// assert_eq!(tokens.check(&desktop.access_token, now), Err(Refused::Unknown));
+    /// assert_eq!(tokens.check(&laptop.access_token, "k", now), Err(Refused::Unknown));
+    /// assert_eq!(tokens.check(&desktop.access_token, "k", now), Err(Refused::Unknown));
     /// ```
     pub fn revoke_user(&mut self, user: &str) -> usize {
         let ids: Vec<u64> = self
@@ -209,7 +236,7 @@ impl Tokens {
         );
         TokenReply {
             access_token,
-            token_type: "Bearer".into(),
+            token_type: "DPoP".into(),
             expires_in: ACCESS_TTL.as_secs(),
             refresh_token,
             user,
@@ -252,15 +279,15 @@ mod tests {
     fn signed_in() -> (Tokens, TokenReply, Instant) {
         let now = Instant::now();
         let mut tokens = Tokens::default();
-        let pair = tokens.sign_in("mike", now).unwrap();
+        let pair = tokens.sign_in("mike", "k", now).unwrap();
         (tokens, pair, now)
     }
 
     #[test]
     fn access_token_names_the_user() {
         let (tokens, pair, now) = signed_in();
-        assert_eq!(tokens.check(&pair.access_token, now), Ok("mike"));
-        assert_eq!(pair.token_type, "Bearer");
+        assert_eq!(tokens.check(&pair.access_token, "k", now), Ok("mike"));
+        assert_eq!(pair.token_type, "DPoP");
         assert_eq!(pair.expires_in, 600);
         assert_eq!(pair.user, "mike");
     }
@@ -269,9 +296,9 @@ mod tests {
     fn access_token_expires_after_ten_minutes() {
         let (tokens, pair, now) = signed_in();
         let almost = now + ACCESS_TTL - Duration::from_secs(1);
-        assert_eq!(tokens.check(&pair.access_token, almost), Ok("mike"));
+        assert_eq!(tokens.check(&pair.access_token, "k", almost), Ok("mike"));
         assert_eq!(
-            tokens.check(&pair.access_token, now + ACCESS_TTL),
+            tokens.check(&pair.access_token, "k", now + ACCESS_TTL),
             Err(Refused::Expired)
         );
     }
@@ -279,15 +306,15 @@ mod tests {
     #[test]
     fn unknown_tokens_are_refused() {
         let (mut tokens, pair, now) = signed_in();
-        assert_eq!(tokens.check("nope", now), Err(Refused::Unknown));
-        assert_eq!(tokens.refresh("nope", now), Err(Refused::Unknown));
+        assert_eq!(tokens.check("nope", "k", now), Err(Refused::Unknown));
+        assert_eq!(tokens.refresh("nope", "k", now), Err(Refused::Unknown));
         // Each kind of token works only in its own place.
         assert_eq!(
-            tokens.check(&pair.refresh_token, now),
+            tokens.check(&pair.refresh_token, "k", now),
             Err(Refused::Unknown)
         );
         assert_eq!(
-            tokens.refresh(&pair.access_token, now),
+            tokens.refresh(&pair.access_token, "k", now),
             Err(Refused::Unknown)
         );
     }
@@ -297,11 +324,11 @@ mod tests {
         let (_, pair, now) = signed_in();
         let mut restarted = Tokens::default();
         assert_eq!(
-            restarted.check(&pair.access_token, now),
+            restarted.check(&pair.access_token, "k", now),
             Err(Refused::Unknown)
         );
         assert_eq!(
-            restarted.refresh(&pair.refresh_token, now),
+            restarted.refresh(&pair.refresh_token, "k", now),
             Err(Refused::Unknown)
         );
     }
@@ -310,28 +337,28 @@ mod tests {
     fn refresh_rotates_the_pair() {
         let (mut tokens, first, now) = signed_in();
         let later = now + ACCESS_TTL;
-        let second = tokens.refresh(&first.refresh_token, later).unwrap();
+        let second = tokens.refresh(&first.refresh_token, "k", later).unwrap();
         assert_ne!(second.access_token, first.access_token);
         assert_ne!(second.refresh_token, first.refresh_token);
-        assert_eq!(tokens.check(&second.access_token, later), Ok("mike"));
-        let third = tokens.refresh(&second.refresh_token, later).unwrap();
-        assert_eq!(tokens.check(&third.access_token, later), Ok("mike"));
+        assert_eq!(tokens.check(&second.access_token, "k", later), Ok("mike"));
+        let third = tokens.refresh(&second.refresh_token, "k", later).unwrap();
+        assert_eq!(tokens.check(&third.access_token, "k", later), Ok("mike"));
     }
 
     #[test]
     fn reuse_revokes_the_sign_in() {
         let (mut tokens, first, now) = signed_in();
-        let second = tokens.refresh(&first.refresh_token, now).unwrap();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
         assert_eq!(
-            tokens.refresh(&first.refresh_token, now),
+            tokens.refresh(&first.refresh_token, "k", now),
             Err(Refused::Reused)
         );
         assert_eq!(
-            tokens.check(&second.access_token, now),
+            tokens.check(&second.access_token, "k", now),
             Err(Refused::Unknown)
         );
         assert_eq!(
-            tokens.refresh(&second.refresh_token, now),
+            tokens.refresh(&second.refresh_token, "k", now),
             Err(Refused::Unknown)
         );
     }
@@ -339,24 +366,27 @@ mod tests {
     #[test]
     fn reuse_leaves_other_sign_ins_alone() {
         let (mut tokens, first, now) = signed_in();
-        let other = tokens.sign_in("mike", now).unwrap();
-        tokens.refresh(&first.refresh_token, now).unwrap();
-        tokens.refresh(&first.refresh_token, now).unwrap_err();
-        assert_eq!(tokens.check(&other.access_token, now), Ok("mike"));
-        assert!(tokens.refresh(&other.refresh_token, now).is_ok());
+        let other = tokens.sign_in("mike", "k", now).unwrap();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap_err();
+        assert_eq!(tokens.check(&other.access_token, "k", now), Ok("mike"));
+        assert!(tokens.refresh(&other.refresh_token, "k", now).is_ok());
     }
 
     #[test]
     fn revoke_user_ends_only_that_person() {
         let (mut tokens, mike, now) = signed_in();
-        let brett = tokens.sign_in("brett", now).unwrap();
+        let brett = tokens.sign_in("brett", "k", now).unwrap();
         assert_eq!(tokens.revoke_user("mike"), 1);
-        assert_eq!(tokens.check(&mike.access_token, now), Err(Refused::Unknown));
         assert_eq!(
-            tokens.refresh(&mike.refresh_token, now),
+            tokens.check(&mike.access_token, "k", now),
             Err(Refused::Unknown)
         );
-        assert_eq!(tokens.check(&brett.access_token, now), Ok("brett"));
+        assert_eq!(
+            tokens.refresh(&mike.refresh_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(tokens.check(&brett.access_token, "k", now), Ok("brett"));
         assert_eq!(tokens.revoke_user("mike"), 0);
     }
 
@@ -364,19 +394,19 @@ mod tests {
     fn a_person_signs_in_again_after_revoke() {
         let (mut tokens, _, now) = signed_in();
         tokens.revoke_user("mike");
-        let again = tokens.sign_in("mike", now).unwrap();
-        assert_eq!(tokens.check(&again.access_token, now), Ok("mike"));
+        let again = tokens.sign_in("mike", "k", now).unwrap();
+        assert_eq!(tokens.check(&again.access_token, "k", now), Ok("mike"));
     }
 
     #[test]
     fn an_idle_sign_in_expires() {
         let (mut tokens, first, now) = signed_in();
         let second = tokens
-            .refresh(&first.refresh_token, now + REFRESH_IDLE / 2)
+            .refresh(&first.refresh_token, "k", now + REFRESH_IDLE / 2)
             .unwrap();
         let idle = now + REFRESH_IDLE / 2 + REFRESH_IDLE;
         assert_eq!(
-            tokens.refresh(&second.refresh_token, idle),
+            tokens.refresh(&second.refresh_token, "k", idle),
             Err(Refused::Unknown)
         );
     }
@@ -384,16 +414,31 @@ mod tests {
     #[test]
     fn sweep_forgets_expired_access_tokens() {
         let (mut tokens, _, now) = signed_in();
-        tokens.sign_in("brett", now + ACCESS_TTL).unwrap();
+        tokens.sign_in("brett", "k", now + ACCESS_TTL).unwrap();
         assert_eq!(tokens.access.len(), 1);
         assert_eq!(tokens.sign_ins.len(), 2);
     }
 
     #[test]
+    fn a_token_works_only_with_its_device_key() {
+        let (mut tokens, pair, now) = signed_in();
+        assert_eq!(
+            tokens.check(&pair.access_token, "thief", now),
+            Err(Refused::WrongKey)
+        );
+        assert_eq!(
+            tokens.refresh(&pair.refresh_token, "thief", now),
+            Err(Refused::WrongKey)
+        );
+        // The refused refresh did not use the token.
+        assert!(tokens.refresh(&pair.refresh_token, "k", now).is_ok());
+    }
+
+    #[test]
     fn bad_user_names_are_refused() {
         let mut tokens = Tokens::default();
-        assert!(tokens.sign_in("", Instant::now()).is_err());
-        assert!(tokens.sign_in("a b", Instant::now()).is_err());
+        assert!(tokens.sign_in("", "k", Instant::now()).is_err());
+        assert!(tokens.sign_in("a b", "k", Instant::now()).is_err());
     }
 
     #[test]

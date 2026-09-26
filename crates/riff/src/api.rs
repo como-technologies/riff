@@ -1,8 +1,12 @@
 //! The HTTP client for `riff-server`. The protocol is in
 //! [`riff_core::wire`].
 
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::{Context, Result, bail};
 use futures::{Stream, StreamExt};
+use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -17,10 +21,14 @@ use serde::de::DeserializeOwned;
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
 /// A connection to one `riff-server`. Cheap to clone.
+///
+/// With [`Api::with_token`], each request carries the access token with
+/// the `DPoP` scheme, and a new proof from the device key (R18).
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,
     base: String,
+    auth: Option<Arc<(String, Key)>>,
 }
 
 impl Api {
@@ -28,6 +36,7 @@ impl Api {
         Self {
             http: reqwest::Client::new(),
             base: base.trim_end_matches('/').to_owned(),
+            auth: None,
         }
     }
 
@@ -50,11 +59,14 @@ impl Api {
         Ok(response.error_for_status()?.json().await?)
     }
 
-    /// Calls the token endpoint. See [`TokenRequest`] for the grants.
-    pub async fn token(&self, request: &TokenRequest) -> Result<TokenReply> {
+    /// Calls the token endpoint with a proof from the device key `key`
+    /// (R18). See [`TokenRequest`] for the grants.
+    pub async fn token(&self, request: &TokenRequest, key: &Key) -> Result<TokenReply> {
+        let url = format!("{}/v1/token", self.base);
         let response = self
             .http
-            .post(format!("{}/v1/token", self.base))
+            .post(&url)
+            .header("dpop", key.proof("POST", &url, None, now()))
             .form(request)
             .send()
             .await
@@ -67,6 +79,26 @@ impl Api {
             .await
             .map_or_else(|_| "no reason".to_owned(), |e| e.error);
         bail!("riff-server refused the token request: {error}")
+    }
+
+    /// Sends `access_token` on each request, with proofs from `key`.
+    pub fn with_token(mut self, access_token: &str, key: Key) -> Self {
+        self.auth = Some(Arc::new((access_token.to_owned(), key)));
+        self
+    }
+
+    /// A request to one path, with the token and a proof when there is
+    /// a token. The proof names the URL without the query.
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let url = format!("{}{path}", self.base);
+        let request = self.http.request(method.clone(), &url);
+        let Some(auth) = &self.auth else {
+            return request;
+        };
+        let (token, key) = auth.as_ref();
+        request
+            .header("authorization", format!("DPoP {token}"))
+            .header("dpop", key.proof(method.as_str(), &url, Some(token), now()))
     }
 
     /// Says where the session works now. Call it at the start and after
@@ -197,24 +229,15 @@ impl Api {
     }
 
     /// Ends each sign-in of `user`, or of the caller when `user` is
-    /// `None` (R20). `token` is an access token of the caller.
-    pub async fn revoke(&self, token: &str, user: Option<&str>) -> Result<Revoked> {
-        let response = self
-            .http
-            .post(format!("{}/v1/revoke", self.base))
-            .bearer_auth(token)
-            .json(&Revoke {
-                user: user.map(str::to_owned),
-            })
-            .send()
-            .await
-            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            bail!("revoke failed ({status}): {text}");
+    /// `None` (R20). It needs [`Api::with_token`].
+    pub async fn revoke(&self, user: Option<&str>) -> Result<Revoked> {
+        if self.auth.is_none() {
+            bail!("not signed in");
         }
-        Ok(response.json().await?)
+        let request = Revoke {
+            user: user.map(str::to_owned),
+        };
+        self.call("revoke", &request).await
     }
 
     async fn call<Req: Serialize, Rep: DeserializeOwned>(
@@ -223,8 +246,7 @@ impl Api {
         request: &Req,
     ) -> Result<Rep> {
         let response = self
-            .http
-            .post(format!("{}/v1/{op}", self.base))
+            .request(reqwest::Method::POST, &format!("/v1/{op}"))
             .json(request)
             .send()
             .await
@@ -244,8 +266,7 @@ impl Api {
         query: &[(&str, String)],
     ) -> Result<impl Stream<Item = Result<T>> + use<T>> {
         let response = self
-            .http
-            .get(format!("{}/v1/{op}", self.base))
+            .request(reqwest::Method::GET, &format!("/v1/{op}"))
             .query(query)
             .send()
             .await
@@ -276,6 +297,13 @@ impl Api {
             }
         }))
     }
+}
+
+/// Seconds since the Unix epoch, for proofs.
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// The messages to show from one thread.

@@ -65,3 +65,9 @@ Google:
 
 The user part of your URI is now the part of your email before the
 `@`. `riff logout` removes the sign-in from this device.
+
+Each token works only with the device key of this machine. `riff`
+keeps the key in the OS keyring. Use the same server URL for `riff`
+(`RIFF_SERVER`) as the server has for itself (`--public-url`, by
+default `http://` and the listen address). Else the server refuses
+each proof.

@@ -16,6 +16,7 @@
 //! - [`name`]: session URIs and thread names.
 //! - [`selector`]: the address of a post.
 //! - [`wire`]: the requests, replies and events on the HTTP API.
+//! - [`dpop`]: device keys and the proofs that bind tokens to them.
 //!
 //! ## Sessions
 //!
@@ -70,6 +71,7 @@
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
+pub mod dpop;
 pub mod name;
 pub mod selector;
 pub mod wire;

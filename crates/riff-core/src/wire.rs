@@ -23,7 +23,7 @@
 //! provider.
 //!
 //! `POST /v1/revoke` ends each sign-in of one person (R20). It needs
-//! `Authorization: Bearer <access token>`. Its request is [`Revoke`] and
+//! an access token and a DPoP proof. Its request is [`Revoke`] and
 //! its reply is [`Revoked`]. A missing or bad token gets status 401. A
 //! person who is not an admin and names another user gets status 403.
 //!
@@ -235,12 +235,13 @@ pub struct TokenRequest {
     pub resource: Option<String>,
 }
 
-/// A new pair of riff tokens. Use `access_token` as a bearer token.
-/// Use `refresh_token` once, to get the next pair.
+/// A new pair of riff tokens. Send `access_token` with the `DPoP`
+/// scheme and a proof from the device key. Use `refresh_token` once, to
+/// get the next pair.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenReply {
     pub access_token: String,
-    /// Always `Bearer`.
+    /// Always `DPoP`.
     pub token_type: String,
     /// Seconds until the access token expires.
     pub expires_in: u64,
@@ -324,6 +325,10 @@ pub struct ResourceMetadata {
     pub authorization_servers: Vec<String>,
     /// Always `["header"]`: a token goes only in the Authorization header.
     pub bearer_methods_supported: Vec<String>,
+    /// Always `["ES256"]` (RFC 9449).
+    pub dpop_signing_alg_values_supported: Vec<String>,
+    /// Always true: each token is bound to a device key (R18).
+    pub dpop_bound_access_tokens_required: bool,
 }
 
 /// The authorization server metadata of `riff-server` (RFC 8414).
@@ -337,4 +342,6 @@ pub struct ServerMetadata {
     pub code_challenge_methods_supported: Vec<String>,
     /// Always `["none"]`: `riff` is a public client.
     pub token_endpoint_auth_methods_supported: Vec<String>,
+    /// Always `["ES256"]` (RFC 9449).
+    pub dpop_signing_alg_values_supported: Vec<String>,
 }

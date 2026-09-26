@@ -113,6 +113,8 @@ async fn fake_provider() -> String {
 
 async fn start() -> (Service, Api) {
     mock_keyring();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
     let service = Service::new(Config {
         provider: Some(Provider {
             issuer: fake_provider().await,
@@ -120,13 +122,17 @@ async fn start() -> (Service, Api) {
             client_secret: None,
             allowed_domains: vec![DEFAULT_DOMAIN.into()],
         }),
-        ..Config::default()
+        ..Config::new(&url)
     });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let api = Api::new(&url);
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (service, api)
+}
+
+/// The thumbprint of the device key of this machine for the server.
+fn jkt(api: &Api) -> String {
+    riff::device::key(api.base()).unwrap().thumbprint()
 }
 
 /// A browser that goes to the URL and follows each redirect.
@@ -143,7 +149,7 @@ async fn login_signs_in_and_keeps_the_sign_in() {
     assert_eq!(
         service
             .tokens()
-            .check(&sign_in.access_token, Instant::now()),
+            .check(&sign_in.access_token, &jkt(&api), Instant::now()),
         Ok("mike")
     );
     assert_eq!(login::stored(api.base()).unwrap(), Some(sign_in.clone()));
@@ -173,7 +179,10 @@ async fn an_old_access_token_is_refreshed() {
 
     let fresh = login::access_token(&api).await.unwrap();
     assert_ne!(fresh, first.access_token);
-    assert_eq!(service.tokens().check(&fresh, Instant::now()), Ok("mike"));
+    assert_eq!(
+        service.tokens().check(&fresh, &jkt(&api), Instant::now()),
+        Ok("mike")
+    );
     let kept = login::stored(api.base()).unwrap().unwrap();
     assert_eq!(kept.access_token, fresh);
     assert_ne!(kept.refresh_token, first.refresh_token);
