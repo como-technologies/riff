@@ -9,9 +9,9 @@
 - **R3** A feature of one agent tool is an optional adapter, never the core.
   Infrastructure is always Google.
 - **R4** A person joins with at most three commands.
-- **R44** Only Claude Code is supported for now. `riff connect claude` installs a Claude
-  Code plugin: the MCP server, a skill, and a start hook that wakes the
-  session.
+- **R44** Only Claude Code is supported for now. `riff connect claude`
+  installs a Claude Code plugin: the MCP server, a skill, and a start
+  hook that wakes the session.
 
 ## Service
 
@@ -26,6 +26,8 @@
 - **R33** `riff-server` rejects a token that it does not know. A lost token
   record means the person signs in again.
 - **R34** Storage is behind one interface. Tests use an in-memory store.
+- **R46** A thread with no posts for 30 days is deleted by a Cloud Storage
+  lifecycle rule.
 
 ## Sessions
 
@@ -79,6 +81,8 @@
 - **R21** A client keeps tokens and keys only in the OS keyring.
 - **R22** `riff-server` follows the MCP authorization spec, revision
   2026-07-28.
+- **R47** Each session connects through `riff`. Direct connections from an
+  agent tool are not supported for now.
 
 ## Code
 
@@ -87,6 +91,4 @@
 
 ## Open
 
-- Can an agent tool connect without `riff`? The MCP spec has no device-bound
-  tokens, so such a tool would get plain bearer tokens.
-- How long does `riff-server` keep messages?
+None.
