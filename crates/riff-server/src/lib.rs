@@ -28,11 +28,12 @@
 //!
 //! - `POST /v1/token` swaps a refresh token for a new pair. The token
 //!   store has its own lock, so a refresh never waits for the state.
-//! - `POST /v1/revoke` ends each sign-in of a person. The admins are a
-//!   setting of the server; see [`Service::with_admins`].
+//! - `POST /v1/revoke` ends each sign-in of a person. It checks the
+//!   token itself. The admins are a setting ([`auth::Config::admins`]).
+//! - With [`auth::Config::require_sign_in`], a layer checks the access
+//!   token of each other `/v1` route. See [`auth`] for the OAuth rules.
 //!
-//! The server keeps state only in memory. It issues tokens. Only
-//! `revoke` checks them yet. The wire protocol is in
+//! The server keeps state only in memory. The wire protocol is in
 //! [`riff_core::wire`].
 //!
 //! # Example
@@ -44,30 +45,33 @@
 //! # }
 //! ```
 
+pub mod auth;
 pub mod state;
 pub mod token;
 
-use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Form, Query, State as AxumState};
+use axum::extract::{Form, Query, Request, State as AxumState};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::IntoResponse;
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Revoke, Revoked,
-    Tailed, Threads, ThreadsReply, TokenError, TokenRequest, Wake, WhoReply, WhoRequest,
+    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, ResourceMetadata,
+    Revoke, Revoked, ServerMetadata, Tailed, Threads, ThreadsReply, TokenError, TokenRequest, Wake,
+    WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::auth::{Config, SignedIn};
 use crate::state::{Delivery, State};
 use crate::token::Tokens;
 
@@ -78,9 +82,9 @@ type Shared = Arc<Server>;
 type Reply<T> = Result<Json<T>, (StatusCode, String)>;
 
 struct Server {
+    config: Config,
     state: Mutex<State>,
     tokens: Mutex<Tokens>,
-    admins: HashSet<String>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
 }
@@ -116,6 +120,7 @@ impl Server {
 /// use riff_server::Service;
 ///
 /// let service = Service::default();
+/// assert!(!service.config().require_sign_in);
 /// let pair = service.tokens().sign_in("mike", Instant::now()).unwrap();
 /// let router = service.router();
 /// # let _ = (pair, router);
@@ -125,19 +130,19 @@ pub struct Service(Shared);
 
 impl Default for Service {
     fn default() -> Self {
-        Service::with_admins(Vec::new())
+        Service::new(Config::default())
     }
 }
 
 impl Service {
-    /// A server where `admins` may revoke the tokens of any person (R20).
-    pub fn with_admins(admins: impl IntoIterator<Item = String>) -> Self {
+    /// A new server with these settings.
+    pub fn new(config: Config) -> Self {
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         Service(Arc::new(Server {
+            config,
             state: Mutex::new(State::default()),
             tokens: Mutex::new(Tokens::default()),
-            admins: admins.into_iter().collect(),
             wakes,
             tail,
         }))
@@ -145,7 +150,7 @@ impl Service {
 
     /// The HTTP routes of this server.
     pub fn router(&self) -> Router {
-        Router::new()
+        let mut routes = Router::new()
             .route("/v1/register", post(register))
             .route("/v1/who", post(who))
             .route("/v1/threads", post(threads))
@@ -155,11 +160,25 @@ impl Service {
             .route("/v1/read", post(read))
             .route("/v1/claim", post(claim))
             .route("/v1/release", post(release))
-            .route("/v1/token", post(token))
-            .route("/v1/revoke", post(revoke))
             .route("/v1/watch", get(watch))
-            .route("/v1/tail", get(tail_thread))
+            .route("/v1/tail", get(tail_thread));
+        if self.0.config.require_sign_in {
+            routes = routes.route_layer(middleware::from_fn_with_state(
+                self.0.clone(),
+                require_token,
+            ));
+        }
+        routes
+            .route(auth::TOKEN_PATH, post(token))
+            .route("/v1/revoke", post(revoke))
+            .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
+            .route(auth::SERVER_METADATA_PATH, get(server_metadata))
             .with_state(self.0.clone())
+    }
+
+    /// The settings of this server.
+    pub fn config(&self) -> &Config {
+        &self.0.config
     }
 
     /// The token store of this server.
@@ -233,21 +252,24 @@ async fn release(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply
 
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
 async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> impl IntoResponse {
-    let no_store = [(header::CACHE_CONTROL, "no-store")];
-    if r.grant_type != "refresh_token" {
+    let no_store = || [(header::CACHE_CONTROL, "no-store")];
+    let refuse = |error: &str| {
         let error = TokenError {
-            error: "unsupported_grant_type".into(),
+            error: error.into(),
         };
-        return (StatusCode::BAD_REQUEST, no_store, Json(error)).into_response();
+        (StatusCode::BAD_REQUEST, no_store(), Json(error)).into_response()
+    };
+    if r.grant_type != "refresh_token" {
+        return refuse("unsupported_grant_type");
+    }
+    if r.resource
+        .is_some_and(|resource| !s.config.is_resource(&resource))
+    {
+        return refuse("invalid_target");
     }
     match s.tokens().refresh(&r.refresh_token, Instant::now()) {
-        Ok(pair) => (no_store, Json(pair)).into_response(),
-        Err(_) => {
-            let error = TokenError {
-                error: "invalid_grant".into(),
-            };
-            (StatusCode::BAD_REQUEST, no_store, Json(error)).into_response()
-        }
+        Ok(pair) => (no_store(), Json(pair)).into_response(),
+        Err(_) => refuse("invalid_grant"),
     }
 }
 
@@ -261,7 +283,7 @@ async fn revoke(
     let token = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(auth::bearer)
         .ok_or((StatusCode::UNAUTHORIZED, "send a bearer token".to_owned()))?;
     let mut tokens = s.tokens();
     let caller = tokens
@@ -269,7 +291,7 @@ async fn revoke(
         .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?
         .to_owned();
     let user = r.user.unwrap_or_else(|| caller.clone());
-    if user != caller && !s.admins.contains(&caller) {
+    if user != caller && !s.config.admins.contains(&caller) {
         return Err((
             StatusCode::FORBIDDEN,
             format!("{caller} is not an admin; only an admin revokes another person"),
@@ -278,6 +300,46 @@ async fn revoke(
     let sign_ins = tokens.revoke_user(&user);
     tracing::info!(%caller, %user, sign_ins, "revoked");
     Ok(Json(Revoked { user, sign_ins }))
+}
+
+/// Lets a request through only with a live access token in the
+/// `Authorization` header. Else it replies 401 with a challenge.
+async fn require_token(
+    AxumState(s): AxumState<Shared>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let token = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(auth::bearer);
+    let checked = token.map(|token| {
+        s.tokens()
+            .check(token, Instant::now())
+            .map(|user| SignedIn(user.to_owned()))
+    });
+    let challenge = match checked {
+        Some(Ok(user)) => {
+            request.extensions_mut().insert(user);
+            return next.run(request).await;
+        }
+        Some(Err(refused)) => s.config.challenge(Some(&refused.to_string())),
+        None => s.config.challenge(None),
+    };
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, challenge)],
+    )
+        .into_response()
+}
+
+async fn resource_metadata(AxumState(s): AxumState<Shared>) -> Json<ResourceMetadata> {
+    Json(s.config.resource_metadata())
+}
+
+async fn server_metadata(AxumState(s): AxumState<Shared>) -> Json<ServerMetadata> {
+    Json(s.config.server_metadata())
 }
 
 #[derive(Deserialize)]

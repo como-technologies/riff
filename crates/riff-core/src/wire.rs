@@ -25,6 +25,13 @@
 //! its reply is [`Revoked`]. A missing or bad token gets status 401. A
 //! person who is not an admin and names another user gets status 403.
 //!
+//! Two metadata documents follow the MCP authorization spec (R22):
+//!
+//! | Path | Reply |
+//! |---|---|
+//! | `GET /.well-known/oauth-protected-resource` | [`ResourceMetadata`] (RFC 9728) |
+//! | `GET /.well-known/oauth-authorization-server` | [`ServerMetadata`] (RFC 8414) |
+//!
 //! Two streams use server-sent events. Each event is one `data:` line
 //! that holds JSON:
 //!
@@ -205,6 +212,10 @@ pub struct Tailed {
 pub struct TokenRequest {
     pub grant_type: String,
     pub refresh_token: String,
+    /// The server that the token is for (RFC 8707). When it is set, it
+    /// must be the public URL of the server.
+    #[serde(default)]
+    pub resource: Option<String>,
 }
 
 /// A new pair of riff tokens. Use `access_token` as a bearer token.
@@ -240,4 +251,28 @@ pub struct Revoked {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenError {
     pub error: String,
+}
+
+/// The protected resource metadata of `riff-server` (RFC 9728).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceMetadata {
+    /// The public URL of the server. Tokens are only for it.
+    pub resource: String,
+    /// The issuer of each token. It is the server itself.
+    pub authorization_servers: Vec<String>,
+    /// Always `["header"]`: a token goes only in the Authorization header.
+    pub bearer_methods_supported: Vec<String>,
+}
+
+/// The authorization server metadata of `riff-server` (RFC 8414).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerMetadata {
+    pub issuer: String,
+    pub token_endpoint: String,
+    pub grant_types_supported: Vec<String>,
+    /// Empty: the server has no authorization endpoint (R83).
+    pub response_types_supported: Vec<String>,
+    pub code_challenge_methods_supported: Vec<String>,
+    /// Always `["none"]`: `riff` is a public client.
+    pub token_endpoint_auth_methods_supported: Vec<String>,
 }

@@ -4,9 +4,13 @@ use std::time::Instant;
 
 use assert_cmd::Command;
 use riff_server::Service;
+use riff_server::auth::Config;
 
 async fn start(admins: &[&str]) -> (Service, String) {
-    let service = Service::with_admins(admins.iter().map(|a| a.to_string()));
+    let service = Service::new(Config {
+        admins: admins.iter().map(|a| a.to_string()).collect(),
+        ..Config::default()
+    });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let router = service.router();

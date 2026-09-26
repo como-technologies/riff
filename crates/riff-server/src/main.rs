@@ -3,6 +3,8 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
+use riff_server::Service;
+use riff_server::auth::Config;
 
 /// The central service that sessions connect to.
 #[derive(Parser)]
@@ -16,6 +18,15 @@ struct Cli {
     /// more admins.
     #[arg(long = "admin", env = "RIFF_ADMINS", value_delimiter = ',')]
     admins: Vec<String>,
+
+    /// The URL where people reach the server. It is the OAuth resource
+    /// and issuer. The default is http://<listen>.
+    #[arg(long, env = "RIFF_PUBLIC_URL")]
+    public_url: Option<String>,
+
+    /// Refuse each request that has no live riff access token.
+    #[arg(long, env = "RIFF_REQUIRE_SIGN_IN")]
+    require_sign_in: bool,
 }
 
 #[tokio::main]
@@ -27,12 +38,14 @@ async fn main() -> std::io::Result<()> {
         )
         .init();
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
+    let public_url = cli
+        .public_url
+        .unwrap_or_else(|| format!("http://{}", listener.local_addr().unwrap_or(cli.listen)));
+    let mut config = Config::new(&public_url);
+    config.require_sign_in = cli.require_sign_in;
+    config.admins = cli.admins;
     tracing::info!("riff-server listens on {}", listener.local_addr()?);
-    axum::serve(
-        listener,
-        riff_server::Service::with_admins(cli.admins).router(),
-    )
-    .await
+    axum::serve(listener, Service::new(config).router()).await
 }
 
 #[cfg(test)]

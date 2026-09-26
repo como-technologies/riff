@@ -169,6 +169,13 @@
   KWallet.
 - **R22** `riff-server` follows the MCP authorization spec, revision
   2026-07-28.
+- **R83** `riff-server` has no authorization endpoint for now. Its
+  metadata lists no response type.
+- **R84** The public URL of `riff-server` is a setting. It is the OAuth
+  resource and the issuer. Each token is only for it.
+- **R85** With the setting `--require-sign-in`, each route except the
+  token endpoint and the metadata needs a live access token in the
+  `Authorization` header.
 - **R47** Each session connects through `riff`. Direct connections from an
   agent tool are not supported for now.
 
