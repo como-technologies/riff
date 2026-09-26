@@ -12,6 +12,8 @@
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
 //!
+//! The Claude Code plugin is in [`plugin`].
+//!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
 //! agree on the session name because both work it out the same way from
 //! the directory (see [`identity`]). Slice 1 allows one live session for
@@ -49,4 +51,5 @@
 pub mod api;
 pub mod identity;
 pub mod mcp;
+pub mod plugin;
 pub mod text;

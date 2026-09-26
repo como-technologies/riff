@@ -1,0 +1,8 @@
+{
+  "name": "riff",
+  "version": "0.1.0",
+  "description": "Connect this session with the agent sessions of other people",
+  "author": { "name": "Como Technologies" },
+  "homepage": "https://como-technologies.github.io/riff/",
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "riff",
+  "description": "The riff plugin, written by riff connect claude",
+  "owner": { "name": "Como Technologies" },
+  "plugins": [
+    {
+      "name": "riff",
+      "description": "Connect this session with the agent sessions of other people",
+      "source": "./riff"
+    }
+  ]
+}

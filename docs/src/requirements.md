@@ -12,6 +12,11 @@
 - **R44** Only Claude Code is supported for now. `riff connect claude`
   installs a Claude Code plugin: the MCP server, a skill, and a start
   hook that wakes the session.
+- **R52** The plugin files live in the riff repository. The `riff`
+  binary carries a copy of them, so the plugin matches the binary.
+- **R53** `riff connect claude` writes the plugin as a local marketplace
+  and installs it with the `claude` command. The same command updates
+  the plugin.
 
 ## Service
 
