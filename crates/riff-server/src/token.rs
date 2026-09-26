@@ -575,4 +575,69 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
     }
+
+    #[test]
+    fn a_session_pair_acts_only_as_its_session() {
+        let (mut tokens, person, now) = signed_in();
+        let a = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        let b = tokens
+            .for_session(&person.access_token, "k", "b", now)
+            .unwrap();
+        let who = |t: &str| tokens.caller(t, "k", now).unwrap().to_string();
+        assert_eq!(who(&person.access_token), "mike");
+        assert_eq!(who(&a.access_token), "mike/a");
+        assert_eq!(who(&b.access_token), "mike/b");
+        assert_eq!(a.user, "mike");
+    }
+
+    #[test]
+    fn a_session_refresh_keeps_the_session() {
+        let (mut tokens, person, now) = signed_in();
+        let first = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let who = tokens.caller(&second.access_token, "k", now).unwrap();
+        assert_eq!(who.session(), Some("a"));
+    }
+
+    #[test]
+    fn only_a_person_token_gives_a_session_pair() {
+        let (mut tokens, person, now) = signed_in();
+        let a = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        assert_eq!(
+            tokens.for_session(&a.access_token, "k", "b", now),
+            Err(Refused::NotPerson)
+        );
+        assert_eq!(
+            tokens.for_session(&person.access_token, "other", "b", now),
+            Err(Refused::WrongKey)
+        );
+        assert_eq!(
+            tokens.for_session(&person.refresh_token, "k", "b", now),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(
+            tokens.for_session(&person.access_token, "k", "bad id", now),
+            Err(Refused::Unknown)
+        );
+    }
+
+    #[test]
+    fn reuse_of_a_session_refresh_revokes_the_sign_in() {
+        let (mut tokens, person, now) = signed_in();
+        let first = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap_err();
+        assert_eq!(
+            tokens.check(&person.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+    }
 }
