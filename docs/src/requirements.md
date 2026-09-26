@@ -17,6 +17,10 @@
 - **R53** `riff connect claude` writes the plugin as a local marketplace
   and installs it with the `claude` command. The same command updates
   the plugin.
+- **R54** A new session can start in any directory of a repository.
+  The start hook and the skill teach this start routine: read the
+  repository thread, claim a work item, make a worktree for it, and
+  move there.
 
 ## Service
 
@@ -39,21 +43,35 @@
 - **R8** A new message can wake an idle session.
 - **R9** A claim ends 5 minutes after its session stops, unless the session
   comes back first.
-- **R35** A session name is a URI: `riff://USER@HOST/OWNER/REPO#WORKTREE`.
-- **R36** USER comes from the sign-in. HOST, OWNER/REPO and WORKTREE come
-  from the machine and from git.
+- **R35** A session has a URI:
+  `riff://USER@HOST/OWNER/REPO?session=ID&claim=ITEM#WORKTREE`.
+  It shows who the session is, where it works and what it works on.
+- **R36** Who: USER comes from the sign-in. ID is the session ID of the
+  agent tool. For Claude Code, this is `CLAUDE_CODE_SESSION_ID`.
+- **R55** Where: HOST, OWNER/REPO and WORKTREE come from the machine and
+  from git. They are true at the start and change with `move`.
+- **R56** What: the URI has one `claim` part for each claim that the
+  session holds. It has none when the session holds no claim.
 - **R37** The main worktree has no `#WORKTREE` part.
-- **R38** A second live session with the same name gets `~2`, then `~3`,
-  and so on.
-- **R39** Display and mentions use the short form
-  `USER@HOST:REPO#WORKTREE`.
-- **R40** A session name outlives the session. Messages to an idle name
-  wait.
+- **R38** The session ID makes each URI unique. Two sessions in one
+  worktree have different URIs.
+- **R57** `riff mcp`, `riff watch` and the hooks find their session by
+  the session ID, not by the directory.
+- **R58** A session keeps its session ID for its life. A resumed session
+  keeps its ID. Messages to an idle session wait for it.
+- **R59** A session ID is not a secret. It never gives access.
+- **R64** The `move` tool gives a session a new place. Its session ID
+  and its claims stay.
+- **R65** A person who posts from the command line has no session ID.
+  The sender is `riff://USER@HOST`. A selector with `user` reaches the
+  person through `riff tail`.
+- **R39** People see the short form `USER@HOST:REPO#WORKTREE`. Riff does
+  not route on the short form.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
-- **R43** Outside git, the name is `riff://USER@HOST/-#DIRECTORY`.
-- **R49** When a watch starts, it wakes the session once if a direct
-  message or a mention is unread.
+- **R43** Outside git, the URI is `riff://USER@HOST/-?session=ID#DIRECTORY`.
+- **R49** When a watch starts, it wakes the session once if an addressed
+  message is unread.
 
 ## Threads
 
@@ -61,17 +79,24 @@
   with two members.
 - **R24** Threads are flat. There are no nested replies.
 - **R25** A thread keeps its history. A session that joins can read it.
-- **R26** Only a direct message or a mention wakes a session.
+- **R26** Only an address wakes a session. Text in a message body
+  never wakes a session.
 - **R27** A person can read and post in each thread from the command line.
 - **R28** A claim belongs to a thread.
 - **R48** A person can claim and release work from the command line.
   `riff claim` exits with status 1 when another session holds the item.
 - **R50** A session lists and reads by default only the threads that it
   joined. It can read any other thread by name.
-- **R51** A mention is `@` and a session name anywhere in a message,
-  except in code. Markdown around the name does not matter. A post
-  names each session that it woke, and each mention that matched no
-  session.
+- **R51** A post has a `to` list of selectors. A selector names one or
+  more of these fields: `user`, `session`, `host`, `repo`, `worktree`,
+  `claim`. A session matches a selector when each named field matches.
+  A post wakes each session that matches one or more selectors.
+- **R60** Riff matches the selectors when the message is posted. A
+  session that matches later gets no wake.
+- **R61** The post result names each session that woke, and each
+  selector that matched no session.
+- **R62** A direct message is a post with one `session` selector.
+- **R63** A person addresses a post with `riff post --to FIELD=VALUE`.
 
 ## Security
 
