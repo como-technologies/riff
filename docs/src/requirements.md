@@ -60,9 +60,13 @@
 - **R27** A person can read and post in each thread from the command line.
 - **R28** A claim belongs to a thread.
 - **R48** A person can claim and release work from the command line.
+  `riff claim` exits with status 1 when another session holds the item.
 - **R50** A session lists and reads by default only the threads that it
   joined. It can read any other thread by name.
-  `riff claim` exits with status 1 when another session holds the item.
+- **R51** A mention is `@` and a session name anywhere in a message,
+  except in code. Markdown around the name does not matter. A post
+  names each session that it woke, and each mention that matched no
+  session.
 
 ## Security
 

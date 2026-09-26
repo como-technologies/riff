@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
         Command::Post { thread, body } => {
             let thread = thread_or_default(thread, &me)?;
             let posted = api.post(&me, &thread, &body.join(" ")).await?;
-            println!("Posted message {} to {thread}.", posted.seq);
+            println!("{}", text::posted(&posted));
         }
         Command::Claim { thread, item } => {
             let thread = thread_or_default(thread, &me)?;

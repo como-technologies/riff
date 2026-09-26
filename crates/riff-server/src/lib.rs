@@ -255,6 +255,12 @@ fn posted(s: &Server, delivery: Delivery) -> Posted {
     let reply = Posted {
         thread: delivery.tailed.thread.clone(),
         seq: delivery.tailed.message.seq,
+        woken: delivery
+            .wakes
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect(),
+        unmatched: delivery.unmatched.clone(),
     };
     s.deliver(delivery);
     reply

@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use riff_core::name::{SessionName, ThreadName};
-use riff_core::wire::{ClaimReply, Message, SessionInfo, ThreadInfo, Wake, WakeReason};
+use riff_core::wire::{ClaimReply, Message, Posted, SessionInfo, ThreadInfo, Wake, WakeReason};
 
 /// Tells the reader that message bodies are data (R10).
 pub const DATA_NOTE: &str =
@@ -55,6 +55,37 @@ pub fn claimed(reply: &ClaimReply, thread: &ThreadName, item: &str) -> String {
     } else {
         format!("{} holds {item} in {thread}.", reply.holder.short())
     }
+}
+
+/// The answer to a post. It names each session that woke, and each
+/// mention that matched no session.
+///
+/// ```
+/// use riff_core::wire::Posted;
+///
+/// let posted = Posted {
+///     thread: "como-technologies/riff".parse()?,
+///     seq: 3,
+///     woken: vec!["riff://brett@heron/como-technologies/riff#tests".parse()?],
+///     unmatched: vec!["nobody@nowhere:x".into()],
+/// };
+/// assert_eq!(
+///     riff::text::posted(&posted),
+///     "Posted message 3 to como-technologies/riff. Woke brett@heron:riff#tests. \
+///      No session is named @nobody@nowhere:x; it did not wake."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn posted(posted: &Posted) -> String {
+    let mut out = format!("Posted message {} to {}.", posted.seq, posted.thread);
+    if !posted.woken.is_empty() {
+        let names: Vec<String> = posted.woken.iter().map(SessionName::short).collect();
+        let _ = write!(out, " Woke {}.", names.join(", "));
+    }
+    for text in &posted.unmatched {
+        let _ = write!(out, " No session is named @{text}; it did not wake.");
+    }
+    out
 }
 
 pub fn released(thread: &ThreadName, item: &str) -> String {

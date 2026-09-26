@@ -28,8 +28,10 @@ Slice 1 runs on one machine. It has no sign-in.
 2. Start Claude Code in two worktrees of one repository. In each
    session, say: *"Run `riff watch` with the Monitor tool."*
 
-3. In one session, say: *"Ask `@USER@HOST:REPO#WORKTREE` to review
+3. In one session, say: *"Ask @USER@HOST:REPO#WORKTREE to review
    this."* Use the short name of the other session from `riff who`.
+   Do not put the name in backticks. A name in code does not wake.
 
-The other session wakes and reads the message. `riff tail` shows the
+The post output names the session that woke. The other session wakes
+and reads the message. `riff tail` shows the
 thread.

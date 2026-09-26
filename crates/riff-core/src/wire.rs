@@ -115,10 +115,17 @@ pub struct Tell {
     pub body: String,
 }
 
+/// The reply to `post` and `tell`. It tells the sender who woke.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Posted {
     pub thread: ThreadName,
     pub seq: u64,
+    /// Each session that the message woke.
+    #[serde(default)]
+    pub woken: Vec<SessionName>,
+    /// Each mention that matched no known session, without the `@`.
+    #[serde(default)]
+    pub unmatched: Vec<String>,
 }
 
 /// `POST /v1/read`: returns the messages that `name` has not read, or

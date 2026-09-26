@@ -14,6 +14,7 @@
 //! This crate holds what both sides must agree on:
 //!
 //! - [`name`]: session names and thread names.
+//! - [`mention`]: which text in a message is a mention.
 //! - [`wire`]: the requests, replies and events on the HTTP API.
 //!
 //! ## Sessions
@@ -35,7 +36,7 @@
 //!
 //! A post does not wake the members of a thread. Only two things wake a
 //! session: a direct message, and a mention (`@` followed by the short
-//! name or the full name). The server sends a [`wire::Wake`] on the watch
+//! name or the full name, outside code; see [`mention`]). The server sends a [`wire::Wake`] on the watch
 //! stream of the woken session.
 //!
 //! ## Claims
@@ -61,5 +62,6 @@
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
+pub mod mention;
 pub mod name;
 pub mod wire;

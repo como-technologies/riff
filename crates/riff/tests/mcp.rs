@@ -76,7 +76,26 @@ async fn the_tools_carry_a_conversation() {
         serde_json::json!({ "body": "@brett@heron:riff#tests the API is ready" }),
     )
     .await;
-    assert_eq!(posted, "Posted message 1 to como-technologies/riff.");
+    assert_eq!(
+        posted,
+        "Posted message 1 to como-technologies/riff. Woke brett@heron:riff#tests."
+    );
+
+    // Markdown around a name still wakes; a name in backticks does not;
+    // a name that matches no session is reported.
+    let (posted, _) = call(
+        &mike,
+        "post",
+        serde_json::json!({
+            "body": "**@brett@heron:riff#tests** not `@brett@heron:riff#tests` or @nobody@x:y"
+        }),
+    )
+    .await;
+    assert_eq!(
+        posted,
+        "Posted message 2 to como-technologies/riff. Woke brett@heron:riff#tests. \
+         No session is named @nobody@x:y; it did not wake."
+    );
 
     let (sent, _) = call(
         &mike,

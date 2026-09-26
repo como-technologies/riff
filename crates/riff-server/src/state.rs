@@ -13,7 +13,9 @@
 //!
 //! - Each call records the session as seen at `now`.
 //! - A post joins its sender to the thread. It wakes each known session
-//!   that it mentions, except the sender.
+//!   that it mentions, except the sender. A mention is `@` and a name,
+//!   outside code (see [`riff_core::mention`]). The delivery lists each
+//!   mention that matched no session.
 //! - A direct message joins both sessions to their direct thread and
 //!   always wakes the receiver. Other sessions cannot see that thread.
 //! - `threads` lists only the threads that the session joined. `read`
@@ -67,6 +69,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
+use riff_core::mention::mentions;
 use riff_core::name::{SessionName, ThreadName};
 use riff_core::wire::{ClaimReply, Message, SessionInfo, Tailed, ThreadInfo, Wake, WakeReason};
 
@@ -101,6 +104,8 @@ pub struct Delivery {
     pub wakes: Vec<(SessionName, Wake)>,
     /// The event for the `tail` streams of the thread.
     pub tailed: Tailed,
+    /// Each mention that matched no known session.
+    pub unmatched: Vec<String>,
 }
 
 impl State {
@@ -208,8 +213,8 @@ impl State {
     ) -> Delivery {
         self.join(from, thread, now);
         let message = self.append(from, thread, body, at_ms);
-        let wakes = self
-            .mentioned(&message.body)
+        let (named, unmatched) = self.resolve_mentions(&message.body);
+        let wakes = named
             .into_iter()
             .filter(|name| name != from)
             .map(|name| {
@@ -220,6 +225,7 @@ impl State {
         Delivery {
             wakes,
             tailed: tailed(thread, message),
+            unmatched,
         }
     }
 
@@ -240,6 +246,7 @@ impl State {
         Delivery {
             wakes,
             tailed: tailed(&thread, message),
+            unmatched: Vec::new(),
         }
     }
 
@@ -363,16 +370,28 @@ impl State {
     /// The known sessions that a body mentions, in short form or in full
     /// (`@mike@pangolin:riff#api`).
     fn mentioned(&self, body: &str) -> BTreeSet<SessionName> {
-        body.split_whitespace()
-            .filter_map(|word| word.strip_prefix('@'))
-            .map(|word| word.trim_end_matches(['.', ',', ';', ':', '!', '?', ')']))
-            .filter_map(|word| {
-                self.sessions
-                    .keys()
-                    .find(|name| name.short() == word || name.to_string() == word)
-                    .cloned()
-            })
-            .collect()
+        self.resolve_mentions(body).0
+    }
+
+    /// The known sessions that a body mentions, and each mention that
+    /// matches no known session.
+    fn resolve_mentions(&self, body: &str) -> (BTreeSet<SessionName>, Vec<String>) {
+        let mut named = BTreeSet::new();
+        let mut unmatched = Vec::new();
+        for text in mentions(body) {
+            let found = self
+                .sessions
+                .keys()
+                .find(|name| name.short() == text || name.to_string() == text);
+            match found {
+                Some(name) => {
+                    named.insert(name.clone());
+                }
+                None if !unmatched.iter().any(|u| u == text) => unmatched.push(text.to_owned()),
+                None => {}
+            }
+        }
+        (named, unmatched)
     }
 }
 
@@ -448,6 +467,22 @@ mod tests {
         let woken: Vec<_> = delivery.wakes.iter().map(|(n, _)| n.clone()).collect();
         assert_eq!(woken, vec![tests()]);
         assert_eq!(delivery.wakes[0].1.reason, WakeReason::Mention);
+    }
+
+    #[test]
+    fn a_name_in_code_does_not_wake_and_an_unknown_name_is_reported() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let delivery = state.post(
+            &api(),
+            &thread("x"),
+            "(@brett@heron:riff#tests) `@mike@pangolin:riff#docs` @ghost@nowhere:x".into(),
+            now,
+            0,
+        );
+        let woken: Vec<_> = delivery.wakes.iter().map(|(n, _)| n.clone()).collect();
+        assert_eq!(woken, vec![tests()]);
+        assert_eq!(delivery.unmatched, vec!["ghost@nowhere:x".to_owned()]);
     }
 
     #[test]
