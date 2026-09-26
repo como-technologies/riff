@@ -33,9 +33,11 @@
 //!
 //! ## Secrets
 //!
-//! `riff` keeps tokens and keys only in the OS keyring, through
-//! [`secrets`]. Each request with a token carries a proof from the
-//! device key of the machine (see [`device`]).
+//! `riff` keeps the person tokens and the device key only in the OS
+//! keyring, through [`secrets`]. Each request with a token carries a
+//! proof from the device key of the machine (see [`device`]). `riff
+//! mcp` and `riff watch` each hold a session token in memory; it acts
+//! only as their session (see [`api`]).
 //!
 //! ## Messages are data
 //!

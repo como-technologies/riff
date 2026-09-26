@@ -31,8 +31,15 @@
 //!   server ([`crate::device`]). The server binds the sign-in to that
 //!   key (R18).
 //!
-//! [`access_token`] gives a live access token. It refreshes the pair
-//! when the access token has less than [`REFRESH_MARGIN`] left.
+//! [`access_token`] gives a live person access token. It refreshes the
+//! pair when the access token has less than [`REFRESH_MARGIN`] left.
+//! Only one `riff` process at a time refreshes the pair of one server:
+//! a lock file makes the others wait (R107). Two processes that use one
+//! refresh token would end the sign-in.
+//!
+//! [`session_token`] swaps the person access token for a session pair
+//! (R19). The session pair stays in the memory of the process
+//! (see [`crate::api::Api::signed_in`]); it never goes to the keyring.
 //!
 //! # Example
 //!
@@ -62,7 +69,8 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqwest::Url;
 use riff_core::wire::{
-    Discovery, ID_TOKEN_TYPE, Revoked, SignInConfig, TOKEN_EXCHANGE, TokenRequest,
+    ACCESS_TOKEN_TYPE, Discovery, ID_TOKEN_TYPE, Revoked, SignInConfig, TOKEN_EXCHANGE, TokenReply,
+    TokenRequest,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -127,9 +135,7 @@ pub fn logout(server: &str) -> Result<bool> {
 /// Ends each sign-in of `user` on each device (R101). The default user
 /// is the caller. Removes the sign-in from this device too when it ends.
 pub async fn logout_all(api: &Api, user: Option<&str>) -> Result<Revoked> {
-    let token = access_token(api).await?;
-    let key = device::key(api.base())?;
-    let done = api.clone().with_token(&token, key).revoke(user).await?;
+    let done = api.clone().signed_in(None)?.revoke(user).await?;
     if stored(api.base())?.is_some_and(|s| s.user == done.user) {
         secrets::delete(&secret_name(api.base()))?;
     }
@@ -187,15 +193,20 @@ pub async fn login(api: &Api, open: impl FnOnce(&str)) -> Result<SignIn> {
     Ok(sign_in)
 }
 
-/// A live access token for the server of `api`. It refreshes the pair
-/// when needed, and keeps the new pair.
+/// A live person access token for the server of `api`. It refreshes
+/// the pair when needed, and keeps the new pair.
 pub async fn access_token(api: &Api) -> Result<String> {
+    if let Some(live) = live(api.base())? {
+        return Ok(live.access_token);
+    }
+    let _lock = refresh_lock(api.base()).await?;
+    // Another process may have refreshed while this one waited.
+    if let Some(live) = live(api.base())? {
+        return Ok(live.access_token);
+    }
     let Some(sign_in) = stored(api.base())? else {
         bail!("no sign-in for {}: run riff login", api.base());
     };
-    if now() + REFRESH_MARGIN.as_secs() < sign_in.expires_at {
-        return Ok(sign_in.access_token);
-    }
     let pair = api
         .token(
             &TokenRequest {
@@ -215,6 +226,62 @@ pub async fn access_token(api: &Api) -> Result<String> {
     };
     store(api.base(), &fresh)?;
     Ok(fresh.access_token)
+}
+
+/// A new session pair for `session`, from the person access token of
+/// the server of `api` (R19). The pair works only for that session.
+pub async fn session_token(api: &Api, session: &str) -> Result<TokenReply> {
+    let person = access_token(api).await?;
+    api.token(
+        &TokenRequest {
+            grant_type: TOKEN_EXCHANGE.into(),
+            subject_token: Some(person),
+            subject_token_type: Some(ACCESS_TOKEN_TYPE.into()),
+            session: Some(session.to_owned()),
+            ..TokenRequest::default()
+        },
+        &device::key(api.base())?,
+    )
+    .await
+}
+
+/// The sign-in at `server` when its access token is live. `Err` when
+/// there is no sign-in.
+fn live(server: &str) -> Result<Option<SignIn>> {
+    let Some(sign_in) = stored(server)? else {
+        bail!("no sign-in for {server}: run riff login");
+    };
+    Ok((now() + REFRESH_MARGIN.as_secs() < sign_in.expires_at).then_some(sign_in))
+}
+
+/// The lock file for refreshes of the pair at `server`, one for each OS
+/// user and server (R107).
+///
+/// ```
+/// let a = riff::login::lock_path("http://a");
+/// assert_ne!(a, riff::login::lock_path("http://b"));
+/// assert!(a.starts_with(std::env::temp_dir()));
+/// ```
+pub fn lock_path(server: &str) -> std::path::PathBuf {
+    let owner = std::env::var("USER").unwrap_or_default();
+    let hash = Sha256::digest(format!("{owner} {server}").as_bytes());
+    let name = URL_SAFE_NO_PAD.encode(&hash[..12]);
+    std::env::temp_dir().join(format!("riff-sign-in-{name}.lock"))
+}
+
+/// Waits for the refresh lock of `server`. The lock ends when the file
+/// closes.
+async fn refresh_lock(server: &str) -> Result<std::fs::File> {
+    let path = lock_path(server);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("cannot open {}", path.display()))?;
+    tokio::task::spawn_blocking(move || file.lock().map(|()| file))
+        .await?
+        .with_context(|| format!("cannot lock {}", path.display()))
 }
 
 /// The URL that starts the sign-in in the browser.

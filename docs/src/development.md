@@ -71,3 +71,8 @@ keeps the key in the OS keyring. Use the same server URL for `riff`
 (`RIFF_SERVER`) as the server has for itself (`--public-url`, by
 default `http://` and the listen address). Else the server refuses
 each proof.
+
+With `--require-sign-in`, the server refuses each call without a
+token. `riff` sends a token on each call when you are signed in. A
+command that you type acts as you. Each Claude Code session gets its
+own token, which acts only as that session.

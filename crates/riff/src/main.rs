@@ -178,6 +178,7 @@ async fn main() -> Result<()> {
     }
     let here = identity::place(&std::env::current_dir()?)?;
     let me = identity::me(&here, api.base())?;
+    let api = api.signed_in(me.who().session())?;
     match cli.command {
         Command::Whoami => println!("{}  {me}", text::name(&me)),
         Command::Who => print!("{}", text::who(&api.who().await?, &me)),

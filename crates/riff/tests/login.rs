@@ -150,7 +150,7 @@ async fn login_signs_in_and_keeps_the_sign_in() {
         service
             .tokens()
             .check(&sign_in.access_token, &jkt(&api), Instant::now()),
-        Ok("mike")
+        Ok("mike".to_owned())
     );
     assert_eq!(login::stored(api.base()).unwrap(), Some(sign_in.clone()));
     assert_eq!(login::user(api.base()).as_deref(), Some("mike"));
@@ -181,7 +181,7 @@ async fn an_old_access_token_is_refreshed() {
     assert_ne!(fresh, first.access_token);
     assert_eq!(
         service.tokens().check(&fresh, &jkt(&api), Instant::now()),
-        Ok("mike")
+        Ok("mike".to_owned())
     );
     let kept = login::stored(api.base()).unwrap().unwrap();
     assert_eq!(kept.access_token, fresh);

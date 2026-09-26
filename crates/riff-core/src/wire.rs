@@ -42,9 +42,11 @@
 //! | `GET /v1/watch` | `uri=<session URI>` | [`Wake`] |
 //! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
 //!
-//! A session is live while its watch stream is open. The routes do
-//! not check tokens yet: each request carries the session URI of its sender as
-//! `me`. The server finds the session by the *who* part of that URI.
+//! A session is live while its watch stream is open. Each request
+//! carries the session URI of its sender as `me`. The server finds the
+//! session by the *who* part of that URI. When the server needs
+//! sign-in, the *who* part must match the token, or the reply is 403
+//! (R104).
 //! Only `register` sets the place of a known session; each other call
 //! uses the URI only to make a session that the server does not know.
 //!
@@ -214,12 +216,17 @@ pub const TOKEN_EXCHANGE: &str = "urn:ietf:params:oauth:grant-type:token-exchang
 /// The subject token type of a [`TOKEN_EXCHANGE`] request.
 pub const ID_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:id_token";
 
+/// The subject token type of a [`TOKEN_EXCHANGE`] request that swaps a
+/// person access token for a session pair (R19).
+pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
+
 /// `POST /v1/token`, as `application/x-www-form-urlencoded`.
 ///
 /// | `grant_type` | Fields |
 /// |---|---|
 /// | `refresh_token` | `refresh_token` |
 /// | [`TOKEN_EXCHANGE`] | `subject_token` (an ID token), `subject_token_type` = [`ID_TOKEN_TYPE`] |
+/// | [`TOKEN_EXCHANGE`] | `subject_token` (a person access token), `subject_token_type` = [`ACCESS_TOKEN_TYPE`], `session` |
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TokenRequest {
     pub grant_type: String,
@@ -229,6 +236,9 @@ pub struct TokenRequest {
     pub subject_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_token_type: Option<String>,
+    /// The session ID of a session pair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     /// The server that the token is for (RFC 8707). When it is set, it
     /// must be the public URL of the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]

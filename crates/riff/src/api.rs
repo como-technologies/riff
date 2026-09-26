@@ -1,5 +1,20 @@
 //! The HTTP client for `riff-server`. The protocol is in
 //! [`riff_core::wire`].
+//!
+//! # Tokens
+//!
+//! [`Api::signed_in`] gives a client that sends a token on each
+//! request, when this device has a sign-in at the server. The token
+//! acts as the caller (R104):
+//!
+//! | Caller | Token | Kept in |
+//! |---|---|---|
+//! | A person | The person access token, see [`login::access_token`] | The OS keyring |
+//! | A session | A session token, see [`login::session_token`] | The memory of the process |
+//!
+//! A session token comes from a token exchange the first time that the
+//! client needs it. After that, the client refreshes it with its own
+//! refresh token. When the refresh fails, it does a new exchange.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,19 +31,38 @@ use riff_core::wire::{
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::sync::Mutex;
+
+use crate::{device, login};
 
 /// The server that `riff` uses when nothing else is set.
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
 /// A connection to one `riff-server`. Cheap to clone.
 ///
-/// With [`Api::with_token`], each request carries the access token with
+/// With [`Api::signed_in`], each request carries an access token with
 /// the `DPoP` scheme, and a new proof from the device key (R18).
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,
     base: String,
-    auth: Option<Arc<(String, Key)>>,
+    auth: Option<Arc<Auth>>,
+}
+
+/// Where the tokens of a signed-in [`Api`] come from.
+struct Auth {
+    key: Key,
+    /// The session of a session client. `None` for a person.
+    session: Option<String>,
+    /// The session pair, once the client has one.
+    pair: Mutex<Option<Pair>>,
+}
+
+struct Pair {
+    access_token: String,
+    refresh_token: String,
+    /// Seconds since the Unix epoch.
+    expires_at: u64,
 }
 
 impl Api {
@@ -81,24 +115,83 @@ impl Api {
         bail!("riff-server refused the token request: {error}")
     }
 
-    /// Sends `access_token` on each request, with proofs from `key`.
-    pub fn with_token(mut self, access_token: &str, key: Key) -> Self {
-        self.auth = Some(Arc::new((access_token.to_owned(), key)));
-        self
+    /// A client that sends a token on each request, when this device
+    /// has a sign-in at the server. `session` is the session ID of the
+    /// caller, or `None` for a person. The token acts only as that
+    /// caller (R19). Without a sign-in, the client sends no token.
+    pub fn signed_in(mut self, session: Option<&str>) -> Result<Self> {
+        if login::stored(&self.base).ok().flatten().is_none() {
+            return Ok(self);
+        }
+        self.auth = Some(Arc::new(Auth {
+            key: device::key(&self.base)?,
+            session: session.map(str::to_owned),
+            pair: Mutex::new(None),
+        }));
+        Ok(self)
     }
 
-    /// A request to one path, with the token and a proof when there is
-    /// a token. The proof names the URL without the query.
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+    /// The same server with no token.
+    fn anonymous(&self) -> Api {
+        Api {
+            auth: None,
+            ..self.clone()
+        }
+    }
+
+    /// A live access token for the caller.
+    async fn access_token(&self, auth: &Auth) -> Result<String> {
+        let Some(session) = &auth.session else {
+            return login::access_token(&self.anonymous()).await;
+        };
+        let mut pair = auth.pair.lock().await;
+        if let Some(live) = pair
+            .as_ref()
+            .filter(|p| now() + login::REFRESH_MARGIN.as_secs() < p.expires_at)
+        {
+            return Ok(live.access_token.clone());
+        }
+        let refreshed = match pair.as_ref() {
+            Some(old) => {
+                let request = TokenRequest {
+                    grant_type: "refresh_token".into(),
+                    refresh_token: Some(old.refresh_token.clone()),
+                    ..TokenRequest::default()
+                };
+                self.token(&request, &auth.key).await.ok()
+            }
+            None => None,
+        };
+        let reply = match refreshed {
+            Some(reply) => reply,
+            None => login::session_token(&self.anonymous(), session).await?,
+        };
+        let access_token = reply.access_token.clone();
+        *pair = Some(Pair {
+            expires_at: now() + reply.expires_in,
+            access_token: reply.access_token,
+            refresh_token: reply.refresh_token,
+        });
+        Ok(access_token)
+    }
+
+    /// A request to one path, with a token and a proof when the client
+    /// is signed in. The proof names the URL without the query.
+    async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+    ) -> Result<reqwest::RequestBuilder> {
         let url = format!("{}{path}", self.base);
         let request = self.http.request(method.clone(), &url);
         let Some(auth) = &self.auth else {
-            return request;
+            return Ok(request);
         };
-        let (token, key) = auth.as_ref();
-        request
+        let token = self.access_token(auth).await?;
+        let proof = auth.key.proof(method.as_str(), &url, Some(&token), now());
+        Ok(request
             .header("authorization", format!("DPoP {token}"))
-            .header("dpop", key.proof(method.as_str(), &url, Some(token), now()))
+            .header("dpop", proof))
     }
 
     /// Says where the session works now. Call it at the start and after
@@ -229,10 +322,10 @@ impl Api {
     }
 
     /// Ends each sign-in of `user`, or of the caller when `user` is
-    /// `None` (R20). It needs [`Api::with_token`].
+    /// `None` (R20). It needs [`Api::signed_in`].
     pub async fn revoke(&self, user: Option<&str>) -> Result<Revoked> {
         if self.auth.is_none() {
-            bail!("not signed in");
+            bail!("no sign-in for {}: run riff login", self.base);
         }
         let request = Revoke {
             user: user.map(str::to_owned),
@@ -247,6 +340,7 @@ impl Api {
     ) -> Result<Rep> {
         let response = self
             .request(reqwest::Method::POST, &format!("/v1/{op}"))
+            .await?
             .json(request)
             .send()
             .await
@@ -267,6 +361,7 @@ impl Api {
     ) -> Result<impl Stream<Item = Result<T>> + use<T>> {
         let response = self
             .request(reqwest::Method::GET, &format!("/v1/{op}"))
+            .await?
             .query(query)
             .send()
             .await

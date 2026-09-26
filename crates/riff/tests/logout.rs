@@ -89,7 +89,10 @@ async fn an_admin_logs_out_another_person() {
     assert!(text::revoked(&done).starts_with("Ended 1 sign-in of brett."));
     let tokens = service.tokens();
     assert!(tokens.check(&brett.access_token, &jkt, now).is_err());
-    assert_eq!(tokens.check(&mike.access_token, &jkt, now), Ok("mike"));
+    assert_eq!(
+        tokens.check(&mike.access_token, &jkt, now),
+        Ok("mike".to_owned())
+    );
     drop(tokens);
     // The admin stays signed in on this device.
     assert!(login::stored(api.base()).unwrap().is_some());
@@ -107,7 +110,7 @@ async fn a_token_from_another_device_cannot_log_out() {
     assert!(login::logout_all(&api, None).await.is_err());
     let tokens = service.tokens();
     let still = tokens.check(&stolen.access_token, &other, Instant::now());
-    assert_eq!(still, Ok("mike"));
+    assert_eq!(still, Ok("mike".to_owned()));
 }
 
 #[tokio::test]

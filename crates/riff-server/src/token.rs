@@ -12,6 +12,12 @@
 //!
 //! A sign-in holds the user and the thumbprint of the device key (R18).
 //! Each pair of tokens belongs to one sign-in.
+//!
+//! A pair is a *person* pair or a *session* pair (R19). `riff login`
+//! gets a person pair. [`Tokens::for_session`] swaps a live person
+//! access token for a session pair. A session pair has its own refresh
+//! chain in the same sign-in. So [`Tokens::caller`] gives a [`Who`]
+//! with the user and, for a session pair, the session ID.
 //! A token is 32 random bytes in URL-safe base64. The server keeps only
 //! the SHA-256 hash of each token, never the token.
 //!
@@ -27,8 +33,11 @@
 //!   its access and refresh tokens stops working.
 //! - A sign-in expires when no refresh token of it is used for
 //!   [`REFRESH_IDLE`].
+//! - A refresh gives a pair of the same kind: a session pair stays for
+//!   its session.
+//! - Only a person access token gives a session pair (R105).
 //! - [`Tokens::revoke_user`] ends each sign-in of one person at once
-//!   (R20).
+//!   (R20). This ends the session pairs too.
 //! - A token that the server does not know is refused. After a restart
 //!   the server knows no token, so each person signs in again.
 //!
@@ -52,9 +61,15 @@
 //! let second = tokens.refresh(&first.refresh_token, "jkt-laptop", now).unwrap();
 //! assert_eq!(tokens.check(&second.access_token, "jkt-laptop", now).unwrap(), "mike");
 //!
+//! // A session pair acts only as its session.
+//! let session = tokens.for_session(&second.access_token, "jkt-laptop", "a6cf", now).unwrap();
+//! let who = tokens.caller(&session.access_token, "jkt-laptop", now).unwrap();
+//! assert_eq!(who.to_string(), "mike/a6cf");
+//!
 //! // A second use revokes the sign-in.
 //! assert_eq!(tokens.refresh(&first.refresh_token, "jkt-laptop", now), Err(Refused::Reused));
 //! assert_eq!(tokens.check(&second.access_token, "jkt-laptop", now), Err(Refused::Unknown));
+//! assert_eq!(tokens.check(&session.access_token, "jkt-laptop", now), Err(Refused::Unknown));
 //! ```
 
 use std::collections::HashMap;
@@ -63,7 +78,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use riff_core::name::{NameError, check};
+use riff_core::name::{NameError, Who};
 use riff_core::wire::TokenReply;
 use sha2::{Digest, Sha256};
 
@@ -84,6 +99,8 @@ pub enum Refused {
     Reused,
     /// The token belongs to another device key.
     WrongKey,
+    /// A session token cannot give another token (R105).
+    NotPerson,
 }
 
 impl fmt::Display for Refused {
@@ -93,6 +110,7 @@ impl fmt::Display for Refused {
             Refused::Expired => "the token expired",
             Refused::Reused => "the refresh token was used before; sign in again",
             Refused::WrongKey => "the token belongs to another device key",
+            Refused::NotPerson => "only a person token gives a session token",
         })
     }
 }
@@ -119,11 +137,14 @@ struct SignIn {
 
 struct Access {
     sign_in: u64,
+    /// The session of a session token. `None` for a person token.
+    session: Option<String>,
     expires: Instant,
 }
 
 struct Refresh {
     sign_in: u64,
+    session: Option<String>,
     used: bool,
 }
 
@@ -137,7 +158,7 @@ impl Tokens {
         jkt: &str,
         now: Instant,
     ) -> Result<TokenReply, NameError> {
-        check("user", user)?;
+        Who::new(user, None)?;
         self.sweep(now);
         let id = self.next_sign_in;
         self.next_sign_in += 1;
@@ -149,7 +170,7 @@ impl Tokens {
                 last_used: now,
             },
         );
-        Ok(self.issue(id, now))
+        Ok(self.issue(id, None, now))
     }
 
     /// Swaps a refresh token for a new pair. A refresh token works once,
@@ -169,12 +190,40 @@ impl Tokens {
         }
         sign_in.last_used = now;
         refresh.used = true;
-        Ok(self.issue(id, now))
+        let session = refresh.session.clone();
+        Ok(self.issue(id, session, now))
+    }
+
+    /// Swaps a live person access token for a session pair in the same
+    /// sign-in (R19). The session pair works only for `session`, and
+    /// only with the device key `jkt`.
+    pub fn for_session(
+        &mut self,
+        token: &str,
+        jkt: &str,
+        session: &str,
+        now: Instant,
+    ) -> Result<TokenReply, Refused> {
+        let who = self.caller(token, jkt, now)?;
+        if who.session().is_some() {
+            return Err(Refused::NotPerson);
+        }
+        Who::new(who.user(), Some(session)).map_err(|_| Refused::Unknown)?;
+        self.sweep(now);
+        let id = self.access[&hash(token)].sign_in;
+        Ok(self.issue(id, Some(session.to_owned()), now))
     }
 
     /// Returns the user of a live access token, used with the device key
     /// `jkt`.
-    pub fn check(&self, token: &str, jkt: &str, now: Instant) -> Result<&str, Refused> {
+    pub fn check(&self, token: &str, jkt: &str, now: Instant) -> Result<String, Refused> {
+        self.caller(token, jkt, now)
+            .map(|who| who.user().to_owned())
+    }
+
+    /// Returns who a live access token acts as, used with the device key
+    /// `jkt`: the user, and the session of a session token.
+    pub fn caller(&self, token: &str, jkt: &str, now: Instant) -> Result<Who, Refused> {
         let access = self.access.get(&hash(token)).ok_or(Refused::Unknown)?;
         let sign_in = self.sign_ins.get(&access.sign_in).ok_or(Refused::Unknown)?;
         if sign_in.jkt != jkt {
@@ -183,7 +232,8 @@ impl Tokens {
         if now >= access.expires {
             return Err(Refused::Expired);
         }
-        Ok(&sign_in.user)
+        // The store checked both parts when it issued the token.
+        Who::new(&sign_in.user, access.session.as_deref()).map_err(|_| Refused::Unknown)
     }
 
     /// Ends each sign-in of `user` and each token of them (R20).
@@ -214,7 +264,7 @@ impl Tokens {
         ids.len()
     }
 
-    fn issue(&mut self, sign_in: u64, now: Instant) -> TokenReply {
+    fn issue(&mut self, sign_in: u64, session: Option<String>, now: Instant) -> TokenReply {
         let user = self
             .sign_ins
             .get(&sign_in)
@@ -225,6 +275,7 @@ impl Tokens {
             hash(&access_token),
             Access {
                 sign_in,
+                session: session.clone(),
                 expires: now + ACCESS_TTL,
             },
         );
@@ -232,6 +283,7 @@ impl Tokens {
             hash(&refresh_token),
             Refresh {
                 sign_in,
+                session,
                 used: false,
             },
         );
@@ -287,7 +339,10 @@ mod tests {
     #[test]
     fn access_token_names_the_user() {
         let (tokens, pair, now) = signed_in();
-        assert_eq!(tokens.check(&pair.access_token, "k", now), Ok("mike"));
+        assert_eq!(
+            tokens.check(&pair.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
         assert_eq!(pair.token_type, "DPoP");
         assert_eq!(pair.expires_in, 600);
         assert_eq!(pair.user, "mike");
@@ -297,7 +352,10 @@ mod tests {
     fn access_token_expires_after_ten_minutes() {
         let (tokens, pair, now) = signed_in();
         let almost = now + ACCESS_TTL - Duration::from_secs(1);
-        assert_eq!(tokens.check(&pair.access_token, "k", almost), Ok("mike"));
+        assert_eq!(
+            tokens.check(&pair.access_token, "k", almost),
+            Ok("mike".to_owned())
+        );
         assert_eq!(
             tokens.check(&pair.access_token, "k", now + ACCESS_TTL),
             Err(Refused::Expired)
@@ -341,9 +399,15 @@ mod tests {
         let second = tokens.refresh(&first.refresh_token, "k", later).unwrap();
         assert_ne!(second.access_token, first.access_token);
         assert_ne!(second.refresh_token, first.refresh_token);
-        assert_eq!(tokens.check(&second.access_token, "k", later), Ok("mike"));
+        assert_eq!(
+            tokens.check(&second.access_token, "k", later),
+            Ok("mike".to_owned())
+        );
         let third = tokens.refresh(&second.refresh_token, "k", later).unwrap();
-        assert_eq!(tokens.check(&third.access_token, "k", later), Ok("mike"));
+        assert_eq!(
+            tokens.check(&third.access_token, "k", later),
+            Ok("mike".to_owned())
+        );
     }
 
     #[test]
@@ -372,7 +436,10 @@ mod tests {
             tokens.refresh(&first.refresh_token, "thief", now),
             Err(Refused::WrongKey)
         );
-        assert_eq!(tokens.check(&second.access_token, "k", now), Ok("mike"));
+        assert_eq!(
+            tokens.check(&second.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
     }
 
     #[test]
@@ -381,7 +448,10 @@ mod tests {
         let other = tokens.sign_in("mike", "k", now).unwrap();
         tokens.refresh(&first.refresh_token, "k", now).unwrap();
         tokens.refresh(&first.refresh_token, "k", now).unwrap_err();
-        assert_eq!(tokens.check(&other.access_token, "k", now), Ok("mike"));
+        assert_eq!(
+            tokens.check(&other.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
         assert!(tokens.refresh(&other.refresh_token, "k", now).is_ok());
     }
 
@@ -398,7 +468,10 @@ mod tests {
             tokens.refresh(&mike.refresh_token, "k", now),
             Err(Refused::Unknown)
         );
-        assert_eq!(tokens.check(&brett.access_token, "k", now), Ok("brett"));
+        assert_eq!(
+            tokens.check(&brett.access_token, "k", now),
+            Ok("brett".to_owned())
+        );
         assert_eq!(tokens.revoke_user("mike"), 0);
     }
 
@@ -407,7 +480,10 @@ mod tests {
         let (mut tokens, _, now) = signed_in();
         tokens.revoke_user("mike");
         let again = tokens.sign_in("mike", "k", now).unwrap();
-        assert_eq!(tokens.check(&again.access_token, "k", now), Ok("mike"));
+        assert_eq!(
+            tokens.check(&again.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
     }
 
     #[test]

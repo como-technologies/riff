@@ -136,7 +136,7 @@ async fn an_id_token_gives_riff_tokens_for_its_user() {
         service
             .tokens()
             .check(&pair.access_token, &key.thumbprint(), Instant::now()),
-        Ok("mike")
+        Ok("mike".to_owned())
     );
 }
 

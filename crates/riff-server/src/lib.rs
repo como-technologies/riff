@@ -30,6 +30,12 @@
 //!   store has its own lock, so a refresh never waits for the state.
 //! - `POST /v1/revoke` ends each sign-in of a person. The admins are a
 //!   setting ([`auth::Config::admins`]).
+//! - Each route with a `me` acts only as the [`auth::SignedIn`] caller
+//!   of its token: the same user and the same session ID, or 403
+//!   (R104). A person token acts only as the person. A session token
+//!   acts only as its session.
+//! - A token exchange also swaps a person access token for a session
+//!   pair (R19, see [`token`]).
 //! - A layer checks the access token and its DPoP proof. It guards
 //!   `/v1/revoke` always, and each other `/v1` route except `/v1/token`
 //!   with [`auth::Config::require_sign_in`]. It puts the
@@ -73,9 +79,10 @@ use futures::{Stream, StreamExt};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    Claim, ClaimReply, ID_TOKEN_TYPE, Membership, Post, Posted, Read, ReadReply, Register,
-    ResourceMetadata, Revoke, Revoked, ServerMetadata, SignInConfig, TOKEN_EXCHANGE, Tailed,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, Claim, ClaimReply, ID_TOKEN_TYPE, Membership, Post, Posted, Read, ReadReply,
+    Register, ResourceMetadata, Revoke, Revoked, ServerMetadata, SignInConfig, TOKEN_EXCHANGE,
+    Tailed, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
+    WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -153,11 +160,11 @@ impl Server {
             .and_then(auth::dpop_token)
             .ok_or(None)?;
         let proof = self.proof(headers, method, path, Some(token))?;
-        let tokens = self.tokens();
-        let user = tokens
-            .check(token, &proof.jkt, Instant::now())
+        let who = self
+            .tokens()
+            .caller(token, &proof.jkt, Instant::now())
             .map_err(Refusal::token)?;
-        Ok(SignedIn(user.to_owned()))
+        Ok(SignedIn(who))
     }
 
     fn replay(&self) -> MutexGuard<'_, Replay> {
@@ -259,7 +266,12 @@ pub fn router() -> Router {
     Service::default().router()
 }
 
-async fn register(AxumState(s): AxumState<Shared>, Json(r): Json<Register>) -> Reply<()> {
+async fn register(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Register>,
+) -> Reply<()> {
+    acts_as(caller, &r.me)?;
     s.state().register(&r.me, Instant::now());
     Ok(Json(()))
 }
@@ -270,23 +282,43 @@ async fn who(AxumState(s): AxumState<Shared>, Json(_): Json<WhoRequest>) -> Repl
     }))
 }
 
-async fn threads(AxumState(s): AxumState<Shared>, Json(r): Json<Threads>) -> Reply<ThreadsReply> {
+async fn threads(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Threads>,
+) -> Reply<ThreadsReply> {
+    acts_as(caller, &r.me)?;
     Ok(Json(ThreadsReply {
         threads: s.state().threads(&r.me, Instant::now()),
     }))
 }
 
-async fn join(AxumState(s): AxumState<Shared>, Json(r): Json<Membership>) -> Reply<()> {
+async fn join(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Membership>,
+) -> Reply<()> {
+    acts_as(caller, &r.me)?;
     s.state().join(&r.me, &r.thread, Instant::now());
     Ok(Json(()))
 }
 
-async fn leave(AxumState(s): AxumState<Shared>, Json(r): Json<Membership>) -> Reply<()> {
+async fn leave(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Membership>,
+) -> Reply<()> {
+    acts_as(caller, &r.me)?;
     s.state().leave(&r.me, &r.thread, Instant::now());
     Ok(Json(()))
 }
 
-async fn post_message(AxumState(s): AxumState<Shared>, Json(r): Json<Post>) -> Reply<Posted> {
+async fn post_message(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Post>,
+) -> Reply<Posted> {
+    acts_as(caller, &r.me)?;
     let delivery = s
         .state()
         .post(&r.me, r.thread, r.to, r.body, Instant::now(), now_ms())
@@ -294,7 +326,12 @@ async fn post_message(AxumState(s): AxumState<Shared>, Json(r): Json<Post>) -> R
     Ok(Json(posted(&s, delivery)))
 }
 
-async fn read(AxumState(s): AxumState<Shared>, Json(r): Json<Read>) -> Reply<ReadReply> {
+async fn read(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Read>,
+) -> Reply<ReadReply> {
+    acts_as(caller, &r.me)?;
     let messages = s
         .state()
         .read(&r.me, &r.thread, r.all, Instant::now())
@@ -302,7 +339,12 @@ async fn read(AxumState(s): AxumState<Shared>, Json(r): Json<Read>) -> Reply<Rea
     Ok(Json(ReadReply { messages }))
 }
 
-async fn claim(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply<ClaimReply> {
+async fn claim(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Claim>,
+) -> Reply<ClaimReply> {
+    acts_as(caller, &r.me)?;
     let reply = s
         .state()
         .claim(&r.me, &r.thread, &r.item, Instant::now())
@@ -310,7 +352,12 @@ async fn claim(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply<C
     Ok(Json(reply))
 }
 
-async fn release(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply<()> {
+async fn release(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Claim>,
+) -> Reply<()> {
+    acts_as(caller, &r.me)?;
     s.state()
         .release(&r.me, &r.thread, &r.item, Instant::now())
         .map_err(bad_request)?;
@@ -348,7 +395,11 @@ async fn token(
                 Instant::now(),
             )
             .map_err(|_| "invalid_grant"),
-        TOKEN_EXCHANGE => exchange(&s, &r, &proof.jkt).await,
+        TOKEN_EXCHANGE => match r.subject_token_type.as_deref() {
+            Some(ID_TOKEN_TYPE) => exchange(&s, &r, &proof.jkt).await,
+            Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof.jkt),
+            _ => Err("invalid_request"),
+        },
         _ => Err("unsupported_grant_type"),
     };
     match reply {
@@ -364,6 +415,7 @@ async fn revoke(
     Extension(SignedIn(caller)): Extension<SignedIn>,
     Json(r): Json<Revoke>,
 ) -> Reply<Revoked> {
+    let caller = caller.user().to_owned();
     // Names compare trimmed and in lower case, as at sign-in (R111).
     let user = r
         .user
@@ -420,10 +472,7 @@ async fn server_metadata(AxumState(s): AxumState<Shared>) -> Json<ServerMetadata
 /// Swaps an ID token of the provider for a first pair of riff tokens.
 async fn exchange(s: &Server, r: &TokenRequest, jkt: &str) -> Result<TokenReply, &'static str> {
     let provider = s.config.provider.as_ref().ok_or("unsupported_grant_type")?;
-    let id_token = match (&r.subject_token, r.subject_token_type.as_deref()) {
-        (Some(token), Some(ID_TOKEN_TYPE)) => token,
-        _ => return Err("invalid_request"),
-    };
+    let id_token = r.subject_token.as_ref().ok_or("invalid_request")?;
     let identity = provider.sign_in(&s.http, id_token).await.map_err(|e| {
         tracing::info!("sign-in refused: {e}");
         "invalid_grant"
@@ -432,6 +481,30 @@ async fn exchange(s: &Server, r: &TokenRequest, jkt: &str) -> Result<TokenReply,
     s.tokens()
         .sign_in(&identity.user, jkt, Instant::now())
         .map_err(|_| "invalid_grant")
+}
+
+/// Swaps a person access token for a session pair (R19).
+fn for_session(s: &Server, r: &TokenRequest, jkt: &str) -> Result<TokenReply, &'static str> {
+    let (Some(token), Some(session)) = (&r.subject_token, &r.session) else {
+        return Err("invalid_request");
+    };
+    s.tokens()
+        .for_session(token, jkt, session, Instant::now())
+        .map_err(|_| "invalid_grant")
+}
+
+/// Refuses a request that acts as another user or session than its
+/// token (R104). Without a token check, each request passes.
+fn acts_as(
+    caller: Option<Extension<SignedIn>>,
+    me: &SessionUri,
+) -> Result<(), (StatusCode, String)> {
+    match caller {
+        Some(Extension(caller)) => caller
+            .may_act_as(me.who())
+            .map_err(|message| (StatusCode::FORBIDDEN, message)),
+        None => Ok(()),
+    }
 }
 
 /// Names the sign-in provider, for `riff login`.
@@ -451,8 +524,10 @@ struct WatchQuery {
 /// stream is open.
 async fn watch(
     AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
     Query(q): Query<WatchQuery>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+    acts_as(caller, &q.uri)?;
     let rx = s.wakes.subscribe();
     let missed = {
         let mut state = s.state();
@@ -475,7 +550,7 @@ async fn watch(
     let stream = futures::stream::iter(missed)
         .chain(live)
         .filter_map(|wake| std::future::ready(Event::default().json_data(wake).ok().map(Ok)));
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// Marks the session as stopped when its watch stream closes.

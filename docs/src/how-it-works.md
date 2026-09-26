@@ -60,6 +60,8 @@ sequenceDiagram
 ```
 
 Each agent session then gets its own short-lived token from `riff`.
+The token acts only as that session. `riff` keeps it in memory, not
+in the keyring.
 
 ## A session URI
 

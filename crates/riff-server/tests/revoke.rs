@@ -42,16 +42,11 @@ async fn a_person_revokes_each_of_their_sign_ins() {
     assert_eq!(status, 200, "{body}");
     let revoked: Revoked = serde_json::from_str(&body).unwrap();
     assert_eq!((revoked.user.as_str(), revoked.sign_ins), ("mike", 2));
-    let check = |token: &str, key: &Key| {
-        service
-            .tokens()
-            .check(token, &key.thumbprint(), now)
-            .map(str::to_owned)
-    };
+    let check = |token: &str, key: &Key| service.tokens().check(token, &key.thumbprint(), now);
     assert!(check(&desktop.access_token, &desktop_key).is_err());
     assert_eq!(
-        check(&brett.access_token, &brett_key).as_deref(),
-        Ok("brett")
+        check(&brett.access_token, &brett_key),
+        Ok("brett".to_owned())
     );
 
     // The revoked token no longer works here either.
@@ -86,7 +81,7 @@ async fn only_an_admin_revokes_another_person() {
     );
     assert_eq!(
         tokens.check(&mike.access_token, &mike_key.thumbprint(), now),
-        Ok("mike")
+        Ok("mike".to_owned())
     );
 }
 

@@ -33,7 +33,7 @@ async fn refresh_rotates_and_reuse_revokes() {
     let (now, jkt) = (Instant::now(), key.thumbprint());
     assert_eq!(
         service.tokens().check(&second.access_token, &jkt, now),
-        Ok("mike")
+        Ok("mike".to_owned())
     );
 
     // The same refresh token again: refused, and the sign-in ends.

@@ -30,7 +30,9 @@
 //! - The token endpoint needs a proof too. A refresh works only with
 //!   the key of the sign-in.
 //! - With [`Config::require_sign_in`], each `/v1` route except
-//!   `/v1/token` needs a live access token. `/v1/revoke` always needs
+//!   `/v1/token` needs a live access token. A request acts only as the
+//!   [`SignedIn`] caller of its token: the `me` of the request must
+//!   have the same user and session ID, or the reply is 403 (R104). `/v1/revoke` always needs
 //!   one. A missing token, or a token or proof that the server refuses,
 //!   gives 401 with a `WWW-Authenticate` challenge. The challenge names
 //!   the resource metadata.
@@ -56,6 +58,7 @@
 use std::collections::HashMap;
 
 use riff_core::dpop::{ALG, MAX_AGE, MAX_SKEW};
+use riff_core::name::Who;
 use riff_core::wire::{ResourceMetadata, ServerMetadata, TOKEN_EXCHANGE};
 
 use crate::oidc::Provider;
@@ -69,9 +72,10 @@ pub const SERVER_METADATA_PATH: &str = "/.well-known/oauth-authorization-server"
 /// The path of the token endpoint.
 pub const TOKEN_PATH: &str = "/v1/token";
 
-/// Each grant type that the token endpoint takes. It takes
-/// [`TOKEN_EXCHANGE`] too when the server has a provider.
-pub const GRANT_TYPES: &[&str] = &["refresh_token"];
+/// Each grant type that the token endpoint takes. A token exchange
+/// swaps an ID token of the provider for a person pair, or a person
+/// access token for a session pair.
+pub const GRANT_TYPES: &[&str] = &["refresh_token", TOKEN_EXCHANGE];
 
 /// The settings of one `riff-server`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,12 +126,7 @@ impl Config {
         ServerMetadata {
             issuer: self.public_url.clone(),
             token_endpoint: format!("{}{TOKEN_PATH}", self.public_url),
-            grant_types_supported: GRANT_TYPES
-                .iter()
-                .copied()
-                .chain(self.provider.as_ref().map(|_| TOKEN_EXCHANGE))
-                .map(Into::into)
-                .collect(),
+            grant_types_supported: GRANT_TYPES.iter().copied().map(Into::into).collect(),
             response_types_supported: vec![],
             code_challenge_methods_supported: vec!["S256".into()],
             token_endpoint_auth_methods_supported: vec!["none".into()],
@@ -161,11 +160,34 @@ impl Config {
     }
 }
 
-/// The user of the access token of a request. With
-/// [`Config::require_sign_in`], the server puts it in the extensions of
-/// each request that passed the token check.
+/// Who the access token of a request acts as: the user, and the
+/// session of a session token. With [`Config::require_sign_in`], the
+/// server puts it in the extensions of each request that passed the
+/// token check.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignedIn(pub String);
+pub struct SignedIn(pub Who);
+
+impl SignedIn {
+    /// Refuses a request whose `me` is another user or another session
+    /// than the token (R104).
+    ///
+    /// ```
+    /// use riff_core::name::{SessionUri, Who};
+    /// use riff_server::auth::SignedIn;
+    ///
+    /// let caller = SignedIn(Who::new("mike", Some("a6cf")).unwrap());
+    /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse().unwrap();
+    /// assert!(caller.may_act_as(me.who()).is_ok());
+    /// let other: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b7d0".parse().unwrap();
+    /// assert!(caller.may_act_as(other.who()).is_err());
+    /// ```
+    pub fn may_act_as(&self, who: &Who) -> Result<(), String> {
+        if &self.0 == who {
+            return Ok(());
+        }
+        Err(format!("this token acts only as {}, not as {who}", self.0))
+    }
+}
 
 /// Why the server refused a request that had a token or a proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -243,18 +265,8 @@ mod tests {
     }
 
     #[test]
-    fn a_provider_adds_the_token_exchange_grant() {
-        let mut config = Config::new("http://h");
-        assert_eq!(
-            config.server_metadata().grant_types_supported,
-            ["refresh_token"]
-        );
-        config.provider = Some(Provider {
-            issuer: "https://accounts.google.com".into(),
-            client_id: "riff".into(),
-            client_secret: None,
-            allowed_domains: vec![],
-        });
+    fn the_token_endpoint_takes_refresh_and_exchange() {
+        let config = Config::new("http://h");
         assert_eq!(
             config.server_metadata().grant_types_supported,
             ["refresh_token", TOKEN_EXCHANGE]

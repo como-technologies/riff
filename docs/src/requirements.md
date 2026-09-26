@@ -182,6 +182,17 @@
   keyring.
 - **R19** Each session gets its own token. The token works only for that
   session.
+- **R103** A session gets its token by token exchange (RFC 8693): it
+  sends a person access token and its session ID. The session token
+  has its own refresh token. A refresh keeps the session.
+- **R104** A token acts only as its caller. The user and the session ID
+  in `me` must match the token, or `riff-server` replies 403. A person
+  token acts only as the person, with no session ID.
+- **R105** Only a person access token gives a session token.
+- **R106** `riff` keeps a session token only in the memory of the
+  process. Only the person tokens go to the keyring.
+- **R107** Only one `riff` process at a time refreshes the person
+  tokens of one server. A lock file makes the others wait.
 - **R20** A person or an admin can revoke all tokens of a person at once.
 - **R101** `riff logout --all` ends each sign-in of the caller, on each
   device. An admin adds `--user USER` to end the sign-ins of another
