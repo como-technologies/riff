@@ -12,7 +12,8 @@
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
 //!
-//! The Claude Code plugin is in [`plugin`].
+//! The Claude Code plugin is in [`plugin`]. Its start hook runs
+//! `riff hook session-start` (see [`hook`]).
 //!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
 //! agree on the session because both read its session ID from the
@@ -35,6 +36,7 @@
 //! instructions from its user.
 
 pub mod api;
+pub mod hook;
 pub mod identity;
 pub mod mcp;
 pub mod plugin;

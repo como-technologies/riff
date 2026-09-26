@@ -1,12 +1,13 @@
 //! The local client that finds sessions and wakes yours.
 
+use std::io::Read;
 use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use riff::api::{Api, DEFAULT_SERVER};
-use riff::{identity, mcp, text};
+use riff::{hook, identity, mcp, text};
 use riff_core::name::{Place, ThreadName};
 use riff_core::selector::Selector;
 
@@ -72,11 +73,30 @@ enum Command {
     Watch,
     /// Serve the riff tools to an agent session over stdio.
     Mcp,
+    /// Run a Claude Code hook. The riff plugin calls it.
+    Hook {
+        #[command(subcommand)]
+        event: HookEvent,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookEvent {
+    /// Read the SessionStart input on stdin. Print the context that
+    /// starts the watch. It always exits with status 0.
+    SessionStart,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Command::Hook {
+        event: HookEvent::SessionStart,
+    } = cli.command
+    {
+        println!("{}", session_start());
+        return Ok(());
+    }
     let api = Api::new(&cli.server);
     let here = identity::place(&std::env::current_dir()?)?;
     let me = identity::me(&here)?;
@@ -104,6 +124,7 @@ async fn main() -> Result<()> {
         Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await?,
         Command::Watch => watch(&api, &identity::session(&here)?).await,
         Command::Mcp => mcp::serve(api, identity::session(&here)?).await?,
+        Command::Hook { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }
@@ -115,6 +136,19 @@ fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> 
             .default_thread()
             .ok_or_else(|| anyhow::anyhow!("name a thread: this directory is not in git")),
     }
+}
+
+/// The SessionStart hook output. It has no URI when riff cannot find the
+/// session, but it always has the context (R69).
+fn session_start() -> String {
+    let mut stdin = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin);
+    let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
+    let uri = input.session_id.as_deref().and_then(|id| {
+        let here = identity::place(&std::env::current_dir().ok()?).ok()?;
+        identity::agent(&here, id).ok()
+    });
+    hook::start_output(&hook::start_context(uri.as_ref(), input.source))
 }
 
 async fn tail(api: &Api, thread: &ThreadName) -> Result<()> {

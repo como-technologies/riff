@@ -12,6 +12,7 @@
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, selectors, claims and `move`. |
+//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). |
 //!
 //! ```
 //! let dir = tempfile::tempdir()?;
@@ -46,6 +47,7 @@ pub const FILES: &[(&str, &str)] = &[
     embed!("riff/.claude-plugin/plugin.json"),
     embed!("riff/.mcp.json"),
     embed!("riff/skills/riff/SKILL.md"),
+    embed!("riff/hooks/hooks.json"),
 ];
 
 /// Writes the marketplace to `dir`. It replaces the files that are there.
@@ -95,6 +97,16 @@ mod tests {
         assert_eq!(market["name"], NAME);
         assert_eq!(market["plugins"][0]["name"], NAME);
         assert_eq!(market["plugins"][0]["source"], "./riff");
+    }
+
+    #[test]
+    fn the_start_hook_is_riff_hook_session_start() {
+        let hooks = json("riff/hooks/hooks.json");
+        let start = &hooks["hooks"]["SessionStart"];
+        assert_eq!(start.as_array().unwrap().len(), 1);
+        assert_eq!(start[0].get("matcher"), None, "each source runs the hook");
+        assert_eq!(start[0]["hooks"][0]["type"], "command");
+        assert_eq!(start[0]["hooks"][0]["command"], "riff hook session-start");
     }
 
     #[test]

@@ -24,6 +24,9 @@ flowchart LR
   `release` and `move`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
+- **The start hook** runs `riff hook session-start` when a session
+  starts. It tells the session to run `riff watch` under the Monitor
+  tool, and to start it again when the Monitor ends.
 
 ## Sign-in
 

@@ -30,6 +30,16 @@
   its user decides (R10).
 - **R73** When a riff line wakes a session, the skill tells it to call
   `read` with no thread.
+- **R66** The start hook runs `riff hook session-start`. It adds
+  context: the session URI, and the order to run `riff watch` under the
+  Monitor tool.
+- **R67** The context tells the session to start the watch again each
+  time the Monitor ends.
+- **R68** After `/clear`, the session has a new session ID. The context
+  tells it to stop the watch of the old ID. After compaction, the
+  context tells it to keep the watch that runs.
+- **R69** The start hook never stops a session start. It exits with
+  status 0, also when riff cannot find the session.
 
 ## Service
 

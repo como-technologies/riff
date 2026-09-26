@@ -16,8 +16,9 @@
 //! [`riff_core::name::sanitize`].
 //!
 //! Claude Code gives the session ID to each process that it starts for
-//! a session: `riff mcp`, a `riff watch` under the Monitor tool, and the
-//! hooks. So they all find the same session, in any directory (R57).
+//! a session: `riff mcp` and a `riff watch` under the Monitor tool get it
+//! in the environment, and the hooks get it on stdin (see [`agent`]).
+//! So they all find the same session, in any directory (R57).
 //!
 //! A person on the command line has no session ID. The URI of a person
 //! is `riff://USER@HOST` (R65). The directory still gives the default
@@ -43,14 +44,30 @@ pub fn session_id() -> Option<String> {
 /// The URI of the caller: an agent session when there is a session ID,
 /// otherwise a person. `place` is where the caller works.
 pub fn me(place: &Place) -> Result<SessionUri> {
+    match session_id() {
+        Some(id) => agent(place, &id),
+        None => Ok(SessionUri::new(
+            Who::new(&user()?, None)?,
+            Place::host_only(place.host())?,
+        )),
+    }
+}
+
+/// The URI of the agent session `id` at `place`. A hook uses it: Claude
+/// Code gives a hook the session ID on stdin.
+pub fn agent(place: &Place, id: &str) -> Result<SessionUri> {
+    Ok(SessionUri::new(
+        Who::new(&user()?, Some(&sanitize(id)))?,
+        place.clone(),
+    ))
+}
+
+/// The user from the environment.
+fn user() -> Result<String> {
     let user = std::env::var("RIFF_USER")
         .or_else(|_| std::env::var("USER"))
         .context("set RIFF_USER or USER")?;
-    let user = sanitize(&user.to_lowercase());
-    Ok(match session_id() {
-        Some(id) => SessionUri::new(Who::new(&user, Some(&sanitize(&id)))?, place.clone()),
-        None => SessionUri::new(Who::new(&user, None)?, Place::host_only(place.host())?),
-    })
+    Ok(sanitize(&user.to_lowercase()))
 }
 
 /// The URI of an agent session. It fails when there is no session ID.
