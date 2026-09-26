@@ -364,8 +364,16 @@ async fn revoke(
     Extension(SignedIn(caller)): Extension<SignedIn>,
     Json(r): Json<Revoke>,
 ) -> Reply<Revoked> {
-    let user = r.user.unwrap_or_else(|| caller.clone());
-    if user != caller && !s.config.admins.contains(&caller) {
+    // Names compare trimmed and in lower case, as at sign-in (R111).
+    let user = r
+        .user
+        .map_or_else(|| caller.clone(), |u| u.trim().to_lowercase());
+    let admin = s
+        .config
+        .admins
+        .iter()
+        .any(|a| a.trim().to_lowercase() == caller);
+    if user != caller && !admin {
         return Err((
             StatusCode::FORBIDDEN,
             format!("{caller} is not an admin; only an admin revokes another person"),

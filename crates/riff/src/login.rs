@@ -66,7 +66,7 @@ use riff_core::wire::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
 use crate::api::Api;
@@ -263,26 +263,36 @@ pub fn challenge(verifier: &str) -> String {
 }
 
 /// Serves the loopback port until the redirect with the code comes.
-/// Other requests, for example for a favicon, get 404.
+/// Only a request with the right `state` ends the wait. Other requests,
+/// for example for a favicon or from another local process, get 404
+/// (R112).
 async fn receive_code(listener: &TcpListener, state: &str) -> Result<String> {
     loop {
         let (stream, _) = listener.accept().await?;
         let mut stream = BufReader::new(stream);
         let mut line = String::new();
-        stream.read_line(&mut line).await?;
+        if (&mut stream)
+            .take(MAX_REQUEST_LINE)
+            .read_line(&mut line)
+            .await
+            .is_err()
+        {
+            continue;
+        }
         let target = line.split_whitespace().nth(1).unwrap_or("/");
-        let url = Url::parse("http://127.0.0.1")?.join(target)?;
+        let Ok(url) = Url::parse("http://127.0.0.1")?.join(target) else {
+            respond(stream.get_mut(), "404 Not Found", "").await;
+            continue;
+        };
         let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        if query.get("state").map(String::as_str) != Some(state) {
+            respond(stream.get_mut(), "404 Not Found", "").await;
+            continue;
+        }
         let outcome = match (query.get("code"), query.get("error")) {
-            (_, Some(error)) => Err(anyhow::anyhow!("the sign-in failed: {error}")),
-            (Some(_), _) if query.get("state").map(String::as_str) != Some(state) => {
-                Err(anyhow::anyhow!("the sign-in came back with a wrong state"))
-            }
-            (Some(code), _) => Ok(code.clone()),
-            (None, None) => {
-                respond(stream.get_mut(), "404 Not Found", "").await;
-                continue;
-            }
+            (_, Some(error)) => Err(anyhow::anyhow!("the sign-in failed: {}", printable(error))),
+            (Some(code), None) => Ok(code.clone()),
+            (None, None) => Err(anyhow::anyhow!("the sign-in came back with no code")),
         };
         let page = match &outcome {
             Ok(_) => "riff: you are signed in. You can close this tab.",
@@ -291,6 +301,15 @@ async fn receive_code(listener: &TcpListener, state: &str) -> Result<String> {
         respond(stream.get_mut(), "200 OK", page).await;
         return outcome;
     }
+}
+
+/// The longest request line the loopback port reads, in bytes.
+const MAX_REQUEST_LINE: u64 = 8192;
+
+/// `text` with control characters removed, cut to 200 characters, so
+/// that it is safe to print on a terminal.
+fn printable(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).take(200).collect()
 }
 
 async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
@@ -369,38 +388,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_loopback_port_takes_the_code_and_checks_the_state() {
+    async fn the_loopback_port_waits_for_the_right_state() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let get = |path: &str| {
             let url = format!("{base}{path}");
             tokio::spawn(async move { reqwest::get(url).await.map(|r| r.status().as_u16()) })
         };
-        let favicon = get("/favicon.ico");
-        let wrong = get("/?code=c1&state=other");
-        let first = receive_code(&listener, "s1").await;
-        let second = {
-            let good = get("/?code=c2&state=s1");
-            let code = receive_code(&listener, "s1").await;
-            assert_eq!(good.await.unwrap().unwrap(), 200);
-            code
+        // Requests from another local process do not end the wait.
+        for path in ["/favicon.ico", "/?code=c1&state=other", "/?error=x"] {
+            let other = get(path);
+            let good = async {
+                assert_eq!(other.await.unwrap().unwrap(), 404, "{path}");
+                get("/?code=c2&state=s1").await.unwrap().unwrap()
+            };
+            let (code, good) = tokio::join!(receive_code(&listener, "s1"), good);
+            assert_eq!(good, 200);
+            assert_eq!(code.unwrap(), "c2");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_long_request_line_is_ignored() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let long = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let _ = stream.write_all(&vec![b'a'; 100_000]).await;
+        });
+        let good = format!("http://{addr}/?code=c&state=s");
+        let good = async {
+            long.await.unwrap();
+            reqwest::get(good).await.unwrap().status().as_u16()
         };
-        // The favicon request may come before or after the wrong state.
-        assert_eq!(favicon.await.unwrap().unwrap(), 404);
-        assert_eq!(wrong.await.unwrap().unwrap(), 200);
-        assert!(first.unwrap_err().to_string().contains("wrong state"));
-        assert_eq!(second.unwrap(), "c2");
+        let (code, good) = tokio::join!(receive_code(&listener, "s"), good);
+        assert_eq!(good, 200);
+        assert_eq!(code.unwrap(), "c");
     }
 
     #[tokio::test]
     async fn a_provider_error_ends_the_sign_in() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!(
-            "http://{}/?error=access_denied",
+            "http://{}/?error=access%1B%5B31mdenied&state=s",
             listener.local_addr().unwrap()
         );
         tokio::spawn(reqwest::get(url));
         let error = receive_code(&listener, "s").await.unwrap_err();
-        assert!(error.to_string().contains("access_denied"));
+        assert_eq!(error.to_string(), "the sign-in failed: access[31mdenied");
     }
 }

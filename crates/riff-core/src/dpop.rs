@@ -231,7 +231,13 @@ pub fn verify(
     else {
         return Err(DpopError::new("the proof is not a compact JWT"));
     };
-    let header: Header = json_part(header)?;
+    let header: serde_json::Value = json_part(header)?;
+    // RFC 9449 section 4.3 (R113).
+    if header.pointer("/jwk/d").is_some() {
+        return Err(DpopError::new("the proof jwk holds a private key"));
+    }
+    let header: Header = serde_json::from_value(header)
+        .map_err(|_| DpopError::new("a proof part is not valid JSON"))?;
     if header.typ != TYP {
         return Err(DpopError::new("the proof typ is not dpop+jwt"));
     }
@@ -255,7 +261,7 @@ pub fn verify(
     if claims.htu != url {
         return Err(DpopError::new("the proof is for another URL"));
     }
-    if claims.iat + MAX_AGE < now {
+    if now.saturating_sub(claims.iat) > MAX_AGE {
         return Err(DpopError::new("the proof is too old"));
     }
     if claims.iat > now + MAX_SKEW {
@@ -406,6 +412,41 @@ mod tests {
         for bad in ["", "a.b", "a.b.c.d", "!!.!!.!!"] {
             assert!(verify(bad, "POST", URL, None, 500).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_private_jwk_is_refused() {
+        let key = Key::generate();
+        let mut header = serde_json::to_value(Header {
+            typ: TYP.into(),
+            alg: ALG.into(),
+            jwk: key.jwk(),
+        })
+        .unwrap();
+        header["jwk"]["d"] = "private".into();
+        let claims = key.proof("POST", URL, None, 500);
+        let claims = claims.split('.').nth(1).unwrap();
+        let input = format!("{}.{claims}", json_b64(&header));
+        let signature: Signature = key.0.sign(input.as_bytes());
+        let proof = format!("{input}.{}", B64.encode(signature.to_bytes()));
+        assert_eq!(
+            verify(&proof, "POST", URL, None, 500)
+                .unwrap_err()
+                .to_string(),
+            "the proof jwk holds a private key"
+        );
+    }
+
+    #[test]
+    fn a_huge_iat_is_refused_without_a_panic() {
+        let key = Key::generate();
+        let proof = key.proof("POST", URL, None, u64::MAX);
+        assert_eq!(
+            verify(&proof, "POST", URL, None, 500)
+                .unwrap_err()
+                .to_string(),
+            "the proof is from the future"
+        );
     }
 
     #[test]

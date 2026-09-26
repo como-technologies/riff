@@ -152,6 +152,8 @@
 - **R17** An access token expires in 10 minutes or less. A refresh token
   changes at each use. A reused refresh token revokes all tokens from
   that sign-in.
+- **R110** Only the device key of a sign-in can revoke it by reuse. A
+  reused refresh token with another key is refused and changes nothing.
 - **R80** A sign-in ends when none of its refresh tokens is used for
   30 days. The person then signs in again.
 - **R81** `riff-server` keeps only a hash of each token, never the
@@ -159,6 +161,8 @@
 - **R90** `riff login` signs in with the provider that `riff-server`
   names. It opens the browser. The code comes back to a loopback port.
   The client uses PKCE with S256.
+- **R112** Only a request with the right `state` ends the wait on the
+  loopback port. It reads at most 8 KiB of the request line.
 - **R91** `riff-server` swaps a valid ID token of its provider for the
   first riff tokens. The email in the ID token must be verified.
 - **R92** USER is the part of the verified email before the `@`, in
@@ -172,6 +176,8 @@
 - **R87** `riff-server` refuses a bearer token, a proof that it saw
   before, and a proof for another method or URL. The URL is the public
   URL of the server and the path.
+- **R113** `riff-server` refuses a proof whose `jwk` holds a private
+  key.
 - **R88** `riff` keeps one device key for each server, in the OS
   keyring.
 - **R19** Each session gets its own token. The token works only for that
@@ -182,6 +188,8 @@
   person.
 - **R102** The admins are a setting of `riff-server`: `--admin USER` or
   `RIFF_ADMINS`. There are no admins by default.
+- **R111** Admin names and the named person compare trimmed and in
+  lower case.
 - **R21** A client keeps tokens and keys only in the OS keyring.
 - **R82** `riff` keeps each secret under the keyring service `riff`.
   On Linux, it needs a Secret Service, for example GNOME Keyring or
@@ -193,8 +201,8 @@
 - **R84** The public URL of `riff-server` is a setting. It is the OAuth
   resource and the issuer. Each token is only for it.
 - **R85** With the setting `--require-sign-in`, each route except the
-  token endpoint and the metadata needs a live access token in the
-  `Authorization` header.
+  token endpoint, the sign-in route and the metadata needs a live
+  access token in the `Authorization` header.
 - **R47** Each session connects through `riff`. Direct connections from an
   agent tool are not supported for now.
 

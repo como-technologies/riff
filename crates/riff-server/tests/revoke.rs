@@ -91,6 +91,26 @@ async fn only_an_admin_revokes_another_person() {
 }
 
 #[tokio::test]
+async fn admin_names_ignore_case_and_spaces() {
+    let (service, url) = common::start(false, &[" Mike"]).await;
+    let now = Instant::now();
+    let (mike_key, brett_key) = (Key::generate(), Key::generate());
+    let mike = service
+        .tokens()
+        .sign_in("mike", &mike_key.thumbprint(), now)
+        .unwrap();
+    service
+        .tokens()
+        .sign_in("brett", &brett_key.thumbprint(), now)
+        .unwrap();
+
+    let (status, body) = revoke(&url, Some((&mike_key, &mike.access_token)), Some("Brett ")).await;
+    assert_eq!(status, 200, "{body}");
+    let revoked: Revoked = serde_json::from_str(&body).unwrap();
+    assert_eq!((revoked.user.as_str(), revoked.sign_ins), ("brett", 1));
+}
+
+#[tokio::test]
 async fn revoke_needs_a_live_token() {
     let (_, url) = common::start(false, &[]).await;
     assert_eq!(revoke(&url, None, None).await.0, 401);

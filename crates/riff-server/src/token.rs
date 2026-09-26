@@ -158,13 +158,14 @@ impl Tokens {
         self.sweep(now);
         let refresh = self.refresh.get_mut(&hash(token)).ok_or(Refused::Unknown)?;
         let id = refresh.sign_in;
+        let sign_in = self.sign_ins.get_mut(&id).ok_or(Refused::Unknown)?;
+        // Only the device key can end the sign-in by reuse (R110).
+        if sign_in.jkt != jkt {
+            return Err(Refused::WrongKey);
+        }
         if refresh.used {
             self.revoke(id);
             return Err(Refused::Reused);
-        }
-        let sign_in = self.sign_ins.get_mut(&id).ok_or(Refused::Unknown)?;
-        if sign_in.jkt != jkt {
-            return Err(Refused::WrongKey);
         }
         sign_in.last_used = now;
         refresh.used = true;
@@ -361,6 +362,17 @@ mod tests {
             tokens.refresh(&second.refresh_token, "k", now),
             Err(Refused::Unknown)
         );
+    }
+
+    #[test]
+    fn reuse_with_another_key_leaves_the_sign_in() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            tokens.refresh(&first.refresh_token, "thief", now),
+            Err(Refused::WrongKey)
+        );
+        assert_eq!(tokens.check(&second.access_token, "k", now), Ok("mike"));
     }
 
     #[test]
