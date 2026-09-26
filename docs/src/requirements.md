@@ -47,6 +47,8 @@
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R43** Outside git, the name is `riff://USER@HOST/-#DIRECTORY`.
+- **R49** When a watch starts, it wakes the session once if a direct
+  message or a mention is unread.
 
 ## Threads
 
@@ -58,6 +60,8 @@
 - **R27** A person can read and post in each thread from the command line.
 - **R28** A claim belongs to a thread.
 - **R48** A person can claim and release work from the command line.
+- **R50** A session lists and reads by default only the threads that it
+  joined. It can read any other thread by name.
   `riff claim` exits with status 1 when another session holds the item.
 
 ## Security

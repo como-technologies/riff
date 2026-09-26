@@ -91,3 +91,38 @@ async fn a_claim_blocks_a_second_session() {
             .granted
     );
 }
+
+#[tokio::test]
+async fn a_watch_starts_with_a_wake_for_a_missed_mention() {
+    let api = start_server().await;
+    let mike = name("riff://mike@pangolin/como-technologies/riff#api");
+    let brett = name("riff://brett@heron/como-technologies/riff#tests");
+    let thread: ThreadName = "como-technologies/riff".parse().unwrap();
+    api.register(&brett).await.unwrap();
+    api.post(
+        &mike,
+        &thread,
+        "@brett@heron:riff#tests while you were away",
+    )
+    .await
+    .unwrap();
+
+    let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
+    let wake = tokio::time::timeout(WAIT, wakes.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake.reason, WakeReason::Mention);
+    assert_eq!(wake.seq, 1);
+
+    // After a read, a new watch has nothing to report.
+    api.read(&brett, &thread, false).await.unwrap();
+    drop(wakes);
+    let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), wakes.next())
+            .await
+            .is_err()
+    );
+}

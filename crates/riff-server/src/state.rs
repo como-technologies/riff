@@ -16,8 +16,13 @@
 //!   that it mentions, except the sender.
 //! - A direct message joins both sessions to their direct thread and
 //!   always wakes the receiver. Other sessions cannot see that thread.
+//! - `threads` lists only the threads that the session joined. `read`
+//!   takes any thread by name, except a direct thread of others.
 //! - `read` returns the messages after the cursor, then moves the cursor
 //!   to the end.
+//! - When a watch starts, [`State::missed`] gives one wake for the
+//!   newest unread direct message or mention, so that the session
+//!   learns about messages that came while it had no watch.
 //! - A claim is free, or held. A held claim goes back to free when its
 //!   holder releases it, or when the holder has no watch stream and was
 //!   last seen more than [`CLAIM_GRACE`] ago. A claim of a free item
@@ -130,11 +135,11 @@ impl State {
             .collect()
     }
 
-    /// The threads that `name` can see, with its unread counts.
+    /// The threads that `name` joined, with its unread counts.
     pub fn threads(&self, name: &SessionName) -> Vec<ThreadInfo> {
         self.threads
             .iter()
-            .filter(|(thread, t)| !thread.is_direct() || t.members.contains(name))
+            .filter(|(_, t)| t.members.contains(name))
             .map(|(thread, t)| {
                 let read = self.cursor(name, thread);
                 ThreadInfo {
@@ -144,6 +149,33 @@ impl State {
                 }
             })
             .collect()
+    }
+
+    /// The wake for the newest unread direct message or mention of
+    /// `name`, if there is one. A watch sends it when it starts.
+    pub fn missed(&self, name: &SessionName) -> Option<Wake> {
+        self.threads
+            .iter()
+            .filter_map(|(thread, t)| {
+                let read = self.cursor(name, thread);
+                t.messages
+                    .iter()
+                    .rev()
+                    .take_while(|m| m.seq > read)
+                    .filter(|m| &m.from != name)
+                    .find_map(|m| {
+                        let reason = if thread.is_direct() {
+                            t.members.contains(name).then_some(WakeReason::Direct)
+                        } else {
+                            self.mentioned(&m.body)
+                                .contains(name)
+                                .then_some(WakeReason::Mention)
+                        };
+                        reason.map(|r| (m.at_ms, wake(thread, m, r)))
+                    })
+            })
+            .max_by_key(|(at_ms, _)| *at_ms)
+            .map(|(_, wake)| wake)
     }
 
     /// Adds a session to a thread. It makes the thread if it is new.
@@ -458,6 +490,63 @@ mod tests {
         assert_eq!(unread[0].body, "two");
         assert_eq!(state.read(&tests(), &t, true, now).unwrap().len(), 2);
         assert!(state.read(&tests(), &t, false, now).unwrap().is_empty());
+    }
+
+    #[test]
+    fn threads_lists_only_joined_threads() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.post(&api(), &thread("design"), "a plan".into(), now, 0);
+        assert!(
+            state
+                .threads(&api())
+                .iter()
+                .any(|t| t.thread == thread("design"))
+        );
+        assert!(
+            !state
+                .threads(&tests())
+                .iter()
+                .any(|t| t.thread == thread("design"))
+        );
+        // A session can still read any thread by name (R25).
+        assert_eq!(
+            state
+                .read(&tests(), &thread("design"), false, now)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn missed_gives_the_newest_unread_mention_or_direct_message() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        assert!(state.missed(&tests()).is_none());
+        state.post(&api(), &thread("design"), "no mention".into(), now, 1);
+        assert!(state.missed(&tests()).is_none());
+        state.post(
+            &api(),
+            &thread("design"),
+            "@brett@heron:riff#tests look".into(),
+            now,
+            2,
+        );
+        let wake = state.missed(&tests()).unwrap();
+        assert_eq!((wake.reason, wake.seq), (WakeReason::Mention, 2));
+        let dm = state
+            .tell(&docs(), &tests(), "hi".into(), now, 3)
+            .tailed
+            .thread;
+        let wake = state.missed(&tests()).unwrap();
+        assert_eq!((wake.reason, wake.thread), (WakeReason::Direct, dm.clone()));
+        // The sender does not miss its own message.
+        assert!(state.missed(&docs()).is_none());
+        state.read(&tests(), &dm, false, now).unwrap();
+        assert_eq!(state.missed(&tests()).unwrap().reason, WakeReason::Mention);
+        state.read(&tests(), &thread("design"), false, now).unwrap();
+        assert!(state.missed(&tests()).is_none());
     }
 
     #[test]

@@ -16,6 +16,9 @@
 //! - A post returns a [`state::Delivery`]. The handler sends its wakes
 //!   and its tail event to two broadcast channels. Each open stream
 //!   filters the channel for its own session or thread.
+//! - A watch stream starts with the wake from [`state::State::missed`],
+//!   if there is one. It subscribes to the wakes channel first, so no
+//!   wake falls in the gap.
 //! - A watch stream owns a guard. When the stream closes, the guard marks
 //!   the session as stopped. That starts the claim grace period.
 //! - A stream that falls more than 1024 events behind skips the events
@@ -191,24 +194,28 @@ async fn watch(
     Query(q): Query<WatchQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = s.wakes.subscribe();
-    {
+    let missed = {
         let mut state = s.state();
         let now = Instant::now();
         state.register(&q.name, now);
         state.watch_started(&q.name, now);
-    }
+        state.missed(&q.name)
+    };
     let guard = WatchGuard {
         server: s.clone(),
         name: q.name.clone(),
     };
-    let stream = BroadcastStream::new(rx).filter_map(move |event| {
+    let live = BroadcastStream::new(rx).filter_map(move |event| {
         let _alive = &guard;
-        let event = match event {
-            Ok((to, wake)) if to == guard.name => Event::default().json_data(wake).ok(),
+        let wake = match event {
+            Ok((to, wake)) if to == guard.name => Some(wake),
             _ => None,
         };
-        std::future::ready(event.map(Ok))
+        std::future::ready(wake)
     });
+    let stream = futures::stream::iter(missed)
+        .chain(live)
+        .filter_map(|wake| std::future::ready(Event::default().json_data(wake).ok().map(Ok)));
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
