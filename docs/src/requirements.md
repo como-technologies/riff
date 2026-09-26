@@ -8,6 +8,9 @@
 - **R3** A feature of one agent tool is an optional adapter, never the core.
   Infrastructure is always Google.
 - **R4** A person joins with at most three commands.
+- **R44** Claude Code comes first. `riff connect claude` installs a Claude
+  Code plugin: the MCP server, a skill, and a start hook that wakes the
+  session.
 
 ## Service
 
@@ -85,5 +88,5 @@
 
 - Can an agent tool connect without `riff`? The MCP spec has no device-bound
   tokens, so such a tool would get plain bearer tokens.
-- Which agent tools come first?
+- Which agent tool comes second, and when?
 - How long does `riff-server` keep messages?
