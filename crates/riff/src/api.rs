@@ -6,8 +6,8 @@ use futures::{Stream, StreamExt};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Message, Post, Posted, Read, ReadReply, Register, SessionInfo,
-    Tailed, ThreadInfo, Threads, ThreadsReply, Wake, WhoReply, WhoRequest,
+    Claim, ClaimReply, Membership, Message, Post, Posted, Read, ReadReply, Register, Revoke,
+    Revoked, SessionInfo, Tailed, ThreadInfo, Threads, ThreadsReply, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -155,6 +155,27 @@ impl Api {
     /// Each new message in one thread.
     pub async fn tail(&self, thread: &ThreadName) -> Result<impl Stream<Item = Result<Tailed>>> {
         self.events("tail", &[("thread", thread.to_string())]).await
+    }
+
+    /// Ends each sign-in of `user`, or of the caller when `user` is
+    /// `None` (R20). `token` is an access token of the caller.
+    pub async fn revoke(&self, token: &str, user: Option<&str>) -> Result<Revoked> {
+        let response = self
+            .http
+            .post(format!("{}/v1/revoke", self.base))
+            .bearer_auth(token)
+            .json(&Revoke {
+                user: user.map(str::to_owned),
+            })
+            .send()
+            .await
+            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            bail!("revoke failed ({status}): {text}");
+        }
+        Ok(response.json().await?)
     }
 
     async fn call<Req: Serialize, Rep: DeserializeOwned>(

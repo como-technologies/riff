@@ -28,9 +28,11 @@
 //!
 //! - `POST /v1/token` swaps a refresh token for a new pair. The token
 //!   store has its own lock, so a refresh never waits for the state.
+//! - `POST /v1/revoke` ends each sign-in of a person. The admins are a
+//!   setting of the server; see [`Service::with_admins`].
 //!
-//! The server keeps state only in memory. It issues tokens, but the
-//! other routes do not check them yet. The wire protocol is in
+//! The server keeps state only in memory. It issues tokens. Only
+//! `revoke` checks them yet. The wire protocol is in
 //! [`riff_core::wire`].
 //!
 //! # Example
@@ -45,12 +47,13 @@
 pub mod state;
 pub mod token;
 
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Form, Query, State as AxumState};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
@@ -58,8 +61,8 @@ use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Tailed, Threads,
-    ThreadsReply, TokenError, TokenRequest, Wake, WhoReply, WhoRequest,
+    Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Revoke, Revoked,
+    Tailed, Threads, ThreadsReply, TokenError, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -77,6 +80,7 @@ type Reply<T> = Result<Json<T>, (StatusCode, String)>;
 struct Server {
     state: Mutex<State>,
     tokens: Mutex<Tokens>,
+    admins: HashSet<String>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
 }
@@ -121,18 +125,24 @@ pub struct Service(Shared);
 
 impl Default for Service {
     fn default() -> Self {
+        Service::with_admins(Vec::new())
+    }
+}
+
+impl Service {
+    /// A server where `admins` may revoke the tokens of any person (R20).
+    pub fn with_admins(admins: impl IntoIterator<Item = String>) -> Self {
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         Service(Arc::new(Server {
             state: Mutex::new(State::default()),
             tokens: Mutex::new(Tokens::default()),
+            admins: admins.into_iter().collect(),
             wakes,
             tail,
         }))
     }
-}
 
-impl Service {
     /// The HTTP routes of this server.
     pub fn router(&self) -> Router {
         Router::new()
@@ -146,6 +156,7 @@ impl Service {
             .route("/v1/claim", post(claim))
             .route("/v1/release", post(release))
             .route("/v1/token", post(token))
+            .route("/v1/revoke", post(revoke))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread))
             .with_state(self.0.clone())
@@ -238,6 +249,35 @@ async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> 
             (StatusCode::BAD_REQUEST, no_store, Json(error)).into_response()
         }
     }
+}
+
+/// Ends each sign-in of a person. The caller is the user of the bearer
+/// token. Only an admin names another person.
+async fn revoke(
+    AxumState(s): AxumState<Shared>,
+    headers: HeaderMap,
+    Json(r): Json<Revoke>,
+) -> Reply<Revoked> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or((StatusCode::UNAUTHORIZED, "send a bearer token".to_owned()))?;
+    let mut tokens = s.tokens();
+    let caller = tokens
+        .check(token, Instant::now())
+        .map_err(|e| (StatusCode::UNAUTHORIZED, e.to_string()))?
+        .to_owned();
+    let user = r.user.unwrap_or_else(|| caller.clone());
+    if user != caller && !s.admins.contains(&caller) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("{caller} is not an admin; only an admin revokes another person"),
+        ));
+    }
+    let sign_ins = tokens.revoke_user(&user);
+    tracing::info!(%caller, %user, sign_ins, "revoked");
+    Ok(Json(Revoked { user, sign_ins }))
 }
 
 #[derive(Deserialize)]

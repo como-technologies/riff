@@ -158,6 +158,11 @@
 - **R19** Each session gets its own token. The token works only for that
   session.
 - **R20** A person or an admin can revoke all tokens of a person at once.
+- **R101** `riff logout --all` ends each sign-in of the caller, on each
+  device. An admin adds `--user USER` to end the sign-ins of another
+  person.
+- **R102** The admins are a setting of `riff-server`: `--admin USER` or
+  `RIFF_ADMINS`. There are no admins by default.
 - **R21** A client keeps tokens and keys only in the OS keyring.
 - **R82** `riff` keeps each secret under the keyring service `riff`.
   On Linux, it needs a Secret Service, for example GNOME Keyring or

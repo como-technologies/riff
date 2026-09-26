@@ -20,6 +20,11 @@
 //! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
 //! [`TokenError`] with status 400.
 //!
+//! `POST /v1/revoke` ends each sign-in of one person (R20). It needs
+//! `Authorization: Bearer <access token>`. Its request is [`Revoke`] and
+//! its reply is [`Revoked`]. A missing or bad token gets status 401. A
+//! person who is not an admin and names another user gets status 403.
+//!
 //! Two streams use server-sent events. Each event is one `data:` line
 //! that holds JSON:
 //!
@@ -212,6 +217,23 @@ pub struct TokenReply {
     /// Seconds until the access token expires.
     pub expires_in: u64,
     pub refresh_token: String,
+}
+
+/// `POST /v1/revoke`: ends each sign-in of a person.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Revoke {
+    /// The person. Leave it out for the caller. Only an admin names
+    /// another person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+}
+
+/// The reply to [`Revoke`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Revoked {
+    pub user: String,
+    /// The number of sign-ins that ended.
+    pub sign_ins: usize,
 }
 
 /// An OAuth error reply, for example `{"error":"invalid_grant"}`.

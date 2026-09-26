@@ -23,6 +23,8 @@
 //!   its access and refresh tokens stops working.
 //! - A sign-in expires when no refresh token of it is used for
 //!   [`REFRESH_IDLE`].
+//! - [`Tokens::revoke_user`] ends each sign-in of one person at once
+//!   (R20).
 //! - A token that the server does not know is refused. After a restart
 //!   the server knows no token, so each person signs in again.
 //!
@@ -154,6 +156,34 @@ impl Tokens {
             return Err(Refused::Expired);
         }
         Ok(&sign_in.user)
+    }
+
+    /// Ends each sign-in of `user` and each token of them (R20).
+    /// Returns the number of sign-ins that ended.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let laptop = tokens.sign_in("mike", now).unwrap();
+    /// let desktop = tokens.sign_in("mike", now).unwrap();
+    /// assert_eq!(tokens.revoke_user("mike"), 2);
+    /// assert_eq!(tokens.check(&laptop.access_token, now), Err(Refused::Unknown));
+    /// assert_eq!(tokens.check(&desktop.access_token, now), Err(Refused::Unknown));
+    /// ```
+    pub fn revoke_user(&mut self, user: &str) -> usize {
+        let ids: Vec<u64> = self
+            .sign_ins
+            .iter()
+            .filter(|(_, s)| s.user == user)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &ids {
+            self.revoke(*id);
+        }
+        ids.len()
     }
 
     fn issue(&mut self, sign_in: u64, now: Instant) -> TokenReply {
@@ -308,6 +338,28 @@ mod tests {
         tokens.refresh(&first.refresh_token, now).unwrap_err();
         assert_eq!(tokens.check(&other.access_token, now), Ok("mike"));
         assert!(tokens.refresh(&other.refresh_token, now).is_ok());
+    }
+
+    #[test]
+    fn revoke_user_ends_only_that_person() {
+        let (mut tokens, mike, now) = signed_in();
+        let brett = tokens.sign_in("brett", now).unwrap();
+        assert_eq!(tokens.revoke_user("mike"), 1);
+        assert_eq!(tokens.check(&mike.access_token, now), Err(Refused::Unknown));
+        assert_eq!(
+            tokens.refresh(&mike.refresh_token, now),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(tokens.check(&brett.access_token, now), Ok("brett"));
+        assert_eq!(tokens.revoke_user("mike"), 0);
+    }
+
+    #[test]
+    fn a_person_signs_in_again_after_revoke() {
+        let (mut tokens, _, now) = signed_in();
+        tokens.revoke_user("mike");
+        let again = tokens.sign_in("mike", now).unwrap();
+        assert_eq!(tokens.check(&again.access_token, now), Ok("mike"));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::plugin::Connected;
 use riff_core::name::{SessionUri, ThreadName};
 
 use crate::api::Inbox;
-use riff_core::wire::{ClaimReply, Message, Posted, SessionInfo, ThreadInfo, Wake};
+use riff_core::wire::{ClaimReply, Message, Posted, Revoked, SessionInfo, ThreadInfo, Wake};
 
 /// Tells the reader that message bodies are data (R10).
 pub const DATA_NOTE: &str =
@@ -154,6 +154,26 @@ pub fn connected(done: &Connected) -> String {
     format!(
         "{old}Installed the riff plugin from {}. Start a new Claude Code session to use it.",
         done.dir.display()
+    )
+}
+
+/// The answer to `riff logout --all`.
+///
+/// ```
+/// use riff_core::wire::Revoked;
+///
+/// let done = Revoked { user: "mike".into(), sign_ins: 2 };
+/// assert_eq!(
+///     riff::text::revoked(&done),
+///     "Ended 2 sign-ins of mike. Each device of mike must sign in again."
+/// );
+/// ```
+pub fn revoked(done: &Revoked) -> String {
+    let plural = if done.sign_ins == 1 { "" } else { "s" };
+    format!(
+        "Ended {} sign-in{plural} of {user}. Each device of {user} must sign in again.",
+        done.sign_ins,
+        user = done.user
     )
 }
 

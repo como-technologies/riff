@@ -11,6 +11,11 @@ struct Cli {
     /// The address to listen on.
     #[arg(long, env = "RIFF_LISTEN", default_value = "127.0.0.1:7878")]
     listen: SocketAddr,
+
+    /// A person who may revoke the tokens of any person. Repeat it for
+    /// more admins.
+    #[arg(long = "admin", env = "RIFF_ADMINS", value_delimiter = ',')]
+    admins: Vec<String>,
 }
 
 #[tokio::main]
@@ -23,7 +28,11 @@ async fn main() -> std::io::Result<()> {
         .init();
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
     tracing::info!("riff-server listens on {}", listener.local_addr()?);
-    axum::serve(listener, riff_server::router()).await
+    axum::serve(
+        listener,
+        riff_server::Service::with_admins(cli.admins).router(),
+    )
+    .await
 }
 
 #[cfg(test)]

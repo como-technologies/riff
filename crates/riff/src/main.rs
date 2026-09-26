@@ -92,6 +92,17 @@ enum Command {
     Watch,
     /// Serve the riff tools to an agent session over stdio.
     Mcp,
+    /// Sign out. With --all, end each sign-in of a person on each
+    /// device.
+    Logout {
+        /// End each sign-in, on each device.
+        #[arg(long, required = true)]
+        all: bool,
+        /// The person. The default is you. Only an admin names another
+        /// person.
+        #[arg(long)]
+        user: Option<String>,
+    },
     /// Run a Claude Code hook. The riff plugin calls it.
     Hook {
         #[command(subcommand)]
@@ -122,6 +133,15 @@ enum Tool {
     },
 }
 
+/// A live access token. For now it comes from `RIFF_TOKEN`; `riff login`
+/// (issue 7) replaces this with the stored sign-in.
+fn access_token() -> Result<String> {
+    std::env::var("RIFF_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("not signed in: set RIFF_TOKEN"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -141,6 +161,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let api = Api::new(&cli.server);
+    if let Command::Logout { user, .. } = &cli.command {
+        let done = api.revoke(&access_token()?, user.as_deref()).await?;
+        println!("{}", text::revoked(&done));
+        return Ok(());
+    }
     let here = identity::place(&std::env::current_dir()?)?;
     let me = identity::me(&here)?;
     match cli.command {
@@ -181,6 +206,7 @@ async fn main() -> Result<()> {
         Command::Mcp => mcp::serve(api, identity::session(&here)?).await?,
         Command::Hook { .. } => unreachable!("handled before the identity"),
         Command::Connect { .. } => unreachable!("handled before the identity"),
+        Command::Logout { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }
