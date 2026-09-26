@@ -4,7 +4,7 @@ Install [Rust](https://rustup.rs) and [just](https://just.systems). Then:
 
 ```sh
 just init   # once: installs the book and audit tools
-just ci     # the gate: fmt, clippy, tests, book
+just ci     # the gate: fmt, clippy, tests, API docs, book
 ```
 
 CI runs the same gate on each push. It publishes this book to GitHub

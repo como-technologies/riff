@@ -1,7 +1,7 @@
 # Riff — notes for agents
 
-The book in `docs/src/` is the source of truth.
-`docs/src/requirements.md` is binding.
+The book in `docs/src/` holds the requirements and the big picture.
+`docs/src/requirements.md` is binding. The code holds the design.
 
 ## Work
 
