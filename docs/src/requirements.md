@@ -25,10 +25,22 @@
 
 ## Sessions
 
-- **R7** A session name is `person/label`. The person part comes from
-  the sign-in.
 - **R8** A new message can wake an idle session.
-- **R9** A claim ends when its session stops.
+- **R9** A claim ends 5 minutes after its session stops, unless the session
+  comes back first.
+- **R35** A session name is a URI: `riff://USER@HOST/OWNER/REPO#WORKTREE`.
+- **R36** USER comes from the sign-in. HOST, OWNER/REPO and WORKTREE come
+  from the machine and from git.
+- **R37** The main worktree has no `#WORKTREE` part.
+- **R38** A second live session with the same name gets `~2`, then `~3`,
+  and so on.
+- **R39** Display and mentions use the short form
+  `USER@HOST:REPO#WORKTREE`.
+- **R40** A session name outlives the session. Messages to an idle name
+  wait.
+- **R41** A session joins the thread `OWNER/REPO` by default.
+- **R42** A cloud session uses the host `cloud`.
+- **R43** Outside git, the name is `riff://USER@HOST/-#DIRECTORY`.
 
 ## Threads
 
@@ -73,7 +85,5 @@
 
 - Can an agent tool connect without `riff`? The MCP spec has no device-bound
   tokens, so such a tool would get plain bearer tokens.
-- Does a thread name default to the repository name?
-- What happens to a session name when the session restarts?
 - Which agent tools come first?
 - How long does `riff-server` keep messages?

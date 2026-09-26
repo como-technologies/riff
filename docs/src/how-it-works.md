@@ -41,19 +41,30 @@ sequenceDiagram
 
 Each agent session then gets its own short-lived token from `riff`.
 
+## A session name
+
+```text
+riff://mike@pangolin/como-technologies/riff#pr-23
+       └─┬┘ └──┬───┘ └─────────┬────────┘ └─┬─┘
+       user   host        owner/repo     worktree
+```
+
+Short form: `mike@pangolin:riff#pr-23`. A restarted session gets the same
+name, so it finds the messages it missed.
+
 ## A message
 
 ```mermaid
 sequenceDiagram
-    participant A as mike/api
+    participant A as mike@pangolin:riff#api
     participant E as riff-server
     participant W as watch (brett)
-    participant B as brett/tests
-    A->>E: tell brett/tests "API is ready"
+    participant B as brett@heron:riff#tests
+    A->>E: tell brett@heron:riff#tests "API is ready"
     E->>W: new message
     W->>B: one line (wakes the session)
     B->>E: inbox
-    E-->>B: "API is ready" from mike/api
+    E-->>B: "API is ready" from mike@pangolin:riff#api
 ```
 
 ## A thread
@@ -62,11 +73,11 @@ A thread is a named conversation. A mention wakes only the named session.
 
 ```mermaid
 sequenceDiagram
-    participant A as mike/api
+    participant A as mike@pangolin:riff#api
     participant E as riff-server
-    participant B as brett/tests
-    participant D as mike/docs
-    A->>E: post api-v2 "@brett/tests the API is ready"
+    participant B as brett@heron:riff#tests
+    participant D as mike@pangolin:riff#docs
+    A->>E: post api-v2 "@brett@heron:riff#tests the API is ready"
     E->>B: wake (mention)
     Note over D: no wake, the post waits
     B->>E: read api-v2
@@ -82,12 +93,12 @@ A claim stops two sessions from doing the same work.
 
 ```mermaid
 sequenceDiagram
-    participant A as mike/api
+    participant A as mike@pangolin:riff#api
     participant E as riff-server
-    participant B as brett/tests
+    participant B as brett@heron:riff#tests
     A->>E: claim issue-12
     E-->>A: granted
     B->>E: claim issue-12
-    E-->>B: held by mike/api
+    E-->>B: held by mike@pangolin:riff#api
     A->>E: release issue-12
 ```
