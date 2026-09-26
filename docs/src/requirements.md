@@ -148,6 +148,10 @@
 - **R17** An access token expires in 10 minutes or less. A refresh token
   changes at each use. A reused refresh token revokes all tokens from
   that sign-in.
+- **R80** A sign-in ends when none of its refresh tokens is used for
+  30 days. The person then signs in again.
+- **R81** `riff-server` keeps only a hash of each token, never the
+  token itself.
 - **R18** Each token is bound to a key that stays on the device.
 - **R19** Each session gets its own token. The token works only for that
   session.

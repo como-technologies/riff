@@ -16,6 +16,10 @@
 //! | `claim` | [`Claim`] | [`ClaimReply`] |
 //! | `release` | [`Claim`] | `null` |
 //!
+//! `POST /v1/token` is an OAuth 2.1 token endpoint. Its request is a
+//! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
+//! [`TokenError`] with status 400.
+//!
 //! Two streams use server-sent events. Each event is one `data:` line
 //! that holds JSON:
 //!
@@ -187,4 +191,31 @@ pub struct Wake {
 pub struct Tailed {
     pub thread: ThreadName,
     pub message: Message,
+}
+
+/// `POST /v1/token`, as `application/x-www-form-urlencoded`: swaps a
+/// refresh token for a new pair of tokens. The only grant type is
+/// `refresh_token`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TokenRequest {
+    pub grant_type: String,
+    pub refresh_token: String,
+}
+
+/// A new pair of riff tokens. Use `access_token` as a bearer token.
+/// Use `refresh_token` once, to get the next pair.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenReply {
+    pub access_token: String,
+    /// Always `Bearer`.
+    pub token_type: String,
+    /// Seconds until the access token expires.
+    pub expires_in: u64,
+    pub refresh_token: String,
+}
+
+/// An OAuth error reply, for example `{"error":"invalid_grant"}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenError {
+    pub error: String,
 }

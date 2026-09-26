@@ -5,8 +5,9 @@
 //! ```text
 //!  HTTP handlers ──lock──▶ State (Mutex)       see [`state`]
 //!        │
-//!        └─ Delivery ──▶ wakes channel ──▶ GET /v1/watch streams
-//!                    └─▶ tail channel  ──▶ GET /v1/tail streams
+//!        ├─ Delivery ──▶ wakes channel ──▶ GET /v1/watch streams
+//!        │           └─▶ tail channel  ──▶ GET /v1/tail streams
+//!        └──lock──▶ Tokens (Mutex)      see [`token`]
 //! ```
 //!
 //! - One process holds all state in memory, behind one mutex. Each
@@ -25,8 +26,12 @@
 //!   that it missed. A skipped wake is lost; the message stays in its
 //!   thread.
 //!
-//! Slice 1 keeps state only in memory and has no sign-in. The wire
-//! protocol is in [`riff_core::wire`].
+//! - `POST /v1/token` swaps a refresh token for a new pair. The token
+//!   store has its own lock, so a refresh never waits for the state.
+//!
+//! The server keeps state only in memory. It issues tokens, but the
+//! other routes do not check them yet. The wire protocol is in
+//! [`riff_core::wire`].
 //!
 //! # Example
 //!
@@ -38,13 +43,15 @@
 //! ```
 
 pub mod state;
+pub mod token;
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Query, State as AxumState};
-use axum::http::StatusCode;
+use axum::extract::{Form, Query, State as AxumState};
+use axum::http::{StatusCode, header};
+use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -52,13 +59,14 @@ use futures::{Stream, StreamExt};
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
     Claim, ClaimReply, Membership, Post, Posted, Read, ReadReply, Register, Tailed, Threads,
-    ThreadsReply, Wake, WhoReply, WhoRequest,
+    ThreadsReply, TokenError, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::state::{Delivery, State};
+use crate::token::Tokens;
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
@@ -68,6 +76,7 @@ type Reply<T> = Result<Json<T>, (StatusCode, String)>;
 
 struct Server {
     state: Mutex<State>,
+    tokens: Mutex<Tokens>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
 }
@@ -76,6 +85,12 @@ impl Server {
     fn state(&self) -> MutexGuard<'_, State> {
         // A panic while the lock is held leaves plain data behind; keep going.
         self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn tokens(&self) -> MutexGuard<'_, Tokens> {
+        self.tokens
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
     }
@@ -89,28 +104,62 @@ impl Server {
     }
 }
 
-/// The HTTP routes of `riff-server`.
+/// One `riff-server`: its state, its tokens and its routes. Clones
+/// share the same server.
+///
+/// ```
+/// use std::time::Instant;
+/// use riff_server::Service;
+///
+/// let service = Service::default();
+/// let pair = service.tokens().sign_in("mike", Instant::now()).unwrap();
+/// let router = service.router();
+/// # let _ = (pair, router);
+/// ```
+#[derive(Clone)]
+pub struct Service(Shared);
+
+impl Default for Service {
+    fn default() -> Self {
+        let (wakes, _) = broadcast::channel(EVENT_BUFFER);
+        let (tail, _) = broadcast::channel(EVENT_BUFFER);
+        Service(Arc::new(Server {
+            state: Mutex::new(State::default()),
+            tokens: Mutex::new(Tokens::default()),
+            wakes,
+            tail,
+        }))
+    }
+}
+
+impl Service {
+    /// The HTTP routes of this server.
+    pub fn router(&self) -> Router {
+        Router::new()
+            .route("/v1/register", post(register))
+            .route("/v1/who", post(who))
+            .route("/v1/threads", post(threads))
+            .route("/v1/join", post(join))
+            .route("/v1/leave", post(leave))
+            .route("/v1/post", post(post_message))
+            .route("/v1/read", post(read))
+            .route("/v1/claim", post(claim))
+            .route("/v1/release", post(release))
+            .route("/v1/token", post(token))
+            .route("/v1/watch", get(watch))
+            .route("/v1/tail", get(tail_thread))
+            .with_state(self.0.clone())
+    }
+
+    /// The token store of this server.
+    pub fn tokens(&self) -> MutexGuard<'_, Tokens> {
+        self.0.tokens()
+    }
+}
+
+/// The HTTP routes of a new `riff-server`.
 pub fn router() -> Router {
-    let (wakes, _) = broadcast::channel(EVENT_BUFFER);
-    let (tail, _) = broadcast::channel(EVENT_BUFFER);
-    let server = Arc::new(Server {
-        state: Mutex::new(State::default()),
-        wakes,
-        tail,
-    });
-    Router::new()
-        .route("/v1/register", post(register))
-        .route("/v1/who", post(who))
-        .route("/v1/threads", post(threads))
-        .route("/v1/join", post(join))
-        .route("/v1/leave", post(leave))
-        .route("/v1/post", post(post_message))
-        .route("/v1/read", post(read))
-        .route("/v1/claim", post(claim))
-        .route("/v1/release", post(release))
-        .route("/v1/watch", get(watch))
-        .route("/v1/tail", get(tail_thread))
-        .with_state(server)
+    Service::default().router()
 }
 
 async fn register(AxumState(s): AxumState<Shared>, Json(r): Json<Register>) -> Reply<()> {
@@ -169,6 +218,26 @@ async fn release(AxumState(s): AxumState<Shared>, Json(r): Json<Claim>) -> Reply
         .release(&r.me, &r.thread, &r.item, Instant::now())
         .map_err(bad_request)?;
     Ok(Json(()))
+}
+
+/// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
+async fn token(AxumState(s): AxumState<Shared>, Form(r): Form<TokenRequest>) -> impl IntoResponse {
+    let no_store = [(header::CACHE_CONTROL, "no-store")];
+    if r.grant_type != "refresh_token" {
+        let error = TokenError {
+            error: "unsupported_grant_type".into(),
+        };
+        return (StatusCode::BAD_REQUEST, no_store, Json(error)).into_response();
+    }
+    match s.tokens().refresh(&r.refresh_token, Instant::now()) {
+        Ok(pair) => (no_store, Json(pair)).into_response(),
+        Err(_) => {
+            let error = TokenError {
+                error: "invalid_grant".into(),
+            };
+            (StatusCode::BAD_REQUEST, no_store, Json(error)).into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]
