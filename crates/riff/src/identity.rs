@@ -92,7 +92,7 @@ pub fn place(dir: &Path) -> Result<Place> {
     place_in(dir, &host)
 }
 
-/// Claude Code sets this variable to `true` in a cloud session (R82).
+/// Claude Code sets this variable to `true` in a cloud session (R100).
 pub const REMOTE_VAR: &str = "CLAUDE_CODE_REMOTE";
 
 /// The host from `RIFF_HOST`, the value of [`REMOTE_VAR`] and the machine
