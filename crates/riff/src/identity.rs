@@ -7,7 +7,7 @@
 //! |---|---|
 //! | user | `RIFF_USER`, then `USER`. Sign-in replaces this in slice 3. |
 //! | session | `RIFF_SESSION`, then `CLAUDE_CODE_SESSION_ID`. A person has none. |
-//! | host | `RIFF_HOST`, then the machine name without its domain. |
+//! | host | `RIFF_HOST`, then `cloud` in a cloud session, then the machine name without its domain. |
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
 //! | worktree | The directory name of a linked worktree. The main worktree has none. |
 //!
@@ -84,11 +84,34 @@ pub fn session(place: &Place) -> Result<SessionUri> {
 
 /// The place for `dir`, with the host from the environment.
 pub fn place(dir: &Path) -> Result<Place> {
-    let host = match std::env::var("RIFF_HOST") {
-        Ok(host) => host,
-        Err(_) => short_host(&gethostname::gethostname().to_string_lossy()),
-    };
+    let host = host(
+        std::env::var("RIFF_HOST").ok().as_deref(),
+        std::env::var(REMOTE_VAR).ok().as_deref(),
+        &gethostname::gethostname().to_string_lossy(),
+    );
     place_in(dir, &host)
+}
+
+/// Claude Code sets this variable to `true` in a cloud session (R82).
+pub const REMOTE_VAR: &str = "CLAUDE_CODE_REMOTE";
+
+/// The host from `RIFF_HOST`, the value of [`REMOTE_VAR`] and the machine
+/// name. A cloud session has a random container name, so its host is
+/// `cloud` (R42).
+///
+/// ```
+/// use riff::identity::host;
+///
+/// assert_eq!(host(None, None, "Pangolin.local"), "pangolin");
+/// assert_eq!(host(None, Some("true"), "a1b2c3d4e5"), "cloud");
+/// assert_eq!(host(Some("brett"), Some("true"), "a1b2c3d4e5"), "brett");
+/// ```
+pub fn host(riff_host: Option<&str>, remote: Option<&str>, machine: &str) -> String {
+    match (riff_host, remote) {
+        (Some(host), _) => host.to_owned(),
+        (None, Some("true")) => "cloud".to_owned(),
+        _ => short_host(machine),
+    }
 }
 
 /// The place for `dir` on a known host.
@@ -212,5 +235,12 @@ mod tests {
     #[test]
     fn host_names_lose_their_domain() {
         assert_eq!(short_host("Pangolin.local"), "pangolin");
+    }
+
+    #[test]
+    fn only_a_true_remote_flag_gives_the_cloud_host() {
+        assert_eq!(host(None, Some("false"), "pangolin"), "pangolin");
+        assert_eq!(host(None, Some(""), "pangolin"), "pangolin");
+        assert_eq!(host(None, Some("true"), "pangolin"), "cloud");
     }
 }

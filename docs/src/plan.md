@@ -15,7 +15,6 @@ These requirements wait for a later slice:
 
 | Requirement | Slice |
 |---|---|
-| R42: `cloud` host | 4 |
 | R44, R53, R54: the plugin and its start routine | 2 |
 | R14–R16, R18–R22: sign-in and device keys | 3 |
 | R5, R6, R29–R32, R34, R46: Cloud Run and storage | 4 |

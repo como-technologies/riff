@@ -98,6 +98,8 @@
   not route on the short form.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
+- **R82** A session is a cloud session when `CLAUDE_CODE_REMOTE` is
+  `true`. `RIFF_HOST` still wins.
 - **R43** Outside git, the URI is `riff://USER@HOST/-?session=ID#DIRECTORY`.
 - **R49** When a watch starts, it wakes the session once if an addressed
   message is unread.
