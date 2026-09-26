@@ -55,7 +55,7 @@
 //! assert!(config.is_resource("https://RIFF.example.com/"));
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashSet, VecDeque};
 
 use riff_core::dpop::{ALG, MAX_AGE, MAX_SKEW};
 use riff_core::name::Who;
@@ -221,11 +221,22 @@ pub fn dpop_token(header: &str) -> Option<&str> {
     (scheme.eq_ignore_ascii_case("dpop") && !token.is_empty()).then_some(token)
 }
 
+/// The most proof IDs that [`Replay`] keeps (R114).
+pub const MAX_PROOFS: usize = 100_000;
+
 /// The proof IDs that the server saw, so that no proof works twice.
 /// It forgets an ID when its proof is too old to pass the time check.
+/// It keeps at most [`MAX_PROOFS`] IDs. When it must forget an ID
+/// early, it refuses each proof as old as that one, so a forgotten
+/// proof still cannot work twice (R114).
 #[derive(Default)]
 pub struct Replay {
-    seen: HashMap<String, u64>,
+    seen: HashSet<String>,
+    /// Each ID with the time when it can go and its `iat`, oldest
+    /// first.
+    order: VecDeque<(u64, u64, String)>,
+    /// A proof with an `iat` below this came before a forgotten ID.
+    floor: u64,
 }
 
 impl Replay {
@@ -240,14 +251,68 @@ impl Replay {
     /// assert!(!replay.first_use("j-1", 100, 101));
     /// ```
     pub fn first_use(&mut self, jti: &str, iat: u64, now: u64) -> bool {
-        self.seen.retain(|_, iat| *iat + MAX_AGE + MAX_SKEW >= now);
-        self.seen.insert(jti.to_owned(), iat).is_none()
+        while let Some((until, _, _)) = self.order.front()
+            && *until < now
+        {
+            let (_, _, old) = self.order.pop_front().expect("a front entry");
+            self.seen.remove(&old);
+        }
+        if iat < self.floor || self.seen.contains(jti) {
+            return false;
+        }
+        if self.order.len() >= MAX_PROOFS
+            && let Some((_, old_iat, old)) = self.order.pop_front()
+        {
+            self.seen.remove(&old);
+            self.floor = self.floor.max(old_iat.saturating_add(1));
+        }
+        self.seen.insert(jti.to_owned());
+        // A proof passes the time check until iat + MAX_AGE, and iat is
+        // at most now + MAX_SKEW.
+        self.order
+            .push_back((now + MAX_SKEW + MAX_AGE, iat, jti.to_owned()));
+        true
+    }
+
+    /// The number of proof IDs that it keeps.
+    pub fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    /// True when it keeps no proof ID.
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_forgets_old_proofs_in_order() {
+        let mut replay = Replay::default();
+        assert!(replay.first_use("a", 100, 100));
+        assert!(replay.first_use("b", 200, 200));
+        assert!(replay.first_use("c", 470, 470));
+        // "a" is too old for the time check now, so the store forgot it.
+        assert_eq!(replay.len(), 2);
+        assert!(!replay.first_use("b", 200, 470));
+    }
+
+    #[test]
+    fn a_full_replay_store_takes_new_proofs_and_refuses_forgotten_ones() {
+        let mut replay = Replay::default();
+        for i in 0..MAX_PROOFS {
+            assert!(replay.first_use(&format!("flood-{i}"), 1000, 1000));
+        }
+        assert!(replay.first_use("fresh", 1001, 1001));
+        assert_eq!(replay.len(), MAX_PROOFS);
+        // flood-0 is forgotten, but a proof as old as it is refused.
+        assert!(!replay.first_use("flood-0", 1000, 1001));
+        assert!(!replay.first_use("fresh", 1001, 1001));
+        assert!(replay.first_use("fresh-2", 1001, 1001));
+    }
 
     #[test]
     fn the_public_url_is_the_resource_and_the_issuer() {

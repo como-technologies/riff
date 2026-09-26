@@ -43,6 +43,7 @@
 //! ```
 
 use std::fmt;
+use std::time::Duration;
 
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
@@ -63,6 +64,19 @@ pub struct Provider {
 
 /// The allowed domain when the settings name none (R15).
 pub const DEFAULT_DOMAIN: &str = "comotechnologies.io";
+
+/// The longest wait for each fetch from the provider (R117).
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The HTTP client for fetches from the provider. Each fetch fails
+/// after `timeout`.
+pub fn client(timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        // Only a broken TLS setup makes the build fail.
+        .expect("an HTTP client")
+}
 
 /// Who signed in.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,6 +217,26 @@ async fn fetch<T: serde::de::DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_silent_provider_times_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let issuer = format!("http://{}", listener.local_addr().unwrap());
+        // Accept connections and never reply.
+        tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                open.push(stream);
+            }
+        });
+        let provider = Provider {
+            issuer,
+            ..provider()
+        };
+        let http = client(Duration::from_millis(100));
+        let error = provider.sign_in(&http, "t").await.unwrap_err();
+        assert!(matches!(error, SignInError::Provider(_)), "{error}");
+    }
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use serde_json::{Value, json};
 

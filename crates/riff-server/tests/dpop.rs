@@ -132,3 +132,27 @@ async fn refresh_needs_the_key_of_the_sign_in() {
     // The refused tries did not use the refresh token.
     assert_eq!(common::refresh(&base, &key, &form).await.status(), 200);
 }
+
+#[tokio::test]
+async fn a_caller_without_a_credential_leaves_no_proof_id() {
+    let (service, base) = common::start(true, &[]).await;
+    let key = Key::generate();
+    for _ in 0..5 {
+        let reply = who(common::post(&format!("{base}/v1/who"), &key, Some("junk"))).await;
+        assert_eq!(reply.status(), 401);
+        let reply =
+            common::refresh(&base, &key, "grant_type=refresh_token&refresh_token=junk").await;
+        assert_eq!(reply.status(), 400);
+    }
+    assert_eq!(service.proofs_kept(), 0);
+
+    // A real token keeps its proof ID.
+    let pair = service
+        .tokens()
+        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .unwrap();
+    let url = format!("{base}/v1/who");
+    let reply = who(common::post(&url, &key, Some(&pair.access_token))).await;
+    assert_eq!(reply.status(), 200);
+    assert_eq!(service.proofs_kept(), 1);
+}

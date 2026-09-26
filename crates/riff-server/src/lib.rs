@@ -123,8 +123,9 @@ impl Server {
     }
 
     /// Checks the `DPoP` header of a request to `path` (R18). `token` is
-    /// the access token that the request carries, if any. The proof
-    /// must be new.
+    /// the access token that the request carries, if any. The caller
+    /// checks the credential of the request, and then calls
+    /// [`Server::first_use`].
     fn proof(
         &self,
         headers: &HeaderMap,
@@ -139,11 +140,18 @@ impl Server {
         let value = value.to_str().map_err(Refusal::proof)?;
         let now = now_ms() / 1000;
         let url = self.config.url(path);
-        let proof = dpop::verify(value, method, &url, token, now).map_err(Refusal::proof)?;
+        dpop::verify(value, method, &url, token, now).map_err(Refusal::proof)
+    }
+
+    /// Refuses a proof that came before. Only a request with a valid
+    /// credential gets here, so a caller without one cannot fill the
+    /// store (R115).
+    fn first_use(&self, proof: &dpop::Proof) -> Result<(), Refusal> {
+        let now = now_ms() / 1000;
         if !self.replay().first_use(&proof.jti, proof.iat, now) {
             return Err(Refusal::proof("the proof was used before"));
         }
-        Ok(proof)
+        Ok(())
     }
 
     /// Finds the user of a request from its access token and its proof.
@@ -164,6 +172,7 @@ impl Server {
             .tokens()
             .caller(token, &proof.jkt, Instant::now())
             .map_err(Refusal::token)?;
+        self.first_use(&proof)?;
         Ok(SignedIn(who))
     }
 
@@ -216,7 +225,7 @@ impl Service {
             replay: Mutex::new(Replay::default()),
             wakes,
             tail,
-            http: reqwest::Client::new(),
+            http: oidc::client(oidc::FETCH_TIMEOUT),
         }))
     }
 
@@ -258,6 +267,11 @@ impl Service {
     /// The token store of this server.
     pub fn tokens(&self) -> MutexGuard<'_, Tokens> {
         self.0.tokens()
+    }
+
+    /// The number of proof IDs that this server keeps (R114).
+    pub fn proofs_kept(&self) -> usize {
+        self.0.replay().len()
     }
 }
 
@@ -387,17 +401,10 @@ async fn token(
         return refuse("invalid_dpop_proof");
     };
     let reply = match r.grant_type.as_str() {
-        "refresh_token" => s
-            .tokens()
-            .refresh(
-                r.refresh_token.as_deref().unwrap_or_default(),
-                &proof.jkt,
-                Instant::now(),
-            )
-            .map_err(|_| "invalid_grant"),
+        "refresh_token" => refresh(&s, &r, &proof),
         TOKEN_EXCHANGE => match r.subject_token_type.as_deref() {
-            Some(ID_TOKEN_TYPE) => exchange(&s, &r, &proof.jkt).await,
-            Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof.jkt),
+            Some(ID_TOKEN_TYPE) => exchange(&s, &r, &proof).await,
+            Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof),
             _ => Err("invalid_request"),
         },
         _ => Err("unsupported_grant_type"),
@@ -469,27 +476,53 @@ async fn server_metadata(AxumState(s): AxumState<Shared>) -> Json<ServerMetadata
     Json(s.config.server_metadata())
 }
 
+/// Swaps a refresh token for a new pair.
+fn refresh(s: &Server, r: &TokenRequest, proof: &dpop::Proof) -> Result<TokenReply, &'static str> {
+    let token = r.refresh_token.as_deref().unwrap_or_default();
+    if !s.tokens().knows_refresh(token, &proof.jkt) {
+        return Err("invalid_grant");
+    }
+    s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
+    s.tokens()
+        .refresh(token, &proof.jkt, Instant::now())
+        .map_err(|_| "invalid_grant")
+}
+
 /// Swaps an ID token of the provider for a first pair of riff tokens.
-async fn exchange(s: &Server, r: &TokenRequest, jkt: &str) -> Result<TokenReply, &'static str> {
+async fn exchange(
+    s: &Server,
+    r: &TokenRequest,
+    proof: &dpop::Proof,
+) -> Result<TokenReply, &'static str> {
     let provider = s.config.provider.as_ref().ok_or("unsupported_grant_type")?;
     let id_token = r.subject_token.as_ref().ok_or("invalid_request")?;
     let identity = provider.sign_in(&s.http, id_token).await.map_err(|e| {
         tracing::info!("sign-in refused: {e}");
         "invalid_grant"
     })?;
+    s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
     tracing::info!("{} signed in as {}", identity.email, identity.user);
     s.tokens()
-        .sign_in(&identity.user, jkt, Instant::now())
+        .sign_in(&identity.user, &proof.jkt, Instant::now())
         .map_err(|_| "invalid_grant")
 }
 
 /// Swaps a person access token for a session pair (R19).
-fn for_session(s: &Server, r: &TokenRequest, jkt: &str) -> Result<TokenReply, &'static str> {
+fn for_session(
+    s: &Server,
+    r: &TokenRequest,
+    proof: &dpop::Proof,
+) -> Result<TokenReply, &'static str> {
     let (Some(token), Some(session)) = (&r.subject_token, &r.session) else {
         return Err("invalid_request");
     };
+    let now = Instant::now();
+    if s.tokens().caller(token, &proof.jkt, now).is_err() {
+        return Err("invalid_grant");
+    }
+    s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
     s.tokens()
-        .for_session(token, jkt, session, Instant::now())
+        .for_session(token, &proof.jkt, session, now)
         .map_err(|_| "invalid_grant")
 }
 

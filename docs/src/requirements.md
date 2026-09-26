@@ -154,6 +154,8 @@
   that sign-in.
 - **R110** Only the device key of a sign-in can revoke it by reuse. A
   reused refresh token with another key is refused and changes nothing.
+- **R116** `riff-server` keeps a used refresh token for 24 hours, to
+  find reuse. After that, the token is not known.
 - **R80** A sign-in ends when none of its refresh tokens is used for
   30 days. The person then signs in again.
 - **R81** `riff-server` keeps only a hash of each token, never the
@@ -165,6 +167,7 @@
   loopback port. It reads at most 8 KiB of the request line.
 - **R91** `riff-server` swaps a valid ID token of its provider for the
   first riff tokens. The email in the ID token must be verified.
+- **R117** Each fetch from the sign-in provider stops after 10 seconds.
 - **R92** USER is the part of the verified email before the `@`, in
   lower case.
 - **R93** `riff logout` removes the sign-in at one server from the
@@ -178,6 +181,10 @@
   URL of the server and the path.
 - **R113** `riff-server` refuses a proof whose `jwk` holds a private
   key.
+- **R114** `riff-server` keeps at most 100,000 proof IDs. When it must
+  forget an ID early, it refuses each proof as old as that one.
+- **R115** `riff-server` keeps a proof ID only after the request shows a
+  valid token or ID token. A caller without one adds nothing.
 - **R88** `riff` keeps one device key for each server, in the OS
   keyring.
 - **R19** Each session gets its own token. The token works only for that

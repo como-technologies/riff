@@ -30,7 +30,9 @@
 //! - A refresh token works once. It gives a new pair, and the server
 //!   marks it as used.
 //! - A used refresh token that comes back revokes the sign-in: each of
-//!   its access and refresh tokens stops working.
+//!   its access and refresh tokens stops working. The server keeps a
+//!   used refresh token for [`REUSE_WINDOW`]. After that, it is not
+//!   known (R116).
 //! - A sign-in expires when no refresh token of it is used for
 //!   [`REFRESH_IDLE`].
 //! - A refresh gives a pair of the same kind: a session pair stays for
@@ -87,6 +89,10 @@ pub const ACCESS_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// A sign-in ends when no refresh token of it is used this long (R80).
 pub const REFRESH_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// The server keeps a used refresh token this long, to find reuse
+/// (R116).
+pub const REUSE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Why the server refuses a token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,7 +151,8 @@ struct Access {
 struct Refresh {
     sign_in: u64,
     session: Option<String>,
-    used: bool,
+    /// When the token was used, if it was.
+    used: Option<Instant>,
 }
 
 impl Tokens {
@@ -173,6 +180,15 @@ impl Tokens {
         Ok(self.issue(id, None, now))
     }
 
+    /// True when `token` is a refresh token of a live sign-in on the
+    /// device key `jkt`, used or not. It changes nothing.
+    pub fn knows_refresh(&self, token: &str, jkt: &str) -> bool {
+        self.refresh
+            .get(&hash(token))
+            .and_then(|r| self.sign_ins.get(&r.sign_in))
+            .is_some_and(|s| s.jkt == jkt)
+    }
+
     /// Swaps a refresh token for a new pair. A refresh token works once,
     /// and only with the device key `jkt` of its sign-in.
     pub fn refresh(&mut self, token: &str, jkt: &str, now: Instant) -> Result<TokenReply, Refused> {
@@ -184,12 +200,12 @@ impl Tokens {
         if sign_in.jkt != jkt {
             return Err(Refused::WrongKey);
         }
-        if refresh.used {
+        if refresh.used.is_some() {
             self.revoke(id);
             return Err(Refused::Reused);
         }
         sign_in.last_used = now;
-        refresh.used = true;
+        refresh.used = Some(now);
         let session = refresh.session.clone();
         Ok(self.issue(id, session, now))
     }
@@ -284,7 +300,7 @@ impl Tokens {
             Refresh {
                 sign_in,
                 session,
-                used: false,
+                used: None,
             },
         );
         TokenReply {
@@ -310,7 +326,11 @@ impl Tokens {
         let live = &self.sign_ins;
         self.access
             .retain(|_, a| now < a.expires && live.contains_key(&a.sign_in));
-        self.refresh.retain(|_, r| live.contains_key(&r.sign_in));
+        self.refresh.retain(|_, r| {
+            live.contains_key(&r.sign_in)
+                && r.used
+                    .is_none_or(|used| now.duration_since(used) < REUSE_WINDOW)
+        });
     }
 }
 
@@ -505,6 +525,22 @@ mod tests {
         tokens.sign_in("brett", "k", now + ACCESS_TTL).unwrap();
         assert_eq!(tokens.access.len(), 1);
         assert_eq!(tokens.sign_ins.len(), 2);
+    }
+
+    #[test]
+    fn sweep_forgets_old_used_refresh_tokens() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        assert_eq!(tokens.refresh.len(), 2);
+        let later = now + REUSE_WINDOW;
+        let third = tokens.refresh(&second.refresh_token, "k", later).unwrap();
+        // The first token is gone. The second is used but new enough.
+        assert_eq!(tokens.refresh.len(), 2);
+        assert_eq!(
+            tokens.refresh(&first.refresh_token, "k", later),
+            Err(Refused::Unknown)
+        );
+        assert!(tokens.refresh(&third.refresh_token, "k", later).is_ok());
     }
 
     #[test]
