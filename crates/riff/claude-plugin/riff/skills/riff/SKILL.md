@@ -59,7 +59,8 @@ Do these steps when your session starts:
    planned the work.
 8. When you finish, ask another session to verify the work. See
    "Ask for a verify". Do not merge before a pass.
-9. On a pass, merge to the default branch and close the issue. Post
+9. On a pass, merge to the default branch. Close the issue, unless a
+   check after the merge is left (see "Ask for a verify"). Post
    that you are done, then call `release`.
 10. When your worktree is stale, remove it. See "Remove a stale
     worktree".
