@@ -4,6 +4,7 @@ use std::io::Read;
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::TimeZone;
 use clap::{Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
@@ -88,10 +89,15 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Show each new message in a thread.
+    /// Show each new message in a thread, for people: a block for each
+    /// message, with color in a terminal.
     Tail {
         /// The thread. The default is your repository thread.
         thread: Option<String>,
+        /// When to use color. `auto` uses color only when stdout is a
+        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
     },
     /// Claim a work item so that no other session does the same work.
     /// Exits with status 1 when another session holds it.
@@ -273,7 +279,9 @@ async fn main() -> Result<()> {
             println!("{}", text::released(&thread, &item));
         }
         Command::Lead => println!("{}", text::led(&api.lead(&me).await?)),
-        Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await,
+        Command::Tail { thread, color } => {
+            tail(&api, &thread_or_default(thread, &here)?, color).await
+        }
         Command::Watch { once } => {
             let me = identity::session(&here, api.base())?;
             let Some(_lock) = lock_watch(&me) else {
@@ -375,11 +383,54 @@ fn record_session(me: &SessionUri) -> Option<local::Held> {
         .flatten()
 }
 
+/// When `riff tail` uses color (01M3JDCA9070MY30AYHK3Y67EF).
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ColorWhen {
+    Auto,
+    Always,
+    Never,
+}
+
 /// Runs until stopped. It connects again when the stream ends (R131).
-async fn tail(api: &Api, thread: &ThreadName) {
-    eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
-    let stream = follow(|| api.tail(thread), RETRY);
-    print_each(stream, text::message, false).await;
+/// Each message is a [`text::block`]. The status lines go to stderr
+/// (01M3JDCA6R894JG6SDJ2R7AFMN).
+async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
+    anstream::ColorChoice::write_global(match color {
+        ColorWhen::Auto => anstream::ColorChoice::Auto,
+        ColorWhen::Always => anstream::ColorChoice::Always,
+        ColorWhen::Never => anstream::ColorChoice::Never,
+    });
+    let (warning, error) = (text::WARNING, text::ERROR);
+    anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
+    let mut stream = Box::pin(follow(|| api.tail(thread), RETRY));
+    let mut lost = false;
+    let mut last_day = None;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(checked) => {
+                if lost {
+                    anstream::eprintln!("riff: connected again.");
+                    lost = false;
+                }
+                let at = i64::try_from(checked.message.at_ms)
+                    .ok()
+                    .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
+                    .unwrap_or_else(chrono::Local::now);
+                let block = text::block(&checked, &at, last_day, textwrap::termwidth());
+                last_day = Some(at.date_naive());
+                anstream::println!("{block}");
+            }
+            Err(e) if !lost => {
+                anstream::eprintln!(
+                    "{warning}riff: {e:#}. Trying again every {} seconds.{warning:#}",
+                    RETRY.as_secs()
+                );
+                lost = true;
+            }
+            Err(_) => {}
+        }
+    }
+    anstream::eprintln!("{error}riff: the stream of {thread} ended.{error:#}");
 }
 
 /// Runs until stopped, or with `once` until the first wake (R170). It

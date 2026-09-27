@@ -426,6 +426,22 @@
   person through `riff tail`.
 - **R39** People see the short form `USER@HOST:REPO#WORKTREE`. Riff does
   not route on the short form.
+- **01M3JDCA6R894JG6SDJ2R7AFMN** `riff tail` shows each message as a
+  block. The header has the local time, the sender in bold, the
+  address, the mark `verified` or `not verified`, and the number. Each
+  session has its own color, from a hash of its session ID. A person
+  has another style. A date line comes before the first message of a
+  day. The body is under the header, with an indent, wrapped to the
+  width of the terminal. The status lines go to stderr: a warning is
+  yellow, an error is red. The MCP `read` tool and `riff watch` stay
+  plain.
+- **01M3JDCA9070MY30AYHK3Y67EF** `riff tail --color <auto|always|never>`
+  controls the color. The default `auto` uses color only when stdout is
+  a terminal, and obeys `NO_COLOR` and `CLICOLOR_FORCE`.
+- **01M3JDCAB7K6QA58HDTN9BR1AH** Before `riff tail` prints a message, it
+  removes each escape sequence and each control character from the
+  body and the names. It keeps newlines and tabs. A body cannot change
+  the terminal.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is

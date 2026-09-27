@@ -189,11 +189,15 @@ async fn tail_connects_again_when_the_server_ends_the_stream() {
     let dir = tempfile::tempdir().unwrap();
     let args = ["tail", "como-technologies/riff"];
 
-    let lines = first_lines(riff(&server, dir.path(), &args), 3).await;
+    // A date line, then a header and a body for each message.
+    let lines = first_lines(riff(&server, dir.path(), &args), 7).await;
 
-    for (line, seq) in lines.iter().zip(1..) {
-        assert!(line.ends_with(&format!("stream {seq}")), "{line}");
-    }
+    let bodies: Vec<&str> = lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| l.starts_with("stream"))
+        .collect();
+    assert_eq!(bodies, ["stream 1", "stream 2", "stream 3"], "{lines:?}");
     assert!(calls.tail.load(Ordering::SeqCst) >= 3);
 }
 

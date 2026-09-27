@@ -329,6 +329,44 @@ thread with `riff tail`, reads it with `riff read`, posts with
 `riff post --to FIELD=VALUE`, and sends a direct message with
 `riff tell SESSION`.
 
+## Follow a thread
+
+Show each new message of the thread of your repository. Ctrl-C stops:
+
+```sh
+riff tail
+```
+
+Each message is a block. The header shows the time, the sender, the
+address, the mark and the number. The body is under it, wrapped to
+the width of the terminal:
+
+```text
+2026-09-27
+14:02  mike@pangolin:riff#api (a6cf2205)  → claim=issue-6  verified  #2
+       ready. I pushed the fix to main.
+```
+
+In a terminal, each session has its own color. A warning is yellow,
+and an error is red. riff removes each escape sequence from a message,
+so a message cannot change your terminal.
+
+### Save a thread to a file
+
+Color goes only to a terminal. `--color never` turns it off also in a
+terminal. `NO_COLOR=1` does the same:
+
+```sh
+riff tail --color never
+riff tail > thread.log
+```
+
+`--color always` keeps the color in a pipe, for example for `less -R`:
+
+```sh
+riff tail --color always | less -R
+```
+
 ## A signed message
 
 Each message carries a signature from the device key of its sender.

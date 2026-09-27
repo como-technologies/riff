@@ -1,6 +1,10 @@
-//! Plain-text output for people and agents.
+//! Plain-text output for people and agents. [`block`] is the styled
+//! form of a message for people, for `riff tail`.
 
 use std::fmt::Write;
+
+use anstyle::{AnsiColor, Color, Style};
+use chrono::{DateTime, NaiveDate, TimeZone};
 
 use crate::plugin::Connected;
 use riff_core::name::{SessionUri, ThreadName};
@@ -538,9 +542,260 @@ pub fn threads(list: &[ThreadInfo], me: &SessionUri) -> String {
     out
 }
 
+/// The indent of the body of a [`block`]: the width of the time, and
+/// two spaces.
+const INDENT: &str = "       ";
+
+/// The colors of the senders. A session gets one of them from a hash of
+/// its session ID ([`sender_style`]). Red and yellow are for errors
+/// and warnings, so they are not here.
+const SENDER_COLORS: [AnsiColor; 8] = [
+    AnsiColor::Green,
+    AnsiColor::Blue,
+    AnsiColor::Magenta,
+    AnsiColor::Cyan,
+    AnsiColor::BrightGreen,
+    AnsiColor::BrightBlue,
+    AnsiColor::BrightMagenta,
+    AnsiColor::BrightCyan,
+];
+
+/// Dim text: the time, the date line, the number and the mark
+/// `verified`.
+const DIM: Style = Style::new().dimmed();
+
+/// The address of a message.
+const MUTED: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::BrightBlack)));
+
+/// The style of a warning on stderr.
+pub const WARNING: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
+
+/// The style of an error on stderr.
+pub const ERROR: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)));
+
+/// Text from another session, safe to print to a terminal
+/// (01M3JDCAB7K6QA58HDTN9BR1AH). It removes each escape sequence and
+/// each control character. It keeps newlines and tabs.
+///
+/// ```
+/// // A body that tries to set the title of the terminal.
+/// assert_eq!(riff::text::safe("hi\x1b]0;title\x07 there"), "hi there");
+/// assert_eq!(riff::text::safe("\x1b[31mred\x1b[0m\x08\r\n\tok\u{9b}"), "red\n\tok");
+/// ```
+pub fn safe(text: &str) -> String {
+    anstream::adapter::strip_str(text)
+        .to_string()
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect()
+}
+
+/// The style of a sender in a [`block`]: bold, with a color from a hash
+/// of its session ID. So a sender has the same color in each message.
+/// A person (no session ID) is bold and underlined, with no color.
+///
+/// ```
+/// use riff::text::sender_style;
+///
+/// let a = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let b = "riff://ann@heron/como-technologies/riff?session=a6cf".parse()?;
+/// assert_eq!(sender_style(&a), sender_style(&b));
+/// assert!(sender_style(&a).get_fg_color().is_some());
+/// let person = "riff://mike@pangolin".parse()?;
+/// assert_eq!(sender_style(&person), anstyle::Style::new().bold().underline());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn sender_style(uri: &SessionUri) -> Style {
+    match uri.who().session() {
+        Some(id) => {
+            // FNV-1a: the same on each machine and each run.
+            let hash = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+            });
+            let color = SENDER_COLORS[(hash % SENDER_COLORS.len() as u64) as usize];
+            Style::new().bold().fg_color(Some(Color::Ansi(color)))
+        }
+        None => Style::new().bold().underline(),
+    }
+}
+
+/// `text` in `style`.
+fn styled(style: Style, text: &str) -> String {
+    format!("{style}{text}{style:#}")
+}
+
+/// A message for people, as `riff tail` shows it
+/// (01M3JDCA6R894JG6SDJ2R7AFMN). It has ANSI styles: print it through
+/// `anstream`, which removes them when the output has no color.
+///
+/// - A date line comes first when the day of `at` is not `last_day`.
+/// - The header: the time, the sender ([`name`], [`sender_style`]),
+///   `lead` for a verified lead, the address, the mark `verified` or
+///   `not verified` (R199), and the number.
+/// - The body is under the header, with an indent. It wraps to `width`
+///   and keeps its own line breaks. Each name and the body are
+///   [`safe`].
+///
+/// ```
+/// use chrono::{FixedOffset, TimeZone};
+/// use riff::api::Checked;
+/// use riff_core::wire::{Kind, Message};
+///
+/// let message = Message {
+///     seq: 2,
+///     from: "riff://mike@pangolin/como-technologies/riff?session=a6cf2205&lead=true#api".parse()?,
+///     to: vec!["claim=issue-6".parse()?],
+///     body: "ready. I pushed the fix to main.".into(),
+///     at_ms: 1_790_000_000_000,
+///     kind: Kind::Message,
+///     sig: None,
+/// };
+/// let c = Checked { message, verified: true };
+/// let utc = FixedOffset::east_opt(0).unwrap();
+/// let at = utc.timestamp_millis_opt(c.message.at_ms as i64).unwrap();
+/// let text = riff::text::block(&c, &at, None, 80);
+/// assert_eq!(
+///     anstream::adapter::strip_str(&text).to_string(),
+///     "2026-09-21\n\
+///      14:13  mike@pangolin:riff#api (a6cf2205) lead  → claim=issue-6  verified  #2\n       \
+///      ready. I pushed the fix to main."
+/// );
+/// // The same day: no date line.
+/// let text = riff::text::block(&c, &at, Some(at.date_naive()), 80);
+/// assert!(anstream::adapter::strip_str(&text).to_string().starts_with("14:13"));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn block<Tz: TimeZone>(
+    c: &Checked,
+    at: &DateTime<Tz>,
+    last_day: Option<NaiveDate>,
+    width: usize,
+) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let m = &c.message;
+    let mut out = String::new();
+    if last_day != Some(at.date_naive()) {
+        let _ = writeln!(out, "{}", styled(DIM, &at.format("%Y-%m-%d").to_string()));
+    }
+    let _ = write!(
+        out,
+        "{}  {}",
+        styled(DIM, &at.format("%H:%M").to_string()),
+        styled(sender_style(&m.from), &safe(&name(&m.from)))
+    );
+    if c.verified && m.from.lead() {
+        let _ = write!(out, " {}", styled(Style::new().bold(), "lead"));
+    }
+    if !m.to.is_empty() {
+        let to: Vec<String> = m.to.iter().map(|s| safe(&s.to_string())).collect();
+        let _ = write!(
+            out,
+            "  {}",
+            styled(MUTED, &format!("→ {}", to.join(" or ")))
+        );
+    }
+    let mark = if c.verified {
+        styled(DIM, "verified")
+    } else {
+        styled(WARNING, "not verified")
+    };
+    let _ = write!(out, "  {mark}  {}", styled(DIM, &format!("#{}", m.seq)));
+    let body = match (m.kind, m.body.is_empty()) {
+        (Kind::Message, _) => safe(&m.body),
+        (Kind::Status, true) => "asks for your status.".into(),
+        (Kind::Status, false) => format!("asks for your status: {}", safe(&m.body)),
+    };
+    let options = textwrap::Options::new(width.max(INDENT.len() + 20))
+        .initial_indent(INDENT)
+        .subsequent_indent(INDENT);
+    for line in body.lines() {
+        let line = line.replace('\t', "    ");
+        out.push('\n');
+        if !line.trim().is_empty() {
+            out.push_str(&textwrap::fill(&line, &options));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ago;
+    use super::*;
+
+    #[test]
+    fn two_senders_mostly_get_different_colors() {
+        let colors: std::collections::HashSet<_> = (0..100)
+            .map(|i| {
+                let uri: SessionUri = format!("riff://mike@pangolin?session={i:08x}-d54a")
+                    .parse()
+                    .unwrap();
+                format!("{:?}", sender_style(&uri).get_fg_color())
+            })
+            .collect();
+        assert_eq!(colors.len(), SENDER_COLORS.len());
+    }
+
+    #[test]
+    fn the_styled_block_has_the_styles() {
+        let message = riff_core::wire::Message {
+            seq: 3,
+            from: "riff://ann@heron/como-technologies/riff?session=77e0"
+                .parse()
+                .unwrap(),
+            to: vec![],
+            body: String::new(),
+            at_ms: 0,
+            kind: Kind::Status,
+            sig: None,
+        };
+        let c = Checked {
+            message,
+            verified: false,
+        };
+        let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
+        let text = block(&c, &at, Some(at.date_naive()), 80);
+        let sender = sender_style(&c.message.from);
+        assert!(text.contains(&format!("{sender}ann@heron:riff (77e0){sender:#}")));
+        assert!(text.contains(&format!("{WARNING}not verified{WARNING:#}")));
+        assert!(!text.contains('→'), "{text}");
+        let plain = anstream::adapter::strip_str(&text).to_string();
+        assert_eq!(
+            plain,
+            "00:00  ann@heron:riff (77e0)  not verified  #3\n       asks for your status."
+        );
+    }
+
+    #[test]
+    fn a_body_keeps_its_line_breaks_and_empty_lines() {
+        let message = riff_core::wire::Message {
+            seq: 1,
+            from: "riff://mike@pangolin".parse().unwrap(),
+            to: vec![],
+            body: "one\n\ntwo".into(),
+            at_ms: 0,
+            kind: Kind::Message,
+            sig: None,
+        };
+        let c = Checked {
+            message,
+            verified: true,
+        };
+        let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
+        let text = block(&c, &at, Some(at.date_naive()), 80);
+        let plain = anstream::adapter::strip_str(&text).to_string();
+        assert!(plain.ends_with("\n       one\n\n       two"), "{plain:?}");
+    }
+
+    #[test]
+    fn safe_removes_each_escape_and_control_character() {
+        // Clear the screen, reset the terminal, a C1 control, a bell.
+        let out = safe("a\x1b[2Jb\x1bc\u{90}d\x07e");
+        assert!(out.starts_with("ab"), "{out:?}");
+        assert!(out.ends_with("de"), "{out:?}");
+        assert!(!out.chars().any(char::is_control), "{out:?}");
+    }
 
     #[test]
     fn ago_uses_the_largest_whole_unit() {
