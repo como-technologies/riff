@@ -4,7 +4,7 @@
 //!
 //! | Data | Key | Notes |
 //! |---|---|---|
-//! | Sessions | who | The place, open watch streams, the last time the session called, and its last status. |
+//! | Sessions | who | The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
 //! | Threads | thread name | Members, and messages with a sequence number that starts at 1. |
 //! | Read cursors | who and thread | The last sequence number that the session read. |
 //! | Claims | thread and item | The session that holds the item. |
@@ -38,8 +38,17 @@
 //! - When a watch starts, [`State::missed`] gives one wake for the
 //!   newest unread message that woke the session (R49).
 //! - `who` lists each session with the time since its last call. A
-//!   session that has not called for [`GONE`] is gone. `who` hides it,
-//!   unless the caller asks for all sessions (R163, R164).
+//!   keep-alive is not a call (R163).
+//! - A session is gone when it ended ([`State::end`]), or when it had no
+//!   call, no keep-alive ([`State::alive`]) and no watch for [`GONE`]
+//!   (R164, R204). `who` hides a gone session, unless the caller asks
+//!   for all sessions. A gone session matches no selector, and a direct
+//!   message to it fails (R205).
+//! - An end frees the claims and the lead of the session at once. A
+//!   session that stops with no end holds its claims for [`CLAIM_GRACE`]
+//!   after its last sign of life (R9, R206).
+//! - A call or a keep-alive from a gone session makes it live again, with
+//!   the same ID, threads and cursors (R207).
 //! - [`State::set_status`] keeps the last status of a session, with the
 //!   time that it was set. `who` shows the status and its age (R182,
 //!   R184).
@@ -47,9 +56,9 @@
 //!   request. It wakes as each post does, and its wakes carry the kind
 //!   (R185).
 //! - A claim is free, or held. A held claim goes back to free when its
-//!   holder releases it, or when the holder has no watch stream and was
-//!   last seen more than [`CLAIM_GRACE`] ago. A claim of a free item
-//!   succeeds.
+//!   holder releases it or ends, or when the holder has no watch stream
+//!   and its last sign of life is more than [`CLAIM_GRACE`] ago. A claim
+//!   of a free item succeeds.
 //! - Each user has at most one lead in each repository thread. Its URI
 //!   has `lead=true` (R175).
 //! - A session with a session ID becomes the lead when it arrives in a
@@ -76,12 +85,14 @@
 //!   save succeeds, a saved cursor is never after the end of its saved
 //!   thread.
 //! - The open watch streams are not saved. A saved session holds the
-//!   last time that it called, in milliseconds since the Unix epoch.
+//!   last time that it called and its last sign of life, in milliseconds
+//!   since the Unix epoch, and whether it ended.
 //! - [`State::load`] makes a state from the objects. Each session counts
 //!   as stopped at the time of the load, so its claims end after
-//!   [`CLAIM_GRACE`] unless it comes back (R125). A session that has not
-//!   called for [`SESSION_EXPIRY`] is dropped, with its memberships,
-//!   cursors and claims (R126). A cursor of a thread with no object is
+//!   [`CLAIM_GRACE`] unless it comes back (R125). A session that was
+//!   gone at the save stays gone. A session with no sign of life for
+//!   [`SESSION_EXPIRY`] is dropped, with its memberships, cursors and
+//!   claims (R126). A cursor of a thread with no object is
 //!   dropped too, so a new thread with the same name starts unread. A
 //!   cursor after the last message of its thread moves back to the last
 //!   message.
@@ -141,10 +152,12 @@ use crate::store;
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 
-/// `who` hides each session that has not called for this long (R164).
-pub const GONE: Duration = Duration::from_secs(24 * 60 * 60);
+/// A session with no call, no keep-alive and no watch for this long is
+/// gone (R204). `riff mcp` sends a keep-alive each
+/// [`riff_core::wire::ALIVE_EVERY`].
+pub const GONE: Duration = Duration::from_secs(3 * 60);
 
-/// A load drops each session that has not called for this long (R126).
+/// A load drops each session with no sign of life for this long (R126).
 pub const SESSION_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// All state of one `riff-server`. See the module docs for the rules.
@@ -165,10 +178,20 @@ struct Session {
     place: Place,
     /// The number of open watch streams.
     watchers: usize,
+    /// The last call.
     last_seen: Instant,
     /// The last call before the load, in milliseconds since the Unix
     /// epoch. `None` when the session called after the load.
     seen_before_load: Option<u64>,
+    /// The last sign of life: a call, a keep-alive or the end of a
+    /// watch. `None` when the session was gone at the load and has not
+    /// come back.
+    alive: Option<Instant>,
+    /// The last sign of life before the load, in milliseconds since the
+    /// Unix epoch. `None` when the session showed life after the load.
+    alive_before_load: Option<u64>,
+    /// True after an end call, until the session comes back.
+    ended: bool,
     status: Option<SetStatus>,
 }
 
@@ -182,6 +205,61 @@ struct SetStatus {
 }
 
 impl Session {
+    /// A new session that calls `now` from `place`.
+    fn new(place: Place, now: Instant) -> Self {
+        Session {
+            place,
+            watchers: 0,
+            last_seen: now,
+            seen_before_load: None,
+            alive: Some(now),
+            alive_before_load: None,
+            ended: false,
+            status: None,
+        }
+    }
+
+    /// Records a sign of life at `now`. A gone session comes back.
+    fn live(&mut self, now: Instant) {
+        self.alive = Some(now);
+        self.alive_before_load = None;
+        self.ended = false;
+    }
+
+    /// True when the session ended, or had no sign of life for [`GONE`].
+    fn gone(&self, now: Instant) -> bool {
+        self.ended
+            || (self.watchers == 0
+                && self
+                    .alive
+                    .is_none_or(|alive| now.saturating_duration_since(alive) >= GONE))
+    }
+
+    /// True while the claims and the lead of the session hold.
+    fn holds(&self, now: Instant) -> bool {
+        !self.ended
+            && (self.watchers > 0
+                || self
+                    .alive
+                    .is_some_and(|alive| now.saturating_duration_since(alive) < CLAIM_GRACE))
+    }
+
+    /// The last sign of life, in milliseconds since the Unix epoch. A
+    /// load is not a sign of life.
+    fn alive_ms(&self, now: Instant, now_ms: u64) -> u64 {
+        if self.watchers > 0 {
+            return now_ms;
+        }
+        match (self.alive_before_load, self.alive) {
+            (Some(before), _) => before,
+            (None, Some(alive)) => {
+                let ago = now.saturating_duration_since(alive).as_millis();
+                now_ms.saturating_sub(u64::try_from(ago).unwrap_or(u64::MAX))
+            }
+            (None, None) => 0,
+        }
+    }
+
     /// The last time that the session called, in milliseconds since the
     /// Unix epoch. A live session calls now.
     fn seen_ms(&self, now: Instant, now_ms: u64) -> u64 {
@@ -257,6 +335,11 @@ struct SavedSession {
     uri: SessionUri,
     /// The last call, in milliseconds since the Unix epoch.
     seen_ms: u64,
+    /// The last sign of life, in milliseconds since the Unix epoch.
+    #[serde(default)]
+    alive_ms: u64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    ended: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     status: Option<SetStatus>,
 }
@@ -347,19 +430,23 @@ impl State {
         let grace = u64::try_from(CLAIM_GRACE.as_millis()).unwrap_or(u64::MAX);
         let mut state = State::default();
         let mut lapsed = BTreeSet::new();
+        let gone = u64::try_from(GONE.as_millis()).unwrap_or(u64::MAX);
         for s in saved.sessions {
-            if now_ms.saturating_sub(s.seen_ms) > expiry {
+            let alive_ms = s.alive_ms.max(s.seen_ms);
+            if now_ms.saturating_sub(alive_ms) > expiry {
                 continue;
             }
-            if saved.saved_ms.saturating_sub(s.seen_ms) > grace {
+            if s.ended || saved.saved_ms.saturating_sub(alive_ms) > grace {
                 lapsed.insert(s.uri.who().clone());
             }
+            let was_gone = s.ended || saved.saved_ms.saturating_sub(alive_ms) >= gone;
             let session = Session {
-                place: s.uri.place().clone(),
-                watchers: 0,
-                last_seen: now,
                 seen_before_load: Some(s.seen_ms),
+                alive: (!was_gone).then_some(now),
+                alive_before_load: Some(alive_ms),
+                ended: s.ended,
                 status: s.status,
+                ..Session::new(s.uri.place().clone(), now)
             };
             state.sessions.insert(s.uri.who().clone(), session);
         }
@@ -492,6 +579,9 @@ impl State {
             session.watchers = session.watchers.saturating_sub(1);
             session.last_seen = now;
             session.seen_before_load = None;
+            if !session.ended {
+                session.live(now);
+            }
             self.changed.insert(Object::Sessions);
         }
     }
@@ -502,10 +592,79 @@ impl State {
         self.arrive(me, now);
     }
 
+    /// Records a keep-alive of `me`: a sign of life that is not a call
+    /// (R204). It does not change the idle time in `who`. A gone session
+    /// comes back (R207). An unknown session arrives as with a call.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::{GONE, State};
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    ///
+    /// // With a keep-alive each minute, the session waits for its user.
+    /// let hour = now + Duration::from_secs(3600);
+    /// state.alive(&mike, hour - Duration::from_secs(60));
+    /// let shown = state.who(hour, 3_600_000, false);
+    /// assert_eq!(shown[0].idle_secs, 3600);
+    ///
+    /// // With no sign of life for 3 minutes, it is gone.
+    /// assert!(state.who(hour + GONE, 3_780_000, false).is_empty());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn alive(&mut self, me: &SessionUri, now: Instant) {
+        let who = me.who();
+        let Some(session) = self.sessions.get_mut(who) else {
+            self.arrive(me, now);
+            return;
+        };
+        session.live(now);
+        self.changed.insert(Object::Sessions);
+    }
+
+    /// Records that `me` ended (R205, R206). The session is gone at once.
+    /// Its claims and its lead are free at once. An unknown session
+    /// stays unknown. A later call or keep-alive brings it back.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let brett: SessionUri = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// let thread = mike.default_thread().unwrap();
+    /// state.claim(&mike, &thread, "issue-12", now).unwrap();
+    ///
+    /// state.end(&mike, now);
+    /// assert!(state.who(now, 0, false).is_empty());
+    /// assert!(state.claim(&brett, &thread, "issue-12", now).unwrap().granted);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn end(&mut self, me: &SessionUri, now: Instant) {
+        let who = me.who();
+        let Some(session) = self.sessions.get_mut(who) else {
+            return;
+        };
+        session.ended = true;
+        session.last_seen = now;
+        session.seen_before_load = None;
+        self.claims.retain(|_, holder| holder != who);
+        self.leads.retain(|_, lead| lead != who);
+        self.changed.insert(Object::Sessions);
+    }
+
     /// Each known session with its URI now, whether it is live, and the
     /// time since its last call. `now_ms` is `now` in milliseconds since
-    /// the Unix epoch. A session that has not called for [`GONE`] is
-    /// gone. Only `all` lists gone sessions (R164).
+    /// the Unix epoch. Only `all` lists gone sessions (R164). See the
+    /// module docs for when a session is gone.
     ///
     /// ```
     /// use std::time::{Duration, Instant};
@@ -519,15 +678,15 @@ impl State {
     ///
     /// let later = now + Duration::from_secs(120);
     /// assert_eq!(state.who(later, 120_000, false)[0].idle_secs, 120);
-    /// let next_day = now + Duration::from_secs(25 * 60 * 60);
-    /// assert!(state.who(next_day, 90_000_000, false).is_empty());
-    /// assert_eq!(state.who(next_day, 90_000_000, true).len(), 1);
+    /// let gone = now + Duration::from_secs(180);
+    /// assert!(state.who(gone, 180_000, false).is_empty());
+    /// assert_eq!(state.who(gone, 180_000, true).len(), 1);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn who(&self, now: Instant, now_ms: u64, all: bool) -> Vec<SessionInfo> {
-        let gone = GONE.as_secs();
         self.sessions
             .iter()
+            .filter(|(_, session)| all || !session.gone(now))
             .map(|(who, session)| SessionInfo {
                 uri: self.uri(who, now),
                 live: session.watchers > 0,
@@ -537,7 +696,6 @@ impl State {
                     age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
                 }),
             })
-            .filter(|s| all || s.idle_secs < gone)
             .collect()
     }
 
@@ -740,7 +898,11 @@ impl State {
             let matched: Vec<Who> = self
                 .sessions
                 .keys()
-                .filter(|who| **who != from && selector.matches(&self.uri(who, now)))
+                .filter(|who| {
+                    **who != from
+                        && !self.sessions[*who].gone(now)
+                        && selector.matches(&self.uri(who, now))
+                })
                 .cloned()
                 .collect();
             if matched.is_empty() {
@@ -875,13 +1037,17 @@ impl State {
         if selector.session.is_none() && !to_lead {
             return Err("a direct message needs a selector with a session or lead=true".into());
         }
-        let matched: Vec<&Who> = self
+        let (matched, gone): (Vec<&Who>, Vec<&Who>) = self
             .sessions
             .keys()
             .filter(|who| *who != from && selector.matches(&self.uri(who, now)))
-            .collect();
+            .partition(|who| !self.sessions[*who].gone(now));
         match matched[..] {
             [who] => Ok(who.clone()),
+            [] if !gone.is_empty() && !to_lead => Err(format!(
+                "the session {selector} is gone: it ended, or it stopped. \
+                 Use who to list the sessions."
+            )),
             [] if to_lead => Err(format!(
                 "no other session is the lead for {selector}. Ask your own user."
             )),
@@ -939,9 +1105,7 @@ impl State {
     }
 
     fn holds(&self, holder: &Who, now: Instant) -> bool {
-        self.sessions.get(holder).is_some_and(|s| {
-            s.watchers > 0 || now.saturating_duration_since(s.last_seen) < CLAIM_GRACE
-        })
+        self.sessions.get(holder).is_some_and(|s| s.holds(now))
     }
 
     /// Records that a session called. A new session starts in the place
@@ -952,18 +1116,11 @@ impl State {
         if let Some(session) = self.sessions.get_mut(&who) {
             session.last_seen = now;
             session.seen_before_load = None;
+            session.live(now);
             return who;
         }
-        self.sessions.insert(
-            who.clone(),
-            Session {
-                place: me.place().clone(),
-                watchers: 0,
-                last_seen: now,
-                seen_before_load: None,
-                status: None,
-            },
-        );
+        self.sessions
+            .insert(who.clone(), Session::new(me.place().clone(), now));
         if let Some(thread) = me.default_thread() {
             self.member(&who, &thread);
         }
@@ -985,6 +1142,8 @@ impl State {
             .map(|(who, s)| SavedSession {
                 uri: SessionUri::new(who.clone(), s.place.clone()),
                 seen_ms: s.seen_ms(now, now_ms),
+                alive_ms: s.alive_ms(now, now_ms),
+                ended: s.ended,
                 status: s.status.clone(),
             })
             .collect();
@@ -1441,9 +1600,176 @@ mod tests {
         save(&mut state, &mut saved, now, T0);
         let later = now + DAY;
         let loaded = load(&saved, later, T0 + ms(DAY));
-        assert!(loaded.who(later, T0 + ms(DAY), false).is_empty());
-        let hour = loaded.who(later, T0 + 3_600_000, false);
-        assert_eq!(hour[0].idle_secs, 3600);
+        let shown = loaded.who(later, T0 + ms(DAY), false);
+        assert_eq!(shown[0].idle_secs, DAY.as_secs());
+        // A session that does not come back is gone after GONE.
+        assert!(loaded.who(later + GONE, T0 + ms(DAY), false).is_empty());
+    }
+
+    #[test]
+    fn a_session_gone_at_the_save_stays_gone_after_the_load() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.end(&docs(), now);
+        let minute = Duration::from_secs(60);
+        state.alive(&api(), now + minute * 2);
+        let at = now + minute * 4;
+        let mut saved = Saved::new();
+        save(&mut state, &mut saved, at, T0 + ms(minute * 4));
+        let loaded = load(&saved, at, T0 + ms(minute * 4));
+        let shown: Vec<SessionUri> = loaded
+            .who(at, T0 + ms(minute * 4), false)
+            .into_iter()
+            .map(|s| s.uri)
+            .collect();
+        assert_eq!(shown, [lead(api())]);
+    }
+
+    const MINUTE: Duration = Duration::from_secs(60);
+
+    fn shown(state: &State, now: Instant) -> Vec<Who> {
+        state
+            .who(now, T0, false)
+            .into_iter()
+            .map(|s| s.uri.who().clone())
+            .collect()
+    }
+
+    #[test]
+    fn an_ended_session_leaves_at_once_and_frees_its_claims() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.watch_started(&api(), now);
+        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        state.end(&api(), now);
+        assert!(!shown(&state, now).contains(api().who()));
+        assert_eq!(state.who(now, T0, true).len(), 3);
+        assert!(state.uri(api().who(), now).claims().is_empty());
+        assert!(!is_lead(&state, &api(), now));
+        let taken = state.claim(&docs(), &repo(), "issue-12", now).unwrap();
+        assert!(taken.granted);
+    }
+
+    #[test]
+    fn a_gone_session_matches_no_selector() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.end(&tests(), now);
+        let d = post(&mut state, &api(), "x", &["user=brett"], "hi");
+        assert!(d.wakes.is_empty());
+        assert_eq!(d.unmatched, to(&["user=brett"]));
+        let error = state
+            .post(Post::new(&api(), None, to(&["session=b2"]), "hi"), now, 0)
+            .err()
+            .unwrap();
+        assert!(error.contains("is gone"), "{error}");
+    }
+
+    #[test]
+    fn a_killed_session_leaves_after_gone_and_its_claims_after_the_grace() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        // Only docs keeps sending keep-alives.
+        for m in 1..=4 {
+            state.alive(&docs(), now + MINUTE * m);
+        }
+        let later = now + GONE;
+        assert_eq!(shown(&state, later), [docs().who().clone()]);
+        let soon = now + CLAIM_GRACE - Duration::from_secs(1);
+        assert!(
+            !state
+                .claim(&docs(), &repo(), "issue-12", soon)
+                .unwrap()
+                .granted
+        );
+        let late = now + CLAIM_GRACE;
+        assert!(
+            state
+                .claim(&docs(), &repo(), "issue-12", late)
+                .unwrap()
+                .granted
+        );
+    }
+
+    #[test]
+    fn a_session_that_waits_for_its_user_stays_with_its_claims() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        for m in 1..=60 {
+            state.alive(&api(), now + MINUTE * m);
+        }
+        let hour = now + MINUTE * 60;
+        let info = state.who(hour, T0 + ms(MINUTE * 60), false);
+        let mike = info.iter().find(|s| s.uri.who() == api().who()).unwrap();
+        assert_eq!(mike.idle_secs, 3600);
+        assert!(!mike.live);
+        assert_eq!(mike.uri.claims(), ["issue-12"]);
+        assert!(
+            !state
+                .claim(&docs(), &repo(), "issue-12", hour)
+                .unwrap()
+                .granted
+        );
+    }
+
+    #[test]
+    fn twenty_killed_sessions_leave_who() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        for n in 0..20 {
+            let dead = uri(&format!(
+                "riff://mike@pangolin/como-technologies/riff?session=dead{n}"
+            ));
+            state.register(&dead, now);
+        }
+        assert_eq!(shown(&state, now).len(), 23);
+        for m in 1..=4 {
+            for me in [api(), tests(), docs()] {
+                state.alive(&me, now + MINUTE * m);
+            }
+        }
+        assert_eq!(shown(&state, now + MINUTE * 4).len(), 3);
+        assert_eq!(state.who(now + MINUTE * 4, T0, true).len(), 23);
+    }
+
+    #[test]
+    fn a_session_comes_back_after_a_network_fault() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        post(&mut state, &api(), "design", &["user=brett"], "look");
+        state.read(&tests(), &repo(), false, now).unwrap();
+        let back = now + MINUTE * 5;
+        assert!(!shown(&state, back).contains(tests().who()));
+        state.alive(&tests(), back);
+        assert!(shown(&state, back).contains(tests().who()));
+        // The same threads and cursors.
+        let threads = state.threads(&tests(), back);
+        let design = threads
+            .iter()
+            .find(|t| t.thread == thread("design"))
+            .unwrap();
+        assert_eq!(design.unread, 1);
+        assert!(
+            state
+                .read(&tests(), &repo(), false, back)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_call_brings_an_ended_session_back() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.end(&api(), now);
+        state.called(&api(), now);
+        assert!(shown(&state, now).contains(api().who()));
+        // An end of an unknown session makes no session.
+        let ghost = uri("riff://mike@pangolin/como-technologies/riff?session=zz");
+        state.end(&ghost, now);
+        assert_eq!(state.who(now, T0, true).len(), 3);
     }
 
     fn status(step: &str, blocked: Option<&str>) -> Status {

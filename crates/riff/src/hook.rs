@@ -75,6 +75,39 @@ use std::fmt::Write;
 use riff_core::name::SessionUri;
 use serde::Deserialize;
 
+/// The part of the SessionEnd hook input that riff uses.
+///
+/// `riff mcp` sends the end call when it stops. The end hook sends it
+/// too, so a session also leaves when `riff mcp` cannot. After `/clear`,
+/// the session keeps its riff session ID (R168), so the hook does not
+/// end it:
+///
+/// ```
+/// use riff::hook::EndInput;
+///
+/// let input: EndInput = serde_json::from_str(r#"{"session_id":"a6cf","reason":"clear"}"#)?;
+/// assert!(!input.ends_the_session());
+/// let input: EndInput = serde_json::from_str(r#"{"session_id":"a6cf","reason":"prompt_input_exit"}"#)?;
+/// assert!(input.ends_the_session());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Default, Deserialize)]
+pub struct EndInput {
+    /// The session ID.
+    pub session_id: Option<String>,
+    /// Why the session ended, for example `clear`, `logout` or
+    /// `prompt_input_exit`.
+    #[serde(default)]
+    pub reason: String,
+}
+
+impl EndInput {
+    /// False for `/clear`: the riff session goes on (R168).
+    pub fn ends_the_session(&self) -> bool {
+        self.reason != "clear"
+    }
+}
+
 use crate::text::DATA_NOTE;
 
 /// Why the session started, as Claude Code gives it.
@@ -234,6 +267,19 @@ mod tests {
     #[test]
     fn no_uri_asks_for_whoami() {
         assert!(start_context(None, Source::Startup, false).contains("whoami"));
+    }
+
+    #[test]
+    fn each_end_but_clear_ends_the_session() {
+        for reason in ["logout", "prompt_input_exit", "other", ""] {
+            let input = EndInput {
+                session_id: None,
+                reason: reason.into(),
+            };
+            assert!(input.ends_the_session(), "{reason}");
+        }
+        let input: EndInput = serde_json::from_str("{}").unwrap();
+        assert!(input.ends_the_session());
     }
 
     #[test]

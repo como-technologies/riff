@@ -2,6 +2,29 @@
 //!
 //! The tools keep the URI of their session. `move` changes its place
 //! (R64). Each other tool sends the URI with its request.
+//!
+//! # Life
+//!
+//! `riff mcp` runs as long as its agent process. So it tells the server
+//! that the session runs, and when it ends:
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant A as agent tool
+//!     participant M as riff mcp
+//!     participant S as riff-server
+//!     M->>S: register
+//!     loop each ALIVE_EVERY, also while no turn runs
+//!         M->>S: alive
+//!     end
+//!     A-->>M: stdin closes, or SIGTERM, SIGINT or SIGHUP
+//!     M->>S: end
+//! ```
+//!
+//! A keep-alive is not a call: `who` still shows the time since the
+//! last call (R204). After the end call, the session leaves `who`, and
+//! its claims are free at once (R205). A session that stops with no end
+//! call is gone after 3 minutes with no keep-alive.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -9,7 +32,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, Status};
+use riff_core::wire::{ALIVE_EVERY, Kind, Status};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -118,7 +141,7 @@ impl Tools {
     }
 
     #[tool(
-        description = "List the sessions in the riff with their URIs. Show which are live, how long each other session is idle, and the status of each session with its age. A session idle for 24 hours is gone and not listed."
+        description = "List the sessions in the riff with their URIs. Show which are live, how long each other session is idle, and the status of each session with its age. A session that ended, or stopped for 3 minutes, is gone and not listed."
     )]
     async fn who(&self, Parameters(a): Parameters<WhoArgs>) -> ToolResult {
         let me = self.me();
@@ -288,13 +311,70 @@ fn err(e: impl std::fmt::Display) -> String {
     format!("{e:#}")
 }
 
-/// Serves the tools on stdin and stdout until the session ends.
+impl Tools {
+    /// Sends a keep-alive each [`ALIVE_EVERY`] for as long as the tools
+    /// run (R204). A failed keep-alive is not reported: the next one
+    /// tries again.
+    pub fn keep_alive(&self) -> tokio::task::JoinHandle<()> {
+        self.keep_alive_every(ALIVE_EVERY)
+    }
+
+    /// [`Tools::keep_alive`] with another period, for tests.
+    pub fn keep_alive_every(&self, every: std::time::Duration) -> tokio::task::JoinHandle<()> {
+        let tools = self.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(every);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let _ = tools.api.alive(&tools.me()).await;
+            }
+        })
+    }
+
+    /// Tells the server that the session ended (R205). It waits at most
+    /// [`END_WAIT`].
+    pub async fn end(&self) {
+        let me = self.me();
+        match tokio::time::timeout(END_WAIT, self.api.end(&me)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => eprintln!("riff: {e:#}"),
+            Err(_) => eprintln!("riff: the end call took too long"),
+        }
+    }
+}
+
+/// The longest wait for the end call. The agent tool stops a slow
+/// process.
+pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Serves the tools on stdin and stdout until the session ends. It
+/// sends keep-alives while it runs, and the end call when its stdin
+/// closes or a signal stops it (R204, R205).
 pub async fn serve(api: Api, me: SessionUri) -> Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
     // Start even if the server is down: each tool call reports the error.
     if let Err(e) = api.register(&me).await {
         eprintln!("riff: {e:#}");
     }
-    let service = Tools::new(api, me).serve(rmcp::transport::stdio()).await?;
-    service.waiting().await?;
-    Ok(())
+    let tools = Tools::new(api, me);
+    let alive = tools.keep_alive();
+    let mut term = signal(SignalKind::terminate())?;
+    let mut int = signal(SignalKind::interrupt())?;
+    let mut hup = signal(SignalKind::hangup())?;
+    let run = async {
+        let service = tools.clone().serve(rmcp::transport::stdio()).await?;
+        service.waiting().await?;
+        Ok(())
+    };
+    let result = tokio::select! {
+        r = run => r,
+        _ = term.recv() => Ok(()),
+        _ = int.recv() => Ok(()),
+        _ = hup.recv() => Ok(()),
+    };
+    alive.abort();
+    tools.end().await;
+    result
 }

@@ -6,6 +6,13 @@
           { "type": "command", "command": "riff hook session-start" }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "riff hook session-end" }
+        ]
+      }
     ]
   }
 }

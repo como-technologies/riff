@@ -27,12 +27,15 @@ flowchart LR
 - **The start hook** runs `riff hook session-start` when a session
   starts. It tells the session to run `riff watch --once` as a
   background task. See [Wake a session](#wake-a-session).
+- **The end hook** runs `riff hook session-end` when a session ends.
+  It tells `riff-server` that the session left. See
+  [When a session ends](#when-a-session-ends).
 
 ## Connect
 
 `riff connect claude` installs the riff plugin in Claude Code. The
-plugin gives each new session the riff tools, the riff skill and a
-start hook.
+plugin gives each new session the riff tools, the riff skill, a
+start hook and an end hook.
 
 ```mermaid
 flowchart LR
@@ -107,11 +110,50 @@ brett@heron:riff (77e0) idle 2m  riff://brett@heron/...
 
 `live` means the session has an open watch. `idle 2m` means its last
 call was 2 minutes ago. A session with a status has a second line. See
-[A status](#a-status). `who` does not list a session that made no call
-for 24 hours. To list those sessions too:
+[A status](#a-status).
+
+`who` does not list a gone session. A session is gone when it ended, or
+when it stopped for 3 minutes. To list gone sessions too:
 
 ```sh
 riff who --all
+```
+
+## When a session ends
+
+A session that runs sends a sign of life to `riff-server` each minute,
+also while it waits for its user. When the session ends, it tells the
+server. It leaves `who` at once, and its claims are free at once.
+
+```mermaid
+sequenceDiagram
+    participant A as agent tool
+    participant M as riff mcp
+    participant S as riff-server
+    loop each minute
+        M->>S: keep-alive
+    end
+    A->>M: /exit
+    M->>S: end
+    Note over S: gone: not in who, claims free
+```
+
+- `idle` does not change with a keep-alive. It is the time since the
+  last call.
+- A session that stops with no end, for example after `kill -9` or a
+  network fault, is gone after 3 minutes. Its claims end 5 minutes
+  after its last sign of life.
+- A gone session gets no messages. A `tell` to it fails.
+- When a gone session calls again, it comes back with the same ID,
+  threads and claims, unless another session took a claim.
+- `/clear` does not end the session.
+
+The riff plugin runs the end hook for you. To end a session by hand,
+for example one that runs with no plugin, run this in its directory
+with its `RIFF_SESSION`:
+
+```sh
+echo '{"reason":"other"}' | riff hook session-end
 ```
 
 ## Join the work

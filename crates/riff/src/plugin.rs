@@ -20,7 +20,7 @@
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
-//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). |
+//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. |
 //!
 //! ```
 //! let dir = tempfile::tempdir()?;
@@ -242,6 +242,15 @@ mod tests {
         assert_eq!(start[0].get("matcher"), None, "each source runs the hook");
         assert_eq!(start[0]["hooks"][0]["type"], "command");
         assert_eq!(start[0]["hooks"][0]["command"], "riff hook session-start");
+    }
+
+    #[test]
+    fn the_end_hook_is_riff_hook_session_end() {
+        let hooks = json("riff/hooks/hooks.json");
+        let end = &hooks["hooks"]["SessionEnd"];
+        assert_eq!(end.as_array().unwrap().len(), 1);
+        assert_eq!(end[0]["hooks"][0]["type"], "command");
+        assert_eq!(end[0]["hooks"][0]["command"], "riff hook session-end");
     }
 
     #[test]

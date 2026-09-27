@@ -33,8 +33,8 @@ enum Command {
     Login,
     /// Show your URI. Inside Claude Code, it is the URI of the session.
     Whoami,
-    /// List the sessions in the riff. A session that made no call for 24
-    /// hours is gone and not listed.
+    /// List the sessions in the riff. A session that ended, or stopped
+    /// for 3 minutes, is gone and not listed.
     Who {
         /// List gone sessions too.
         #[arg(long)]
@@ -154,6 +154,10 @@ enum HookEvent {
     /// Read the SessionStart input on stdin. Print the context that
     /// starts the watch. It always exits with status 0.
     SessionStart,
+    /// Read the SessionEnd input on stdin. Tell riff-server that the
+    /// session ended, unless the reason is clear. It always exits with
+    /// status 0.
+    SessionEnd,
 }
 
 #[derive(Subcommand)]
@@ -174,6 +178,13 @@ async fn main() -> Result<()> {
     } = cli.command
     {
         println!("{}", session_start());
+        return Ok(());
+    }
+    if let Command::Hook {
+        event: HookEvent::SessionEnd,
+    } = cli.command
+    {
+        session_end(&cli.server).await;
         return Ok(());
     }
     if let Command::Connect {
@@ -310,6 +321,31 @@ fn session_start() -> String {
         .zip(local::dir())
         .is_some_and(|(id, dir)| local::watching(&dir, id));
     hook::start_output(&hook::start_context(uri.as_ref(), input.source, watching))
+}
+
+/// The SessionEnd hook: the end call for the session (R205). It never
+/// fails: an error goes to stderr.
+async fn session_end(server: &str) {
+    let mut stdin = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin);
+    let input: hook::EndInput = serde_json::from_str(&stdin).unwrap_or_default();
+    if !input.ends_the_session() {
+        return;
+    }
+    let Some(id) = identity::agent_session(input.session_id) else {
+        return;
+    };
+    let ended = async {
+        let here = identity::place(&std::env::current_dir()?)?;
+        let api = Api::new(server);
+        let me = identity::agent(&here, &id, api.base())?;
+        api.signed_in(me.who().session())?.end(&me).await
+    };
+    match tokio::time::timeout(mcp::END_WAIT, ended).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => eprintln!("riff: {e:#}"),
+        Err(_) => eprintln!("riff: the end call took too long"),
+    }
 }
 
 /// Takes the watch lock of the session `me` (R169). `None` when another

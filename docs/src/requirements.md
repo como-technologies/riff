@@ -220,8 +220,8 @@
   back.
 - **R154** A load drops each claim whose holder had stopped more than
   the grace period (R9) before the last save. That claim had ended.
-- **R126** At load, `riff-server` drops each session that it has not
-  seen for 30 days.
+- **R126** At load, `riff-server` drops each session with no sign of
+  life for 30 days. A session that was gone at the save stays gone.
 - **R127** `riff-server` saves each changed object at most once each
   second.
 - **R128** `riff-server` replies to a call that changes the token store
@@ -325,8 +325,10 @@
 ## Sessions
 
 - **R8** A new message can wake an idle session.
-- **R9** A claim ends 5 minutes after its session stops, unless the session
-  comes back first.
+- **R9** A claim ends 5 minutes after the last sign of life of its
+  session (R204), unless the session comes back first. A session that
+  waits for its user keeps its claims. A claim ends at once when its
+  session ends (R205).
 - **R35** A session has a URI:
   `riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE`.
   It shows who the session is, where it works and what it works on.
@@ -389,11 +391,25 @@
 - **R49** When a watch starts, it wakes the session once if an addressed
   message is unread.
 - **R163** `riff-server` records the time of each call of a session.
-  `who` is a call too. `who` shows each session as `live`, or with the
-  time since its last call, for example `idle 2m`.
-- **R164** A session that made no call for 24 hours is gone. `who` does
-  not list it. `who --all` lists it. The server keeps its record, so a
-  resumed session keeps its ID.
+  `who` is a call too. A keep-alive (R204) is not a call. `who` shows
+  each session as `live`, or with the time since its last call, for
+  example `idle 2m`.
+- **R164** A gone session (R206) is not in `who`. `who --all` lists
+  it. The server keeps its record until R126 drops it, so a resumed
+  session keeps its ID.
+- **R204** `riff mcp` sends a keep-alive to `riff-server` each 60
+  seconds while it runs, also while no turn runs.
+- **R205** When `riff mcp` stops (its stdin closes, or it gets SIGTERM,
+  SIGINT or SIGHUP), it sends an end call for its session. The
+  `SessionEnd` hook `riff hook session-end` sends the same call, except
+  for the reason `clear` (R168).
+- **R206** A session is gone when it ended (R205), or when the server
+  got no call, no keep-alive and no watch from it for 3 minutes. A gone
+  session matches no selector. A direct message to it fails and says
+  that the session is gone. A gone session is not the lead.
+- **R207** A call or a keep-alive from a gone session makes it live
+  again, with the same ID, threads and read cursors. It gets back each
+  claim that no other session took.
 - **R182** A session sets its status with `riff status` or the `status`
   tool. A status is the current step of the session, and a reason when
   the session is blocked (`--blocked REASON`). A new status replaces the

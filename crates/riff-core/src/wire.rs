@@ -17,6 +17,8 @@
 //! | `release` | [`Claim`] | `null` |
 //! | `lead` | [`Lead`] | [`LeadReply`] |
 //! | `status` | [`SetStatus`] | `null` |
+//! | `alive` | [`Alive`] | `null` |
+//! | `end` | [`End`] | `null` |
 //!
 //! `POST /v1/token` is an OAuth 2.1 token endpoint. Its request is a
 //! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
@@ -83,6 +85,24 @@ use crate::signed::Content;
 /// joins the thread of its repository.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Register {
+    pub me: SessionUri,
+}
+
+/// `riff mcp` sends a keep-alive this often, also while no turn runs
+/// (R204). A session with no sign of life for 3 minutes is gone.
+pub const ALIVE_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `POST /v1/alive`: a keep-alive. It shows that the session still runs,
+/// but it is not a call: the idle time in `who` stays (R204).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Alive {
+    pub me: SessionUri,
+}
+
+/// `POST /v1/end`: the session ended (R205). It leaves `who`, and its
+/// claims are free at once.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct End {
     pub me: SessionUri,
 }
 

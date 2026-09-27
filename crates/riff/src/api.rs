@@ -44,10 +44,10 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Claim, ClaimReply, Keys, Kind, Lead, LeadReply, Membership, Message, Post, Posted, Read,
-    ReadReply, Register, Revoke, Revoked, SessionInfo, SetStatus, SignInConfig, Status, Tailed,
-    ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
-    WhoRequest,
+    Alive, Claim, ClaimReply, End, Keys, Kind, Lead, LeadReply, Membership, Message, Post, Posted,
+    Read, ReadReply, Register, Revoke, Revoked, SessionInfo, SetStatus, SignInConfig, Status,
+    Tailed, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake,
+    WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -340,6 +340,16 @@ impl Api {
     /// each move.
     pub async fn register(&self, me: &SessionUri) -> Result<()> {
         self.call("register", &Register { me: me.clone() }).await
+    }
+
+    /// A keep-alive: the session still runs (R204).
+    pub async fn alive(&self, me: &SessionUri) -> Result<()> {
+        self.call("alive", &Alive { me: me.clone() }).await
+    }
+
+    /// The session ended (R205).
+    pub async fn end(&self, me: &SessionUri) -> Result<()> {
+        self.call("end", &End { me: me.clone() }).await
     }
 
     /// Lists the sessions. `all` lists gone sessions too.

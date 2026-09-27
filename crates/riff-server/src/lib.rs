@@ -116,10 +116,10 @@ use futures::{Stream, StreamExt};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, Claim, ClaimReply, ID_TOKEN_TYPE, Keys, Lead, LeadReply, Membership, Post,
-    Posted, Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, ServerMetadata,
-    SetStatus, SignInConfig, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError, TokenReply,
-    TokenRequest, Wake, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Keys, Lead, LeadReply,
+    Membership, Post, Posted, Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked,
+    ServerMetadata, SetStatus, SignInConfig, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply,
+    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -644,6 +644,8 @@ impl Service {
             .route("/v1/release", post(release))
             .route("/v1/lead", post(lead))
             .route("/v1/status", post(status))
+            .route("/v1/alive", post(alive))
+            .route("/v1/end", post(end))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
@@ -690,6 +692,26 @@ async fn register(
     Json(r): Json<Register>,
 ) -> Reply<()> {
     acts_as(&s, caller, &r.me)?.register(&r.me, Instant::now());
+    Ok(Json(()))
+}
+
+/// A keep-alive: a sign of life that is not a call (R204).
+async fn alive(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Alive>,
+) -> Reply<()> {
+    acts_as(&s, caller, &r.me)?.alive(&r.me, Instant::now());
+    Ok(Json(()))
+}
+
+/// The session ended: it is gone, and its claims are free (R205).
+async fn end(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<End>,
+) -> Reply<()> {
+    acts_as(&s, caller, &r.me)?.end(&r.me, Instant::now());
     Ok(Json(()))
 }
 
