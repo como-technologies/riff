@@ -184,6 +184,10 @@
 - **R223** On GitHub, a wave is a milestone named `Wave N`. A name can
   follow, for example `Wave 5: Cloud`. A work item is an issue in the
   milestone. A milestone with another name is out of the waves.
+- **01M3JD8WWMK2ZQTFER4TJFV37V** On GitHub, the backlog is the
+  milestone `Backlog`. It is out of the waves. An item in the backlog
+  is not free work: no session starts it. Only the lead moves an item
+  from the backlog into a wave, when its user schedules the item.
 - **R224** On GitHub, an open wave is an open milestone. The lead ends
   a wave: it closes the milestone. It closes a milestone only when the
   milestone has no open issue.

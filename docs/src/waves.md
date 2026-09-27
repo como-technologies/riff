@@ -106,8 +106,11 @@ This is the only part of the book that is special to one forge.
 
 - A wave is a milestone named `Wave N`. A name can follow, for example
   `Wave 5: Cloud`. A work item is an issue in the milestone.
-- A milestone with another name, for example `Later`, is out of the
-  waves.
+- A milestone with another name is out of the waves.
+- The backlog is the milestone `Backlog`. It holds the items that we
+  track but do not start. An item in the backlog is not free work: no
+  session starts it. Only the lead moves an item from the backlog into
+  a wave, when you schedule the item.
 - An open wave is an open milestone. The lead ends a wave: it closes
   the milestone. It closes a milestone only when the milestone has no
   open issue.
@@ -126,6 +129,20 @@ gh api repos/como-technologies/riff/milestones --jq 'map("\(.number) \(.title)")
 ```sh
 gh issue list --milestone "Wave 2"
 ```
+
+### Move an item to the backlog
+
+```sh
+gh issue edit 71 --milestone Backlog
+```
+
+To see the items in the backlog:
+
+```sh
+gh issue list --milestone Backlog
+```
+
+To schedule an item, tell your lead: *"Move issue 71 into Wave 4."*
 
 ### Add an item with no wave
 
