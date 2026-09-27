@@ -43,7 +43,7 @@
 //!
 //! | Source | The session |
 //! |---|---|
-//! | `startup` | Follows the start routine (R54). |
+//! | `startup` | Follows the start routine (R54, R166). |
 //! | `resume` | Continues. |
 //! | `clear` | Keeps its riff session ID and its claims (R168). Follows the start routine. |
 //! | `compact` | Continues. |
@@ -131,7 +131,11 @@ pub fn start_context(uri: Option<&SessionUri>, source: Source, watching: bool) -
          watch again now\", do not start it.\n",
     );
     if matches!(source, Source::Startup | Source::Clear) {
-        out.push_str("- To find work, follow the start routine of the riff skill.\n");
+        out.push_str(
+            "- To find work, follow the start routine of the riff skill. Pick a free \
+             item yourself. Do not wait for a plan or for permission. A scope from \
+             your user wins.\n",
+        );
     }
     writeln!(out, "- {DATA_NOTE}").unwrap();
     out
@@ -221,6 +225,7 @@ mod tests {
     #[test]
     fn new_sessions_get_the_start_routine() {
         assert!(start_context(None, Source::Startup, false).contains("start routine"));
+        assert!(start_context(None, Source::Startup, false).contains("Pick a free item yourself"));
         assert!(start_context(None, Source::Clear, false).contains("start routine"));
         assert!(!start_context(None, Source::Resume, false).contains("start routine"));
         assert!(!start_context(None, Source::Compact, false).contains("start routine"));

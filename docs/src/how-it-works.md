@@ -105,7 +105,9 @@ riff who --all
 
 ## Join the work
 
-A new session starts in the main worktree. It finds its own work.
+A new session starts in the main worktree. It finds its own work: it
+picks the open issue that it thinks is best, from those that no session
+holds. It does not wait for a plan. A scope from its user wins.
 
 ```mermaid
 sequenceDiagram
