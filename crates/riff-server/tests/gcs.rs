@@ -298,6 +298,15 @@ async fn call(base: &str, op: &str, body: Value) -> Value {
     reply.json().await.unwrap()
 }
 
+/// The URI and the live flag of each session in a `who` reply.
+fn uris(who: serde_json::Value) -> Vec<(serde_json::Value, serde_json::Value)> {
+    let sessions = who["sessions"].as_array().unwrap();
+    sessions
+        .iter()
+        .map(|s| (s["uri"].clone(), s["live"].clone()))
+        .collect()
+}
+
 #[tokio::test]
 async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     let (fake, url) = start().await;
@@ -311,13 +320,13 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     call(&base, "post", post).await;
     let claim = json!({ "me": brett, "thread": repo, "item": "issue-44" });
     call(&base, "claim", claim).await;
-    let who = call(&base, "who", json!({})).await;
+    let who = uris(call(&base, "who", json!({ "me": mike })).await);
     old.save().await.unwrap();
     let thread = thread_object(&repo.parse().unwrap());
     assert!(fake.lock().unwrap().objects.contains_key(&thread));
 
     let (_new, base) = common::start_on(Arc::new(store(&url))).await;
-    assert_eq!(call(&base, "who", json!({})).await, who);
+    assert_eq!(uris(call(&base, "who", json!({ "me": mike })).await), who);
     let read = call(&base, "read", json!({ "me": brett, "thread": repo })).await;
     assert_eq!(read["messages"][0]["body"], "saved");
     let claim = json!({ "me": mike, "thread": repo, "item": "issue-44" });

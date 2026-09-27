@@ -229,6 +229,12 @@
 - **R43** Outside git, the URI is `riff://USER@HOST/-?session=ID#DIRECTORY`.
 - **R49** When a watch starts, it wakes the session once if an addressed
   message is unread.
+- **R163** `riff-server` records the time of each call of a session.
+  `who` is a call too. `who` shows each session as `live`, or with the
+  time since its last call, for example `idle 2m`.
+- **R164** A session that made no call for 24 hours is gone. `who` does
+  not list it. `who --all` lists it. The server keeps its record, so a
+  resumed session keeps its ID.
 
 ## Threads
 

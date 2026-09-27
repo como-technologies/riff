@@ -23,6 +23,16 @@ async fn call(base: &str, op: &str, body: Value) -> Value {
     reply.json().await.unwrap()
 }
 
+/// The URI and the live flag of each session in a `who` reply. The idle
+/// time can change over a restart.
+fn uris(who: serde_json::Value) -> Vec<(serde_json::Value, serde_json::Value)> {
+    let sessions = who["sessions"].as_array().unwrap();
+    sessions
+        .iter()
+        .map(|s| (s["uri"].clone(), s["live"].clone()))
+        .collect()
+}
+
 #[tokio::test]
 async fn a_new_server_on_the_same_store_has_the_same_state() {
     let store = Memory::default();
@@ -37,12 +47,12 @@ async fn a_new_server_on_the_same_store_has_the_same_state() {
     call(&base, "read", json!({ "me": BRETT, "thread": REPO })).await;
     let claim = json!({ "me": BRETT, "thread": REPO, "item": "issue-6" });
     call(&base, "claim", claim).await;
-    let who = call(&base, "who", json!({})).await;
+    let who = uris(call(&base, "who", json!({ "me": MIKE })).await);
     let threads = call(&base, "threads", json!({ "me": BRETT })).await;
     old.save().await.unwrap();
 
     let (_new, base) = common::start_on(Arc::new(store)).await;
-    assert_eq!(call(&base, "who", json!({})).await, who);
+    assert_eq!(uris(call(&base, "who", json!({ "me": MIKE })).await), who);
     assert_eq!(
         call(&base, "threads", json!({ "me": BRETT })).await,
         threads
@@ -85,7 +95,7 @@ async fn a_save_that_finds_another_version_stops_the_server() {
     server.stopped().await;
     let reply = reqwest::Client::new()
         .post(format!("{base}/v1/who"))
-        .json(&json!({}))
+        .json(&json!({ "me": MIKE }))
         .send()
         .await
         .unwrap();

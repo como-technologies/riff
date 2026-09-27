@@ -329,8 +329,13 @@ impl Api {
         self.call("register", &Register { me: me.clone() }).await
     }
 
-    pub async fn who(&self) -> Result<Vec<SessionInfo>> {
-        let reply: WhoReply = self.call("who", &WhoRequest {}).await?;
+    /// Lists the sessions. `all` lists gone sessions too.
+    pub async fn who(&self, me: &SessionUri, all: bool) -> Result<Vec<SessionInfo>> {
+        let request = WhoRequest {
+            me: me.clone(),
+            all,
+        };
+        let reply: WhoReply = self.call("who", &request).await?;
         Ok(reply.sessions)
     }
 

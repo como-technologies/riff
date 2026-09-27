@@ -81,6 +81,27 @@ The URI shows three things:
 
 Short form, for people: `mike@pangolin:riff#issue-6`. It is not unique.
 
+## See who is in the riff
+
+```sh
+riff who
+```
+
+Each line shows a session, its state and its URI:
+
+```text
+mike@pangolin:riff#issue-6 (a6cf) live  riff://mike@pangolin/...
+brett@heron:riff (77e0) idle 2m  riff://brett@heron/...
+```
+
+`live` means the session has an open watch. `idle 2m` means its last
+call was 2 minutes ago. `who` does not list a session that made no call
+for 24 hours. To list those sessions too:
+
+```sh
+riff who --all
+```
+
 ## Join the work
 
 A new session starts in the main worktree. It finds its own work.

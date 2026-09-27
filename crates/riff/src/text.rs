@@ -281,13 +281,35 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     out
 }
 
+/// One line for each session: its name, `live` or the time since its
+/// last call, and its URI.
+///
+/// ```
+/// use riff::text;
+/// use riff_core::wire::SessionInfo;
+///
+/// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
+/// let list = [
+///     SessionInfo { uri: me, live: true, idle_secs: 0 },
+///     SessionInfo { uri: brett, live: false, idle_secs: 150 },
+/// ];
+/// let out = text::who(&list, &list[0].uri);
+/// assert!(out.contains("(a6cf) live (you)"), "{out}");
+/// assert!(out.contains("(77e0) idle 2m "), "{out}");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
     if sessions.is_empty() {
         return "Nobody is in the riff.".into();
     }
     let mut out = String::new();
     for s in sessions {
-        let state = if s.live { "live" } else { "idle" };
+        let state = if s.live {
+            "live".into()
+        } else {
+            format!("idle {}", ago(s.idle_secs))
+        };
         let you = if s.uri.who() == me.who() {
             " (you)"
         } else {
@@ -296,6 +318,17 @@ pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
         let _ = writeln!(out, "{} {state}{you}  {}", name(&s.uri), s.uri);
     }
     out
+}
+
+/// A time in seconds, short, in its largest whole unit: `12s`, `2m`,
+/// `3h` or `5d`.
+fn ago(secs: u64) -> String {
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m", secs / 60),
+        3600..86_400 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86_400),
+    }
 }
 
 pub fn threads(list: &[ThreadInfo], me: &SessionUri) -> String {
@@ -313,4 +346,19 @@ pub fn threads(list: &[ThreadInfo], me: &SessionUri) -> String {
         );
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ago;
+
+    #[test]
+    fn ago_uses_the_largest_whole_unit() {
+        assert_eq!(ago(0), "0s");
+        assert_eq!(ago(59), "59s");
+        assert_eq!(ago(60), "1m");
+        assert_eq!(ago(3599), "59m");
+        assert_eq!(ago(3 * 3600 + 5), "3h");
+        assert_eq!(ago(5 * 86_400), "5d");
+    }
 }

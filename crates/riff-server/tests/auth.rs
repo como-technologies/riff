@@ -15,7 +15,7 @@ async fn who(base: &str, auth: Option<(&Key, &str)>) -> reqwest::Response {
     };
     request
         .header("content-type", "application/json")
-        .body("{}")
+        .body(r#"{"me":"riff://mike@pangolin"}"#)
         .send()
         .await
         .unwrap()
@@ -107,7 +107,7 @@ async fn a_token_in_the_query_string_does_not_count() {
             key.proof("POST", &who_url, Some(&pair.access_token), common::now()),
         )
         .header("content-type", "application/json")
-        .body("{}")
+        .body(r#"{"me":"riff://mike@pangolin"}"#)
         .send()
         .await
         .unwrap();

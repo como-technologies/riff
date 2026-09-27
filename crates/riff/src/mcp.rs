@@ -41,6 +41,12 @@ pub struct PostArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct WhoArgs {
+    /// True lists gone sessions too.
+    all: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ReadArgs {
     /// The thread. Leave it out to read the unread messages of all your threads.
     thread: Option<String>,
@@ -88,7 +94,7 @@ impl Tools {
         let me = self.me();
         let now = self
             .api
-            .who()
+            .who(&me, true)
             .await
             .ok()
             .and_then(|list| list.into_iter().find(|s| s.uri.who() == me.who()))
@@ -96,10 +102,14 @@ impl Tools {
         Ok(format!("{}\n{now}", text::name(&now)))
     }
 
-    #[tool(description = "List the sessions in the riff with their URIs, and show which are live.")]
-    async fn who(&self) -> ToolResult {
-        let sessions = self.api.who().await.map_err(err)?;
-        Ok(text::who(&sessions, &self.me()))
+    #[tool(
+        description = "List the sessions in the riff with their URIs. Show which are live, and how long each other session is idle. A session idle for 24 hours is gone and not listed."
+    )]
+    async fn who(&self, Parameters(a): Parameters<WhoArgs>) -> ToolResult {
+        let me = self.me();
+        let all = a.all.unwrap_or(false);
+        let sessions = self.api.who(&me, all).await.map_err(err)?;
+        Ok(text::who(&sessions, &me))
     }
 
     #[tool(description = "List your threads with their unread counts.")]

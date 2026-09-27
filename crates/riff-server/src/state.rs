@@ -35,6 +35,9 @@
 //!   to the end.
 //! - When a watch starts, [`State::missed`] gives one wake for the
 //!   newest unread message that woke the session (R49).
+//! - `who` lists each session with the time since its last call. A
+//!   session that has not called for [`GONE`] is gone. `who` hides it,
+//!   unless the caller asks for all sessions (R163, R164).
 //! - A claim is free, or held. A held claim goes back to free when its
 //!   holder releases it, or when the holder has no watch stream and was
 //!   last seen more than [`CLAIM_GRACE`] ago. A claim of a free item
@@ -115,6 +118,9 @@ use crate::store;
 
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
+
+/// `who` hides each session that has not called for this long (R164).
+pub const GONE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// A load drops each session that has not called for this long (R126).
 pub const SESSION_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -277,7 +283,7 @@ impl State {
     /// }
     /// let threads = threads.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice()));
     /// let loaded = State::load(sessions.as_deref(), threads, now, 2_000).unwrap();
-    /// assert_eq!(loaded.who()[0].uri, mike);
+    /// assert_eq!(loaded.who(now, 2_000, false)[0].uri, mike);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn load<'a>(
@@ -436,14 +442,44 @@ impl State {
         }
     }
 
-    /// Each known session with its URI now, and whether it is live.
-    pub fn who(&self) -> Vec<SessionInfo> {
+    /// Records a call of `me` that changes nothing else, for example
+    /// `who`.
+    pub fn called(&mut self, me: &SessionUri, now: Instant) {
+        self.arrive(me, now);
+    }
+
+    /// Each known session with its URI now, whether it is live, and the
+    /// time since its last call. `now_ms` is `now` in milliseconds since
+    /// the Unix epoch. A session that has not called for [`GONE`] is
+    /// gone. Only `all` lists gone sessions (R164).
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    ///
+    /// let later = now + Duration::from_secs(120);
+    /// assert_eq!(state.who(later, 120_000, false)[0].idle_secs, 120);
+    /// let next_day = now + Duration::from_secs(25 * 60 * 60);
+    /// assert!(state.who(next_day, 90_000_000, false).is_empty());
+    /// assert_eq!(state.who(next_day, 90_000_000, true).len(), 1);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn who(&self, now: Instant, now_ms: u64, all: bool) -> Vec<SessionInfo> {
+        let gone = GONE.as_secs();
         self.sessions
             .iter()
             .map(|(who, session)| SessionInfo {
                 uri: self.uri(who),
                 live: session.watchers > 0,
+                idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
             })
+            .filter(|s| all || s.idle_secs < gone)
             .collect()
     }
 
@@ -859,7 +895,7 @@ mod tests {
         let b = uri("riff://mike@pangolin/como-technologies/riff?session=b");
         state.register(&a, now);
         state.register(&b, now);
-        assert_eq!(state.who().len(), 2);
+        assert_eq!(listed(&state).len(), 2);
         let d = post(&mut state, &a, "x", &["session=b"], "hi");
         assert_eq!(woken(&d), vec![b.who().clone()]);
     }
@@ -943,7 +979,7 @@ mod tests {
         state.claim(&api(), &repo(), "issue-6", now).unwrap();
         let moved = uri("riff://mike@pangolin/como-technologies/riff?session=a1#issue-6");
         state.register(&moved, now);
-        assert_eq!(state.who().len(), 3);
+        assert_eq!(listed(&state).len(), 3);
         let now_uri = state.uri(api().who());
         assert_eq!(now_uri.place().worktree(), Some("issue-6"));
         assert_eq!(now_uri.claims(), ["issue-6"]);
@@ -1114,9 +1150,40 @@ mod tests {
         let now = Instant::now();
         let mut state = setup(now);
         state.watch_started(&tests(), now);
-        let live: Vec<_> = state.who().into_iter().filter(|s| s.live).collect();
+        let live: Vec<_> = listed(&state).into_iter().filter(|s| s.live).collect();
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].uri, tests());
+    }
+
+    #[test]
+    fn who_hides_gone_sessions_but_not_live_ones() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.watch_started(&tests(), now);
+        let day2 = now + DAY * 2;
+        state.register(&api(), day2 - Duration::from_secs(90));
+        let shown = state.who(day2, T0, false);
+        let uris: Vec<SessionUri> = shown.iter().map(|s| s.uri.clone()).collect();
+        assert_eq!(uris, [tests(), api()]);
+        assert_eq!(shown[0].idle_secs, 0);
+        assert_eq!(shown[1].idle_secs, 90);
+        assert_eq!(state.who(day2, T0, true).len(), 3);
+        // A call brings a gone session back.
+        state.called(&docs(), day2);
+        assert_eq!(state.who(day2, T0, false).len(), 3);
+    }
+
+    #[test]
+    fn a_loaded_session_keeps_its_idle_time() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let mut saved = Saved::new();
+        save(&mut state, &mut saved, now, T0);
+        let later = now + DAY;
+        let loaded = load(&saved, later, T0 + ms(DAY));
+        assert!(loaded.who(later, T0 + ms(DAY), false).is_empty());
+        let hour = loaded.who(later, T0 + 3_600_000, false);
+        assert_eq!(hour[0].idle_secs, 3600);
     }
 
     const DAY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -1145,6 +1212,11 @@ mod tests {
         State::load(sessions, threads, now, now_ms).unwrap()
     }
 
+    /// Each session, gone or not.
+    fn listed(state: &State) -> Vec<SessionInfo> {
+        state.who(Instant::now(), T0, true)
+    }
+
     fn json(value: &impl Serialize) -> serde_json::Value {
         serde_json::to_value(value).unwrap()
     }
@@ -1168,7 +1240,7 @@ mod tests {
 
         let later = now + Duration::from_secs(1);
         let mut loaded = load(&saved, later, T0 + 1000);
-        assert_eq!(json(&loaded.who()), json(&state.who()));
+        assert_eq!(json(&listed(&loaded)), json(&listed(&state)));
         for me in [api(), tests(), docs()] {
             let threads = loaded.threads(&me, later);
             assert_eq!(json(&threads), json(&state.threads(&me, later)));
@@ -1204,7 +1276,7 @@ mod tests {
 
         let start = now + Duration::from_secs(3600);
         let mut loaded = load(&saved, start, T0 + 3_600_000);
-        assert!(loaded.who().iter().all(|s| !s.live));
+        assert!(listed(&loaded).iter().all(|s| !s.live));
         let soon = start + CLAIM_GRACE - Duration::from_secs(1);
         assert!(
             !loaded
@@ -1256,7 +1328,7 @@ mod tests {
 
         let day31 = now + DAY * 31;
         let mut loaded = load(&saved, day31, T0 + ms(DAY * 31));
-        let who: Vec<SessionUri> = loaded.who().into_iter().map(|s| s.uri).collect();
+        let who: Vec<SessionUri> = listed(&loaded).into_iter().map(|s| s.uri).collect();
         assert_eq!(who, [api()]);
         assert_eq!(loaded.threads(&api(), day31)[0].members, [api()]);
         assert!(
@@ -1279,7 +1351,7 @@ mod tests {
         let mut saved = Saved::new();
         save(&mut state, &mut saved, now, T0);
         let loaded = load(&saved, now + DAY * 30, T0 + ms(DAY * 30));
-        assert_eq!(loaded.who().len(), 3);
+        assert_eq!(listed(&loaded).len(), 3);
     }
 
     #[test]
@@ -1294,7 +1366,7 @@ mod tests {
         state.register(&api(), day31);
         save(&mut state, &mut saved, day31, T0 + ms(DAY * 31));
         let loaded = load(&saved, day31, T0 + ms(DAY * 31));
-        let who: Vec<SessionUri> = loaded.who().into_iter().map(|s| s.uri).collect();
+        let who: Vec<SessionUri> = listed(&loaded).into_iter().map(|s| s.uri).collect();
         assert_eq!(who, [tests(), api()]);
     }
 
@@ -1311,7 +1383,7 @@ mod tests {
         let mut saved = Saved::new();
         save(&mut loaded, &mut saved, day20, T0 + ms(DAY * 20));
         let again = load(&saved, day20 + DAY * 11, T0 + ms(DAY * 31));
-        let who: Vec<SessionUri> = again.who().into_iter().map(|s| s.uri).collect();
+        let who: Vec<SessionUri> = listed(&again).into_iter().map(|s| s.uri).collect();
         assert_eq!(who, [api()]);
     }
 
@@ -1402,7 +1474,7 @@ mod tests {
         let design = Object::Thread(thread("design"));
         assert_eq!(objects(&mut state), [design.clone(), Object::Sessions]);
         // A call that only looks changes nothing.
-        state.who();
+        listed(&state);
         state.missed(tests().who());
         assert!(objects(&mut state).is_empty());
         // A second join changes only the sessions.

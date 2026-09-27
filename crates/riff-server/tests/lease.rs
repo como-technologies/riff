@@ -53,7 +53,10 @@ async fn a_new_server_stops_the_old_one() {
     timeout(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
-    assert_eq!(status(&old_base, "who", json!({})).await, 503);
+    assert_eq!(
+        status(&old_base, "who", json!({ "me": "riff://mike@pangolin" })).await,
+        503
+    );
     // The watch stream of the old server ends.
     timeout(Duration::from_secs(5), watch.bytes())
         .await
@@ -168,13 +171,22 @@ impl Store for Flaky {
 async fn a_server_that_cannot_read_the_lease_replies_503_until_it_can() {
     let store = Arc::new(Flaky::default());
     let (_service, base) = common::start_on(store.clone()).await;
-    assert_eq!(status(&base, "who", json!({})).await, 200);
+    assert_eq!(
+        status(&base, "who", json!({ "me": "riff://mike@pangolin" })).await,
+        200
+    );
 
     store.down.store(true, Ordering::SeqCst);
     sleep(common::LEASE.valid_for + common::LEASE.read_every * 2).await;
-    assert_eq!(status(&base, "who", json!({})).await, 503);
+    assert_eq!(
+        status(&base, "who", json!({ "me": "riff://mike@pangolin" })).await,
+        503
+    );
 
     store.down.store(false, Ordering::SeqCst);
     sleep(common::LEASE.read_every * 4).await;
-    assert_eq!(status(&base, "who", json!({})).await, 200);
+    assert_eq!(
+        status(&base, "who", json!({ "me": "riff://mike@pangolin" })).await,
+        200
+    );
 }

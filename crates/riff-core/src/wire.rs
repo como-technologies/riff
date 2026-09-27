@@ -80,9 +80,15 @@ pub struct Register {
     pub me: SessionUri,
 }
 
-/// `POST /v1/who`: lists the known sessions.
+/// `POST /v1/who`: lists the known sessions. The call counts as a call
+/// of `me`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WhoRequest {}
+pub struct WhoRequest {
+    pub me: SessionUri,
+    /// True lists gone sessions too.
+    #[serde(default)]
+    pub all: bool,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WhoReply {
@@ -95,6 +101,10 @@ pub struct SessionInfo {
     pub uri: SessionUri,
     /// True while the session has an open watch stream.
     pub live: bool,
+    /// The seconds since the last call of the session. 0 while it is
+    /// live.
+    #[serde(default)]
+    pub idle_secs: u64,
 }
 
 /// `POST /v1/threads`: lists the threads of `me`, with unread counts.

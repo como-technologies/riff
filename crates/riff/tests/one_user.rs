@@ -112,7 +112,7 @@ async fn the_server_refuses_a_known_session_under_a_new_user() {
     assert!(error.contains("known as user mike"), "{error}");
     assert!(api.claim(&other, &thread, "issue-8").await.is_err());
 
-    let who = api.who().await.unwrap();
+    let who = api.who(&mike, false).await.unwrap();
     assert_eq!(who.len(), 1, "one entry for the session");
     assert_eq!(who[0].uri.who(), mike.who());
     assert_eq!(who[0].uri.claims(), ["issue-7"]);

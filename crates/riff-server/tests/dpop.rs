@@ -9,7 +9,7 @@ use riff_core::dpop::Key;
 async fn who(request: reqwest::RequestBuilder) -> reqwest::Response {
     request
         .header("content-type", "application/json")
-        .body("{}")
+        .body(r#"{"me":"riff://mike@pangolin"}"#)
         .send()
         .await
         .unwrap()

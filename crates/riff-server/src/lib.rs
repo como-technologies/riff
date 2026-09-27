@@ -667,9 +667,16 @@ async fn register(
     Ok(Json(()))
 }
 
-async fn who(AxumState(s): AxumState<Shared>, Json(_): Json<WhoRequest>) -> Reply<WhoReply> {
+async fn who(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<WhoRequest>,
+) -> Reply<WhoReply> {
+    let now = Instant::now();
+    let mut state = acts_as(&s, caller, &r.me)?;
+    state.called(&r.me, now);
     Ok(Json(WhoReply {
-        sessions: s.state().who(),
+        sessions: state.who(now, now_ms(), r.all),
     }))
 }
 

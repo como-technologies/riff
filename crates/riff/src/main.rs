@@ -32,8 +32,13 @@ enum Command {
     Login,
     /// Show your URI. Inside Claude Code, it is the URI of the session.
     Whoami,
-    /// List the sessions in the riff.
-    Who,
+    /// List the sessions in the riff. A session that made no call for 24
+    /// hours is gone and not listed.
+    Who {
+        /// List gone sessions too.
+        #[arg(long)]
+        all: bool,
+    },
     /// Post a message to a thread.
     Post {
         /// The thread. The default is your repository thread.
@@ -181,7 +186,7 @@ async fn main() -> Result<()> {
     let api = api.signed_in(me.who().session())?;
     match cli.command {
         Command::Whoami => println!("{}  {me}", text::name(&me)),
-        Command::Who => print!("{}", text::who(&api.who().await?, &me)),
+        Command::Who { all } => print!("{}", text::who(&api.who(&me, all).await?, &me)),
         Command::Post { thread, to, body } => {
             let thread = thread_or_default(thread, &here)?;
             let posted = api.post(&me, Some(&thread), &to, &body.join(" ")).await?;

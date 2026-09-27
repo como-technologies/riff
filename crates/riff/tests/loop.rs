@@ -49,9 +49,13 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
     let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
     let mut tail = Box::pin(api.tail(&thread).await.unwrap());
 
-    let who = api.who().await.unwrap();
+    let who = api.who(&mike, false).await.unwrap();
     assert!(who.iter().any(|s| s.uri == brett && s.live));
     assert!(who.iter().any(|s| s.uri == mike && !s.live));
+    // A call of who counts as a call: a new session is listed.
+    let docs = uri("riff://mike@pangolin/como-technologies/riff?session=c3#docs");
+    let who = api.who(&docs, false).await.unwrap();
+    assert!(who.iter().any(|s| s.uri == docs && s.idle_secs == 0));
 
     api.post(&mike, Some(&thread), &[], "@brett in text does not wake")
         .await
@@ -100,7 +104,7 @@ async fn a_moved_session_keeps_its_watch() {
 
     let moved = uri("riff://brett@heron/como-technologies/riff?session=b2#issue-6");
     api.register(&moved).await.unwrap();
-    let who = api.who().await.unwrap();
+    let who = api.who(&moved, false).await.unwrap();
     assert_eq!(who.len(), 1, "a move must not make a second session");
 
     api.post(&mike, Some(&thread), &to("worktree=issue-6"), "hi")

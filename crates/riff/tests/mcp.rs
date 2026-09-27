@@ -73,6 +73,9 @@ async fn the_tools_carry_a_conversation() {
 
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
     assert!(who.contains(BRETT), "{who}");
+    assert!(who.contains("(b2) idle 0s  "), "{who}");
+    let (all, _) = call(&mike, "who", serde_json::json!({ "all": true })).await;
+    assert_eq!(all, who);
 
     let (posted, _) = call(
         &mike,
@@ -154,7 +157,10 @@ async fn move_changes_the_place_and_keeps_the_claims() {
     assert!(!is_error, "{moved}");
     let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
     assert!(me.contains("session=a1&claim=issue-6#notes"), "{me}");
-    assert_eq!(api.who().await.unwrap().len(), 1);
+    assert_eq!(
+        api.who(&MIKE.parse().unwrap(), false).await.unwrap().len(),
+        1
+    );
 
     let (text, is_error) = call(&mike, "move", serde_json::json!({ "path": "/no/such/dir" })).await;
     assert!(is_error, "{text}");
