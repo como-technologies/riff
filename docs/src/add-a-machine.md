@@ -5,6 +5,9 @@ machine. Do this only on a network that you trust. Each machine that
 can reach your first machine can then read and send messages in your
 riff, with any name.
 
+You do not sign in on either machine. riff uses the name that you log
+in with on each machine.
+
 ## On the first machine
 
 Let the riff of your first machine take connections from your network:
