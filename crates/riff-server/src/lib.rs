@@ -63,6 +63,7 @@
 //! ```
 
 pub mod auth;
+pub mod gcs;
 pub mod oidc;
 pub mod service;
 pub mod state;

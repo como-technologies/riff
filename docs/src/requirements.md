@@ -96,6 +96,9 @@
 - **R147** The name of each thread object starts with `threads/`. The
   sessions, the token store and the lease have names outside
   `threads/`.
+- **R149** When the lifecycle rule (R46) deleted a thread object, the
+  next save of that thread saves it again as a new object. It is not a
+  failed save (R141).
 
 ## Cloud
 
