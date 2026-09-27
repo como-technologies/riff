@@ -10,8 +10,8 @@
 //!
 //! - `just rid` prints a new ID ([`new_id`]). Nobody writes an ID by hand
 //!   or gives it a meaning.
-//! - The old IDs, `R` and a number, stay as they are. They get no ULID and no
-//!   new number.
+//! - The old IDs `R1` to `R232` stay as they are. They get no ULID and no
+//!   new number. `R233` and up are not valid IDs.
 //! - `just ci` runs [`check`] on `docs/src/requirements.md` and on each
 //!   text file that can cite a requirement:
 //!
@@ -19,7 +19,7 @@
 //! |---|---|---|
 //! | `duplicate-id` | error | Two requirements with the same ID. |
 //! | `unknown-id` | error | A cited ID that no requirement has. |
-//! | `id-format` | warning | A requirement ID that is not an old ID and not a valid ULID. |
+//! | `id-format` | warning | A requirement ID that is not an old ID (`R1` to `R232`) and not a valid ULID. |
 //!
 //! A requirement is a line of the form `- **ID** text`. A citation is a
 //! word that has the form of an old ID or of a ULID.
@@ -82,16 +82,30 @@ pub fn is_ulid(word: &str) -> bool {
     word.len() == 26 && word.bytes().all(|b| CROCKFORD.contains(&b)) && word.as_bytes()[0] <= b'7'
 }
 
-/// True for an old requirement ID: `R` and a number.
+/// The last old requirement ID. A new requirement never gets an old
+/// ID: `R233` and up are not valid.
+pub const LAST_LEGACY: u32 = 232;
+
+/// True for an old requirement ID: `R1` to `R232` ([`LAST_LEGACY`]).
 ///
 /// ```
-/// assert!(reqs::is_legacy("R233"));
-/// assert!(!reqs::is_legacy("R"));
+/// assert!(reqs::is_legacy("R1"));
+/// assert!(reqs::is_legacy("R232"));
+/// assert!(!reqs::is_legacy("R233"), "a new ID gets a ULID");
+/// assert!(!reqs::is_legacy("R0"));
 /// assert!(!reqs::is_legacy("R12a"));
 /// ```
 pub fn is_legacy(word: &str) -> bool {
-    word.strip_prefix('R')
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    r_number(word).is_some_and(|n| (1..=LAST_LEGACY).contains(&n))
+}
+
+/// The number of a word of the form `R` and a number.
+fn r_number(word: &str) -> Option<u32> {
+    let n = word.strip_prefix('R')?;
+    if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(n.parse().unwrap_or(u32::MAX))
 }
 
 /// What [`check`] found. Each line names the file and the line.
@@ -111,7 +125,7 @@ pub const REQUIREMENTS: &str = "docs/src/requirements.md";
 /// path and its text.
 ///
 /// ```
-/// let requirements = "- **R1** One.\n- **R1** Again.\n- **X-1** Bad.\n";
+/// let requirements = "- **R1** One.\n- **R1** Again.\n- **X-1** Bad.\n- **R233** New.\n";
 /// let report = reqs::check(requirements, &[("a.rs", "// R1, R7")]);
 /// assert_eq!(report.errors, [
 ///     "docs/src/requirements.md:2: duplicate-id: R1 is also on line 1",
@@ -119,6 +133,7 @@ pub const REQUIREMENTS: &str = "docs/src/requirements.md";
 /// ]);
 /// assert_eq!(report.warnings, [
 ///     "docs/src/requirements.md:3: id-format: X-1 is not a ULID (run just rid)",
+///     "docs/src/requirements.md:4: id-format: R233 is not a ULID (run just rid)",
 /// ]);
 /// ```
 pub fn check(requirements: &str, sources: &[(&str, &str)]) -> Report {
@@ -146,7 +161,7 @@ pub fn check(requirements: &str, sources: &[(&str, &str)]) -> Report {
         for (n, line) in text.lines().enumerate() {
             let own = if skip_defined { defined(line) } else { None };
             for word in words(line) {
-                if Some(word) == own || !(is_legacy(word) || is_ulid(word)) {
+                if Some(word) == own || !(r_number(word).is_some() || is_ulid(word)) {
                     continue;
                 }
                 if !ids.contains_key(word) {

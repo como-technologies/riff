@@ -33,12 +33,13 @@ requirement gets a new ID from this command:
 just rid
 ```
 
-It prints an ID such as `01M3J3FGCENZTA3JGZ6S3NX7YM`. Write the new
-requirement as `- **ID** text`. Cite it by the same ID in code, tests
+It prints a new ID of 26 digits and capital letters. Write the new
+requirement as `- **ID** text`, with that ID. Cite it by the same ID in code, tests
 and commits. Two people who add requirements at the same time never get
 the same ID. So nobody has to agree on a number first.
 
-The old IDs, `R` and a number, stay. Never renumber a requirement.
+The old IDs `R1` to `R232` stay. Never give a new requirement the next
+`R` number, and never renumber a requirement.
 
 `just ci` checks the IDs. To run only this check:
 
@@ -47,7 +48,8 @@ just reqs
 ```
 
 It fails when two requirements have the same ID, or when a file cites an
-ID that no requirement has. It warns when an ID is not a ULID.
+ID that no requirement has. It warns when a new ID is not a ULID, for
+example the next `R` number.
 
 ## Sign in on this machine
 

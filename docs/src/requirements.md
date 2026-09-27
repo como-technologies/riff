@@ -649,12 +649,12 @@
   an advisory, we update it, change a feature, or replace it.
 - **01M3J3FGCENZTA3JGZ6S3NX7YM** A new requirement gets a ULID from
   `just rid` as its ID. The ID has no meaning. Nobody writes it by
-  hand. The old IDs, R and a number, stay as they are. A requirement
-  is never renumbered.
+  hand. The old IDs R1 to R232 stay as they are. No new requirement
+  gets an old ID. A requirement is never renumbered.
 - **01M3J3FGEND8977RZTRS9C0V5Z** `just ci` fails when two requirements
   have the same ID, and when code, tests, the book or the notes for
   agents cite an ID that no requirement has. It warns when a
-  requirement ID is not an old ID and not a ULID.
+  requirement ID is not an old ID (R1 to R232) and not a ULID.
 
 ## Open
 

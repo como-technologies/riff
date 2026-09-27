@@ -74,6 +74,15 @@ fn a_malformed_id_warns_but_passes() {
 }
 
 #[test]
+fn the_next_r_number_warns() {
+    let dir = repo("- **R232** Old.\n- **R233** New, by habit.\n", "");
+    let out = check(dir.path());
+    assert!(out.status.success());
+    assert!(stderr(&out).contains("id-format: R233"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("R232"), "{}", stderr(&out));
+}
+
+#[test]
 fn a_cited_id_that_does_not_exist_fails() {
     let dir = repo("- **R1** One.\n", "/// See R9.\n");
     let out = check(dir.path());
