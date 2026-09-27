@@ -336,7 +336,10 @@ gh run list --workflow CI --branch main
 
 ### Turn the shared server on
 
-It sets `CLOUD_DEPLOY`, and deploys now:
+It sets `CLOUD_DEPLOY`, and deploys now. While the service runs, it
+costs about 45 USD each month: one instance with 1 vCPU that is always
+on (R29). Turn it off when nobody uses it. For the cost of each host,
+see [#47](https://github.com/como-technologies/riff/issues/47).
 
 ```sh
 just cloud up
