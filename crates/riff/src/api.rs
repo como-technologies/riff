@@ -46,13 +46,13 @@ use tokio::sync::Mutex;
 
 use crate::{device, login, secrets};
 
-/// The server that `riff` uses when nothing else is set: the shared
-/// server on Cloud Run (R5, R133). Local development sets `RIFF_SERVER`.
+/// The server that `riff` uses when nothing else is set: the server on
+/// this machine (R133). `RIFF_SERVER` names another server.
 ///
 /// ```
-/// assert!(riff::api::DEFAULT_SERVER.starts_with("https://"));
+/// assert_eq!(riff::api::DEFAULT_SERVER, "http://127.0.0.1:7878");
 /// ```
-pub const DEFAULT_SERVER: &str = "https://riff-server-816917641970.us-central1.run.app";
+pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
 /// The word that [`Api::tell`] takes in place of a session: the lead of
 /// your user in your repository (R179).

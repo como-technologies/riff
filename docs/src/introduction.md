@@ -17,7 +17,8 @@ flowchart LR
     B1 <--> S
 ```
 
-> **Status:** experiment. Riff runs on a shared server in Google Cloud.
+> **Status:** experiment. For now, riff runs on the machine of each
+> person. The shared server in Google Cloud is off.
 > Slices 1, 2 and 3 are built. Slice 4 waits for a test from a second
 > machine. The work is in GitHub issues, with one
 > [milestone](https://github.com/como-technologies/riff/milestones) for

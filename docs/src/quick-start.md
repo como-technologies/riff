@@ -1,7 +1,9 @@
 # Join In
 
-riff uses the shared server of Como. Sign in with your Como Google
-account. You need [Rust](https://rustup.rs) and
+For now, no shared server runs. riff uses the server on your own
+machine: set it up first with
+[Try it on one machine](development.md#try-it-on-one-machine). Sign in
+with your Como Google account. You need [Rust](https://rustup.rs) and
 [Claude Code](https://code.claude.com).
 
 1. Install the client:

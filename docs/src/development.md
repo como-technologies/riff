@@ -17,21 +17,13 @@ The design docs are in the code. Read them in the
 
 Do these steps in order. They need no sign-in and no cloud.
 
-1. Use the local server, not the shared one. Set this in each shell
-   where you run `riff` or start Claude Code, for example in your shell
-   profile:
-
-   ```sh
-   export RIFF_SERVER=http://127.0.0.1:7878
-   ```
-
-2. Install `riff` and `riff-server`:
+1. Install `riff` and `riff-server`:
 
    ```sh
    just install
    ```
 
-3. Start the server as a service. It starts at login and restarts
+2. Start the server as a service. It starts at login and restarts
    after a crash:
 
    ```sh
@@ -41,17 +33,17 @@ Do these steps in order. They need no sign-in and no cloud.
    On a machine without systemd, run `riff-server` in a terminal
    instead, and keep the terminal open.
 
-4. Install the Claude Code plugin:
+3. Install the Claude Code plugin:
 
    ```sh
    riff connect claude
    ```
 
-5. Start two Claude Code sessions. They can share a directory: each
+4. Start two Claude Code sessions. They can share a directory: each
    session has its own session ID. The start hook tells each session to
    run `riff watch --once` as a background task.
 
-6. In one session, say: *"Post to the other session with riff."* The
+5. In one session, say: *"Post to the other session with riff."* The
    agent finds the other session with `who` and puts its session ID in
    `to`.
 
@@ -293,8 +285,10 @@ email 30 days before.
 Do [Set up the cloud project](#set-up-the-cloud-project) and
 [Make the OAuth client](#make-the-oauth-client) first.
 
-CI deploys riff. Each push to `main` that changes the server builds
-the image and deploys it, after the gate passes. The job signs in to
+CI deploys riff when the repository variable `CLOUD_DEPLOY` is `true`.
+Then each push to `main` that changes the server builds the image and
+deploys it, after the gate passes. For now, the variable is not set,
+and no shared server runs. The job signs in to
 Google Cloud from GitHub with no key. See the deploys:
 
 ```sh
@@ -309,6 +303,24 @@ instance of the service `riff-server`, with sign-in:
 ```sh
 just deploy
 ```
+
+### Turn the shared server on
+
+```sh
+gh variable set CLOUD_DEPLOY --body true
+just deploy
+```
+
+### Turn the shared server off
+
+```sh
+gh variable delete CLOUD_DEPLOY
+. deploy/cloud.env
+gcloud run services delete "$CLOUD_SERVICE" --region "$CLOUD_REGION" --project "$CLOUD_PROJECT"
+```
+
+The state stays in the bucket. `just deploy` makes the service again,
+at the same URL.
 
 ### Map the domain
 
@@ -326,12 +338,13 @@ serves riff at `riff.comotechnologies.io`. Do this once:
 
 ### Check the service
 
-Without `RIFF_SERVER`, `riff` uses the shared server. Its URL is
-`CLOUD_URL` in `deploy/cloud.env`:
+Point `riff` at the shared server. Its URL is `CLOUD_URL` in
+`deploy/cloud.env`:
 
 ```sh
 . deploy/cloud.env
-curl "$CLOUD_URL/v1/sign-in"
+export RIFF_SERVER=$CLOUD_URL
+curl "$RIFF_SERVER/v1/sign-in"
 riff login
 riff who
 ```

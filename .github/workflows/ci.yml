@@ -39,13 +39,14 @@ jobs:
         run: just ci
 
   deploy:
-    # A push to main that changes the server builds the image and deploys
-    # it to Cloud Run (R160). The job signs in to Google Cloud with the
+    # When the repository variable CLOUD_DEPLOY is true, a push to main
+    # that changes the server builds the image and deploys it to Cloud
+    # Run (R160). The job signs in to Google Cloud with the
     # OIDC token of GitHub; no key exists (R161). One deploy runs at a
     # time; a newer push waits for it.
     name: Deploy
     needs: gate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CLOUD_DEPLOY == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

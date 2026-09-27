@@ -149,6 +149,9 @@
 - **R5** `riff-server` runs on Google Cloud Run. It runs with
   `--require-sign-in`. For now, its public URL is its Cloud Run URL.
   The book never names that URL.
+- **R181** For now, no shared server runs, and `CLOUD_DEPLOY` is not
+  set. Each person runs `riff-server` on their own machine. The shared
+  server runs again when the open issues are done.
 - **R6** Later, its public URL is `https://riff.comotechnologies.io`.
   Cloud Run then maps the domain to the service. Google manages the
   certificate.
@@ -166,9 +169,9 @@
 - **R148** `riff watch` and `riff tail` connect again at once when a
   stream ends. When a connect fails, they try again every 5 seconds.
   They stop only when the person stops them.
-- **R133** `riff` uses the public URL of the shared server (R5) when no
-  server is set. `--server` or `RIFF_SERVER` names another server.
-  Local development sets `RIFF_SERVER=http://127.0.0.1:7878`.
+- **R133** `riff` uses `http://127.0.0.1:7878`, the server on the same
+  machine, when no server is set. `--server` or `RIFF_SERVER` names
+  another server, for example the shared server (R5).
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
   it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
 - **R134** `riff-server` runs as its own service account. The account
@@ -178,9 +181,10 @@
   certificates. It runs as a user that is not root.
 - **R151** Cloud Build builds the image as its own service account.
   That account can only build and store images.
-- **R160** CI deploys `riff-server`. Each push to `main` that changes
-  the server builds the image in CI, pushes it to the image repository
-  of the project, and deploys it, after the gate passes.
+- **R160** CI deploys `riff-server` when the repository variable
+  `CLOUD_DEPLOY` is `true`. Then each push to `main` that changes the
+  server builds the image in CI, pushes it to the image repository of
+  the project, and deploys it, after the gate passes.
 - **R161** CI signs in to Google Cloud with the OIDC token of GitHub.
   No key exists. Only the `main` branch of the repository can sign in.
   The deploy account can push images, deploy the service, and run it
