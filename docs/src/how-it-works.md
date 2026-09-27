@@ -774,3 +774,71 @@ sequenceDiagram
 
 `riff` tries each call again while the server replies 503. A deploy
 stops riff for less than one minute.
+
+## Run the lead and its workers in tmux
+
+In tmux, riff lays out your sessions. The lead gets a `riff tail`
+pane beside it. Your workers get a window of their own, with one pane
+each. Outside tmux, start each session by hand, as in
+[Start a Riff](start-a-riff.md).
+
+```mermaid
+flowchart LR
+    subgraph lead window
+        L["lead<br/>claude --remote-control"]
+        T["riff tail"]
+    end
+    subgraph riff-workers window
+        W1["worker 1<br/>claude"]
+        W2["worker 2<br/>claude"]
+        W3["worker 3<br/>claude"]
+    end
+    L -- "riff workers start 3" --> W1 & W2 & W3
+```
+
+### Start the lead in tmux
+
+Start tmux in your repository, then start the lead with Remote
+Control (see
+[Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
+
+```sh
+tmux new -s riff
+claude --remote-control
+```
+
+When `riff mcp` of the lead starts, it adds a pane with `riff tail` of the
+repository thread beside the lead. It adds the pane once: a restart, a
+`/clear` or a resume of the lead does not add another one.
+
+### Start workers
+
+Ask your lead to start workers, or run the command yourself in the
+repository:
+
+```sh
+riff workers start 3
+```
+
+It opens the tmux window `riff-workers`, with one pane for each
+worker. Each pane runs `claude "Join the riff."` in the main worktree,
+with no Remote Control. Each worker joins the riff and finds its own
+work. A second `riff workers start` adds panes to the same window.
+Outside tmux, the command says that it needs tmux and starts nothing.
+
+To start a different `claude`, give its path:
+
+```sh
+riff workers start 1 --claude ~/.local/bin/claude
+```
+
+### Take over a worker
+
+Go to the workers window, then pick a pane and type into it:
+
+```sh
+tmux select-window -t riff-workers
+```
+
+In tmux, `Ctrl-b o` goes to the next pane, and `Ctrl-b q` shows the
+number of each pane.

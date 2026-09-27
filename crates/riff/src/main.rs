@@ -8,7 +8,8 @@ use chrono::TimeZone;
 use clap::{Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
-use riff::{hook, identity, local, login, mcp, plugin, text};
+use riff::terminal::{Program, Terminal, Tmux};
+use riff::{hook, identity, local, login, mcp, plugin, terminal, text};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, Status};
@@ -153,6 +154,26 @@ enum Command {
         #[command(subcommand)]
         tool: Tool,
     },
+    /// Start the worker sessions of this machine. They need tmux.
+    Workers {
+        #[command(subcommand)]
+        command: Workers,
+    },
+}
+
+#[derive(Subcommand)]
+enum Workers {
+    /// Start COUNT worker sessions in the tmux window riff-workers, one
+    /// pane each. Each pane runs `claude "Join the riff."` in the main
+    /// worktree. Outside tmux, it starts nothing.
+    Start {
+        /// The number of workers.
+        #[arg(value_parser = clap::value_parser!(u16).range(1..))]
+        count: u16,
+        /// The claude command.
+        #[arg(long, default_value = "claude")]
+        claude: std::path::PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -200,6 +221,12 @@ async fn main() -> Result<()> {
         let connected = plugin::connect(claude, &plugin::dir()?)?;
         println!("{}", text::connected(&connected));
         return Ok(());
+    }
+    if let Command::Workers {
+        command: Workers::Start { count, claude },
+    } = &cli.command
+    {
+        return start_workers(*count, claude, &cli.server);
     }
     let api = Api::new(&cli.server);
     match &cli.command {
@@ -293,15 +320,69 @@ async fn main() -> Result<()> {
         Command::Mcp => {
             let me = identity::session(&here, api.base())?;
             let _record = record_session(&me);
-            mcp::serve(api, me).await?
+            let tail = tail_beside_lead(&api, &me);
+            let (_, served) = tokio::join!(tail, mcp::serve(api.clone(), me.clone()));
+            served?
         }
         Command::Hook { .. }
         | Command::Connect { .. }
+        | Command::Workers { .. }
         | Command::Login
         | Command::Logout { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }
+
+/// Starts `count` workers in tmux (01M3JD392Q5ANX0FPZ51W7B0E3). Outside
+/// tmux, it starts nothing and fails (01M3JD3973J7A9BG8G9EP9TVDP).
+fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
+    let Some(tmux) = Tmux::from_env() else {
+        eprintln!("{}", text::NO_TMUX);
+        std::process::exit(1);
+    };
+    let dir = std::env::current_dir()?;
+    let main = identity::main_worktree(&dir)
+        .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
+    let worker = Program::worker(claude, &main, Api::new(server).base());
+    let window = tmux.workers(&vec![worker; usize::from(count)])?;
+    println!("{}", text::workers_started(count, &window, &main));
+    Ok(())
+}
+
+/// In tmux, adds the `riff tail` pane beside the lead
+/// (01M3JD390F49HZSKEJ3VACX0ZA). It first waits until the server lists
+/// the session. An error goes to stderr: the tools still work.
+async fn tail_beside_lead(api: &Api, me: &SessionUri) {
+    let Some(tmux) = Tmux::from_env() else {
+        return;
+    };
+    let added = async {
+        let program = Program::tail(
+            &std::env::current_exe()?,
+            &std::env::current_dir()?,
+            api.base(),
+        );
+        for _ in 0..REGISTER_TRIES {
+            if api
+                .who(me, false)
+                .await?
+                .iter()
+                .any(|s| s.uri.who() == me.who())
+            {
+                break;
+            }
+            tokio::time::sleep(REGISTER_WAIT).await;
+        }
+        terminal::tail_beside_lead(api, me, &tmux, &program).await
+    };
+    if let Err(e) = added.await {
+        eprintln!("riff: cannot add the riff tail pane: {e:#}");
+    }
+}
+
+/// How often and how long `riff mcp` waits for its session to register.
+const REGISTER_TRIES: u32 = 10;
+const REGISTER_WAIT: Duration = Duration::from_millis(200);
 
 fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> {
     match given {

@@ -12,6 +12,7 @@
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
+//! | `riff workers start` | Starts worker sessions in tmux, with [`terminal`]. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
@@ -58,4 +59,5 @@ pub mod login;
 pub mod mcp;
 pub mod plugin;
 pub mod secrets;
+pub mod terminal;
 pub mod text;

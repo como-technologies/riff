@@ -680,6 +680,28 @@
 - **R47** Each session connects through `riff`. Direct connections from an
   agent tool are not supported for now.
 
+## Terminal
+
+- **01M3JD390F49HZSKEJ3VACX0ZA** When the lead runs in tmux, `riff mcp`
+  of the lead adds a pane with `riff tail` of the repository thread
+  beside it. It marks the pane. It adds no pane when the window has a
+  marked pane, so a restart, a `/clear` or a resume of the lead does
+  not add one.
+- **01M3JD392Q5ANX0FPZ51W7B0E3** `riff workers start N` starts N
+  workers in the tmux window `riff-workers`, one pane each. Each pane
+  runs `claude "Join the riff."` in the main worktree, with
+  `RIFF_WORKER=1`. A second start adds panes to the same window. No
+  person types a key.
+- **01M3JD394YFA3TQRE3E72ZER4Z** A worker starts with no Remote
+  Control. The book starts the lead with `claude --remote-control`.
+- **01M3JD3973J7A9BG8G9EP9TVDP** Outside tmux, `riff workers start`
+  says that it needs tmux, starts nothing and exits with status 1.
+- **01M3JD399ABBWE3DJT5BVXAFH5** tmux is one terminal backend. Its
+  parts are in one module behind one interface, so that a later
+  backend does the same.
+- **01M3JD39BASN1GNJTZXXKBCNZ9** Each pane that riff makes gets the
+  riff-server URL of the command that makes it, in `RIFF_SERVER`.
+
 ## Code
 
 - **R12** All code is Rust.

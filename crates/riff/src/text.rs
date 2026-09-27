@@ -214,6 +214,30 @@ pub fn connected(done: &Connected) -> String {
     )
 }
 
+/// The error of `riff workers start` outside tmux
+/// (01M3JD3973J7A9BG8G9EP9TVDP).
+pub const NO_TMUX: &str = "riff: riff workers start needs tmux. It started nothing. Run it in \
+a tmux session, or start each worker by hand: open a terminal in the repository and run claude.";
+
+/// The answer to `riff workers start`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::workers_started(2, "riff-workers", "/src/riff".as_ref()),
+///     "Started 2 workers in /src/riff, in the tmux window riff-workers. \
+///      To see them: tmux select-window -t riff-workers"
+/// );
+/// assert!(riff::text::workers_started(1, "w", "/r".as_ref()).starts_with("Started 1 worker in"));
+/// ```
+pub fn workers_started(count: u16, window: &str, dir: &std::path::Path) -> String {
+    let workers = if count == 1 { "worker" } else { "workers" };
+    format!(
+        "Started {count} {workers} in {}, in the tmux window {window}. \
+         To see them: tmux select-window -t {window}",
+        dir.display()
+    )
+}
+
 /// The answer to `riff logout --all`.
 ///
 /// ```

@@ -192,6 +192,14 @@ pub fn host(riff_host: Option<&str>, remote: Option<&str>, machine: &str) -> Str
     }
 }
 
+/// The main worktree of the repository of `dir`: the first worktree
+/// that `git worktree list` names. `None` outside git.
+pub fn main_worktree(dir: &Path) -> Option<std::path::PathBuf> {
+    let list = git(dir, &["worktree", "list", "--porcelain"])?;
+    let first = list.lines().next()?.strip_prefix("worktree ")?;
+    Some(first.into())
+}
+
 /// The place for `dir` on a known host.
 pub fn place_in(dir: &Path, host: &str) -> Result<Place> {
     let (repo, worktree) = match git(dir, &["rev-parse", "--show-toplevel"]) {
