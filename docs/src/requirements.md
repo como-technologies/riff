@@ -198,12 +198,12 @@
   data of a real person: an email address, a billing account ID or an
   organization ID.
 - **R136** A person makes the project and links its billing account
-  with gcloud, by the how-to in the book. `just cloud-setup` makes the
+  with gcloud, by the how-to in the book. `just cloud setup` makes the
   resources of riff in the project. It checks each resource first, so
-  it can run again. `just deploy` builds the image and deploys it to
+  it can run again. `just cloud deploy` builds the image and deploys it to
   Cloud Run.
 - **R145** A person makes the OAuth client by hand in the console, with
-  the how-to in the book. `just oauth-client` puts the client secret in
+  the how-to in the book. `just cloud oauth-client` puts the client secret in
   Secret Manager and the client ID in `deploy/cloud.env`. The secret is
   never in the repository or in a downloaded file.
 

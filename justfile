@@ -69,29 +69,22 @@ install:
 serve:
     cargo run -p riff-server
 
-# Install riff-server as a user service, with the OAuth client of the cloud project
-service *ARGS:
+# riff-server on this machine: just local RECIPE
+mod local 'deploy/local.just'
+
+# The shared server on Cloud Run: just cloud RECIPE
+mod cloud 'deploy/cloud.just'
+
+# Print the shell line that points riff at a server: local or cloud. Run: eval "$(just use cloud)"
+use TARGET="":
     #!/usr/bin/env bash
     set -euo pipefail
-    . deploy/cloud.env
-    if [ -z "$RIFF_OIDC_CLIENT_ID" ]; then
-        echo "deploy/cloud.env has no client ID. Run: just oauth-client" >&2
-        exit 1
-    fi
-    secret=$(gcloud secrets versions access latest --secret "$CLOUD_SECRET" --project "$CLOUD_PROJECT")
-    RIFF_OIDC_CLIENT_ID=$RIFF_OIDC_CLIENT_ID RIFF_OIDC_CLIENT_SECRET=$secret riff-server install {{ARGS}}
-
-# Make the cloud resources of riff; it checks each one first (R136)
-cloud-setup:
-    deploy/cloud-setup.sh
-
-# Build the image with Cloud Build and deploy it to Cloud Run (R136)
-deploy:
-    deploy/deploy.sh
-
-# Store the OAuth client: the secret in Secret Manager, the ID in deploy/cloud.env
-oauth-client:
-    deploy/oauth-client.sh
+    case "{{TARGET}}" in
+        local) echo "unset RIFF_SERVER" ;;
+        cloud) . deploy/cloud.env; echo "export RIFF_SERVER=$CLOUD_URL" ;;
+        "") echo "# riff uses ${RIFF_SERVER:-http://127.0.0.1:7878}" ;;
+        *) echo "Use: just use local, or just use cloud" >&2; exit 1 ;;
+    esac
 
 # Clean build artifacts
 clean:

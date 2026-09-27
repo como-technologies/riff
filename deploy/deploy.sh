@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploys riff-server to Cloud Run (R5, R6, R29, R32, R130, R131,
-# R134). Run `just cloud-setup` first.
+# R134). Run `just cloud setup` first.
 #
 # With no argument, Cloud Build builds the image from the source, and
 # the script maps the domain once. With `--image IMAGE`, the script
@@ -21,7 +21,7 @@ else
 fi
 
 if [ -z "$RIFF_OIDC_CLIENT_ID" ]; then
-    echo "deploy/cloud.env has no client ID. Run: just oauth-client" >&2
+    echo "deploy/cloud.env has no client ID. Run: just cloud oauth-client" >&2
     exit 1
 fi
 

@@ -127,5 +127,5 @@ versions=$(gcloud secrets versions list "$CLOUD_SECRET" --filter=state=ENABLED \
 if [ -z "$RIFF_OIDC_CLIENT_ID" ] || [ -z "$versions" ]; then
     echo
     echo "Next: make the OAuth client by hand. See \"Make the OAuth client\""
-    echo "on the Development page of the book. Then run: just oauth-client"
+    echo "on the Development page of the book. Then run: just cloud oauth-client"
 fi

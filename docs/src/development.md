@@ -69,18 +69,18 @@ The client exists. To make it again, see
 3. Install the server service again, with the OAuth client:
 
    ```sh
-   just service
+   just local setup
    ```
 
-   `just service` runs `riff-server install` with the client ID from
+   `just local setup` runs `riff-server install` with the client ID from
    `deploy/cloud.env` and the client secret from Secret Manager. It
    gives its own options to `riff-server install`, for example
-   `just service --admin USER`.
+   `just local setup --admin USER`.
 
 4. Check the server log:
 
    ```sh
-   journalctl --user -u riff-server -n 5
+   just local log -n 5
    ```
 
    The last start must show `sign-in with https://accounts.google.com`
@@ -125,7 +125,7 @@ the Claude Code session again, as a new session.
 `riff logout --all` ends each of your sign-ins, on each device.
 
 Only accounts of `comotechnologies.io` can sign in. To allow another
-Workspace domain, add `--allowed-domain DOMAIN` to `just service`.
+Workspace domain, add `--allowed-domain DOMAIN` to `just local setup`.
 Give `--allowed-domain` once for each domain, the default domain too.
 
 An admin can end each sign-in of another person. Name the admins with
@@ -147,20 +147,69 @@ each proof.
 
 `riff-server install` writes its settings, as options or as `RIFF_*`
 variables, to `~/.config/systemd/user/riff-server.env`, with mode
-0600. Then it enables and starts the service. `just service` does the
-same, with the OAuth client.
+0600. Then it enables and starts the service. `just local setup` does
+the same, with the OAuth client.
 
 - Each install replaces all settings. When you use sign-in, always use
-  `just service`: plain `riff-server install` removes the OAuth client.
-- After each `just install`, run `just service` (or
-  `riff-server install`) and `riff connect claude` again. The service
-  then runs the new binary.
-- `systemctl --user status riff-server` shows the state.
-- `journalctl --user -u riff-server` shows the log.
+  `just local setup`: plain `riff-server install` removes the OAuth
+  client.
 - `riff-server uninstall` stops the service and removes its files.
 
 The service stops when you log out. To keep it running, run
 `loginctl enable-linger` once.
+
+`just local` alone lists its recipes.
+
+### Check the local server
+
+It shows the state of the service, if the server answers, and the
+version of the binary:
+
+```sh
+just local status
+```
+
+### Start and stop the local server
+
+```sh
+just local stop
+just local start
+just local restart
+```
+
+### See the local log
+
+Add `-f` to follow the log:
+
+```sh
+just local log
+just local log -f
+```
+
+### Update the local server
+
+Build the new binaries, install the service again, and update the
+plugin:
+
+```sh
+just install
+just local setup
+riff connect claude
+```
+
+### Point riff at a server
+
+`riff` uses the local server when `RIFF_SERVER` is not set. `just use`
+prints the shell line for a server. Run it with `eval` in each shell
+where you run `riff` or start Claude Code:
+
+```sh
+eval "$(just use cloud)"
+eval "$(just use local)"
+just use
+```
+
+`just use` alone shows the server that `riff` uses now.
 
 ## Save the state in a bucket
 
@@ -217,7 +266,7 @@ gcloud billing projects link como-riff --billing-account BILLING_ACCOUNT_ID
 Then make the resources of riff in the project:
 
 ```sh
-just cloud-setup
+just cloud setup
 ```
 
 The command checks each resource first, so you can run it again.
@@ -262,7 +311,7 @@ slightly different words.
    download the JSON file. In a terminal, run:
 
    ```sh
-   just oauth-client
+   just cloud oauth-client
    ```
 
    It asks for the client ID and the client secret. It puts the secret
@@ -295,32 +344,35 @@ Google Cloud from GitHub with no key. See the deploys:
 gh run list --workflow CI --branch main
 ```
 
-### Deploy by hand
-
-Cloud Build builds the image from `Dockerfile`. Cloud Run then runs one
-instance of the service `riff-server`, with sign-in:
-
-```sh
-just deploy
-```
+`just cloud` alone lists its recipes.
 
 ### Turn the shared server on
 
+It sets `CLOUD_DEPLOY`, and deploys now:
+
 ```sh
-gh variable set CLOUD_DEPLOY --body true
-just deploy
+just cloud up
 ```
 
 ### Turn the shared server off
 
+It removes `CLOUD_DEPLOY`, and deletes the service. gcloud asks you
+first. The state stays in the bucket. `just cloud up` makes the service
+again, at the same URL.
+
 ```sh
-gh variable delete CLOUD_DEPLOY
-. deploy/cloud.env
-gcloud run services delete "$CLOUD_SERVICE" --region "$CLOUD_REGION" --project "$CLOUD_PROJECT"
+just cloud down
 ```
 
-The state stays in the bucket. `just deploy` makes the service again,
-at the same URL.
+### Deploy by hand
+
+Cloud Build builds the image from `Dockerfile`. Cloud Run then runs one
+instance of the service `riff-server`, with sign-in. It does not change
+`CLOUD_DEPLOY`:
+
+```sh
+just cloud deploy
+```
 
 ### Map the domain
 
@@ -333,29 +385,26 @@ serves riff at `riff.comotechnologies.io`. Do this once:
 2. At the DNS host of `comotechnologies.io`, add a CNAME record: name
    `riff`, value `ghs.googlehosted.com`.
 3. In `deploy/cloud.env`, set `CLOUD_URL=https://riff.comotechnologies.io`.
-4. Run `just deploy`. It maps the domain to the service once. Google
+4. Run `just cloud deploy`. It maps the domain to the service once. Google
    then makes the certificate. That can take some hours.
 
-### Check the service
+### Check the shared server
 
-Point `riff` at the shared server. Its URL is `CLOUD_URL` in
-`deploy/cloud.env`:
+The first command shows if CI deploys, and the state of the service.
+The next ones point `riff` at the shared server and sign in:
 
 ```sh
-. deploy/cloud.env
-export RIFF_SERVER=$CLOUD_URL
-curl "$RIFF_SERVER/v1/sign-in"
+just cloud status
+eval "$(just use cloud)"
 riff login
 riff who
 ```
 
-The first command shows the issuer and the client ID.
-
-### See the log
+### See the shared log
 
 ```sh
-gcloud run services logs read riff-server --project como-riff \
-  --region us-central1 --limit 20
+just cloud log
+just cloud log --limit 20
 ```
 
 Each start shows `the provider knows the OAuth client`. When Google
