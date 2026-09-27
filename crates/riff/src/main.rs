@@ -237,7 +237,11 @@ async fn main() -> Result<()> {
         tool: Tool::Claude { claude },
     } = &cli.command
     {
-        let connected = plugin::connect(claude, &plugin::dir()?)?;
+        let settings = plugin::settings_from(
+            std::env::var_os("CLAUDE_CONFIG_DIR"),
+            std::env::var_os("HOME"),
+        );
+        let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
         println!("{}", text::connected(&connected));
         return Ok(());
     }

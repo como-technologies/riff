@@ -820,8 +820,11 @@ riff 2a880834 lead
 riff dceb0b68 issue-82 blocked
 ```
 
-The short ID is the same as in `riff who`. A plugin cannot set the
-status line, so add it to `~/.claude/settings.json` yourself:
+The short ID is the same as in `riff who`. `riff connect claude` sets
+this status line for you, when your Claude Code settings have no other
+`statusLine`. When they have one, riff leaves it, and says so. To use
+the riff status line then, put this in `~/.claude/settings.json` in
+place of your `statusLine`:
 
 ```json
 {

@@ -34,7 +34,8 @@ later.
    riff-server install
    ```
 
-3. Add riff to Claude Code:
+3. Add riff to Claude Code. It also shows each session and its claims
+   in the status line of Claude Code:
 
    ```sh
    riff connect claude

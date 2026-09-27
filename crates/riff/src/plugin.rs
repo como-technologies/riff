@@ -12,6 +12,10 @@
 //! 2. `claude plugin marketplace add DIR` adds the marketplace `riff`.
 //! 3. `claude plugin install --scope user riff@riff` installs the plugin.
 //!
+//! 4. It adds the riff status line to the user settings of Claude Code
+//!    when they have no `statusLine` ([`add_statusline`]). A plugin
+//!    cannot set it.
+//!
 //! Claude Code loads a plugin from a local marketplace in place. So a new
 //! `riff` binary and one more `riff connect claude` update the plugin.
 //! Both `claude` steps succeed when they have nothing to do.
@@ -141,13 +145,123 @@ pub struct Connected {
     pub dir: PathBuf,
     /// True when it removed an old `riff` MCP server entry (R75).
     pub removed_old: bool,
+    /// What it did with the status line.
+    pub statusline: Statusline,
+}
+
+/// The `statusLine` setting of the riff status line
+/// (01M3JFFJEW8BSRBZ9JQPKT0S8Z).
+pub const STATUSLINE: &str =
+    "\"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"riff statusline\"\n  }";
+
+/// What [`add_statusline`] did with the settings file at `path`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Statusline {
+    /// It added the riff status line.
+    Added(PathBuf),
+    /// The riff status line was set already.
+    Set,
+    /// Another status line is set. riff left it.
+    Other(PathBuf),
+    /// riff could not read or write the settings, and left them.
+    Failed(String),
+}
+
+/// The user settings of Claude Code: `$CLAUDE_CONFIG_DIR/settings.json`,
+/// or `$HOME/.claude/settings.json`.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let p = riff::plugin::settings_from(None, Some("/home/mike".into()));
+/// assert_eq!(p.as_deref(), Some(Path::new("/home/mike/.claude/settings.json")));
+/// let p = riff::plugin::settings_from(Some("/cfg".into()), Some("/home/mike".into()));
+/// assert_eq!(p.as_deref(), Some(Path::new("/cfg/settings.json")));
+/// ```
+pub fn settings_from(
+    config_dir: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    match (config_dir.filter(|d| !d.is_empty()), home) {
+        (Some(dir), _) => Some(PathBuf::from(dir).join("settings.json")),
+        (None, Some(home)) => Some(Path::new(&home).join(".claude/settings.json")),
+        (None, None) => None,
+    }
+}
+
+/// The settings text with the riff status line, or None when the
+/// settings have a `statusLine` already. It adds the key as text before
+/// the last `}`, so each other key keeps its place and its format
+/// (01M3JFFJEW8BSRBZ9JQPKT0S8Z).
+///
+/// ```
+/// use riff::plugin::with_statusline;
+///
+/// let text = with_statusline("{\n  \"model\": \"opus\"\n}\n")?.unwrap();
+/// assert!(text.starts_with("{\n  \"model\": \"opus\",\n  \"statusLine\": {"));
+/// assert!(text.ends_with("}\n}\n"));
+/// assert_eq!(with_statusline(&text)?, None);
+/// assert!(with_statusline("{}")?.unwrap().starts_with("{\n  \"statusLine\""));
+/// assert!(with_statusline("[1]").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn with_statusline(text: &str) -> Result<Option<String>> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).context("the settings are not valid JSON")?;
+    let object = value
+        .as_object()
+        .context("the settings are not a JSON object")?;
+    if object.contains_key("statusLine") {
+        return Ok(None);
+    }
+    let end = text
+        .rfind('}')
+        .context("the settings have no closing brace")?;
+    let head = text[..end].trim_end();
+    let comma = if object.is_empty() { "" } else { "," };
+    let out = format!("{head}{comma}\n  {STATUSLINE}\n}}{}", &text[end + 1..]);
+    serde_json::from_str::<serde_json::Value>(&out).context("riff made invalid settings")?;
+    Ok(Some(out))
+}
+
+/// Adds the riff status line to the settings file at `path`, when the
+/// settings have no `statusLine`. It makes the file when it is not
+/// there. It writes the file only when it changes.
+pub fn add_statusline(path: &Path) -> Statusline {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => "{}\n".to_owned(),
+        Err(e) => return Statusline::Failed(format!("read {}: {e}", path.display())),
+    };
+    let new = match with_statusline(&text) {
+        Ok(Some(new)) => new,
+        Ok(None) => {
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            return if value["statusLine"]["command"] == "riff statusline" {
+                Statusline::Set
+            } else {
+                Statusline::Other(path.to_owned())
+            };
+        }
+        Err(e) => return Statusline::Failed(format!("{}: {e:#}", path.display())),
+    };
+    let written = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(path, new));
+    match written {
+        Ok(()) => Statusline::Added(path.to_owned()),
+        Err(e) => Statusline::Failed(format!("write {}: {e}", path.display())),
+    }
 }
 
 /// Writes the marketplace to `dir` and installs the plugin in user scope
 /// with the `claude` command at `claude` (R53). It first removes an old
 /// user-scope MCP server entry named `riff`, from `claude mcp add`, so a
-/// session does not get the riff tools twice (R75).
-pub fn connect(claude: &Path, dir: &Path) -> Result<Connected> {
+/// session does not get the riff tools twice (R75). Then it adds the
+/// riff status line to the settings at `settings`
+/// ([`add_statusline`]).
+pub fn connect(claude: &Path, dir: &Path, settings: Option<&Path>) -> Result<Connected> {
     write(dir).with_context(|| format!("write the plugin to {}", dir.display()))?;
     let removed_old = run(
         claude,
@@ -168,9 +282,14 @@ pub fn connect(claude: &Path, dir: &Path) -> Result<Connected> {
         claude,
         ["plugin", "install", "--scope", "user", &plugin].map(OsStr::new),
     )?;
+    let statusline = match settings {
+        Some(path) => add_statusline(path),
+        None => Statusline::Failed("set HOME or CLAUDE_CONFIG_DIR".into()),
+    };
     Ok(Connected {
         dir: dir.to_owned(),
         removed_old,
+        statusline,
     })
 }
 
@@ -267,7 +386,7 @@ mod tests {
     #[test]
     fn a_missing_claude_command_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
-        let err = connect(Path::new("/no/such/claude"), dir.path()).unwrap_err();
+        let err = connect(Path::new("/no/such/claude"), dir.path(), None).unwrap_err();
         assert!(format!("{err:#}").contains("/no/such/claude plugin marketplace add"));
         assert!(dir.path().join("riff/.mcp.json").is_file());
     }

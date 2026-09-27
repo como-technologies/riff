@@ -508,10 +508,17 @@
   the terminal.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
   line of a Claude Code session: `riff`, the short session ID of
-  `riff who`, `lead`, each claim, and `blocked`. A person sets it as
-  the `statusLine` command in the Claude Code settings. A plugin cannot
+  `riff who`, `lead`, each claim, and `blocked`. It is the
+  `statusLine` command in the Claude Code settings. A plugin cannot
   set it. It never fails, and it waits at most 2 seconds for
   riff-server.
+- **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
+  status line to the user settings of Claude Code
+  (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
+  when they have no `statusLine`. It keeps each other key, its place
+  and its format, and writes the file only when it changes. When
+  another `statusLine` is set, or the settings are not a JSON object,
+  it changes nothing and names the manual how-to.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is

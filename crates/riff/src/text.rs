@@ -6,7 +6,7 @@ use std::fmt::Write;
 use anstyle::{AnsiColor, Color, Style};
 use chrono::{DateTime, NaiveDate, TimeZone};
 
-use crate::plugin::Connected;
+use crate::plugin::{Connected, Statusline};
 use riff_core::name::{SessionUri, ThreadName};
 
 use crate::api::{Checked, Inbox};
@@ -282,14 +282,23 @@ pub fn riff_set(reply: &RiffReply, posted: &[Posted]) -> String {
 /// The result of `riff connect claude`.
 ///
 /// ```
-/// use riff::plugin::Connected;
+/// use riff::plugin::{Connected, Statusline};
 ///
-/// let done = Connected { dir: "/d".into(), removed_old: true };
+/// let mut done = Connected {
+///     dir: "/d".into(),
+///     removed_old: true,
+///     statusline: Statusline::Added("/h/.claude/settings.json".into()),
+/// };
 /// assert_eq!(
 ///     riff::text::connected(&done),
 ///     "Removed the old riff MCP server entry.\n\
-///      Installed the riff plugin from /d. Start a new Claude Code session to use it."
+///      Installed the riff plugin from /d. Start a new Claude Code session to use it.\n\
+///      Added the riff status line to /h/.claude/settings.json."
 /// );
+/// done.statusline = Statusline::Set;
+/// assert!(riff::text::connected(&done).ends_with("to use it."));
+/// done.statusline = Statusline::Other("/s.json".into());
+/// assert!(riff::text::connected(&done).contains("\"Find the pane of a session\""));
 /// ```
 pub fn connected(done: &Connected) -> String {
     let old = if done.removed_old {
@@ -297,8 +306,21 @@ pub fn connected(done: &Connected) -> String {
     } else {
         ""
     };
+    let how = "To use the riff status line, see \"Find the pane of a session\" in How It Works.";
+    let statusline = match &done.statusline {
+        Statusline::Added(path) => {
+            format!("\nAdded the riff status line to {}.", path.display())
+        }
+        Statusline::Set => String::new(),
+        Statusline::Other(path) => format!(
+            "\n{} has another status line, so riff left it. {how}",
+            path.display()
+        ),
+        Statusline::Failed(why) => format!("\nriff did not set the status line: {why}. {how}"),
+    };
     format!(
-        "{old}Installed the riff plugin from {}. Start a new Claude Code session to use it.",
+        "{old}Installed the riff plugin from {}. Start a new Claude Code session to use it.\
+         {statusline}",
         done.dir.display()
     )
 }

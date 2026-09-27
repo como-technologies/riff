@@ -47,12 +47,16 @@ fn fake_claude(dir: &Path, remove_status: u8) -> PathBuf {
     path
 }
 
+/// `riff connect claude` with the fake `bin`. The Claude Code settings
+/// are in `data/home/.claude`, never in the real home.
 fn connect(bin: &Path, data: &Path, cwd: &Path) -> assert_cmd::assert::Assert {
     assert_cmd::Command::cargo_bin("riff")
         .unwrap()
         .args(["connect", "claude", "--claude"])
         .arg(bin)
         .env("XDG_DATA_HOME", data)
+        .env("HOME", data.join("home"))
+        .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("RIFF_SESSION")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .current_dir(cwd)
@@ -67,8 +71,10 @@ fn connect_writes_the_plugin_and_runs_claude() {
     connect(&bin, tmp.path(), tmp.path())
         .success()
         .stdout(format!(
-            "Installed the riff plugin from {}. Start a new Claude Code session to use it.\n",
-            market.display()
+            "Installed the riff plugin from {}. Start a new Claude Code session to use it.\n\
+             Added the riff status line to {}.\n",
+            market.display(),
+            tmp.path().join("home/.claude/settings.json").display()
         ));
     assert!(market.join("riff/.mcp.json").is_file());
     let log = std::fs::read_to_string(tmp.path().join("log")).unwrap();
@@ -200,6 +206,86 @@ fn connect_says_when_it_removed_the_old_entry() {
     let out = connect(&bin, tmp.path(), tmp.path()).success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
     assert!(stdout.starts_with("Removed the old riff MCP server entry.\n"));
+}
+
+/// 01M3JFFJEW8BSRBZ9JQPKT0S8Z
+#[test]
+fn connect_adds_the_statusline_when_none_is_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    let settings = tmp.path().join("home/.claude/settings.json");
+    let out = connect(&bin, tmp.path(), tmp.path()).success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(
+        stdout.contains(&format!(
+            "Added the riff status line to {}.",
+            settings.display()
+        )),
+        "{stdout}"
+    );
+    let text = std::fs::read_to_string(&settings).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["statusLine"]["command"], "riff statusline");
+    assert_eq!(value["statusLine"]["type"], "command");
+
+    // A second run changes nothing and says nothing of it.
+    let out = connect(&bin, tmp.path(), tmp.path()).success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(!stdout.contains("status line"), "{stdout}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), text);
+}
+
+#[test]
+fn connect_keeps_the_other_keys_in_their_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    let settings = tmp.path().join("home/.claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let old = "{\n  \"permissions\": { \"allow\": [\"Bash(ls)\"] },\n  \"model\": \"opus\"\n}\n";
+    std::fs::write(&settings, old).unwrap();
+    connect(&bin, tmp.path(), tmp.path()).success();
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(
+        text.starts_with("{\n  \"permissions\": { \"allow\": [\"Bash(ls)\"] },\n  \"model\": \"opus\",\n  \"statusLine\""),
+        "{text}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["model"], "opus");
+    assert_eq!(value["statusLine"]["command"], "riff statusline");
+}
+
+#[test]
+fn connect_leaves_another_statusline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    let settings = tmp.path().join("home/.claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let old = "{\"statusLine\": {\"type\": \"command\", \"command\": \"mine\"}}";
+    std::fs::write(&settings, old).unwrap();
+    let out = connect(&bin, tmp.path(), tmp.path()).success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(stdout.contains("has another status line"), "{stdout}");
+    assert!(
+        stdout.contains("\"Find the pane of a session\""),
+        "{stdout}"
+    );
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), old);
+}
+
+#[test]
+fn connect_leaves_settings_that_are_not_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    let settings = tmp.path().join("home/.claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(&settings, "{ not json").unwrap();
+    let out = connect(&bin, tmp.path(), tmp.path()).success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(
+        stdout.contains("riff did not set the status line"),
+        "{stdout}"
+    );
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{ not json");
 }
 
 #[test]
