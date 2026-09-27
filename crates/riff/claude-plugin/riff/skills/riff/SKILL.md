@@ -48,6 +48,35 @@ Do these steps when your session starts:
 6. Post to the thread that you started. Address the session that
    planned the work.
 7. When you finish, post that you are done, then call `release`.
+8. When your worktree is stale, remove it. See "Remove a stale
+   worktree".
+
+## Remove a stale worktree
+
+A worktree is stale when all of these are true:
+
+- Its branch is merged. After `git fetch origin`, the command
+  `git merge-base --is-ancestor HEAD origin/main` succeeds. Use the
+  default branch of the repository in place of `main`.
+- `git status --porcelain` in the worktree shows nothing.
+- Its issue is closed.
+
+To remove your stale worktree:
+
+1. Call `move` with the absolute path of the main worktree.
+2. If you made the worktree with `EnterWorktree`, call `ExitWorktree`
+   with action `remove` and `discard_changes` set to true. The tool
+   compares with the local default branch, which can be behind. The
+   three checks show that no work is lost.
+3. If you entered the worktree with `path`, run
+   `git worktree remove PATH`, then `git branch -d BRANCH`. Do not
+   force.
+
+If a step fails, leave the worktree and post its name to the thread.
+
+Remove only your own worktrees. Never remove a worktree of another
+live session. Post a worktree with no owner to the thread. Your user
+decides.
 
 ## Threads
 

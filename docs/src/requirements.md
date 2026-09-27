@@ -23,6 +23,10 @@
   move there.
 - **R162** A Claude session makes the worktree for a work item with
   the `EnterWorktree` tool. The worktree is `.claude/worktrees/ITEM`.
+- **R165** A session removes its own worktree and branch when the
+  branch is merged into the default branch, the worktree is clean and
+  the issue is closed. It never removes a worktree of another live
+  session. A worktree with no owner goes to the thread.
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, selectors, direct messages, threads, claims and
   `move`.

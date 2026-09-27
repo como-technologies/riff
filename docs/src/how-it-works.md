@@ -118,7 +118,14 @@ sequenceDiagram
     S->>G: worktree add .claude/worktrees/issue-6
     S->>E: move (worktree issue-6)
     S->>E: post "started issue-6"
+    S->>E: post "done issue-6", release issue-6
+    S->>G: branch merged, worktree clean, issue closed?
+    S->>E: move (main worktree)
+    S->>G: remove .claude/worktrees/issue-6 and its branch
 ```
+
+A session removes only its own worktree, and only when the work is
+safe on the default branch.
 
 ## A message
 

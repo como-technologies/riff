@@ -275,4 +275,25 @@ mod tests {
         assert!(skill.contains("`.claude/worktrees/issue-12`"));
         assert!(!skill.contains("worktree add ../"));
     }
+
+    #[test]
+    fn the_skill_removes_only_stale_worktrees_of_its_own() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "Remove a stale worktree",
+            "git merge-base --is-ancestor HEAD origin/main",
+            "git status --porcelain",
+            "issue is closed",
+            "`ExitWorktree`",
+            "`discard_changes`",
+            "git branch -d",
+            "Do not force",
+            "Never remove a worktree of another live session",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+        assert!(!skill.contains("branch -D"));
+        assert!(!skill.contains("--force"));
+    }
 }
