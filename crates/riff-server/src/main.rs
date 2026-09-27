@@ -5,11 +5,12 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{Parser, Subcommand};
+use clap::parser::ValueSource;
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
-use riff_server::{Service, service};
+use riff_server::{Service, listen, service};
 use tokio::signal::unix::{SignalKind, signal};
 
 /// The central service that sessions connect to. With no command, it
@@ -47,6 +48,12 @@ struct Cli {
     /// Refuse each request that has no live riff access token.
     #[arg(long, env = "RIFF_REQUIRE_SIGN_IN", global = true)]
     require_sign_in: bool,
+
+    /// Listen on an address that is not loopback with no sign-in. Each
+    /// machine that can reach the server can then read, post and answer
+    /// as any person. riff-server has no TLS.
+    #[arg(long, env = "RIFF_INSECURE", global = true)]
+    insecure: bool,
 
     /// The OpenID Connect issuer that people sign in with.
     #[arg(
@@ -94,7 +101,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Install riff-server as a systemd user service with these
-    /// settings, and start it. Run it again to update the service.
+    /// settings, and start it. Run it again to update the service: it
+    /// keeps each old setting that it does not get again.
     Install {
         /// The systemctl command.
         #[arg(long, default_value = "systemctl")]
@@ -125,6 +133,9 @@ impl Cli {
         if self.require_sign_in {
             settings.push(("RIFF_REQUIRE_SIGN_IN", "true".into()));
         }
+        if self.insecure {
+            settings.push(("RIFF_INSECURE", "true".into()));
+        }
         if let Some(id) = &self.client_id {
             settings.push(("RIFF_OIDC_CLIENT_ID", id.clone()));
         }
@@ -136,15 +147,77 @@ impl Cli {
         }
         settings
     }
+
+    /// [`Cli::settings`] in two parts: the settings that the person
+    /// gave, as an option or as a variable, and the defaults.
+    fn given_settings(&self, matches: &ArgMatches) -> Given {
+        let command = Cli::command();
+        let (given, defaults) = self.settings().into_iter().partition(|(name, _)| {
+            command
+                .get_arguments()
+                .find(|a| a.get_env().is_some_and(|e| e == *name))
+                .and_then(|a| matches.value_source(a.get_id().as_str()))
+                .is_some_and(|source| source != ValueSource::DefaultValue)
+        });
+        Given { given, defaults }
+    }
+
+    /// True for a riff with no sign-in (R211).
+    fn trusted(&self) -> bool {
+        self.client_id.is_none() && !self.require_sign_in
+    }
+}
+
+/// The settings of an install, see [`Cli::given_settings`].
+struct Given {
+    given: Vec<(&'static str, String)>,
+    defaults: Vec<(&'static str, String)>,
+}
+
+/// Checks the listen address of the settings of a service, as
+/// `riff-server` checks its own at start (01M3JCE4ZD4DZCQ21FA69RT52D).
+fn check_settings(settings: &[(String, String)]) -> std::io::Result<(SocketAddr, Option<String>)> {
+    let get = |name: &str| {
+        settings
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    };
+    let on = |name: &str| get(name).is_some_and(truthy);
+    let listen: SocketAddr = get("RIFF_LISTEN")
+        .unwrap_or("127.0.0.1:7878")
+        .parse()
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("RIFF_LISTEN: {e}"),
+            )
+        })?;
+    let trusted =
+        get("RIFF_OIDC_CLIENT_ID").is_none_or(str::is_empty) && !on("RIFF_REQUIRE_SIGN_IN");
+    let warning = listen::check(listen, trusted, on("RIFF_INSECURE"))
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    Ok((listen, warning))
+}
+
+/// True for a flag value that clap reads as set.
+fn truthy(value: &str) -> bool {
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "0" | "n" | "no" | "f" | "false" | "off"
+    )
 }
 
 /// Installs or removes the service, and says what it did.
-fn manage(cli: &Cli, command: &Command) -> std::io::Result<()> {
+fn manage(cli: &Cli, matches: &ArgMatches, command: &Command) -> std::io::Result<()> {
     let dir = service::dir()?;
     match command {
         Command::Install { systemctl } => {
             let exe = std::env::current_exe()?;
-            service::install(systemctl, &dir, &exe, &cli.settings())?;
+            let Given { given, defaults } = cli.given_settings(matches);
+            let settings = service::merge(service::installed(&dir)?, &given, &defaults);
+            let (listen, warning) = check_settings(&settings)?;
+            service::install(systemctl, &dir, &exe, &settings)?;
             println!(
                 "Installed riff-server as a systemd user service. It listens on {}.\n\
                  Unit: {}\n\
@@ -152,10 +225,13 @@ fn manage(cli: &Cli, command: &Command) -> std::io::Result<()> {
                  Status: systemctl --user status riff-server\n\
                  Logs: journalctl --user -u riff-server\n\
                  To keep it running after you log out: loginctl enable-linger",
-                cli.listen,
+                listen,
                 dir.join(service::UNIT).display(),
                 dir.join(service::ENV).display()
             );
+            if let Some(warning) = warning {
+                println!("Warning: {warning}.");
+            }
         }
         Command::Uninstall { systemctl } => {
             if service::uninstall(systemctl, &dir)? {
@@ -169,16 +245,32 @@ fn manage(cli: &Cli, command: &Command) -> std::io::Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let cli = Cli::parse();
-    if let Some(command) = &cli.command {
-        return manage(&cli, command);
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("riff-server: {e}");
+            std::process::ExitCode::FAILURE
+        }
     }
+}
+
+async fn run() -> std::io::Result<()> {
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    if let Some(command) = &cli.command {
+        return manage(&cli, &matches, command);
+    }
+    let warning = listen::check(cli.listen, cli.trusted(), cli.insecure)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    if let Some(warning) = warning {
+        tracing::warn!("{warning}");
+    }
     // Catch SIGTERM before the server says that it listens.
     let mut terminate = signal(SignalKind::terminate())?;
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
@@ -262,8 +354,8 @@ async fn check_client(provider: &Provider) {
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
-    use clap::{CommandFactory, Parser};
+    use super::{Cli, Given, check_settings};
+    use clap::{CommandFactory, FromArgMatches, Parser};
 
     #[test]
     fn cli_definition_is_valid() {
@@ -277,6 +369,7 @@ mod tests {
             "--admin=a@comotechnologies.io",
             "--public-url=https://x",
             "--require-sign-in",
+            "--insecure",
             "--client-id=id",
             "--client-secret=s",
             "--bucket=b",
@@ -290,5 +383,35 @@ mod tests {
         for (name, _) in settings {
             assert!(envs.iter().any(|e| e == name), "{name}");
         }
+    }
+
+    #[test]
+    fn a_setting_is_given_by_an_option_not_by_a_default() {
+        let args = ["riff-server", "install", "--listen=0.0.0.0:1", "--insecure"];
+        let matches = Cli::command().get_matches_from(args);
+        let cli = Cli::from_arg_matches(&matches).unwrap();
+        let Given { given, defaults } = cli.given_settings(&matches);
+        let names = |s: &[(&'static str, String)]| s.iter().map(|(n, _)| *n).collect::<Vec<_>>();
+        assert_eq!(names(&given), ["RIFF_LISTEN", "RIFF_INSECURE"]);
+        assert!(names(&defaults).contains(&"RIFF_OIDC_ISSUER"));
+    }
+
+    #[test]
+    fn check_settings_reads_the_settings_file() {
+        let s = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+                .collect::<Vec<_>>()
+        };
+        let open = ("RIFF_LISTEN", "0.0.0.0:7878");
+        assert!(check_settings(&s(&[open])).is_err());
+        assert!(check_settings(&s(&[open, ("RIFF_INSECURE", "false")])).is_err());
+        let (_, warning) = check_settings(&s(&[open, ("RIFF_INSECURE", "true")])).unwrap();
+        assert!(warning.is_some());
+        let (_, warning) = check_settings(&s(&[open, ("RIFF_OIDC_CLIENT_ID", "id")])).unwrap();
+        assert!(warning.is_none());
+        let (listen, _) = check_settings(&[]).unwrap();
+        assert_eq!(listen.to_string(), "127.0.0.1:7878");
     }
 }

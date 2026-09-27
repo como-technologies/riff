@@ -79,8 +79,12 @@ fn install_writes_the_unit_and_starts_the_service() {
     );
 }
 
+fn settings(tmp: &Path) -> String {
+    std::fs::read_to_string(tmp.join("systemd/user/riff-server.env")).unwrap()
+}
+
 #[test]
-fn install_again_replaces_the_settings() {
+fn install_again_keeps_the_settings_that_it_does_not_get() {
     let tmp = tempfile::tempdir().unwrap();
     let systemctl = fake_systemctl(tmp.path(), 0);
     let bin = systemctl.to_str().unwrap();
@@ -95,9 +99,87 @@ fn install_again_replaces_the_settings() {
     )
     .success();
     server(tmp.path(), &["install", "--systemctl", bin]).success();
-    let env = std::fs::read_to_string(tmp.path().join("systemd/user/riff-server.env")).unwrap();
-    assert!(!env.contains("RIFF_ADMINS"), "{env}");
+    let env = settings(tmp.path());
+    assert!(
+        env.contains("RIFF_ADMINS=\"mike@comotechnologies.io\"\n"),
+        "{env}"
+    );
     assert_eq!(log(tmp.path()).matches("restart riff-server").count(), 2);
+}
+
+#[test]
+fn install_insecure_writes_it_and_a_plain_install_keeps_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let systemctl = fake_systemctl(tmp.path(), 0);
+    let bin = systemctl.to_str().unwrap();
+    let out = server(
+        tmp.path(),
+        &[
+            "install",
+            "--systemctl",
+            bin,
+            "--listen",
+            "0.0.0.0:7878",
+            "--insecure",
+        ],
+    )
+    .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(stdout.contains("Warning:"), "{stdout}");
+    let env = settings(tmp.path());
+    assert!(env.contains("RIFF_LISTEN=\"0.0.0.0:7878\"\n"), "{env}");
+    assert!(env.contains("RIFF_INSECURE=\"true\"\n"), "{env}");
+
+    let out = server(tmp.path(), &["install", "--systemctl", bin]).success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(stdout.contains("It listens on 0.0.0.0:7878."), "{stdout}");
+    assert_eq!(settings(tmp.path()), env);
+
+    server(
+        tmp.path(),
+        &["install", "--systemctl", bin, "--listen", "127.0.0.1:7878"],
+    )
+    .success();
+    let env = settings(tmp.path());
+    assert!(env.contains("RIFF_LISTEN=\"127.0.0.1:7878\"\n"), "{env}");
+    assert!(env.contains("RIFF_INSECURE=\"true\"\n"), "{env}");
+}
+
+#[test]
+fn install_on_the_network_with_no_sign_in_needs_insecure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let systemctl = fake_systemctl(tmp.path(), 0);
+    let bin = systemctl.to_str().unwrap();
+    let out = server(
+        tmp.path(),
+        &["install", "--systemctl", bin, "--listen", "0.0.0.0:7878"],
+    )
+    .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains("--insecure"), "{stderr}");
+    assert!(!tmp.path().join("systemd").exists());
+    assert_eq!(log(tmp.path()), "");
+}
+
+#[test]
+fn install_with_sign_in_listens_anywhere_with_no_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let systemctl = fake_systemctl(tmp.path(), 0);
+    let bin = systemctl.to_str().unwrap();
+    let out = server(
+        tmp.path(),
+        &[
+            "install",
+            "--systemctl",
+            bin,
+            "--listen",
+            "0.0.0.0:7878",
+            "--require-sign-in",
+        ],
+    )
+    .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(!stdout.contains("Warning:"), "{stdout}");
 }
 
 #[test]

@@ -33,9 +33,16 @@ fn the_page_starts_the_server_as_a_service() {
 
 #[test]
 fn the_first_machine_lets_its_riff_take_connections_from_the_network() {
-    // The first machine, then its update: both keep `--listen`.
-    let listen = "riff-server install --listen 0.0.0.0:7878";
-    assert_eq!(server_commands("add-a-machine.md"), [listen, listen]);
+    // The first machine needs `--insecure` with no sign-in
+    // (01M3JCE4ZD4DZCQ21FA69RT52D). Its update keeps both settings
+    // (01M3JCE5477135XSD740DG7KFT).
+    assert_eq!(
+        server_commands("add-a-machine.md"),
+        [
+            "riff-server install --listen 0.0.0.0:7878 --insecure",
+            "riff-server install"
+        ]
+    );
 }
 
 #[test]

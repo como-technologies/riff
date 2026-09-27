@@ -13,8 +13,11 @@ in with on each machine.
 Let the riff of your first machine take connections from your network:
 
 ```sh
-riff-server install --listen 0.0.0.0:7878
+riff-server install --listen 0.0.0.0:7878 --insecure
 ```
+
+A riff with no sign-in listens only on `127.0.0.1`. `--insecure` lets
+it listen on your network. Without it, `riff-server` does not start.
 
 This command starts the riff again. The riff then forgets its messages
 and its claims. To update riff, see
@@ -91,11 +94,12 @@ sign-in](development.md#when-riff-says-the-riff-has-no-sign-in).
 Update both machines to the same riff at the same time.
 
 1. On the first machine, install riff, start its riff again, and add
-   riff to Claude Code:
+   riff to Claude Code. `riff-server install` keeps `--listen` and
+   `--insecure` from the last install:
 
    ```sh
    cargo install --locked --git https://github.com/como-technologies/riff riff riff-server
-   riff-server install --listen 0.0.0.0:7878
+   riff-server install
    riff connect claude
    ```
 

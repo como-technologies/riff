@@ -199,8 +199,12 @@
   starts it. The unit runs the binary that ran `install`. It restarts
   the server after a crash and starts it at login. The settings of
   `install` go in a file next to the unit, with mode 0600.
-- **R120** `riff-server install` again replaces the unit and the
-  settings, and restarts the service.
+- **R120** `riff-server install` again writes the unit and the
+  settings again, and restarts the service.
+- **01M3JCE5477135XSD740DG7KFT** `riff-server install` keeps each old
+  setting that it does not get again. A setting that it gets, as an
+  option or as a `RIFF_*` variable, replaces the old one. So a plain
+  `riff-server install` keeps `--listen` and `--insecure`.
 - **R121** `riff-server uninstall` stops and disables the service, and
   removes the unit and the settings.
 - **R122** When `systemctl --user` does not work, `install` and
@@ -549,6 +553,14 @@
 - **R212** The reader counts each message of a riff that trusts its
   callers as verified. The lead mark of such a message is the lead mark
   that the server gives.
+- **01M3JCE4ZD4DZCQ21FA69RT52D** A riff with no sign-in (R211) listens
+  only on a loopback address. `riff-server` refuses to start on another
+  address, unless it gets `--insecure` (`RIFF_INSECURE`). With
+  `--insecure` on such an address, it warns at start: each machine that
+  can reach it can read, post and answer as any person. `install` does
+  the same check. A riff that requires sign-in listens on any address.
+- **01M3JCE51T84JZKJ0NR89TPDNY** `riff-server` never terminates TLS. A
+  proxy or the platform in front of it does, for example Cloud Run.
 
 ## Sign-in and tokens
 

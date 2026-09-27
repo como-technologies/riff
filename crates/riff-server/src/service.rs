@@ -21,8 +21,13 @@
 //!   ([`env_text()`]), with mode 0600 (R119). The unit runs the binary
 //!   that ran `install`, with the settings as environment variables.
 //! - [`install()`] then runs `daemon-reload`, `enable` and `restart`. So
-//!   a second `install` replaces the files and restarts the service
+//!   a second `install` writes the files again and restarts the service
 //!   (R120).
+//! - A second `install` keeps each old setting that it does not get
+//!   again ([`installed()`], then [`merge()`]). A setting that it gets,
+//!   as an option or as a `RIFF_*` variable, replaces the old one. So a
+//!   plain `riff-server install` keeps `--listen` and `--insecure`
+//!   (01M3JCE5477135XSD740DG7KFT).
 //! - [`uninstall()`] runs `disable --now` when the unit is there. Then it
 //!   removes both files and runs `daemon-reload` (R121).
 //! - Both first run `systemctl --user show-environment`. When it fails,
@@ -83,9 +88,10 @@ pub fn unit_text(exe: &Path, env: &Path) -> String {
 /// assert!(riff_server::service::env_text(&[("A", "x\ny".into())]).is_err());
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn env_text(settings: &[(&str, String)]) -> io::Result<String> {
+pub fn env_text<N: AsRef<str>>(settings: &[(N, String)]) -> io::Result<String> {
     let mut text = String::new();
     for (name, value) in settings {
+        let name = name.as_ref();
         if value.contains(['\n', '\r']) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -96,6 +102,100 @@ pub fn env_text(settings: &[(&str, String)]) -> io::Result<String> {
         text.push_str(&format!("{name}=\"{value}\"\n"));
     }
     Ok(text)
+}
+
+/// The settings in the text of a settings file, in order. It reads the
+/// lines of [`env_text()`], and also `NAME=value` with no quotes. It
+/// skips empty lines and comments.
+///
+/// ```
+/// let text = "RIFF_LISTEN=\"0.0.0.0:7878\"\n# note\nA=\"x\\\"y\"\nB=z\n";
+/// assert_eq!(
+///     riff_server::service::parse_env(text),
+///     [
+///         ("RIFF_LISTEN".to_owned(), "0.0.0.0:7878".to_owned()),
+///         ("A".to_owned(), "x\"y".to_owned()),
+///         ("B".to_owned(), "z".to_owned()),
+///     ]
+/// );
+/// ```
+pub fn parse_env(text: &str) -> Vec<(String, String)> {
+    let mut settings = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = match value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+            Some(quoted) => {
+                let mut out = String::new();
+                let mut chars = quoted.chars();
+                while let Some(c) = chars.next() {
+                    out.push(if c == '\\' {
+                        chars.next().unwrap_or(c)
+                    } else {
+                        c
+                    });
+                }
+                out
+            }
+            None => value.to_owned(),
+        };
+        settings.push((name.trim().to_owned(), value));
+    }
+    settings
+}
+
+/// The settings of a new install: the `old` settings, with each
+/// setting in `given` in place of the old one. A setting in `defaults`
+/// goes in only when `old` does not have it
+/// (01M3JCE5477135XSD740DG7KFT).
+///
+/// ```
+/// use riff_server::service::merge;
+///
+/// let old = vec![
+///     ("RIFF_LISTEN".to_owned(), "0.0.0.0:7878".to_owned()),
+///     ("RIFF_INSECURE".to_owned(), "true".to_owned()),
+/// ];
+/// // A plain install keeps the old address.
+/// let plain = merge(old.clone(), &[], &[("RIFF_LISTEN", "127.0.0.1:7878".into())]);
+/// assert_eq!(plain, old);
+/// // A new --listen replaces it, and keeps --insecure.
+/// let moved = merge(old, &[("RIFF_LISTEN", "127.0.0.1:7878".into())], &[]);
+/// assert_eq!(moved[0].1, "127.0.0.1:7878");
+/// assert_eq!(moved[1].0, "RIFF_INSECURE");
+/// ```
+pub fn merge(
+    old: Vec<(String, String)>,
+    given: &[(&str, String)],
+    defaults: &[(&str, String)],
+) -> Vec<(String, String)> {
+    let mut settings = old;
+    for (name, value) in given {
+        match settings.iter_mut().find(|(n, _)| n == name) {
+            Some(setting) => setting.1 = value.clone(),
+            None => settings.push(((*name).to_owned(), value.clone())),
+        }
+    }
+    for (name, value) in defaults {
+        if !settings.iter().any(|(n, _)| n == name) {
+            settings.push(((*name).to_owned(), value.clone()));
+        }
+    }
+    settings
+}
+
+/// The settings of the installed service in `dir`. It is empty when
+/// there is no settings file.
+pub fn installed(dir: &Path) -> io::Result<Vec<(String, String)>> {
+    match std::fs::read_to_string(dir.join(ENV)) {
+        Ok(text) => Ok(parse_env(&text)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
 }
 
 /// The directory for the unit: `$XDG_CONFIG_HOME/systemd/user`, or
@@ -137,11 +237,11 @@ pub fn dir() -> io::Result<PathBuf> {
 
 /// Writes the unit and the settings to `dir`, then enables and
 /// restarts the service with `systemctl` (R119, R120).
-pub fn install(
+pub fn install<N: AsRef<str>>(
     systemctl: &Path,
     dir: &Path,
     exe: &Path,
-    settings: &[(&str, String)],
+    settings: &[(N, String)],
 ) -> io::Result<()> {
     check(systemctl)?;
     let env = dir.join(ENV);
@@ -241,6 +341,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_env_reads_what_env_text_writes() {
+        let settings = vec![
+            ("A".to_owned(), r#"x"y\z"#.to_owned()),
+            ("B".to_owned(), String::new()),
+        ];
+        let text = env_text(&settings).unwrap();
+        assert_eq!(parse_env(&text), settings);
+    }
+
+    #[test]
+    fn merge_adds_a_new_setting_after_the_old_ones() {
+        let old = vec![("A".to_owned(), "1".to_owned())];
+        let merged = merge(old, &[("B", "2".into())], &[("A", "0".into())]);
+        assert_eq!(
+            merged,
+            [
+                ("A".to_owned(), "1".to_owned()),
+                ("B".to_owned(), "2".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn installed_is_empty_without_a_settings_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(installed(tmp.path()).unwrap().is_empty());
+    }
+
+    #[test]
     fn empty_config_home_uses_home() {
         let dir = dir_from(Some("".into()), Some("/h".into())).unwrap();
         assert_eq!(dir, Path::new("/h/.config/systemd/user"));
@@ -251,7 +380,8 @@ mod tests {
     fn install_fails_and_writes_nothing_without_systemctl() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("user");
-        let err = install(Path::new("false"), &dir, Path::new("/x"), &[]).unwrap_err();
+        let none: &[(&str, String)] = &[];
+        let err = install(Path::new("false"), &dir, Path::new("/x"), none).unwrap_err();
         assert!(err.to_string().contains("no systemd user manager"), "{err}");
         assert!(!dir.exists());
     }

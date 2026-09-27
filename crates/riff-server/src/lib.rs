@@ -59,6 +59,8 @@
 //!
 //! - `riff-server install` runs the server as a systemd user service.
 //!   See [`service`].
+//! - A riff with no sign-in listens only on a loopback address, unless
+//!   it gets `--insecure`. See [`listen`].
 //!
 //! - [`Service::load`] loads the state from a [`store::Store`] (R30). A
 //!   task then saves the changed objects each [`SAVE_EVERY`] (R127).
@@ -97,6 +99,7 @@
 pub mod auth;
 pub mod gcs;
 pub mod lease;
+pub mod listen;
 pub mod oidc;
 pub mod service;
 pub mod state;

@@ -200,10 +200,23 @@ variables, to `~/.config/systemd/user/riff-server.env`, with mode
 0600. Then it enables and starts the service. `just local setup` does
 the same, with the OAuth client.
 
-- Each install replaces all settings. When you use sign-in, always use
-  `just local setup`: plain `riff-server install` removes the OAuth
-  client.
+- Each install keeps the old settings that it does not get again. A
+  setting that it gets replaces the old one. So a plain
+  `riff-server install` keeps the OAuth client, `--listen` and
+  `--insecure`.
+- With no sign-in, an address that is not loopback needs `--insecure`.
+  Else `install` fails and changes nothing.
 - `riff-server uninstall` stops the service and removes its files.
+
+### Remove a setting of the service
+
+An install cannot remove an old setting. Uninstall, then install with
+the settings that you want:
+
+```sh
+riff-server uninstall
+riff-server install --listen 127.0.0.1:7878
+```
 
 The service stops when you log out. To keep it running, run
 `loginctl enable-linger` once.

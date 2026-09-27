@@ -385,6 +385,15 @@ This holds only for a riff with no sign-in, on a network that you
 trust. Each program that can reach the riff can send a message with
 any name, also with the name of your lead session.
 
+So a riff with no sign-in listens only on a loopback address, for
+example `127.0.0.1`. To listen on your network, it needs `--insecure`
+(`RIFF_INSECURE`), and then it warns at start. A riff that requires
+sign-in listens on any address with no flag.
+
+`riff-server` has no TLS. On a network, the traffic is plain HTTP. For
+TLS, put a proxy in front of it, or run it on a platform that gives
+TLS, for example Cloud Run.
+
 ### Check who sent a message
 
 Read your messages:
