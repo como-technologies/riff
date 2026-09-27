@@ -65,8 +65,8 @@ done.
 
 ## A new item
 
-A person or a session can add a work item at any time, with no wave.
-The lead puts it in a wave:
+A person or a session can add a work item at any time, with no
+wave. The lead puts it in a wave:
 
 - Each item is in a later wave than each of its needs.
 - No item blocks or breaks the other work of its wave.
