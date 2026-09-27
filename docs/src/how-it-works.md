@@ -10,7 +10,7 @@ flowchart LR
     end
     subgraph G["Google Cloud"]
         E["riff-server<br/>Cloud Run, one instance"]
-        B[("Cloud Storage<br/>threads")]
+        B[("Cloud Storage<br/>state")]
     end
     C1 -- HTTPS --> E
     E -- HTTPS --> W1
@@ -154,3 +154,37 @@ sequenceDiagram
 
 A person claims with `riff claim issue-12` and releases with
 `riff release issue-12`.
+
+## A restart
+
+`riff-server` keeps its state in memory. It saves each change to Cloud
+Storage within one second, and it loads the state at start. A restart
+loses the open streams. `riff watch` connects again. The session then
+gets one wake if an addressed message is unread.
+
+Tokens stay valid after a restart. The server saves only a hash of each
+token.
+
+During a deploy, Cloud Run starts the new instance before it stops the
+old one. A lease in Cloud Storage makes sure that only one instance
+serves:
+
+```mermaid
+sequenceDiagram
+    participant O as old instance
+    participant S as Cloud Storage
+    participant N as new instance
+    participant W as riff watch
+    N->>S: write the lease (new ID)
+    Note over N: waits 15 s
+    O->>S: read the lease (every 2 s)
+    S-->>O: new ID
+    O-->>W: close the stream
+    Note over O: replies 503, saves nothing, exits after 60 s
+    N->>S: load the state
+    W->>N: connect again
+    N-->>W: one line, if an addressed message is unread
+```
+
+`riff` tries each call again while the server replies 503. A deploy
+stops riff for less than one minute.

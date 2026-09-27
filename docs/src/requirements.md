@@ -53,13 +53,6 @@
 
 ## Service
 
-- **R5** `riff-server` runs on Google Cloud Run under a Como domain.
-- **R6** `riff-server` has a public HTTPS endpoint with a valid certificate.
-- **R29** Only one `riff-server` instance runs at a time.
-- **R30** `riff-server` keeps its state in memory. It saves threads to Cloud
-  Storage and loads them at start.
-- **R31** A lost message is acceptable. Sessions and claims are not saved.
-  After a restart, sessions register again.
 - **R118** `riff-server` with no command runs in the foreground, in a
   terminal.
 - **R119** `riff-server install` installs a systemd user service and
@@ -72,12 +65,79 @@
   removes the unit and the settings.
 - **R122** When `systemctl --user` does not work, `install` and
   `uninstall` fail and change nothing.
-- **R32** The token signing key is in Secret Manager.
 - **R33** `riff-server` rejects a token that it does not know. A lost token
   record means the person signs in again.
+
+## Saved state
+
+- **R30** `riff-server` keeps its state in memory. With `--bucket NAME`
+  (`RIFF_BUCKET`), it saves the state to that Cloud Storage bucket. It
+  loads the state at start.
 - **R34** Storage is behind one interface. Tests use an in-memory store.
-- **R46** A thread with no posts for 30 days is deleted by a Cloud Storage
-  lifecycle rule.
+  Without `--bucket`, `riff-server` saves nothing.
+- **R124** The bucket holds one object for each thread, with its members
+  and its messages. One object holds the sessions, with their places,
+  read cursors and claims. One object holds the token store.
+- **R31** A restart loses only the open streams, the proof IDs and the
+  changes that were not saved. A lost message is acceptable.
+- **R125** After a load, each session counts as stopped at the time of
+  the load. Its claims end after the grace period (R9), unless it comes
+  back.
+- **R126** At load, `riff-server` drops each session that it has not
+  seen for 30 days.
+- **R127** `riff-server` saves each changed object at most once each
+  second.
+- **R128** `riff-server` replies to a call that changes the token store
+  only after it saved the change.
+- **R129** On SIGTERM, `riff-server` saves each unsaved change, then
+  exits.
+- **R46** A lifecycle rule of the bucket deletes each thread object 30
+  days after its last change.
+
+## Cloud
+
+- **R5** `riff-server` runs on Google Cloud Run. Its public URL is
+  `https://riff.comotechnologies.io`. It runs with `--require-sign-in`.
+- **R6** Cloud Run maps the domain to the service. Google manages the
+  certificate.
+- **R29** Only one instance of `riff-server` serves at a time. An
+  instance is one running `riff-server` process. Cloud Run keeps one
+  instance, with its CPU on also between calls. During a deploy, a
+  second instance runs for a short time. The lease (R137) stops one of
+  them.
+- **R130** An instance takes up to 1000 calls at a time. Each open
+  stream is one call.
+- **R131** Cloud Run ends each call after 60 minutes. `riff watch` and
+  `riff tail` then connect again.
+- **R132** `riff` tries a call again while the server replies 503, for
+  up to 60 seconds.
+- **R133** `riff` uses `https://riff.comotechnologies.io` when no server
+  is set. `--server` or `RIFF_SERVER` names another server.
+- **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
+  it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
+- **R134** `riff-server` runs as its own service account. The account
+  can read and write only its bucket, and read only its secret. The
+  bucket is private.
+- **R135** The image holds only the `riff-server` binary and CA
+  certificates. It runs as a user that is not root.
+- **R136** `just cloud-setup` makes the cloud resources once.
+  `just deploy` builds the image and deploys it to Cloud Run.
+
+## One instance
+
+- **R137** The lease is an object in the bucket. It holds the ID of the
+  instance that may serve.
+- **R138** At start, an instance makes a random ID and writes it to the
+  lease. It then waits 15 seconds, loads the state, and starts to serve.
+- **R139** An instance reads the lease every 2 seconds. It serves only
+  for 5 seconds after the last read that showed its own ID. Else it
+  replies 503.
+- **R140** An instance that reads another ID in the lease stops for
+  good. It closes each stream, replies 503 to each call and saves
+  nothing more. It exits after 60 seconds.
+- **R141** Each save names the version of the object that the instance
+  knows. When the bucket holds another version, the save fails. The
+  instance then stops as in R140.
 
 ## Sessions
 
@@ -187,7 +247,7 @@
 - **R18** Each token is bound to a key that stays on the device.
 - **R86** Tokens use DPoP (RFC 9449) with ES256. Each request with a
   token carries a new proof from the device key. A proof is valid for
-  5 minutes, and up to 60 seconds in the future.
+  5 minutes, and up to 10 seconds in the future.
 - **R87** `riff-server` refuses a bearer token, a proof that it saw
   before, and a proof for another method or URL. The URL is the public
   URL of the server and the path.
@@ -197,6 +257,8 @@
   forget an ID early, it refuses each proof as old as that one.
 - **R115** `riff-server` keeps a proof ID only after the request shows a
   valid token or ID token. A caller without one adds nothing.
+- **R142** At start, `riff-server` knows no proof ID. It refuses each
+  proof issued before it started to serve.
 - **R88** `riff` keeps one device key for each server, in the OS
   keyring.
 - **R19** Each session gets its own token. The token works only for that
