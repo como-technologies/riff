@@ -24,10 +24,16 @@
 //!
 //! | Source | The session |
 //! |---|---|
-//! | `startup` | Starts the watch. Follows the start routine (R54, R166). |
-//! | `resume` | Starts the watch. The old watch stopped with the old process. |
-//! | `clear` | Has a new session ID. Stops the watch of the old ID, starts a new one, and follows the start routine. |
-//! | `compact` | Keeps the watch that runs. Starts one only if none runs. |
+//! | `startup` | Follows the start routine (R54). |
+//! | `resume` | Continues. |
+//! | `clear` | Keeps its riff session ID and its claims (R168). Follows the start routine. |
+//! | `compact` | Continues. |
+//!
+//! The watch does not depend on the source. A watch that runs holds a
+//! lock (R169, see [`crate::local`]). When the lock is held, the
+//! context tells the session to keep that watch. Else it tells the
+//! session to start one. So after `/clear`, the session keeps the watch
+//! from before `/clear`: it runs for the same ID.
 //!
 //! The hook never stops a session start (R69). When it cannot find the
 //! session, the context has no URI, and the hook still exits with
@@ -38,9 +44,10 @@
 //!
 //! let input: StartInput = serde_json::from_str(r#"{"session_id":"a6cf","source":"clear"}"#)?;
 //! assert_eq!(input.source, Source::Clear);
-//! let context = riff::hook::start_context(None, input.source);
-//! assert!(context.contains("riff watch"));
-//! assert!(context.contains("TaskStop"));
+//! let context = riff::hook::start_context(None, input.source, true);
+//! assert!(context.contains("claims stay"));
+//! assert!(context.contains("Keep it."));
+//! assert!(!context.contains("TaskStop"));
 //! # Ok::<(), serde_json::Error>(())
 //! ```
 
@@ -60,7 +67,8 @@ pub const MONITOR_TIMEOUT_MS: u32 = 1_800_000;
 pub enum Source {
     /// A resumed session. It keeps its session ID.
     Resume,
-    /// `/clear`. The session has a new session ID.
+    /// `/clear`. Claude Code gives the session a new session ID, but the
+    /// riff session keeps its ID (R168).
     Clear,
     /// The context was compacted. The Monitor tasks still run.
     Compact,
@@ -81,8 +89,8 @@ pub struct StartInput {
 }
 
 /// The context that the start hook adds. `uri` is the session, when the
-/// hook found it.
-pub fn start_context(uri: Option<&SessionUri>, source: Source) -> String {
+/// hook found it. `watching` is true when a watch runs for the session.
+pub fn start_context(uri: Option<&SessionUri>, source: Source, watching: bool) -> String {
     let mut out = String::from("riff: ");
     match uri {
         Some(uri) => writeln!(out, "this session is {uri}.").unwrap(),
@@ -92,29 +100,23 @@ pub fn start_context(uri: Option<&SessionUri>, source: Source) -> String {
         "run `riff watch` with the Monitor tool, with timeout_ms {MONITOR_TIMEOUT_MS} and the \
          description \"riff wakes\"."
     );
-    match source {
-        Source::Compact => writeln!(
-            out,
-            "- Keep the Monitor task that runs `riff watch`. If none runs, {start}"
-        ),
-        Source::Clear => writeln!(
-            out,
-            "- /clear gave this session a new session ID. The old `riff watch` Monitor task \
-             still wakes you for the old ID. Stop it with TaskStop.\n- Now {start}"
-        ),
-        Source::Startup | Source::Resume => writeln!(out, "- Now {start}"),
+    if source == Source::Clear {
+        out.push_str(
+            "- /clear did not change your riff session. Its session ID and its claims stay. \
+             The riff whoami tool shows them.\n",
+        );
     }
-    .unwrap();
+    if watching {
+        out.push_str("- A task runs `riff watch` for this session. Keep it.\n");
+    } else {
+        writeln!(out, "- Now {start}").unwrap();
+    }
     out.push_str(
         "- Each line of the watch is a wake. Call the riff read tool with no thread.\n\
          - When the Monitor ends, start it again.\n",
     );
     if matches!(source, Source::Startup | Source::Clear) {
-        out.push_str(
-            "- To find work, follow the start routine of the riff skill. Pick a free \
-             item yourself. Do not wait for a plan or for permission. A scope from \
-             your user wins.\n",
-        );
+        out.push_str("- To find work, follow the start routine of the riff skill.\n");
     }
     writeln!(out, "- {DATA_NOTE}").unwrap();
     out
@@ -148,17 +150,19 @@ mod tests {
             .unwrap()
     }
 
+    const SOURCES: [Source; 4] = [
+        Source::Startup,
+        Source::Resume,
+        Source::Clear,
+        Source::Compact,
+    ];
+
     #[test]
-    fn each_source_starts_or_keeps_the_watch() {
-        for source in [
-            Source::Startup,
-            Source::Resume,
-            Source::Clear,
-            Source::Compact,
-        ] {
-            let context = start_context(Some(&uri()), source);
+    fn each_source_starts_the_watch_when_none_runs() {
+        for source in SOURCES {
+            let context = start_context(Some(&uri()), source, false);
             assert!(
-                context.contains("`riff watch` with the Monitor tool"),
+                context.contains("Now run `riff watch` with the Monitor tool"),
                 "{context}"
             );
             assert!(context.contains("timeout_ms 1800000"));
@@ -169,30 +173,46 @@ mod tests {
     }
 
     #[test]
-    fn only_clear_stops_the_old_watch() {
-        assert!(start_context(None, Source::Clear).contains("TaskStop"));
-        assert!(!start_context(None, Source::Startup).contains("TaskStop"));
+    fn each_source_keeps_a_watch_that_runs() {
+        for source in SOURCES {
+            let context = start_context(Some(&uri()), source, true);
+            assert!(context.contains("Keep it."), "{context}");
+            assert!(!context.contains("Now run"), "{context}");
+            assert!(context.contains("start it again"));
+        }
     }
 
     #[test]
-    fn compact_keeps_the_watch() {
-        let context = start_context(None, Source::Compact);
-        assert!(context.contains("Keep the Monitor task"));
-        assert!(context.contains("If none runs, run `riff watch`"));
+    fn no_source_stops_a_watch() {
+        for source in SOURCES {
+            for watching in [false, true] {
+                assert!(!start_context(None, source, watching).contains("TaskStop"));
+            }
+        }
+    }
+
+    #[test]
+    fn clear_keeps_the_session_and_its_claims() {
+        let context = start_context(Some(&uri()), Source::Clear, true);
+        assert!(context.contains("did not change your riff session"));
+        assert!(context.contains("claims stay"));
+        assert!(context.contains("whoami"));
+        for source in [Source::Startup, Source::Resume, Source::Compact] {
+            assert!(!start_context(None, source, true).contains("claims stay"));
+        }
     }
 
     #[test]
     fn new_sessions_get_the_start_routine() {
-        assert!(start_context(None, Source::Startup).contains("start routine"));
-        assert!(start_context(None, Source::Startup).contains("Pick a free item yourself"));
-        assert!(start_context(None, Source::Clear).contains("start routine"));
-        assert!(!start_context(None, Source::Resume).contains("start routine"));
-        assert!(!start_context(None, Source::Compact).contains("start routine"));
+        assert!(start_context(None, Source::Startup, false).contains("start routine"));
+        assert!(start_context(None, Source::Clear, false).contains("start routine"));
+        assert!(!start_context(None, Source::Resume, false).contains("start routine"));
+        assert!(!start_context(None, Source::Compact, false).contains("start routine"));
     }
 
     #[test]
     fn no_uri_asks_for_whoami() {
-        assert!(start_context(None, Source::Startup).contains("whoami"));
+        assert!(start_context(None, Source::Startup, false).contains("whoami"));
     }
 
     #[test]

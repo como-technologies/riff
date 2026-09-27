@@ -110,7 +110,9 @@ fn riff(server: &str, dir: &Path, args: &[&str]) -> Command {
         .env("RIFF_USER", "brett")
         .env("RIFF_HOST", "heron")
         .env("RIFF_SESSION", "b2")
-        .env_remove("CLAUDE_CODE_SESSION_ID");
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        // Keep the watch lock away from other test runs (R169).
+        .env("XDG_RUNTIME_DIR", dir);
     cmd
 }
 

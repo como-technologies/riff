@@ -7,8 +7,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
-use riff::{hook, identity, login, mcp, plugin, text};
-use riff_core::name::{Place, ThreadName};
+use riff::{hook, identity, local, login, mcp, plugin, text};
+use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
 
 /// The time between two tries to connect a stream.
@@ -95,7 +95,8 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// Print one line each time a post wakes this session.
+    /// Print one line each time a post wakes this session. One watch
+    /// runs for each session: a second one stops at once.
     Watch,
     /// Serve the riff tools to an agent session over stdio.
     Mcp,
@@ -218,9 +219,17 @@ async fn main() -> Result<()> {
             println!("{}", text::released(&thread, &item));
         }
         Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await,
-        Command::Watch => watch(&api, &identity::session(&here, api.base())?).await,
+        Command::Watch => {
+            let me = identity::session(&here, api.base())?;
+            let Some(_lock) = lock_watch(&me) else {
+                println!("{}", text::WATCH_RUNS);
+                std::process::exit(1);
+            };
+            watch(&api, &me).await
+        }
         Command::Mcp => {
             let me = identity::session(&here, api.base())?;
+            let _record = record_session(&me);
             mcp::serve(api, me).await?
         }
         Command::Hook { .. }
@@ -246,12 +255,44 @@ fn session_start() -> String {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
     let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
-    let uri = input.session_id.as_deref().and_then(|id| {
+    let id = identity::agent_session(input.session_id);
+    let uri = id.as_deref().and_then(|id| {
         let here = identity::place(&std::env::current_dir().ok()?).ok()?;
         let server = std::env::var("RIFF_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.into());
         identity::agent(&here, id, Api::new(&server).base()).ok()
     });
-    hook::start_output(&hook::start_context(uri.as_ref(), input.source))
+    let watching = id
+        .as_deref()
+        .zip(local::dir())
+        .is_some_and(|(id, dir)| local::watching(&dir, id));
+    hook::start_output(&hook::start_context(uri.as_ref(), input.source, watching))
+}
+
+/// Takes the watch lock of the session `me` (R169). `None` when another
+/// watch holds it. Without the lock file, the watch runs with no lock.
+fn lock_watch(me: &SessionUri) -> Option<Option<local::Held>> {
+    let (Some(dir), Some(id)) = (local::dir(), me.who().session()) else {
+        return Some(None);
+    };
+    match local::watch(&dir, id) {
+        Ok(Some(lock)) => Some(Some(lock)),
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("riff: the watch runs with no lock: {e}");
+            Some(None)
+        }
+    }
+}
+
+/// Records the session ID of `riff mcp` for its agent process, the
+/// parent (R167). The record lasts while the result lives. Without it,
+/// the tools still work.
+fn record_session(me: &SessionUri) -> Option<local::Held> {
+    let (dir, id) = (local::dir()?, me.who().session()?);
+    local::record(&dir, std::os::unix::process::parent_id(), id)
+        .inspect_err(|e| eprintln!("riff: cannot record the session ID: {e}"))
+        .ok()
+        .flatten()
 }
 
 /// Runs until stopped. It connects again when the stream ends (R131).

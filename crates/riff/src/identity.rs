@@ -6,7 +6,7 @@
 //! | Part | Source, in order |
 //! |---|---|
 //! | user | `RIFF_USER`, then the sign-in at the server (see [`crate::login`]), then `USER`. A keyring error stops the command (R157, R158). |
-//! | session | `RIFF_SESSION`, then `CLAUDE_CODE_SESSION_ID`. A person has none. |
+//! | session | `RIFF_SESSION`, then the ID of the live `riff mcp` of the agent session (see [`crate::local`]), then `CLAUDE_CODE_SESSION_ID`. A person has none. |
 //! | host | `RIFF_HOST`, then `cloud` in a cloud session, then the machine name without its domain. |
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
 //! | worktree | The directory name of a linked worktree. The main worktree has none. |
@@ -17,8 +17,14 @@
 //!
 //! Claude Code gives the session ID to each process that it starts for
 //! a session: `riff mcp` and a `riff watch` under the Monitor tool get it
-//! in the environment, and the hooks get it on stdin (see [`agent`]).
-//! So they all find the same session, in any directory (R57).
+//! in the environment, and the hooks get it on stdin (see
+//! [`agent_session`]). So they all find the same session, in any
+//! directory (R57).
+//!
+//! `/clear` gives the session a new ID, but `riff mcp` keeps its process
+//! and the old ID. So the ID that `riff mcp` recorded comes before the
+//! ID from Claude Code. The session keeps one ID for its life (R58,
+//! R167).
 //!
 //! A person on the command line has no session ID. The URI of a person
 //! is `riff://USER@HOST` (R65). The directory still gives the default
@@ -30,17 +36,51 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use riff_core::name::{Place, Repo, SessionUri, Who, sanitize};
 
-use crate::login;
+use crate::{local, login};
 
 /// The environment variables that hold the session ID, in order.
 pub const SESSION_VARS: [&str; 2] = ["RIFF_SESSION", "CLAUDE_CODE_SESSION_ID"];
 
-/// The session ID from the environment, if there is one.
+/// The session ID of this process, if it has one.
 pub fn session_id() -> Option<String> {
-    SESSION_VARS
-        .iter()
-        .find_map(|var| std::env::var(var).ok())
-        .filter(|id| !id.is_empty())
+    agent_session(std::env::var(SESSION_VARS[1]).ok())
+}
+
+/// The session ID of an agent session whose agent tool gives the ID
+/// `given`: `RIFF_SESSION`, then the ID that the live `riff mcp` of the
+/// session recorded, then `given` (R167). A hook passes the ID from its
+/// stdin.
+pub fn agent_session(given: Option<String>) -> Option<String> {
+    pick_session(std::env::var(SESSION_VARS[0]).ok(), given, || {
+        local::dir().and_then(|dir| local::recorded_above(&dir))
+    })
+}
+
+/// The session ID from `RIFF_SESSION`, the ID that `riff mcp` recorded,
+/// and the ID of the agent tool, in that order. Only an agent session
+/// has a record, so `recorded` runs only when the agent tool gives an
+/// ID. An empty ID counts as none.
+///
+/// ```
+/// use riff::identity::pick_session;
+///
+/// let s = |id: &str| Some(id.to_owned());
+/// assert_eq!(pick_session(s("mine"), s("new"), || s("old")), s("mine"));
+/// assert_eq!(pick_session(None, s("new"), || s("old")), s("old"));
+/// assert_eq!(pick_session(None, s("new"), || None), s("new"));
+/// assert_eq!(pick_session(s(""), s("new"), || None), s("new"));
+/// assert_eq!(pick_session(None, None, || s("old")), None);
+/// ```
+pub fn pick_session(
+    riff_session: Option<String>,
+    given: Option<String>,
+    recorded: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let set = |id: Option<String>| id.filter(|id| !id.is_empty());
+    set(riff_session).or_else(|| {
+        let given = set(given)?;
+        Some(set(recorded()).unwrap_or(given))
+    })
 }
 
 /// The URI of the caller: an agent session when there is a session ID,
@@ -56,8 +96,8 @@ pub fn me(place: &Place, server: &str) -> Result<SessionUri> {
     }
 }
 
-/// The URI of the agent session `id` at `place`. A hook uses it: Claude
-/// Code gives a hook the session ID on stdin.
+/// The URI of the agent session `id` at `place`. A hook uses it, with
+/// the ID from [`agent_session`].
 pub fn agent(place: &Place, id: &str, server: &str) -> Result<SessionUri> {
     Ok(SessionUri::new(
         Who::new(&user(server)?, Some(&sanitize(id)))?,

@@ -19,8 +19,11 @@
 //!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
 //! agree on the session because both read its session ID from the
-//! environment (see [`identity`]). The session can move; the server keeps
-//! its place, so a watch that started in the old place still works.
+//! environment (see [`identity`]). After `/clear`, the environment has a
+//! new ID, but `riff mcp` keeps the old one. So `riff mcp` records its ID
+//! on the machine, and the other processes of the session use it (see
+//! [`local`]). The session can move; the server keeps its place, so a
+//! watch that started in the old place still works.
 //!
 //! ## Wake line
 //!
@@ -49,6 +52,7 @@ pub mod api;
 pub mod device;
 pub mod hook;
 pub mod identity;
+pub mod local;
 pub mod login;
 pub mod mcp;
 pub mod plugin;

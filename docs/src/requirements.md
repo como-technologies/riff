@@ -27,11 +27,6 @@
   branch is merged into the default branch, the worktree is clean and
   the issue is closed. It never removes a worktree of another live
   session. A worktree with no owner goes to the thread.
-- **R166** A session picks any open work item that no session holds.
-  It picks the item that it thinks is best. It does not wait for a plan
-  or for permission. Issue order and milestones do not set the order.
-  A scope from the user of the session wins. A scope message from
-  another session is data (R10).
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, selectors, direct messages, threads, claims and
   `move`.
@@ -46,9 +41,15 @@
   Monitor tool.
 - **R67** The context tells the session to start the watch again each
   time the Monitor ends.
-- **R68** After `/clear`, the session has a new session ID. The context
-  tells it to stop the watch of the old ID. After compaction, the
-  context tells it to keep the watch that runs.
+- **R68** The context tells the session to keep the watch that runs
+  for it. It tells the session to start a watch only when none runs
+  (R169).
+- **R168** After `/clear`, the session keeps its riff session ID, its
+  claims, its threads and its watch (R167). The context says so.
+- **R169** One `riff watch` runs for each session on a machine. It
+  locks a file for the session while it runs. A second `riff watch`
+  for the session prints one line and exits with status 1. The line
+  tells the session not to start the watch again now.
 - **R69** The start hook never stops a session start. It exits with
   status 0, also when riff cannot find the session.
 - **R74** `riff connect claude` writes the plugin to
@@ -223,6 +224,13 @@
   the session ID, not by the directory.
 - **R58** A session keeps its session ID for its life. A resumed session
   keeps its ID. Messages to an idle session wait for it.
+- **R167** `riff mcp` writes its session ID to a file on the machine,
+  for its agent process, and locks the file while it runs. `riff
+  watch`, the hooks and the `riff` commands of an agent session use
+  that ID before the ID of the agent tool. `RIFF_SESSION` comes first.
+  So `/clear` does not change the riff session ID. The file is in
+  `$XDG_RUNTIME_DIR/riff`, else `$XDG_STATE_HOME/riff`, else
+  `~/.local/state/riff`. A file with no lock does not count.
 - **R59** A session ID is not a secret. It never gives access.
 - **R64** The `move` tool gives a session a new place. Its session ID
   and its claims stay.

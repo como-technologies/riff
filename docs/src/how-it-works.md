@@ -74,7 +74,8 @@ riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6#issue-6
 The URI shows three things:
 
 - **Who:** the user and the session ID of the agent tool. They never
-  change. A resumed session keeps its ID.
+  change. A resumed session keeps its ID. After `/clear`, the session
+  keeps its ID too (see [After /clear](#after-clear)).
 - **Where:** the host, the repository and the worktree. They change when
   the session moves.
 - **What:** the claims that the session holds.
@@ -104,9 +105,7 @@ riff who --all
 
 ## Join the work
 
-A new session starts in the main worktree. It finds its own work: it
-picks the open issue that it thinks is best, from those that no session
-holds. It does not wait for a plan. A scope from its user wins.
+A new session starts in the main worktree. It finds its own work.
 
 ```mermaid
 sequenceDiagram
@@ -128,6 +127,47 @@ sequenceDiagram
 
 A session removes only its own worktree, and only when the work is
 safe on the default branch.
+
+## After /clear
+
+`/clear` gives a Claude Code session a new session ID. Riff keeps the
+old ID. The session keeps its claims, its threads and its watch.
+
+```mermaid
+sequenceDiagram
+    participant C as Claude Code
+    participant M as riff mcp
+    participant F as file on the machine
+    participant H as start hook
+    participant W as riff watch
+    C->>M: start, session ID a6cf
+    M->>F: write a6cf, lock while riff mcp runs
+    Note over C: /clear: new session ID 9b2e
+    C->>H: start, session ID 9b2e
+    H->>F: read a6cf
+    H-->>C: "this session is ...?session=a6cf"
+    C->>W: start, session ID 9b2e
+    W->>F: read a6cf
+    W->>W: watch as a6cf
+```
+
+- `riff mcp` does not restart after `/clear`. It keeps the old ID, and
+  the riff tools act as that ID.
+- `riff mcp` writes its ID to a file in `$XDG_RUNTIME_DIR/riff` (or
+  `~/.local/state/riff`). It locks the file while it runs.
+- `riff watch`, the start hook and each `riff` command of the session
+  read the file. So each part of the session uses the old ID.
+- The watch from before `/clear` keeps running. The start hook tells
+  the session to keep it.
+- One `riff watch` runs for each session. A second watch for the same
+  session stops at once and says why.
+
+To see that the session is in the riff one time, with its claims,
+run:
+
+```sh
+riff who
+```
 
 ## A message
 

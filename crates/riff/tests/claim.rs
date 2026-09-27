@@ -73,7 +73,8 @@ async fn run(
         .env("RIFF_USER", user)
         .env("RIFF_HOST", "pangolin")
         .env_remove("RIFF_SESSION")
-        .env_remove("CLAUDE_CODE_SESSION_ID");
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env("XDG_RUNTIME_DIR", dir);
     if let Some(id) = session {
         cmd.env("RIFF_SESSION", id);
     }

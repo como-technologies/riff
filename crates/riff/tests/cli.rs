@@ -1,5 +1,14 @@
 use assert_cmd::Command;
 
+/// The start hook, away from the local files of this machine (R167).
+fn hook(run: &tempfile::TempDir) -> Command {
+    let mut cmd = Command::cargo_bin("riff").unwrap();
+    cmd.args(["hook", "session-start"])
+        .env("XDG_RUNTIME_DIR", run.path())
+        .env_remove("RIFF_SESSION");
+    cmd
+}
+
 #[test]
 fn version_names_the_binary() {
     Command::cargo_bin("riff")
@@ -12,9 +21,8 @@ fn version_names_the_binary() {
 
 #[test]
 fn session_start_hook_adds_the_watch_context() {
-    let out = Command::cargo_bin("riff")
-        .unwrap()
-        .args(["hook", "session-start"])
+    let run = tempfile::tempdir().unwrap();
+    let out = hook(&run)
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .write_stdin(r#"{"session_id":"a6cf","source":"startup","hook_event_name":"SessionStart"}"#)
@@ -34,9 +42,8 @@ fn session_start_hook_adds_the_watch_context() {
 
 #[test]
 fn a_cloud_session_has_the_host_cloud() {
-    let out = Command::cargo_bin("riff")
-        .unwrap()
-        .args(["hook", "session-start"])
+    let run = tempfile::tempdir().unwrap();
+    let out = hook(&run)
         .env("RIFF_USER", "mike")
         .env_remove("RIFF_HOST")
         .env("CLAUDE_CODE_REMOTE", "true")
@@ -52,9 +59,8 @@ fn a_cloud_session_has_the_host_cloud() {
 
 #[test]
 fn session_start_hook_never_fails() {
-    let out = Command::cargo_bin("riff")
-        .unwrap()
-        .args(["hook", "session-start"])
+    let run = tempfile::tempdir().unwrap();
+    let out = hook(&run)
         .env_remove("USER")
         .env_remove("RIFF_USER")
         .write_stdin("not json")
