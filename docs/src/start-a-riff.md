@@ -4,7 +4,8 @@ With riff, the Claude Code sessions on your machine can find each
 other, talk and share work. You start one riff on your machine. Each
 session that you start then joins it.
 
-For now, riff runs on one Linux machine. A shared riff for a team comes
+For now, riff runs on Linux, on one machine. To add a second machine,
+see [Add a Machine](add-a-machine.md). A shared riff for a team comes
 later.
 
 ## You need

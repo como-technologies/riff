@@ -1,24 +1,23 @@
 //! "Start a Riff", the first page of the book for a person: at most
-//! three commands (R4), each one real, and no sign-in. No book page
-//! names the Cloud Run URL (R5). The `riff-server` commands of the page
-//! are checked in `crates/riff-server/tests/start_a_riff.rs`.
+//! three commands (R4), each one real, and no sign-in. "Add a Machine"
+//! (R203): its commands are real too. No book page names the Cloud Run
+//! URL (R5). The `riff-server` commands of the pages are checked in
+//! `crates/riff-server/tests/start_a_riff.rs`.
 
 use std::fs;
 use std::path::Path;
 
 use assert_cmd::Command;
 
-/// The text of `docs/src/start-a-riff.md`.
-fn page() -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/start-a-riff.md");
-    fs::read_to_string(path).unwrap()
-}
-
-/// The commands in the `sh` blocks of the page, in order.
-fn commands() -> Vec<String> {
+/// The commands in the `sh` blocks of the book page `name`, in order.
+fn commands_of(name: &str) -> Vec<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/src")
+        .join(name);
+    let page = fs::read_to_string(path).unwrap();
     let mut commands = Vec::new();
     let mut in_sh = false;
-    for line in page().lines().map(str::trim) {
+    for line in page.lines().map(str::trim) {
         if line.starts_with("```") {
             in_sh = !in_sh && line == "```sh";
         } else if in_sh && !line.is_empty() && !line.starts_with('#') {
@@ -26,6 +25,23 @@ fn commands() -> Vec<String> {
         }
     }
     commands
+}
+
+/// The commands of "Start a Riff".
+fn commands() -> Vec<String> {
+    commands_of("start-a-riff.md")
+}
+
+/// Checks that each `riff` command in `commands` runs with `--help`.
+fn each_is_real(commands: &[String]) {
+    for command in commands {
+        Command::cargo_bin("riff")
+            .unwrap()
+            .args(command.split_whitespace().skip(1))
+            .arg("--help")
+            .assert()
+            .success();
+    }
 }
 
 #[test]
@@ -52,14 +68,30 @@ fn each_riff_command_of_the_page_is_real_and_none_signs_in() {
         .filter(|c| c.starts_with("riff "))
         .collect();
     assert_eq!(riff, ["riff connect claude"]);
-    for command in riff {
-        Command::cargo_bin("riff")
-            .unwrap()
-            .args(command.split_whitespace().skip(1))
-            .arg("--help")
-            .assert()
-            .success();
-    }
+    each_is_real(&riff);
+}
+
+#[test]
+fn a_second_machine_installs_riff_names_the_first_and_connects() {
+    let commands = commands_of("add-a-machine.md");
+    let install: Vec<&str> = commands[1].split_whitespace().collect();
+    assert_eq!(
+        install.last(),
+        Some(&env!("CARGO_PKG_NAME")),
+        "{commands:?}"
+    );
+    assert!(install.contains(&env!("CARGO_PKG_REPOSITORY")));
+    assert!(
+        commands[2].contains("export RIFF_SERVER=http://FIRST:7878"),
+        "{commands:?}"
+    );
+    let riff: Vec<String> = commands
+        .iter()
+        .filter(|c| c.starts_with("riff "))
+        .cloned()
+        .collect();
+    assert_eq!(riff, ["riff connect claude", "riff who"]);
+    each_is_real(&riff);
 }
 
 #[test]

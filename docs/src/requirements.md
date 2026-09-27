@@ -10,6 +10,11 @@
   Infrastructure is always Google.
 - **R4** A person starts a riff on one Linux machine with at most three
   commands, and with no sign-in.
+- **R203** A person adds a second machine to the riff of a first machine
+  on a network that they trust. The riff of the first machine takes
+  connections from the network. The second machine names that riff with
+  `RIFF_SERVER`. With no sign-in, each machine that can reach the riff
+  can read and send its messages.
 - **R44** Only Claude Code is supported for now. `riff connect claude`
   installs a Claude Code plugin: the MCP server, a skill, and a start
   hook that wakes the session.
