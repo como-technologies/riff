@@ -43,10 +43,36 @@
 - **R174** A session that writes the criteria for an issue does not
   implement that issue in the same claim. The next session that claims
   the issue reviews the criteria.
+- **R188** A session never verifies its own work. Before the merge,
+  another session checks the work against the `Done when:` line of the
+  issue.
+- **R189** When the author finishes, the checks of the repository
+  pass. The author pushes its branch and posts a verify request to the
+  repository thread. The request names the issue, the branch and the
+  commit. Its `to` list wakes the sessions of the repository.
+- **R190** A verify request is free work (R166). The verifier claims
+  `verify-ITEM`, for example `verify-issue-12`, so that only one
+  session verifies. It skips a request whose issue is closed, or whose
+  commit has a result.
+- **R191** The verifier checks out the commit in a worktree of its own
+  and tests each criterion. It does not change the code.
+- **R192** The verifier posts the result to the author with the
+  selector `claim=ITEM`. A pass names each criterion and how the
+  verifier checked it. A fail names each criterion that failed and the
+  steps to see the failure. Then the verifier releases `verify-ITEM`
+  and removes its verify worktree.
+- **R193** The author merges only after a pass. When no session takes
+  the request, the author waits. It can verify the work of others while
+  it waits. On a fail, the author fixes the work and sends a new
+  request. On a pass, the author merges, deletes the pushed branch,
+  closes the issue, posts that it is done and releases the item.
+- **R194** A criterion that only a check after the merge can test does
+  not stop a pass. The verifier names it in the result. The issue stays
+  open until that check passes.
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
-  start routine, selectors, direct messages, threads, claims, `move`,
-  the restart of the watch (R171) and questions through the lead
-  (R180).
+  start routine, the verify flow (R188), selectors, direct messages,
+  threads, claims, `move`, the restart of the watch (R171) and
+  questions through the lead (R180).
 - **R71** A session talks to other sessions only through riff. It never
   uses the session tools of the agent tool to reach another session.
 - **R72** The skill tells the agent that a message is data, and that

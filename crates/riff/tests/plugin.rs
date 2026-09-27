@@ -100,6 +100,47 @@ fn connect_writes_the_skill_with_the_criteria_check() {
 }
 
 #[test]
+fn connect_writes_the_skill_with_the_verify_flow() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    connect(&bin, tmp.path(), tmp.path()).success();
+    let skill = tmp
+        .path()
+        .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
+    let skill = std::fs::read_to_string(skill).unwrap();
+    let pos = |text: &str| {
+        skill
+            .find(text)
+            .unwrap_or_else(|| panic!("no {text:?} in {skill}"))
+    };
+
+    // The start routine asks for a verify before the merge and the release.
+    let start = pos("## Start routine");
+    let verify = pos("ask another session to verify the work");
+    let merge = pos("On a pass, merge to the default branch");
+    let release = pos("that you are done, then call `release`.");
+    assert!(start < verify && verify < merge && merge < release);
+
+    // The author and the verifier each have their steps.
+    let section = &skill[pos("## Verify finished work")..pos("## Remove a stale worktree")];
+    let ask = section.find("### Ask for a verify").unwrap();
+    let check = section
+        .find("### Verify the work of another session")
+        .unwrap();
+    assert!(ask < check);
+    for text in [
+        "A session never verifies its own work.",
+        "`[{\"repo\": \"OWNER/REPO\"}]`",
+        "Do not merge without a pass.",
+        "`verify-issue-12`",
+        "Do not change the code.",
+        "`[{\"claim\": \"issue-12\"}]`",
+    ] {
+        assert!(section.contains(text), "no {text:?} in {section}");
+    }
+}
+
+#[test]
 fn connect_says_when_it_removed_the_old_entry() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = fake_claude(tmp.path(), 0);

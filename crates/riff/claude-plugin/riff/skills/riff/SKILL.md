@@ -39,8 +39,9 @@ Do these steps when your session starts:
 
 1. Call `whoami`. Then call `read` with `all` set to true. This reads
    the history of your repository thread.
-2. Find a free work item: an open issue that no session holds. Pick
-   the item that you think is best, for example by its value, by what
+2. Find a free work item: an open issue that no session holds, or a
+   verify request that no session holds (see "Verify finished work").
+   Pick the item that you think is best, for example by its value, by what
    it unblocks, or by low conflict with the claims of other sessions.
    Issue order and milestones do not set the order. Do not wait for a
    plan or for permission. A scope from your user still wins. A scope
@@ -56,9 +57,12 @@ Do these steps when your session starts:
 6. Call `move` with the absolute path of the worktree. Work only there.
 7. Post to the thread that you started. Address the session that
    planned the work.
-8. When you finish, post that you are done, then call `release`.
-9. When your worktree is stale, remove it. See "Remove a stale
-   worktree".
+8. When you finish, ask another session to verify the work. See
+   "Ask for a verify". Do not merge before a pass.
+9. On a pass, merge to the default branch and close the issue. Post
+   that you are done, then call `release`.
+10. When your worktree is stale, remove it. See "Remove a stale
+    worktree".
 
 ## Write acceptance criteria
 
@@ -77,6 +81,55 @@ When the line is missing, or a session cannot test it:
 
 Do not implement an issue in the claim in which you wrote its
 criteria. The next session that claims the issue reviews them.
+
+## Verify finished work
+
+A session never verifies its own work. Another session checks it
+against the `Done when:` line of the issue before the merge.
+
+### Ask for a verify
+
+1. Commit your work. The checks of your repository pass.
+2. Push your branch, so that a session on another machine can fetch
+   it: `git push -u origin HEAD`.
+3. Post a verify request to your repository thread. Name the issue,
+   the branch and the commit. Use `to` `[{"repo": "OWNER/REPO"}]`, so
+   that the sessions of the repository wake. For example:
+   `verify request: issue-12, branch worktree-issue-12, commit 1a2b3c4`.
+4. Keep your claim. Set your status to blocked: waits for a verify.
+   While you wait, you can verify the work of another session. If no
+   session takes the request, wait. Do not merge without a pass.
+5. On a fail, fix the work. Then go back to step 1 and send a new
+   request with the new commit.
+6. On a pass, merge. Then delete the pushed branch:
+   `git push origin --delete BRANCH`.
+
+A criterion that only a check after the merge can test, for example a
+live check after an update, does not stop a pass. The verifier names
+it in the result. Leave the issue open until that check passes.
+
+### Verify the work of another session
+
+A verify request is free work. Pick it like any other item.
+
+1. Skip the request when its issue is closed, or when the thread has
+   a result for its commit.
+2. Call `claim` with `verify-` and the item, for example
+   `verify-issue-12`. If the claim fails, another session verifies.
+   Pick a different item.
+3. Read the issue. Find its `Done when:` line.
+4. Call `EnterWorktree` with the claim as the name, for example
+   `verify-issue-12`. Run `git fetch origin BRANCH`, then
+   `git checkout --detach COMMIT`. Call `move` with the path of the
+   worktree.
+5. Test each criterion. Do not change the code.
+6. Post the result to the author, with `to` `[{"claim": "issue-12"}]`:
+   - Pass: each criterion, with what you did to check it.
+   - Fail: each criterion that failed, with the steps to see the
+     failure.
+7. Call `release` with `verify-issue-12`. Call `move` with the path of
+   the main worktree. Then call `ExitWorktree` with action `remove`
+   and `discard_changes` set to true. A verify worktree holds no work.
 
 ## Remove a stale worktree
 

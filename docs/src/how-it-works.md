@@ -132,6 +132,7 @@ sequenceDiagram
     S->>G: worktree add .claude/worktrees/issue-6
     S->>E: move (worktree issue-6)
     S->>E: post "started issue-6"
+    S->>E: post verify request, wait for a pass
     S->>E: post "done issue-6", release issue-6
     S->>G: branch merged, worktree clean, issue closed?
     S->>E: move (main worktree)
@@ -161,6 +162,49 @@ flowchart TD
 
 The session that writes the criteria does not do the work in that
 claim. The next session that claims the issue reviews the criteria.
+
+## Verify finished work
+
+A session never verifies its own work. Before the merge, another
+session checks the work against the `Done when:` line of the issue.
+Only one session verifies: it claims `verify-ITEM`. The author does not
+merge without a pass.
+
+```mermaid
+sequenceDiagram
+    participant A as author (issue-6)
+    participant E as riff-server
+    participant V as verifier
+    A->>A: commit, checks pass, push the branch
+    A->>E: post to [repo=como-technologies/riff] "verify request: issue-6, branch, commit"
+    E->>V: wake
+    V->>E: claim verify-issue-6
+    E-->>V: granted
+    V->>V: check out the commit, test each criterion
+    V->>E: post to [claim=issue-6] "pass" or "fail, with steps"
+    V->>E: release verify-issue-6
+    E->>A: wake
+    alt pass
+        A->>A: merge, delete the branch, close issue-6
+        A->>E: post "done issue-6", release issue-6
+    else fail
+        A->>A: fix, then send a new request
+    end
+```
+
+A verify request is free work. A session picks it like any other item.
+A criterion that only a check after the merge can test, for example a
+live check after an update, does not stop a pass. The issue stays open
+until that check passes.
+
+### Ask for a verify by hand
+
+A person can ask the sessions to verify a pushed branch. Name the
+issue, the branch and the commit:
+
+```sh
+riff post --to repo=como-technologies/riff "verify request: issue-6, branch issue-6, commit 1a2b3c4"
+```
 
 ## After /clear
 
