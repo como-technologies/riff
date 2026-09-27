@@ -27,10 +27,9 @@ after the merge is left (see
 
 ## Pick an item
 
-A session takes a free item of the current wave. It takes work only
-from the current wave. When the current wave has no free item, the
-session verifies the work of others, runs its checks after the merge,
-or waits.
+A session takes a free item of the current wave, never of a later
+wave. When the current wave has no free item, the session verifies
+the work of others, runs its checks after the merge, or waits.
 
 ```mermaid
 flowchart TD
