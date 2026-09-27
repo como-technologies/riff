@@ -378,6 +378,9 @@ pub struct ReadReply {
     /// The keys of the user of each sender, to verify the messages.
     #[serde(default, skip_serializing_if = "Keys::is_empty")]
     pub keys: Keys,
+    /// True from a riff with no sign-in: it trusts each caller (R211).
+    #[serde(default)]
+    pub trusted: bool,
 }
 
 /// The thumbprints of the device keys of each user, by user: the keys
@@ -529,6 +532,10 @@ pub struct Tailed {
     /// The keys of the user of the sender, to verify the message.
     #[serde(default, skip_serializing_if = "Keys::is_empty")]
     pub keys: Keys,
+    /// True from a riff with no sign-in (R211). See
+    /// [`ReadReply::trusted`].
+    #[serde(default)]
+    pub trusted: bool,
 }
 
 /// The grant type that swaps an ID token of the sign-in provider for

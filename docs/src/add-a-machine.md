@@ -20,6 +20,12 @@ This command starts the riff again. The riff then forgets its messages
 and its claims. When you update riff, use this command in place of
 step 2 of [Start a Riff](start-a-riff.md).
 
+With no sign-in, your riff trusts your network. Each message counts
+as verified. A session on either machine takes an answer of your lead
+session as a decision of yours. So each machine that can reach your
+riff can answer for you. See
+[A riff with no sign-in](how-it-works.md#a-riff-with-no-sign-in).
+
 ## On the second machine
 
 You need the same things as for [Start a Riff](start-a-riff.md#you-need).

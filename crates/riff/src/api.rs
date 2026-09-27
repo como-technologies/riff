@@ -29,7 +29,9 @@
 //! [`riff_core::signed`]). The reader checks each message before it
 //! shows it: [`Api::read`] and [`checked`] give a [`Checked`] message
 //! (R199). Without sign-in, the server keeps no signature, so no
-//! message is verified (R201).
+//! message is verified (R201), except on a riff with no sign-in: it
+//! trusts its network, and the reader counts each of its messages as
+//! verified (R212).
 //!
 //! # Tries
 //!
@@ -503,7 +505,8 @@ impl Api {
     }
 
     /// The unread messages (or all of them) of one thread, each checked
-    /// with the keys that the server gives (R199).
+    /// with the keys that the server gives (R199), or with its trusted
+    /// mark (R212).
     pub async fn read(
         &self,
         me: &SessionUri,
@@ -519,7 +522,7 @@ impl Api {
         Ok(reply
             .messages
             .into_iter()
-            .map(|message| checked(thread, message, &reply.keys))
+            .map(|message| checked(thread, message, &reply.keys, reply.trusted))
             .collect())
     }
 
@@ -548,10 +551,14 @@ impl Api {
         self.events("watch", &[("uri", me.to_string())]).await
     }
 
-    /// Each new message in one thread, on one connection. [`follow`]
-    /// connects again.
-    pub async fn tail(&self, thread: &ThreadName) -> Result<impl Stream<Item = Result<Tailed>>> {
-        self.events("tail", &[("thread", thread.to_string())]).await
+    /// Each new message in one thread, on one connection, checked like
+    /// [`Api::read`]. [`follow`] connects again.
+    pub async fn tail(&self, thread: &ThreadName) -> Result<impl Stream<Item = Result<Checked>>> {
+        let events = self
+            .events::<Tailed>("tail", &[("thread", thread.to_string())])
+            .await?;
+        Ok(events
+            .map(move |tailed| tailed.map(|t| checked(&t.thread, t.message, &t.keys, t.trusted))))
     }
 
     /// Ends each sign-in of `user`, or of the caller when `user` is
@@ -659,8 +666,9 @@ pub struct Checked {
     pub verified: bool,
 }
 
-/// Checks one message of `thread` with the keys that the server gave.
-/// See [`Message::verified`].
+/// Checks one message of `thread` with the keys that the server gave
+/// (see [`Message::verified`]). A message from a riff with no sign-in
+/// (`trusted`) is verified (R212).
 ///
 /// ```
 /// use riff::api::checked;
@@ -676,19 +684,14 @@ pub struct Checked {
 ///     sig: None,
 /// };
 /// let thread = "como-technologies/riff".parse()?;
-/// assert!(!checked(&thread, message, &Keys::new()).verified);
+/// assert!(!checked(&thread, message.clone(), &Keys::new(), false).verified);
+/// assert!(checked(&thread, message, &Keys::new(), true).verified);
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn checked(thread: &ThreadName, message: Message, keys: &Keys) -> Checked {
+pub fn checked(thread: &ThreadName, message: Message, keys: &Keys, trusted: bool) -> Checked {
     Checked {
-        verified: message.verified(thread, keys),
+        verified: trusted || message.verified(thread, keys),
         message,
-    }
-}
-
-impl From<Tailed> for Checked {
-    fn from(tailed: Tailed) -> Self {
-        checked(&tailed.thread, tailed.message, &tailed.keys)
     }
 }
 

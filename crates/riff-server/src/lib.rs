@@ -42,6 +42,9 @@
 //!   sign-ins of each sender ([`token::Tokens::keys`]), so the reader
 //!   verifies each message (see [`riff_core::signed`]). Without sign-in,
 //!   the server keeps no signature and gives no keys (R201).
+//! - A riff with no sign-in ([`auth::Config::trusted`]) marks
+//!   each `read` reply and each `tail` event as trusted. Its reader
+//!   counts each of its messages as verified (R211, R212).
 //! - A layer checks the access token and its DPoP proof. It guards
 //!   `/v1/revoke` always, and each other `/v1` route except `/v1/token`
 //!   with [`auth::Config::require_sign_in`]. It puts the
@@ -782,6 +785,7 @@ async fn post_message(
     if signed {
         delivery.tailed.keys = s.keys([me.who().user()]);
     }
+    delivery.tailed.trusted = s.config.trusted();
     Ok(Json(posted(&s, delivery)))
 }
 
@@ -797,7 +801,8 @@ async fn status(
 }
 
 /// Gives the messages. With sign-in, the reply holds the keys of each
-/// sender, so the reader can verify each message (R199).
+/// sender, so the reader can verify each message (R199). A riff with
+/// no sign-in marks the reply as trusted (R211).
 async fn read(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
@@ -812,7 +817,11 @@ async fn read(
     } else {
         Keys::new()
     };
-    Ok(Json(ReadReply { messages, keys }))
+    Ok(Json(ReadReply {
+        messages,
+        keys,
+        trusted: s.config.trusted(),
+    }))
 }
 
 async fn claim(

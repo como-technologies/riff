@@ -530,11 +530,21 @@
   message shows `verified` or `not verified`. A message is verified
   when its signature is valid for the message as the reader got it,
   and its key is the key of a live sign-in of the user of the sender.
-  `read` and `tail` give these keys.
+  `read` and `tail` give these keys. A message from a riff with no
+  sign-in is verified too (R212).
 - **R200** A message that is not verified never counts as from the
   lead. The reader shows its sender without `lead=true`.
 - **R201** Without sign-in, `riff-server` keeps no signature and gives
-  no keys. So no message is verified.
+  no keys. So only a riff with no sign-in verifies such a message
+  (R211).
+- **R211** A `riff-server` with no sign-in provider and no
+  `--require-sign-in` is a riff with no sign-in. It trusts each caller.
+  A person runs it only on a network that they trust (R203). Each
+  `read` reply and each `tail` event of such a riff says that it
+  trusts its callers.
+- **R212** The reader counts each message of a riff that trusts its
+  callers as verified. The lead mark of such a message is the lead mark
+  that the server gives.
 
 ## Sign-in and tokens
 

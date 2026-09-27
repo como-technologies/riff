@@ -947,6 +947,7 @@ impl State {
                 thread,
                 message,
                 keys: Keys::new(),
+                trusted: false,
             },
         })
     }

@@ -75,6 +75,7 @@ async fn tail(State(calls): State<Shared>) -> impl IntoResponse {
         thread: repo(),
         message,
         keys: Default::default(),
+        trusted: false,
     })
 }
 

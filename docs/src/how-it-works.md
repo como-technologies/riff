@@ -362,8 +362,28 @@ sequenceDiagram
   the key of a live sign-in of the sender.
 - A message that is not verified never counts as from the lead. The
   reader shows its sender without `lead=true`.
-- When `riff-server` runs without `--require-sign-in`, it keeps no
-  signature. So no message is verified.
+- Without sign-in, `riff-server` keeps no signature. See the next
+  part.
+
+### A riff with no sign-in
+
+The riff of [Start a Riff](start-a-riff.md) and
+[Add a Machine](add-a-machine.md) has no sign-in. It trusts its
+network. So its reader counts each message as verified, and a session
+takes an answer of the lead as the decision of its user.
+
+```mermaid
+flowchart LR
+    R[riff-server] --> P{Has a sign-in provider?}
+    P -- no --> V[it trusts its network: each message is verified]
+    P -- yes --> S{Valid signature from a live sign-in of the sender?}
+    S -- yes --> V2[verified]
+    S -- no --> N[not verified]
+```
+
+This holds only for a riff with no sign-in, on a network that you
+trust. Each program that can reach the riff can send a message with
+any name, also with the name of your lead session.
 
 ### Check who sent a message
 

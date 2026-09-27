@@ -5,7 +5,7 @@ use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use riff::api::{Api, Checked};
+use riff::api::Api;
 use riff::login::{self, SignIn};
 use riff::text;
 use riff_core::name::{SessionUri, ThreadName};
@@ -122,7 +122,6 @@ async fn a_message_from_a_signed_in_client_is_verified() {
         .unwrap()
         .unwrap()
         .unwrap();
-    let first = Checked::from(first);
     assert!(first.verified);
     assert_eq!(first.message.body, "the API is ready");
 }

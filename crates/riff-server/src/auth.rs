@@ -115,6 +115,32 @@ impl Config {
         }
     }
 
+    /// True for a riff with no sign-in: no provider, and no
+    /// [`Config::require_sign_in`]. It trusts each caller: a person runs
+    /// it only on a network that they trust (R203). So its reader counts
+    /// each of its messages as verified (R211).
+    ///
+    /// ```
+    /// use riff_server::auth::Config;
+    /// use riff_server::oidc::Provider;
+    ///
+    /// let mut config = Config::new("http://0.0.0.0:7878");
+    /// assert!(config.trusted());
+    /// config.require_sign_in = true;
+    /// assert!(!config.trusted());
+    /// config.require_sign_in = false;
+    /// config.provider = Some(Provider {
+    ///     issuer: "https://accounts.google.com".into(),
+    ///     client_id: "riff".into(),
+    ///     client_secret: None,
+    ///     allowed_domains: vec!["comotechnologies.io".into()],
+    /// });
+    /// assert!(!config.trusted());
+    /// ```
+    pub fn trusted(&self) -> bool {
+        self.provider.is_none() && !self.require_sign_in
+    }
+
     /// The protected resource metadata (RFC 9728).
     pub fn resource_metadata(&self) -> ResourceMetadata {
         ResourceMetadata {
