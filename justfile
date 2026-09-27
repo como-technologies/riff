@@ -12,7 +12,15 @@ init:
 
 # Run all CI checks. crate-audit is not part of the gate: CI runs it as a
 # separate job (and weekly), so a new advisory cannot hide a code failure.
-ci: fmt-check lint test doc book
+ci: fmt-check lint test doc book reqs
+
+# Check the requirement IDs: no duplicate, and each cited ID exists
+reqs:
+    cargo run -q -p reqs -- check
+
+# Print a new requirement ID (a ULID)
+rid:
+    @cargo run -q -p reqs -- rid
 
 # House vocabulary for the full local gate
 alias gate := ci

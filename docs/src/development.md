@@ -4,7 +4,7 @@ Install [Rust](https://rustup.rs) and [just](https://just.systems). Then:
 
 ```sh
 just init   # once: installs the book and audit tools
-just ci     # the gate: fmt, clippy, tests, API docs, book
+just ci     # the gate: fmt, clippy, tests, API docs, book, requirement IDs
 ```
 
 CI runs the same gate on each push. It publishes this book to GitHub
@@ -23,6 +23,31 @@ just install
 ```
 
 `riff tail` shows the messages of the thread of your repository.
+
+## Add a requirement
+
+Each requirement in `docs/src/requirements.md` has an ID. A new
+requirement gets a new ID from this command:
+
+```sh
+just rid
+```
+
+It prints an ID such as `01M3J3FGCENZTA3JGZ6S3NX7YM`. Write the new
+requirement as `- **ID** text`. Cite it by the same ID in code, tests
+and commits. Two people who add requirements at the same time never get
+the same ID. So nobody has to agree on a number first.
+
+The old IDs, `R` and a number, stay. Never renumber a requirement.
+
+`just ci` checks the IDs. To run only this check:
+
+```sh
+just reqs
+```
+
+It fails when two requirements have the same ID, or when a file cites an
+ID that no requirement has. It warns when an ID is not a ULID.
 
 ## Sign in on this machine
 

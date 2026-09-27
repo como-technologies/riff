@@ -1,0 +1,16 @@
+[package]
+name = "reqs"
+description = "Requirement IDs of this repository: make a new ID, and check the IDs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+getrandom.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
