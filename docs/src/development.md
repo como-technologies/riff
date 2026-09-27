@@ -34,8 +34,8 @@ just rid
 ```
 
 It prints a new ID of 26 digits and capital letters. Write the new
-requirement as `- **ID** text`, with that ID. Cite it by the same ID in code, tests
-and commits. Two people who add requirements at the same time never get
+requirement as `- **ID** text`, with that ID. Cite it by the same ID
+in code, tests and commits. Two people who add requirements at the same time never get
 the same ID. So nobody has to agree on a number first.
 
 The old IDs `R1` to `R232` stay. Never give a new requirement the next
@@ -48,8 +48,8 @@ just reqs
 ```
 
 It fails when two requirements have the same ID, or when a file cites an
-ID that no requirement has. It warns when a new ID is not a ULID, for
-example the next `R` number.
+ID that no requirement has. It warns when a new ID does not have that
+form, for example the next `R` number.
 
 ## Sign in on this machine
 
