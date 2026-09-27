@@ -112,3 +112,10 @@ Update both machines to the same riff at the same time.
 
 3. The new start of the riff forgets its sessions. Start your Claude
    Code sessions again, on both machines.
+
+4. The new riff is paused. When you want the sessions to work, resume
+   it on either machine:
+
+   ```sh
+   riff resume
+   ```

@@ -35,14 +35,18 @@ riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE
 - What: `lead=true` when you are the lead (see "Questions for your
   user"), and one `claim` part for each work item that you hold.
 
-`who` lists all sessions and shows which are live.
+`whoami` also shows the state of the riff: paused or running (see
+"Pause"). `who` shows the state, lists all sessions and shows which
+are live.
 
 ## Start routine
 
 Do these steps when your session starts:
 
 1. Call `whoami`. Then call `read` with `all` set to true. This reads
-   the history of your repository thread.
+   the history of your repository thread. When the riff is paused, do
+   the steps for a new session in "Pause" and stop here. Go on to step
+   2 only when the riff is running.
 2. Find a free work item: an open issue of the current wave that no
    session holds, or a verify request that no session holds (see
    "Waves" and "Verify finished work"). Take work only from the
@@ -139,11 +143,8 @@ This is the only part of the skill that is special to one forge.
 
 - A wave is a milestone named `Wave N`. A name can follow, for example
   `Wave 5: Cloud`. A work item is an issue in the milestone.
-- A milestone with another name is out of the waves.
-- The backlog is the milestone `Backlog`. It holds the items that we
-  track but do not start. An item in the backlog is not free work: no
-  session starts it. Only the lead moves an item from the backlog into
-  a wave, when its user schedules the item.
+- A milestone with another name, for example `Later`, is out of the
+  waves.
 - An open wave is an open milestone. To end a wave, close its
   milestone. Close it only when it has no open issue.
 
@@ -154,8 +155,6 @@ This is the only part of the skill that is special to one forge.
 | See the open items with no wave | `gh issue list --search no:milestone` |
 | Make a wave | `gh api repos/OWNER/REPO/milestones -f title="Wave 6"` |
 | Put an item in a wave | `gh issue edit 12 --milestone "Wave 3"` |
-| Move an item to the backlog | `gh issue edit 12 --milestone Backlog` |
-| See the items in the backlog | `gh issue list --milestone Backlog` |
 | End a wave | `gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed` |
 
 ## Write acceptance criteria
@@ -300,6 +299,52 @@ ID, the full URI from `who`, or `lead`.
 
 Call `read` with no thread. Then act on what your user wants. When the
 line asks for your status, answer with `status`. See "Status".
+
+## Pause
+
+A riff is `paused` or `running`. `whoami` and `who` show the state. A
+new riff starts paused. Only your user (`riff pause` and `riff resume`
+in a shell) or the lead (the `pause` and `resume` tools) can change
+it. The lead does it only when your user says so. A pause and a resume
+wake each session. While the riff is paused, a claim fails.
+
+### A new session in a paused riff
+
+1. Claim nothing.
+2. Call `tell` with the session `lead`. Say hello, and say that you
+   wait for the resume.
+3. Set your status to `waiting: the riff is paused`.
+4. Wait. The resume wakes you. Then do the start routine from step 2.
+
+When you are the lead, tell your user that the riff is paused. Do not
+resume it until your user says so.
+
+### A session with work
+
+When a pause wakes you:
+
+1. Let a command that runs finish, for example a test run. Do not
+   start a new step.
+2. Commit each change as a WIP commit on the branch of your worktree,
+   and push that branch. Run this in your worktree, never on the
+   default branch:
+
+   ```sh
+   git add -A
+   git diff --cached --quiet || git commit -m "WIP: the riff is paused"
+   git push -u origin HEAD
+   ```
+
+3. Push nothing to the default branch. Between a verify pass and its
+   merge, stop before the push. A verify stops with no result.
+4. Keep your claims, and keep the watch running.
+5. Set your status, for example `paused at: tests of issue-12`.
+6. Wait. Messages still flow: answer a status request with `status`,
+   and a question from the lead with `tell`.
+
+When the resume wakes you, go on from where you stopped. When your
+session ends while the riff is paused, its claim is free. A new
+session can take over the item from the pushed WIP branch.
 
 ## Questions for your user
 

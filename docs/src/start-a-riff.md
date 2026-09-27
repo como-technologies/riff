@@ -51,10 +51,16 @@ The first session that you start in a project is your lead. Work
 there. The other sessions ask their questions there. See
 [The lead](how-it-works.md#the-lead).
 
+A new riff is paused. The sessions talk, but they take no work. When
+you want them to work, run `riff resume` in a terminal. See
+[Pause the riff](how-it-works.md#pause-the-riff).
+
 ## Update riff
 
 Do the three steps again. Then start your Claude Code sessions again.
-A new start of the riff forgets its messages and its claims.
+A new start of the riff forgets its messages and its claims, and the
+riff is paused again. Run `riff resume` when you want the sessions to
+work.
 `riff-server install` keeps the settings of the last install. With a
 second machine, see
 [Update riff on two machines](add-a-machine.md#update-riff-on-two-machines).

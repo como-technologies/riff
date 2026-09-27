@@ -5,7 +5,7 @@
 
 use riff::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Kind, Status};
+use riff_core::wire::{Kind, RiffState, Status};
 
 async fn start_server() -> Api {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -45,6 +45,15 @@ async fn riff() -> Riff {
     // The first session of each user is its lead (R176).
     for me in [&riff.lead, &riff.brett, &riff.a, &riff.b] {
         riff.api.register(me).await.unwrap();
+    }
+    // A new riff is paused. The lead resumes it.
+    riff.api
+        .set_riff(&riff.lead, RiffState::Running)
+        .await
+        .unwrap();
+    riff.api.inbox(&riff.lead, None, false).await.unwrap();
+    for me in [&riff.brett, &riff.a, &riff.b] {
+        riff.api.inbox(me, None, false).await.unwrap();
     }
     riff
 }

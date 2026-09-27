@@ -100,6 +100,10 @@ async fn the_server_refuses_a_known_session_under_a_new_user() {
     let mike = uri("riff://mike@pangolin/como-technologies/riff?session=a1#issue-7");
     let other = uri("riff://sandman@pangolin/como-technologies/riff?session=a1");
     api.register(&mike).await.unwrap();
+    // The first session of mike is its lead, so it can resume the riff.
+    api.set_riff(&mike, riff_core::wire::RiffState::Running)
+        .await
+        .unwrap();
     assert!(api.claim(&mike, &thread, "issue-7").await.unwrap().granted);
 
     let error = api.register(&other).await.unwrap_err().to_string();

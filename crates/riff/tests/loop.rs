@@ -149,6 +149,12 @@ async fn a_moved_session_keeps_its_watch() {
 async fn a_claim_blocks_a_second_session_and_is_addressable() {
     let api = start_server().await;
     let (mike, brett, thread) = (mike(), brett(), repo());
+    let person = "riff://mike@pangolin/como-technologies/riff"
+        .parse()
+        .unwrap();
+    api.set_riff(&person, riff_core::wire::RiffState::Running)
+        .await
+        .unwrap();
 
     assert!(api.claim(&mike, &thread, "issue-12").await.unwrap().granted);
     let reply = api.claim(&brett, &thread, "issue-12").await.unwrap();

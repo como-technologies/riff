@@ -9,6 +9,7 @@
 //! | Read cursors | who and thread | The last sequence number that the session read. |
 //! | Claims | thread and item | The session that holds the item. |
 //! | Leads | user and repository thread | The lead session of the user. |
+//! | Riff state | none: one for the server | Paused or running. |
 //!
 //! The server keys each session by its [`Who`]: the user and the session
 //! ID. It builds the [`SessionUri`] of a session from the who, the place
@@ -71,14 +72,19 @@
 //! - A lead counts while it holds, as a claim does, and while it works
 //!   in that repository. A lead that leaves the repository thread stops
 //!   being the lead (R178).
+//! - The riff is paused or running. A new state is paused.
+//!   [`State::riff`] reads it, and sets it for a person or a lead
+//!   (01M3JCFTWCR72HQB8CBTQKXJNF, 01M3JCG3T8AJZN31SZQQTP3FAF).
+//! - While the riff is paused, a claim fails. A held claim stays, and a
+//!   release works (01M3JCG3WBHDF0ZWM06XV94ZDC).
 //!
 //! The state does no I/O and reads no clock. The caller passes `now`.
 //!
 //! # Saved state
 //!
 //! The state is a set of objects (R124): one [`Object::Sessions`] with
-//! the sessions, their places, statuses, read cursors, claims and
-//! leads, and one
+//! the sessions, their places, statuses, read cursors, claims, leads
+//! and the riff state, and one
 //! [`Object::Thread`] for each thread, with its members and messages.
 //! [`crate::store`] names the objects in a store.
 //!
@@ -108,7 +114,7 @@
 //! ```
 //! use std::time::Instant;
 //! use riff_core::name::SessionUri;
-//! use riff_core::wire::Post;
+//! use riff_core::wire::{Post, RiffState};
 //! use riff_server::state::State;
 //!
 //! let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?;
@@ -118,6 +124,9 @@
 //! state.register(&mike, now);
 //! state.register(&brett, now);
 //! let thread = mike.default_thread();
+//!
+//! // A new riff is paused. Mike's session is the lead, so it resumes it.
+//! state.riff(&mike, Some(RiffState::Running), now).unwrap();
 //!
 //! // A post without an address wakes nobody, whatever its text.
 //! let quiet = Post::new(&mike, thread.clone(), vec![], "@brett ready");
@@ -145,8 +154,8 @@ use std::time::{Duration, Instant};
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ClaimReply, Keys, LeadReply, Message, Post, SessionInfo, Status, StatusInfo, Tailed,
-    ThreadInfo, Wake,
+    ClaimReply, Keys, LeadReply, Message, Post, RiffReply, RiffState, SessionInfo, Status,
+    StatusInfo, Tailed, ThreadInfo, Wake,
 };
 use serde::{Deserialize, Serialize};
 
@@ -173,6 +182,8 @@ pub struct State {
     claims: BTreeMap<(ThreadName, String), Who>,
     /// The lead of each user in each repository thread (R175).
     leads: BTreeMap<(String, ThreadName), Who>,
+    /// The state of the riff. A new riff is paused.
+    riff: RiffState,
     /// Each object that changed since the last [`State::changes`].
     changed: BTreeSet<Object>,
 }
@@ -330,6 +341,9 @@ struct SavedSessions {
     claims: Vec<SavedClaim>,
     #[serde(default)]
     leads: Vec<SavedLead>,
+    /// A saved state from before the riff state loads as paused.
+    #[serde(default)]
+    riff: RiffState,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -431,7 +445,10 @@ impl State {
         };
         let expiry = u64::try_from(SESSION_EXPIRY.as_millis()).unwrap_or(u64::MAX);
         let grace = u64::try_from(CLAIM_GRACE.as_millis()).unwrap_or(u64::MAX);
-        let mut state = State::default();
+        let mut state = State {
+            riff: saved.riff,
+            ..State::default()
+        };
         let mut lapsed = BTreeSet::new();
         let gone = u64::try_from(GONE.as_millis()).unwrap_or(u64::MAX);
         for s in saved.sessions {
@@ -636,6 +653,7 @@ impl State {
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::RiffState;
     /// use riff_server::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
@@ -643,6 +661,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&mike, now);
+    /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
     /// let thread = mike.default_thread().unwrap();
     /// state.claim(&mike, &thread, "issue-12", now).unwrap();
     ///
@@ -759,6 +778,58 @@ impl State {
         Ok(LeadReply {
             lead: self.uri(&who, now),
             replaced: old.map(|old| self.uri(&old, now)),
+        })
+    }
+
+    /// The state of the riff. With `set`, it sets the state first. Only
+    /// a person (`me` with no session ID) or a lead can set it
+    /// (01M3JCG3T8AJZN31SZQQTP3FAF).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::RiffState;
+    /// use riff_server::state::State;
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
+    /// let other: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b2#api".parse()?;
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.register(&other, now);
+    /// assert_eq!(state.riff(&other, None, now).unwrap().state, RiffState::Paused);
+    ///
+    /// assert!(state.riff(&other, Some(RiffState::Running), now).is_err());
+    /// assert!(state.riff(&lead, Some(RiffState::Running), now).unwrap().changed);
+    /// let again = state.riff(&mike, Some(RiffState::Running), now).unwrap();
+    /// assert!(!again.changed);
+    /// assert_eq!(again.state, RiffState::Running);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn riff(
+        &mut self,
+        me: &SessionUri,
+        set: Option<RiffState>,
+        now: Instant,
+    ) -> Result<RiffReply, String> {
+        let who = self.arrive(me, now);
+        let Some(set) = set else {
+            return Ok(RiffReply {
+                state: self.riff,
+                changed: false,
+            });
+        };
+        if who.session().is_some() && !self.is_lead(&who, now) {
+            return Err(format!(
+                "only your user or the lead can make the riff {set}. Tell the lead."
+            ));
+        }
+        let changed = self.riff != set;
+        self.riff = set;
+        Ok(RiffReply {
+            state: set,
+            changed,
         })
     }
 
@@ -992,6 +1063,12 @@ impl State {
     ) -> Result<ClaimReply, String> {
         check("claim", item).map_err(|e| e.to_string())?;
         let who = self.arrive(me, now);
+        if self.riff == RiffState::Paused {
+            return Err(format!(
+                "the riff is paused, so nobody claims {item}. Wait until your user or \
+                 the lead resumes it."
+            ));
+        }
         let key = (thread.clone(), item.to_owned());
         if let Some(holder) = self.claims.get(&key)
             && *holder != who
@@ -1183,6 +1260,7 @@ impl State {
             cursors,
             claims,
             leads,
+            riff: self.riff,
         }
     }
 
@@ -1247,11 +1325,13 @@ mod tests {
         thread("como-technologies/riff")
     }
 
+    /// Three sessions in a running riff.
     fn setup(now: Instant) -> State {
         let mut state = State::default();
         for n in [api(), tests(), docs()] {
             state.register(&n, now);
         }
+        state.riff(&api(), Some(RiffState::Running), now).unwrap();
         state
     }
 

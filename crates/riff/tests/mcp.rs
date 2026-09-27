@@ -69,8 +69,8 @@ async fn the_tools_carry_a_conversation() {
     assert_eq!(
         names,
         [
-            "claim", "join", "lead", "leave", "move", "post", "read", "release", "status", "tell",
-            "threads", "who", "whoami"
+            "claim", "join", "lead", "leave", "move", "pause", "post", "read", "release", "resume",
+            "status", "tell", "threads", "who", "whoami"
         ]
     );
 
@@ -137,6 +137,21 @@ async fn the_tools_carry_a_conversation() {
     let (again, _) = call(&brett, "read", serde_json::json!({})).await;
     assert_eq!(again, "No unread messages.");
 
+    // A new riff is paused. Brett's session is the lead of brett, so it
+    // can resume it; the state is one for the whole riff.
+    let (refused, is_error) = call(&mike, "claim", serde_json::json!({ "item": "issue-12" })).await;
+    assert!(is_error, "{refused}");
+    assert!(refused.contains("the riff is paused"), "{refused}");
+    let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
+    assert!(me.ends_with("The riff is paused. Nobody claims work. Your user or the lead resumes it with `riff resume`."), "{me}");
+    let (resumed, _) = call(&brett, "resume", serde_json::json!({})).await;
+    assert_eq!(
+        resumed,
+        "The riff is running now. Woke mike@pangolin:riff#api (a1)."
+    );
+    let (who, _) = call(&mike, "who", serde_json::json!({})).await;
+    assert!(who.starts_with("The riff is running.\n"), "{who}");
+
     let (claimed, _) = call(&mike, "claim", serde_json::json!({ "item": "issue-12" })).await;
     assert_eq!(claimed, "You hold issue-12 in como-technologies/riff.");
     let (blocked, _) = call(&brett, "claim", serde_json::json!({ "item": "issue-12" })).await;
@@ -163,7 +178,7 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
 
     // The first session is the lead with no action. The others are not.
     let (me, _) = call(&first, "whoami", serde_json::json!({})).await;
-    assert!(me.ends_with(MIKE_LEAD), "{me}");
+    assert!(me.contains(&format!("\n{MIKE_LEAD}\n")), "{me}");
     for session in [&worker, &third] {
         let (me, _) = call(session, "whoami", serde_json::json!({})).await;
         assert!(!me.contains("lead=true"), "{me}");
@@ -255,6 +270,7 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
 async fn move_changes_the_place_and_keeps_the_claims() {
     let api = start_server().await;
     let mike = connect(&api, MIKE).await;
+    call(&mike, "resume", serde_json::json!({})).await;
     call(&mike, "claim", serde_json::json!({ "item": "issue-6" })).await;
 
     let dir = tempfile::tempdir().unwrap();

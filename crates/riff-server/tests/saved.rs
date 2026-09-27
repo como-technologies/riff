@@ -40,6 +40,9 @@ async fn a_new_server_on_the_same_store_has_the_same_state() {
     let (old, base) = common::start_on(Arc::new(store.clone())).await;
     call(&base, "register", json!({ "me": MIKE })).await;
     call(&base, "register", json!({ "me": BRETT })).await;
+    // A new riff is paused. Mike, a person, resumes it.
+    let mike = "riff://mike@pangolin/como-technologies/riff";
+    call(&base, "riff", json!({ "me": mike, "state": "running" })).await;
     let to_brett = json!([{ "user": "brett" }]);
     let post = json!({ "me": MIKE, "thread": "design", "to": to_brett, "body": "look" });
     call(&base, "post", post).await;
@@ -63,7 +66,9 @@ async fn a_new_server_on_the_same_store_has_the_same_state() {
     // Brett read the repository thread before the restart.
     let read = call(&base, "read", json!({ "me": BRETT, "thread": REPO })).await;
     assert_eq!(read["messages"], json!([]));
-    // Brett still holds the claim.
+    // The riff still runs, and Brett still holds the claim.
+    let state = call(&base, "riff", json!({ "me": MIKE })).await;
+    assert_eq!(state["state"], "running");
     let claim = json!({ "me": MIKE, "thread": REPO, "item": "issue-6" });
     let reply = call(&base, "claim", claim).await;
     assert_eq!(reply["granted"], false);

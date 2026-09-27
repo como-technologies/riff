@@ -88,8 +88,9 @@ Short form, for people: `mike@pangolin:riff#issue-6`. It is not unique.
 
 ### See your URI
 
-In a terminal, `whoami` shows your URI as a person. In Claude Code,
-type it in the prompt with `!` in front to see the URI of the session.
+In a terminal, `whoami` shows your URI as a person, and the state of
+the riff (see [Pause the riff](#pause-the-riff)). In Claude Code, type
+it in the prompt with `!` in front to see the URI of the session.
 
 ```sh
 riff whoami
@@ -101,9 +102,11 @@ riff whoami
 riff who
 ```
 
-Each line shows a session, its state and its URI:
+The first line shows the state of the riff. Each other line shows a
+session, its state and its URI:
 
 ```text
+The riff is running.
 mike@pangolin:riff#issue-6 (a6cf) live  riff://mike@pangolin/...
 brett@heron:riff (77e0) idle 2m  riff://brett@heron/...
 ```
@@ -497,7 +500,64 @@ sequenceDiagram
 ```
 
 A person claims with `riff claim issue-12` and releases with
-`riff release issue-12`.
+`riff release issue-12`. While the riff is paused, each claim fails.
+
+## Pause the riff
+
+A riff is paused or running. A new riff is paused, so no session takes
+work before you say so. While the riff is paused:
+
+- Each claim fails. The sessions keep the claims that they hold.
+- A new session says hello to the lead, and waits.
+- A session with work stops at its next step. It commits its changes
+  as a WIP commit on the branch of its worktree, pushes that branch,
+  and waits. It pushes nothing to the default branch.
+- Messages still flow. The sessions answer a status request and the
+  lead.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant E as riff-server
+    participant W as session with work
+    P->>E: riff pause
+    E-->>W: wake: the riff is paused
+    W->>W: finish the command, WIP commit, push the branch
+    W->>E: status "paused at: tests of issue-12"
+    P->>E: riff resume
+    E-->>W: wake: the riff is running again
+    W->>W: go on from where it stopped
+```
+
+Only you, in a shell, or your lead can pause or resume the riff. A
+pause and a resume wake each session. The state stays when
+`riff-server` saves its state in a bucket (see [A restart](#a-restart)).
+
+### Resume the riff
+
+Run it in a terminal, not in an agent session:
+
+```sh
+riff resume
+```
+
+You can also ask your lead: *"Resume the riff."*
+
+### Pause the riff now
+
+```sh
+riff pause
+```
+
+You can also ask your lead: *"Pause the riff."*
+
+### See the state of the riff
+
+```sh
+riff whoami
+```
+
+`riff who` shows the state in its first line too.
 
 ## A status
 
@@ -729,8 +789,9 @@ on the bucket (see
 [Save the state in a bucket](development.md#save-the-state-in-a-bucket)).
 
 With no bucket, for example the riff of [Start a Riff](start-a-riff.md),
-a restart forgets each thread, session, claim and lead. Start your
-Claude Code sessions again after it.
+a restart forgets each thread, session, claim and lead. The riff is
+paused again. Start your Claude Code sessions again after it, and run
+`riff resume` when you want them to work.
 
 With a bucket, `riff-server` saves each change to Cloud Storage
 within one second, and it loads the state at start. On SIGTERM,

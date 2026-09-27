@@ -124,9 +124,9 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Keys, Lead, LeadReply,
-    Membership, Post, Posted, Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked,
-    ServerMetadata, SetStatus, SignInConfig, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply,
-    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Membership, Post, Posted, Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, Riff,
+    RiffReply, ServerMetadata, SetStatus, SignInConfig, TOKEN_EXCHANGE, Tailed, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -653,6 +653,7 @@ impl Service {
             .route("/v1/claim", post(claim))
             .route("/v1/release", post(release))
             .route("/v1/lead", post(lead))
+            .route("/v1/riff", post(riff))
             .route("/v1/status", post(status))
             .route("/v1/alive", post(alive))
             .route("/v1/end", post(end))
@@ -861,6 +862,19 @@ async fn lead(
     let reply = acts_as(&s, caller, &r.me)?
         .lead(&r.me, Instant::now())
         .map_err(bad_request)?;
+    Ok(Json(reply))
+}
+
+/// Reads the state of the riff, or sets it for a person or a lead
+/// (01M3JCG3T8AJZN31SZQQTP3FAF). A refused set gets 403.
+async fn riff(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Riff>,
+) -> Reply<RiffReply> {
+    let reply = acts_as(&s, caller, &r.me)?
+        .riff(&r.me, r.state, Instant::now())
+        .map_err(|message| (StatusCode::FORBIDDEN, message))?;
     Ok(Json(reply))
 }
 

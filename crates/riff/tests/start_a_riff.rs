@@ -97,7 +97,8 @@ fn a_second_machine_installs_riff_names_the_first_and_connects() {
             "riff who",
             "riff logout",
             "riff connect claude",
-            "riff connect claude"
+            "riff connect claude",
+            "riff resume"
         ]
     );
     each_is_real(&riff);

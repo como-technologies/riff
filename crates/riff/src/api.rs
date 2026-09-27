@@ -54,9 +54,9 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Alive, Claim, ClaimReply, End, Keys, Kind, Lead, LeadReply, Membership, Message, Post, Posted,
-    Read, ReadReply, Register, Revoke, Revoked, SessionInfo, SetStatus, SignInConfig, Status,
-    Tailed, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake,
-    WhoReply, WhoRequest,
+    Read, ReadReply, Register, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetStatus,
+    SignInConfig, Status, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply,
+    TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -546,6 +546,58 @@ impl Api {
     /// the old lead (R177).
     pub async fn lead(&self, me: &SessionUri) -> Result<LeadReply> {
         self.call("lead", &Lead { me: me.clone() }).await
+    }
+
+    /// The state of the riff (01M3JCFTWCR72HQB8CBTQKXJNF).
+    pub async fn riff(&self, me: &SessionUri) -> Result<RiffState> {
+        let request = Riff {
+            me: me.clone(),
+            state: None,
+        };
+        let reply: RiffReply = self.call("riff", &request).await?;
+        Ok(reply.state)
+    }
+
+    /// Pauses or resumes the riff. Only a person or a lead can
+    /// (01M3JCG3T8AJZN31SZQQTP3FAF). When the state changes, it wakes
+    /// each session that is not gone: it posts [`text::riff_news`] to
+    /// the thread of each repository of such a session, to that
+    /// repository
+    /// (01M3JCG3YD7C2Y3V0QJPF082YH).
+    pub async fn set_riff(
+        &self,
+        me: &SessionUri,
+        state: RiffState,
+    ) -> Result<(RiffReply, Vec<Posted>)> {
+        let request = Riff {
+            me: me.clone(),
+            state: Some(state),
+        };
+        let reply: RiffReply = self.call("riff", &request).await?;
+        let mut posted = Vec::new();
+        if !reply.changed {
+            return Ok((reply, posted));
+        }
+        let mut repos: Vec<ThreadName> = self
+            .who(me, false)
+            .await?
+            .into_iter()
+            .filter_map(|s| s.uri.default_thread())
+            .collect();
+        repos.sort();
+        repos.dedup();
+        let body = text::riff_news(state);
+        for repo in repos {
+            let to = Selector {
+                repo: Some(repo.to_string()),
+                ..Selector::default()
+            };
+            posted.push(
+                self.post(me, Some(&repo), &[to], &body, Kind::Message)
+                    .await?,
+            );
+        }
+        Ok((reply, posted))
     }
 
     /// The wakes for one session, on one connection. The session is

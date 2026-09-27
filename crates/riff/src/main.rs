@@ -12,7 +12,7 @@ use riff::terminal::{Program, Terminal, Tmux};
 use riff::{hook, identity, local, login, mcp, plugin, terminal, text};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, Status};
+use riff_core::wire::{Kind, RiffState, Status};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
@@ -33,10 +33,11 @@ struct Cli {
 enum Command {
     /// Sign in with the provider of riff-server. It opens the browser.
     Login,
-    /// Show your URI. Inside Claude Code, it is the URI of the session.
+    /// Show your URI and the state of the riff. Inside Claude Code, it
+    /// is the URI of the session.
     Whoami,
-    /// List the sessions in the riff. A session that ended, or stopped
-    /// for 3 minutes, is gone and not listed.
+    /// Show the state of the riff and list its sessions. A session that
+    /// ended, or stopped for 3 minutes, is gone and not listed.
     Who {
         /// List gone sessions too.
         #[arg(long)]
@@ -122,6 +123,12 @@ enum Command {
     /// replaces the old lead. Run it in the agent session, for example
     /// `! riff lead` in Claude Code.
     Lead,
+    /// Pause the riff. Each session stops at its next step and waits.
+    /// Nobody claims work. Only you in a shell, or the lead, can pause.
+    Pause,
+    /// Resume the riff. Each session goes on from where it stopped.
+    /// A new riff starts paused, so resume it to start the work.
+    Resume,
     /// Print one line each time a post wakes this session. One watch
     /// runs for each session: a second one stops at once.
     Watch {
@@ -204,7 +211,7 @@ async fn main() -> Result<()> {
         event: HookEvent::SessionStart,
     } = cli.command
     {
-        println!("{}", session_start());
+        println!("{}", session_start(&cli.server).await);
         return Ok(());
     }
     if let Command::Hook {
@@ -255,8 +262,19 @@ async fn main() -> Result<()> {
     let me = identity::me(&here, api.base())?;
     let api = api.signed_in(me.who().session())?;
     match cli.command {
-        Command::Whoami => println!("{}  {me}", text::name(&me)),
-        Command::Who { all } => print!("{}", text::who(&api.who(&me, all).await?, &me)),
+        Command::Whoami => {
+            println!("{}  {me}", text::name(&me));
+            match api.riff(&me).await {
+                Ok(state) => println!("{}", text::riff_state(state)),
+                Err(e) => eprintln!("riff: cannot read the state of the riff: {e:#}"),
+            }
+        }
+        Command::Who { all } => {
+            println!("{}", text::riff_state(api.riff(&me).await?));
+            print!("{}", text::who(&api.who(&me, all).await?, &me));
+        }
+        Command::Pause => pause(&api, &me, RiffState::Paused).await?,
+        Command::Resume => pause(&api, &me, RiffState::Running).await?,
         Command::Post {
             thread,
             to,
@@ -384,6 +402,14 @@ async fn tail_beside_lead(api: &Api, me: &SessionUri) {
 const REGISTER_TRIES: u32 = 10;
 const REGISTER_WAIT: Duration = Duration::from_millis(200);
 
+/// Pauses or resumes the riff, and wakes each session
+/// (01M3JCG3T8AJZN31SZQQTP3FAF, 01M3JCG3YD7C2Y3V0QJPF082YH).
+async fn pause(api: &Api, me: &SessionUri, state: RiffState) -> Result<()> {
+    let (reply, posted) = api.set_riff(me, state).await?;
+    println!("{}", text::riff_set(&reply, &posted));
+    Ok(())
+}
+
 fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> {
     match given {
         Some(t) => Ok(t.parse()?),
@@ -394,22 +420,48 @@ fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> 
 }
 
 /// The SessionStart hook output. It has no URI when riff cannot find the
-/// session, but it always has the context (R69).
-fn session_start() -> String {
+/// session, and no riff state when it cannot read it in
+/// [`hook::STATE_WAIT`], but it always has the context (R69).
+async fn session_start(server: &str) -> String {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
     let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
     let id = identity::agent_session(input.session_id);
+    let api = Api::new(server);
     let uri = id.as_deref().and_then(|id| {
         let here = identity::place(&std::env::current_dir().ok()?).ok()?;
-        let server = std::env::var("RIFF_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.into());
-        identity::agent(&here, id, Api::new(&server).base()).ok()
+        identity::agent(&here, id, api.base()).ok()
     });
+    let (uri, riff) = match uri {
+        Some(uri) => match tokio::time::timeout(hook::STATE_WAIT, start_facts(api, &uri)).await {
+            Ok(Ok((lead, riff))) => (Some(uri.with_lead(lead)), Some(riff)),
+            _ => (Some(uri), None),
+        },
+        None => (None, None),
+    };
     let watching = id
         .as_deref()
         .zip(local::dir())
         .is_some_and(|(id, dir)| local::watching(&dir, id));
-    hook::start_output(&hook::start_context(uri.as_ref(), input.source, watching))
+    hook::start_output(&hook::start_context(
+        uri.as_ref(),
+        input.source,
+        watching,
+        riff,
+    ))
+}
+
+/// Whether the server names `me` as the lead, and the state of the
+/// riff (01M3JCG48QPCNNTKW34FTR0AMR).
+async fn start_facts(api: Api, me: &SessionUri) -> Result<(bool, RiffState)> {
+    let api = api.signed_in(me.who().session())?;
+    let riff = api.riff(me).await?;
+    let lead = api
+        .who(me, false)
+        .await?
+        .iter()
+        .any(|s| s.uri.who() == me.who() && s.uri.lead());
+    Ok((lead, riff))
 }
 
 /// The SessionEnd hook: the end call for the session (R205). It never

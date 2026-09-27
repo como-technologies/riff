@@ -16,6 +16,7 @@
 //! | `claim` | [`Claim`] | [`ClaimReply`] |
 //! | `release` | [`Claim`] | `null` |
 //! | `lead` | [`Lead`] | [`LeadReply`] |
+//! | `riff` | [`Riff`] | [`RiffReply`] |
 //! | `status` | [`SetStatus`] | `null` |
 //! | `alive` | [`Alive`] | `null` |
 //! | `end` | [`End`] | `null` |
@@ -511,6 +512,53 @@ pub struct LeadReply {
     /// The old lead, when another session was the lead.
     #[serde(default)]
     pub replaced: Option<SessionUri>,
+}
+
+/// `POST /v1/riff`: reads the state of the riff. With a `state`, it
+/// sets it. Only a person (a `me` with no session ID) or a lead can set
+/// it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Riff {
+    pub me: SessionUri,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<RiffState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RiffReply {
+    /// The state now.
+    pub state: RiffState,
+    /// True when the call changed the state.
+    #[serde(default)]
+    pub changed: bool,
+}
+
+/// The state of a riff. A new riff is paused.
+///
+/// ```
+/// use riff_core::wire::RiffState;
+///
+/// assert_eq!(RiffState::default(), RiffState::Paused);
+/// assert_eq!(serde_json::to_string(&RiffState::Running).unwrap(), r#""running""#);
+/// assert_eq!(RiffState::Running.to_string(), "running");
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RiffState {
+    /// The sessions stop at their next step and wait. Nobody claims.
+    #[default]
+    Paused,
+    /// The sessions pick and do work.
+    Running,
+}
+
+impl std::fmt::Display for RiffState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RiffState::Paused => "paused",
+            RiffState::Running => "running",
+        })
+    }
 }
 
 /// An event on `GET /v1/watch?uri=…`: a message addressed to the

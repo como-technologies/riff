@@ -184,16 +184,51 @@
 - **R223** On GitHub, a wave is a milestone named `Wave N`. A name can
   follow, for example `Wave 5: Cloud`. A work item is an issue in the
   milestone. A milestone with another name is out of the waves.
-- **01M3JD8WWMK2ZQTFER4TJFV37V** On GitHub, the backlog is the
-  milestone `Backlog`. It is out of the waves. An item in the backlog
-  is not free work: no session starts it. Only the lead moves an item
-  from the backlog into a wave, when its user schedules the item.
 - **R224** On GitHub, an open wave is an open milestone. The lead ends
   a wave: it closes the milestone. It closes a milestone only when the
   milestone has no open issue.
 - **R225** The skill gives the `gh` command for each step of the
   waves: see the open waves, see the items of a wave, see the items
   with no wave, make a wave, put an item in a wave and end a wave.
+
+## Pause
+
+- **01M3JCFTWCR72HQB8CBTQKXJNF** A riff is paused or running. The
+  state is one for each `riff-server`. The server saves it, so it stays
+  when the sessions and the server restart. A new riff starts paused.
+  A saved state from before this rule loads as paused.
+- **01M3JCG3T8AJZN31SZQQTP3FAF** Only a person (a call with no session
+  ID, for example `riff pause` in a shell) or a lead can pause or
+  resume the riff. A call from another session fails.
+- **01M3JCG3WBHDF0ZWM06XV94ZDC** While the riff is paused, a claim
+  fails. The sessions keep the claims that they hold. A release still
+  works.
+- **01M3JCG3YD7C2Y3V0QJPF082YH** A pause or a resume that changes the
+  state wakes each session of the riff that is not gone: the client
+  posts to the thread of each repository of such a session, to that
+  repository.
+- **01M3JCG40FN0DP135EHHF403TY** While the riff is paused, a new
+  session says hello to the lead, sets its status to waiting, and
+  claims nothing.
+- **01M3JCG42FYS8FJ0V6WK89KXAP** While the riff is paused, a session
+  with work stops at its next step. A command that runs finishes
+  first. The session commits each change as a WIP commit on the branch
+  of its worktree, pushes that branch, sets its status, and waits.
+  Nothing goes to the default branch: a session between a verify pass
+  and its merge stops before the push, and a verify stops with no
+  result.
+- **01M3JCG44JKRVY8T4TZMB5PXNF** While the riff is paused, messages
+  still flow. A session answers a status request and a question from
+  the lead. The watch runs, so the session stays live.
+- **01M3JCG46KKK97VD00KQ4DW6HK** When the riff resumes, each session
+  goes on from where it stopped. A new session follows the start
+  routine.
+- **01M3JCG48QPCNNTKW34FTR0AMR** The start hook and the skill tell a
+  session the state of the riff. They tell it to pick a free item only
+  when the riff is running. When the hook cannot read the state, it
+  tells the session to call `whoami`.
+- **01M3JCG4AV80MHFP73CWDY5E3M** `riff who`, `riff whoami` and the
+  `whoami` tool show the state of the riff.
 
 ## Service
 

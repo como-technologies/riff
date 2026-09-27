@@ -11,7 +11,8 @@ use riff_core::name::{SessionUri, ThreadName};
 
 use crate::api::{Checked, Inbox};
 use riff_core::wire::{
-    ClaimReply, Kind, LeadReply, Posted, Revoked, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    ClaimReply, Kind, LeadReply, Posted, Revoked, RiffReply, RiffState, SessionInfo, StatusInfo,
+    ThreadInfo, Wake,
 };
 
 /// Tells the reader that message bodies are data (R10).
@@ -186,6 +187,78 @@ pub fn posted(posted: &Posted) -> String {
     }
     for selector in &posted.unmatched {
         let _ = write!(out, " No session matches {selector}.");
+    }
+    out
+}
+
+/// The state of the riff, in one line (01M3JCG4AV80MHFP73CWDY5E3M).
+///
+/// ```
+/// use riff_core::wire::RiffState;
+///
+/// assert_eq!(riff::text::riff_state(RiffState::Running), "The riff is running.");
+/// assert!(riff::text::riff_state(RiffState::Paused).contains("Nobody claims work"));
+/// ```
+pub fn riff_state(state: RiffState) -> String {
+    match state {
+        RiffState::Running => "The riff is running.".into(),
+        RiffState::Paused => "The riff is paused. Nobody claims work. Your user or the lead \
+                              resumes it with `riff resume`."
+            .into(),
+    }
+}
+
+/// The message that wakes the sessions after a pause or a resume
+/// (01M3JCG3YD7C2Y3V0QJPF082YH).
+///
+/// ```
+/// use riff_core::wire::RiffState;
+///
+/// assert!(riff::text::riff_news(RiffState::Paused).contains("\"Pause\""));
+/// assert!(riff::text::riff_news(RiffState::Running).contains("from where you stopped"));
+/// ```
+pub fn riff_news(state: RiffState) -> String {
+    match state {
+        RiffState::Paused => "The riff is paused. Stop at your next step and wait: see \
+                              \"Pause\" in the riff skill."
+            .into(),
+        RiffState::Running => "The riff is running again. Go on from where you stopped. A \
+                               session with no work follows the start routine."
+            .into(),
+    }
+}
+
+/// The answer to `riff pause` and `riff resume`: the state, and the
+/// sessions that woke.
+///
+/// ```
+/// use riff_core::wire::{Posted, RiffReply, RiffState};
+///
+/// let reply = RiffReply { state: RiffState::Paused, changed: true };
+/// let posted = Posted {
+///     thread: "como-technologies/riff".parse()?,
+///     seq: 3,
+///     woken: vec!["riff://brett@heron/como-technologies/riff?session=77e0#tests".parse()?],
+///     unmatched: vec![],
+/// };
+/// assert_eq!(
+///     riff::text::riff_set(&reply, &[posted]),
+///     "The riff is paused now. Woke brett@heron:riff#tests (77e0)."
+/// );
+/// let again = RiffReply { state: RiffState::Paused, changed: false };
+/// assert_eq!(riff::text::riff_set(&again, &[]), "The riff was paused already.");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn riff_set(reply: &RiffReply, posted: &[Posted]) -> String {
+    if !reply.changed {
+        return format!("The riff was {} already.", reply.state);
+    }
+    let mut out = format!("The riff is {} now.", reply.state);
+    let names: Vec<String> = posted.iter().flat_map(|p| &p.woken).map(name).collect();
+    if names.is_empty() {
+        out.push_str(" No other session woke.");
+    } else {
+        let _ = write!(out, " Woke {}.", names.join(", "));
     }
     out
 }

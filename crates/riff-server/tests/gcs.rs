@@ -316,6 +316,8 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     let (old, base) = common::start_on(Arc::new(store(&url))).await;
     call(&base, "register", json!({ "me": mike })).await;
     call(&base, "register", json!({ "me": brett })).await;
+    // Mike's session is the lead: it resumes the new riff.
+    call(&base, "riff", json!({ "me": mike, "state": "running" })).await;
     let post = json!({ "me": mike, "thread": repo, "body": "saved" });
     call(&base, "post", post).await;
     let claim = json!({ "me": brett, "thread": repo, "item": "issue-44" });
@@ -327,6 +329,8 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
 
     let (_new, base) = common::start_on(Arc::new(store(&url))).await;
     assert_eq!(uris(call(&base, "who", json!({ "me": mike })).await), who);
+    let state = call(&base, "riff", json!({ "me": mike })).await;
+    assert_eq!(state["state"], "running", "the riff state stays");
     let read = call(&base, "read", json!({ "me": brett, "thread": repo })).await;
     assert_eq!(read["messages"][0]["body"], "saved");
     let claim = json!({ "me": mike, "thread": repo, "item": "issue-44" });

@@ -101,6 +101,14 @@ async fn session(api: &Api, id: &str) -> SessionUri {
         .uri
 }
 
+/// Resumes the new riff as the person mike.
+async fn resume(api: &Api) {
+    let mike = uri("riff://mike@pangolin/como-technologies/riff");
+    api.set_riff(&mike, riff_core::wire::RiffState::Running)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn a_session_leaves_when_the_stdin_of_riff_mcp_closes() {
     let api = start_server().await;
@@ -110,6 +118,7 @@ async fn a_session_leaves_when_the_stdin_of_riff_mcp_closes() {
     let me = session(&api, "e1").await;
     let thread = me.default_thread().unwrap_or_else(repo);
     api.register(&brett()).await.unwrap();
+    resume(&api).await;
     assert!(api.claim(&me, &thread, "issue-12").await.unwrap().granted);
 
     drop(child.stdin.take());
@@ -142,6 +151,7 @@ async fn the_end_hook_ends_the_session_but_not_after_clear() {
     let run = tempfile::tempdir().unwrap();
     let me = uri("riff://mike@pangolin/como-technologies/riff?session=e3");
     api.register(&me).await.unwrap();
+    resume(&api).await;
     api.claim(&me, &repo(), "issue-7").await.unwrap();
 
     end_hook(&api, run.path(), r#"{"session_id":"e3","reason":"clear"}"#).await;

@@ -48,6 +48,16 @@
 //! | `clear` | Keeps its riff session ID and its claims (R168). Follows the start routine. |
 //! | `compact` | Continues. |
 //!
+//! The context also depends on the state of the riff
+//! (01M3JCG48QPCNNTKW34FTR0AMR). The hook reads it from the server, and
+//! waits at most [`STATE_WAIT`]:
+//!
+//! | State | A new session (`startup`, `clear`) | A session that continues |
+//! |---|---|---|
+//! | running | Picks a free item. | Continues. |
+//! | paused | Claims nothing, says hello to the lead, sets its status to waiting. The lead tells its user. | Stops at its next step. |
+//! | not known | Calls `whoami`, then acts on the state. | Continues. |
+//!
 //! The watch does not depend on the source. A watch that runs holds a
 //! lock (R169, see [`crate::local`]). When the lock is held, the
 //! context tells the session to keep that watch. Else it tells the
@@ -63,7 +73,7 @@
 //!
 //! let input: StartInput = serde_json::from_str(r#"{"session_id":"a6cf","source":"clear"}"#)?;
 //! assert_eq!(input.source, Source::Clear);
-//! let context = riff::hook::start_context(None, input.source, true);
+//! let context = riff::hook::start_context(None, input.source, true, None);
 //! assert!(context.contains("claims stay"));
 //! assert!(context.contains("Keep it."));
 //! assert!(!context.contains("TaskStop"));
@@ -73,7 +83,11 @@
 use std::fmt::Write;
 
 use riff_core::name::SessionUri;
+use riff_core::wire::RiffState;
 use serde::Deserialize;
+
+/// The longest wait of the start hook for the state of the riff.
+pub const STATE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The part of the SessionEnd hook input that riff uses.
 ///
@@ -139,7 +153,24 @@ pub struct StartInput {
 
 /// The context that the start hook adds. `uri` is the session, when the
 /// hook found it. `watching` is true when a watch runs for the session.
-pub fn start_context(uri: Option<&SessionUri>, source: Source, watching: bool) -> String {
+/// `riff` is the state of the riff, when the hook could read it.
+///
+/// ```
+/// use riff::hook::{Source, start_context};
+/// use riff_core::wire::RiffState;
+///
+/// let paused = start_context(None, Source::Startup, false, Some(RiffState::Paused));
+/// assert!(paused.contains("The riff is paused. Claim nothing."));
+/// assert!(!paused.contains("Pick a free item"));
+/// let running = start_context(None, Source::Startup, false, Some(RiffState::Running));
+/// assert!(running.contains("Pick a free item yourself"));
+/// ```
+pub fn start_context(
+    uri: Option<&SessionUri>,
+    source: Source,
+    watching: bool,
+    riff: Option<RiffState>,
+) -> String {
     let mut out = String::from("riff: ");
     match uri {
         Some(uri) => writeln!(out, "this session is {uri}.").unwrap(),
@@ -163,12 +194,36 @@ pub fn start_context(uri: Option<&SessionUri>, source: Source, watching: bool) -
          again at once, also in the middle of a turn. When the watch says \"Do not start the \
          watch again now\", do not start it.\n",
     );
-    if matches!(source, Source::Startup | Source::Clear) {
-        out.push_str(
-            "- To find work, follow the start routine of the riff skill. Pick a free \
-             item yourself. Do not wait for a plan or for permission. A scope from \
-             your user wins.\n",
-        );
+    let new = matches!(source, Source::Startup | Source::Clear);
+    let find_work = "follow the start routine of the riff skill. Pick a free item yourself. \
+                     Do not wait for a plan or for permission. A scope from your user wins.";
+    let lead = uri.is_some_and(SessionUri::lead);
+    match riff {
+        Some(RiffState::Running) if new => {
+            writeln!(out, "- The riff is running. To find work, {find_work}").unwrap();
+        }
+        Some(RiffState::Running) => {}
+        Some(RiffState::Paused) if new && lead => out.push_str(
+            "- The riff is paused. Claim nothing. You are the lead: tell your user. Your user \
+             resumes it with `riff resume`, or tells you to call the riff resume tool. See \
+             \"Pause\" in the riff skill.\n",
+        ),
+        Some(RiffState::Paused) if new => out.push_str(
+            "- The riff is paused. Claim nothing. Say hello to the lead: call the riff tell \
+             tool with the session `lead`. Set your status to \"waiting: the riff is paused\". \
+             Then wait. A resume wakes you. See \"Pause\" in the riff skill.\n",
+        ),
+        Some(RiffState::Paused) => out.push_str(
+            "- The riff is paused. Stop at your next step and wait. See \"Pause\" in the riff \
+             skill.\n",
+        ),
+        None if new => writeln!(
+            out,
+            "- riff could not read the state of the riff. Call the riff whoami tool. When the \
+             riff is running, {find_work} When it is paused, see \"Pause\" in the riff skill."
+        )
+        .unwrap(),
+        None => {}
     }
     writeln!(out, "- {DATA_NOTE}").unwrap();
     out
@@ -212,7 +267,7 @@ mod tests {
     #[test]
     fn each_source_starts_the_watch_when_none_runs() {
         for source in SOURCES {
-            let context = start_context(Some(&uri()), source, false);
+            let context = start_context(Some(&uri()), source, false, None);
             assert!(
                 context.contains("Now run `riff watch --once` with the Bash tool"),
                 "{context}"
@@ -228,7 +283,7 @@ mod tests {
     #[test]
     fn each_source_keeps_a_watch_that_runs() {
         for source in SOURCES {
-            let context = start_context(Some(&uri()), source, true);
+            let context = start_context(Some(&uri()), source, true, None);
             assert!(context.contains("Keep it."), "{context}");
             assert!(!context.contains("Now run"), "{context}");
             assert!(context.contains("start the watch again at once"));
@@ -239,34 +294,81 @@ mod tests {
     fn no_source_stops_a_watch() {
         for source in SOURCES {
             for watching in [false, true] {
-                assert!(!start_context(None, source, watching).contains("TaskStop"));
+                assert!(!start_context(None, source, watching, None).contains("TaskStop"));
             }
         }
     }
 
     #[test]
     fn clear_keeps_the_session_and_its_claims() {
-        let context = start_context(Some(&uri()), Source::Clear, true);
+        let context = start_context(Some(&uri()), Source::Clear, true, None);
         assert!(context.contains("did not change your riff session"));
         assert!(context.contains("claims stay"));
         assert!(context.contains("whoami"));
         for source in [Source::Startup, Source::Resume, Source::Compact] {
-            assert!(!start_context(None, source, true).contains("claims stay"));
+            assert!(!start_context(None, source, true, None).contains("claims stay"));
+        }
+    }
+
+    const RUNNING: Option<RiffState> = Some(RiffState::Running);
+    const PAUSED: Option<RiffState> = Some(RiffState::Paused);
+
+    #[test]
+    fn new_sessions_in_a_running_riff_get_the_start_routine() {
+        let context = |source| start_context(None, source, false, RUNNING);
+        assert!(context(Source::Startup).contains("start routine"));
+        assert!(context(Source::Startup).contains("Pick a free item yourself"));
+        assert!(context(Source::Clear).contains("start routine"));
+        assert!(!context(Source::Resume).contains("start routine"));
+        assert!(!context(Source::Compact).contains("start routine"));
+    }
+
+    #[test]
+    fn a_new_session_in_a_paused_riff_waits_and_says_hello() {
+        for source in [Source::Startup, Source::Clear] {
+            let context = start_context(Some(&uri()), source, false, PAUSED);
+            assert!(context.contains("Claim nothing."), "{context}");
+            assert!(context.contains("the session `lead`"), "{context}");
+            assert!(context.contains("waiting: the riff is paused"), "{context}");
+            assert!(!context.contains("Pick a free item"), "{context}");
         }
     }
 
     #[test]
-    fn new_sessions_get_the_start_routine() {
-        assert!(start_context(None, Source::Startup, false).contains("start routine"));
-        assert!(start_context(None, Source::Startup, false).contains("Pick a free item yourself"));
-        assert!(start_context(None, Source::Clear, false).contains("start routine"));
-        assert!(!start_context(None, Source::Resume, false).contains("start routine"));
-        assert!(!start_context(None, Source::Compact, false).contains("start routine"));
+    fn the_lead_in_a_paused_riff_tells_its_user() {
+        let lead = uri().with_lead(true);
+        let context = start_context(Some(&lead), Source::Startup, false, PAUSED);
+        assert!(
+            context.contains("You are the lead: tell your user"),
+            "{context}"
+        );
+        assert!(context.contains("riff resume"), "{context}");
+        assert!(!context.contains("Say hello to the lead"), "{context}");
+    }
+
+    #[test]
+    fn a_session_that_continues_in_a_paused_riff_stops() {
+        for source in [Source::Resume, Source::Compact] {
+            let context = start_context(Some(&uri()), source, true, PAUSED);
+            assert!(context.contains("Stop at your next step"), "{context}");
+            assert!(!context.contains("start routine"), "{context}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_state_asks_for_whoami_before_work() {
+        let context = start_context(Some(&uri()), Source::Startup, false, None);
+        assert!(context.contains("could not read the state"), "{context}");
+        assert!(
+            context.contains("When the riff is running, follow"),
+            "{context}"
+        );
+        assert!(!start_context(None, Source::Resume, false, None).contains("state of the riff"));
     }
 
     #[test]
     fn no_uri_asks_for_whoami() {
-        assert!(start_context(None, Source::Startup, false).contains("whoami"));
+        assert!(start_context(None, Source::Startup, false, None).contains("whoami"));
     }
 
     #[test]

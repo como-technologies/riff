@@ -88,11 +88,55 @@ async fn run(
     )
 }
 
+/// Resumes the new riff as the person mike, in a shell.
+async fn resume(server: &str, dir: &Path) {
+    let (out, code) = run(server, dir, "mike", None, &["resume"]).await;
+    assert_eq!(code, 0, "{out}");
+}
+
+#[tokio::test]
+async fn a_new_riff_is_paused_and_refuses_each_claim() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+
+    let (out, code) = run(&server, dir, "mike", None, &["who"]).await;
+    assert_eq!(code, 0);
+    assert!(out.starts_with("The riff is paused."), "{out}");
+    let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
+    assert_ne!(code, 0, "a paused riff refuses a claim");
+
+    let (out, code) = run(&server, dir, "mike", None, &["resume"]).await;
+    assert_eq!(code, 0);
+    assert_eq!(out, "The riff is running now. No other session woke.\n");
+    let (out, _) = run(&server, dir, "mike", None, &["resume"]).await;
+    assert_eq!(out, "The riff was running already.\n");
+    let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
+    assert!(out.ends_with("The riff is running.\n"), "{out}");
+    let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
+    assert_eq!(code, 0);
+
+    // The first session of brett is its lead. A second session of brett
+    // is not, so it cannot pause the riff.
+    agent(&server, dir, "brett", "first", &["who"]).await;
+    let (_, code) = agent(&server, dir, "brett", "second", &["pause"]).await;
+    assert_ne!(code, 0, "only a person or a lead can pause");
+    let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
+    assert!(out.ends_with("The riff is running.\n"), "{out}");
+
+    let (out, code) = run(&server, dir, "mike", None, &["pause"]).await;
+    assert_eq!(code, 0);
+    assert!(out.starts_with("The riff is paused now."), "{out}");
+    let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
+    assert!(out.contains("The riff is paused."), "{out}");
+}
+
 #[tokio::test]
 async fn claim_and_release_work_in_the_repository_thread() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
+    resume(&server, dir).await;
 
     let (out, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_eq!(out, "You hold issue-12 in como-technologies/riff.\n");
@@ -120,6 +164,7 @@ async fn claim_and_release_work_in_the_repository_thread() {
 async fn claim_takes_a_named_thread() {
     let server = start_server().await;
     let dir = repo();
+    resume(&server, dir.path()).await;
 
     let (out, code) = riff(
         &server,
@@ -137,6 +182,7 @@ async fn post_wakes_the_holder_of_a_claim() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
+    resume(&server, dir).await;
 
     riff(&server, dir, "mike", &["claim", "issue-6"]).await;
     let (out, code) = riff(
