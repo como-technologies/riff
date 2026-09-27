@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
@@ -11,8 +11,24 @@ use riff_server::auth::Config;
 use riff_server::lease::Timing;
 use riff_server::store::Store;
 
+/// The HTTP client of each test. The build of a client blocks the
+/// runtime for up to 250 ms under load: half of the [`LEASE`] serve
+/// time. So the tests build one client, before the first server starts.
+/// It keeps no idle connection, so a test never gets a connection of
+/// the runtime of another test.
+pub fn client() -> reqwest::Client {
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap()
+    });
+    CLIENT.clone()
+}
+
 /// Starts a server. Its public URL is its real address.
 pub async fn start(require_sign_in: bool, admins: &[&str]) -> (Service, String) {
+    client();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let service = Service::new(Config {
@@ -36,6 +52,7 @@ pub const LEASE: Timing = Timing {
 /// Starts a server that loads its state from `store` and saves to it.
 /// It uses the [`LEASE`] times.
 pub async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
+    client();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
@@ -57,7 +74,7 @@ pub fn now() -> u64 {
 
 /// A POST with the `DPoP` scheme and a fresh proof from `key`.
 pub fn post(url: &str, key: &Key, token: Option<&str>) -> reqwest::RequestBuilder {
-    let mut request = reqwest::Client::new()
+    let mut request = client()
         .post(url)
         .header("dpop", key.proof("POST", url, token, now()));
     if let Some(token) = token {

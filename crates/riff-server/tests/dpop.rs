@@ -47,7 +47,7 @@ async fn a_copied_token_without_the_key_is_refused() {
     );
 
     // A thief with the token and no proof.
-    let bare = reqwest::Client::new()
+    let bare = common::client()
         .post(&url)
         .header("authorization", format!("DPoP {token}"));
     let bare = who(bare).await;
@@ -55,7 +55,7 @@ async fn a_copied_token_without_the_key_is_refused() {
     assert!(challenge(&bare).starts_with(r#"DPoP error="invalid_dpop_proof""#));
 
     // The token as a bearer token.
-    let bearer = reqwest::Client::new()
+    let bearer = common::client()
         .post(&url)
         .bearer_auth(token)
         .header("dpop", key.proof("POST", &url, Some(token), common::now()));
@@ -76,7 +76,7 @@ async fn a_proof_works_once_and_only_for_its_request() {
     let token = pair.access_token.as_str();
     let proof = key.proof("POST", &url, Some(token), common::now());
     let send = |proof: String| {
-        reqwest::Client::new()
+        common::client()
             .post(&url)
             .header("authorization", format!("DPoP {token}"))
             .header("dpop", proof)
@@ -113,7 +113,7 @@ async fn refresh_needs_the_key_of_the_sign_in() {
     let thief = common::refresh(&base, &Key::generate(), &form).await;
     assert_eq!(thief.status(), 400);
 
-    let no_proof = reqwest::Client::new()
+    let no_proof = common::client()
         .post(format!("{base}/v1/token"))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(form.clone())

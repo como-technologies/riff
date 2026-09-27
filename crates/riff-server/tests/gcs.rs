@@ -288,7 +288,7 @@ async fn no_metadata_server_is_a_failure() {
 
 /// Calls `op` on a riff server. The call must succeed.
 async fn call(base: &str, op: &str, body: Value) -> Value {
-    let reply = reqwest::Client::new()
+    let reply = common::client()
         .post(format!("{base}/v1/{op}"))
         .json(&body)
         .send()

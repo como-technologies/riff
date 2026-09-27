@@ -4,6 +4,7 @@ mod common;
 
 use std::sync::Arc;
 
+use futures::FutureExt;
 use riff_server::store::{Memory, SESSIONS, Store, StoreError};
 use serde_json::{Value, json};
 
@@ -13,7 +14,7 @@ const REPO: &str = "como-technologies/riff";
 
 /// Calls `op` and returns the reply. The call must succeed.
 async fn call(base: &str, op: &str, body: Value) -> Value {
-    let reply = reqwest::Client::new()
+    let reply = common::client()
         .post(format!("{base}/v1/{op}"))
         .json(&body)
         .send()
@@ -89,11 +90,16 @@ async fn a_save_that_finds_another_version_stops_the_server() {
 
     let post = json!({ "me": MIKE, "thread": REPO, "body": "lost" });
     call(&base, "post", post).await;
-    let error = server.save().await.unwrap_err();
-    assert!(matches!(error, StoreError::Conflict(_)), "{error}");
+    // This save finds the other version. Or the save of each second
+    // found it first: then the server stopped, and this save does
+    // nothing.
+    match server.save().await {
+        Err(error) => assert!(matches!(error, StoreError::Conflict(_)), "{error}"),
+        Ok(()) => assert!(server.stopped().now_or_never().is_some()),
+    }
     // The server stopped for good (R141): 503, and no more saves.
     server.stopped().await;
-    let reply = reqwest::Client::new()
+    let reply = common::client()
         .post(format!("{base}/v1/who"))
         .json(&json!({ "me": MIKE }))
         .send()
@@ -101,7 +107,7 @@ async fn a_save_that_finds_another_version_stops_the_server() {
         .unwrap();
     assert_eq!(reply.status(), 503);
     let post = json!({ "me": MIKE, "thread": REPO, "body": "also lost" });
-    let _ = reqwest::Client::new()
+    let _ = common::client()
         .post(format!("{base}/v1/post"))
         .json(&post)
         .send()

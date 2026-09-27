@@ -58,7 +58,7 @@ async fn a_session_token_cannot_act_as_another_session() {
     // The watch stream checks the session too.
     let watch = |uri: &str| {
         let url = format!("{base}/v1/watch");
-        reqwest::Client::new()
+        common::client()
             .get(&url)
             .query(&[("uri", uri)])
             .header("authorization", format!("DPoP {}", a.access_token))

@@ -11,7 +11,7 @@ async fn revoke(base: &str, auth: Option<(&Key, &str)>, user: Option<&str>) -> (
     let url = format!("{base}/v1/revoke");
     let request = match auth {
         Some((key, token)) => common::post(&url, key, Some(token)),
-        None => reqwest::Client::new().post(&url),
+        None => common::client().post(&url),
     };
     let reply = request
         .json(&Revoke {

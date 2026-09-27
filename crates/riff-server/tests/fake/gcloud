@@ -1,0 +1,16 @@
+#!/bin/sh
+# A fake gcloud for tests/cloud.rs. It writes each call to the file
+# $FAKE_GCLOUD_LOG. A describe call succeeds only when the call starts
+# with a line of the file $FAKE_GCLOUD_FOUND.
+echo "$*" >> "$FAKE_GCLOUD_LOG"
+case "$*" in
+    "billing projects describe"*) echo True; exit 0 ;;
+    "projects describe"*|"secrets describe"*) exit 0 ;;
+    "secrets versions list"*) echo 1; exit 0 ;;
+    *" describe "*)
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$*" in "$f"*) exit 0 ;; esac
+        done < "$FAKE_GCLOUD_FOUND"
+        exit 1 ;;
+esac

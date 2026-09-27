@@ -2,9 +2,14 @@
 //! R46, R134-R136, R160, R161).
 //! The tests run each script with a fake `gcloud` that writes each call
 //! to a log.
+//!
+//! The tests never run a file that they wrote. A test that writes a
+//! file holds it open for a short time, and a parallel test can fork
+//! then. Linux does not run a file that a process holds open for
+//! writing (`ETXTBSY`).
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -25,15 +30,19 @@ fn run_with(script: &str, args: &[&str], found: &[&str]) -> String {
 }
 
 /// A copy of `deploy/` whose `cloud.env` sets `CLOUD_URL` to `url`.
+/// Each other file is a link to the file in `deploy/`.
 fn deploy_with_url(url: &str) -> tempfile::TempDir {
     let copy = tempfile::tempdir().unwrap();
     let dir = copy.path().join("deploy");
     fs::create_dir(&dir).unwrap();
     for entry in fs::read_dir(deploy()).unwrap() {
         let path = entry.unwrap().path();
-        fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
+        let name = path.file_name().unwrap();
+        if name != "cloud.env" {
+            symlink(&path, dir.join(name)).unwrap();
+        }
     }
-    let env = fs::read_to_string(dir.join("cloud.env")).unwrap();
+    let env = fs::read_to_string(deploy().join("cloud.env")).unwrap();
     let env: Vec<String> = env
         .lines()
         .map(|l| {
@@ -54,38 +63,13 @@ fn run_in(scripts: &Path, script: &str, args: &[&str], found: &[&str]) -> String
     let log = dir.path().join("calls");
     let found_file = dir.path().join("found");
     fs::write(&found_file, found.join("\n") + "\n").unwrap();
-    let fake = dir.path().join("gcloud");
-    fs::write(
-        &fake,
-        format!(
-            r#"#!/bin/sh
-echo "$*" >> {log}
-case "$*" in
-    "billing projects describe"*) echo True; exit 0 ;;
-    "projects describe"*|"secrets describe"*) exit 0 ;;
-    "secrets versions list"*) echo 1; exit 0 ;;
-    *" describe "*)
-        while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            case "$*" in "$f"*) exit 0 ;; esac
-        done < {found}
-        exit 1 ;;
-esac
-"#,
-            log = log.display(),
-            found = found_file.display(),
-        ),
-    )
-    .unwrap();
-    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!(
-        "{}:{}",
-        dir.path().display(),
-        std::env::var("PATH").unwrap()
-    );
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake");
+    let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
     let out = Command::new(scripts.join(script))
         .args(args)
         .env("PATH", path)
+        .env("FAKE_GCLOUD_LOG", &log)
+        .env("FAKE_GCLOUD_FOUND", &found_file)
         .output()
         .unwrap();
     assert!(

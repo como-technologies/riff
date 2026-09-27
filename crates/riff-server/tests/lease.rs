@@ -17,7 +17,7 @@ const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b#tests";
 
 /// Calls `op` and returns the status.
 async fn status(base: &str, op: &str, body: Value) -> u16 {
-    reqwest::Client::new()
+    common::client()
         .post(format!("{base}/v1/{op}"))
         .json(&body)
         .send()
@@ -39,7 +39,7 @@ async fn a_new_server_stops_the_old_one() {
         status(&old_base, "register", json!({ "me": MIKE })).await,
         200
     );
-    let watch = reqwest::Client::new()
+    let watch = common::client()
         .get(format!("{old_base}/v1/watch"))
         .query(&[("uri", MIKE)])
         .send()
@@ -85,7 +85,7 @@ async fn a_new_server_refuses_a_proof_from_before_it_served() {
         .unwrap();
     let url = format!("{base}/v1/revoke");
     let revoke = |iat: u64| {
-        reqwest::Client::new()
+        common::client()
             .post(&url)
             .header(
                 "dpop",
@@ -109,7 +109,7 @@ async fn a_server_with_no_store_refuses_a_proof_from_before_it_started() {
         .sign_in("mike", &key.thumbprint(), Instant::now())
         .unwrap();
     let url = format!("{base}/v1/revoke");
-    let reply = reqwest::Client::new()
+    let reply = common::client()
         .post(&url)
         .header(
             "dpop",

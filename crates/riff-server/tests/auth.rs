@@ -11,7 +11,7 @@ async fn who(base: &str, auth: Option<(&Key, &str)>) -> reqwest::Response {
     let url = format!("{base}/v1/who");
     let request = match auth {
         Some((key, token)) => common::post(&url, key, Some(token)),
-        None => reqwest::Client::new().post(&url),
+        None => common::client().post(&url),
     };
     request
         .header("content-type", "application/json")
@@ -100,7 +100,7 @@ async fn a_token_in_the_query_string_does_not_count() {
         .sign_in("mike", &key.thumbprint(), Instant::now())
         .unwrap();
     let who_url = format!("{url}/v1/who");
-    let reply = reqwest::Client::new()
+    let reply = common::client()
         .post(format!("{who_url}?access_token={}", pair.access_token))
         .header(
             "dpop",

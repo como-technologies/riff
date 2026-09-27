@@ -400,6 +400,7 @@ impl Service {
             config,
             State::default(),
             Tokens::default(),
+            oidc::client(oidc::FETCH_TIMEOUT),
             None,
             None,
             now_ms() / 1000,
@@ -430,6 +431,9 @@ impl Service {
     /// # Ok(()) }
     /// ```
     pub async fn load(config: Config, store: Arc<dyn Store>) -> Result<Self, StoreError> {
+        // The build of the HTTP client blocks. Build it now, so that it
+        // does not use up the serve time after the lease read (R139).
+        let http = oidc::client(oidc::FETCH_TIMEOUT);
         let lease = Lease::take(store.clone()).await?;
         tracing::info!(
             "took the lease as {}; waiting {:?} for the old instance",
@@ -480,7 +484,7 @@ impl Service {
             versions: tokio::sync::Mutex::new(versions),
         };
         let until = asked + config.lease.valid_for;
-        let service = Service::build(config, state, tokens, Some(saved), Some(until), start);
+        let service = Service::build(config, state, tokens, http, Some(saved), Some(until), start);
         service.keep_lease(lease);
         service.save_each_second();
         Ok(service)
@@ -492,6 +496,7 @@ impl Service {
         config: Config,
         state: State,
         tokens: Tokens,
+        http: reqwest::Client,
         saved: Option<Saved>,
         until: Option<Instant>,
         start: u64,
@@ -509,7 +514,7 @@ impl Service {
             replay: Mutex::new(replay),
             wakes,
             tail,
-            http: oidc::client(oidc::FETCH_TIMEOUT),
+            http,
             saved,
             gate: Gate {
                 until: Mutex::new(until),
