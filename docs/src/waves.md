@@ -21,8 +21,8 @@ Needs: #51, #58
 ```
 
 An item is merged when it is closed, or when it has the note
-`Merged in #PR (COMMIT)`. The author adds this note when a
-check after the merge is left (see
+`Merged in #PR (COMMIT)`. The author adds this note when a check
+after the merge is left (see
 [Verify finished work](how-it-works.md#verify-finished-work)).
 
 ## Pick an item
@@ -65,8 +65,8 @@ done.
 
 ## A new item
 
-A person or a session can add a work item at any time, with no wave.
-The lead puts it in a wave:
+A person or a session can add a work item at any time, with no
+wave. The lead puts it in a wave:
 
 - Each item is in a later wave than each of its needs.
 - No item blocks or breaks the other work of its wave.
