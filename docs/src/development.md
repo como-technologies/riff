@@ -26,14 +26,8 @@ It runs on one machine.
    ```
 
    After a change to riff, run `just install` and `riff connect claude`
-   again.
-
-   To run the server as a systemd user service, use
-   `riff-server install` in place of `riff-server &`. It takes the same
-   settings as `riff-server`. After each `just install`, run
-   `riff-server install` again: the service then runs the new binary.
-   `journalctl --user -u riff-server` shows the log.
-   `riff-server uninstall` removes the service.
+   again. To keep the server running, see
+   [Run the server as a service](#run-the-server-as-a-service).
 
 2. Start two Claude Code sessions. They can share a directory: each
    session has its own session ID. The start hook tells each session to
@@ -45,6 +39,31 @@ It runs on one machine.
 
 The post output names the session that woke. The other session wakes
 and reads the message. `riff tail` shows the thread.
+
+## Run the server as a service
+
+On Linux, `riff-server` can run as a systemd user service. The service
+starts at login and restarts after a crash.
+
+```sh
+riff-server install
+```
+
+`install` takes the same settings as `riff-server`, as options or as
+`RIFF_*` variables. It writes them to
+`~/.config/systemd/user/riff-server.env`, with mode 0600. Then it
+enables and starts the service.
+
+- After each `just install`, run `riff-server install` again. The
+  service then runs the new binary.
+- To change a setting, run `riff-server install` again with the new
+  settings.
+- `systemctl --user status riff-server` shows the state.
+- `journalctl --user -u riff-server` shows the log.
+- `riff-server uninstall` stops the service and removes its files.
+
+The service stops when you log out. To keep it running, run
+`loginctl enable-linger` once.
 
 ## Sign in
 
@@ -60,6 +79,8 @@ Google:
    RIFF_OIDC_CLIENT_ID=... RIFF_OIDC_CLIENT_SECRET=... riff-server &
    ```
 
+   For the service, give the same settings to `riff-server install`.
+
    Only accounts of `comotechnologies.io` can sign in. To allow other
    Workspace domains, set `RIFF_ALLOWED_DOMAINS`, with commas between
    the domains.
@@ -72,6 +93,11 @@ Google:
 
 The user part of your URI is now the part of your email before the
 `@`. `riff logout` removes the sign-in from this device.
+`riff logout --all` ends each of your sign-ins, on each device.
+
+An admin can end each sign-in of another person. Name the admins when
+you start the server, with `--admin USER` for each admin. Then an
+admin runs `riff logout --all --user USER`.
 
 Each token works only with the device key of this machine. `riff`
 keeps the key in the OS keyring. Use the same server URL for `riff`

@@ -11,11 +11,26 @@ The book in `docs/src/` holds the requirements and the big picture.
 - Design docs live in the code as rustdoc, with doc tests. The book
   stays for people: what riff is, how to join, the big picture.
 - Each change has unit tests, integration tests and doc tests.
-- Update the book in the same commit as the change.
+- Update the book in the same commit as the change. See "User docs".
 - A new decision is a new requirement statement. Do not write the
   reasoning.
 - No users yet. Change any interface freely. No compatibility shims.
 - Work on `main`, or fast-forward a local branch into it.
+
+## User docs (STRONG REQUIREMENT)
+
+A feature is not done until a person can find it in the book and use
+it. Requirements and rustdoc do not count: they are for agents.
+
+- Each new command, subcommand, flag or setting that a person uses
+  gets a how-to in the book: `quick-start.md`, `development.md` or
+  `how-it-works.md`.
+- A how-to has its own heading and a copyable `sh` block. Do not hide
+  a new step in a paragraph of an old step.
+- Check the words against `--help` output. Use the real flag names.
+- Change `plan.md` when a slice or a "Not yet" row changes.
+- Before each commit, run `riff --help` and `riff-server --help`.
+  Find each command in the book. Add the missing ones.
 
 ## Writing
 
