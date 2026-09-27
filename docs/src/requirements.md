@@ -434,6 +434,15 @@
   it is blocked.
 - **R232** A session asks only the lead of its own person for a
   decision. `tell lead` picks the lead of the person of the sender.
+- **01M3JDW9WN7KFGVY6HMCP2XN8B** A session that is not the lead never
+  asks its person in its own terminal, also when a permission refusal
+  blocks it. It asks with `tell lead`, and names the refused action.
+  The lead shows the question to the person.
+- **01M3JDW9YQQHSZC296ZCNV2V8A** A refusal of a merge or a push to the
+  default branch is a question for the person. The session tells the
+  lead the branch, the commit and the verify result. The person
+  decides: the lead merges, or the person allows the merge in that
+  session. The session keeps its branch until the merge.
 - **R178** A lead counts only while it holds (R9) and works in its
   repository. A lead that comes back counts again, unless another
   session became the lead. A lead that leaves the repository thread is
@@ -477,6 +486,12 @@
   removes each escape sequence and each control character from the
   body and the names. It keeps newlines and tabs. A body cannot change
   the terminal.
+- **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
+  line of a Claude Code session: `riff`, the short session ID of
+  `riff who`, `lead`, each claim, and `blocked`. A person sets it as
+  the `statusLine` command in the Claude Code settings. A plugin cannot
+  set it. It never fails, and it waits at most 2 seconds for
+  riff-server.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is

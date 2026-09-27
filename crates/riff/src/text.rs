@@ -564,6 +564,59 @@ pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
     out
 }
 
+/// The line that `riff statusline` prints for the agent session `id`:
+/// `riff`, the short session ID of [`name`], `lead` for the lead, each
+/// claim, and `blocked` when the status is blocked. So a person finds
+/// the pane of each session of `riff who`. `info` is the session in
+/// `riff who`, or None when riff cannot find it.
+///
+/// ```
+/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+///
+/// let id = "2a880834-3707-4672";
+/// let mut info = SessionInfo {
+///     uri: "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78#issue-78"
+///         .parse()?,
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+/// };
+/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
+/// info.uri = info.uri.with_lead(true);
+/// info.status = Some(StatusInfo {
+///     status: Status { step: "merge".into(), blocked: Some("waits".into()) },
+///     age_secs: 5,
+/// });
+/// assert_eq!(
+///     riff::text::statusline(id, Some(&info)),
+///     "riff 2a880834 lead issue-78 blocked"
+/// );
+/// assert_eq!(riff::text::statusline(id, None), "riff 2a880834 (not in the riff)");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn statusline(id: &str, info: Option<&SessionInfo>) -> String {
+    let short: String = id.chars().take(ID_CHARS).collect();
+    let mut out = format!("riff {short}");
+    let Some(info) = info else {
+        out.push_str(" (not in the riff)");
+        return out;
+    };
+    if info.uri.lead() {
+        out.push_str(" lead");
+    }
+    for claim in info.uri.claims() {
+        let _ = write!(out, " {claim}");
+    }
+    if info
+        .status
+        .as_ref()
+        .is_some_and(|s| s.status.blocked.is_some())
+    {
+        out.push_str(" blocked");
+    }
+    out
+}
+
 /// A status with its age. A blocked status starts with `blocked` and
 /// names the step at the end.
 ///

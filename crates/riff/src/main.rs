@@ -17,6 +17,9 @@ use riff_core::wire::{Kind, RiffState, Status};
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
 
+/// The longest time that `riff statusline` waits for riff-server.
+const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
+
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
 #[command(version, about)]
@@ -150,6 +153,10 @@ enum Command {
         #[arg(long, requires = "all")]
         user: Option<String>,
     },
+    /// Print the status line of a Claude Code session: its short session
+    /// ID, its claims, and `lead` or `blocked`. Claude Code runs it with
+    /// the session on stdin. It always exits with status 0.
+    Statusline,
     /// Run a Claude Code hook. The riff plugin calls it.
     Hook {
         #[command(subcommand)]
@@ -219,6 +226,10 @@ async fn main() -> Result<()> {
     } = cli.command
     {
         session_end(&cli.server).await;
+        return Ok(());
+    }
+    if let Command::Statusline = cli.command {
+        println!("{}", statusline(&cli.server).await);
         return Ok(());
     }
     if let Command::Connect {
@@ -343,6 +354,7 @@ async fn main() -> Result<()> {
             served?
         }
         Command::Hook { .. }
+        | Command::Statusline
         | Command::Connect { .. }
         | Command::Workers { .. }
         | Command::Login
@@ -462,6 +474,35 @@ async fn start_facts(api: Api, me: &SessionUri) -> Result<(bool, RiffState)> {
         .iter()
         .any(|s| s.uri.who() == me.who() && s.uri.lead());
     Ok((lead, riff))
+}
+
+/// The status line of the Claude Code session on stdin
+/// ([`text::statusline`]). It finds the session like a hook does, and
+/// looks for it in `riff who`. It never fails, and it waits at most
+/// [`STATUSLINE_WAIT`] for riff-server.
+async fn statusline(server: &str) -> String {
+    let mut stdin = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin);
+    let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
+    let Some(id) = identity::agent_session(input.session_id) else {
+        return "riff: no session".into();
+    };
+    let find = async {
+        let here = identity::place(&std::env::current_dir()?)?;
+        let api = Api::new(server);
+        let me = identity::agent(&here, &id, api.base())?;
+        let who = api.signed_in(me.who().session())?.who(&me, false).await?;
+        anyhow::Ok(
+            who.into_iter()
+                .find(|s| s.uri.who().session() == Some(id.as_str())),
+        )
+    };
+    let info = tokio::time::timeout(STATUSLINE_WAIT, find)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+    text::statusline(&id, info.as_ref())
 }
 
 /// The SessionEnd hook: the end call for the session (R205). It never

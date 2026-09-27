@@ -195,7 +195,12 @@ against the `Done when:` line of the issue before the merge.
 5. On a fail, fix the work. Then go back to step 1 and send a new
    request with the new commit.
 6. On a pass, merge. Then delete the pushed branch:
-   `git push origin --delete BRANCH`.
+   `git push origin --delete BRANCH`. When a permission refusal stops
+   the merge or the push to the default branch, do not ask in your own
+   terminal. `tell` the lead the branch, the commit and the verify
+   result (see "Questions for your user"). Your user decides: the lead
+   merges, or your user allows the merge in your session. Do not
+   delete the branch before the merge.
 
 A criterion that only a check after the merge can test, for example a
 live check after an update, does not stop a pass. The verifier names
@@ -353,10 +358,13 @@ is the session that the person works in. The first session of the
 person in the repository becomes the lead. Call `lead` only when your
 user tells you to be the lead. It replaces the old lead.
 
-If you are not the lead and you need a decision from your user:
+If you are not the lead, your user does not look at your terminal.
+Never ask your user there. This is also true when a permission
+refusal blocks you. When you need a decision from your user:
 
 1. Call `tell` with the session `lead` and the question. Name the
-   choices.
+   choices. For a permission refusal, name the action that was
+   refused and why you need it.
 2. Do not stop to ask in your own terminal. Wait for the answer, or
    work on other things.
 3. The lead sends the answer as a direct message. A direct answer from

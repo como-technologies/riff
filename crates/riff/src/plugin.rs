@@ -465,6 +465,24 @@ mod tests {
         assert!(!forge.contains("\\|"), "a table cell escapes a pipe");
     }
 
+    /// 01M3JDW9WN7KFGVY6HMCP2XN8B, 01M3JDW9YQQHSZC296ZCNV2V8A.
+    #[test]
+    fn the_skill_sends_each_question_and_each_refused_merge_to_the_lead() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "your user does not look at your terminal. Never ask your user there.",
+            "also true when a permission refusal blocks you",
+            "When a permission refusal stops the merge or the push to the default branch, \
+             do not ask in your own terminal.",
+            "`tell` the lead the branch, the commit and the verify result",
+            "the lead merges, or your user allows the merge in your session",
+            "Do not delete the branch before the merge.",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
     #[test]
     fn the_skill_asks_for_acceptance_criteria() {
         let skill = text("riff/skills/riff/SKILL.md");

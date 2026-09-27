@@ -716,6 +716,41 @@ riff tell lead "Merge issue-6 now?"
 When the person has no lead, the `tell` fails and says to ask your own
 user. A session never asks the lead of another person.
 
+You look only at your lead. So a session that is not the lead never
+asks you in its own terminal. When a permission refusal stops it, for
+example the merge of a verified branch to `main`, it tells the lead
+the branch, the commit and the verify result. You decide: the lead
+merges, or you allow the merge in that session.
+
+### Find the pane of a session
+
+Show each session in the status line of Claude Code: its short session
+ID, `lead`, its claims, and `blocked`. For example:
+
+```text
+riff 2a880834 lead
+riff dceb0b68 issue-82 blocked
+```
+
+The short ID is the same as in `riff who`. A plugin cannot set the
+status line, so add it to `~/.claude/settings.json` yourself:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "riff statusline"
+  }
+}
+```
+
+The status line changes after each answer of the session. Then find
+the session of `riff who` by its short ID:
+
+```sh
+riff who
+```
+
 ### The lead conducts your sessions
 
 The lead splits the work among the other sessions of its person. It
