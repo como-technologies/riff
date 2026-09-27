@@ -10,6 +10,7 @@ use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{hook, identity, local, login, mcp, plugin, terminal, text};
+use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Freed, Kind, RiffState, Status};
@@ -22,7 +23,7 @@ const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version = riff_core::build::VERSION, about)]
 struct Cli {
     /// The riff-server URL.
     #[arg(long, global = true, env = "RIFF_SERVER", default_value = DEFAULT_SERVER)]
@@ -276,12 +277,13 @@ async fn main() -> Result<()> {
         Command::Whoami => {
             println!("{}  {me}", text::name(&me));
             match api.riff(&me).await {
-                Ok(state) => println!("{}", text::riff_state(state)),
+                Ok(state) => println!("{}\n{}", text::riff_state(state), text::build_line()),
                 Err(e) => eprintln!("riff: cannot read the state of the riff: {e:#}"),
             }
         }
         Command::Who { all } => {
             println!("{}", text::riff_state(api.riff(&me).await?));
+            println!("{}", text::build_line());
             print!("{}", text::who(&api.who(&me, all).await?, &me));
         }
         Command::Pause => pause(&api, &me, RiffState::Paused).await?,
@@ -444,20 +446,24 @@ async fn session_start(server: &str) -> String {
         let here = identity::place(&std::env::current_dir().ok()?).ok()?;
         identity::agent(&here, id, api.base()).ok()
     });
-    let (uri, riff, freed) = match uri {
+    let (uri, riff, freed, mismatch) = match uri {
         Some(uri) => {
             let facts = start_facts(api, &uri, input.source.is_new_start());
             match tokio::time::timeout(hook::STATE_WAIT, facts).await {
-                Ok(Ok((lead, riff, freed))) => (Some(uri.with_lead(lead)), Some(riff), freed),
-                _ => (Some(uri), None, Vec::new()),
+                Ok(Ok((lead, riff, freed))) => (Some(uri.with_lead(lead)), Some(riff), freed, None),
+                Ok(Err(e)) => (Some(uri), None, Vec::new(), e.downcast::<Mismatch>().ok()),
+                Err(_) => (Some(uri), None, Vec::new(), None),
             }
         }
-        None => (None, None, Vec::new()),
+        None => (None, None, Vec::new(), None),
     };
     let watching = id
         .as_deref()
         .zip(local::dir())
         .is_some_and(|(id, dir)| local::watching(&dir, id));
+    if let Some(mismatch) = mismatch {
+        return hook::start_output(&hook::mismatch_context(uri.as_ref(), &mismatch));
+    }
     hook::start_output(&hook::start_context(
         uri.as_ref(),
         input.source,
@@ -608,6 +614,10 @@ async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
                 last_day = Some(at.date_naive());
                 anstream::println!("{block}");
             }
+            Err(e) if e.downcast_ref::<Mismatch>().is_some() => {
+                anstream::eprintln!("{error}riff: {e}{error:#}");
+                std::process::exit(1);
+            }
             Err(e) if !lost => {
                 anstream::eprintln!(
                     "{warning}riff: {e:#}. Trying again every {} seconds.{warning:#}",
@@ -646,6 +656,12 @@ async fn print_each<T>(
                 if once {
                     return;
                 }
+            }
+            // A mismatch stays until a person updates riff: stop, so that
+            // the line wakes the session (01M3JEE7TPZMNK7X6JXJ7GWFPP).
+            Err(e) if e.downcast_ref::<Mismatch>().is_some() => {
+                println!("riff: {e}");
+                std::process::exit(1);
             }
             Err(e) if !reported => {
                 eprintln!(

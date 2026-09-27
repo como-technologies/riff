@@ -112,7 +112,7 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     let (out, _) = run(&server, dir, "mike", None, &["resume"]).await;
     assert_eq!(out, "The riff was running already.\n");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
-    assert!(out.ends_with("The riff is running.\n"), "{out}");
+    assert!(out.contains("\nThe riff is running.\n"), "{out}");
     let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_eq!(code, 0);
 
@@ -122,7 +122,7 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     let (_, code) = agent(&server, dir, "brett", "second", &["pause"]).await;
     assert_ne!(code, 0, "only a person or a lead can pause");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
-    assert!(out.ends_with("The riff is running.\n"), "{out}");
+    assert!(out.contains("\nThe riff is running.\n"), "{out}");
 
     let (out, code) = run(&server, dir, "mike", None, &["pause"]).await;
     assert_eq!(code, 0);

@@ -398,8 +398,11 @@ Do [Set up the cloud project](#set-up-the-cloud-project) and
 [Make the OAuth client](#make-the-oauth-client) first.
 
 CI deploys riff when the repository variable `CLOUD_DEPLOY` is `true`.
-Then each push to `main` that changes the server builds the image and
-deploys it, after the gate passes. For now, the variable is not set,
+Then each push to `main` that changes the code of a crate builds the
+image and deploys it, after the gate passes. A `riff` refuses a
+server of another build (see
+[Builds](how-it-works.md#builds)), so the server follows each code
+change. For now, the variable is not set,
 and no shared server runs. The job signs in to
 Google Cloud from GitHub with no key. See the deploys:
 

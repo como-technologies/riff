@@ -1,6 +1,8 @@
 //! `GET /v1/sign-in` and the token exchange, with a fake provider that
 //! serves a discovery document and a JWKS.
 
+mod common;
+
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::routing::get;
@@ -71,7 +73,7 @@ async fn exchange_with(server: &str, token: &str, key: Option<&Key>) -> reqwest:
         ..TokenRequest::default()
     };
     let url = format!("{server}/v1/token");
-    let mut request = reqwest::Client::new().post(&url).form(&form);
+    let mut request = common::client().post(&url).form(&form);
     if let Some(key) = key {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -107,7 +109,9 @@ async fn start() -> (Service, String, String) {
 #[tokio::test]
 async fn sign_in_names_the_provider() {
     let (_, server, issuer) = start().await;
-    let config: SignInConfig = reqwest::get(format!("{server}/v1/sign-in"))
+    let config: SignInConfig = common::client()
+        .get(format!("{server}/v1/sign-in"))
+        .send()
         .await
         .unwrap()
         .json()
@@ -170,7 +174,11 @@ async fn a_server_without_a_provider_has_no_sign_in() {
     let server = format!("http://{}", listener.local_addr().unwrap());
     let router = Service::new(Config::new(&server)).router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let reply = reqwest::get(format!("{server}/v1/sign-in")).await.unwrap();
+    let reply = common::client()
+        .get(format!("{server}/v1/sign-in"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(reply.status(), 404);
     let reply = exchange(&server, "any").await;
     let error: TokenError = reply.json().await.unwrap();

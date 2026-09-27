@@ -143,7 +143,8 @@ async fn the_tools_carry_a_conversation() {
     assert!(is_error, "{refused}");
     assert!(refused.contains("the riff is paused"), "{refused}");
     let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
-    assert!(me.ends_with("The riff is paused. Nobody claims work. Your user or the lead resumes it with `riff resume`."), "{me}");
+    assert!(me.contains("The riff is paused. Nobody claims work. Your user or the lead resumes it with `riff resume`.\n"), "{me}");
+    assert!(me.ends_with(&riff::text::build_line()), "{me}");
     let (resumed, _) = call(&brett, "resume", serde_json::json!({})).await;
     assert_eq!(
         resumed,

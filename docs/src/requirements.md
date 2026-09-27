@@ -789,6 +789,36 @@
 - **01M3JD39BASN1GNJTZXXKBCNZ9** Each pane that riff makes gets the
   riff-server URL of the command that makes it, in `RIFF_SERVER`.
 
+## Builds
+
+- **01M3JEE7KZR5VVJGZQD82AA6NH** A message is valid only between a
+  `riff` and a `riff-server` of builds that match. Two builds match
+  when they have the same crate version and the same commit. The
+  commit of a build is the last commit that changed `crates`,
+  `Cargo.toml` or `Cargo.lock`. A build also names the UTC time of
+  that commit.
+- **01M3JEE7P46GWXR1BD4Q1TTSGN** Each call of `riff` names its build in
+  the header `riff-build`. Each reply of `riff-server` names the build
+  of the server in the same header.
+- **01M3JEE7RDTDD3KQMKH41E8D57** `riff-server` refuses each call of a
+  `riff` whose build does not match, or that names no build, with
+  status 409. `riff` refuses each reply of a `riff-server` whose build
+  does not match, or that names no build. The error names both
+  builds, the older side, and the step to update it. The OAuth
+  metadata stays open to each client.
+- **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the builds do not match, the
+  start hook gives the session the error, and tells it to tell its
+  user at once and not to use the riff. `riff watch` and `riff tail`
+  print the error and stop.
+- **01M3JEE7WT04BKX377VW5GDSPY** `riff --version`,
+  `riff-server --version`, `riff whoami`, `riff who` and the whoami
+  tool show the build.
+- **01M3JEE7YXQPWS65FBVTASAEBX** The image build of `riff-server` has
+  no git. It gets the commit and its time as `RIFF_COMMIT` and
+  `RIFF_COMMIT_TIME` from `deploy/build-id.sh`, which uses the same
+  git command as the build of `riff`. CI deploys the shared server on
+  each push to `main` that changes the code of any crate.
+
 ## Code
 
 - **R12** All code is Rust.

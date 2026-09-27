@@ -16,7 +16,7 @@ use tokio::signal::unix::{SignalKind, signal};
 /// The central service that sessions connect to. With no command, it
 /// runs in the foreground.
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version = riff_core::build::VERSION, about)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

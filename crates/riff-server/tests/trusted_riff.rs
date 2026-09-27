@@ -3,6 +3,8 @@
 //! It listens on the network only with `--insecure`
 //! (01M3JCE4ZD4DZCQ21FA69RT52D).
 
+mod common;
+
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
@@ -62,7 +64,7 @@ async fn read_reply(port: u16) -> ReadReply {
         .parse()
         .unwrap();
     let thread: ThreadName = "como-technologies/riff".parse().unwrap();
-    let http = reqwest::Client::new();
+    let http = common::client();
     let call =
         |op: &str, body: serde_json::Value| http.post(format!("{url}/{op}")).json(&body).send();
     let register = Register { me: me.clone() };

@@ -210,6 +210,20 @@ pub fn riff_state(state: RiffState) -> String {
     }
 }
 
+/// The build of `riff`, after a call that its `riff-server` answered:
+/// so both have this build (01M3JEE7WT04BKX377VW5GDSPY).
+///
+/// ```
+/// let line = riff::text::build_line();
+/// assert!(line.starts_with("riff and riff-server have the build 0.1.0 "), "{line}");
+/// ```
+pub fn build_line() -> String {
+    format!(
+        "riff and riff-server have the build {}.",
+        riff_core::build::VERSION
+    )
+}
+
 /// The message that wakes the sessions after a pause or a resume
 /// (01M3JCG3YD7C2Y3V0QJPF082YH).
 ///

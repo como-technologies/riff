@@ -49,6 +49,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use futures::{Stream, StreamExt};
+use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -336,7 +337,10 @@ impl Api {
         path: &str,
     ) -> Result<reqwest::RequestBuilder> {
         let url = format!("{}{path}", self.base);
-        let request = self.http.request(method.clone(), &url);
+        let request = self
+            .http
+            .request(method.clone(), &url)
+            .header(build::HEADER, build::VERSION);
         let Some(auth) = &self.auth else {
             return Ok(request);
         };
@@ -367,6 +371,7 @@ impl Api {
                 .send()
                 .await
                 .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            check_build(&response)?;
             match waits.next() {
                 Some(wait) if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
                     tokio::time::sleep(wait).await;
@@ -700,6 +705,22 @@ impl Api {
 }
 
 /// Seconds since the Unix epoch, for proofs.
+/// Refuses a reply of a `riff-server` whose build does not match this
+/// `riff`, or that names no build: an older server
+/// (01M3JEE7RDTDD3KQMKH41E8D57). The error is a [`Mismatch`].
+fn check_build(response: &reqwest::Response) -> Result<()> {
+    let this = Build::this();
+    let server = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
+    if server.as_ref().is_some_and(|s| s.matches(&this)) {
+        return Ok(());
+    }
+    Err(Mismatch {
+        riff: Some(this),
+        server,
+    }
+    .into())
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -782,10 +803,18 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let code = axum::http::StatusCode::from_u16(status).unwrap();
-        let router = axum::Router::new().route(
-            "/v1/sign-in",
-            axum::routing::get(move || async move { code }),
-        );
+        let router = axum::Router::new()
+            .route(
+                "/v1/sign-in",
+                axum::routing::get(move || async move { code }),
+            )
+            .layer(axum::middleware::map_response(
+                |mut r: axum::response::Response| async move {
+                    let build = axum::http::HeaderValue::from_static(build::VERSION);
+                    r.headers_mut().insert(build::HEADER, build);
+                    r
+                },
+            ));
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         Api::new(&url)
     }

@@ -93,12 +93,23 @@ async fn post_busy(State(calls): State<Shared>) -> Response {
     .into_response()
 }
 
+/// A fake server names the build of this `riff` in each reply, like
+/// `riff-server` (01M3JEE7P46GWXR1BD4Q1TTSGN).
+async fn stamp_build(mut response: axum::response::Response) -> axum::response::Response {
+    response.headers_mut().insert(
+        riff_core::build::HEADER,
+        axum::http::HeaderValue::from_static(riff_core::build::VERSION),
+    );
+    response
+}
+
 async fn start_fake() -> (String, Shared) {
     let calls = Shared::default();
     let router = axum::Router::new()
         .route("/v1/watch", get(watch))
         .route("/v1/tail", get(tail))
         .route("/v1/post", post(post_busy))
+        .layer(axum::middleware::map_response(stamp_build))
         .with_state(calls.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

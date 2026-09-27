@@ -120,6 +120,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use futures::{Stream, StreamExt};
+use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
@@ -671,9 +672,11 @@ impl Service {
             .merge(revoke)
             .route(auth::TOKEN_PATH, post(token))
             .route("/v1/sign-in", get(sign_in_config))
+            .route_layer(middleware::from_fn(check_build))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
+            .layer(middleware::from_fn(stamp_build))
             .with_state(self.0.clone())
     }
 
@@ -987,6 +990,32 @@ async fn require_token(
         [(header::WWW_AUTHENTICATE, challenge)],
     )
         .into_response()
+}
+
+/// Refuses a call from a `riff` whose build does not match the build of
+/// this server, or that names no build (01M3JEE7RDTDD3KQMKH41E8D57). The
+/// OAuth metadata stays open to each client.
+async fn check_build(request: Request, next: Next) -> Response {
+    let this = Build::this();
+    let riff = Build::from_header(request.headers().get(build::HEADER).map(|v| v.as_bytes()));
+    if riff.as_ref().is_some_and(|r| r.matches(&this)) {
+        return next.run(request).await;
+    }
+    let mismatch = Mismatch {
+        riff,
+        server: Some(this),
+    };
+    (StatusCode::CONFLICT, mismatch.to_string()).into_response()
+}
+
+/// Names the build of this server in each reply
+/// (01M3JEE7P46GWXR1BD4Q1TTSGN).
+async fn stamp_build(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    if let Ok(value) = header::HeaderValue::from_str(&Build::this().to_string()) {
+        response.headers_mut().insert(build::HEADER, value);
+    }
+    response
 }
 
 /// Replies 503 to each call while the server does not serve (R139,

@@ -46,8 +46,20 @@ async fn tail() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     ))
 }
 
+/// A fake server names the build of this `riff` in each reply, like
+/// `riff-server` (01M3JEE7P46GWXR1BD4Q1TTSGN).
+async fn stamp_build(mut response: axum::response::Response) -> axum::response::Response {
+    response.headers_mut().insert(
+        riff_core::build::HEADER,
+        axum::http::HeaderValue::from_static(riff_core::build::VERSION),
+    );
+    response
+}
+
 async fn start_fake() -> String {
-    let router = axum::Router::new().route("/v1/tail", get(tail));
+    let router = axum::Router::new()
+        .route("/v1/tail", get(tail))
+        .layer(axum::middleware::map_response(stamp_build));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });

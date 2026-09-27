@@ -87,6 +87,7 @@
 
 use std::fmt::Write;
 
+use riff_core::build::Mismatch;
 use riff_core::name::SessionUri;
 use riff_core::wire::{Freed, RiffState};
 use serde::Deserialize;
@@ -262,6 +263,33 @@ pub fn start_context(
         None => {}
     }
     writeln!(out, "- {DATA_NOTE}").unwrap();
+    out
+}
+
+/// The start context when the builds of `riff` and its `riff-server` do
+/// not match (01M3JEE7TPZMNK7X6JXJ7GWFPP). The session tells its user at
+/// once, and does not use the riff.
+///
+/// ```
+/// use riff_core::build::Mismatch;
+///
+/// let m = Mismatch { riff: Some("0.1.0 bbbb 2026-09-27T11:00:00Z".parse().unwrap()), server: None };
+/// let context = riff::hook::mismatch_context(None, &m);
+/// assert!(context.contains("do not match"));
+/// assert!(context.contains("Tell your user now"));
+/// assert!(!context.contains("riff watch"));
+/// ```
+pub fn mismatch_context(uri: Option<&SessionUri>, mismatch: &Mismatch) -> String {
+    let mut out = String::from("riff: ");
+    if let Some(uri) = uri {
+        writeln!(out, "this session is {uri}.").unwrap();
+        out.push_str("- ");
+    }
+    writeln!(out, "riff cannot use its riff-server: {mismatch}").unwrap();
+    out.push_str(
+        "- Tell your user now, in your first reply. Do not start the watch, and do not call \
+         the riff tools, until your user updates riff and starts this session again.\n",
+    );
     out
 }
 

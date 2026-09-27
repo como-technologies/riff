@@ -139,7 +139,7 @@ Show the state of the riff: paused or running."
             .and_then(|list| list.into_iter().find(|s| s.uri.who() == me.who()))
             .map_or(me.clone(), |s| s.uri);
         let state = match self.api.riff(&me).await {
-            Ok(state) => text::riff_state(state),
+            Ok(state) => format!("{}\n{}", text::riff_state(state), text::build_line()),
             Err(e) => format!("riff cannot read the state of the riff: {e:#}"),
         };
         Ok(format!("{}\n{now}\n{state}", text::name(&now)))
@@ -154,8 +154,9 @@ Show the state of the riff: paused or running."
         let state = self.api.riff(&me).await.map_err(err)?;
         let sessions = self.api.who(&me, all).await.map_err(err)?;
         Ok(format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
             text::riff_state(state),
+            text::build_line(),
             text::who(&sessions, &me)
         ))
     }

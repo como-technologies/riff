@@ -7,5 +7,5 @@ fn version_names_the_binary() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(concat!("riff-server ", env!("CARGO_PKG_VERSION"), "\n"));
+        .stdout(format!("riff-server {}\n", riff_core::build::VERSION));
 }

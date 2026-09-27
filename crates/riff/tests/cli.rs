@@ -1,10 +1,12 @@
 use assert_cmd::Command;
 
-/// The start hook, away from the local files of this machine (R167).
+/// The start hook, away from the local files and the riff-server of
+/// this machine (R167). No server listens on port 9.
 fn hook(run: &tempfile::TempDir) -> Command {
     let mut cmd = Command::cargo_bin("riff").unwrap();
     cmd.args(["hook", "session-start"])
         .env("XDG_RUNTIME_DIR", run.path())
+        .env("RIFF_SERVER", "http://127.0.0.1:9")
         .env_remove("RIFF_SESSION");
     cmd
 }
@@ -16,7 +18,7 @@ fn version_names_the_binary() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(concat!("riff ", env!("CARGO_PKG_VERSION"), "\n"));
+        .stdout(format!("riff {}\n", riff_core::build::VERSION));
 }
 
 #[test]

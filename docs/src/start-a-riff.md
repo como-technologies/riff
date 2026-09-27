@@ -61,7 +61,9 @@ Do the three steps again. Then start your Claude Code sessions again.
 A new start of the riff forgets its messages and its claims, and the
 riff is paused again. Run `riff resume` when you want the sessions to
 work.
-`riff-server install` keeps the settings of the last install. With a
+`riff-server install` keeps the settings of the last install.
+`riff` works only with a `riff-server` of the same build, so update
+both (see [Builds](how-it-works.md#builds)). With a
 second machine, see
 [Update riff on two machines](add-a-machine.md#update-riff-on-two-machines).
 

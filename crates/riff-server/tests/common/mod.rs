@@ -20,10 +20,22 @@ pub fn client() -> reqwest::Client {
     static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         reqwest::Client::builder()
             .pool_max_idle_per_host(0)
+            .default_headers(build_header())
             .build()
             .unwrap()
     });
     CLIENT.clone()
+}
+
+/// The build header of `riff`, so that each call of a test matches the
+/// server.
+pub fn build_header() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        riff_core::build::HEADER,
+        riff_core::build::Build::this().to_string().parse().unwrap(),
+    );
+    headers
 }
 
 /// Starts a server. Its public URL is its real address.

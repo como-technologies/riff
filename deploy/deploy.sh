@@ -16,6 +16,10 @@ if [ "${1:-}" = --image ] && [ -n "${2:-}" ]; then
     from=(--image "$image")
 else
     image=
+    # Cloud Build gets the source with no git: it reads the build from
+    # this file (01M3JEE7YXQPWS65FBVTASAEBX).
+    deploy/build-id.sh > build-id.env
+    trap 'rm -f build-id.env' EXIT
     from=(--source . --build-service-account
         "projects/$CLOUD_PROJECT/serviceAccounts/$(account "$CLOUD_BUILD_ACCOUNT")")
 fi

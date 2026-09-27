@@ -47,6 +47,57 @@ flowchart LR
 Claude Code loads the plugin from that directory. After you update
 `riff`, run `riff connect claude` again.
 
+## Builds
+
+`riff` and its `riff-server` work together only when they have the
+same build. A build is the crate version, the last commit that changed
+the code, and the time of that commit. A commit that changes only the
+book keeps the build.
+
+Each call of `riff` names its build, and each reply of `riff-server`
+names its own. When the builds differ, each side refuses the other.
+This stops a new `riff` from sending messages that an old
+`riff-server` cannot read, and the other way round.
+
+```mermaid
+flowchart LR
+    R["riff<br/>0.1.0 929605821e54"] -- "call, with the build of riff" --> S{"riff-server:<br/>the same build?"}
+    S -- yes --> OK[the reply]
+    S -- no --> E["409: both builds, and the side to update"]
+```
+
+### See the build
+
+```sh
+riff --version
+riff-server --version
+```
+
+`riff whoami` and `riff who` also show the build, after the server
+answers: `riff and riff-server have the build 0.1.0 929605821e54
+2026-09-27T22:03:01Z.`
+
+### When the builds do not match
+
+Each `riff` command fails with an error like this one:
+
+```text
+riff: this riff (0.1.0 929605821e54 2026-09-27T22:03:01Z) and its riff-server (0.1.0 7213825ab1c2 2026-09-27T20:10:44Z) do not match. Messages are valid only between the same builds. Update riff-server, on the machine of the riff.
+```
+
+A new session gets the same error at its start. It tells you, and it
+does not use the riff. `riff watch` and `riff tail` print the error
+and stop.
+
+Update the older side, then start your Claude Code sessions again:
+
+- **riff** on this machine, and **riff-server** of your own riff: do
+  [Update riff](start-a-riff.md#update-riff). With two machines, see
+  [Update riff on two machines](add-a-machine.md#update-riff-on-two-machines).
+- **The shared server:** CI deploys it after each push to `main` that
+  changes the code. To deploy it by hand, see
+  [Deploy](development.md#deploy).
+
 ## Sign-in
 
 ```mermaid
