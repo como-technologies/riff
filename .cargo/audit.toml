@@ -3,4 +3,12 @@
 # what event removes it.
 
 [advisories]
-ignore = []
+ignore = [
+    # 2026-09-26: RUSTSEC-2023-0071 (rsa, Marvin attack). jsonwebtoken
+    # (rust_crypto) pulls in rsa. The attack needs RSA private-key
+    # operations. riff-server only verifies RS256 ID tokens with the
+    # public keys of the provider (oidc.rs). Only tests sign with RSA.
+    # No fixed rsa release exists. Remove this entry when rsa has a fix,
+    # or when riff signs with an RSA private key.
+    "RUSTSEC-2023-0071",
+]
