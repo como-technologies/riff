@@ -2,11 +2,13 @@
 
 #![allow(dead_code)]
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
 use riff_server::Service;
 use riff_server::auth::Config;
+use riff_server::store::Store;
 
 /// Starts a server. Its public URL is its real address.
 pub async fn start(require_sign_in: bool, admins: &[&str]) -> (Service, String) {
@@ -17,6 +19,16 @@ pub async fn start(require_sign_in: bool, admins: &[&str]) -> (Service, String) 
         admins: admins.iter().map(|a| a.to_string()).collect(),
         ..Config::new(&url)
     });
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (service, url)
+}
+
+/// Starts a server that loads its state from `store` and saves to it.
+pub async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let service = Service::load(Config::new(&url), store).await.unwrap();
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (service, url)

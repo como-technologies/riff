@@ -1,5 +1,6 @@
 //! The central service that sessions connect to.
 
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -7,6 +8,7 @@ use clap::{Parser, Subcommand};
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 use riff_server::{Service, service};
+use tokio::signal::unix::{SignalKind, signal};
 
 /// The central service that sessions connect to. With no command, it
 /// runs in the foreground.
@@ -166,6 +168,8 @@ async fn main() -> std::io::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    // Catch SIGTERM before the server says that it listens.
+    let mut terminate = signal(SignalKind::terminate())?;
     let listener = tokio::net::TcpListener::bind(cli.listen).await?;
     let public_url = cli
         .public_url
@@ -185,7 +189,21 @@ async fn main() -> std::io::Result<()> {
     } else {
         tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");
     }
-    axum::serve(listener, Service::new(config).router()).await
+    let service = Service::new(config);
+    let stop = async {
+        tokio::select! {
+            _ = terminate.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    };
+    tokio::select! {
+        result = axum::serve(listener, service.router()).into_future() => result,
+        () = stop => {
+            // Save each unsaved change, then exit (R129).
+            tracing::info!("stopping: saving the state");
+            service.save().await.map_err(std::io::Error::other)
+        }
+    }
 }
 
 #[cfg(test)]

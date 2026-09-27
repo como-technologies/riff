@@ -50,8 +50,16 @@
 //! - `riff-server install` runs the server as a systemd user service.
 //!   See [`service`].
 //!
-//! The server keeps state only in memory. The wire protocol is in
-//! [`riff_core::wire`].
+//! - [`Service::load`] loads the state from a [`store::Store`] (R30). A
+//!   task then saves the changed objects each [`SAVE_EVERY`] (R127).
+//!   [`Service::save`] saves them at once; `main` calls it on SIGTERM
+//!   (R129). A server from [`Service::new`] has no store and saves
+//!   nothing (R34).
+//! - The server knows the [`store::Version`] of each object. Each save
+//!   names it, so a save over the changes of another instance fails
+//!   (R141). A failed save marks its object as changed again.
+//!
+//! The wire protocol is in [`riff_core::wire`].
 //!
 //! # Example
 //!
@@ -70,9 +78,10 @@ pub mod state;
 pub mod store;
 pub mod token;
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Form, Query, Request, State as AxumState};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -92,14 +101,19 @@ use riff_core::wire::{
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
+use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::state::{Delivery, State};
+use crate::store::{SESSIONS, Store, StoreError, THREADS, Version};
 use crate::token::Tokens;
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
+
+/// The server saves each changed object at most this often (R127).
+pub const SAVE_EVERY: Duration = Duration::from_secs(1);
 
 type Shared = Arc<Server>;
 type Reply<T> = Result<Json<T>, (StatusCode, String)>;
@@ -112,6 +126,15 @@ struct Server {
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
     http: reqwest::Client,
+    saved: Option<Saved>,
+}
+
+/// Where a server saves its state.
+struct Saved {
+    store: Arc<dyn Store>,
+    /// The version of each object that the server knows. The lock lets
+    /// only one save run at a time.
+    versions: tokio::sync::Mutex<HashMap<String, Version>>,
 }
 
 impl Server {
@@ -220,19 +243,118 @@ impl Default for Service {
 }
 
 impl Service {
-    /// A new server with these settings.
+    /// A new server with these settings. It saves nothing.
     pub fn new(config: Config) -> Self {
+        Service::build(config, State::default(), None)
+    }
+
+    /// A server with the state that `store` holds. It saves each change
+    /// to `store` within [`SAVE_EVERY`], while the service lives (R30).
+    ///
+    /// ```
+    /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+    /// use std::sync::Arc;
+    /// use riff_server::Service;
+    /// use riff_server::auth::Config;
+    /// use riff_server::store::Memory;
+    ///
+    /// let store = Memory::default();
+    /// let service = Service::load(Config::default(), Arc::new(store.clone())).await?;
+    /// service.save().await?;
+    /// // A restart: a new server on the same store.
+    /// let service = Service::load(Config::default(), Arc::new(store)).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn load(config: Config, store: Arc<dyn Store>) -> Result<Self, StoreError> {
+        let mut versions = HashMap::new();
+        let mut threads = Vec::new();
+        for name in store.list(THREADS).await? {
+            if let Some(loaded) = store.load(&name).await? {
+                versions.insert(name.clone(), loaded.version);
+                threads.push((name, loaded.bytes));
+            }
+        }
+        let sessions = store.load(SESSIONS).await?;
+        if let Some(loaded) = &sessions {
+            versions.insert(SESSIONS.into(), loaded.version);
+        }
+        let state = State::load(
+            sessions.as_ref().map(|loaded| loaded.bytes.as_slice()),
+            threads
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+            Instant::now(),
+            now_ms(),
+        )
+        .map_err(StoreError::Failed)?;
+        tracing::info!(threads = threads.len(), "loaded the state");
+        let saved = Saved {
+            store,
+            versions: tokio::sync::Mutex::new(versions),
+        };
+        let service = Service::build(config, state, Some(saved));
+        service.save_each_second();
+        Ok(service)
+    }
+
+    fn build(config: Config, state: State, saved: Option<Saved>) -> Self {
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         Service(Arc::new(Server {
             config,
-            state: Mutex::new(State::default()),
+            state: Mutex::new(state),
             tokens: Mutex::new(Tokens::default()),
             replay: Mutex::new(Replay::default()),
             wakes,
             tail,
             http: oidc::client(oidc::FETCH_TIMEOUT),
+            saved,
         }))
+    }
+
+    /// Saves each changed object now (R129). A server with no store does
+    /// nothing. When a save fails, the other objects are still saved,
+    /// and the first error is returned.
+    pub async fn save(&self) -> Result<(), StoreError> {
+        let Some(saved) = &self.0.saved else {
+            return Ok(());
+        };
+        let mut versions = saved.versions.lock().await;
+        let changes = self.0.state().changes(Instant::now(), now_ms());
+        let mut result = Ok(());
+        for (object, bytes) in changes {
+            let name = object.name();
+            let known = versions.get(&name).copied();
+            match saved.store.save(&name, bytes, known).await {
+                Ok(version) => {
+                    versions.insert(name, version);
+                }
+                Err(error) => {
+                    self.0.state().mark_changed(object);
+                    result = result.and(Err(error));
+                }
+            }
+        }
+        result
+    }
+
+    /// Starts the task that saves the changes each [`SAVE_EVERY`]. The
+    /// task ends when the service ends.
+    fn save_each_second(&self) {
+        let server = Arc::downgrade(&self.0);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(SAVE_EVERY);
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(server) = server.upgrade() else {
+                    break;
+                };
+                if let Err(error) = Service(server).save().await {
+                    tracing::error!("save failed: {error}");
+                }
+            }
+        });
     }
 
     /// The HTTP routes of this server.
@@ -647,4 +769,120 @@ fn bad_request(message: String) -> (StatusCode, String) {
 
 fn not_found(message: String) -> (StatusCode, String) {
     (StatusCode::NOT_FOUND, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Memory;
+    use futures::future::BoxFuture;
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    /// A memory store that counts the saves of each object.
+    #[derive(Default)]
+    struct Counting {
+        store: Memory,
+        saves: Mutex<Vec<String>>,
+    }
+
+    impl Counting {
+        fn saves(&self, name: &str) -> usize {
+            self.saves
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|n| *n == name)
+                .count()
+        }
+    }
+
+    impl Store for Counting {
+        fn load<'a>(
+            &'a self,
+            name: &'a str,
+        ) -> BoxFuture<'a, Result<Option<store::Loaded>, StoreError>> {
+            self.store.load(name)
+        }
+
+        fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+            self.store.list(prefix)
+        }
+
+        fn save<'a>(
+            &'a self,
+            name: &'a str,
+            bytes: Vec<u8>,
+            known: Option<Version>,
+        ) -> BoxFuture<'a, Result<Version, StoreError>> {
+            self.saves.lock().unwrap().push(name.to_owned());
+            self.store.save(name, bytes, known)
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_changed_object_is_saved_at_most_once_each_second() {
+        let store = Arc::new(Counting::default());
+        let service = Service::load(Config::default(), store.clone())
+            .await
+            .unwrap();
+        let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a"
+            .parse()
+            .unwrap();
+        let thread = me.default_thread().unwrap();
+        let name = store::thread_object(&thread);
+        let post = |n: usize| {
+            for _ in 0..n {
+                let now = Instant::now();
+                service
+                    .0
+                    .state()
+                    .post(&me, Some(thread.clone()), vec![], "x".into(), now, 0)
+                    .unwrap();
+            }
+        };
+        // The first tick comes at once, and nothing changed.
+        sleep(Duration::from_millis(10)).await;
+        post(5);
+        sleep(Duration::from_millis(500)).await;
+        assert_eq!(store.saves(&name), 0);
+        sleep(Duration::from_millis(600)).await;
+        assert_eq!(store.saves(&name), 1);
+        assert_eq!(store.saves(SESSIONS), 1);
+        post(5);
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(store.saves(&name), 1);
+        sleep(Duration::from_secs(1)).await;
+        assert_eq!(store.saves(&name), 2);
+        // Nothing changed, so nothing is saved.
+        sleep(Duration::from_secs(3)).await;
+        assert_eq!(store.saves(&name), 2);
+
+        let loaded = Service::load(Config::default(), Arc::new(store.store.clone()))
+            .await
+            .unwrap();
+        let now = Instant::now();
+        let messages = loaded.0.state().read(&me, &thread, true, now).unwrap();
+        assert_eq!(messages.len(), 10);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_save_task_ends_with_the_service() {
+        let store = Arc::new(Counting::default());
+        let service = Service::load(Config::default(), store.clone())
+            .await
+            .unwrap();
+        let server = Arc::downgrade(&service.0);
+        drop(service);
+        sleep(Duration::from_secs(2)).await;
+        assert!(server.upgrade().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_server_with_no_store_saves_nothing() {
+        let service = Service::default();
+        let me: SessionUri = "riff://mike@pangolin/-?session=a#x".parse().unwrap();
+        service.0.state().register(&me, Instant::now());
+        assert!(service.save().await.is_ok());
+    }
 }

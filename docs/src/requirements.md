@@ -90,7 +90,7 @@
 - **R128** `riff-server` replies to a call that changes the token store
   only after it saved the change.
 - **R129** On SIGTERM, `riff-server` saves each unsaved change, then
-  exits.
+  exits. Ctrl-C does the same.
 - **R46** A lifecycle rule of the bucket deletes each thread object 30
   days after its last change.
 - **R147** The name of each thread object starts with `threads/`. The
