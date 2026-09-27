@@ -386,12 +386,15 @@ mod tests {
             "The current wave is the open wave with the lowest number",
             "The next wave is the open wave after it",
             "an open issue of the current wave",
-            "take an item of the next wave whose needs are merged",
+            "Take work only from the current wave",
             "Never take an item whose needs are open",
+            "When the current wave has no free item, verify the work of another session, run your checks after the merge, or wait",
             "When the repository has no waves",
             "`Needs:` line",
             "`Merged in COMMIT`",
-            "A wave ends when each of its items is merged",
+            "An item is closed when it is merged and each check after the merge passed",
+            "A wave is done when each of its items is closed",
+            "No session starts an item of the next wave before the current wave is done",
             "`tell` the lead",
             "### Plan the waves",
             "Do these steps only when you are the lead",
@@ -400,12 +403,16 @@ mod tests {
             "No item blocks or breaks the other work of its wave",
             "the last number plus one",
             "what it needs, and what needs it",
-            "end the wave",
+            "When each item of the current wave is closed, the wave is done",
+            "End the wave",
             "### Waves on GitHub",
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }
         assert!(!skill.contains("milestones do not set the order"));
+        let start =
+            &skill[skill.find("## Start routine").unwrap()..skill.find("## Waves").unwrap()];
+        assert!(!start.contains("next wave"), "{start}");
     }
 
     #[test]

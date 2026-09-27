@@ -114,7 +114,10 @@ fn the_skill_the_requirements_and_the_page_agree() {
         "The next wave is the open wave after it.",
         "has no waves, each open item is in the current wave.",
         "`Needs:` line",
-        "An item is merged when it is closed, when its wave has ended, or when it has",
+        "An item is merged when it is closed, or when it has",
+        "closed when it is merged and each check after the merge passed.",
+        "A wave is done when each of its items is closed.",
+        "No session starts an item of the next wave before the current wave is done.",
         "`Merged in COMMIT`",
         "A person or a session can add a work item at any time, with no wave.",
         "Each item is in a later wave than each of its needs.",
@@ -141,13 +144,46 @@ fn a_session_takes_its_work_from_the_current_wave() {
     let r166 = &r166[..r166.find(" - **R").unwrap()];
     for text in [
         "an open work item of the current wave (R214)",
-        "an item of the next wave whose needs are merged (R215)",
-        "It never picks an item whose needs are open.",
+        "It takes work only from the current wave (R216).",
+        "It never picks an item whose needs are open (R215).",
+        "the session verifies, runs its checks after the merge, or waits.",
     ] {
         assert!(r166.contains(text), "R166 does not say {text:?}: {r166}");
     }
+    assert!(!r166.contains("next wave"), "{r166}");
     let how = flat(&read("docs/src/how-it-works.md"));
     assert!(how.contains("picks the free item of the current wave"));
+}
+
+#[test]
+fn a_milestone_closes_only_with_no_open_issue() {
+    let requirements = flat(&read("docs/src/requirements.md"));
+    let r224 = &requirements[requirements.find("**R224**").unwrap()..];
+    let r224 = &r224[..r224.find(" - **R").unwrap()];
+    for doc in [r224, &flat(&read("docs/src/waves.md"))] {
+        assert!(
+            doc.contains("only when the milestone has no open issue"),
+            "{doc}"
+        );
+        assert!(!doc.contains("stay in"), "{doc}");
+    }
+    assert!(flat(&skill()).contains("Close it only when it has no open issue."));
+}
+
+#[test]
+fn no_text_says_a_wave_ends_when_its_items_are_merged() {
+    let mut texts = vec![("SKILL.md".to_owned(), skill())];
+    texts.extend(book());
+    for (name, text) in &texts {
+        let text = flat(text);
+        for old in [
+            "A wave ends when each of its items is merged",
+            "when its wave has ended",
+            "take an item of the next wave",
+        ] {
+            assert!(!text.contains(old), "{name} says {old:?}");
+        }
+    }
 }
 
 #[test]

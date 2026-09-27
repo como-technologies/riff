@@ -34,9 +34,10 @@
   the issue is closed. It never removes a worktree of another live
   session. A worktree with no owner goes to the thread.
 - **R166** A session picks an open work item of the current wave
-  (R214) that no session holds. When the current wave has no free
-  item, it picks an item of the next wave whose needs are merged
-  (R215). It never picks an item whose needs are open. It picks the
+  (R214) that no session holds. It takes work only from the current
+  wave (R216). It never picks an item whose needs are open (R215).
+  When the current wave has no free item, the session verifies,
+  runs its checks after the merge, or waits. It picks the
   item that it thinks is best. It does not wait for a plan or for
   permission. The order of the items in a wave does not matter. A
   scope from the user of the session wins. A scope message from
@@ -146,12 +147,14 @@
   waves, each open item is in the current wave. An item that the lead
   keeps out of the waves is not free work.
 - **R215** An item names the items that it needs in a `Needs:` line.
-  An item is merged when it is closed, when its wave has ended, or when
-  it has the note `Merged in COMMIT` (R194).
-- **R216** A wave ends when each of its items is merged. Then each
-  machine updates to the merged code, when a check after the merge
-  needs it. Then the sessions run the checks after the merge and close
-  the items.
+  An item is merged when it is closed, or when it has the note
+  `Merged in COMMIT` (R194). An item is closed when it is merged and
+  each check after the merge passed.
+- **R216** A wave is done when each of its items is closed. The order
+  in a wave: merge each item, update each machine when a check after
+  the merge needs it, run the checks after the merge, close each item.
+  Then the lead ends the wave. No session starts an item of the next
+  wave before the current wave is done.
 - **R217** The lead plans the waves. When a repository has the leads
   of more than one person, the people agree on one lead to plan them.
 - **R218** A person or a session can add a work item at any time, with
@@ -167,9 +170,10 @@
   thread: the item, its wave, what it needs and what needs it. When a
   wave starts, the lead posts the current wave with its items, the
   next wave, and the conflicts between items.
-- **R221** When each item of the current wave is merged, the lead ends
-  the wave. It tells its user to update each machine when a check
-  needs it, and tells the sessions to run their checks after the merge.
+- **R221** When each item of the current wave is merged, the lead
+  tells its user to update each machine when a check needs it, and
+  tells the sessions to run their checks after the merge. When each
+  item is closed, the lead ends the wave.
 - **R222** The skill, the requirements and the book name the concept
   of waves first. Each keeps the form of a forge in one part of its
   own. A new forge needs no change to the concept. Outside these
@@ -181,8 +185,8 @@
   follow, for example `Wave 5: Cloud`. A work item is an issue in the
   milestone. A milestone with another name is out of the waves.
 - **R224** On GitHub, an open wave is an open milestone. The lead ends
-  a wave: it closes the milestone. Open issues stay in the closed
-  milestone until their checks after the merge pass.
+  a wave: it closes the milestone. It closes a milestone only when the
+  milestone has no open issue.
 - **R225** The skill gives the `gh` command for each step of the
   waves: see the open waves, see the items of a wave, see the items
   with no wave, make a wave, put an item in a wave and end a wave.

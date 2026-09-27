@@ -19,24 +19,23 @@ An item can need other items. Its `Needs:` line names them:
 Needs: #51, #58
 ```
 
-An item is merged when it is closed, when its wave has ended, or when
-it has the note `Merged in COMMIT`. The author adds this note when a
+An item is merged when it is closed, or when it has the note
+`Merged in COMMIT`. The author adds this note when a
 check after the merge is left (see
 [Verify finished work](how-it-works.md#verify-finished-work)).
 
 ## Pick an item
 
-A session takes a free item of the current wave. When the current
-wave has no free item, it takes an item of the next wave, but only
-when the needs of the item are merged.
+A session takes a free item of the current wave. It takes work only
+from the current wave. When the current wave has no free item, the
+session verifies the work of others, runs its checks after the merge,
+or waits.
 
 ```mermaid
 flowchart TD
     S[session looks for work] --> C{"free item in<br/>the current wave?"}
     C -- yes --> T[claim it]
-    C -- no --> N{"free item in the next wave<br/>with each need merged?"}
-    N -- yes --> T
-    N -- no --> W[verify the work of others, or wait]
+    C -- no --> W["verify the work of others,<br/>run checks after the merge, or wait"]
 ```
 
 ## The life of a wave
@@ -45,18 +44,23 @@ flowchart TD
 flowchart LR
     P[planned] --> C[current]
     C --> M[each item merged]
-    M --> E[the wave ends]
-    E --> U[each machine gets the merged code]
+    M --> U[each machine gets the merged code]
     U --> K[checks after the merge]
-    K --> X[items closed]
+    K --> X[each item closed]
+    X --> D[the wave is done]
+    D --> E[the lead ends the wave]
     E --> N[the next wave is current]
 ```
 
-A wave ends when each of its items is merged, not closed. Some items
+A wave is done when each of its items is closed. An item is closed
+when it is merged and each check after the merge passed. Some items
 have a check that needs the merged code on each machine. So the order
-is: merge each item, update each machine, run the checks, close the
-items. In the riff repository, the update is
+is: merge each item, update each machine, run the checks, close each
+item. In the riff repository, the update is
 [Update riff](start-a-riff.md#update-riff).
+
+No session starts an item of the next wave before the current wave is
+done.
 
 ## A new item
 
@@ -104,8 +108,8 @@ This is the only part of the book that is special to one forge.
 - A milestone with another name, for example `Later`, is out of the
   waves.
 - An open wave is an open milestone. The lead ends a wave: it closes
-  the milestone. Open issues stay in it until their checks after the
-  merge pass.
+  the milestone. It closes a milestone only when the milestone has no
+  open issue.
 
 The waves of riff are its
 [milestones](https://github.com/como-technologies/riff/milestones).

@@ -45,9 +45,10 @@ Do these steps when your session starts:
    the history of your repository thread.
 2. Find a free work item: an open issue of the current wave that no
    session holds, or a verify request that no session holds (see
-   "Waves" and "Verify finished work"). When the current wave has no
-   free item, take an item of the next wave whose needs are merged.
-   Never take an item whose needs are open. Pick the item that you
+   "Waves" and "Verify finished work"). Take work only from the
+   current wave. Never take an item whose needs are open. When the
+   current wave has no free item, verify the work of another session,
+   run your checks after the merge, or wait. Pick the item that you
    think is best, for example by its value, by what it unblocks, or by
    low conflict with the claims of other sessions. The order of the
    items in a wave does not matter. Do not wait for a plan or for
@@ -87,13 +88,17 @@ time.
 - An item names the items that it needs in a `Needs:` line, for
   example `Needs: #12, #15`. An item with no `Needs:` line needs
   nothing.
-- An item is merged when it is closed, when its wave has ended, or
-  when it has a note `Merged in COMMIT`.
-- A wave ends when each of its items is merged. Then each machine
-  updates to the merged code, when a check after the merge needs it.
-  In the riff repository, this is an update of riff, so that new
-  sessions start with the new plugin. Then the sessions run the checks
-  after the merge, and close the items.
+- An item is merged when it is closed, or when it has a note
+  `Merged in COMMIT`.
+- An item is closed when it is merged and each check after the merge
+  passed.
+- A wave is done when each of its items is closed. The order in a
+  wave: merge each item, update each machine when a check after the
+  merge needs it, run the checks after the merge, close each item.
+  In the riff repository, the update is an update of riff, so that
+  new sessions start with the new plugin. Then the lead ends the wave.
+- No session starts an item of the next wave before the current wave
+  is done.
 - A person or a session can add a work item at any time, with no
   wave. When you add an item, `tell` the lead. The lead puts it in a
   wave.
@@ -121,10 +126,12 @@ plan the waves.
 5. When a wave starts, post the board to the same `to`: the current
    wave and its items, the next wave, and the conflicts between items.
    A conflict is two items that edit the same part.
-6. When each item of the current wave is merged, end the wave. When a
-   check after the merge needs the merged code, tell your user to
-   update each machine. Then tell the sessions to run their checks
-   after the merge. Post the board of the new current wave.
+6. When each item of the current wave is merged, and a check after
+   the merge needs the merged code, tell your user to update each
+   machine. Then tell the sessions to run their checks after the
+   merge.
+7. When each item of the current wave is closed, the wave is done.
+   End the wave. Post the board of the new current wave.
 
 ### Waves on GitHub
 
@@ -135,8 +142,7 @@ This is the only part of the skill that is special to one forge.
 - A milestone with another name, for example `Later`, is out of the
   waves.
 - An open wave is an open milestone. To end a wave, close its
-  milestone. Its open issues stay in it until their checks after the
-  merge pass.
+  milestone. Close it only when it has no open issue.
 
 | To | Run |
 |---|---|
