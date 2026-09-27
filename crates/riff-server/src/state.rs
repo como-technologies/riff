@@ -4,7 +4,7 @@
 //!
 //! | Data | Key | Notes |
 //! |---|---|---|
-//! | Sessions | who | The place, open watch streams, and the last time the session called. |
+//! | Sessions | who | The place, open watch streams, the last time the session called, and its last status. |
 //! | Threads | thread name | Members, and messages with a sequence number that starts at 1. |
 //! | Read cursors | who and thread | The last sequence number that the session read. |
 //! | Claims | thread and item | The session that holds the item. |
@@ -40,6 +40,12 @@
 //! - `who` lists each session with the time since its last call. A
 //!   session that has not called for [`GONE`] is gone. `who` hides it,
 //!   unless the caller asks for all sessions (R163, R164).
+//! - [`State::set_status`] keeps the last status of a session, with the
+//!   time that it was set. `who` shows the status and its age (R182,
+//!   R184).
+//! - A post has a kind. A post of kind [`Kind::Status`](riff_core::wire::Kind::Status) is a status
+//!   request. It wakes as each post does, and its wakes carry the kind
+//!   (R185).
 //! - A claim is free, or held. A held claim goes back to free when its
 //!   holder releases it, or when the holder has no watch stream and was
 //!   last seen more than [`CLAIM_GRACE`] ago. A claim of a free item
@@ -59,7 +65,8 @@
 //! # Saved state
 //!
 //! The state is a set of objects (R124): one [`Object::Sessions`] with
-//! the sessions, their places, read cursors, claims and leads, and one
+//! the sessions, their places, statuses, read cursors, claims and
+//! leads, and one
 //! [`Object::Thread`] for each thread, with its members and messages.
 //! [`crate::store`] names the objects in a store.
 //!
@@ -87,6 +94,7 @@
 //! ```
 //! use std::time::Instant;
 //! use riff_core::name::SessionUri;
+//! use riff_core::wire::Post;
 //! use riff_server::state::State;
 //!
 //! let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?;
@@ -98,12 +106,12 @@
 //! let thread = mike.default_thread();
 //!
 //! // A post without an address wakes nobody, whatever its text.
-//! let quiet = state.post(&mike, thread.clone(), vec![], "@brett ready".into(), now, 0).unwrap();
-//! assert!(quiet.wakes.is_empty());
+//! let quiet = Post::new(&mike, thread.clone(), vec![], "@brett ready");
+//! assert!(state.post(quiet, now, 0).unwrap().wakes.is_empty());
 //!
 //! // A post to brett's user wakes brett.
 //! let to = vec!["user=brett".parse()?];
-//! let delivery = state.post(&mike, thread.clone(), to, "ready".into(), now, 0).unwrap();
+//! let delivery = state.post(Post::new(&mike, thread.clone(), to, "ready"), now, 0).unwrap();
 //! assert_eq!(&delivery.wakes[0].0, brett.who());
 //!
 //! // Brett reads both messages once.
@@ -122,7 +130,9 @@ use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
-use riff_core::wire::{ClaimReply, LeadReply, Message, SessionInfo, Tailed, ThreadInfo, Wake};
+use riff_core::wire::{
+    ClaimReply, LeadReply, Message, Post, SessionInfo, Status, StatusInfo, Tailed, ThreadInfo, Wake,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::store;
@@ -158,6 +168,16 @@ struct Session {
     /// The last call before the load, in milliseconds since the Unix
     /// epoch. `None` when the session called after the load.
     seen_before_load: Option<u64>,
+    status: Option<SetStatus>,
+}
+
+/// A status with the time that the session set it.
+#[derive(Clone, Serialize, Deserialize)]
+struct SetStatus {
+    #[serde(flatten)]
+    status: Status,
+    /// Milliseconds since the Unix epoch.
+    set_ms: u64,
 }
 
 impl Session {
@@ -236,6 +256,8 @@ struct SavedSession {
     uri: SessionUri,
     /// The last call, in milliseconds since the Unix epoch.
     seen_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    status: Option<SetStatus>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -336,6 +358,7 @@ impl State {
                 watchers: 0,
                 last_seen: now,
                 seen_before_load: Some(s.seen_ms),
+                status: s.status,
             };
             state.sessions.insert(s.uri.who().clone(), session);
         }
@@ -508,6 +531,10 @@ impl State {
                 uri: self.uri(who, now),
                 live: session.watchers > 0,
                 idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
+                status: session.status.as_ref().map(|s| StatusInfo {
+                    status: s.status.clone(),
+                    age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
+                }),
             })
             .filter(|s| all || s.idle_secs < gone)
             .collect()
@@ -573,6 +600,45 @@ impl State {
         })
     }
 
+    /// Sets the status of `me` at `now_ms`, in milliseconds since the
+    /// Unix epoch. It replaces the old status (R182). See
+    /// [`Status::check`] for the status that it refuses (R183).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Status;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// let step = Status { step: "write the tests".into(), blocked: None };
+    /// state.set_status(&mike, step.clone(), now, 1_000).unwrap();
+    ///
+    /// let status = state.who(now, 61_000, false)[0].status.clone().unwrap();
+    /// assert_eq!(status.status, step);
+    /// assert_eq!(status.age_secs, 60);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn set_status(
+        &mut self,
+        me: &SessionUri,
+        status: Status,
+        now: Instant,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        status.check()?;
+        let who = self.arrive(me, now);
+        if let Some(session) = self.sessions.get_mut(&who) {
+            session.status = Some(SetStatus {
+                status,
+                set_ms: now_ms,
+            });
+        }
+        Ok(())
+    }
+
     /// The threads that `me` joined, with its unread counts.
     pub fn threads(&mut self, me: &SessionUri, now: Instant) -> Vec<ThreadInfo> {
         let who = self.arrive(me, now);
@@ -631,16 +697,17 @@ impl State {
 
     /// Adds a message to a thread and wakes each session that `to`
     /// selects (R51). With no thread, the post is a direct message (R62).
-    pub fn post(
-        &mut self,
-        me: &SessionUri,
-        thread: Option<ThreadName>,
-        to: Vec<Selector>,
-        body: String,
-        now: Instant,
-        at_ms: u64,
-    ) -> Result<Delivery, String> {
-        let from = self.arrive(me, now);
+    /// `at_ms` is the time of the post, in milliseconds since the Unix
+    /// epoch.
+    pub fn post(&mut self, post: Post, now: Instant, at_ms: u64) -> Result<Delivery, String> {
+        let Post {
+            me,
+            thread,
+            to,
+            body,
+            kind,
+        } = post;
+        let from = self.arrive(&me, now);
         if to.iter().any(Selector::is_empty) {
             return Err("a selector needs one or more fields".into());
         }
@@ -677,6 +744,7 @@ impl State {
             to,
             body,
             at_ms,
+            kind,
         };
         t.messages.push(Stored {
             message: message.clone(),
@@ -870,6 +938,7 @@ impl State {
                 watchers: 0,
                 last_seen: now,
                 seen_before_load: None,
+                status: None,
             },
         );
         if let Some(thread) = me.default_thread() {
@@ -893,6 +962,7 @@ impl State {
             .map(|(who, s)| SavedSession {
                 uri: SessionUri::new(who.clone(), s.place.clone()),
                 seen_ms: s.seen_ms(now, now_ms),
+                status: s.status.clone(),
             })
             .collect();
         let cursors = self
@@ -948,12 +1018,14 @@ fn wake(thread: &ThreadName, message: &Message) -> Wake {
         thread: thread.clone(),
         seq: message.seq,
         from: message.from.clone(),
+        kind: message.kind,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riff_core::wire::Kind;
 
     fn uri(text: &str) -> SessionUri {
         text.parse().unwrap()
@@ -1003,7 +1075,11 @@ mod tests {
 
     fn post(state: &mut State, me: &SessionUri, t: &str, sel: &[&str], body: &str) -> Delivery {
         state
-            .post(me, Some(thread(t)), to(sel), body.into(), Instant::now(), 0)
+            .post(
+                Post::new(me, Some(thread(t)), to(sel), body),
+                Instant::now(),
+                0,
+            )
             .unwrap()
     }
 
@@ -1125,7 +1201,11 @@ mod tests {
     fn a_post_with_no_address_field_is_refused() {
         let now = Instant::now();
         let mut state = setup(now);
-        let result = state.post(&api(), None, vec![Selector::default()], "x".into(), now, 0);
+        let result = state.post(
+            Post::new(&api(), None, vec![Selector::default()], "x"),
+            now,
+            0,
+        );
         assert!(result.is_err());
     }
 
@@ -1161,7 +1241,7 @@ mod tests {
         let now = Instant::now();
         let mut state = setup(now);
         let d = state
-            .post(&api(), None, to(&["session=b2"]), "hi".into(), now, 0)
+            .post(Post::new(&api(), None, to(&["session=b2"]), "hi"), now, 0)
             .unwrap();
         assert_eq!(woken(&d), vec![tests().who().clone()]);
         let dm = d.tailed.thread;
@@ -1182,7 +1262,7 @@ mod tests {
         ] {
             assert!(
                 state
-                    .post(&api(), None, to(sel), "x".into(), now, 0)
+                    .post(Post::new(&api(), None, to(sel), "x"), now, 0)
                     .is_err(),
                 "{sel:?}"
             );
@@ -1237,17 +1317,14 @@ mod tests {
         assert!(state.missed(&b).is_none());
         state
             .post(
-                &api(),
-                Some(thread("design")),
-                to(&["user=brett"]),
-                "look".into(),
+                Post::new(&api(), Some(thread("design")), to(&["user=brett"]), "look"),
                 now,
                 2,
             )
             .unwrap();
         assert_eq!(state.missed(&b).unwrap().seq, 2);
         let dm = state
-            .post(&docs(), None, to(&["session=b2"]), "hi".into(), now, 3)
+            .post(Post::new(&docs(), None, to(&["session=b2"]), "hi"), now, 3)
             .unwrap()
             .tailed
             .thread;
@@ -1346,6 +1423,80 @@ mod tests {
         assert_eq!(hour[0].idle_secs, 3600);
     }
 
+    fn status(step: &str, blocked: Option<&str>) -> Status {
+        Status {
+            step: step.into(),
+            blocked: blocked.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn a_status_replaces_the_old_one_and_shows_its_age() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        assert!(listed(&state).iter().all(|s| s.status.is_none()));
+        state
+            .set_status(&tests(), status("write the tests", None), now, T0)
+            .unwrap();
+        let blocked = status("merge", Some("waits for a review"));
+        state
+            .set_status(&tests(), blocked.clone(), now, T0 + 1_000)
+            .unwrap();
+        let later = T0 + 121_000;
+        let shown = state.who(now, later, false);
+        let brett = shown.iter().find(|s| s.uri.who() == tests().who()).unwrap();
+        let info = brett.status.clone().unwrap();
+        assert_eq!(info.status, blocked);
+        assert_eq!(info.age_secs, 120);
+        let others = shown.iter().filter(|s| s.uri.who() != tests().who());
+        assert!(others.into_iter().all(|s| s.status.is_none()));
+    }
+
+    #[test]
+    fn a_status_that_does_not_fit_on_one_line_is_refused() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        for bad in [
+            status("", None),
+            status("merge", Some(" ")),
+            status("line\nbreak", None),
+            status(&"x".repeat(201), None),
+        ] {
+            assert!(state.set_status(&api(), bad, now, T0).is_err());
+        }
+        assert!(listed(&state).iter().all(|s| s.status.is_none()));
+    }
+
+    #[test]
+    fn a_status_request_wakes_with_its_kind() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let ask = Post {
+            kind: Kind::Status,
+            ..Post::new(
+                &api(),
+                Some(repo()),
+                to(&["repo=como-technologies/riff"]),
+                "",
+            )
+        };
+        let delivery = state.post(ask, now, 0).unwrap();
+        assert_eq!(delivery.wakes.len(), 2);
+        assert!(delivery.wakes.iter().all(|(_, w)| w.kind == Kind::Status));
+        assert_eq!(delivery.tailed.message.kind, Kind::Status);
+        assert_eq!(state.missed(tests().who()).unwrap().kind, Kind::Status);
+        let messages = state.read(&docs(), &repo(), false, now).unwrap();
+        assert_eq!(messages[0].kind, Kind::Status);
+        post(
+            &mut state,
+            &api(),
+            "como-technologies/riff",
+            &["user=brett"],
+            "hi",
+        );
+        assert_eq!(state.missed(tests().who()).unwrap().kind, Kind::Message);
+    }
+
     const DAY: Duration = Duration::from_secs(24 * 60 * 60);
     /// A time in milliseconds since the Unix epoch.
     const T0: u64 = 1_800_000_000_000;
@@ -1387,7 +1538,7 @@ mod tests {
         let mut state = setup(now);
         post(&mut state, &api(), "design", &["user=brett"], "look");
         let dm = state
-            .post(&api(), None, to(&["session=c3"]), "hi".into(), now, 7)
+            .post(Post::new(&api(), None, to(&["session=c3"]), "hi"), now, 7)
             .unwrap()
             .tailed
             .thread;
@@ -1395,11 +1546,19 @@ mod tests {
         state.read(&tests(), &repo(), false, now).unwrap();
         state.leave(&docs(), &repo(), now);
         state.claim(&tests(), &repo(), "issue-6", now).unwrap();
+        let blocked = status("merge", Some("waits for a review"));
+        state
+            .set_status(&tests(), blocked, now, T0 - 5_000)
+            .unwrap();
         let mut saved = Saved::new();
         save(&mut state, &mut saved, now, T0);
 
         let later = now + Duration::from_secs(1);
         let mut loaded = load(&saved, later, T0 + 1000);
+        let brett = listed(&loaded)
+            .into_iter()
+            .find(|s| s.uri.who() == tests().who());
+        assert_eq!(brett.unwrap().status.unwrap().age_secs, 5);
         assert_eq!(json(&listed(&loaded)), json(&listed(&state)));
         for me in [api(), tests(), docs()] {
             let threads = loaded.threads(&me, later);
@@ -1732,7 +1891,7 @@ mod tests {
         let now = Instant::now();
         let mut state = setup(now);
         let d = state
-            .post(&docs(), None, mike_lead(), "may I?".into(), now, 0)
+            .post(Post::new(&docs(), None, mike_lead(), "may I?"), now, 0)
             .unwrap();
         assert_eq!(woken(&d), [api().who().clone()]);
         assert_eq!(
@@ -1741,17 +1900,21 @@ mod tests {
         );
 
         let error = state
-            .post(&api(), None, mike_lead(), "me?".into(), now, 0)
+            .post(Post::new(&api(), None, mike_lead(), "me?"), now, 0)
             .err()
             .unwrap();
         assert!(error.contains("Ask your own user"), "{error}");
         let error = state
-            .post(&api(), None, to(&["user=mike"]), "who?".into(), now, 0)
+            .post(Post::new(&api(), None, to(&["user=mike"]), "who?"), now, 0)
             .err()
             .unwrap();
         assert!(error.contains("session or lead=true"), "{error}");
         let error = state
-            .post(&docs(), None, to(&["lead=true"]), "which?".into(), now, 0)
+            .post(
+                Post::new(&docs(), None, to(&["lead=true"]), "which?"),
+                now,
+                0,
+            )
             .err()
             .unwrap();
         assert!(error.contains("2 sessions match"), "{error}");
@@ -1765,7 +1928,7 @@ mod tests {
         let later = now + CLAIM_GRACE + Duration::from_secs(1);
         assert!(!is_lead(&state, &api(), later));
         let error = state
-            .post(&docs(), None, mike_lead(), "may I?".into(), later, 0)
+            .post(Post::new(&docs(), None, mike_lead(), "may I?"), later, 0)
             .err()
             .unwrap();
         assert!(error.contains("Ask your own user"), "{error}");
@@ -1809,7 +1972,7 @@ mod tests {
         state.register(&other, now);
         assert!(is_lead(&state, &other, now), "the first of mike in other");
         let d = state
-            .post(&tests(), None, mike_lead(), "hi".into(), now, 0)
+            .post(Post::new(&tests(), None, mike_lead(), "hi"), now, 0)
             .err()
             .unwrap();
         assert!(d.contains("Ask your own user"), "{d}");

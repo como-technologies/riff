@@ -111,9 +111,9 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Claim, ClaimReply, ID_TOKEN_TYPE, Lead, LeadReply, Membership, Post, Posted,
-    Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, ServerMetadata, SignInConfig,
-    TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake,
-    WhoReply, WhoRequest,
+    Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, ServerMetadata, SetStatus,
+    SignInConfig, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError, TokenReply,
+    TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -619,6 +619,7 @@ impl Service {
             .route("/v1/claim", post(claim))
             .route("/v1/release", post(release))
             .route("/v1/lead", post(lead))
+            .route("/v1/status", post(status))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
@@ -715,9 +716,20 @@ async fn post_message(
     Json(r): Json<Post>,
 ) -> Reply<Posted> {
     let delivery = acts_as(&s, caller, &r.me)?
-        .post(&r.me, r.thread, r.to, r.body, Instant::now(), now_ms())
+        .post(r, Instant::now(), now_ms())
         .map_err(bad_request)?;
     Ok(Json(posted(&s, delivery)))
+}
+
+async fn status(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<SetStatus>,
+) -> Reply<()> {
+    acts_as(&s, caller, &r.me)?
+        .set_status(&r.me, r.status, Instant::now(), now_ms())
+        .map_err(bad_request)?;
+    Ok(Json(()))
 }
 
 async fn read(
@@ -1131,7 +1143,7 @@ mod tests {
                 service
                     .0
                     .state()
-                    .post(&me, Some(thread.clone()), vec![], "x".into(), now, 0)
+                    .post(Post::new(&me, Some(thread.clone()), vec![], "x"), now, 0)
                     .unwrap();
             }
         };

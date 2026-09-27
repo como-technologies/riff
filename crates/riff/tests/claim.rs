@@ -1,5 +1,6 @@
-//! `riff claim`, `riff release`, `riff post`, `riff tell`, `riff read`
-//! and `riff lead` from the command line, against a real server.
+//! `riff claim`, `riff release`, `riff post`, `riff tell`, `riff read`,
+//! `riff lead` and `riff status` from the command line, against a real
+//! server.
 
 use std::path::Path;
 use std::process::Command as Git;
@@ -307,4 +308,62 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
 
     let (_, code) = riff(&server, dir, "mike", &["lead"]).await;
     assert_ne!(code, 0, "a person with no session ID cannot be the lead");
+}
+
+#[tokio::test]
+async fn a_person_asks_for_status_and_who_shows_each_answer() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+
+    agent(&server, dir, "mike", "a1", &["read"]).await;
+    agent(&server, dir, "mike", "b2", &["read"]).await;
+    let ask = [
+        "post",
+        "--kind",
+        "status",
+        "--to",
+        "repo=como-technologies/riff",
+    ];
+    let (out, code) = riff(&server, dir, "mike", &ask).await;
+    assert_eq!(
+        out,
+        "Posted message 1 to como-technologies/riff. \
+         Woke mike@pangolin:riff (a1), mike@pangolin:riff (b2).\n"
+    );
+    assert_eq!(code, 0);
+
+    let (out, _) = agent(&server, dir, "mike", "a1", &["read"]).await;
+    assert!(
+        out.ends_with(
+            "[1] riff://mike@pangolin to repo=como-technologies/riff asks for your status.\n"
+        ),
+        "{out}"
+    );
+    let (out, code) = agent(
+        &server,
+        dir,
+        "mike",
+        "a1",
+        &["status", "write", "the", "tests"],
+    )
+    .await;
+    assert_eq!(out, "Your status is now: write the tests\n");
+    assert_eq!(code, 0);
+    let blocked = ["status", "--blocked", "waits for a review", "merge"];
+    let (_, code) = agent(&server, dir, "mike", "b2", &blocked).await;
+    assert_eq!(code, 0);
+
+    let (out, _) = riff(&server, dir, "mike", &["who"]).await;
+    assert!(
+        out.contains("?session=a1&lead=true\n  status 0s ago: write the tests\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("?session=b2\n  blocked 0s ago: waits for a review (step: merge)\n"),
+        "{out}"
+    );
+
+    let (_, code) = riff(&server, dir, "mike", &["post"]).await;
+    assert_ne!(code, 0, "a message needs a body");
 }

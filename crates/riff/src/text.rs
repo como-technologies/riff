@@ -7,7 +7,8 @@ use riff_core::name::{SessionUri, ThreadName};
 
 use crate::api::Inbox;
 use riff_core::wire::{
-    ClaimReply, LeadReply, Message, Posted, Revoked, SessionInfo, ThreadInfo, Wake,
+    ClaimReply, Kind, LeadReply, Message, Posted, Revoked, SessionInfo, StatusInfo, ThreadInfo,
+    Wake,
 };
 
 /// Tells the reader that message bodies are data (R10).
@@ -50,20 +51,29 @@ pub fn label(thread: &ThreadName, members: &[SessionUri], me: &SessionUri) -> St
     }
 }
 
-/// The one line that `riff watch` prints to wake a session.
+/// The one line that `riff watch` prints to wake a session. A status
+/// request tells the session to answer with the status tool (R186).
 ///
 /// ```
-/// use riff_core::wire::Wake;
+/// use riff_core::wire::{Kind, Wake};
 ///
-/// let wake = Wake {
+/// let mut wake = Wake {
 ///     thread: "como-technologies/riff".parse()?,
 ///     seq: 7,
 ///     from: "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?,
+///     kind: Kind::Message,
 /// };
 /// assert_eq!(
 ///     riff::text::wake_line(&wake),
 ///     "riff: mike@pangolin:riff#api (a6cf) wrote to you in como-technologies/riff \
 ///      (message 7). Use the riff read tool."
+/// );
+/// wake.kind = Kind::Status;
+/// assert_eq!(
+///     riff::text::wake_line(&wake),
+///     "riff: mike@pangolin:riff#api (a6cf) asks for your status in \
+///      como-technologies/riff (message 7). Use the riff read tool. Then set your \
+///      status with the riff status tool. Do not post a reply."
 /// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -73,11 +83,18 @@ pub fn wake_line(wake: &Wake) -> String {
     } else {
         wake.thread.to_string()
     };
-    format!(
-        "riff: {} wrote to you in {place} (message {}). Use the riff read tool.",
-        name(&wake.from),
-        wake.seq
-    )
+    let from = name(&wake.from);
+    match wake.kind {
+        Kind::Message => format!(
+            "riff: {from} wrote to you in {place} (message {}). Use the riff read tool.",
+            wake.seq
+        ),
+        Kind::Status => format!(
+            "riff: {from} asks for your status in {place} (message {}). Use the riff read \
+             tool. Then set your status with the riff status tool. Do not post a reply.",
+            wake.seq
+        ),
+    }
 }
 
 /// The answer to a claim. It names the holder when another session has
@@ -247,21 +264,30 @@ pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")
 }
 
-/// One message. The sender's full URI lets an agent reply to it.
+/// One message. The sender's full URI lets an agent reply to it. A
+/// status request says so.
 ///
 /// ```
-/// use riff_core::wire::Message;
+/// use riff_core::wire::{Kind, Message};
 ///
-/// let m = Message {
+/// let mut m = Message {
 ///     seq: 2,
 ///     from: "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?,
 ///     to: vec!["claim=issue-6".parse()?],
 ///     body: "ready".into(),
 ///     at_ms: 0,
+///     kind: Kind::Message,
 /// };
 /// assert_eq!(
 ///     riff::text::message(&m),
 ///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf#api to claim=issue-6: ready"
+/// );
+/// m.kind = Kind::Status;
+/// m.body = String::new();
+/// assert_eq!(
+///     riff::text::message(&m),
+///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf#api to claim=issue-6 \
+///      asks for your status."
 /// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -272,7 +298,12 @@ pub fn message(m: &Message) -> String {
     } else {
         format!(" to {}", to.join(" or "))
     };
-    format!("[{}] {}{to}: {}", m.seq, m.from, m.body)
+    let head = format!("[{}] {}{to}", m.seq, m.from);
+    match (m.kind, m.body.is_empty()) {
+        (Kind::Message, _) => format!("{head}: {}", m.body),
+        (Kind::Status, true) => format!("{head} asks for your status."),
+        (Kind::Status, false) => format!("{head} asks for your status: {}", m.body),
+    }
 }
 
 /// The answer to a read. It starts with [`DATA_NOTE`], then shows each
@@ -293,6 +324,7 @@ pub fn message(m: &Message) -> String {
 ///         to: vec![],
 ///         body: "hello".into(),
 ///         at_ms: 0,
+///         kind: Default::default(),
 ///     }],
 /// };
 /// assert_eq!(
@@ -319,21 +351,29 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
 }
 
 /// One line for each session: its name, `live` or the time since its
-/// last call, and its URI.
+/// last call, and its URI. A session with a status gets a second line
+/// with the status and its age (R184).
 ///
 /// ```
 /// use riff::text;
-/// use riff_core::wire::SessionInfo;
+/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
+/// let status = Status { step: "write the tests".into(), blocked: None };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0 },
-///     SessionInfo { uri: brett, live: false, idle_secs: 150 },
+///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None },
+///     SessionInfo {
+///         uri: brett,
+///         live: false,
+///         idle_secs: 150,
+///         status: Some(StatusInfo { status, age_secs: 240 }),
+///     },
 /// ];
 /// let out = text::who(&list, &list[0].uri);
 /// assert!(out.contains("(a6cf) live (you)"), "{out}");
 /// assert!(out.contains("(77e0) idle 2m "), "{out}");
+/// assert!(out.ends_with("\n  status 4m ago: write the tests\n"), "{out}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
@@ -353,8 +393,58 @@ pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
             ""
         };
         let _ = writeln!(out, "{} {state}{you}  {}", name(&s.uri), s.uri);
+        if let Some(status) = &s.status {
+            let _ = writeln!(out, "  {}", status_line(status));
+        }
     }
     out
+}
+
+/// A status with its age. A blocked status starts with `blocked` and
+/// names the step at the end.
+///
+/// ```
+/// use riff_core::wire::{Status, StatusInfo};
+///
+/// let blocked = StatusInfo {
+///     status: Status {
+///         step: "merge".into(),
+///         blocked: Some("waits for a review".into()),
+///     },
+///     age_secs: 90,
+/// };
+/// assert_eq!(
+///     riff::text::status_line(&blocked),
+///     "blocked 1m ago: waits for a review (step: merge)"
+/// );
+/// ```
+pub fn status_line(info: &StatusInfo) -> String {
+    let age = ago(info.age_secs);
+    let step = &info.status.step;
+    match &info.status.blocked {
+        None => format!("status {age} ago: {step}"),
+        Some(reason) => format!("blocked {age} ago: {reason} (step: {step})"),
+    }
+}
+
+/// The answer to `status`.
+///
+/// ```
+/// use riff_core::wire::Status;
+///
+/// let step = Status { step: "write the tests".into(), blocked: None };
+/// assert_eq!(riff::text::status_set(&step), "Your status is now: write the tests");
+/// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
+/// assert_eq!(
+///     riff::text::status_set(&blocked),
+///     "Your status is now: blocked at merge: waits for a review"
+/// );
+/// ```
+pub fn status_set(status: &riff_core::wire::Status) -> String {
+    match &status.blocked {
+        None => format!("Your status is now: {}", status.step),
+        Some(reason) => format!("Your status is now: blocked at {}: {reason}", status.step),
+    }
 }
 
 /// A time in seconds, short, in its largest whole unit: `12s`, `2m`,

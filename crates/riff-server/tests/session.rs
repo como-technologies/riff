@@ -116,3 +116,49 @@ async fn a_session_refresh_keeps_the_session() {
     assert_eq!(register(&base, &key, &next.access_token, A).await, 200);
     assert_eq!(register(&base, &key, &next.access_token, B).await, 403);
 }
+
+/// Sets a status as `me` with `token`. Returns the status code.
+async fn set_status(base: &str, key: &Key, token: &str, me: &str, step: &str) -> u16 {
+    common::post(&format!("{base}/v1/status"), key, Some(token))
+        .json(&json!({ "me": me, "status": { "step": step } }))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[tokio::test]
+async fn a_session_sets_only_its_own_status() {
+    let (service, base) = common::start(true, &[]).await;
+    let key = Key::generate();
+    let person = service
+        .tokens()
+        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .unwrap();
+    let reply = for_session(&base, &key, &person.access_token, "a").await;
+    let a: TokenReply = reply.json().await.unwrap();
+
+    assert_eq!(
+        set_status(&base, &key, &a.access_token, A, "tests").await,
+        200
+    );
+    assert_eq!(
+        set_status(&base, &key, &a.access_token, B, "tests").await,
+        403
+    );
+    // A status that does not fit on one line gets 400.
+    assert_eq!(
+        set_status(&base, &key, &a.access_token, A, "a\nb").await,
+        400
+    );
+
+    let who = common::post(&format!("{base}/v1/who"), &key, Some(&a.access_token))
+        .json(&json!({ "me": A }))
+        .send()
+        .await
+        .unwrap();
+    let who: serde_json::Value = who.json().await.unwrap();
+    assert_eq!(who["sessions"][0]["status"]["step"], "tests");
+    assert_eq!(who["sessions"][0]["status"]["age_secs"], 0);
+}

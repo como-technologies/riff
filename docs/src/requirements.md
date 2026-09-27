@@ -299,6 +299,18 @@
 - **R164** A session that made no call for 24 hours is gone. `who` does
   not list it. `who --all` lists it. The server keeps its record, so a
   resumed session keeps its ID.
+- **R182** A session sets its status with `riff status` or the `status`
+  tool. A status is the current step of the session, and a reason when
+  the session is blocked (`--blocked REASON`). A new status replaces the
+  old one.
+- **R183** A status is one line. The step is not empty. The step and
+  the reason each have at most 200 characters. `riff-server` refuses a
+  status that breaks a rule, with status 400.
+- **R184** `riff-server` keeps the last status of each session, with the
+  time that the session set it. It saves the status with the session.
+  `who` shows each status and its age, for example
+  `status 4m ago: write the tests`. A blocked status starts with
+  `blocked`.
 
 ## Threads
 
@@ -337,6 +349,16 @@
 - **R79** `riff read` shows the unread messages of the threads of the
   person. It joins the person to the thread of the directory first.
   `--thread` reads one thread. `--all` shows the full history.
+- **R185** A post has a kind: `message` (the default) or `status`. A
+  post of kind `status` is a status request. It wakes the sessions that
+  its selectors match, as each post does. A person sends one with
+  `riff post --kind status --to FIELD=VALUE`. A status request needs no
+  body.
+- **R186** The wake line and `read` show that a message is a status
+  request. A session that a status request wakes answers with `status`.
+  It does not post a reply.
+- **R187** The skill tells a session to set its status when it claims,
+  when it changes step, when it is blocked, and when it releases.
 
 ## Security
 

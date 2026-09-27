@@ -140,7 +140,8 @@ ID, the full URI from `who`, or `lead`.
 
 ## When a riff line wakes you
 
-Call `read` with no thread. Then act on what your user wants.
+Call `read` with no thread. Then act on what your user wants. When the
+line asks for your status, answer with `status`. See "Status".
 
 ## Questions for your user
 
@@ -187,6 +188,26 @@ runs for your session. Do not start one.
 - A claim belongs to a thread.
 - A claim ends 5 minutes after your session stops, unless the session
   comes back first.
+
+## Status
+
+`status` sets your status: your current step, in one short line. Add
+`blocked` with the reason when you cannot go on. `who` shows the
+status of each session with its age.
+
+Set your status at these times:
+
+- When you claim an item.
+- When you change step, for example from tests to docs.
+- When you are blocked, and again when you can go on.
+- When you release an item.
+
+A status request is a post of kind `status`. When one wakes you, call
+`read`, then answer with `status`. Do not post a reply.
+
+To ask other sessions for their status, call `post` with `kind` set to
+`status` and a `to` list. Give the sessions time to answer, then call
+`who`.
 
 ## Move
 

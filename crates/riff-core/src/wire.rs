@@ -16,6 +16,7 @@
 //! | `claim` | [`Claim`] | [`ClaimReply`] |
 //! | `release` | [`Claim`] | `null` |
 //! | `lead` | [`Lead`] | [`LeadReply`] |
+//! | `status` | [`SetStatus`] | `null` |
 //!
 //! `POST /v1/token` is an OAuth 2.1 token endpoint. Its request is a
 //! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
@@ -106,6 +107,81 @@ pub struct SessionInfo {
     /// live.
     #[serde(default)]
     pub idle_secs: u64,
+    /// The last status that the session set, if it set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<StatusInfo>,
+}
+
+/// The most characters in the step or the reason of a [`Status`].
+pub const STATUS_CHARS: usize = 200;
+
+/// What a session does now: its current step, and a reason when it is
+/// blocked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Status {
+    pub step: String,
+    /// Why the session cannot go on. `None` when it is not blocked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<String>,
+}
+
+impl Status {
+    /// Refuses a status that `who` cannot show on one line: an empty
+    /// step, a line break, or more than [`STATUS_CHARS`] characters in
+    /// the step or the reason.
+    ///
+    /// ```
+    /// use riff_core::wire::Status;
+    ///
+    /// let status = |step: &str, blocked: Option<&str>| Status {
+    ///     step: step.into(),
+    ///     blocked: blocked.map(Into::into),
+    /// };
+    /// assert!(status("write the tests", None).check().is_ok());
+    /// assert!(status("merge", Some("waits for a review")).check().is_ok());
+    /// assert!(status(" ", None).check().is_err());
+    /// assert!(status("merge", Some("")).check().is_err());
+    /// assert!(status("two\nlines", None).check().is_err());
+    /// assert!(status(&"x".repeat(201), None).check().is_err());
+    /// ```
+    pub fn check(&self) -> Result<(), String> {
+        let parts = [
+            ("step", Some(&self.step)),
+            ("reason", self.blocked.as_ref()),
+        ];
+        for (what, text) in parts {
+            let Some(text) = text else { continue };
+            if text.trim().is_empty() {
+                return Err(format!("the {what} of a status is empty"));
+            }
+            if text.chars().any(char::is_control) {
+                return Err(format!("the {what} of a status must be one line"));
+            }
+            if text.chars().count() > STATUS_CHARS {
+                return Err(format!(
+                    "the {what} of a status has more than {STATUS_CHARS} characters"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A [`Status`] in the reply to `who`, with its age.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusInfo {
+    #[serde(flatten)]
+    pub status: Status,
+    /// The seconds since the session set the status.
+    pub age_secs: u64,
+}
+
+/// `POST /v1/status`: sets the status of `me`. It replaces the old
+/// status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetStatus {
+    pub me: SessionUri,
+    pub status: Status,
 }
 
 /// `POST /v1/threads`: lists the threads of `me`, with unread counts.
@@ -148,6 +224,61 @@ pub struct Post {
     #[serde(default)]
     pub to: Vec<Selector>,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Kind::is_message")]
+    pub kind: Kind,
+}
+
+impl Post {
+    /// A post of kind [`Kind::Message`].
+    pub fn new(me: &SessionUri, thread: Option<ThreadName>, to: Vec<Selector>, body: &str) -> Post {
+        Post {
+            me: me.clone(),
+            thread,
+            to,
+            body: body.to_owned(),
+            kind: Kind::Message,
+        }
+    }
+}
+
+/// The kind of a post.
+///
+/// ```
+/// use riff_core::wire::Kind;
+///
+/// assert_eq!(serde_json::to_string(&Kind::Status).unwrap(), r#""status""#);
+/// assert_eq!("status".parse::<Kind>(), Ok(Kind::Status));
+/// assert!("other".parse::<Kind>().is_err());
+/// ```
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// A message to read.
+    #[default]
+    Message,
+    /// A status request. Each session that it wakes sets its status
+    /// with `status`. It does not post a reply.
+    Status,
+}
+
+impl Kind {
+    pub fn is_message(&self) -> bool {
+        *self == Kind::Message
+    }
+}
+
+impl std::str::FromStr for Kind {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "message" => Ok(Kind::Message),
+            "status" => Ok(Kind::Status),
+            _ => Err(format!("no kind {text}: use message or status")),
+        }
+    }
 }
 
 /// The reply to `post`. It tells the sender who woke.
@@ -189,6 +320,8 @@ pub struct Message {
     pub body: String,
     /// Milliseconds since the Unix epoch.
     pub at_ms: u64,
+    #[serde(default, skip_serializing_if = "Kind::is_message")]
+    pub kind: Kind,
 }
 
 /// `POST /v1/claim` and `POST /v1/release`: a lease on one work item.
@@ -228,6 +361,8 @@ pub struct Wake {
     pub thread: ThreadName,
     pub seq: u64,
     pub from: SessionUri,
+    #[serde(default, skip_serializing_if = "Kind::is_message")]
+    pub kind: Kind,
 }
 
 /// An event on `GET /v1/tail?thread=…`.

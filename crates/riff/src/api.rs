@@ -36,9 +36,9 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Claim, ClaimReply, Lead, LeadReply, Membership, Message, Post, Posted, Read, ReadReply,
-    Register, Revoke, Revoked, SessionInfo, SignInConfig, Tailed, ThreadInfo, Threads,
-    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Claim, ClaimReply, Kind, Lead, LeadReply, Membership, Message, Post, Posted, Read, ReadReply,
+    Register, Revoke, Revoked, SessionInfo, SetStatus, SignInConfig, Status, Tailed, ThreadInfo,
+    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -357,21 +357,31 @@ impl Api {
     }
 
     /// Posts to a thread and wakes each session that `to` selects. With
-    /// no thread, it sends a direct message to one session.
+    /// no thread, it sends a direct message to one session. A post of
+    /// kind [`Kind::Status`] asks each woken session for its status.
     pub async fn post(
         &self,
         me: &SessionUri,
         thread: Option<&ThreadName>,
         to: &[Selector],
         body: &str,
+        kind: Kind,
     ) -> Result<Posted> {
         let request = Post {
-            me: me.clone(),
-            thread: thread.cloned(),
-            to: to.to_vec(),
-            body: body.to_owned(),
+            kind,
+            ..Post::new(me, thread.cloned(), to.to_vec(), body)
         };
         self.call("post", &request).await
+    }
+
+    /// Sets the status of `me`. It replaces the old status (R182).
+    pub async fn status(&self, me: &SessionUri, status: &Status) -> Result<()> {
+        status.check().map_err(anyhow::Error::msg)?;
+        let request = SetStatus {
+            me: me.clone(),
+            status: status.clone(),
+        };
+        self.call("status", &request).await
     }
 
     /// Sends a direct message (R62). `session` is a session ID, a full
@@ -389,7 +399,7 @@ impl Api {
                 Err(_) => Selector::session(session),
             }
         };
-        self.post(me, None, &[to], body).await
+        self.post(me, None, &[to], body, Kind::Message).await
     }
 
     /// The unread messages (or all of them) of one thread. With no

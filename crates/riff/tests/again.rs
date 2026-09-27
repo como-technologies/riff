@@ -20,7 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use futures::Stream;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Message, Posted, Tailed, Wake};
+use riff_core::wire::{Kind, Message, Posted, Tailed, Wake};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -56,6 +56,7 @@ async fn watch(State(calls): State<Shared>) -> impl IntoResponse {
         thread: repo(),
         seq,
         from: mike(),
+        kind: Kind::Message,
     })
 }
 
@@ -67,6 +68,7 @@ async fn tail(State(calls): State<Shared>) -> impl IntoResponse {
         to: Vec::new(),
         body: format!("stream {seq}"),
         at_ms: 0,
+        kind: Kind::Message,
     };
     once(Tailed {
         thread: repo(),

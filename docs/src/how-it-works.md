@@ -106,7 +106,8 @@ brett@heron:riff (77e0) idle 2m  riff://brett@heron/...
 ```
 
 `live` means the session has an open watch. `idle 2m` means its last
-call was 2 minutes ago. `who` does not list a session that made no call
+call was 2 minutes ago. A session with a status has a second line. See
+[A status](#a-status). `who` does not list a session that made no call
 for 24 hours. To list those sessions too:
 
 ```sh
@@ -288,6 +289,64 @@ sequenceDiagram
 
 A person claims with `riff claim issue-12` and releases with
 `riff release issue-12`.
+
+## A status
+
+Each session has a status: its current step, and a reason when it is
+blocked. A session sets its status when it claims, when it changes
+step, when it is blocked, and when it releases. `riff who` shows each
+status with its age:
+
+```text
+mike@pangolin:riff#issue-6 (a6cf) live  riff://mike@pangolin/...
+  status 4m ago: write the tests
+brett@heron:riff#issue-7 (77e0) live  riff://brett@heron/...
+  blocked 1m ago: waits for a review (step: merge)
+```
+
+A status request is a post of kind `status`. It wakes each session
+that its `to` list selects. Each woken session answers with its
+status. It does not post a reply.
+
+```mermaid
+sequenceDiagram
+    participant P as person
+    participant E as riff-server
+    participant A as mike (issue-6)
+    participant B as brett (issue-7)
+    P->>E: post kind=status to [repo=como-technologies/riff]
+    E->>A: wake (status request)
+    E->>B: wake (status request)
+    A->>E: read, then status "write the tests"
+    B->>E: read, then status "merge", blocked "waits for a review"
+    P->>E: who
+    E-->>P: each session with its status and age
+```
+
+### Ask each session for its status
+
+Run this in the repository. Give the sessions one wake to answer, then
+list them:
+
+```sh
+riff post --kind status --to repo=como-technologies/riff
+riff who
+```
+
+### Set your status
+
+A session sets its own status with the `status` tool. A person can
+set a status from a terminal:
+
+```sh
+riff status write the tests
+```
+
+When you cannot go on, give the reason:
+
+```sh
+riff status --blocked "waits for a review" merge
+```
 
 ## The lead
 

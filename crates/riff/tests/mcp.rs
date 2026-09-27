@@ -69,8 +69,8 @@ async fn the_tools_carry_a_conversation() {
     assert_eq!(
         names,
         [
-            "claim", "join", "lead", "leave", "move", "post", "read", "release", "tell", "threads",
-            "who", "whoami"
+            "claim", "join", "lead", "leave", "move", "post", "read", "release", "status", "tell",
+            "threads", "who", "whoami"
         ]
     );
 
@@ -200,6 +200,51 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
     let (text, is_error) = call(&third, "tell", ask).await;
     assert!(is_error);
     assert!(text.contains("Ask your own user"), "{text}");
+}
+
+#[tokio::test]
+async fn a_status_request_gets_an_answer_with_the_status_tool() {
+    let api = start_server().await;
+    let mike = connect(&api, MIKE).await;
+    let brett = connect(&api, BRETT).await;
+
+    let ask = serde_json::json!({
+        "to": [{ "repo": "como-technologies/riff" }],
+        "body": "",
+        "kind": "status"
+    });
+    let (posted, _) = call(&mike, "post", ask).await;
+    assert!(
+        posted.ends_with("Woke brett@heron:riff#tests (b2)."),
+        "{posted}"
+    );
+
+    let (read, _) = call(&brett, "read", serde_json::json!({})).await;
+    assert!(
+        read.contains(&format!(
+            "{MIKE_LEAD} to repo=como-technologies/riff asks for your status."
+        )),
+        "{read}"
+    );
+    let answer = serde_json::json!({ "step": "merge", "blocked": "waits for a review" });
+    let (set, is_error) = call(&brett, "status", answer).await;
+    assert!(!is_error, "{set}");
+    assert_eq!(
+        set,
+        "Your status is now: blocked at merge: waits for a review"
+    );
+
+    let (who, _) = call(&mike, "who", serde_json::json!({})).await;
+    assert!(
+        who.contains(&format!(
+            "{BRETT_LEAD}\n  blocked 0s ago: waits for a review (step: merge)\n"
+        )),
+        "{who}"
+    );
+
+    let (text, is_error) = call(&brett, "status", serde_json::json!({ "step": "" })).await;
+    assert!(is_error);
+    assert!(text.contains("the step of a status is empty"), "{text}");
 }
 
 #[tokio::test]

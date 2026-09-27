@@ -10,6 +10,7 @@ use riff::api::{Api, DEFAULT_SERVER, follow};
 use riff::{hook, identity, local, login, mcp, plugin, text};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
+use riff_core::wire::{Kind, Status};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
@@ -50,9 +51,23 @@ enum Command {
         /// --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,
-        /// The message.
-        #[arg(required = true)]
+        /// The kind of post: message, or status. A status request asks
+        /// each session that it wakes to set its status. `riff who` then
+        /// shows each status.
+        #[arg(long, default_value = "message")]
+        kind: Kind,
+        /// The message. A status request needs none.
         body: Vec<String>,
+    },
+    /// Set your status: your current step. `riff who` shows it with its
+    /// age. It replaces your old status.
+    Status {
+        /// You cannot go on. REASON says why.
+        #[arg(long, value_name = "REASON")]
+        blocked: Option<String>,
+        /// Your current step, in one short line.
+        #[arg(required = true)]
+        step: Vec<String>,
     },
     /// Send a direct message to one session. It wakes that session.
     Tell {
@@ -198,10 +213,28 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Whoami => println!("{}  {me}", text::name(&me)),
         Command::Who { all } => print!("{}", text::who(&api.who(&me, all).await?, &me)),
-        Command::Post { thread, to, body } => {
+        Command::Post {
+            thread,
+            to,
+            kind,
+            body,
+        } => {
+            if kind.is_message() && body.is_empty() {
+                anyhow::bail!("give the message. Only a post with --kind status needs none.");
+            }
             let thread = thread_or_default(thread, &here)?;
-            let posted = api.post(&me, Some(&thread), &to, &body.join(" ")).await?;
+            let posted = api
+                .post(&me, Some(&thread), &to, &body.join(" "), kind)
+                .await?;
             println!("{}", text::posted(&posted));
+        }
+        Command::Status { blocked, step } => {
+            let status = Status {
+                step: step.join(" "),
+                blocked,
+            };
+            api.status(&me, &status).await?;
+            println!("{}", text::status_set(&status));
         }
         Command::Tell { session, body } => {
             let posted = api.tell(&me, &session, &body.join(" ")).await?;
