@@ -69,6 +69,26 @@ install:
 serve:
     cargo run -p riff-server
 
+# Install riff-server as a user service, with the OAuth client of the cloud project
+service *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . deploy/cloud.env
+    if [ -z "$RIFF_OIDC_CLIENT_ID" ]; then
+        echo "deploy/cloud.env has no client ID. Run: just oauth-client" >&2
+        exit 1
+    fi
+    secret=$(gcloud secrets versions access latest --secret "$CLOUD_SECRET" --project "$CLOUD_PROJECT")
+    RIFF_OIDC_CLIENT_ID=$RIFF_OIDC_CLIENT_ID RIFF_OIDC_CLIENT_SECRET=$secret riff-server install {{ARGS}}
+
+# Make the cloud resources of riff; it checks each one first (R136)
+cloud-setup:
+    deploy/cloud-setup.sh
+
+# Store the OAuth client: the secret in Secret Manager, the ID in deploy/cloud.env
+oauth-client:
+    deploy/oauth-client.sh
+
 # Clean build artifacts
 clean:
     cargo clean

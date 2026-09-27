@@ -120,8 +120,21 @@
   bucket is private.
 - **R135** The image holds only the `riff-server` binary and CA
   certificates. It runs as a user that is not root.
-- **R136** `just cloud-setup` makes the cloud resources once.
-  `just deploy` builds the image and deploys it to Cloud Run.
+- **R143** The Google Cloud project `como-riff` holds each cloud
+  resource of riff. It holds nothing else.
+- **R144** `deploy/cloud.env` holds the cloud settings and the OAuth
+  client ID. The repository is public. No file in it holds the account
+  data of a real person: an email address, a billing account ID or an
+  organization ID.
+- **R136** A person makes the project and links its billing account
+  with gcloud, by the how-to in the book. `just cloud-setup` makes the
+  resources of riff in the project. It checks each resource first, so
+  it can run again. `just deploy` builds the image and deploys it to
+  Cloud Run.
+- **R145** A person makes the OAuth client by hand in the console, with
+  the how-to in the book. `just oauth-client` puts the client secret in
+  Secret Manager and the client ID in `deploy/cloud.env`. The secret is
+  never in the repository or in a downloaded file.
 
 ## One instance
 
@@ -240,6 +253,8 @@
 - **R91** `riff-server` swaps a valid ID token of its provider for the
   first riff tokens. The email in the ID token must be verified.
 - **R117** Each fetch from the sign-in provider stops after 10 seconds.
+- **R146** At start, `riff-server` checks its OAuth client with the
+  provider. When the provider refuses the client, `riff-server` stops.
 - **R92** USER is the part of the verified email before the `@`, in
   lower case.
 - **R93** `riff logout` removes the sign-in at one server from the
