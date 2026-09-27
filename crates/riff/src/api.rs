@@ -46,8 +46,13 @@ use tokio::sync::Mutex;
 
 use crate::{device, login, secrets};
 
-/// The server that `riff` uses when nothing else is set.
-pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
+/// The server that `riff` uses when nothing else is set: the shared
+/// server on Cloud Run (R5, R133). Local development sets `RIFF_SERVER`.
+///
+/// ```
+/// assert!(riff::api::DEFAULT_SERVER.starts_with("https://"));
+/// ```
+pub const DEFAULT_SERVER: &str = "https://riff-server-816917641970.us-central1.run.app";
 
 /// How long the client tries a request again while the server replies
 /// 503 (R132).

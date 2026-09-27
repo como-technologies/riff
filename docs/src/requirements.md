@@ -126,8 +126,9 @@
 - **R148** `riff watch` and `riff tail` connect again at once when a
   stream ends. When a connect fails, they try again every 5 seconds.
   They stop only when the person stops them.
-- **R133** `riff` uses `https://riff.comotechnologies.io` when no server
-  is set. `--server` or `RIFF_SERVER` names another server.
+- **R133** `riff` uses the public URL of the shared server (R5) when no
+  server is set. `--server` or `RIFF_SERVER` names another server.
+  Local development sets `RIFF_SERVER=http://127.0.0.1:7878`.
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
   it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
 - **R134** `riff-server` runs as its own service account. The account

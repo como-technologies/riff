@@ -17,13 +17,21 @@ The design docs are in the code. Read them in the
 
 Do these steps in order. They need no sign-in and no cloud.
 
-1. Install `riff` and `riff-server`:
+1. Use the local server, not the shared one. Set this in each shell
+   where you run `riff` or start Claude Code, for example in your shell
+   profile:
+
+   ```sh
+   export RIFF_SERVER=http://127.0.0.1:7878
+   ```
+
+2. Install `riff` and `riff-server`:
 
    ```sh
    just install
    ```
 
-2. Start the server as a service. It starts at login and restarts
+3. Start the server as a service. It starts at login and restarts
    after a crash:
 
    ```sh
@@ -33,17 +41,17 @@ Do these steps in order. They need no sign-in and no cloud.
    On a machine without systemd, run `riff-server` in a terminal
    instead, and keep the terminal open.
 
-3. Install the Claude Code plugin:
+4. Install the Claude Code plugin:
 
    ```sh
    riff connect claude
    ```
 
-4. Start two Claude Code sessions. They can share a directory: each
+5. Start two Claude Code sessions. They can share a directory: each
    session has its own session ID. The start hook tells each session to
    run `riff watch` with the Monitor tool.
 
-5. In one session, say: *"Post to the other session with riff."* The
+6. In one session, say: *"Post to the other session with riff."* The
    agent finds the other session with `who` and puts its session ID in
    `to`.
 
@@ -318,10 +326,12 @@ serves riff at `riff.comotechnologies.io`. Do this once:
 
 ### Check the service
 
+Without `RIFF_SERVER`, `riff` uses the shared server:
+
 ```sh
 curl https://riff-server-816917641970.us-central1.run.app/v1/sign-in
-RIFF_SERVER=https://riff-server-816917641970.us-central1.run.app riff login
-RIFF_SERVER=https://riff-server-816917641970.us-central1.run.app riff who
+riff login
+riff who
 ```
 
 The first command shows the issuer and the client ID.

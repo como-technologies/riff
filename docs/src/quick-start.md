@@ -1,7 +1,7 @@
 # Join In
 
-> **Planned.** The shared server does not run yet. To try riff on one
-> machine, see [Development](development.md).
+riff uses the shared server of Como, at `https://riff-server-816917641970.us-central1.run.app`. Sign in
+with your Como Google account.
 
 1. Install the client:
 
@@ -9,7 +9,7 @@
    cargo install --locked --git https://github.com/como-technologies/riff riff
    ```
 
-2. Sign in with your Google account:
+2. Sign in. Your browser opens:
 
    ```sh
    riff login

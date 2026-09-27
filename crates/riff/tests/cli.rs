@@ -79,3 +79,21 @@ fn login_says_when_it_cannot_reach_the_server() {
     let stderr = String::from_utf8(stderr).unwrap();
     assert!(stderr.contains("cannot reach riff-server"), "{stderr}");
 }
+
+#[test]
+fn the_default_server_is_the_shared_server() {
+    let out = Command::cargo_bin("riff")
+        .unwrap()
+        .args(["login", "--help"])
+        .env_remove("RIFF_SERVER")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let help = String::from_utf8(out).unwrap();
+    assert!(
+        help.contains("[default: https://riff-server-816917641970.us-central1.run.app]"),
+        "{help}"
+    );
+}
