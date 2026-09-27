@@ -93,6 +93,9 @@
   exits.
 - **R46** A lifecycle rule of the bucket deletes each thread object 30
   days after its last change.
+- **R147** The name of each thread object starts with `threads/`. The
+  sessions, the token store and the lease have names outside
+  `threads/`.
 
 ## Cloud
 

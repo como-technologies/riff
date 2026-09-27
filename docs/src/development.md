@@ -177,6 +177,19 @@ just cloud-setup
 ```
 
 The command checks each resource first, so you can run it again.
+It makes the bucket `como-riff-state`. The bucket has one lifecycle
+rule. The rule deletes each thread object 30 days after its last
+change. The rule does not touch the sessions, the tokens or the lease.
+
+### See the lifecycle rule
+
+```sh
+gcloud storage buckets describe gs://como-riff-state --project como-riff \
+  --format 'json(lifecycle_config)'
+```
+
+The output shows one `Delete` rule with `age` 30 and the prefix
+`threads/`.
 
 ## Make the OAuth client
 

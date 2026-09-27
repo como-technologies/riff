@@ -19,7 +19,7 @@ if [ "$(gcloud billing projects describe "$CLOUD_PROJECT" --format='value(billin
 fi
 echo "Project $CLOUD_PROJECT: exists, with billing."
 
-gcloud services enable secretmanager.googleapis.com "${project[@]}"
+gcloud services enable secretmanager.googleapis.com storage.googleapis.com "${project[@]}"
 echo "APIs: on."
 
 if gcloud secrets describe "$CLOUD_SECRET" "${project[@]}" >/dev/null 2>&1; then
@@ -28,6 +28,18 @@ else
     echo "Secret $CLOUD_SECRET: making it."
     gcloud secrets create "$CLOUD_SECRET" --replication-policy automatic "${project[@]}"
 fi
+
+bucket=gs://$CLOUD_BUCKET
+if gcloud storage buckets describe "$bucket" "${project[@]}" >/dev/null 2>&1; then
+    echo "Bucket $CLOUD_BUCKET: exists."
+else
+    echo "Bucket $CLOUD_BUCKET: making it."
+    gcloud storage buckets create "$bucket" --location "$CLOUD_REGION" \
+        --uniform-bucket-level-access --public-access-prevention "${project[@]}"
+fi
+# The rule deletes each thread object 30 days after its last change (R46).
+gcloud storage buckets update "$bucket" --lifecycle-file lifecycle.json "${project[@]}"
+echo "Bucket $CLOUD_BUCKET: lifecycle rule set."
 
 # gcloud warns when it filters an empty list, so hide its stderr.
 versions=$(gcloud secrets versions list "$CLOUD_SECRET" --filter=state=ENABLED \
