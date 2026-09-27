@@ -340,6 +340,14 @@
   sign-in.
 - **R158** When `riff` cannot open the keyring, the command stops,
   unless `RIFF_USER` is set. With `RIFF_USER`, it sends no token.
+- **R226** When `riff` gets no token, it asks `riff-server` if it has
+  sign-in. At a riff with no sign-in, the command stops and says to run
+  `riff logout`, while this machine keeps a sign-in for that riff. When
+  that sign-in is gone, it says to try again or to start the session
+  again. `riff` keeps the old sign-in until the person runs
+  `riff logout`.
+- **R227** No error tells a person to run `riff login` at a riff with
+  no sign-in.
 - **R159** A session keeps the user of its first call. The server
   refuses a call with a known session ID and another user, with status
   409. The reply tells the session to set `RIFF_USER` or to sign in.

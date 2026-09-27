@@ -90,6 +90,20 @@ export RIFF_USER=USER
 `riff` then sends no token. A server with `--require-sign-in` refuses
 it.
 
+### When riff says the riff has no sign-in
+
+A riff can start again with no sign-in, for example after
+[Start a Riff](start-a-riff.md). Then each command stops with
+`riff-server at URL has no sign-in, but this machine has an old sign-in
+for it`. Remove the old sign-in:
+
+```sh
+riff logout
+```
+
+Then start your Claude Code sessions again. Your user is now the name
+that you log in with on your machine.
+
 ### When riff says a session is known as another user
 
 The server keeps one user for each session. A call with the same

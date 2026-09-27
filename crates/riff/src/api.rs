@@ -16,6 +16,13 @@
 //! client needs it. After that, the client refreshes it with its own
 //! refresh token. When the refresh fails, it does a new exchange.
 //!
+//! When the client gets no token, it asks the server if it has sign-in
+//! ([`Api::has_sign_in`]). A riff with no sign-in cannot give a token,
+//! so a sign-in of this machine for it is old. The error then names
+//! `riff logout`, never `riff login` (R226, R227). The client keeps the
+//! old sign-in: the user of a sign-in is the user of each session, so
+//! only the person removes it.
+//!
 //! # Signatures
 //!
 //! A signed-in client signs each post with its device key (R195, see
@@ -53,7 +60,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
-use crate::{device, login, secrets};
+use crate::{device, login, secrets, text};
 
 /// The server that `riff` uses when nothing else is set: the server on
 /// this machine (R133). `RIFF_SERVER` names another server.
@@ -208,6 +215,31 @@ impl Api {
         Ok(response.error_for_status()?.json().await?)
     }
 
+    /// True when the server has a sign-in provider. A riff with no
+    /// sign-in replies 404 to `GET /v1/sign-in` (R226).
+    pub async fn has_sign_in(&self) -> Result<bool> {
+        let response = self
+            .anonymous()
+            .send(reqwest::Method::GET, "/v1/sign-in", |r| r)
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        response.error_for_status()?;
+        Ok(true)
+    }
+
+    /// `error` when the server has sign-in, or when riff cannot ask it.
+    /// At a riff with no sign-in, the error names the step that helps
+    /// (R226).
+    async fn no_token(&self, error: anyhow::Error) -> anyhow::Error {
+        if !matches!(self.has_sign_in().await, Ok(false)) {
+            return error;
+        }
+        let kept = login::stored(&self.base).is_ok_and(|s| s.is_some());
+        anyhow::anyhow!(text::no_sign_in(&self.base, kept))
+    }
+
     /// Calls the token endpoint with a proof from the device key `key`
     /// (R18). See [`TokenRequest`] for the grants.
     pub async fn token(&self, request: &TokenRequest, key: &Key) -> Result<TokenReply> {
@@ -303,7 +335,10 @@ impl Api {
         let Some(auth) = &self.auth else {
             return Ok(request);
         };
-        let token = self.access_token(auth).await?;
+        let token = match self.access_token(auth).await {
+            Ok(token) => token,
+            Err(error) => return Err(self.no_token(error).await),
+        };
         let proof = auth.key.proof(method.as_str(), &url, Some(&token), now());
         Ok(request
             .header("authorization", format!("DPoP {token}"))
@@ -523,6 +558,9 @@ impl Api {
     /// `None` (R20). It needs [`Api::signed_in`].
     pub async fn revoke(&self, user: Option<&str>) -> Result<Revoked> {
         if self.auth.is_none() {
+            if matches!(self.has_sign_in().await, Ok(false)) {
+                bail!(text::nobody_signs_in(&self.base));
+            }
             bail!("no sign-in for {}: run riff login", self.base);
         }
         let request = Revoke {
@@ -672,6 +710,48 @@ fn claim(me: &SessionUri, thread: &ThreadName, item: &str) -> Claim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A client of a fake server that replies `status` to
+    /// `GET /v1/sign-in`.
+    async fn sign_in_replies(status: u16) -> Api {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let code = axum::http::StatusCode::from_u16(status).unwrap();
+        let router = axum::Router::new().route(
+            "/v1/sign-in",
+            axum::routing::get(move || async move { code }),
+        );
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        Api::new(&url)
+    }
+
+    #[tokio::test]
+    async fn has_sign_in_is_false_only_for_a_404() {
+        assert!(!sign_in_replies(404).await.has_sign_in().await.unwrap());
+        assert!(sign_in_replies(200).await.has_sign_in().await.unwrap());
+        assert!(sign_in_replies(500).await.has_sign_in().await.is_err());
+        let gone = Api::new("http://127.0.0.1:1");
+        assert!(gone.has_sign_in().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn no_token_keeps_the_error_unless_the_riff_has_no_sign_in() {
+        let first = || anyhow::anyhow!("the sign-in ended: run riff login");
+        let signed = sign_in_replies(200).await;
+        assert_eq!(
+            signed.no_token(first()).await.to_string(),
+            first().to_string()
+        );
+        let down = sign_in_replies(500).await;
+        assert_eq!(
+            down.no_token(first()).await.to_string(),
+            first().to_string()
+        );
+        let open = sign_in_replies(404).await;
+        let error = open.no_token(first()).await.to_string();
+        assert!(error.contains("has no sign-in"), "{error}");
+        assert!(!error.contains("riff login"), "{error}");
+    }
 
     #[tokio::test]
     async fn follow_gives_a_failed_connect_as_one_error_and_tries_again() {

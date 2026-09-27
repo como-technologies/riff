@@ -258,6 +258,51 @@ pub fn signed_out(had: bool, server: &str) -> String {
     }
 }
 
+/// The error at a riff with no sign-in, when a client of this machine
+/// has an old sign-in for it (R226). `kept` is true while the keyring
+/// still holds that sign-in. It is false when the sign-in was removed
+/// after this process started.
+///
+/// ```
+/// let server = "http://127.0.0.1:7878";
+/// assert_eq!(
+///     riff::text::no_sign_in(server, true),
+///     "riff-server at http://127.0.0.1:7878 has no sign-in, but this machine \
+///      has an old sign-in for it. Run riff logout, then try again."
+/// );
+/// assert_eq!(
+///     riff::text::no_sign_in(server, false),
+///     "riff-server at http://127.0.0.1:7878 has no sign-in. This process \
+///      started with an old sign-in of this machine. Try again, or start \
+///      your agent session again."
+/// );
+/// ```
+pub fn no_sign_in(server: &str, kept: bool) -> String {
+    if kept {
+        format!(
+            "riff-server at {server} has no sign-in, but this machine has an old \
+             sign-in for it. Run riff logout, then try again."
+        )
+    } else {
+        format!(
+            "riff-server at {server} has no sign-in. This process started with an \
+             old sign-in of this machine. Try again, or start your agent session again."
+        )
+    }
+}
+
+/// The error of `riff logout --all` at a riff with no sign-in (R227).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::nobody_signs_in("http://127.0.0.1:7878"),
+///     "riff-server at http://127.0.0.1:7878 has no sign-in. Nobody is signed in to it."
+/// );
+/// ```
+pub fn nobody_signs_in(server: &str) -> String {
+    format!("riff-server at {server} has no sign-in. Nobody is signed in to it.")
+}
+
 /// The answer to a release.
 pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")

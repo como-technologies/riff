@@ -144,7 +144,7 @@ pub fn pick_user(
     let user = riff_user
         .or(signed_in)
         .or(os_user)
-        .context("run riff login, or set RIFF_USER")?;
+        .context("set RIFF_USER. At a riff with sign-in, you can run riff login instead")?;
     Ok(sanitize(&user.to_lowercase()))
 }
 

@@ -113,9 +113,10 @@ async fn a_token_from_another_device_cannot_log_out() {
     assert_eq!(still, Ok("mike".to_owned()));
 }
 
+/// This server has no sign-in provider, so nobody can sign in (R227).
 #[tokio::test]
 async fn logout_all_needs_a_sign_in() {
     let (_, api) = start(&[]).await;
     let error = login::logout_all(&api, None).await.unwrap_err();
-    assert!(error.to_string().contains("run riff login"), "{error}");
+    assert_eq!(error.to_string(), text::nobody_signs_in(api.base()));
 }

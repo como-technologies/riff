@@ -205,6 +205,36 @@ async fn a_used_refresh_token_ends_the_sign_in() {
     assert!(format!("{error:#}").contains("run riff login"), "{error:#}");
 }
 
+/// At a riff with sign-in, an ended sign-in still says `riff login`
+/// (R226).
+#[tokio::test]
+async fn a_call_with_an_ended_sign_in_says_to_run_riff_login() {
+    let (_, api) = start().await;
+    let first = login::login(&api, browser).await.unwrap();
+    let old = SignIn {
+        expires_at: 0,
+        ..first
+    };
+    login::store(api.base(), &old).unwrap();
+    login::access_token(&api).await.unwrap();
+    login::store(api.base(), &old).unwrap();
+
+    assert!(api.has_sign_in().await.unwrap());
+    let me = "riff://ada@pangolin/como-technologies/riff"
+        .parse()
+        .unwrap();
+    let person = api.clone().signed_in(None).unwrap();
+    let error = person.who(&me, false).await.unwrap_err();
+    assert!(format!("{error:#}").contains("run riff login"), "{error:#}");
+}
+
+#[tokio::test]
+async fn logout_all_with_no_sign_in_at_a_riff_with_sign_in_says_riff_login() {
+    let (_, api) = start().await;
+    let error = login::logout_all(&api, None).await.unwrap_err();
+    assert!(error.to_string().contains("run riff login"), "{error}");
+}
+
 #[tokio::test]
 async fn a_server_without_a_provider_says_so() {
     mock_keyring();
