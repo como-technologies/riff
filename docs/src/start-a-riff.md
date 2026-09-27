@@ -12,8 +12,10 @@ later.
 - Linux with systemd and a desktop. riff keeps a key in the keyring of
   your desktop.
 - [Claude Code](https://code.claude.com).
-- [Rust](https://rustup.rs) and a C compiler. On Ubuntu, install the
-  compiler with `sudo apt install build-essential`.
+- Rust. If you do not have it, install it with
+  [rustup](https://rustup.rs).
+- A C compiler. On Ubuntu, install it with
+  `sudo apt install build-essential`.
 
 ## Start
 
