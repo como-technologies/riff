@@ -93,8 +93,8 @@
   only after it saved the change.
 - **R150** When that save fails, `riff-server` replies 503. The next
   save tries the change again.
-- **R129** On SIGTERM, `riff-server` saves each unsaved change, then
-  exits. Ctrl-C does the same.
+- **R129** On SIGTERM, `riff-server` replies 503 to each new call,
+  saves each unsaved change, then exits. Ctrl-C does the same.
 - **R46** A lifecycle rule of the bucket deletes each thread object 30
   days after its last change.
 - **R147** The name of each thread object starts with `threads/`. The
@@ -168,6 +168,10 @@
 - **R141** Each save names the version of the object that the instance
   knows. When the bucket holds another version, the save fails. The
   instance then stops as in R140.
+- **R155** An instance saves only in the time that R139 gives it to
+  serve.
+- **R156** A new instance starts to serve at a whole second. When the
+  lease shows another ID after its wait, it exits and does not serve.
 
 ## Sessions
 

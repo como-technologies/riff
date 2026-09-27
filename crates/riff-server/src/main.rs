@@ -224,9 +224,17 @@ async fn main() -> std::io::Result<()> {
     tokio::select! {
         result = axum::serve(listener, service.router()).into_future() => result,
         () = stop => {
-            // Save each unsaved change, then exit (R129).
+            // Take no more calls, save each unsaved change, then exit (R129).
             tracing::info!("stopping: saving the state");
-            service.save().await.map_err(std::io::Error::other)
+            service.shutdown().await.map_err(std::io::Error::other)
+        }
+        () = async {
+            service.stopped().await;
+            tokio::time::sleep(service.config().lease.exit_after).await;
+        } => {
+            // Another instance serves now (R140).
+            tracing::info!("exiting: another instance serves");
+            Ok(())
         }
     }
 }

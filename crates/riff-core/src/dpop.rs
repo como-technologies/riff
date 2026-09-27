@@ -59,7 +59,7 @@ use sha2::{Digest, Sha256};
 pub const MAX_AGE: u64 = 300;
 
 /// A proof may be this many seconds in the future, for clock skew (R86).
-pub const MAX_SKEW: u64 = 60;
+pub const MAX_SKEW: u64 = 10;
 
 /// The `typ` of a proof.
 const TYP: &str = "dpop+jwt";

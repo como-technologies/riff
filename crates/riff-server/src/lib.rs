@@ -61,6 +61,17 @@
 //! - The token store is the object [`store::TOKENS`]. A call that
 //!   changes it gets its reply only after the save (R128). When that
 //!   save fails, the reply is 503, and the task saves the tokens again.
+//! - A server with a store takes the [`lease`] before it loads, and
+//!   keeps reading it. A gate replies 503 to each call while the server
+//!   does not serve (R139). The server saves only while it holds the
+//!   lease (R155).
+//! - A server that reads another ID in the lease, or whose save finds
+//!   another version, stops for good (R140, R141): each stream closes,
+//!   each call gets 503, and it saves nothing more.
+//!   [`Service::stopped`] tells `main`, which exits after
+//!   [`lease::Timing::exit_after`].
+//! - A server refuses each proof issued before it started to serve
+//!   (R142).
 //!
 //! The wire protocol is in [`riff_core::wire`].
 //!
@@ -75,6 +86,7 @@
 
 pub mod auth;
 pub mod gcs;
+pub mod lease;
 pub mod oidc;
 pub mod service;
 pub mod state;
@@ -83,7 +95,7 @@ pub mod token;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -109,6 +121,7 @@ use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
+use crate::lease::Lease;
 use crate::state::{Delivery, State};
 use crate::store::{SESSIONS, Store, StoreError, THREADS, TOKENS, Version};
 use crate::token::Tokens;
@@ -135,6 +148,18 @@ struct Server {
     tail: broadcast::Sender<Tailed>,
     http: reqwest::Client,
     saved: Option<Saved>,
+    gate: Gate,
+}
+
+/// When a server serves. A server with no lease serves until it stops.
+struct Gate {
+    /// With a lease: the server serves until this time (R139).
+    until: Mutex<Option<Instant>>,
+    /// True once the server stopped for good (R140).
+    stopped: tokio::sync::watch::Sender<bool>,
+    /// True once the server shuts down: it takes no call, but it still
+    /// saves (R129).
+    closing: AtomicBool,
 }
 
 /// Where a server saves its state.
@@ -261,11 +286,61 @@ impl Server {
             let changes = self.tokens_changes.load(Ordering::SeqCst);
             (tokens.to_bytes(Instant::now(), SystemTime::now()), changes)
         };
+        if !self.leased() {
+            return Err(StoreError::Failed("the server does not serve now".into()));
+        }
         let known = versions.get(TOKENS).copied();
-        let version = saved.store.save(TOKENS, bytes, known).await?;
+        let version = match saved.store.save(TOKENS, bytes, known).await {
+            Ok(version) => version,
+            Err(error) => {
+                if let StoreError::Conflict(_) = error {
+                    self.stop(&error.to_string());
+                }
+                return Err(error);
+            }
+        };
         versions.insert(TOKENS.into(), version);
         self.tokens_saved.fetch_max(changes, Ordering::SeqCst);
         Ok(())
+    }
+
+    fn until(&self) -> MutexGuard<'_, Option<Instant>> {
+        self.gate
+            .until
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// True while the server holds the lease and has not stopped, so it
+    /// may save (R139, R140).
+    fn leased(&self) -> bool {
+        !self.is_stopped() && self.until().is_none_or(|until| Instant::now() < until)
+    }
+
+    /// True while the server takes calls: it holds the lease, and it
+    /// does not shut down.
+    fn serving(&self) -> bool {
+        self.leased() && !self.gate.closing.load(Ordering::SeqCst)
+    }
+
+    fn is_stopped(&self) -> bool {
+        *self.gate.stopped.borrow()
+    }
+
+    /// Stops for good (R140).
+    fn stop(&self, why: &str) {
+        if !self.gate.stopped.send_replace(true) {
+            tracing::warn!("stopped for good: {why}");
+        }
+    }
+
+    /// Ends when the server stops for good.
+    fn stopping(&self) -> impl Future<Output = ()> + use<> {
+        let mut stopped = self.gate.stopped.subscribe();
+        async move {
+            // An error means that the server is gone, so it stopped too.
+            let _ = stopped.wait_for(|stopped| *stopped).await;
+        }
     }
 
     fn deliver(&self, delivery: Delivery) {
@@ -302,27 +377,51 @@ impl Default for Service {
 impl Service {
     /// A new server with these settings. It saves nothing.
     pub fn new(config: Config) -> Self {
-        Service::build(config, State::default(), Tokens::default(), None)
+        Service::build(
+            config,
+            State::default(),
+            Tokens::default(),
+            None,
+            None,
+            now_ms() / 1000,
+        )
     }
 
-    /// A server with the state that `store` holds. It saves each change
-    /// to `store` within [`SAVE_EVERY`], while the service lives (R30).
+    /// A server with the state that `store` holds. It takes the lease,
+    /// waits, loads the state, and serves from the next whole second
+    /// (R138, R142). It saves each change to `store` within
+    /// [`SAVE_EVERY`], while the service lives (R30). It fails when
+    /// another instance took the lease during the wait.
     ///
     /// ```
     /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
     /// use std::sync::Arc;
+    /// use std::time::Duration;
     /// use riff_server::Service;
     /// use riff_server::auth::Config;
     /// use riff_server::store::Memory;
     ///
+    /// let mut config = Config::default();
+    /// config.lease.wait = Duration::from_millis(10);
     /// let store = Memory::default();
-    /// let service = Service::load(Config::default(), Arc::new(store.clone())).await?;
-    /// service.save().await?;
-    /// // A restart: a new server on the same store.
-    /// let service = Service::load(Config::default(), Arc::new(store)).await?;
+    /// let old = Service::load(config.clone(), Arc::new(store.clone())).await?;
+    /// // A deploy: a new server on the same store.
+    /// let new = Service::load(config, Arc::new(store)).await?;
+    /// old.stopped().await;
     /// # Ok(()) }
     /// ```
     pub async fn load(config: Config, store: Arc<dyn Store>) -> Result<Self, StoreError> {
+        let lease = Lease::take(store.clone()).await?;
+        tracing::info!(
+            "took the lease as {}; waiting {:?} for the old instance",
+            lease.id(),
+            config.lease.wait
+        );
+        tokio::time::sleep(config.lease.wait).await;
+        // Serve from the next whole second, and refuse each proof issued
+        // before it (R142). See the lease module for the argument.
+        tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
+        let start = now_ms() / 1000;
         let mut versions = HashMap::new();
         let mut threads = Vec::new();
         for name in store.list(THREADS).await? {
@@ -353,52 +452,86 @@ impl Service {
         )
         .map_err(StoreError::Failed)?;
         tracing::info!(threads = threads.len(), "loaded the state");
+        let asked = Instant::now();
+        if !lease.held().await? {
+            return Err(StoreError::Conflict(store::LEASE.into()));
+        }
         let saved = Saved {
             store,
             versions: tokio::sync::Mutex::new(versions),
         };
-        let service = Service::build(config, state, tokens, Some(saved));
+        let until = asked + config.lease.valid_for;
+        let service = Service::build(config, state, tokens, Some(saved), Some(until), start);
+        service.keep_lease(lease);
         service.save_each_second();
         Ok(service)
     }
 
-    fn build(config: Config, state: State, tokens: Tokens, saved: Option<Saved>) -> Self {
+    /// `until` is the end of the first serve time of a server with a
+    /// lease. `start` is the second when it starts to serve.
+    fn build(
+        config: Config,
+        state: State,
+        tokens: Tokens,
+        saved: Option<Saved>,
+        until: Option<Instant>,
+        start: u64,
+    ) -> Self {
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
+        let mut replay = Replay::default();
+        replay.refuse_before(start);
         Service(Arc::new(Server {
             config,
             state: Mutex::new(state),
             tokens: Mutex::new(tokens),
             tokens_changes: AtomicU64::new(0),
             tokens_saved: AtomicU64::new(0),
-            replay: Mutex::new(Replay::default()),
+            replay: Mutex::new(replay),
             wakes,
             tail,
             http: oidc::client(oidc::FETCH_TIMEOUT),
             saved,
+            gate: Gate {
+                until: Mutex::new(until),
+                stopped: tokio::sync::watch::Sender::new(false),
+                closing: AtomicBool::new(false),
+            },
         }))
     }
 
-    /// Saves each changed object now (R129). A server with no store does
-    /// nothing. When a save fails, the other objects are still saved,
-    /// and the first error is returned.
+    /// Saves each changed object now. A server with no store does
+    /// nothing. A server that does not hold the lease now saves nothing
+    /// (R140, R155). When a save fails, the other objects are still
+    /// saved, and the first error is returned. A save that finds another
+    /// version stops the server for good (R141).
     pub async fn save(&self) -> Result<(), StoreError> {
         let Some(saved) = &self.0.saved else {
             return Ok(());
         };
         let mut versions = saved.versions.lock().await;
-        let changes = self.0.state().changes(Instant::now(), now_ms());
+        if !self.0.leased() {
+            return Ok(());
+        }
         let mut result = if self.0.tokens_unsaved(0) {
             self.0.save_tokens(saved, &mut versions).await
         } else {
             Ok(())
         };
+        if self.0.is_stopped() {
+            return result;
+        }
+        let changes = self.0.state().changes(Instant::now(), now_ms());
         for (object, bytes) in changes {
             let name = object.name();
             let known = versions.get(&name).copied();
             match saved.store.save(&name, bytes, known).await {
                 Ok(version) => {
                     versions.insert(name, version);
+                }
+                Err(error @ StoreError::Conflict(_)) => {
+                    self.0.stop(&error.to_string());
+                    return Err(error);
                 }
                 Err(error) => {
                     self.0.state().mark_changed(object);
@@ -407,6 +540,48 @@ impl Service {
             }
         }
         result
+    }
+
+    /// Stops taking calls, then saves each unsaved change (R129). The
+    /// gate replies 503 from now on. `main` calls it on SIGTERM.
+    pub async fn shutdown(&self) -> Result<(), StoreError> {
+        self.0.gate.closing.store(true, Ordering::SeqCst);
+        self.save().await
+    }
+
+    /// Ends when the server stops for good (R140, R141).
+    pub async fn stopped(&self) {
+        self.0.stopping().await;
+    }
+
+    /// Starts the task that reads the lease each
+    /// [`lease::Timing::read_every`] (R139). The task ends when the
+    /// server stops or ends.
+    fn keep_lease(&self, lease: Lease) {
+        let server = Arc::downgrade(&self.0);
+        let timing = self.0.config.lease;
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(timing.read_every);
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(server) = server.upgrade() else {
+                    break;
+                };
+                if server.is_stopped() {
+                    break;
+                }
+                let asked = Instant::now();
+                match lease.held().await {
+                    Ok(true) => *server.until() = Some(asked + timing.valid_for),
+                    Ok(false) => {
+                        server.stop("another instance holds the lease");
+                        break;
+                    }
+                    Err(error) => tracing::warn!("the lease read failed: {error}"),
+                }
+            }
+        });
     }
 
     /// Starts the task that saves the changes each [`SAVE_EVERY`]. The
@@ -421,6 +596,9 @@ impl Service {
                 let Some(server) = server.upgrade() else {
                     break;
                 };
+                if server.is_stopped() {
+                    break;
+                }
                 if let Err(error) = Service(server).save().await {
                     tracing::error!("save failed: {error}");
                 }
@@ -455,6 +633,7 @@ impl Service {
             .route("/v1/sign-in", get(sign_in_config))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
+            .layer(middleware::from_fn_with_state(self.0.clone(), gate))
             .with_state(self.0.clone())
     }
 
@@ -680,6 +859,20 @@ async fn require_token(
         .into_response()
 }
 
+/// Replies 503 to each call while the server does not serve (R139,
+/// R140).
+async fn gate(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
+    if s.serving() {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "1")],
+        "riff-server does not serve now. Try again.",
+    )
+        .into_response()
+}
+
 async fn resource_metadata(AxumState(s): AxumState<Shared>) -> Json<ResourceMetadata> {
     Json(s.config.resource_metadata())
 }
@@ -794,7 +987,8 @@ async fn watch(
     });
     let stream = futures::stream::iter(missed)
         .chain(live)
-        .filter_map(|wake| std::future::ready(Event::default().json_data(wake).ok().map(Ok)));
+        .filter_map(|wake| std::future::ready(Event::default().json_data(wake).ok().map(Ok)))
+        .take_until(s.stopping());
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
@@ -827,6 +1021,7 @@ async fn tail_thread(
         };
         std::future::ready(event.map(Ok))
     });
+    let stream = stream.take_until(s.stopping());
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 

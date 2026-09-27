@@ -90,6 +90,8 @@ pub struct Config {
     /// The OpenID Connect provider that people sign in with. Without
     /// it, nobody can sign in.
     pub provider: Option<Provider>,
+    /// The times of the lease, for a server with a store.
+    pub lease: crate::lease::Timing,
 }
 
 impl Default for Config {
@@ -107,6 +109,7 @@ impl Config {
             require_sign_in: false,
             admins: Vec::new(),
             provider: None,
+            lease: crate::lease::Timing::default(),
         }
     }
 
@@ -272,6 +275,21 @@ impl Replay {
         self.order
             .push_back((now + MAX_SKEW + MAX_AGE, iat, jti.to_owned()));
         true
+    }
+
+    /// Refuses each proof issued before `iat`, in seconds since the Unix
+    /// epoch. A server calls it when it starts to serve (R142).
+    ///
+    /// ```
+    /// use riff_server::auth::Replay;
+    ///
+    /// let mut replay = Replay::default();
+    /// replay.refuse_before(1_000);
+    /// assert!(!replay.first_use("j-1", 999, 1_000));
+    /// assert!(replay.first_use("j-2", 1_000, 1_000));
+    /// ```
+    pub fn refuse_before(&mut self, iat: u64) {
+        self.floor = self.floor.max(iat);
     }
 
     /// The number of proof IDs that it keeps.

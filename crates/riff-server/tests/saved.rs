@@ -4,7 +4,7 @@ mod common;
 
 use std::sync::Arc;
 
-use riff_server::store::{Memory, StoreError};
+use riff_server::store::{Memory, SESSIONS, Store, StoreError};
 use serde_json::{Value, json};
 
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a#api";
@@ -65,21 +65,37 @@ async fn a_new_server_on_the_same_store_has_the_same_state() {
 }
 
 #[tokio::test]
-async fn a_save_over_the_changes_of_another_server_fails() {
+async fn a_save_that_finds_another_version_stops_the_server() {
     let store = Memory::default();
-    let (old, old_base) = common::start_on(Arc::new(store.clone())).await;
-    call(&old_base, "register", json!({ "me": MIKE })).await;
-    old.save().await.unwrap();
+    let (server, base) = common::start_on(Arc::new(store.clone())).await;
+    call(&base, "register", json!({ "me": MIKE })).await;
+    server.save().await.unwrap();
+    // Another instance writes the sessions object.
+    let known = store.load(SESSIONS).await.unwrap().unwrap().version;
+    store
+        .save(SESSIONS, b"{}".to_vec(), Some(known))
+        .await
+        .unwrap();
 
-    let (new, new_base) = common::start_on(Arc::new(store)).await;
-    let post = json!({ "me": BRETT, "thread": REPO, "body": "new" });
-    call(&new_base, "post", post).await;
-    new.save().await.unwrap();
-
-    let post = json!({ "me": MIKE, "thread": REPO, "body": "old" });
-    call(&old_base, "post", post).await;
-    let error = old.save().await.unwrap_err();
+    let post = json!({ "me": MIKE, "thread": REPO, "body": "lost" });
+    call(&base, "post", post).await;
+    let error = server.save().await.unwrap_err();
     assert!(matches!(error, StoreError::Conflict(_)), "{error}");
-    // The object stays changed, so the next save fails too.
-    assert!(old.save().await.is_err());
+    // The server stopped for good (R141): 503, and no more saves.
+    server.stopped().await;
+    let reply = reqwest::Client::new()
+        .post(format!("{base}/v1/who"))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 503);
+    let post = json!({ "me": MIKE, "thread": REPO, "body": "also lost" });
+    let _ = reqwest::Client::new()
+        .post(format!("{base}/v1/post"))
+        .json(&post)
+        .send()
+        .await;
+    server.save().await.unwrap();
+    assert_eq!(store.load(SESSIONS).await.unwrap().unwrap().bytes, b"{}");
 }

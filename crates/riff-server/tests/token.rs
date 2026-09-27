@@ -63,29 +63,34 @@ async fn unknown_tokens_and_grants_are_refused() {
 }
 
 /// A store whose saves fail.
-struct Broken;
+/// A store whose saves fail, except the saves of the lease.
+#[derive(Default)]
+struct Broken(Memory);
 
 impl riff_server::store::Store for Broken {
     fn load<'a>(
         &'a self,
-        _: &'a str,
+        name: &'a str,
     ) -> futures::future::BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
-        Box::pin(async { Ok(None) })
+        self.0.load(name)
     }
 
     fn list<'a>(
         &'a self,
-        _: &'a str,
+        prefix: &'a str,
     ) -> futures::future::BoxFuture<'a, Result<Vec<String>, StoreError>> {
-        Box::pin(async { Ok(vec![]) })
+        self.0.list(prefix)
     }
 
     fn save<'a>(
         &'a self,
-        _: &'a str,
-        _: Vec<u8>,
-        _: Option<Version>,
+        name: &'a str,
+        bytes: Vec<u8>,
+        known: Option<Version>,
     ) -> futures::future::BoxFuture<'a, Result<Version, StoreError>> {
+        if name == riff_server::store::LEASE {
+            return self.0.save(name, bytes, known);
+        }
         Box::pin(async { Err(StoreError::Failed("the disk is gone".into())) })
     }
 }
@@ -133,7 +138,7 @@ async fn tokens_stay_valid_across_a_restart() {
 
 #[tokio::test]
 async fn a_token_change_that_is_not_saved_gets_503() {
-    let (service, url) = common::start_on(Arc::new(Broken)).await;
+    let (service, url) = common::start_on(Arc::new(Broken::default())).await;
     let key = Key::generate();
     let first = service
         .tokens()

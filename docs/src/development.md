@@ -154,6 +154,11 @@ The server gets its access token from the metadata server of Cloud
 Run. So the flag works only on Cloud Run. The service account of the
 server must have write access to the bucket.
 
+With a bucket, the server takes the lease at start, waits 15 seconds,
+and then loads the state. Only one server serves from a bucket. When a
+new server takes the lease, the old one replies 503 and exits after 60
+seconds.
+
 ## Set up the cloud project
 
 Do this once, for the team. The project `como-riff` exists: use these
