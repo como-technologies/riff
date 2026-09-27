@@ -98,6 +98,62 @@ Each error names its rule. The
 GitHub runs no check on a pull request that has a conflict with
 `main`. When `Hygiene` does not run, rebase your branch on `main` and
 push it again.
+## Merge by pull request on GitHub
+
+No session and no person pushes to `main`. Each change goes in by a
+pull request. GitHub merges it with a squash when the checks `Gate`,
+`Hygiene` and `riff/verify` pass. The ruleset on `main` makes this so.
+Only the repository admin role can bypass it, for a fix.
+
+The project settings of Claude Code (`.claude/settings.json`) deny a
+push to `main` and `gh pr merge --admin` in each session. Each session
+uses your GitHub account, so GitHub alone cannot stop a session.
+
+### Set up the repository
+
+Run it once, and again after a change to `deploy/github.sh`. It is
+safe to run again:
+
+```sh
+just github
+```
+
+It turns on auto-merge and squash merge only, and makes or updates the
+ruleset `main`. To see the result:
+
+```sh
+gh api repos/como-technologies/riff --jq '{allow_auto_merge, allow_squash_merge, allow_merge_commit, allow_rebase_merge, squash_merge_commit_title, squash_merge_commit_message, delete_branch_on_merge}'
+gh api repos/como-technologies/riff/rulesets
+```
+
+### Turn on auto-merge
+
+Open the pull request as in
+[Check a pull request on GitHub](#check-a-pull-request-on-github).
+Then turn on auto-merge:
+
+```sh
+gh pr merge --auto --squash
+```
+
+The pull request waits for `riff/verify`. To wait for the merge:
+
+```sh
+gh pr checks --watch
+```
+
+### Set the verify status
+
+After a verify, put the result on the pull request, then set the status
+on the commit that you checked. Use `state=failure` for a fail:
+
+```sh
+gh pr comment 40 --body-file result.md
+gh api repos/como-technologies/riff/statuses/1a2b3c4 -f state=success -f context=riff/verify -f description="PASS: verify-issue-12"
+```
+
+A new commit on the pull request has no status. It needs a new
+verify.
 
 ## Sign in on this machine
 

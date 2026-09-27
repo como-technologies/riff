@@ -301,35 +301,46 @@ claim. The next session that claims the issue reviews the criteria.
 
 A session never verifies its own work. Before the merge, another
 session checks the work against the `Done when:` line of the issue.
-Only one session verifies: it claims `verify-ITEM`. The author does not
-merge without a pass.
+Only one session verifies: it claims `verify-ITEM`.
+
+No session merges, and no session pushes to `main`. The author opens a
+pull request with auto-merge on. The verifier sets the status
+`riff/verify` on the commit that it checked. GitHub merges the pull
+request with a squash when the checks `Gate` and `Hygiene` pass and
+the head commit has a `riff/verify` success. A new commit has no
+status, so it needs a new verify.
 
 ```mermaid
 sequenceDiagram
     participant A as author (issue-6)
     participant E as riff-server
     participant V as verifier
+    participant G as GitHub
     A->>A: commit, checks pass, push the branch
-    A->>E: post to [repo=como-technologies/riff] "verify request: issue-6, branch, commit"
+    A->>G: gh pr create, gh pr merge --auto --squash
+    A->>E: post to [repo=como-technologies/riff] "verify request: issue-6, PR #40, commit"
     E->>V: wake
     V->>E: claim verify-issue-6
     E-->>V: granted
     V->>V: check out the commit, test each criterion
+    V->>G: comment the result, set riff/verify on the commit
     V->>E: post to [claim=issue-6] "pass" or "fail, with steps"
     V->>E: release verify-issue-6
     E->>A: wake
     alt pass
-        A->>A: merge, delete the branch, close issue-6
+        G->>G: Gate, Hygiene and riff/verify pass: squash merge, delete the branch
         A->>E: post "done issue-6", release issue-6
-    else fail
-        A->>A: fix, then send a new request
+    else fail or conflict
+        A->>A: fix or rebase, push, then send a new request
     end
 ```
 
 A verify request is free work. A session picks it like any other item.
 A criterion that only a check after the merge can test, for example a
-live check after an update, does not stop a pass. The issue stays open
-until that check passes.
+live check after an update, does not stop a pass. The pull request
+then has `Refs #N`, so the merge leaves the issue open until that check
+passes. The `gh` steps are in
+[Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github).
 
 ### Ask for a verify by hand
 
@@ -806,9 +817,9 @@ user. A session never asks the lead of another person.
 
 You look only at your lead. So a session that is not the lead never
 asks you in its own terminal. When a permission refusal stops it, for
-example the merge of a verified branch to `main`, it tells the lead
-the branch, the commit and the verify result. You decide: the lead
-merges, or you allow the merge in that session.
+example `gh pr create`, it tells the lead the pull request, the commit
+and the verify result. You decide. No session pushes to `main` (see
+[Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github)).
 
 ### Find the pane of a session
 

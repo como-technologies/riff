@@ -16,7 +16,8 @@ The book in `docs/src/` holds the requirements and the big picture.
   reasoning. A new requirement gets its ID from `just rid`. Never
   renumber a requirement.
 - No users yet. Change any interface freely. No compatibility shims.
-- Work on `main`, or fast-forward a local branch into it.
+- Work on a branch. Merge by pull request with auto-merge. Never push
+  to `main`.
 
 ## User docs (STRONG REQUIREMENT)
 

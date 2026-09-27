@@ -122,9 +122,9 @@ fn connect_writes_the_skill_with_the_verify_flow() {
 
     // The start routine asks for a verify before the merge and the release.
     let start = pos("## Start routine");
-    let verify = pos("ask another session to verify the work");
-    let merge = pos("On a pass, merge to the default branch");
-    let release = pos("that you are done, then call `release`.");
+    let verify = pos("another session to verify the work");
+    let merge = pos("On a pass, the forge merges the pull request");
+    let release = pos("done, then call `release`.");
     assert!(start < verify && verify < merge && merge < release);
 
     // The author and the verifier each have their steps.
@@ -134,15 +134,18 @@ fn connect_writes_the_skill_with_the_verify_flow() {
         .find("### Verify the work of another session")
         .unwrap();
     assert!(ask < check);
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
     for text in [
         "A session never verifies its own work.",
         "`[{\"repo\": \"OWNER/REPO\"}]`",
-        "Do not merge without a pass.",
+        "No session merges and no session pushes to the default branch.",
+        "Open a pull request for the branch, and turn on auto-merge with a squash.",
+        "set the verify status of that commit: success on a pass, failure on a fail.",
         "`verify-issue-12`",
         "Do not change the code.",
         "`[{\"claim\": \"issue-12\"}]`",
     ] {
-        assert!(section.contains(text), "no {text:?} in {section}");
+        assert!(flat.contains(text), "no {text:?} in {section}");
     }
 
     // The verify worktree has a name of its own and works from any

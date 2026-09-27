@@ -21,7 +21,7 @@ Needs: #51, #58
 ```
 
 An item is merged when it is closed, or when it has the note
-`Merged in COMMIT`. The author adds this note when a
+`Merged in #PR (COMMIT)`. The author adds this note when a
 check after the merge is left (see
 [Verify finished work](how-it-works.md#verify-finished-work)).
 

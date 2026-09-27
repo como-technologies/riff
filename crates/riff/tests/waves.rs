@@ -119,7 +119,7 @@ fn the_skill_the_requirements_and_the_page_agree() {
         "closed when it is merged and each check after the merge passed.",
         "A wave is done when each of its items is closed.",
         "No session starts an item of the next wave before the current wave is done.",
-        "`Merged in COMMIT`",
+        "`Merged in #PR (COMMIT)`",
         "A person or a session can add a work item at any time, with no wave.",
         "Each item is in a later wave than each of its needs.",
         "No item blocks or breaks the other work of its wave",

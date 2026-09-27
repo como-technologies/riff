@@ -73,8 +73,8 @@ macro_rules! embed {
 /// ```
 ///
 /// The skill tells a session to take its work from the current wave
-/// (R166). Only its part "Waves on GitHub" names the objects of the
-/// forge that hold a wave (R222):
+/// (R166). Only its parts "Waves on GitHub" and "Pull requests on
+/// GitHub" name the objects of the forge that hold a wave (R222):
 ///
 /// ```
 /// let (_, skill) = riff::plugin::FILES
@@ -83,11 +83,17 @@ macro_rules! embed {
 ///     .unwrap();
 /// let step = skill.find("2. Find a free work item").unwrap();
 /// assert!(skill[step..].starts_with("2. Find a free work item: an open issue of the current wave"));
-/// let forge = skill.find("### Waves on GitHub").unwrap();
-/// let end = forge + skill[forge..].find("\n## ").unwrap();
-/// assert!(!skill[..forge].contains("milestone"));
-/// assert!(skill[forge..end].contains("milestone"));
-/// assert!(!skill[end..].contains("milestone"));
+/// let part = |heading: &str| {
+///     let start = skill.find(heading).unwrap();
+///     (start, start + skill[start..].find("\n## ").unwrap())
+/// };
+/// let (waves, waves_end) = part("### Waves on GitHub");
+/// let (prs, prs_end) = part("### Pull requests on GitHub");
+/// assert!(!skill[..waves].contains("milestone"));
+/// assert!(skill[waves..waves_end].contains("milestone"));
+/// assert!(!skill[waves_end..prs].contains("milestone"));
+/// assert!(skill[prs..prs_end].contains("--milestone"));
+/// assert!(!skill[prs_end..].contains("milestone"));
 /// ```
 pub const FILES: &[(&str, &str)] = &[
     embed!(".claude-plugin/marketplace.json"),
@@ -486,12 +492,13 @@ mod tests {
         let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
         for word in [
             "Remove a stale worktree",
-            "git merge-base --is-ancestor HEAD origin/main",
+            "Its pull request is merged, and the head commit of the pull request is the `HEAD` of the worktree",
+            "gh pr view BRANCH --json state,headRefOid",
             "git status --porcelain",
             "issue is closed",
             "`ExitWorktree`",
             "`discard_changes`",
-            "git branch -d",
+            "git update-ref -d refs/heads/BRANCH HEADREF",
             "Do not force",
             "Never remove a worktree of another live session",
         ] {
@@ -566,7 +573,7 @@ mod tests {
             "When the current wave has no free item, verify the work of another session, run your checks after the merge, or wait",
             "When the repository has no waves",
             "`Needs:` line",
-            "`Merged in COMMIT`",
+            "`Merged in #PR (COMMIT)`",
             "An item is closed when it is merged and each check after the merge passed",
             "A wave is done when each of its items is closed",
             "No session starts an item of the next wave before the current wave is done",
@@ -616,13 +623,41 @@ mod tests {
         for word in [
             "your user does not look at your terminal. Never ask your user there.",
             "also true when a permission refusal blocks you",
-            "When a permission refusal stops the merge or the push to the default branch, \
-             do not ask in your own terminal.",
-            "`tell` the lead the branch, the commit and the verify result",
-            "the lead merges, or your user allows the merge in your session",
-            "Do not delete the branch before the merge.",
+            "When a permission refusal stops a step, do not ask in your own terminal.",
+            "`tell` the lead the pull request, the commit and the verify result",
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
+    /// 01M3JFEXJG2D651PWA30DNRGWF, 01M3JFEXMPNFEV4HBZJQ15JD25,
+    /// 01M3JFEXPXRTXYHCV0WSKEK07M.
+    #[test]
+    fn the_skill_merges_by_pull_request() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        assert!(!skill.contains("HEAD:main"), "a push to main");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "No session merges and no session pushes to the default branch.",
+            "You never merge, and you never push to the default branch.",
+            "A pass counts only for its commit",
+            "`Merged in #PR (COMMIT)`",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+        let forge = &skill[skill.find("### Pull requests on GitHub").unwrap()..];
+        let forge = &forge[..forge.find("\n## ").unwrap()];
+        for command in [
+            "`gh pr create --title \"TITLE\" --milestone \"Wave 3\" --body-file pr.md`",
+            "`gh pr merge 40 --auto --squash`",
+            "`gh pr checks 40 --watch`",
+            "`gh pr comment 40 --body-file result.md`",
+            "-f state=success -f context=riff/verify",
+            "Closes #12",
+            "Issue: #12\nMilestone: Wave 3",
+            "Never run `gh pr merge --admin`",
+        ] {
+            assert!(forge.contains(command), "no {command:?} in {forge}");
         }
     }
 

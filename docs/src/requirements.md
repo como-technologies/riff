@@ -30,8 +30,9 @@
 - **R162** A Claude session makes the worktree for a work item with
   the `EnterWorktree` tool. The worktree is `.claude/worktrees/ITEM`.
 - **R165** A session removes its own worktree and branch when the
-  branch is merged into the default branch, the worktree is clean and
-  the issue is closed. It never removes a worktree of another live
+  pull request of the branch is merged with the `HEAD` of the worktree
+  as its head commit, the worktree is clean and the issue is closed.
+  It deletes the branch only while the branch points at that commit. It never removes a worktree of another live
   session. A worktree with no owner goes to the thread.
 - **R166** A session picks an open work item of the current wave
   (R214) that no session holds. It takes work only from the current
@@ -57,9 +58,11 @@
   another session checks the work against the `Done when:` line of the
   issue.
 - **R189** When the author finishes, the checks of the repository
-  pass. The author pushes its branch and posts a verify request to the
-  repository thread. The request names the issue, the branch and the
-  commit. Its `to` list wakes the sessions of the repository.
+  pass. The author pushes its branch, opens a pull request with
+  auto-merge on (01M3JFEXMPNFEV4HBZJQ15JD25), and posts a verify
+  request to the repository thread. The request names the issue, the
+  pull request and the commit. Its `to` list wakes the sessions of the
+  repository.
 - **R190** A verify request is free work (R166). The verifier claims
   `verify-ITEM`, for example `verify-issue-12`, so that only one
   session verifies. It skips a request whose issue is closed, or whose
@@ -69,17 +72,24 @@
 - **R192** The verifier posts the result to the author with the
   selector `claim=ITEM`. A pass names each criterion and how the
   verifier checked it. A fail names each criterion that failed and the
-  steps to see the failure. Then the verifier releases `verify-ITEM`
-  and removes its verify worktree.
-- **R193** The author merges only after a pass. When no session takes
-  the request, the author waits. It can verify the work of others while
-  it waits. On a fail, the author fixes the work and sends a new
-  request. On a pass, the author merges, deletes the pushed branch,
-  closes the issue, posts that it is done and releases the item.
+  steps to see the failure. The verifier also puts the result on the
+  pull request and sets the verify status of the commit
+  (01M3JFEXPXRTXYHCV0WSKEK07M). Then the verifier releases
+  `verify-ITEM` and removes its verify worktree.
+- **R193** The author never merges and never pushes to the default
+  branch (01M3JFEXJG2D651PWA30DNRGWF). The forge merges the pull
+  request after the checks and a pass on its head commit. When no
+  session takes the request, the author waits. It can verify the work
+  of others while it waits. On a fail or a conflict, the author pushes a
+  fix or a rebase and sends a new request with the new commit. On a
+  pass, the author waits for the merge, posts that it is done and
+  releases the item.
 - **R194** A criterion that only a check after the merge can test does
-  not stop a pass. The verifier names it in the result. The issue stays
-  open until that check passes. After the merge, the author adds a
-  note to the issue: `Merged in COMMIT`, and the check that is left.
+  not stop a pass. The verifier names it in the result. The pull
+  request links the issue so that the merge leaves it open, and the
+  issue stays open until that check passes. After the merge, the author
+  adds a note to the issue: `Merged in #PR (COMMIT)`, and the check
+  that is left.
 - **R202** The verify worktree is
   `MAIN/.claude/worktrees/verify-ITEM-ID`, detached at the commit.
   MAIN is the main worktree. ID is the first 4 characters of the
@@ -149,7 +159,7 @@
   keeps out of the waves is not free work.
 - **R215** An item names the items that it needs in a `Needs:` line.
   An item is merged when it is closed, or when it has the note
-  `Merged in COMMIT` (R194). An item is closed when it is merged and
+  `Merged in #PR (COMMIT)` (R194). An item is closed when it is merged and
   each check after the merge passed.
 - **R216** A wave is done when each of its items is closed. The order
   in a wave: merge each item, update each machine when a check after
@@ -217,10 +227,39 @@
 - **01M3JDRT5B52GDZK91VETC6VV2** The workflow `hygiene.yml` runs the
   job `Hygiene` (`hygiene pr`) on each pull request event: opened,
   edited, synchronize, reopened, milestoned and demilestoned. It does
-  not run the `Gate` again. It does not run on a push to `main`.
+  not run the `Gate` again. On a push to `main`, it runs
+  `hygiene commit` on the new commit (01M3JFEXS6M5549TC6MH0G2MS0).
 - **01M3JDRT7HMZD4FHWHDH3S1A1D** Each error of `hygiene` names its
   rule. It exits with status 1 on a broken rule, and with status 2 when
   `gh` or `git` fails.
+## Pull requests on GitHub
+
+- **01M3JFEXG85AJK8ZE8N807EQVB** `just github` sets up the repository
+  with `gh api`, and is safe to run again. Auto-merge is on. Squash is
+  the only merge. The squash commit takes the title and the body of the
+  pull request. GitHub deletes the branch after the merge. The ruleset
+  `main` on the default branch needs a pull request with 0 approvals
+  and the checks `Gate`, `Hygiene` and `riff/verify`. A branch need not
+  be up to date with `main`. No force push and no deletion of `main`.
+  The only bypass is the repository admin role, so that our user can
+  push a fix.
+- **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
+  `gh pr merge --admin`. Each session uses the GitHub account of our
+  user, so GitHub cannot stop it. The project settings of Claude Code
+  deny both, and the skill says it.
+- **01M3JFEXMPNFEV4HBZJQ15JD25** The author opens a pull request with
+  `gh pr create`, with the milestone of the issue and the body form of
+  the hygiene check, and turns on auto-merge with
+  `gh pr merge --auto --squash`. The last pull request of an issue has
+  `Closes #N`. Each other one, and one with a check after the merge
+  left, has `Refs #N`.
+- **01M3JFEXPXRTXYHCV0WSKEK07M** The verifier puts its result on the
+  pull request as a comment that names the commit. It sets the commit
+  status `riff/verify` on that commit: `success` on a pass, `failure`
+  on a fail. A new commit has no status, so it needs a new verify.
+- **01M3JFEXS6M5549TC6MH0G2MS0** The workflow `Hygiene` also runs on
+  each push to `main`. It checks the commit message with the commit
+  rule of the hygiene check.
 
 ## Pause
 
@@ -484,11 +523,11 @@
   asks its person in its own terminal, also when a permission refusal
   blocks it. It asks with `tell lead`, and names the refused action.
   The lead shows the question to the person.
-- **01M3JDW9YQQHSZC296ZCNV2V8A** A refusal of a merge or a push to the
-  default branch is a question for the person. The session tells the
-  lead the branch, the commit and the verify result. The person
-  decides: the lead merges, or the person allows the merge in that
-  session. The session keeps its branch until the merge.
+- **01M3JDW9YQQHSZC296ZCNV2V8A** A permission refusal of a step of the
+  pull request, for example a push of the branch or `gh pr create`, is
+  a question for the person. The session tells the lead the pull
+  request, the commit and the verify result. The session never asks to
+  push to the default branch (01M3JFEXJG2D651PWA30DNRGWF).
 - **R178** A lead counts only while it holds (R9) and works in its
   repository. A lead that comes back counts again, unless another
   session became the lead. A lead that leaves the repository thread is

@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git push origin HEAD:main)"
+      "Bash(gh pr create *)",
+      "Bash(gh pr merge * --auto --squash)",
+      "Bash(gh pr comment *)",
+      "Bash(gh api repos/como-technologies/riff/statuses/*)"
+    ],
+    "deny": [
+      "Bash(git push * main)",
+      "Bash(git push * main *)",
+      "Bash(git push *:main)",
+      "Bash(git push *:main *)",
+      "Bash(git push *:refs/heads/main)",
+      "Bash(git push *:refs/heads/main *)",
+      "Bash(gh pr merge *--admin*)"
     ]
   }
 }

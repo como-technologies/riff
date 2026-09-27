@@ -98,6 +98,10 @@ use TARGET="":
         *) echo "Use: just use local, or just use cloud" >&2; exit 1 ;;
     esac
 
+# Set up the GitHub repository for pull requests: auto-merge, squash only, the ruleset on main
+github REPO="como-technologies/riff":
+    deploy/github.sh {{REPO}}
+
 # Clean build artifacts
 clean:
     cargo clean

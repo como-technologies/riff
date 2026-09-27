@@ -78,11 +78,11 @@ Do these steps when your session starts:
 6. Call `move` with the absolute path of the worktree. Work only there.
 7. Post to the thread that you started. Address the session that
    planned the work.
-8. When you finish, ask another session to verify the work. See
-   "Ask for a verify". Do not merge before a pass.
-9. On a pass, merge to the default branch. Close the issue, unless a
-   check after the merge is left (see "Ask for a verify"). Post
-   that you are done, then call `release`.
+8. When you finish, open a pull request with auto-merge on, and ask
+   another session to verify the work. See "Ask for a verify". You
+   never merge, and you never push to the default branch.
+9. On a pass, the forge merges the pull request. Post that you are
+   done, then call `release`.
 10. When your worktree is stale, remove it. See "Remove a stale
     worktree".
 
@@ -101,7 +101,7 @@ time.
   example `Needs: #12, #15`. An item with no `Needs:` line needs
   nothing.
 - An item is merged when it is closed, or when it has a note
-  `Merged in COMMIT`.
+  `Merged in #PR (COMMIT)`.
 - An item is closed when it is merged and each check after the merge
   passed.
 - A wave is done when each of its items is closed. The order in a
@@ -193,34 +193,41 @@ criteria. The next session that claims the issue reviews them.
 A session never verifies its own work. Another session checks it
 against the `Done when:` line of the issue before the merge.
 
+No session merges and no session pushes to the default branch. The
+author opens a pull request with auto-merge on. The forge merges it
+when the checks of the repository and the verify pass. The `gh` steps
+are in "Pull requests on GitHub".
+
 ### Ask for a verify
 
 1. Commit your work. The checks of your repository pass.
 2. Push your branch, so that a session on another machine can fetch
    it: `git push -u origin HEAD`.
-3. Post a verify request to your repository thread. Name the issue,
-   the branch and the commit. Use `to` `[{"repo": "OWNER/REPO"}]`, so
-   that the sessions of the repository wake. For example:
-   `verify request: issue-12, branch worktree-issue-12, commit 1a2b3c4`.
-4. Keep your claim. Set your status to blocked: waits for a verify.
+3. Open a pull request for the branch, and turn on auto-merge with a
+   squash. Link the issue in its body. Give it the wave of the issue.
+4. Post a verify request to your repository thread. Name the issue,
+   the pull request and the commit. Use `to` `[{"repo": "OWNER/REPO"}]`,
+   so that the sessions of the repository wake. For example:
+   `verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4`.
+5. Keep your claim. Set your status to blocked: waits for a verify.
    While you wait, you can verify the work of another session. If no
-   session takes the request, wait. Do not merge without a pass.
-5. On a fail, fix the work. Then go back to step 1 and send a new
-   request with the new commit.
-6. On a pass, merge. Then delete the pushed branch:
-   `git push origin --delete BRANCH`. When a permission refusal stops
-   the merge or the push to the default branch, do not ask in your own
-   terminal. `tell` the lead the branch, the commit and the verify
-   result (see "Questions for your user"). Your user decides: the lead
-   merges, or your user allows the merge in your session. Do not
-   delete the branch before the merge.
+   session takes the request, wait.
+6. On a fail, fix the work and push it. On a conflict with the default
+   branch, rebase on it and push. A pass counts only for its commit, so
+   send a new request with the new commit.
+7. On a pass, wait until the forge merges the pull request. Then post
+   that you are done, and call `release`. The forge deletes the branch.
+
+When a permission refusal stops a step, do not ask in your own
+terminal. `tell` the lead the pull request, the commit and the verify
+result (see "Questions for your user").
 
 A criterion that only a check after the merge can test, for example a
 live check after an update, does not stop a pass. The verifier names
-it in the result. Leave the issue open until that check passes. After
-the merge, add a note to the issue: `Merged in COMMIT`, and the check
-that is left. The note tells the other sessions that the item is merged
-(see "Waves").
+it in the result. Link the issue so that the merge leaves it open. After
+the merge, add a note to the issue: `Merged in #PR (COMMIT)`, and the
+check that is left. The note tells the other sessions that the item is
+merged (see "Waves").
 
 ### Verify the work of another session
 
@@ -245,6 +252,9 @@ A verify request is free work. Pick it like any other item.
    - Pass: each criterion, with what you did to check it.
    - Fail: each criterion that failed, with the steps to see the
      failure.
+   Put the same result on the pull request as a comment that names
+   the commit. Then set the verify status of that commit: success on a
+   pass, failure on a fail. A success lets the forge merge.
 7. Call `release` with `verify-issue-12`. Go back to where you came
    from. From a worktree of your own, call `EnterWorktree` with its
    path. From the main worktree, call `ExitWorktree` with action
@@ -253,13 +263,49 @@ A verify request is free work. Pick it like any other item.
    work. Do not force. If the command fails, post the path to the
    thread.
 
+### Pull requests on GitHub
+
+This is the only part of "Verify finished work" that is special to
+one forge.
+
+- GitHub merges a pull request with a squash when the checks `Gate`
+  and `Hygiene` pass and its head commit has the status `riff/verify`
+  success. A new commit needs a new verify.
+- The body of a pull request has one line `Closes #N` (the last pull
+  request of the issue) or `Refs #N` (each other one, and one with a
+  check after the merge left). It ends with the trailers `Issue: #N`
+  and `Milestone: M`, where M is the milestone of the issue. Do not end
+  the title with `(#N)`.
+
+```text
+Closes #12
+
+Show the wave in riff who.
+
+Issue: #12
+Milestone: Wave 3
+```
+
+| To | Run |
+|---|---|
+| Open a pull request | `gh pr create --title "TITLE" --milestone "Wave 3" --body-file pr.md` |
+| Turn on auto-merge | `gh pr merge 40 --auto --squash` |
+| Wait for the merge | `gh pr checks 40 --watch`, then `gh pr view 40 --json state,mergeCommit` |
+| Put the verify result on the pull request | `gh pr comment 40 --body-file result.md` |
+| Set the verify status of a commit | `gh api repos/OWNER/REPO/statuses/COMMIT -f state=success -f context=riff/verify -f description="PASS: verify-issue-12" -f target_url=COMMENT_URL` |
+| Find the pull request of a branch | `gh pr view BRANCH --json number,state,headRefOid` |
+
+For a fail, set `state=failure`. Never run `gh pr merge --admin`, and
+never push to `main`: the project settings deny both.
+
 ## Remove a stale worktree
 
 A worktree is stale when all of these are true:
 
-- Its branch is merged. After `git fetch origin`, the command
-  `git merge-base --is-ancestor HEAD origin/main` succeeds. Use the
-  default branch of the repository in place of `main`.
+- Its pull request is merged, and the head commit of the pull request
+  is the `HEAD` of the worktree. On GitHub:
+  `gh pr view BRANCH --json state,headRefOid` shows `MERGED` and that
+  commit.
 - `git status --porcelain` in the worktree shows nothing.
 - Its issue is closed.
 
@@ -271,8 +317,12 @@ To remove your stale worktree:
    compares with the local default branch, which can be behind. The
    three checks show that no work is lost.
 3. If you entered the worktree with `path`, run
-   `git worktree remove PATH`, then `git branch -d BRANCH`. Do not
-   force.
+   `git worktree remove PATH`, then
+   `git update-ref -d refs/heads/BRANCH HEADREF`. HEADREF is the head
+   commit of the merged pull request. A squash merge leaves the branch
+   out of the default branch, so `git branch -d` refuses it. The
+   `update-ref` deletes the branch only while it points at HEADREF. Do
+   not force.
 
 If a step fails, leave the worktree and post its name to the thread.
 

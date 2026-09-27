@@ -1,13 +1,15 @@
 name: Hygiene
 
-# The form of each pull request (see the docs of the hygiene crate). A
-# separate workflow, so an edit of a pull request does not run the Gate
-# again. It runs on pull requests only: each commit of the old flow on
-# main has another form.
+# The form of each pull request, and of each commit on main (see the
+# docs of the hygiene crate). A separate workflow, so an edit of a pull
+# request does not run the Gate again. On a push to main, it checks the
+# new commit with the commit rule (01M3JFEXS6M5549TC6MH0G2MS0).
 on:
   pull_request:
     branches: [main]
     types: [opened, edited, synchronize, reopened, milestoned, demilestoned]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -27,8 +29,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Check the pull request
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: cargo run -q -p hygiene -- pr "$PR"
+
+      - name: Check the commit on main
+        if: github.event_name == 'push'
+        run: cargo run -q -p hygiene -- commit "$GITHUB_SHA"
