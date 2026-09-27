@@ -55,7 +55,7 @@ use crate::{device, login, secrets};
 pub const DEFAULT_SERVER: &str = "https://riff-server-816917641970.us-central1.run.app";
 
 /// The word that [`Api::tell`] takes in place of a session: the lead of
-/// your user in your repository (RLEAD5).
+/// your user in your repository (R179).
 pub const LEAD: &str = "lead";
 
 /// How long the client tries a request again while the server replies
@@ -376,7 +376,7 @@ impl Api {
 
     /// Sends a direct message (R62). `session` is a session ID, a full
     /// session URI, or [`LEAD`] for the lead of the user of `me` in its
-    /// repository (RLEAD5).
+    /// repository (R179).
     pub async fn tell(&self, me: &SessionUri, session: &str, body: &str) -> Result<Posted> {
         let to = if session == LEAD {
             Selector::lead(me.who().user(), &me.place().repo_text())
@@ -454,7 +454,7 @@ impl Api {
     }
 
     /// Makes `me` the lead of its user in its repository. It replaces
-    /// the old lead (RLEAD3).
+    /// the old lead (R177).
     pub async fn lead(&self, me: &SessionUri) -> Result<LeadReply> {
         self.call("lead", &Lead { me: me.clone() }).await
     }

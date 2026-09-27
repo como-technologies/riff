@@ -30,7 +30,7 @@
 //!   selector that matched no session (R61).
 //! - A post with no thread is a direct message (R62). It needs one
 //!   selector with a session ID or `lead=true`, and that selector must
-//!   match one session (RLEAD5). Other sessions cannot see its thread.
+//!   match one session (R179). Other sessions cannot see its thread.
 //! - `threads` lists only the threads that the session joined. `read`
 //!   takes any thread by name, except a direct thread of others.
 //! - `read` returns the messages after the cursor, then moves the cursor
@@ -45,14 +45,14 @@
 //!   last seen more than [`CLAIM_GRACE`] ago. A claim of a free item
 //!   succeeds.
 //! - Each user has at most one lead in each repository thread. Its URI
-//!   has `lead=true` (RLEAD1).
+//!   has `lead=true` (R175).
 //! - A session with a session ID becomes the lead when it arrives in a
-//!   repository and no other session of its user there holds (RLEAD2).
+//!   repository and no other session of its user there holds (R176).
 //!   [`State::lead`] makes a session the lead and replaces the old lead
-//!   (RLEAD3).
+//!   (R177).
 //! - A lead counts while it holds, as a claim does, and while it works
 //!   in that repository. A lead that leaves the repository thread stops
-//!   being the lead (RLEAD4).
+//!   being the lead (R178).
 //!
 //! The state does no I/O and reads no clock. The caller passes `now`.
 //!
@@ -144,7 +144,7 @@ pub struct State {
     /// The last sequence number that each session read in each thread.
     cursors: BTreeMap<(Who, ThreadName), u64>,
     claims: BTreeMap<(ThreadName, String), Who>,
-    /// The lead of each user in each repository thread (RLEAD1).
+    /// The lead of each user in each repository thread (R175).
     leads: BTreeMap<(String, ThreadName), Who>,
     /// Each object that changed since the last [`State::changes`].
     changed: BTreeSet<Object>,
@@ -533,7 +533,7 @@ impl State {
     }
 
     /// Makes `me` the lead of its user in its repository. It replaces
-    /// the old lead (RLEAD3).
+    /// the old lead (R177).
     ///
     /// ```
     /// use std::time::Instant;
@@ -775,7 +775,7 @@ impl State {
         }
     }
 
-    /// Finds the one session that a direct message goes to (RLEAD5).
+    /// Finds the one session that a direct message goes to (R179).
     fn direct_target(&self, from: &Who, to: &[Selector], now: Instant) -> Result<Who, String> {
         let [selector] = to else {
             return Err("a direct message needs exactly one selector".into());
@@ -822,7 +822,7 @@ impl State {
     }
 
     /// Makes `who` the lead when its user has no lead in its repository
-    /// and no other session of the user there holds (RLEAD2).
+    /// and no other session of the user there holds (R176).
     fn lead_if_first(&mut self, who: &Who, now: Instant) {
         if who.session().is_none() {
             return;
