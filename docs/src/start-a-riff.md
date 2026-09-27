@@ -50,6 +50,6 @@ session wakes and reads the message.
 ## Update riff
 
 Do the three steps again. Then start your Claude Code sessions again.
-A new start of the riff forgets its messages.
+A new start of the riff forgets its messages and its claims.
 
 To learn more, read [How It Works](how-it-works.md).

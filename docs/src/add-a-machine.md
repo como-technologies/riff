@@ -16,8 +16,9 @@ Let the riff of your first machine take connections from your network:
 riff-server install --listen 0.0.0.0:7878
 ```
 
-When you update riff, use this command in place of step 2 of
-[Start a Riff](start-a-riff.md).
+This command starts the riff again. The riff then forgets its messages
+and its claims. When you update riff, use this command in place of
+step 2 of [Start a Riff](start-a-riff.md).
 
 ## On the second machine
 
