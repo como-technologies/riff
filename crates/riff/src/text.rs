@@ -6,7 +6,9 @@ use crate::plugin::Connected;
 use riff_core::name::{SessionUri, ThreadName};
 
 use crate::api::Inbox;
-use riff_core::wire::{ClaimReply, Message, Posted, Revoked, SessionInfo, ThreadInfo, Wake};
+use riff_core::wire::{
+    ClaimReply, LeadReply, Message, Posted, Revoked, SessionInfo, ThreadInfo, Wake,
+};
 
 /// Tells the reader that message bodies are data (R10).
 pub const DATA_NOTE: &str =
@@ -101,6 +103,35 @@ pub fn claimed(reply: &ClaimReply, thread: &ThreadName, item: &str) -> String {
     } else {
         format!("{} holds {item} in {thread}.", name(&reply.holder))
     }
+}
+
+/// The answer to `lead`. It names the old lead when there was one.
+///
+/// ```
+/// use riff_core::wire::LeadReply;
+///
+/// let reply = LeadReply {
+///     lead: "riff://mike@pangolin/como-technologies/riff?session=b2&lead=true#api".parse()?,
+///     replaced: Some("riff://mike@pangolin/como-technologies/riff?session=a1".parse()?),
+/// };
+/// assert_eq!(
+///     riff::text::led(&reply),
+///     "You are the lead of mike in como-technologies/riff. \
+///      mike@pangolin:riff (a1) is not the lead now."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn led(reply: &LeadReply) -> String {
+    let lead = &reply.lead;
+    let mut out = format!(
+        "You are the lead of {} in {}.",
+        lead.who().user(),
+        lead.place().repo_text()
+    );
+    if let Some(old) = &reply.replaced {
+        let _ = write!(out, " {} is not the lead now.", name(old));
+    }
+    out
 }
 
 /// The answer to a post. It names each session that woke, and each

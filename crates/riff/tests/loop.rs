@@ -49,9 +49,11 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
     let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
     let mut tail = Box::pin(api.tail(&thread).await.unwrap());
 
+    // Each is the first session of its user, so each is its lead.
+    let (mike_lead, brett_lead) = (mike.clone().with_lead(true), brett.clone().with_lead(true));
     let who = api.who(&mike, false).await.unwrap();
-    assert!(who.iter().any(|s| s.uri == brett && s.live));
-    assert!(who.iter().any(|s| s.uri == mike && !s.live));
+    assert!(who.iter().any(|s| s.uri == brett_lead && s.live));
+    assert!(who.iter().any(|s| s.uri == mike_lead && !s.live));
     // A call of who counts as a call: a new session is listed.
     let docs = uri("riff://mike@pangolin/como-technologies/riff?session=c3#docs");
     let who = api.who(&docs, false).await.unwrap();
@@ -64,14 +66,14 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
         .post(&mike, Some(&thread), &to("user=brett"), "the API is ready")
         .await
         .unwrap();
-    assert_eq!(posted.woken, vec![brett.clone()]);
+    assert_eq!(posted.woken, vec![brett_lead]);
     let wake = tokio::time::timeout(WAIT, wakes.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
     assert_eq!(wake.seq, 2, "the post without an address must not wake");
-    assert_eq!(wake.from, mike);
+    assert_eq!(wake.from, mike_lead);
 
     let first = tokio::time::timeout(WAIT, tail.next())
         .await

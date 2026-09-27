@@ -17,6 +17,7 @@
 //! | `repo` | `OWNER/REPO`, or `-` outside git. |
 //! | `worktree` | The worktree. The main worktree has none. |
 //! | `claim` | One of the claims that the session holds. |
+//! | `lead` | `true`: the lead of its user in its repository. `false`: each other session. |
 //!
 //! On the command line, a selector is `FIELD=VALUE` pairs with commas
 //! between them.
@@ -38,6 +39,10 @@
 //!
 //! let brett: Selector = "user=brett".parse()?;
 //! assert!(!brett.matches(&uri));
+//!
+//! let mikes_lead: Selector = "user=mike,repo=como-technologies/riff,lead=true".parse()?;
+//! assert!(!mikes_lead.matches(&uri));
+//! assert!(mikes_lead.matches(&uri.with_lead(true)));
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
@@ -72,6 +77,10 @@ pub struct Selector {
     /// A claimed work item, for example `issue-6`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim: Option<String>,
+    /// True picks the lead of its user in its repository. Use it with
+    /// `user` and `repo`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead: Option<bool>,
 }
 
 impl Selector {
@@ -83,9 +92,19 @@ impl Selector {
         }
     }
 
+    /// A selector for the lead of `user` in the repository `repo`.
+    pub fn lead(user: &str, repo: &str) -> Self {
+        Self {
+            user: Some(user.to_owned()),
+            repo: Some(repo.to_owned()),
+            lead: Some(true),
+            ..Self::default()
+        }
+    }
+
     /// True when the selector names no field.
     pub fn is_empty(&self) -> bool {
-        self.fields().iter().all(|(_, v)| v.is_none())
+        self.lead.is_none() && self.fields().iter().all(|(_, v)| v.is_none())
     }
 
     /// True when each named field matches the session.
@@ -102,6 +121,7 @@ impl Selector {
             && eq(&self.repo, Some(&place.repo_text()))
             && eq(&self.worktree, place.worktree())
             && self.claim.as_ref().is_none_or(|c| uri.claims().contains(c))
+            && self.lead.is_none_or(|l| l == uri.lead())
     }
 
     fn fields(&self) -> [(&'static str, &Option<String>); 6] {
@@ -122,6 +142,7 @@ impl fmt::Display for Selector {
             .fields()
             .iter()
             .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}={v}")))
+            .chain(self.lead.map(|l| format!("lead={l}")))
             .collect();
         f.write_str(&pairs.join(","))
     }
@@ -137,6 +158,9 @@ impl FromStr for Selector {
     ///
     /// let s: Selector = "user=mike,claim=issue-6".parse()?;
     /// assert_eq!(s.to_string(), "user=mike,claim=issue-6");
+    /// let lead: Selector = "user=mike,lead=true".parse()?;
+    /// assert_eq!(lead.lead, Some(true));
+    /// assert!("lead=yes".parse::<Selector>().is_err());
     /// assert!("".parse::<Selector>().is_err());
     /// assert!("colour=blue".parse::<Selector>().is_err());
     /// # Ok::<(), riff_core::name::NameError>(())
@@ -148,6 +172,13 @@ impl FromStr for Selector {
                 .split_once('=')
                 .filter(|(_, v)| !v.is_empty())
                 .ok_or_else(|| NameError::new(format!("not FIELD=VALUE: {pair}")))?;
+            if key == "lead" {
+                let lead = value
+                    .parse()
+                    .map_err(|_| NameError::new(format!("lead is true or false, not {value}")))?;
+                out.lead = Some(lead);
+                continue;
+            }
             let field = match key {
                 "user" => &mut out.user,
                 "session" => &mut out.session,
@@ -157,7 +188,7 @@ impl FromStr for Selector {
                 "claim" => &mut out.claim,
                 _ => {
                     return Err(NameError::new(format!(
-                        "no field named {key}. Use user, session, host, repo, worktree or claim."
+                        "no field named {key}. Use user, session, host, repo, worktree, claim or lead."
                     )));
                 }
             };
@@ -205,6 +236,26 @@ mod tests {
         ] {
             assert!(!sel(s).matches(&u), "{s}");
         }
+    }
+
+    #[test]
+    fn lead_selects_the_lead_or_the_others() {
+        let u = uri("riff://mike@pangolin/como-technologies/riff?session=a6cf");
+        let lead = u.clone().with_lead(true);
+        assert!(sel("lead=true").matches(&lead));
+        assert!(!sel("lead=true").matches(&u));
+        assert!(sel("lead=false").matches(&u));
+        assert!(!sel("lead=false").matches(&lead));
+        let s = Selector::lead("mike", "como-technologies/riff");
+        assert_eq!(
+            s.to_string(),
+            "user=mike,repo=como-technologies/riff,lead=true"
+        );
+        assert!(s.matches(&lead));
+        assert_eq!(
+            serde_json::to_string(&s).unwrap(),
+            r#"{"user":"mike","repo":"como-technologies/riff","lead":true}"#
+        );
     }
 
     #[test]

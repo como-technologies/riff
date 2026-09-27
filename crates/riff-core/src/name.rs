@@ -18,10 +18,12 @@
 //! | host | where | The machine name, without its domain. |
 //! | owner/repo | where | The `origin` remote of the git repository. |
 //! | worktree | where | The directory name of a linked worktree. The main worktree has none. |
+//! | lead | what | `lead=true` when the session is the lead of its user in its repository. |
 //! | claim | what | One part for each claim that the session holds. |
 //!
 //! *Who* ([`Who`]) never changes. *Where* ([`Place`]) changes when the
-//! session moves. *What* changes with each claim. The server keys each
+//! session moves. *What* changes with each claim, and when the session
+//! becomes the lead or stops being the lead. The server keys each
 //! session by its [`Who`].
 //!
 //! Outside git, the repository part is `-` and the worktree part is the
@@ -214,6 +216,10 @@ impl Place {
 /// assert_eq!(uri.short(), "mike@pangolin:riff#pr-23");
 /// assert_eq!(uri.who().session(), Some("a6cf"));
 /// assert_eq!(uri.claims(), ["issue-6"]);
+/// assert!(!uri.lead());
+///
+/// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true".parse()?;
+/// assert!(lead.lead());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -221,17 +227,30 @@ impl Place {
 pub struct SessionUri {
     who: Who,
     place: Place,
+    lead: bool,
     claims: Vec<String>,
 }
 
 impl SessionUri {
-    /// A URI with no claims.
+    /// A URI with no claims. It is not the lead.
     pub fn new(who: Who, place: Place) -> Self {
         Self {
             who,
             place,
+            lead: false,
             claims: Vec::new(),
         }
+    }
+
+    /// The same URI, as the lead or not.
+    pub fn with_lead(mut self, lead: bool) -> Self {
+        self.lead = lead;
+        self
+    }
+
+    /// True when the session is the lead of its user in its repository.
+    pub fn lead(&self) -> bool {
+        self.lead
     }
 
     /// The same URI with these claims, in sorted order.
@@ -303,6 +322,7 @@ impl fmt::Display for SessionUri {
             .session
             .iter()
             .map(|s| format!("session={s}"))
+            .chain(self.lead.then(|| "lead=true".to_owned()))
             .chain(self.claims.iter().map(|c| format!("claim={c}")))
             .collect();
         if self.place.has_path() || !query.is_empty() {
@@ -348,10 +368,12 @@ impl FromStr for SessionUri {
             }
         };
         let mut session = None;
+        let mut lead = false;
         let mut claims = Vec::new();
         for pair in query.into_iter().flat_map(|q| q.split('&')) {
             match pair.split_once('=') {
                 Some(("session", value)) if session.is_none() => session = Some(value),
+                Some(("lead", "true")) => lead = true,
                 Some(("claim", value)) => {
                     check("claim", value)?;
                     claims.push(value.to_owned());
@@ -361,7 +383,7 @@ impl FromStr for SessionUri {
         }
         let who = Who::new(user, session)?;
         let place = Place::new(host, repo, worktree)?;
-        Ok(Self::new(who, place).with_claims(claims))
+        Ok(Self::new(who, place).with_lead(lead).with_claims(claims))
     }
 }
 
@@ -506,10 +528,11 @@ mod tests {
 
     #[test]
     fn a_full_uri_round_trips() {
-        let text = "riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=a&claim=b#pr-23";
+        let text = "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=a&claim=b#pr-23";
         let parsed: SessionUri = text.parse().unwrap();
         assert_eq!(parsed.to_string(), text);
         assert_eq!(parsed.claims(), ["a", "b"]);
+        assert!(parsed.lead());
         assert_eq!(parsed.place().worktree(), Some("pr-23"));
     }
 
@@ -563,6 +586,8 @@ mod tests {
             "riff://mike@pangolin/o/r?other=x",
             "riff://mike@pangolin/o/r?session=a&session=b",
             "riff://mike@pangolin/o/r?claim=a b",
+            "riff://mike@pangolin/o/r?session=a&lead=false",
+            "riff://mike@pangolin/o/r?session=a&lead=yes",
         ] {
             assert!(bad.parse::<SessionUri>().is_err(), "{bad}");
         }

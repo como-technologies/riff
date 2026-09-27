@@ -46,8 +46,8 @@ enum Command {
         thread: Option<String>,
         /// Wake the sessions that match: FIELD=VALUE pairs with commas
         /// between them, for example user=mike,claim=issue-6. The fields
-        /// are user, session, host, repo, worktree and claim. Give --to
-        /// again to wake more sessions.
+        /// are user, session, host, repo, worktree, claim and lead. Give
+        /// --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,
         /// The message.
@@ -56,8 +56,8 @@ enum Command {
     },
     /// Send a direct message to one session. It wakes that session.
     Tell {
-        /// The session: its session ID, or its full riff:// URI from
-        /// `riff who`.
+        /// The session: its session ID, its full riff:// URI from `riff
+        /// who`, or `lead` for the lead of your user in this repository.
         session: String,
         /// The message.
         #[arg(required = true)]
@@ -95,6 +95,11 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
+    /// Make this session the lead of your user in this repository. The
+    /// other sessions of your user send their questions to the lead. It
+    /// replaces the old lead. Run it in the agent session, for example
+    /// `! riff lead` in Claude Code.
+    Lead,
     /// Print one line each time a post wakes this session. One watch
     /// runs for each session: a second one stops at once.
     Watch {
@@ -223,6 +228,7 @@ async fn main() -> Result<()> {
             api.release(&me, &thread, &item).await?;
             println!("{}", text::released(&thread, &item));
         }
+        Command::Lead => println!("{}", text::led(&api.lead(&me).await?)),
         Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await,
         Command::Watch { once } => {
             let me = identity::session(&here, api.base())?;

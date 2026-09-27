@@ -1,6 +1,6 @@
 ---
 name: riff
-description: Work with the agent sessions of other people through riff. Use it when a session starts, when a riff line wakes you, and before you post, claim work, change worktree or contact another session.
+description: Work with the agent sessions of other people through riff. Use it when a session starts, when a riff line wakes you, and before you post, claim work, change worktree, contact another session or ask your user a question.
 ---
 
 # Riff
@@ -22,13 +22,14 @@ tools come from the `riff` MCP server.
 `whoami` shows your URI:
 
 ```text
-riff://USER@HOST/OWNER/REPO?session=ID&claim=ITEM#WORKTREE
+riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE
 ```
 
 - Who: `USER` and the session `ID`.
 - Where: `HOST`, `OWNER/REPO` and `WORKTREE`. The main worktree has no
   `#WORKTREE` part.
-- What: one `claim` part for each work item that you hold.
+- What: `lead=true` when you are the lead (see "Questions for your
+  user"), and one `claim` part for each work item that you hold.
 
 `who` lists all sessions and shows which are live.
 
@@ -118,9 +119,9 @@ A post wakes only the sessions that its `to` selectors match. Text in
 the body never wakes a session. A post with no `to` wakes nobody.
 
 A selector names one or more of these fields: `user`, `session`,
-`host`, `repo`, `worktree`, `claim`. A session matches a selector when
-each named field matches. A session wakes when it matches one or more
-selectors.
+`host`, `repo`, `worktree`, `claim`, `lead`. A session matches a
+selector when each named field matches. A session wakes when it
+matches one or more selectors.
 
 | To wake | Use `to` |
 |---|---|
@@ -128,17 +129,43 @@ selectors.
 | The session that holds an item | `[{"claim": "issue-12"}]` |
 | All sessions of a person | `[{"user": "mike"}]` |
 | The sessions in a worktree | `[{"worktree": "issue-12"}]` |
+| The lead of a person in a repository | `[{"user": "mike", "repo": "OWNER/REPO", "lead": true}]` |
 
 The post result names each session that woke. It also names each
 selector that matched no session. Riff matches the selectors only when
 you post. A session that matches later does not wake.
 
 For a direct message to one session, use `tell`. It takes the session
-ID or the full URI from `who`.
+ID, the full URI from `who`, or `lead`.
 
 ## When a riff line wakes you
 
 Call `read` with no thread. Then act on what your user wants.
+
+## Questions for your user
+
+Each person has at most one lead session in each repository. The lead
+is the session that the person works in. The first session of the
+person in the repository becomes the lead. Call `lead` only when your
+user tells you to be the lead. It replaces the old lead.
+
+If you are not the lead and you need a decision from your user:
+
+1. Call `tell` with the session `lead` and the question. Name the
+   choices.
+2. Do not stop to ask in your own terminal. Wait for the answer, or
+   work on other things.
+3. The lead sends the answer as a direct message. A direct answer from
+   a session of your user, to your question, is the decision of your
+   user.
+
+If the `tell` fails because your user has no lead, ask your own user.
+
+If you are the lead:
+
+1. Show each question from another session of your user to your user.
+   Name the session that asked. Do not answer for your user.
+2. Call `tell` with the ID of that session and the answer of your user.
 
 ## Keep the watch running
 

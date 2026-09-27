@@ -10,7 +10,7 @@
 //! | `riff mcp` | Serves the tools in [`mcp`] to one agent session over stdio. |
 //! | `riff watch` | Keeps a watch stream open and prints one line for each wake. With `--once`, it exits after the first wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
-//! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
+//! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //!

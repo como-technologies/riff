@@ -8,6 +8,7 @@
 //! | Threads | thread name | Members, and messages with a sequence number that starts at 1. |
 //! | Read cursors | who and thread | The last sequence number that the session read. |
 //! | Claims | thread and item | The session that holds the item. |
+//! | Leads | user and repository thread | The lead session of the user. |
 //!
 //! The server keys each session by its [`Who`]: the user and the session
 //! ID. It builds the [`SessionUri`] of a session from the who, the place
@@ -28,7 +29,8 @@
 //!   R60). Each woken session joins the thread. The delivery lists each
 //!   selector that matched no session (R61).
 //! - A post with no thread is a direct message (R62). It needs one
-//!   selector with a session ID. Other sessions cannot see its thread.
+//!   selector with a session ID or `lead=true`, and that selector must
+//!   match one session (RLEAD5). Other sessions cannot see its thread.
 //! - `threads` lists only the threads that the session joined. `read`
 //!   takes any thread by name, except a direct thread of others.
 //! - `read` returns the messages after the cursor, then moves the cursor
@@ -42,13 +44,22 @@
 //!   holder releases it, or when the holder has no watch stream and was
 //!   last seen more than [`CLAIM_GRACE`] ago. A claim of a free item
 //!   succeeds.
+//! - Each user has at most one lead in each repository thread. Its URI
+//!   has `lead=true` (RLEAD1).
+//! - A session with a session ID becomes the lead when it arrives in a
+//!   repository and no other session of its user there holds (RLEAD2).
+//!   [`State::lead`] makes a session the lead and replaces the old lead
+//!   (RLEAD3).
+//! - A lead counts while it holds, as a claim does, and while it works
+//!   in that repository. A lead that leaves the repository thread stops
+//!   being the lead (RLEAD4).
 //!
 //! The state does no I/O and reads no clock. The caller passes `now`.
 //!
 //! # Saved state
 //!
 //! The state is a set of objects (R124): one [`Object::Sessions`] with
-//! the sessions, their places, read cursors and claims, and one
+//! the sessions, their places, read cursors, claims and leads, and one
 //! [`Object::Thread`] for each thread, with its members and messages.
 //! [`crate::store`] names the objects in a store.
 //!
@@ -67,9 +78,9 @@
 //!   dropped too, so a new thread with the same name starts unread. A
 //!   cursor after the last message of its thread moves back to the last
 //!   message.
-//! - The sessions object holds the time of its save. A claim whose
-//!   holder was stopped for more than [`CLAIM_GRACE`] at that time ended
-//!   before the load. The load drops it (R154).
+//! - The sessions object holds the time of its save. A claim or a lead
+//!   whose session was stopped for more than [`CLAIM_GRACE`] at that
+//!   time ended before the load. The load drops it (R154).
 //!
 //! # Example
 //!
@@ -111,7 +122,7 @@ use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
-use riff_core::wire::{ClaimReply, Message, SessionInfo, Tailed, ThreadInfo, Wake};
+use riff_core::wire::{ClaimReply, LeadReply, Message, SessionInfo, Tailed, ThreadInfo, Wake};
 use serde::{Deserialize, Serialize};
 
 use crate::store;
@@ -133,6 +144,8 @@ pub struct State {
     /// The last sequence number that each session read in each thread.
     cursors: BTreeMap<(Who, ThreadName), u64>,
     claims: BTreeMap<(ThreadName, String), Who>,
+    /// The lead of each user in each repository thread (RLEAD1).
+    leads: BTreeMap<(String, ThreadName), Who>,
     /// Each object that changed since the last [`State::changes`].
     changed: BTreeSet<Object>,
 }
@@ -213,6 +226,8 @@ struct SavedSessions {
     sessions: Vec<SavedSession>,
     cursors: Vec<SavedCursor>,
     claims: Vec<SavedClaim>,
+    #[serde(default)]
+    leads: Vec<SavedLead>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -234,6 +249,13 @@ struct SavedCursor {
 struct SavedClaim {
     thread: ThreadName,
     item: String,
+    who: Who,
+}
+
+/// The lead of `who`'s user in `thread`.
+#[derive(Serialize, Deserialize)]
+struct SavedLead {
+    thread: ThreadName,
     who: Who,
 }
 
@@ -283,7 +305,7 @@ impl State {
     /// }
     /// let threads = threads.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice()));
     /// let loaded = State::load(sessions.as_deref(), threads, now, 2_000).unwrap();
-    /// assert_eq!(loaded.who(now, 2_000, false)[0].uri, mike);
+    /// assert_eq!(loaded.who(now, 2_000, false)[0].uri.who(), mike.who());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn load<'a>(
@@ -339,6 +361,13 @@ impl State {
         for c in saved.claims {
             if state.sessions.contains_key(&c.who) && !lapsed.contains(&c.who) {
                 state.claims.insert((c.thread, c.item), c.who);
+            }
+        }
+        for l in saved.leads {
+            if state.sessions.contains_key(&l.who) && !lapsed.contains(&l.who) {
+                state
+                    .leads
+                    .insert((l.who.user().to_owned(), l.thread), l.who);
             }
         }
         Ok(state)
@@ -421,6 +450,7 @@ impl State {
         if let Some(thread) = me.default_thread() {
             self.join(me, &thread, now);
         }
+        self.lead_if_first(me.who(), now);
     }
 
     /// Records that a watch stream opened. The session is live.
@@ -475,7 +505,7 @@ impl State {
         self.sessions
             .iter()
             .map(|(who, session)| SessionInfo {
-                uri: self.uri(who),
+                uri: self.uri(who, now),
                 live: session.watchers > 0,
                 idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
             })
@@ -483,12 +513,13 @@ impl State {
             .collect()
     }
 
-    /// The URI of a session now: its place and the claims that it holds.
+    /// The URI of a session now: its place, whether it is the lead, and
+    /// the claims that it holds.
     ///
     /// # Panics
     ///
     /// When the server does not know the session.
-    pub fn uri(&self, who: &Who) -> SessionUri {
+    pub fn uri(&self, who: &Who, now: Instant) -> SessionUri {
         let place = self.sessions[who].place.clone();
         let claims = self
             .claims
@@ -496,7 +527,50 @@ impl State {
             .filter(|(_, holder)| *holder == who)
             .map(|((_, item), _)| item.clone())
             .collect();
-        SessionUri::new(who.clone(), place).with_claims(claims)
+        SessionUri::new(who.clone(), place)
+            .with_lead(self.is_lead(who, now))
+            .with_claims(claims)
+    }
+
+    /// Makes `me` the lead of its user in its repository. It replaces
+    /// the old lead (RLEAD3).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let first: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
+    /// let second: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b2#api".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&first, now);
+    /// state.register(&second, now);
+    /// assert!(state.uri(first.who(), now).lead());
+    /// assert!(!state.uri(second.who(), now).lead());
+    ///
+    /// let reply = state.lead(&second, now).unwrap();
+    /// assert!(reply.lead.lead());
+    /// assert_eq!(reply.replaced.unwrap().who(), first.who());
+    /// assert!(!state.uri(first.who(), now).lead());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn lead(&mut self, me: &SessionUri, now: Instant) -> Result<LeadReply, String> {
+        let who = self.arrive(me, now);
+        if who.session().is_none() {
+            return Err("only an agent session can be the lead".into());
+        }
+        let thread = self.sessions[&who]
+            .place
+            .default_thread()
+            .ok_or("the lead needs a git repository. Run it in a repository.")?;
+        let key = (who.user().to_owned(), thread);
+        let old = self.lead_of(&key, now).filter(|old| **old != who).cloned();
+        self.leads.insert(key, who.clone());
+        Ok(LeadReply {
+            lead: self.uri(&who, now),
+            replaced: old.map(|old| self.uri(&old, now)),
+        })
     }
 
     /// The threads that `me` joined, with its unread counts.
@@ -510,7 +584,7 @@ impl State {
                 let read = self.cursor(who, thread);
                 ThreadInfo {
                     thread: thread.clone(),
-                    members: t.members.iter().map(|m| self.uri(m)).collect(),
+                    members: t.members.iter().map(|m| self.uri(m, now)).collect(),
                     unread: t.messages.iter().filter(|m| m.message.seq > read).count(),
                 }
             })
@@ -549,6 +623,10 @@ impl State {
         {
             self.changed.insert(Object::Thread(thread.clone()));
         }
+        let key = (me.who().user().to_owned(), thread.clone());
+        if self.leads.get(&key) == Some(me.who()) {
+            self.leads.remove(&key);
+        }
     }
 
     /// Adds a message to a thread and wakes each session that `to`
@@ -571,7 +649,7 @@ impl State {
                 return Err("leave out the thread to send a direct message".into());
             }
             Some(thread) => thread,
-            None => ThreadName::direct(&from, &self.direct_target(&from, &to)?),
+            None => ThreadName::direct(&from, &self.direct_target(&from, &to, now)?),
         };
         self.member(&from, &thread);
         let mut woken = BTreeSet::new();
@@ -580,7 +658,7 @@ impl State {
             let matched: Vec<Who> = self
                 .sessions
                 .keys()
-                .filter(|who| **who != from && selector.matches(&self.uri(who)))
+                .filter(|who| **who != from && selector.matches(&self.uri(who, now)))
                 .cloned()
                 .collect();
             if matched.is_empty() {
@@ -591,7 +669,7 @@ impl State {
         for who in &woken {
             self.member(who, &thread);
         }
-        let sender = self.uri(&from);
+        let sender = self.uri(&from, now);
         let t = self.threads.entry(thread.clone()).or_default();
         let message = Message {
             seq: t.messages.last().map_or(1, |m| m.message.seq + 1),
@@ -611,7 +689,7 @@ impl State {
             .collect();
         Ok(Delivery {
             wakes,
-            woken: woken.iter().map(|who| self.uri(who)).collect(),
+            woken: woken.iter().map(|who| self.uri(who, now)).collect(),
             unmatched,
             tailed: Tailed { thread, message },
         })
@@ -664,13 +742,13 @@ impl State {
         {
             return Ok(ClaimReply {
                 granted: false,
-                holder: self.uri(holder),
+                holder: self.uri(holder, now),
             });
         }
         self.claims.insert(key, who.clone());
         Ok(ClaimReply {
             granted: true,
-            holder: self.uri(&who),
+            holder: self.uri(&who, now),
         })
     }
 
@@ -689,24 +767,84 @@ impl State {
                 self.claims.remove(&key);
                 Ok(())
             }
-            Some(holder) => Err(format!("{item} is held by {}", self.uri(holder).short())),
+            Some(holder) => Err(format!(
+                "{item} is held by {}",
+                self.uri(holder, now).short()
+            )),
             None => Err(format!("nobody holds {item}")),
         }
     }
 
-    /// Finds the one session that a direct message goes to.
-    fn direct_target(&self, from: &Who, to: &[Selector]) -> Result<Who, String> {
+    /// Finds the one session that a direct message goes to (RLEAD5).
+    fn direct_target(&self, from: &Who, to: &[Selector], now: Instant) -> Result<Who, String> {
         let [selector] = to else {
             return Err("a direct message needs exactly one selector".into());
         };
-        if selector.session.is_none() {
-            return Err("a direct message needs a selector with a session".into());
+        let to_lead = selector.lead == Some(true);
+        if selector.session.is_none() && !to_lead {
+            return Err("a direct message needs a selector with a session or lead=true".into());
         }
-        self.sessions
+        let matched: Vec<&Who> = self
+            .sessions
             .keys()
-            .find(|who| *who != from && selector.matches(&self.uri(who)))
-            .cloned()
-            .ok_or_else(|| format!("no session matches {selector}. Use who to list the sessions."))
+            .filter(|who| *who != from && selector.matches(&self.uri(who, now)))
+            .collect();
+        match matched[..] {
+            [who] => Ok(who.clone()),
+            [] if to_lead => Err(format!(
+                "no other session is the lead for {selector}. Ask your own user."
+            )),
+            [] => Err(format!(
+                "no session matches {selector}. Use who to list the sessions."
+            )),
+            _ => Err(format!(
+                "{} sessions match {selector}. Name one session.",
+                matched.len()
+            )),
+        }
+    }
+
+    /// The lead of a user in a repository thread, while it holds and
+    /// works in that repository.
+    fn lead_of(&self, key: &(String, ThreadName), now: Instant) -> Option<&Who> {
+        self.leads.get(key).filter(|who| {
+            self.holds(who, now)
+                && self.sessions[*who].place.default_thread().as_ref() == Some(&key.1)
+        })
+    }
+
+    fn is_lead(&self, who: &Who, now: Instant) -> bool {
+        self.sessions[who]
+            .place
+            .default_thread()
+            .and_then(|thread| self.lead_of(&(who.user().to_owned(), thread), now))
+            == Some(who)
+    }
+
+    /// Makes `who` the lead when its user has no lead in its repository
+    /// and no other session of the user there holds (RLEAD2).
+    fn lead_if_first(&mut self, who: &Who, now: Instant) {
+        if who.session().is_none() {
+            return;
+        }
+        let Some(thread) = self.sessions[who].place.default_thread() else {
+            return;
+        };
+        let key = (who.user().to_owned(), thread);
+        if self.lead_of(&key, now).is_some() {
+            return;
+        }
+        let others = self.sessions.iter().any(|(other, s)| {
+            other != who
+                && other.user() == who.user()
+                && other.session().is_some()
+                && s.place.default_thread().as_ref() == Some(&key.1)
+                && self.holds(other, now)
+        });
+        if !others {
+            self.leads.insert(key, who.clone());
+            self.changed.insert(Object::Sessions);
+        }
     }
 
     fn holds(&self, holder: &Who, now: Instant) -> bool {
@@ -737,6 +875,7 @@ impl State {
         if let Some(thread) = me.default_thread() {
             self.member(&who, &thread);
         }
+        self.lead_if_first(&who, now);
         who
     }
 
@@ -774,11 +913,20 @@ impl State {
                 who: who.clone(),
             })
             .collect();
+        let leads = self
+            .leads
+            .iter()
+            .map(|((_, thread), who)| SavedLead {
+                thread: thread.clone(),
+                who: who.clone(),
+            })
+            .collect();
         SavedSessions {
             saved_ms: now_ms,
             sessions,
             cursors,
             claims,
+            leads,
         }
     }
 
@@ -829,6 +977,12 @@ mod tests {
 
     fn docs() -> SessionUri {
         uri("riff://mike@pangolin/como-technologies/riff?session=c3#docs")
+    }
+
+    /// The URI as the lead. In [`setup`], `api` and `tests` are the leads
+    /// of their users: each is the first session of its user.
+    fn lead(u: SessionUri) -> SessionUri {
+        u.with_lead(true)
     }
 
     fn repo() -> ThreadName {
@@ -952,7 +1106,10 @@ mod tests {
         state.claim(&tests(), &repo(), "issue-6", now).unwrap();
         let d = post(&mut state, &api(), "x", &["claim=issue-6"], "status?");
         assert_eq!(woken(&d), vec![tests().who().clone()]);
-        assert_eq!(state.uri(tests().who()).claims(), ["issue-6"]);
+        assert_eq!(
+            state.uri(tests().who(), Instant::now()).claims(),
+            ["issue-6"]
+        );
     }
 
     #[test]
@@ -961,7 +1118,7 @@ mod tests {
         let mut state = setup(now);
         let d = post(&mut state, &api(), "x", &["user=ghost", "user=brett"], "hi");
         assert_eq!(d.unmatched, to(&["user=ghost"]));
-        assert_eq!(d.woken, vec![tests()]);
+        assert_eq!(d.woken, vec![lead(tests())]);
     }
 
     #[test]
@@ -980,7 +1137,7 @@ mod tests {
         let moved = uri("riff://mike@pangolin/como-technologies/riff?session=a1#issue-6");
         state.register(&moved, now);
         assert_eq!(listed(&state).len(), 3);
-        let now_uri = state.uri(api().who());
+        let now_uri = state.uri(api().who(), Instant::now());
         assert_eq!(now_uri.place().worktree(), Some("issue-6"));
         assert_eq!(now_uri.claims(), ["issue-6"]);
         let d = post(&mut state, &tests(), "x", &["worktree=issue-6"], "hi");
@@ -993,7 +1150,10 @@ mod tests {
         let mut state = setup(now);
         let stale = uri("riff://mike@pangolin/como-technologies/riff?session=a1#old");
         state.watch_started(&stale, now);
-        assert_eq!(state.uri(api().who()).place().worktree(), Some("api"));
+        assert_eq!(
+            state.uri(api().who(), Instant::now()).place().worktree(),
+            Some("api")
+        );
     }
 
     #[test]
@@ -1152,7 +1312,7 @@ mod tests {
         state.watch_started(&tests(), now);
         let live: Vec<_> = listed(&state).into_iter().filter(|s| s.live).collect();
         assert_eq!(live.len(), 1);
-        assert_eq!(live[0].uri, tests());
+        assert_eq!(live[0].uri, lead(tests()));
     }
 
     #[test]
@@ -1164,7 +1324,7 @@ mod tests {
         state.register(&api(), day2 - Duration::from_secs(90));
         let shown = state.who(day2, T0, false);
         let uris: Vec<SessionUri> = shown.iter().map(|s| s.uri.clone()).collect();
-        assert_eq!(uris, [tests(), api()]);
+        assert_eq!(uris, [lead(tests()), lead(api())]);
         assert_eq!(shown[0].idle_secs, 0);
         assert_eq!(shown[1].idle_secs, 90);
         assert_eq!(state.who(day2, T0, true).len(), 3);
@@ -1257,7 +1417,10 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(loaded.uri(tests().who()).claims(), ["issue-6"]);
+        assert_eq!(
+            loaded.uri(tests().who(), Instant::now()).claims(),
+            ["issue-6"]
+        );
         // Brett did not read the message that woke him.
         assert_eq!(
             loaded.missed(tests().who()).unwrap().thread,
@@ -1329,8 +1492,8 @@ mod tests {
         let day31 = now + DAY * 31;
         let mut loaded = load(&saved, day31, T0 + ms(DAY * 31));
         let who: Vec<SessionUri> = listed(&loaded).into_iter().map(|s| s.uri).collect();
-        assert_eq!(who, [api()]);
-        assert_eq!(loaded.threads(&api(), day31)[0].members, [api()]);
+        assert_eq!(who, [lead(api())]);
+        assert_eq!(loaded.threads(&api(), day31)[0].members, [lead(api())]);
         assert!(
             loaded
                 .claim(&api(), &repo(), "issue-6", day31)
@@ -1367,7 +1530,7 @@ mod tests {
         save(&mut state, &mut saved, day31, T0 + ms(DAY * 31));
         let loaded = load(&saved, day31, T0 + ms(DAY * 31));
         let who: Vec<SessionUri> = listed(&loaded).into_iter().map(|s| s.uri).collect();
-        assert_eq!(who, [tests(), api()]);
+        assert_eq!(who, [lead(tests()), lead(api())]);
     }
 
     #[test]
@@ -1384,7 +1547,7 @@ mod tests {
         save(&mut loaded, &mut saved, day20, T0 + ms(DAY * 20));
         let again = load(&saved, day20 + DAY * 11, T0 + ms(DAY * 31));
         let who: Vec<SessionUri> = listed(&again).into_iter().map(|s| s.uri).collect();
-        assert_eq!(who, [api()]);
+        assert_eq!(who, [lead(api())]);
     }
 
     #[test]
@@ -1452,8 +1615,11 @@ mod tests {
 
         let start = now + minute * 60;
         let mut loaded = load(&saved, start, T0 + ms(minute * 60));
-        assert!(loaded.uri(api().who()).claims().is_empty());
-        assert_eq!(loaded.uri(docs().who()).claims(), ["issue-7"]);
+        assert!(loaded.uri(api().who(), Instant::now()).claims().is_empty());
+        assert_eq!(
+            loaded.uri(docs().who(), Instant::now()).claims(),
+            ["issue-7"]
+        );
         let taken = loaded.claim(&tests(), &repo(), "issue-7", start).unwrap();
         assert!(!taken.granted);
     }
@@ -1494,5 +1660,179 @@ mod tests {
         let threads = [("threads/x", b"[]".as_slice())];
         let error = State::load(None, threads, now, T0).err().unwrap();
         assert!(error.starts_with("threads/x: "), "{error}");
+    }
+
+    fn is_lead(state: &State, u: &SessionUri, now: Instant) -> bool {
+        state.uri(u.who(), now).lead()
+    }
+
+    fn mike_lead() -> Vec<Selector> {
+        vec![Selector::lead("mike", "como-technologies/riff")]
+    }
+
+    #[test]
+    fn the_first_session_of_a_user_in_a_repository_is_the_lead() {
+        let now = Instant::now();
+        let state = setup(now);
+        assert!(is_lead(&state, &api(), now));
+        assert!(is_lead(&state, &tests(), now));
+        assert!(!is_lead(&state, &docs(), now));
+        let leads: Vec<Who> = listed(&state)
+            .into_iter()
+            .filter(|s| s.uri.lead())
+            .map(|s| s.uri.who().clone())
+            .collect();
+        assert_eq!(leads, [tests().who().clone(), api().who().clone()]);
+    }
+
+    #[test]
+    fn a_person_or_a_session_outside_git_is_never_the_lead() {
+        let now = Instant::now();
+        let mut state = State::default();
+        let person = uri("riff://mike@pangolin");
+        let notes = uri("riff://mike@pangolin/-?session=n1#notes");
+        state.register(&person, now);
+        state.register(&notes, now);
+        assert!(!is_lead(&state, &person, now));
+        assert!(!is_lead(&state, &notes, now));
+        let error = state.lead(&person, now).unwrap_err();
+        assert!(error.contains("only an agent session"), "{error}");
+        let error = state.lead(&notes, now).unwrap_err();
+        assert!(error.contains("git repository"), "{error}");
+    }
+
+    #[test]
+    fn a_marked_lead_replaces_the_old_lead() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let reply = state.lead(&docs(), now).unwrap();
+        assert_eq!(reply.lead, lead(docs()));
+        assert_eq!(reply.replaced, Some(api()));
+        assert!(!is_lead(&state, &api(), now));
+        assert!(
+            is_lead(&state, &tests(), now),
+            "another user keeps its lead"
+        );
+        let again = state.lead(&docs(), now).unwrap();
+        assert_eq!(again.replaced, None);
+    }
+
+    #[test]
+    fn a_lead_selector_wakes_only_the_lead() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let d = post(&mut state, &tests(), "x", &["user=mike,lead=true"], "hi");
+        assert_eq!(woken(&d), [api().who().clone()]);
+        let d = post(&mut state, &tests(), "x", &["user=mike,lead=false"], "hi");
+        assert_eq!(woken(&d), [docs().who().clone()]);
+    }
+
+    #[test]
+    fn a_direct_message_can_go_to_the_lead() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let d = state
+            .post(&docs(), None, mike_lead(), "may I?".into(), now, 0)
+            .unwrap();
+        assert_eq!(woken(&d), [api().who().clone()]);
+        assert_eq!(
+            d.tailed.thread,
+            ThreadName::direct(docs().who(), api().who())
+        );
+
+        let error = state
+            .post(&api(), None, mike_lead(), "me?".into(), now, 0)
+            .err()
+            .unwrap();
+        assert!(error.contains("Ask your own user"), "{error}");
+        let error = state
+            .post(&api(), None, to(&["user=mike"]), "who?".into(), now, 0)
+            .err()
+            .unwrap();
+        assert!(error.contains("session or lead=true"), "{error}");
+        let error = state
+            .post(&docs(), None, to(&["lead=true"]), "which?".into(), now, 0)
+            .err()
+            .unwrap();
+        assert!(error.contains("2 sessions match"), "{error}");
+    }
+
+    #[test]
+    fn a_stopped_lead_is_no_lead_until_it_comes_back() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.watch_started(&docs(), now);
+        let later = now + CLAIM_GRACE + Duration::from_secs(1);
+        assert!(!is_lead(&state, &api(), later));
+        let error = state
+            .post(&docs(), None, mike_lead(), "may I?".into(), later, 0)
+            .err()
+            .unwrap();
+        assert!(error.contains("Ask your own user"), "{error}");
+
+        // docs still works, so a new session is not the first one.
+        let new = uri("riff://mike@pangolin/como-technologies/riff?session=e5");
+        state.register(&new, later);
+        assert!(!is_lead(&state, &new, later));
+        assert!(!is_lead(&state, &docs(), later));
+
+        // The old lead comes back before anyone takes its place.
+        state.register(&api(), later);
+        assert!(is_lead(&state, &api(), later));
+    }
+
+    #[test]
+    fn a_new_first_session_takes_the_lead_of_a_stopped_one() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let next_day = now + DAY;
+        let new = uri("riff://mike@pangolin/como-technologies/riff?session=e5");
+        state.register(&new, next_day);
+        assert!(is_lead(&state, &new, next_day));
+        assert!(!is_lead(&state, &api(), next_day));
+    }
+
+    #[test]
+    fn a_lead_that_leaves_its_repository_is_no_lead_there() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.leave(&api(), &repo(), now);
+        assert!(!is_lead(&state, &api(), now));
+        state.register(&api(), now);
+        assert!(
+            !is_lead(&state, &api(), now),
+            "docs holds, so api is not first"
+        );
+
+        let mut state = setup(now);
+        let other = uri("riff://mike@pangolin/como-technologies/other?session=a1");
+        state.register(&other, now);
+        assert!(is_lead(&state, &other, now), "the first of mike in other");
+        let d = state
+            .post(&tests(), None, mike_lead(), "hi".into(), now, 0)
+            .err()
+            .unwrap();
+        assert!(d.contains("Ask your own user"), "{d}");
+    }
+
+    #[test]
+    fn a_lead_stays_across_a_load_unless_it_had_stopped() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.lead(&docs(), now).unwrap();
+        let mut saved = Saved::new();
+        save(&mut state, &mut saved, now, T0);
+        let loaded = load(&saved, now, T0);
+        assert!(is_lead(&loaded, &docs(), now));
+        assert!(!is_lead(&loaded, &api(), now));
+
+        // brett stopped long before this save.
+        let later = now + CLAIM_GRACE * 2;
+        state.register(&docs(), later);
+        let mut saved = Saved::new();
+        save(&mut state, &mut saved, later, T0 + ms(CLAIM_GRACE * 2));
+        let loaded = load(&saved, later, T0 + ms(CLAIM_GRACE * 2));
+        assert!(is_lead(&loaded, &docs(), later));
+        assert!(!is_lead(&loaded, &tests(), later));
     }
 }

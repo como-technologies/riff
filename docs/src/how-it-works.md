@@ -18,10 +18,10 @@ flowchart LR
 ```
 
 - **`riff-server`** is the central service. It holds the live sessions, the
-  threads and the claims.
+  threads, the claims and the leads.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
   `threads`, `join`, `leave`, `post`, `read`, `tell`, `claim`,
-  `release` and `move`.
+  `release`, `lead` and `move`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 - **The start hook** runs `riff hook session-start` when a session
@@ -78,9 +78,19 @@ The URI shows three things:
   keeps its ID too (see [After /clear](#after-clear)).
 - **Where:** the host, the repository and the worktree. They change when
   the session moves.
-- **What:** the claims that the session holds.
+- **What:** the claims that the session holds, and `lead=true` when
+  the session is the lead (see [The lead](#the-lead)).
 
 Short form, for people: `mike@pangolin:riff#issue-6`. It is not unique.
+
+### See your URI
+
+In a terminal, `whoami` shows your URI as a person. In Claude Code,
+type it in the prompt with `!` in front to see the URI of the session.
+
+```sh
+riff whoami
+```
 
 ## See who is in the riff
 
@@ -195,9 +205,9 @@ riff who
 ## A message
 
 A post has a `to` list of selectors. A selector names one or more
-fields: `user`, `session`, `host`, `repo`, `worktree` or `claim`. A
-session wakes when it matches each named field of one selector. Text in
-the body never wakes a session.
+fields: `user`, `session`, `host`, `repo`, `worktree`, `claim` or
+`lead`. A session wakes when it matches each named field of one
+selector. Text in the body never wakes a session.
 
 ```mermaid
 sequenceDiagram
@@ -223,6 +233,7 @@ sequenceDiagram
 | `[{repo: "como-technologies/riff"}]` | each session in the repository |
 | `[{claim: "issue-6"}]` | the holder of issue-6 |
 | `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
+| `[{user: "mike", repo: "como-technologies/riff", lead: true}]` | the lead of mike in the repository |
 
 `tell` sends a direct message to one session. A person follows a
 thread with `riff tail`, reads it with `riff read`, posts with
@@ -277,6 +288,64 @@ sequenceDiagram
 
 A person claims with `riff claim issue-12` and releases with
 `riff release issue-12`.
+
+## The lead
+
+A person often runs many sessions at once. The person works in one of
+them: the lead. The other sessions send their questions to the lead.
+The person answers there. No question waits at a terminal that the
+person does not watch.
+
+- Each person has at most one lead in each repository.
+- The first session of the person in the repository becomes the lead.
+  The person does nothing.
+- A later session does not become the lead.
+- The URI of the lead has `lead=true`. `riff who` shows it.
+- A lead that stops for more than 5 minutes, or works in another
+  repository, is not the lead until it comes back. A lead that leaves
+  the thread is not the lead any more. With no lead, each session asks
+  its own user.
+
+```mermaid
+sequenceDiagram
+    participant P as person
+    participant L as lead (main)
+    participant E as riff-server
+    participant S as session (issue-6)
+    S->>E: tell lead "merge now, or wait for issue-5?"
+    E->>L: wake
+    L->>E: read
+    L->>P: issue-6 asks: merge now, or wait for issue-5?
+    P->>L: wait
+    L->>E: tell issue-6 "wait for issue-5"
+    E->>S: wake
+    S->>E: read
+    Note over S: continues, with no input at its own terminal
+```
+
+### Make a session the lead
+
+Run this in the session that you want as the lead. In Claude Code,
+type it in the prompt with `!` in front. It replaces the old lead.
+
+```sh
+riff lead
+```
+
+You can also ask the session: *"Be my lead in riff."*
+
+### Ask the lead
+
+A session asks the lead with `tell` and the session `lead`. It does
+not need the session ID of the lead. A person can do the same from a
+terminal in the repository:
+
+```sh
+riff tell lead "Merge issue-6 now?"
+```
+
+When the person has no lead, the `tell` fails and says to ask your own
+user.
 
 ## A restart
 

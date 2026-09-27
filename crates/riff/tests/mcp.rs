@@ -53,6 +53,9 @@ async fn call(
 
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a1#api";
 const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b2#tests";
+// Each is the first session of its user, so each is its lead.
+const MIKE_LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=a1&lead=true#api";
+const BRETT_LEAD: &str = "riff://brett@heron/como-technologies/riff?session=b2&lead=true#tests";
 
 #[tokio::test]
 async fn the_tools_carry_a_conversation() {
@@ -66,13 +69,13 @@ async fn the_tools_carry_a_conversation() {
     assert_eq!(
         names,
         [
-            "claim", "join", "leave", "move", "post", "read", "release", "tell", "threads", "who",
-            "whoami"
+            "claim", "join", "lead", "leave", "move", "post", "read", "release", "tell", "threads",
+            "who", "whoami"
         ]
     );
 
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
-    assert!(who.contains(BRETT), "{who}");
+    assert!(who.contains(BRETT_LEAD), "{who}");
     assert!(who.contains("(b2) idle 0s  "), "{who}");
     let (all, _) = call(&mike, "who", serde_json::json!({ "all": true })).await;
     assert_eq!(all, who);
@@ -119,7 +122,7 @@ async fn the_tools_carry_a_conversation() {
     let (read, _) = call(&brett, "read", serde_json::json!({})).await;
     assert!(read.starts_with(riff::text::DATA_NOTE), "{read}");
     assert!(
-        read.contains(&format!("{MIKE} to user=brett: the API is ready")),
+        read.contains(&format!("{MIKE_LEAD} to user=brett: the API is ready")),
         "{read}"
     );
     assert!(
@@ -137,6 +140,66 @@ async fn the_tools_carry_a_conversation() {
         blocked,
         "mike@pangolin:riff#api (a1) holds issue-12 in como-technologies/riff."
     );
+}
+
+#[tokio::test]
+async fn a_worker_asks_the_lead_and_gets_the_answer() {
+    let api = start_server().await;
+    let first = connect(&api, MIKE).await;
+    let worker = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=c3#docs",
+    )
+    .await;
+    let third = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=e5",
+    )
+    .await;
+
+    // The first session is the lead with no action. The others are not.
+    let (me, _) = call(&first, "whoami", serde_json::json!({})).await;
+    assert!(me.ends_with(MIKE_LEAD), "{me}");
+    for session in [&worker, &third] {
+        let (me, _) = call(session, "whoami", serde_json::json!({})).await;
+        assert!(!me.contains("lead=true"), "{me}");
+    }
+
+    // The worker asks the lead. The lead sends the answer back.
+    let ask = serde_json::json!({ "session": "lead", "body": "merge now?" });
+    let (sent, _) = call(&worker, "tell", ask).await;
+    assert!(
+        sent.ends_with("Woke mike@pangolin:riff#api (a1)."),
+        "{sent}"
+    );
+    let (read, _) = call(&first, "read", serde_json::json!({})).await;
+    assert!(
+        read.contains("direct with mike@pangolin:riff#docs (c3)"),
+        "{read}"
+    );
+    assert!(read.contains("merge now?"), "{read}");
+    let answer = serde_json::json!({ "session": "c3", "body": "yes, merge" });
+    call(&first, "tell", answer).await;
+    let (read, _) = call(&worker, "read", serde_json::json!({})).await;
+    assert!(read.contains("yes, merge"), "{read}");
+
+    // The person marks another lead. It replaces the first.
+    let (led, is_error) = call(&third, "lead", serde_json::json!({})).await;
+    assert!(!is_error, "{led}");
+    assert_eq!(
+        led,
+        "You are the lead of mike in como-technologies/riff. \
+         mike@pangolin:riff#api (a1) is not the lead now."
+    );
+    let ask = serde_json::json!({ "session": "lead", "body": "and now?" });
+    let (sent, _) = call(&worker, "tell", ask).await;
+    assert!(sent.ends_with("Woke mike@pangolin:riff (e5)."), "{sent}");
+
+    // The lead cannot ask itself. It asks its own user.
+    let ask = serde_json::json!({ "session": "lead", "body": "me?" });
+    let (text, is_error) = call(&third, "tell", ask).await;
+    assert!(is_error);
+    assert!(text.contains("Ask your own user"), "{text}");
 }
 
 #[tokio::test]

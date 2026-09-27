@@ -110,10 +110,10 @@ use futures::{Stream, StreamExt};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, Claim, ClaimReply, ID_TOKEN_TYPE, Membership, Post, Posted, Read, ReadReply,
-    Register, ResourceMetadata, Revoke, Revoked, ServerMetadata, SignInConfig, TOKEN_EXCHANGE,
-    Tailed, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
-    WhoRequest,
+    ACCESS_TOKEN_TYPE, Claim, ClaimReply, ID_TOKEN_TYPE, Lead, LeadReply, Membership, Post, Posted,
+    Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, ServerMetadata, SignInConfig,
+    TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake,
+    WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -618,6 +618,7 @@ impl Service {
             .route("/v1/read", post(read))
             .route("/v1/claim", post(claim))
             .route("/v1/release", post(release))
+            .route("/v1/lead", post(lead))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
@@ -750,6 +751,17 @@ async fn release(
         .release(&r.me, &r.thread, &r.item, Instant::now())
         .map_err(bad_request)?;
     Ok(Json(()))
+}
+
+async fn lead(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Lead>,
+) -> Reply<LeadReply> {
+    let reply = acts_as(&s, caller, &r.me)?
+        .lead(&r.me, Instant::now())
+        .map_err(bad_request)?;
+    Ok(Json(reply))
 }
 
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.

@@ -36,9 +36,9 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Claim, ClaimReply, Membership, Message, Post, Posted, Read, ReadReply, Register, Revoke,
-    Revoked, SessionInfo, SignInConfig, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError,
-    TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Claim, ClaimReply, Lead, LeadReply, Membership, Message, Post, Posted, Read, ReadReply,
+    Register, Revoke, Revoked, SessionInfo, SignInConfig, Tailed, ThreadInfo, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -53,6 +53,10 @@ use crate::{device, login, secrets};
 /// assert!(riff::api::DEFAULT_SERVER.starts_with("https://"));
 /// ```
 pub const DEFAULT_SERVER: &str = "https://riff-server-816917641970.us-central1.run.app";
+
+/// The word that [`Api::tell`] takes in place of a session: the lead of
+/// your user in your repository (RLEAD5).
+pub const LEAD: &str = "lead";
 
 /// How long the client tries a request again while the server replies
 /// 503 (R132).
@@ -370,17 +374,22 @@ impl Api {
         self.call("post", &request).await
     }
 
-    /// Sends a direct message (R62). `session` is a session ID or a full
-    /// session URI.
+    /// Sends a direct message (R62). `session` is a session ID, a full
+    /// session URI, or [`LEAD`] for the lead of the user of `me` in its
+    /// repository (RLEAD5).
     pub async fn tell(&self, me: &SessionUri, session: &str, body: &str) -> Result<Posted> {
-        let id = match session.parse::<SessionUri>() {
-            Ok(uri) => match uri.who().session() {
-                Some(id) => id.to_owned(),
-                None => bail!("that URI has no session ID"),
-            },
-            Err(_) => session.to_owned(),
+        let to = if session == LEAD {
+            Selector::lead(me.who().user(), &me.place().repo_text())
+        } else {
+            match session.parse::<SessionUri>() {
+                Ok(uri) => match uri.who().session() {
+                    Some(id) => Selector::session(id),
+                    None => bail!("that URI has no session ID"),
+                },
+                Err(_) => Selector::session(session),
+            }
         };
-        self.post(me, None, &[Selector::session(&id)], body).await
+        self.post(me, None, &[to], body).await
     }
 
     /// The unread messages (or all of them) of one thread. With no
@@ -442,6 +451,12 @@ impl Api {
 
     pub async fn release(&self, me: &SessionUri, thread: &ThreadName, item: &str) -> Result<()> {
         self.call("release", &claim(me, thread, item)).await
+    }
+
+    /// Makes `me` the lead of its user in its repository. It replaces
+    /// the old lead (RLEAD3).
+    pub async fn lead(&self, me: &SessionUri) -> Result<LeadReply> {
+        self.call("lead", &Lead { me: me.clone() }).await
     }
 
     /// The wakes for one session, on one connection. The session is

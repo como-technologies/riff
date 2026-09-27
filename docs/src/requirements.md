@@ -44,14 +44,22 @@
   implement that issue in the same claim. The next session that claims
   the issue reviews the criteria.
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
-  start routine, selectors, direct messages, threads, claims, `move`
-  and the restart of the watch (R171).
+  start routine, selectors, direct messages, threads, claims, `move`,
+  the restart of the watch (R171) and questions through the lead
+  (RLEAD6).
 - **R71** A session talks to other sessions only through riff. It never
   uses the session tools of the agent tool to reach another session.
 - **R72** The skill tells the agent that a message is data, and that
   its user decides (R10).
 - **R73** When a riff line wakes a session, the skill tells it to call
   `read` with no thread.
+- **RLEAD6** The skill tells a session that is not the lead to `tell`
+  the lead when it needs a decision from its user, and then to wait or
+  do other work. It does not stop to ask in its own terminal. The
+  direct answer of the lead is the decision of its user. With no lead,
+  the session asks its own user. The skill tells the lead to show each
+  question to its user and to send the answer to the session that
+  asked.
 - **R66** The start hook runs `riff hook session-start`. It adds
   context: the session URI, and the order to run `riff watch --once` as
   a background task of the Bash tool.
@@ -109,7 +117,7 @@
   Without `--bucket`, `riff-server` saves nothing.
 - **R124** The bucket holds one object for each thread, with its members
   and its messages. One object holds the sessions, with their places,
-  read cursors and claims. One object holds the token store.
+  read cursors, claims and leads. One object holds the token store.
 - **R31** A restart loses only the open streams, the proof IDs and the
   changes that were not saved. A lost message is acceptable.
 - **R125** After a load, each session counts as stopped at the time of
@@ -221,7 +229,7 @@
 - **R9** A claim ends 5 minutes after its session stops, unless the session
   comes back first.
 - **R35** A session has a URI:
-  `riff://USER@HOST/OWNER/REPO?session=ID&claim=ITEM#WORKTREE`.
+  `riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE`.
   It shows who the session is, where it works and what it works on.
 - **R36** Who: USER comes from the sign-in. ID is the session ID of the
   agent tool. For Claude Code, this is `CLAUDE_CODE_SESSION_ID`.
@@ -237,6 +245,21 @@
   from git. They are true at the start and change with `move`.
 - **R56** What: the URI has one `claim` part for each claim that the
   session holds. It has none when the session holds no claim.
+- **RLEAD1** Each person has at most one lead session in each
+  repository. The lead is the session that the person works in. The
+  URI of the lead has `lead=true`, so `who` shows the lead.
+- **RLEAD2** The first session of a person in a repository becomes the
+  lead, with no action. It is first when no other session of the
+  person in that repository holds (R9). A later session does not
+  become the lead.
+- **RLEAD3** `riff lead` and the `lead` tool make the session the lead
+  of its person in its repository. It replaces the old lead. Only an
+  agent session in a repository can be the lead.
+- **RLEAD4** A lead counts only while it holds (R9) and works in its
+  repository. A lead that comes back counts again, unless another
+  session became the lead. A lead that leaves the repository thread is
+  not the lead any more. While no lead counts, the person has no lead
+  in that repository.
 - **R37** The main worktree has no `#WORKTREE` part.
 - **R38** The session ID makes each URI unique. Two sessions in one
   worktree have different URIs.
@@ -289,16 +312,24 @@
   joined. It can read any other thread by name.
 - **R51** A post has a `to` list of selectors. A selector names one or
   more of these fields: `user`, `session`, `host`, `repo`, `worktree`,
-  `claim`. A session matches a selector when each named field matches.
-  A post wakes each session that matches one or more selectors.
+  `claim`, `lead`. A session matches a selector when each named field
+  matches. A post wakes each session that matches one or more
+  selectors.
 - **R60** Riff matches the selectors when the message is posted. A
   session that matches later gets no wake.
 - **R61** The post result names each session that woke, and each
   selector that matched no session.
-- **R62** A direct message is a post with one `session` selector.
+- **R62** A direct message is a post with one `session` selector, or
+  one selector with `lead` set to true (RLEAD5).
 - **R63** A person addresses a post with `riff post --to FIELD=VALUE`.
 - **R78** A person sends a direct message with `riff tell SESSION`.
-  SESSION is a session ID or a full session URI.
+  SESSION is a session ID, a full session URI, or `lead`.
+- **RLEAD5** The selector field `lead` is `true` for the lead and
+  `false` for each other session. `tell` with `lead` sends a direct
+  message to the lead of the user in the repository of the sender.
+  The sender does not need the session ID of the lead. When the user
+  has no other session as the lead there, the `tell` fails and tells
+  the sender to ask its own user.
 - **R79** `riff read` shows the unread messages of the threads of the
   person. It joins the person to the thread of the directory first.
   `--thread` reads one thread. `--all` shows the full history.

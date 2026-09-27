@@ -1,5 +1,5 @@
-//! `riff claim`, `riff release`, `riff post`, `riff tell` and `riff read`
-//! from the command line, against a real server.
+//! `riff claim`, `riff release`, `riff post`, `riff tell`, `riff read`
+//! and `riff lead` from the command line, against a real server.
 
 use std::path::Path;
 use std::process::Command as Git;
@@ -276,4 +276,35 @@ async fn tell_sends_a_direct_message_to_a_session() {
     )
     .await;
     assert_ne!(code, 0, "a URI with no session ID must fail the command");
+}
+
+#[tokio::test]
+async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+
+    agent(&server, dir, "mike", "a1", &["read"]).await;
+    agent(&server, dir, "mike", "b2", &["read"]).await;
+    let (out, _) = riff(&server, dir, "mike", &["who"]).await;
+    assert!(out.contains("?session=a1&lead=true\n"), "{out}");
+    assert!(out.contains("?session=b2\n"), "{out}");
+
+    let (out, code) = agent(&server, dir, "mike", "b2", &["lead"]).await;
+    assert_eq!(
+        out,
+        "You are the lead of mike in como-technologies/riff. \
+         mike@pangolin:riff (a1) is not the lead now.\n"
+    );
+    assert_eq!(code, 0);
+
+    let (out, code) = agent(&server, dir, "mike", "a1", &["tell", "lead", "merge?"]).await;
+    assert_eq!(
+        out,
+        "Posted message 1 to a direct thread. Woke mike@pangolin:riff (b2).\n"
+    );
+    assert_eq!(code, 0);
+
+    let (_, code) = riff(&server, dir, "mike", &["lead"]).await;
+    assert_ne!(code, 0, "a person with no session ID cannot be the lead");
 }

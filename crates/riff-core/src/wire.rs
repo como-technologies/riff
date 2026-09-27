@@ -15,6 +15,7 @@
 //! | `read` | [`Read`] | [`ReadReply`] |
 //! | `claim` | [`Claim`] | [`ClaimReply`] |
 //! | `release` | [`Claim`] | `null` |
+//! | `lead` | [`Lead`] | [`LeadReply`] |
 //!
 //! `POST /v1/token` is an OAuth 2.1 token endpoint. Its request is a
 //! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
@@ -202,6 +203,22 @@ pub struct Claim {
 pub struct ClaimReply {
     pub granted: bool,
     pub holder: SessionUri,
+}
+
+/// `POST /v1/lead`: makes `me` the lead of its user in its repository.
+/// It replaces the old lead.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Lead {
+    pub me: SessionUri,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LeadReply {
+    /// The URI of `me` now, with `lead=true`.
+    pub lead: SessionUri,
+    /// The old lead, when another session was the lead.
+    #[serde(default)]
+    pub replaced: Option<SessionUri>,
 }
 
 /// An event on `GET /v1/watch?uri=…`: a message addressed to the
