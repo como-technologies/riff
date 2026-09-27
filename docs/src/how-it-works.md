@@ -159,8 +159,11 @@ A person claims with `riff claim issue-12` and releases with
 
 `riff-server` keeps its state in memory. It saves each change to Cloud
 Storage within one second, and it loads the state at start. A restart
-loses the open streams. `riff watch` connects again. The session then
-gets one wake if an addressed message is unread.
+loses the open streams. `riff watch` and `riff tail` connect again.
+The session then gets one wake if an addressed message is unread.
+Cloud Run also ends each stream after 60 minutes. The streams then
+connect again in the same way. `riff tail` does not show a message
+that comes while it connects. `riff read` shows it.
 
 Tokens stay valid after a restart. The server saves only a hash of each
 token.

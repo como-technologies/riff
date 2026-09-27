@@ -114,6 +114,9 @@
   `riff tail` then connect again.
 - **R132** `riff` tries a call again while the server replies 503, for
   up to 60 seconds.
+- **R148** `riff watch` and `riff tail` connect again at once when a
+  stream ends. When a connect fails, they try again every 5 seconds.
+  They stop only when the person stops them.
 - **R133** `riff` uses `https://riff.comotechnologies.io` when no server
   is set. `--server` or `RIFF_SERVER` names another server.
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives

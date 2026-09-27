@@ -15,9 +15,20 @@
 //! A session token comes from a token exchange the first time that the
 //! client needs it. After that, the client refreshes it with its own
 //! refresh token. When the refresh fails, it does a new exchange.
+//!
+//! # Tries
+//!
+//! Cloud Run can stop a call or a stream at any time: at a deploy, and
+//! after 60 minutes for each stream. So:
+//!
+//! - While the server replies 503, the client sends the request again,
+//!   for up to [`BUSY_LIMIT`] (R132). See [`busy_waits`].
+//! - [`follow`] opens a stream again each time it ends (R131). `riff
+//!   watch` and `riff tail` use it.
 
+use std::future::Future;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use futures::{Stream, StreamExt};
@@ -37,6 +48,94 @@ use crate::{device, login};
 
 /// The server that `riff` uses when nothing else is set.
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
+
+/// How long the client tries a request again while the server replies
+/// 503 (R132).
+pub const BUSY_LIMIT: Duration = Duration::from_secs(60);
+
+/// The waits between two tries of a request that got 503 (R132). The
+/// first wait is 250 ms. Each next wait is double, up to 5 seconds.
+/// Together they last [`BUSY_LIMIT`].
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::api::{BUSY_LIMIT, busy_waits};
+///
+/// let waits: Vec<Duration> = busy_waits().collect();
+/// assert_eq!(waits[..3], [250, 500, 1000].map(Duration::from_millis));
+/// assert!(waits.iter().all(|w| *w <= Duration::from_secs(5)));
+/// assert_eq!(waits.iter().sum::<Duration>(), BUSY_LIMIT);
+/// ```
+pub fn busy_waits() -> impl Iterator<Item = Duration> {
+    let most = Duration::from_secs(5);
+    let mut left = BUSY_LIMIT;
+    let mut next = Duration::from_millis(250);
+    std::iter::from_fn(move || {
+        if left.is_zero() {
+            return None;
+        }
+        let wait = next.min(left);
+        left -= wait;
+        next = (next * 2).min(most);
+        Some(wait)
+    })
+}
+
+/// Follows a stream across connections (R131, R148). `connect` opens the
+/// stream. When the stream ends or fails, `follow` connects again at
+/// once. When a connect fails, `follow` gives the error as one item and
+/// waits `retry` before the next connect. The stream of `follow` never
+/// ends.
+///
+/// ```
+/// use std::time::Duration;
+/// use futures::StreamExt;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// // Each connection gives one item and then ends.
+/// let mut n = 0;
+/// let connect = move || {
+///     n += 1;
+///     let item: anyhow::Result<u32> = Ok(n);
+///     async move { anyhow::Ok(futures::stream::iter([item])) }
+/// };
+/// let items = riff::api::follow(connect, Duration::from_secs(5)).take(3);
+/// let items: Vec<u32> = items.map(Result::unwrap).collect().await;
+/// assert_eq!(items, [1, 2, 3]);
+/// # }
+/// ```
+pub fn follow<T, S, F, Fut>(connect: F, retry: Duration) -> impl Stream<Item = Result<T>>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<S>>,
+    S: Stream<Item = Result<T>>,
+{
+    enum Link<S> {
+        Down { wait: bool },
+        Up(std::pin::Pin<Box<S>>),
+    }
+    let start = (connect, Link::<S>::Down { wait: false });
+    futures::stream::unfold(start, move |(mut connect, mut link)| async move {
+        loop {
+            link = match link {
+                Link::Up(mut stream) => match stream.next().await {
+                    Some(Ok(item)) => return Some((Ok(item), (connect, Link::Up(stream)))),
+                    Some(Err(_)) | None => Link::Down { wait: false },
+                },
+                Link::Down { wait } => {
+                    if wait {
+                        tokio::time::sleep(retry).await;
+                    }
+                    match connect().await {
+                        Ok(stream) => Link::Up(Box::pin(stream)),
+                        Err(e) => return Some((Err(e), (connect, Link::Down { wait: true }))),
+                    }
+                }
+            }
+        }
+    })
+}
 
 /// A connection to one `riff-server`. Cheap to clone.
 ///
@@ -82,11 +181,9 @@ impl Api {
     /// The sign-in provider of the server.
     pub async fn sign_in_config(&self) -> Result<SignInConfig> {
         let response = self
-            .http
-            .get(format!("{}/v1/sign-in", self.base))
-            .send()
-            .await
-            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            .anonymous()
+            .send(reqwest::Method::GET, "/v1/sign-in", |r| r)
+            .await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             bail!("riff-server at {} has no sign-in provider", self.base);
         }
@@ -98,13 +195,12 @@ impl Api {
     pub async fn token(&self, request: &TokenRequest, key: &Key) -> Result<TokenReply> {
         let url = format!("{}/v1/token", self.base);
         let response = self
-            .http
-            .post(&url)
-            .header("dpop", key.proof("POST", &url, None, now()))
-            .form(request)
-            .send()
-            .await
-            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            .anonymous()
+            .send(reqwest::Method::POST, "/v1/token", |r| {
+                r.header("dpop", key.proof("POST", &url, None, now()))
+                    .form(request)
+            })
+            .await?;
         if response.status().is_success() {
             return Ok(response.json().await?);
         }
@@ -192,6 +288,32 @@ impl Api {
         Ok(request
             .header("authorization", format!("DPoP {token}"))
             .header("dpop", proof))
+    }
+
+    /// Sends a request to one path. `body` adds the rest to the request.
+    /// While the server replies 503, it waits and sends a new request,
+    /// with a new proof (R132). See [`busy_waits`].
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response> {
+        let mut waits = busy_waits();
+        loop {
+            // A box: a request may need a token, and a token is a request.
+            let request = Box::pin(self.request(method.clone(), path)).await?;
+            let response = body(request)
+                .send()
+                .await
+                .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            match waits.next() {
+                Some(wait) if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+                    tokio::time::sleep(wait).await;
+                }
+                _ => return Ok(response),
+            }
+        }
     }
 
     /// Says where the session works now. Call it at the start and after
@@ -310,13 +432,14 @@ impl Api {
         self.call("release", &claim(me, thread, item)).await
     }
 
-    /// The wakes for one session. The session is live while the stream
-    /// is open.
+    /// The wakes for one session, on one connection. The session is
+    /// live while the stream is open. [`follow`] connects again.
     pub async fn watch(&self, me: &SessionUri) -> Result<impl Stream<Item = Result<Wake>>> {
         self.events("watch", &[("uri", me.to_string())]).await
     }
 
-    /// Each new message in one thread.
+    /// Each new message in one thread, on one connection. [`follow`]
+    /// connects again.
     pub async fn tail(&self, thread: &ThreadName) -> Result<impl Stream<Item = Result<Tailed>>> {
         self.events("tail", &[("thread", thread.to_string())]).await
     }
@@ -339,12 +462,10 @@ impl Api {
         request: &Req,
     ) -> Result<Rep> {
         let response = self
-            .request(reqwest::Method::POST, &format!("/v1/{op}"))
-            .await?
-            .json(request)
-            .send()
-            .await
-            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            .send(reqwest::Method::POST, &format!("/v1/{op}"), |r| {
+                r.json(request)
+            })
+            .await?;
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
@@ -360,12 +481,10 @@ impl Api {
         query: &[(&str, String)],
     ) -> Result<impl Stream<Item = Result<T>> + use<T>> {
         let response = self
-            .request(reqwest::Method::GET, &format!("/v1/{op}"))
+            .send(reqwest::Method::GET, &format!("/v1/{op}"), |r| {
+                r.query(query)
+            })
             .await?
-            .query(query)
-            .send()
-            .await
-            .with_context(|| format!("cannot reach riff-server at {}", self.base))?
             .error_for_status()?;
         let mut buffer = String::new();
         let lines = response.bytes_stream().flat_map(move |chunk| {
@@ -421,5 +540,54 @@ fn claim(me: &SessionUri, thread: &ThreadName, item: &str) -> Claim {
         me: me.clone(),
         thread: thread.clone(),
         item: item.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn follow_gives_a_failed_connect_as_one_error_and_tries_again() {
+        let mut n = 0;
+        let connect = move || {
+            n += 1;
+            let reply = match n {
+                2 | 3 => Err(anyhow::anyhow!("try {n} failed")),
+                _ => Ok(futures::stream::iter([Ok(n)])),
+            };
+            std::future::ready(reply)
+        };
+        let items: Vec<String> = follow(connect, Duration::from_millis(1))
+            .take(4)
+            .map(|item| item.map_or_else(|e| e.to_string(), |n: u32| n.to_string()))
+            .collect()
+            .await;
+        assert_eq!(items, ["1", "try 2 failed", "try 3 failed", "4"]);
+    }
+
+    #[tokio::test]
+    async fn follow_connects_again_after_an_error_in_the_stream() {
+        let mut n = 0;
+        let connect = move || {
+            n += 1;
+            let items: Vec<Result<u32>> = vec![Ok(n), Err(anyhow::anyhow!("reset")), Ok(99)];
+            std::future::ready(anyhow::Ok(futures::stream::iter(items)))
+        };
+        let items: Vec<u32> = follow(connect, Duration::from_secs(60))
+            .take(2)
+            .map(Result::unwrap)
+            .collect()
+            .await;
+        assert_eq!(items, [1, 2]);
+    }
+
+    #[test]
+    fn busy_waits_grow_and_stop_at_the_limit() {
+        let waits: Vec<Duration> = busy_waits().collect();
+        let (last, rest) = waits.split_last().unwrap();
+        assert!(rest.windows(2).all(|w| w[0] <= w[1]));
+        assert!(*last <= Duration::from_secs(5));
+        assert_eq!(waits.iter().sum::<Duration>(), BUSY_LIMIT);
     }
 }

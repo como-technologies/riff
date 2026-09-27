@@ -5,13 +5,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use futures::StreamExt;
-use riff::api::{Api, DEFAULT_SERVER};
+use futures::{Stream, StreamExt};
+use riff::api::{Api, DEFAULT_SERVER, follow};
 use riff::{hook, identity, login, mcp, plugin, text};
 use riff_core::name::{Place, ThreadName};
 use riff_core::selector::Selector;
 
-/// The time between two tries to reach the server.
+/// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
 
 /// The local client that finds sessions and wakes yours.
@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
             api.release(&me, &thread, &item).await?;
             println!("{}", text::released(&thread, &item));
         }
-        Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await?,
+        Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await,
         Command::Watch => watch(&api, &identity::session(&here, api.base())?).await,
         Command::Mcp => {
             let me = identity::session(&here, api.base())?;
@@ -249,26 +249,29 @@ fn session_start() -> String {
     hook::start_output(&hook::start_context(uri.as_ref(), input.source))
 }
 
-async fn tail(api: &Api, thread: &ThreadName) -> Result<()> {
-    let mut stream = Box::pin(api.tail(thread).await?);
+/// Runs until stopped. It connects again when the stream ends (R131).
+async fn tail(api: &Api, thread: &ThreadName) {
     eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
-    while let Some(tailed) = stream.next().await {
-        println!("{}", text::message(&tailed?.message));
-    }
-    Ok(())
+    let stream = follow(|| api.tail(thread), RETRY);
+    print_each(stream, |tailed| text::message(&tailed.message)).await;
 }
 
-/// Runs until stopped. It connects again after the server goes away.
+/// Runs until stopped. It connects again when the stream ends (R131).
 async fn watch(api: &Api, me: &riff_core::name::SessionUri) {
+    let stream = follow(|| api.watch(me), RETRY);
+    print_each(stream, text::wake_line).await;
+}
+
+/// Prints one line for each item. It reports a failed connect on
+/// stderr once, until the next item comes.
+async fn print_each<T>(stream: impl Stream<Item = Result<T>>, line: impl Fn(&T) -> String) {
+    let mut stream = Box::pin(stream);
     let mut reported = false;
-    loop {
-        match api.watch(me).await {
-            Ok(stream) => {
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(item) => {
                 reported = false;
-                let mut stream = Box::pin(stream);
-                while let Some(Ok(wake)) = stream.next().await {
-                    println!("{}", text::wake_line(&wake));
-                }
+                println!("{}", line(&item));
             }
             Err(e) if !reported => {
                 eprintln!(
@@ -279,7 +282,6 @@ async fn watch(api: &Api, me: &riff_core::name::SessionUri) {
             }
             Err(_) => {}
         }
-        tokio::time::sleep(RETRY).await;
     }
 }
 
