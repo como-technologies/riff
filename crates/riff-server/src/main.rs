@@ -29,8 +29,8 @@ struct Cli {
     )]
     listen: SocketAddr,
 
-    /// A person who may revoke the tokens of any person. Repeat it for
-    /// more admins.
+    /// The verified email of a person who may revoke the tokens of any
+    /// person. Repeat it for more admins.
     #[arg(
         long = "admin",
         env = "RIFF_ADMINS",
@@ -188,6 +188,11 @@ async fn main() -> std::io::Result<()> {
     let mut config = Config::new(&public_url);
     config.require_sign_in = cli.require_sign_in;
     config.admins = cli.admins;
+    for admin in &config.admins {
+        if !admin.contains('@') {
+            tracing::warn!("the admin {admin} is not an email: it names nobody (R210)");
+        }
+    }
     tracing::info!("riff-server listens on {}", listener.local_addr()?);
     if let Some(client_id) = cli.client_id {
         tracing::info!("sign-in with {}", cli.issuer);
@@ -269,7 +274,7 @@ mod tests {
     fn each_setting_is_an_env_of_the_cli() {
         let cli = Cli::parse_from([
             "riff-server",
-            "--admin=a",
+            "--admin=a@comotechnologies.io",
             "--public-url=https://x",
             "--require-sign-in",
             "--client-id=id",

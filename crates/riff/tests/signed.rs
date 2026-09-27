@@ -54,7 +54,7 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
     let jkt = riff::device::key(api.base()).unwrap().thumbprint();
     let pair = service
         .tokens()
-        .sign_in("mike", &jkt, Instant::now())
+        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
         .unwrap();
     let sign_in = SignIn {
         user: pair.user,

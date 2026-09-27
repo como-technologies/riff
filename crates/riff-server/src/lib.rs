@@ -29,7 +29,8 @@
 //! - `POST /v1/token` swaps a refresh token for a new pair. The token
 //!   store has its own lock, so a refresh never waits for the state.
 //! - `POST /v1/revoke` ends each sign-in of a person. The admins are a
-//!   setting ([`auth::Config::admins`]).
+//!   setting ([`auth::Config::admins`]). Each admin is named by verified
+//!   email (R210).
 //! - Each route with a `me` acts only as the [`auth::SignedIn`] caller
 //!   of its token: the same user and the same session ID, or 403
 //!   (R104). A person token acts only as the person. A session token
@@ -383,7 +384,10 @@ impl Server {
 ///
 /// let service = Service::default();
 /// assert!(!service.config().require_sign_in);
-/// let pair = service.tokens().sign_in("mike", "jkt", Instant::now()).unwrap();
+/// let pair = service
+///     .tokens()
+///     .sign_in("mike@comotechnologies.io", "jkt", Instant::now())
+///     .unwrap();
 /// let router = service.router();
 /// # let _ = (pair, router);
 /// ```
@@ -864,20 +868,16 @@ async fn token(
     Form(r): Form<TokenRequest>,
 ) -> impl IntoResponse {
     let no_store = || [(header::CACHE_CONTROL, "no-store")];
-    let refuse = |error: &str| {
-        let error = TokenError {
-            error: error.into(),
-        };
-        (StatusCode::BAD_REQUEST, no_store(), Json(error)).into_response()
-    };
+    let refuse =
+        |error: TokenError| (StatusCode::BAD_REQUEST, no_store(), Json(error)).into_response();
     if r.resource
         .as_ref()
         .is_some_and(|resource| !s.config.is_resource(resource))
     {
-        return refuse("invalid_target");
+        return refuse(no("invalid_target"));
     }
     let Ok(proof) = s.proof(&headers, "POST", auth::TOKEN_PATH, None) else {
-        return refuse("invalid_dpop_proof");
+        return refuse(no("invalid_dpop_proof"));
     };
     let mark = s.tokens_changes.load(Ordering::SeqCst);
     let reply = match r.grant_type.as_str() {
@@ -885,15 +885,13 @@ async fn token(
         TOKEN_EXCHANGE => match r.subject_token_type.as_deref() {
             Some(ID_TOKEN_TYPE) => exchange(&s, &r, &proof).await,
             Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof),
-            _ => Err("invalid_request"),
+            _ => Err(no("invalid_request")),
         },
-        _ => Err("unsupported_grant_type"),
+        _ => Err(no("unsupported_grant_type")),
     };
     if let Err(error) = s.save_tokens_since(mark).await {
         tracing::error!("the token store was not saved: {error}");
-        let error = TokenError {
-            error: "temporarily_unavailable".into(),
-        };
+        let error = no("temporarily_unavailable");
         return (StatusCode::SERVICE_UNAVAILABLE, no_store(), Json(error)).into_response();
     }
     match reply {
@@ -914,11 +912,13 @@ async fn revoke(
     let user = r
         .user
         .map_or_else(|| caller.clone(), |u| u.trim().to_lowercase());
-    let admin = s
-        .config
-        .admins
-        .iter()
-        .any(|a| a.trim().to_lowercase() == caller);
+    // An admin is named by verified email (R210).
+    let email = s.tokens().email_of(&caller).unwrap_or_default().to_owned();
+    let admin = !email.is_empty()
+        && s.config
+            .admins
+            .iter()
+            .any(|a| a.trim().to_lowercase() == email);
     if user != caller && !admin {
         return Err((
             StatusCode::FORBIDDEN,
@@ -982,16 +982,24 @@ async fn server_metadata(AxumState(s): AxumState<Shared>) -> Json<ServerMetadata
     Json(s.config.server_metadata())
 }
 
+/// An OAuth error reply with only its code.
+fn no(error: &str) -> TokenError {
+    TokenError {
+        error: error.into(),
+        ..TokenError::default()
+    }
+}
+
 /// Swaps a refresh token for a new pair.
-fn refresh(s: &Server, r: &TokenRequest, proof: &dpop::Proof) -> Result<TokenReply, &'static str> {
+fn refresh(s: &Server, r: &TokenRequest, proof: &dpop::Proof) -> Result<TokenReply, TokenError> {
     let token = r.refresh_token.as_deref().unwrap_or_default();
     if !s.tokens().knows_refresh(token, &proof.jkt) {
-        return Err("invalid_grant");
+        return Err(no("invalid_grant"));
     }
-    s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
+    s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
     s.tokens_change()
         .refresh(token, &proof.jkt, Instant::now())
-        .map_err(|_| "invalid_grant")
+        .map_err(|_| no("invalid_grant"))
 }
 
 /// Swaps an ID token of the provider for a first pair of riff tokens.
@@ -999,18 +1007,35 @@ async fn exchange(
     s: &Server,
     r: &TokenRequest,
     proof: &dpop::Proof,
-) -> Result<TokenReply, &'static str> {
-    let provider = s.config.provider.as_ref().ok_or("unsupported_grant_type")?;
-    let id_token = r.subject_token.as_ref().ok_or("invalid_request")?;
+) -> Result<TokenReply, TokenError> {
+    let provider = s
+        .config
+        .provider
+        .as_ref()
+        .ok_or_else(|| no("unsupported_grant_type"))?;
+    let id_token = r
+        .subject_token
+        .as_ref()
+        .ok_or_else(|| no("invalid_request"))?;
     let identity = provider.sign_in(&s.http, id_token).await.map_err(|e| {
         tracing::info!("sign-in refused: {e}");
-        "invalid_grant"
+        no("invalid_grant")
     })?;
-    s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
-    tracing::info!("{} signed in as {}", identity.email, identity.user);
-    s.tokens_change()
-        .sign_in(&identity.user, &proof.jkt, Instant::now())
-        .map_err(|_| "invalid_grant")
+    s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
+    let pair = s
+        .tokens_change()
+        .sign_in(&identity.email, &proof.jkt, Instant::now())
+        .map_err(|e| {
+            tracing::info!("sign-in refused for {}: {e}", identity.email);
+            // Another email holds the USER (R209), or the email gives no
+            // USER (R208). Both refuse the person, who must read why.
+            TokenError {
+                error: "access_denied".into(),
+                error_description: Some(e.to_string()),
+            }
+        })?;
+    tracing::info!("{} signed in as {}", identity.email, pair.user);
+    Ok(pair)
 }
 
 /// Swaps a person access token for a session pair (R19).
@@ -1018,18 +1043,18 @@ fn for_session(
     s: &Server,
     r: &TokenRequest,
     proof: &dpop::Proof,
-) -> Result<TokenReply, &'static str> {
+) -> Result<TokenReply, TokenError> {
     let (Some(token), Some(session)) = (&r.subject_token, &r.session) else {
-        return Err("invalid_request");
+        return Err(no("invalid_request"));
     };
     let now = Instant::now();
     if s.tokens().caller(token, &proof.jkt, now).is_err() {
-        return Err("invalid_grant");
+        return Err(no("invalid_grant"));
     }
-    s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
+    s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
     s.tokens_change()
         .for_session(token, &proof.jkt, session, now)
-        .map_err(|_| "invalid_grant")
+        .map_err(|_| no("invalid_grant"))
 }
 
 /// Refuses a request that acts as another user or session than its

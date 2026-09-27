@@ -40,7 +40,11 @@ impl Caller {
         let key = Key::generate();
         let person = service
             .tokens()
-            .sign_in(me.who().user(), &key.thumbprint(), Instant::now())
+            .sign_in(
+                &format!("{}@comotechnologies.io", me.who().user()),
+                &key.thumbprint(),
+                Instant::now(),
+            )
             .unwrap();
         let Some(session) = me.who().session() else {
             return Caller {

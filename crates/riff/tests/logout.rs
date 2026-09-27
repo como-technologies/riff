@@ -52,10 +52,13 @@ async fn logout_all_ends_each_sign_in_of_the_caller() {
     let now = Instant::now();
     let laptop = service
         .tokens()
-        .sign_in("mike", &this_device(&api), now)
+        .sign_in("mike@comotechnologies.io", &this_device(&api), now)
         .unwrap();
     let desktop_key = Key::generate().thumbprint();
-    let desktop = service.tokens().sign_in("mike", &desktop_key, now).unwrap();
+    let desktop = service
+        .tokens()
+        .sign_in("mike@comotechnologies.io", &desktop_key, now)
+        .unwrap();
     keep(&api, &laptop);
 
     let done = login::logout_all(&api, None).await.unwrap();
@@ -74,11 +77,17 @@ async fn logout_all_ends_each_sign_in_of_the_caller() {
 
 #[tokio::test]
 async fn an_admin_logs_out_another_person() {
-    let (service, api) = start(&["mike"]).await;
+    let (service, api) = start(&["mike@comotechnologies.io"]).await;
     let now = Instant::now();
     let jkt = this_device(&api);
-    let mike = service.tokens().sign_in("mike", &jkt, now).unwrap();
-    let brett = service.tokens().sign_in("brett", &jkt, now).unwrap();
+    let mike = service
+        .tokens()
+        .sign_in("mike@comotechnologies.io", &jkt, now)
+        .unwrap();
+    let brett = service
+        .tokens()
+        .sign_in("brett@comotechnologies.io", &jkt, now)
+        .unwrap();
 
     keep(&api, &brett);
     let error = login::logout_all(&api, Some("mike")).await.unwrap_err();
@@ -104,7 +113,7 @@ async fn a_token_from_another_device_cannot_log_out() {
     let other = Key::generate().thumbprint();
     let stolen = service
         .tokens()
-        .sign_in("mike", &other, Instant::now())
+        .sign_in("mike@comotechnologies.io", &other, Instant::now())
         .unwrap();
     keep(&api, &stolen);
     assert!(login::logout_all(&api, None).await.is_err());

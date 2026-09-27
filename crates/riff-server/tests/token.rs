@@ -19,7 +19,11 @@ async fn refresh_rotates_and_reuse_revokes() {
     let key = Key::generate();
     let first = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let form = format!(
         "grant_type=refresh_token&refresh_token={}",
@@ -103,7 +107,7 @@ async fn tokens_stay_valid_across_a_restart() {
     let jkt = key.thumbprint();
     let first = service
         .tokens()
-        .sign_in("mike", &jkt, Instant::now())
+        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
         .unwrap();
     let form = |t: &str| format!("grant_type=refresh_token&refresh_token={t}");
     let reply = common::refresh(&url, &key, &form(&first.refresh_token)).await;
@@ -142,7 +146,11 @@ async fn a_token_change_that_is_not_saved_gets_503() {
     let key = Key::generate();
     let first = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let form = format!(
         "grant_type=refresh_token&refresh_token={}",

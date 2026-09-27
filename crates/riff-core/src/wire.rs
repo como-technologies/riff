@@ -650,9 +650,13 @@ pub struct Revoked {
 }
 
 /// An OAuth error reply, for example `{"error":"invalid_grant"}`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenError {
     pub error: String,
+    /// What a person must read, for a refusal that only they can fix,
+    /// for example a USER that another account holds (R209).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_description: Option<String>,
 }
 
 /// The protected resource metadata of `riff-server` (RFC 9728).

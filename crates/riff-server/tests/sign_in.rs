@@ -177,6 +177,68 @@ async fn a_server_without_a_provider_has_no_sign_in() {
     assert_eq!(error.error, "unsupported_grant_type");
 }
 
+/// Two emails that give the same USER: only the first one gets it
+/// (R209).
+#[tokio::test]
+async fn a_second_email_does_not_get_the_user_of_the_first() {
+    let (service, server, issuer) = start().await;
+    let first = id_token(&issuer, "O'Brien@comotechnologies.io", DEFAULT_DOMAIN);
+    let reply = exchange(&server, &first).await;
+    assert_eq!(reply.status(), 200);
+    let pair: TokenReply = reply.json().await.unwrap();
+    assert_eq!(pair.user, "o-brien");
+
+    // The other account gives the same USER. The server refuses it.
+    let second = id_token(&issuer, "o-brien@comotechnologies.io", DEFAULT_DOMAIN);
+    let reply = exchange(&server, &second).await;
+    assert_eq!(reply.status(), 400);
+    let error: TokenError = reply.json().await.unwrap();
+    assert_eq!(error.error, "access_denied");
+
+    // Only the sign-in of the first email is there.
+    assert_eq!(
+        service.tokens().email_of("o-brien"),
+        Some("o'brien@comotechnologies.io")
+    );
+    assert_eq!(service.tokens().revoke_user("o-brien"), 1);
+}
+
+/// Each allowed domain has its own accounts, and a USER belongs to one
+/// of them (R209).
+#[tokio::test]
+async fn two_domains_do_not_share_a_user() {
+    let issuer = fake_provider().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    let service = Service::new(Config {
+        provider: Some(Provider {
+            issuer: issuer.clone(),
+            client_id: "riff-client".into(),
+            client_secret: None,
+            allowed_domains: vec![DEFAULT_DOMAIN.into(), "other.test".into()],
+        }),
+        ..Config::new(&server)
+    });
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let first = id_token(&issuer, "alice@comotechnologies.io", DEFAULT_DOMAIN);
+    let reply = exchange(&server, &first).await;
+    assert_eq!(reply.status(), 200);
+    let pair: TokenReply = reply.json().await.unwrap();
+    assert_eq!(pair.user, "alice");
+
+    let second = id_token(&issuer, "alice@other.test", "other.test");
+    let reply = exchange(&server, &second).await;
+    assert_eq!(reply.status(), 400);
+    let error: TokenError = reply.json().await.unwrap();
+    assert_eq!(error.error, "access_denied");
+    assert_eq!(
+        service.tokens().email_of("alice"),
+        Some("alice@comotechnologies.io")
+    );
+}
+
 #[tokio::test]
 async fn an_account_from_another_domain_is_refused() {
     let (service, server, issuer) = start().await;

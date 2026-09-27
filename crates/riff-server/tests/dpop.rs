@@ -29,7 +29,11 @@ async fn a_copied_token_without_the_key_is_refused() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let token = pair.access_token.as_str();
 
@@ -71,7 +75,11 @@ async fn a_proof_works_once_and_only_for_its_request() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let token = pair.access_token.as_str();
     let proof = key.proof("POST", &url, Some(token), common::now());
@@ -103,7 +111,11 @@ async fn refresh_needs_the_key_of_the_sign_in() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let form = format!(
         "grant_type=refresh_token&refresh_token={}",
@@ -149,7 +161,11 @@ async fn a_caller_without_a_credential_leaves_no_proof_id() {
     // A real token keeps its proof ID.
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let url = format!("{base}/v1/who");
     let reply = who(common::post(&url, &key, Some(&pair.access_token))).await;

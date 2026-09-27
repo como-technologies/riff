@@ -32,9 +32,15 @@
 //! [`Provider::check_client`]).
 //!
 //! The user part of the session URI is the part of the email before
-//! the `@`, in lower case (see [`user_of`]). The server fetches the
-//! discovery document and the JWKS at each sign-in. A person signs in
-//! about once a month, so there is no cache.
+//! the `@`, in lower case (R208, see [`user_of`]). Two emails can give
+//! the same USER, for example `o'brien@x.io` and `o-brien@x.io`. The
+//! first email that signs in with a USER holds it, and the server
+//! refuses each other email that gives it (R209, see
+//! [`crate::token::Tokens::sign_in`]).
+//!
+//! The server fetches the discovery document and the JWKS at each
+//! sign-in. A person signs in about once a month, so there is no
+//! cache.
 //!
 //! # Example
 //!
@@ -222,9 +228,10 @@ impl Provider {
     }
 }
 
-/// The user part of the session URI for `email`: the part before the
-/// `@`, in lower case, with each character that a URI part cannot hold
-/// replaced by `-`.
+/// The USER of `email`: the part before the `@`, in lower case, with
+/// each character that a URI part cannot hold replaced by `-` (R208).
+/// Two emails can give the same USER. Only
+/// [`crate::token::Tokens::sign_in`] tells which email holds it (R209).
 pub fn user_of(email: &str) -> Result<String, SignInError> {
     let local = email
         .rsplit_once('@')

@@ -81,7 +81,11 @@ async fn a_new_server_refuses_a_proof_from_before_it_served() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let url = format!("{base}/v1/revoke");
     let revoke = |iat: u64| {
@@ -106,7 +110,11 @@ async fn a_server_with_no_store_refuses_a_proof_from_before_it_started() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let url = format!("{base}/v1/revoke");
     let reply = common::client()

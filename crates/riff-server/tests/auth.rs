@@ -78,7 +78,11 @@ async fn a_live_token_passes_and_a_bad_one_gets_invalid_token() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
 
     assert_eq!(
@@ -97,7 +101,11 @@ async fn a_token_in_the_query_string_does_not_count() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let who_url = format!("{url}/v1/who");
     let reply = common::client()
@@ -126,7 +134,11 @@ async fn the_token_endpoint_checks_the_resource() {
     let key = Key::generate();
     let pair = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let form = |resource: &str| {
         format!(

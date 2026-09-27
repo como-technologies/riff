@@ -45,7 +45,7 @@ fn install_writes_the_unit_and_starts_the_service() {
             "--systemctl",
             systemctl.to_str().unwrap(),
             "--listen=127.0.0.1:9999",
-            "--admin=mike",
+            "--admin=mike@comotechnologies.io",
         ],
     )
     .success();
@@ -61,7 +61,10 @@ fn install_writes_the_unit_and_starts_the_service() {
     );
     let env = std::fs::read_to_string(user.join("riff-server.env")).unwrap();
     assert!(env.contains("RIFF_LISTEN=\"127.0.0.1:9999\"\n"), "{env}");
-    assert!(env.contains("RIFF_ADMINS=\"mike\"\n"), "{env}");
+    assert!(
+        env.contains("RIFF_ADMINS=\"mike@comotechnologies.io\"\n"),
+        "{env}"
+    );
     let mode = std::fs::metadata(user.join("riff-server.env"))
         .unwrap()
         .permissions()
@@ -81,7 +84,16 @@ fn install_again_replaces_the_settings() {
     let tmp = tempfile::tempdir().unwrap();
     let systemctl = fake_systemctl(tmp.path(), 0);
     let bin = systemctl.to_str().unwrap();
-    server(tmp.path(), &["install", "--systemctl", bin, "--admin=mike"]).success();
+    server(
+        tmp.path(),
+        &[
+            "install",
+            "--systemctl",
+            bin,
+            "--admin=mike@comotechnologies.io",
+        ],
+    )
+    .success();
     server(tmp.path(), &["install", "--systemctl", bin]).success();
     let env = std::fs::read_to_string(tmp.path().join("systemd/user/riff-server.env")).unwrap();
     assert!(!env.contains("RIFF_ADMINS"), "{env}");

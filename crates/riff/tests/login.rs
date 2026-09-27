@@ -235,6 +235,26 @@ async fn logout_all_with_no_sign_in_at_a_riff_with_sign_in_says_riff_login() {
     assert!(error.to_string().contains("run riff login"), "{error}");
 }
 
+/// The person reads why the server refuses the sign-in: another email
+/// holds their USER (R209).
+#[tokio::test]
+async fn login_says_that_another_account_holds_the_user() {
+    let (service, api) = start().await;
+    // Another email signed in as `ada` first.
+    service
+        .tokens()
+        .sign_in("ada@other.test", "k", Instant::now())
+        .unwrap();
+    let error = login::login(&api, browser).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("access_denied: the user ada belongs to another account"),
+        "{error}"
+    );
+    assert_eq!(login::stored(api.base()).unwrap(), None);
+}
+
 #[tokio::test]
 async fn a_server_without_a_provider_says_so() {
     mock_keyring();

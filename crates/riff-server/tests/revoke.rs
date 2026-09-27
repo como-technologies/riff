@@ -28,15 +28,15 @@ async fn a_person_revokes_each_of_their_sign_ins() {
     let (service, url) = common::start(false, &[]).await;
     let now = Instant::now();
     let (laptop_key, desktop_key, brett_key) = (Key::generate(), Key::generate(), Key::generate());
-    let sign_in = |user, key: &Key| {
+    let sign_in = |email, key: &Key| {
         service
             .tokens()
-            .sign_in(user, &key.thumbprint(), now)
+            .sign_in(email, &key.thumbprint(), now)
             .unwrap()
     };
-    let laptop = sign_in("mike", &laptop_key);
-    let desktop = sign_in("mike", &desktop_key);
-    let brett = sign_in("brett", &brett_key);
+    let laptop = sign_in("mike@comotechnologies.io", &laptop_key);
+    let desktop = sign_in("mike@comotechnologies.io", &desktop_key);
+    let brett = sign_in("brett@comotechnologies.io", &brett_key);
 
     let (status, body) = revoke(&url, Some((&laptop_key, &laptop.access_token)), None).await;
     assert_eq!(status, 200, "{body}");
@@ -56,16 +56,16 @@ async fn a_person_revokes_each_of_their_sign_ins() {
 
 #[tokio::test]
 async fn only_an_admin_revokes_another_person() {
-    let (service, url) = common::start(false, &["mike"]).await;
+    let (service, url) = common::start(false, &["mike@comotechnologies.io"]).await;
     let now = Instant::now();
     let (mike_key, brett_key) = (Key::generate(), Key::generate());
     let mike = service
         .tokens()
-        .sign_in("mike", &mike_key.thumbprint(), now)
+        .sign_in("mike@comotechnologies.io", &mike_key.thumbprint(), now)
         .unwrap();
     let brett = service
         .tokens()
-        .sign_in("brett", &brett_key.thumbprint(), now)
+        .sign_in("brett@comotechnologies.io", &brett_key.thumbprint(), now)
         .unwrap();
 
     let (status, _) = revoke(&url, Some((&brett_key, &brett.access_token)), Some("mike")).await;
@@ -86,23 +86,48 @@ async fn only_an_admin_revokes_another_person() {
 }
 
 #[tokio::test]
-async fn admin_names_ignore_case_and_spaces() {
-    let (service, url) = common::start(false, &[" Mike"]).await;
+async fn admin_emails_ignore_case_and_spaces() {
+    let (service, url) = common::start(false, &[" Mike@ComoTechnologies.io "]).await;
     let now = Instant::now();
     let (mike_key, brett_key) = (Key::generate(), Key::generate());
     let mike = service
         .tokens()
-        .sign_in("mike", &mike_key.thumbprint(), now)
+        .sign_in("mike@comotechnologies.io", &mike_key.thumbprint(), now)
         .unwrap();
     service
         .tokens()
-        .sign_in("brett", &brett_key.thumbprint(), now)
+        .sign_in("brett@comotechnologies.io", &brett_key.thumbprint(), now)
         .unwrap();
 
     let (status, body) = revoke(&url, Some((&mike_key, &mike.access_token)), Some("Brett ")).await;
     assert_eq!(status, 200, "{body}");
     let revoked: Revoked = serde_json::from_str(&body).unwrap();
     assert_eq!((revoked.user.as_str(), revoked.sign_ins), ("brett", 1));
+}
+
+/// An admin is named by verified email (R210). Another account with
+/// the same USER as the admin is not an admin.
+#[tokio::test]
+async fn only_the_email_of_the_admin_is_an_admin() {
+    let (service, url) = common::start(false, &["alice@a.test"]).await;
+    let now = Instant::now();
+    let (alice_key, brett_key) = (Key::generate(), Key::generate());
+    // Only this Alice signs in as `alice`, so only she is the admin.
+    let alice = service
+        .tokens()
+        .sign_in("alice@b.test", &alice_key.thumbprint(), now)
+        .unwrap();
+    assert_eq!(alice.user, "alice");
+    service
+        .tokens()
+        .sign_in("brett@a.test", &brett_key.thumbprint(), now)
+        .unwrap();
+
+    let (status, body) = revoke(&url, Some((&alice_key, &alice.access_token)), Some("brett")).await;
+    assert_eq!(status, 403, "{body}");
+    // Her own sign-ins are still hers to end.
+    let (status, body) = revoke(&url, Some((&alice_key, &alice.access_token)), None).await;
+    assert_eq!(status, 200, "{body}");
 }
 
 #[tokio::test]

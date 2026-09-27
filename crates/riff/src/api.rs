@@ -256,10 +256,13 @@ impl Api {
         if response.status().is_success() {
             return Ok(response.json().await?);
         }
-        let error = response
-            .json::<TokenError>()
-            .await
-            .map_or_else(|_| "no reason".to_owned(), |e| e.error);
+        let error = response.json::<TokenError>().await.map_or_else(
+            |_| "no reason".to_owned(),
+            |e| match e.error_description {
+                Some(why) => format!("{}: {why}", e.error),
+                None => e.error,
+            },
+        );
         bail!("riff-server refused the token request: {error}")
     }
 

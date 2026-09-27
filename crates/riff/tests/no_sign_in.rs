@@ -51,7 +51,7 @@ async fn restart_with_no_sign_in(expired: bool) -> String {
     let jkt = riff::device::key(&url).unwrap().thumbprint();
     let pair = first
         .tokens()
-        .sign_in("mike", &jkt, Instant::now())
+        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
         .unwrap();
     let sign_in = SignIn {
         user: pair.user,

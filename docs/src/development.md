@@ -49,7 +49,7 @@ The client exists. To make it again, see
    `just local setup` runs `riff-server install` with the client ID from
    `deploy/cloud.env` and the client secret from Secret Manager. It
    gives its own options to `riff-server install`, for example
-   `just local setup --admin USER`.
+   `just local setup --admin EMAIL`.
 
 4. Check the server log:
 
@@ -72,7 +72,30 @@ The client exists. To make it again, see
    before `riff login` has no token.
 
 The user part of your URI is now the part of your email before the
-`@`. `riff logout` removes the sign-in from this device.
+`@`, in lower case. Each character that a URI part cannot hold becomes
+`-`: `O'Brien@comotechnologies.io` gets the user `o-brien`. Your user
+belongs to your email: no other account can sign in as it. `riff
+logout` removes the sign-in from this device.
+
+### When another account holds your user
+
+Two emails can give the same user, for example `o'brien@` and
+`o-brien@`. The first account that signs in holds the user. `riff
+login` then stops for the second account:
+
+```sh
+riff login
+```
+
+```text
+riff-server refused the token request: access_denied: the user o-brien
+belongs to another account; ask an admin
+```
+
+Ask an admin which account holds the user. An admin can end the
+sign-ins of that account (`riff logout --all --user USER`), but the
+user still belongs to its email. To sign in, use an email that gives
+another user.
 
 ### When riff cannot read the keyring
 
@@ -115,10 +138,22 @@ the Claude Code session again, as a new session.
 Only accounts of `comotechnologies.io` can sign in. To allow another
 Workspace domain, add `--allowed-domain DOMAIN` to `just local setup`.
 Give `--allowed-domain` once for each domain, the default domain too.
+Two domains do not share a user: `alice@a.com` and `alice@b.com` both
+give `alice`, and only the first account gets it.
 
-An admin can end each sign-in of another person. Name the admins with
-`--admin USER`, once for each admin. Then an admin runs
-`riff logout --all --user USER`.
+An admin can end each sign-in of another person. Name each admin by
+verified email, once for each admin:
+
+```sh
+just local setup --admin alice@comotechnologies.io
+```
+
+A name that is not an email names nobody: the log says so at start.
+Then an admin runs:
+
+```sh
+riff logout --all --user USER
+```
 
 With `--require-sign-in`, the server refuses each call without a
 token. `riff` sends a token on each call when you are signed in. A

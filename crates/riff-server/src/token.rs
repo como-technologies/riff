@@ -11,7 +11,10 @@
 //! ```
 //!
 //! A sign-in holds the user and the thumbprint of the device key (R18).
-//! Each pair of tokens belongs to one sign-in.
+//! Each pair of tokens belongs to one sign-in. A person signs in with a
+//! verified email. The USER comes from the email (R208), and the store
+//! keeps the email of each USER: the first email that signs in with a
+//! USER holds it (R209, see [`Tokens::sign_in`]).
 //!
 //! A pair is a *person* pair or a *session* pair (R19). `riff login`
 //! gets a person pair. [`Tokens::for_session`] swaps a live person
@@ -39,7 +42,8 @@
 //!   its session.
 //! - Only a person access token gives a session pair (R105).
 //! - [`Tokens::revoke_user`] ends each sign-in of one person at once
-//!   (R20). This ends the session pairs too.
+//!   (R20). This ends the session pairs too. It leaves the USER of the
+//!   person: only that email signs in as that USER again.
 //! - A token that the server does not know is refused.
 //!
 //! The store does no I/O and reads no clock. The caller passes `now`.
@@ -58,7 +62,7 @@
 //!
 //! let (now, wall) = (Instant::now(), SystemTime::now());
 //! let mut tokens = Tokens::default();
-//! let pair = tokens.sign_in("mike", "k", now).unwrap();
+//! let pair = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
 //! let bytes = tokens.to_bytes(now, wall);
 //! assert!(!String::from_utf8_lossy(&bytes).contains(&pair.access_token));
 //!
@@ -74,7 +78,7 @@
 //!
 //! let now = Instant::now();
 //! let mut tokens = Tokens::default();
-//! let first = tokens.sign_in("mike", "jkt-laptop", now).unwrap();
+//! let first = tokens.sign_in("mike@comotechnologies.io", "jkt-laptop", now).unwrap();
 //! assert_eq!(tokens.check(&first.access_token, "jkt-laptop", now).unwrap(), "mike");
 //!
 //! // Another device key cannot use the token.
@@ -95,16 +99,18 @@
 //! assert_eq!(tokens.check(&session.access_token, "jkt-laptop", now), Err(Refused::Unknown));
 //! ```
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use riff_core::name::{NameError, Who};
+use riff_core::name::Who;
 use riff_core::wire::TokenReply;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::oidc::user_of;
 
 /// An access token works this long (R17).
 pub const ACCESS_TTL: Duration = Duration::from_secs(10 * 60);
@@ -145,6 +151,29 @@ impl fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
+/// Why a sign-in did not start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoSignIn {
+    /// The email gives no valid USER (R208).
+    Email(String),
+    /// Another email holds the USER (R209). It names the USER.
+    Taken(String),
+}
+
+impl fmt::Display for NoSignIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NoSignIn::Email(why) => f.write_str(why),
+            NoSignIn::Taken(user) => write!(
+                f,
+                "the user {user} belongs to another account; ask an admin"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for NoSignIn {}
+
 type Hash = [u8; 32];
 
 /// All tokens of one `riff-server`. See the module docs for the rules.
@@ -154,6 +183,8 @@ pub struct Tokens {
     access: HashMap<Hash, Access>,
     refresh: HashMap<Hash, Refresh>,
     next_sign_in: u64,
+    /// The verified email of each USER, in lower case (R209).
+    users: BTreeMap<String, String>,
 }
 
 struct SignIn {
@@ -179,23 +210,51 @@ struct Refresh {
 }
 
 impl Tokens {
-    /// Starts a sign-in for `user` on the device key `jkt`, and issues
-    /// its first pair. The caller has checked the identity of the user
-    /// and the proof of the key.
+    /// Starts a sign-in for the verified email `email` on the device key
+    /// `jkt`, and issues its first pair. The caller has checked the
+    /// email and the proof of the key.
+    ///
+    /// The USER of the pair comes from the email (R208). The first email
+    /// that signs in with a USER holds it. Another email that gives the
+    /// same USER gets [`NoSignIn::Taken`] (R209).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{NoSignIn, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let pair = tokens.sign_in("O'Brien@comotechnologies.io", "k", now).unwrap();
+    /// assert_eq!(pair.user, "o-brien");
+    ///
+    /// // Another email that gives the same USER cannot sign in.
+    /// let taken = tokens.sign_in("o-brien@comotechnologies.io", "k", now);
+    /// assert_eq!(taken, Err(NoSignIn::Taken("o-brien".into())));
+    ///
+    /// // The email that holds the USER signs in again, on each device.
+    /// assert!(tokens.sign_in("o'brien@comotechnologies.io", "k2", now).is_ok());
+    /// ```
     pub fn sign_in(
         &mut self,
-        user: &str,
+        email: &str,
         jkt: &str,
         now: Instant,
-    ) -> Result<TokenReply, NameError> {
-        Who::new(user, None)?;
+    ) -> Result<TokenReply, NoSignIn> {
+        let email = email.trim().to_lowercase();
+        let user = user_of(&email).map_err(|e| NoSignIn::Email(e.to_string()))?;
+        match self.users.get(&user) {
+            Some(held) if held != &email => return Err(NoSignIn::Taken(user)),
+            _ => {
+                self.users.insert(user.clone(), email);
+            }
+        }
         self.sweep(now);
         let id = self.next_sign_in;
         self.next_sign_in += 1;
         self.sign_ins.insert(
             id,
             SignIn {
-                user: user.to_owned(),
+                user,
                 jkt: jkt.to_owned(),
                 idle_until: now + REFRESH_IDLE,
             },
@@ -284,8 +343,8 @@ impl Tokens {
     ///
     /// let now = Instant::now();
     /// let mut tokens = Tokens::default();
-    /// let laptop = tokens.sign_in("mike", "k", now).unwrap();
-    /// let desktop = tokens.sign_in("mike", "k", now).unwrap();
+    /// let laptop = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
+    /// let desktop = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
     /// assert_eq!(tokens.revoke_user("mike"), 2);
     /// assert_eq!(tokens.check(&laptop.access_token, "k", now), Err(Refused::Unknown));
     /// assert_eq!(tokens.check(&desktop.access_token, "k", now), Err(Refused::Unknown));
@@ -303,6 +362,22 @@ impl Tokens {
         ids.len()
     }
 
+    /// The verified email that holds `user` (R209). It is `None` when no
+    /// email signed in as `user`.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let mut tokens = Tokens::default();
+    /// tokens.sign_in("Mike@comotechnologies.io", "k", Instant::now()).unwrap();
+    /// assert_eq!(tokens.email_of("mike"), Some("mike@comotechnologies.io"));
+    /// assert_eq!(tokens.email_of("brett"), None);
+    /// ```
+    pub fn email_of(&self, user: &str) -> Option<&str> {
+        self.users.get(user).map(String::as_str)
+    }
+
     /// The thumbprints of the device keys of the live sign-ins of
     /// `user`, sorted, each once. A reader checks the signature of a
     /// message from `user` against them (R199).
@@ -313,10 +388,10 @@ impl Tokens {
     ///
     /// let now = Instant::now();
     /// let mut tokens = Tokens::default();
-    /// tokens.sign_in("mike", "laptop", now).unwrap();
-    /// tokens.sign_in("mike", "desktop", now).unwrap();
-    /// tokens.sign_in("mike", "laptop", now).unwrap();
-    /// tokens.sign_in("brett", "heron", now).unwrap();
+    /// tokens.sign_in("mike@comotechnologies.io", "laptop", now).unwrap();
+    /// tokens.sign_in("mike@comotechnologies.io", "desktop", now).unwrap();
+    /// tokens.sign_in("mike@comotechnologies.io", "laptop", now).unwrap();
+    /// tokens.sign_in("brett@comotechnologies.io", "heron", now).unwrap();
     /// assert_eq!(tokens.keys("mike", now), ["desktop", "laptop"]);
     /// assert!(tokens.keys("mike", now + REFRESH_IDLE).is_empty());
     /// tokens.revoke_user("brett");
@@ -339,6 +414,7 @@ impl Tokens {
         let live = |t: Instant| (now < t).then(|| clock.save(t));
         let saved = Saved {
             next_sign_in: self.next_sign_in,
+            users: self.users.clone(),
             sign_ins: self
                 .sign_ins
                 .iter()
@@ -389,6 +465,7 @@ impl Tokens {
         let clock = Clock { now, wall };
         let mut tokens = Tokens {
             next_sign_in: saved.next_sign_in,
+            users: saved.users,
             ..Tokens::default()
         };
         for s in saved.sign_ins {
@@ -503,6 +580,8 @@ impl std::error::Error for LoadError {}
 #[derive(Serialize, Deserialize)]
 struct Saved {
     next_sign_in: u64,
+    /// The verified email of each USER (R209).
+    users: BTreeMap<String, String>,
     sign_ins: Vec<SavedSignIn>,
     access: Vec<SavedAccess>,
     refresh: Vec<SavedRefresh>,
@@ -582,7 +661,9 @@ mod tests {
     fn signed_in() -> (Tokens, TokenReply, Instant) {
         let now = Instant::now();
         let mut tokens = Tokens::default();
-        let pair = tokens.sign_in("mike", "k", now).unwrap();
+        let pair = tokens
+            .sign_in("mike@comotechnologies.io", "k", now)
+            .unwrap();
         (tokens, pair, now)
     }
 
@@ -695,7 +776,9 @@ mod tests {
     #[test]
     fn reuse_leaves_other_sign_ins_alone() {
         let (mut tokens, first, now) = signed_in();
-        let other = tokens.sign_in("mike", "k", now).unwrap();
+        let other = tokens
+            .sign_in("mike@comotechnologies.io", "k", now)
+            .unwrap();
         tokens.refresh(&first.refresh_token, "k", now).unwrap();
         tokens.refresh(&first.refresh_token, "k", now).unwrap_err();
         assert_eq!(
@@ -708,7 +791,9 @@ mod tests {
     #[test]
     fn revoke_user_ends_only_that_person() {
         let (mut tokens, mike, now) = signed_in();
-        let brett = tokens.sign_in("brett", "k", now).unwrap();
+        let brett = tokens
+            .sign_in("brett@comotechnologies.io", "k", now)
+            .unwrap();
         assert_eq!(tokens.revoke_user("mike"), 1);
         assert_eq!(
             tokens.check(&mike.access_token, "k", now),
@@ -729,7 +814,9 @@ mod tests {
     fn a_person_signs_in_again_after_revoke() {
         let (mut tokens, _, now) = signed_in();
         tokens.revoke_user("mike");
-        let again = tokens.sign_in("mike", "k", now).unwrap();
+        let again = tokens
+            .sign_in("mike@comotechnologies.io", "k", now)
+            .unwrap();
         assert_eq!(
             tokens.check(&again.access_token, "k", now),
             Ok("mike".to_owned())
@@ -752,7 +839,9 @@ mod tests {
     #[test]
     fn sweep_forgets_expired_access_tokens() {
         let (mut tokens, _, now) = signed_in();
-        tokens.sign_in("brett", "k", now + ACCESS_TTL).unwrap();
+        tokens
+            .sign_in("brett@comotechnologies.io", "k", now + ACCESS_TTL)
+            .unwrap();
         assert_eq!(tokens.access.len(), 1);
         assert_eq!(tokens.sign_ins.len(), 2);
     }
@@ -789,10 +878,58 @@ mod tests {
     }
 
     #[test]
-    fn bad_user_names_are_refused() {
+    fn a_user_belongs_to_one_email() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        let first = tokens.sign_in("o'brien@a.io", "k", now).unwrap();
+        assert_eq!(first.user, "o-brien");
+        // A second email that gives the same USER does not get it.
+        let taken = tokens.sign_in("o-brien@a.io", "k", now);
+        assert_eq!(taken, Err(NoSignIn::Taken("o-brien".into())));
+        // The email that holds the USER still signs in, in any case.
+        let again = tokens.sign_in("O'Brien@A.io", "k", now).unwrap();
+        assert_eq!(again.user, "o-brien");
+        assert_eq!(tokens.email_of("o-brien"), Some("o'brien@a.io"));
+    }
+
+    #[test]
+    fn two_domains_do_not_share_a_user() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        tokens.sign_in("alice@a.io", "k", now).unwrap();
+        let taken = tokens.sign_in("alice@b.io", "k", now);
+        assert_eq!(taken, Err(NoSignIn::Taken("alice".into())));
+        assert_eq!(tokens.email_of("alice"), Some("alice@a.io"));
+    }
+
+    #[test]
+    fn a_revoke_leaves_the_user_of_the_person() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        tokens.sign_in("alice@a.io", "k", now).unwrap();
+        assert_eq!(tokens.revoke_user("alice"), 1);
+        assert_eq!(tokens.email_of("alice"), Some("alice@a.io"));
+        assert!(tokens.sign_in("alice@b.io", "k", now).is_err());
+        assert!(tokens.sign_in("alice@a.io", "k", now).is_ok());
+    }
+
+    #[test]
+    fn a_restart_keeps_the_user_of_each_email() {
+        let (tokens, _, now) = signed_in();
+        let (mut loaded, now) = restart(&tokens, now, REFRESH_IDLE);
+        // Each sign-in ended, and the USER still belongs to its email.
+        assert!(loaded.sign_ins.is_empty());
+        assert_eq!(loaded.email_of("mike"), Some("mike@comotechnologies.io"));
+        let taken = loaded.sign_in("mike@other.io", "k", now);
+        assert_eq!(taken, Err(NoSignIn::Taken("mike".into())));
+    }
+
+    #[test]
+    fn bad_emails_are_refused() {
         let mut tokens = Tokens::default();
         assert!(tokens.sign_in("", "k", Instant::now()).is_err());
-        assert!(tokens.sign_in("a b", "k", Instant::now()).is_err());
+        assert!(tokens.sign_in("not-an-email", "k", Instant::now()).is_err());
+        assert!(tokens.sign_in("@x.io", "k", Instant::now()).is_err());
     }
 
     #[test]
@@ -950,7 +1087,9 @@ mod tests {
         let (mut tokens, first, now) = signed_in();
         tokens.refresh(&first.refresh_token, "k", now).unwrap();
         let (mut loaded, now) = restart(&tokens, now, Duration::ZERO);
-        let other = loaded.sign_in("mike", "k", now).unwrap();
+        let other = loaded
+            .sign_in("mike@comotechnologies.io", "k", now)
+            .unwrap();
         loaded.refresh(&first.refresh_token, "k", now).unwrap_err();
         assert_eq!(
             loaded.check(&other.access_token, "k", now),
@@ -962,10 +1101,10 @@ mod tests {
     fn a_bad_saved_form_does_not_load() {
         let (now, wall) = (Instant::now(), SystemTime::now());
         assert!(Tokens::from_bytes(b"{", now, wall).is_err());
-        let bad_hash = br#"{"next_sign_in":1,"sign_ins":[],"access":[],
+        let bad_hash = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"access":[],
             "refresh":[{"hash":"abc","sign_in":0,"session":null,"used":null}]}"#;
         assert!(Tokens::from_bytes(bad_hash, now, wall).is_err());
-        let bad_id = br#"{"next_sign_in":0,"sign_ins":[
+        let bad_id = br#"{"next_sign_in":0,"users":{},"sign_ins":[
             {"id":0,"user":"mike","jkt":"k","idle_until":18446744073709551615}],
             "access":[],"refresh":[]}"#;
         assert!(Tokens::from_bytes(bad_id, now, wall).is_err());

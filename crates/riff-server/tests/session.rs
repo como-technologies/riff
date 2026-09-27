@@ -39,7 +39,11 @@ async fn a_session_token_cannot_act_as_another_session() {
     let key = Key::generate();
     let person = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let reply = for_session(&base, &key, &person.access_token, "a").await;
     assert_eq!(reply.status(), 200);
@@ -78,7 +82,11 @@ async fn only_a_person_token_gives_a_session_token() {
     let key = Key::generate();
     let person = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let a: TokenReply = for_session(&base, &key, &person.access_token, "a")
         .await
@@ -100,7 +108,11 @@ async fn a_session_refresh_keeps_the_session() {
     let key = Key::generate();
     let person = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let a: TokenReply = for_session(&base, &key, &person.access_token, "a")
         .await
@@ -134,7 +146,11 @@ async fn a_session_sets_only_its_own_status() {
     let key = Key::generate();
     let person = service
         .tokens()
-        .sign_in("mike", &key.thumbprint(), Instant::now())
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     let reply = for_session(&base, &key, &person.access_token, "a").await;
     let a: TokenReply = reply.json().await.unwrap();

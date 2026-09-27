@@ -578,8 +578,11 @@
   provider. When the provider refuses the client, `riff-server` stops.
 - **R153** When `riff-server` cannot reach the provider at start, it
   logs a warning and serves.
-- **R92** USER is the part of the verified email before the `@`, in
-  lower case.
+- **R208** USER is the part of the verified email before the `@`, in
+  lower case. Each character that a URI part cannot hold becomes `-`.
+- **R209** A USER belongs to one verified email. The first email that
+  signs in with a USER holds it. `riff-server` refuses each other email
+  that gives the same USER. The refusal names the USER.
 - **R93** `riff logout` removes the sign-in at one server from the
   device.
 - **R18** Each token is bound to a key that stays on the device.
@@ -616,10 +619,12 @@
 - **R101** `riff logout --all` ends each sign-in of the caller, on each
   device. An admin adds `--user USER` to end the sign-ins of another
   person.
-- **R102** The admins are a setting of `riff-server`: `--admin USER` or
-  `RIFF_ADMINS`. There are no admins by default.
-- **R111** Admin names and the named person compare trimmed and in
-  lower case.
+- **R210** The admins are a setting of `riff-server`: `--admin EMAIL`
+  or `RIFF_ADMINS`. Each admin is named by verified email. A name that
+  is not an email names nobody, and the server logs a warning at start.
+  There are no admins by default.
+- **R111** Admin emails, user names and the named person compare
+  trimmed and in lower case.
 - **R21** A client keeps tokens and keys only in the OS keyring.
 - **R82** `riff` keeps each secret under the keyring service `riff`.
   On Linux, it needs a Secret Service, for example GNOME Keyring or
