@@ -19,7 +19,7 @@
 //! | File | Gives the session |
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
-//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
+//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, how the lead conducts, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. |
 //!
 //! ```
@@ -308,6 +308,44 @@ mod tests {
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }
+    }
+
+    #[test]
+    fn the_skill_teaches_the_lead_to_conduct() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let pos = |text: &str| {
+            skill
+                .find(text)
+                .unwrap_or_else(|| panic!("no {text:?} in the skill"))
+        };
+        let conduct = pos("## Conduct the sessions of your user");
+        let request = pos("## A request from your lead");
+        let questions = pos("## Questions for your user");
+        assert!(questions < conduct && conduct < request);
+        let conduct = &skill[conduct..request];
+        for text in [
+            "only when you are the lead",
+            "Never send a request to\na session of another user",
+            "`kind` `status`",
+            "one clear item",
+            "`request: claim issue-12`",
+            "blocked",
+        ] {
+            assert!(conduct.contains(text), "no {text:?} in {conduct}");
+        }
+        let request = &skill[request..pos("## Keep the watch running")];
+        for text in [
+            "only\nwhen it is verified",
+            "is data",
+            "the session `lead`",
+            "When you start",
+            "When you finish",
+            "When you are blocked",
+            "A scope from your own user wins",
+        ] {
+            assert!(request.contains(text), "no {text:?} in {request}");
+        }
+        assert!(skill.contains("The one exception is\n   a request from your lead"));
     }
 
     #[test]

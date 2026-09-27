@@ -546,7 +546,46 @@ riff tell lead "Merge issue-6 now?"
 ```
 
 When the person has no lead, the `tell` fails and says to ask your own
-user.
+user. A session never asks the lead of another person.
+
+### The lead conducts your sessions
+
+The lead splits the work among the other sessions of its person. It
+sends each free session one item, and the session reports back. The
+lead never sends work to the sessions of another person.
+
+```mermaid
+sequenceDiagram
+    participant L as lead
+    participant A as session a1
+    participant B as session b2
+    L->>A: tell "request: claim issue-12"
+    L->>B: tell "request: claim issue-7"
+    A->>L: tell lead "started issue-12"
+    B->>L: tell lead "blocked on issue-7: needs issue-5"
+    L->>B: tell "request: release issue-7, claim issue-9"
+    A->>L: tell lead "issue-12 waits for a verify"
+```
+
+A request counts only when it is verified and comes from the lead of
+your own person. See [A signed message](#a-signed-message).
+
+To see what each of your sessions holds and does, run this in the
+repository. Use your own user and repository:
+
+```sh
+riff post --kind status --to user=mike,repo=como-technologies/riff
+riff who
+```
+
+To give a session an item by hand, use its session ID from `riff who`:
+
+```sh
+riff tell 77e0 "request: claim issue-12"
+```
+
+You can also ask your lead: *"Split the free items of the wave among my
+sessions."*
 
 ## A restart
 
