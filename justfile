@@ -22,6 +22,10 @@ reqs:
 rid:
     @cargo run -q -p reqs -- rid
 
+# Check the form of a pull request (needs gh), or of a commit: just hygiene pr 90
+hygiene *ARGS:
+    @cargo run -q -p hygiene -- {{ARGS}}
+
 # House vocabulary for the full local gate
 alias gate := ci
 

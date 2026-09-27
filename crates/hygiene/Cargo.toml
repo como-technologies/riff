@@ -1,0 +1,17 @@
+[package]
+name = "hygiene"
+description = "Issue hygiene of this repository: check the form of a pull request and of a commit on main"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

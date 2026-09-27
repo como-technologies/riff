@@ -99,8 +99,9 @@ fn only_the_forge_parts_name_milestones() {
         assert!(!words.contains("milestone"), "{name} names milestones");
         forge += usize::from(rest.len() < text.len());
     }
-    // The skill, the requirements and the page "Waves" each have a forge part.
-    assert_eq!(forge, 3);
+    // The skill, the requirements, the page "Waves" and the page
+    // "Development" (check a pull request) each have a forge part.
+    assert_eq!(forge, 4);
 }
 
 #[test]

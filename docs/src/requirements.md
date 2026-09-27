@@ -196,6 +196,32 @@
   waves: see the open waves, see the items of a wave, see the items
   with no wave, make a wave, put an item in a wave and end a wave.
 
+## Issue hygiene on GitHub
+
+- **01M3JDRSW3E9ENAKC3S0KHPV8M** `just hygiene pr N` checks the form
+  of pull request N with `gh`. The body has exactly one link line:
+  `Closes #N` or `Refs #N` (`link`). No other closing keyword of GitHub
+  stands before an issue number (`keyword`). The title does not end
+  with `(#N)`, because GitHub adds the number of the pull request
+  (`title`).
+- **01M3JDRSYEGKYVNGF49SJMACEB** The body of a pull request ends with
+  the trailers `Issue: #N` and `Milestone: M`, each one time. N is the
+  issue of the link line (`issue-trailer`). M is the milestone of the
+  pull request (`milestone-trailer`).
+- **01M3JDRT0SHF2J3NXNGZFWYH6W** A pull request and its issue have the
+  same milestone (`milestone`). The issue is open (`issue-open`).
+- **01M3JDRT31M12MJ1K592RAJQ78** `just hygiene commit [REV]` checks the
+  message of a commit on `main`: the title ends with `(#PR)`, PR is not
+  the issue (`commit-title`), and the message has the trailers
+  `Issue: #N` and `Milestone: M`.
+- **01M3JDRT5B52GDZK91VETC6VV2** The workflow `hygiene.yml` runs the
+  job `Hygiene` (`hygiene pr`) on each pull request event: opened,
+  edited, synchronize, reopened, milestoned and demilestoned. It does
+  not run the `Gate` again. It does not run on a push to `main`.
+- **01M3JDRT7HMZD4FHWHDH3S1A1D** Each error of `hygiene` names its
+  rule. It exits with status 1 on a broken rule, and with status 2 when
+  `gh` or `git` fails.
+
 ## Pause
 
 - **01M3JCFTWCR72HQB8CBTQKXJNF** A riff is paused or running. The

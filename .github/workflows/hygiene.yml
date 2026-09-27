@@ -1,0 +1,34 @@
+name: Hygiene
+
+# The form of each pull request (see the docs of the hygiene crate). A
+# separate workflow, so an edit of a pull request does not run the Gate
+# again. It runs on pull requests only: each commit of the old flow on
+# main has another form.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, milestoned, demilestoned]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # rust-toolchain.toml pins the toolchain; rustup reads it.
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: cargo run -q -p hygiene -- pr "$PR"

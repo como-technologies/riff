@@ -51,6 +51,54 @@ It fails when two requirements have the same ID, or when a file cites an
 ID that no requirement has. It warns when a new ID does not have that
 form, for example the next `R` number.
 
+## Check a pull request on GitHub
+
+Each pull request has the same form. The form links the pull request to
+its issue and to its wave. A squash merge copies it into the commit on
+`main`. This is the body of a pull request for issue 77:
+
+```text
+Closes #77
+
+Pause and resume the riff. A new riff starts paused.
+
+Issue: #77
+Milestone: Wave 3
+```
+
+- The first line links the issue. Use `Closes #N` in the last pull
+  request of the issue. Use `Refs #N` in each other one, and when a
+  check after the merge is left.
+- The last lines are trailers: the issue, and its milestone.
+- Give the pull request the milestone of its issue. Do not end the
+  title with `(#N)`. GitHub adds the number of the pull request.
+
+Write the body to a file, then open the pull request:
+
+```sh
+gh pr create --title "Pause and resume the riff" --milestone "Wave 3" --body-file pr.md
+```
+
+The job `Hygiene` checks each pull request. To check one yourself, give
+its number:
+
+```sh
+just hygiene pr 90
+```
+
+To check the message of a commit:
+
+```sh
+just hygiene commit HEAD
+```
+
+Each error names its rule. The
+[API docs of hygiene](api/hygiene/index.html) list the rules.
+
+GitHub runs no check on a pull request that has a conflict with
+`main`. When `Hygiene` does not run, rebase your branch on `main` and
+push it again.
+
 ## Sign in on this machine
 
 Sign-in uses the OAuth client of the Google Cloud project `como-riff`.

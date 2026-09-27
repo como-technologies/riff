@@ -1179,6 +1179,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hygiene"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "hyper"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
