@@ -3,9 +3,11 @@
 use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use riff_server::auth::Config;
+use riff_server::gcs::Gcs;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 use riff_server::{Service, service};
 use tokio::signal::unix::{SignalKind, signal};
@@ -81,6 +83,12 @@ struct Cli {
         global = true
     )]
     allowed_domains: Vec<String>,
+
+    /// The Cloud Storage bucket that holds the state. The server loads
+    /// the state at start and saves each change. Without it, the server
+    /// saves nothing.
+    #[arg(long, env = "RIFF_BUCKET", global = true)]
+    bucket: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -122,6 +130,9 @@ impl Cli {
         }
         if let Some(secret) = &self.client_secret {
             settings.push(("RIFF_OIDC_CLIENT_SECRET", secret.clone()));
+        }
+        if let Some(bucket) = &self.bucket {
+            settings.push(("RIFF_BUCKET", bucket.clone()));
         }
         settings
     }
@@ -189,7 +200,19 @@ async fn main() -> std::io::Result<()> {
     } else {
         tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");
     }
-    let service = Service::new(config);
+    let service = match &cli.bucket {
+        Some(bucket) => {
+            tracing::info!("state in gs://{bucket}");
+            let store = Arc::new(Gcs::new(bucket));
+            Service::load(config, store)
+                .await
+                .map_err(std::io::Error::other)?
+        }
+        None => {
+            tracing::warn!("no RIFF_BUCKET: the state is not saved");
+            Service::new(config)
+        }
+    };
     let stop = async {
         tokio::select! {
             _ = terminate.recv() => {}
@@ -225,6 +248,7 @@ mod tests {
             "--require-sign-in",
             "--client-id=id",
             "--client-secret=s",
+            "--bucket=b",
         ]);
         let envs: Vec<String> = Cli::command()
             .get_arguments()

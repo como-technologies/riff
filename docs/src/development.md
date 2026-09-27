@@ -138,6 +138,21 @@ same, with the OAuth client.
 The service stops when you log out. To keep it running, run
 `loginctl enable-linger` once.
 
+## Save the state in a bucket
+
+Without a bucket, `riff-server` keeps its state only in memory. A
+restart loses all threads, sessions and claims. With `--bucket`
+(`RIFF_BUCKET`), the server loads the state from a Cloud Storage bucket
+at start. It then saves each change to the bucket:
+
+```sh
+riff-server --bucket como-riff-state
+```
+
+The server gets its access token from the metadata server of Cloud
+Run. So the flag works only on Cloud Run. The service account of the
+server must have write access to the bucket.
+
 ## Set up the cloud project
 
 Do this once, for the team. The project `como-riff` exists: use these

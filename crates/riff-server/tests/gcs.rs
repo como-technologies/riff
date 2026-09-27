@@ -1,6 +1,8 @@
 //! The Cloud Storage store against a fake Cloud Storage and metadata
 //! server.
 
+mod common;
+
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +14,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use riff_server::gcs::{Gcs, TOKEN_PATH};
 use riff_server::store::{SESSIONS, Store, StoreError, TOKENS, thread_object};
-use serde_json::json;
+use serde_json::{Value, json};
 
 const BUCKET: &str = "riff-test";
 const TOKEN: &str = "fake-token";
@@ -282,4 +284,42 @@ async fn no_metadata_server_is_a_failure() {
     let store = Gcs::with_urls(BUCKET, &url, "http://127.0.0.1:1");
     let result = store.load(SESSIONS).await;
     assert!(matches!(result, Err(StoreError::Failed(_))), "{result:?}");
+}
+
+/// Calls `op` on a riff server. The call must succeed.
+async fn call(base: &str, op: &str, body: Value) -> Value {
+    let reply = reqwest::Client::new()
+        .post(format!("{base}/v1/{op}"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 200, "{op}");
+    reply.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn a_new_server_on_the_same_bucket_has_the_same_state() {
+    let (fake, url) = start().await;
+    let mike = "riff://mike@pangolin/como-technologies/riff?session=a";
+    let brett = "riff://brett@heron/como-technologies/riff?session=b";
+    let repo = "como-technologies/riff";
+    let (old, base) = common::start_on(Arc::new(store(&url))).await;
+    call(&base, "register", json!({ "me": mike })).await;
+    call(&base, "register", json!({ "me": brett })).await;
+    let post = json!({ "me": mike, "thread": repo, "body": "saved" });
+    call(&base, "post", post).await;
+    let claim = json!({ "me": brett, "thread": repo, "item": "issue-44" });
+    call(&base, "claim", claim).await;
+    let who = call(&base, "who", json!({})).await;
+    old.save().await.unwrap();
+    let thread = thread_object(&repo.parse().unwrap());
+    assert!(fake.lock().unwrap().objects.contains_key(&thread));
+
+    let (_new, base) = common::start_on(Arc::new(store(&url))).await;
+    assert_eq!(call(&base, "who", json!({})).await, who);
+    let read = call(&base, "read", json!({ "me": brett, "thread": repo })).await;
+    assert_eq!(read["messages"][0]["body"], "saved");
+    let claim = json!({ "me": mike, "thread": repo, "item": "issue-44" });
+    assert_eq!(call(&base, "claim", claim).await["granted"], false);
 }
