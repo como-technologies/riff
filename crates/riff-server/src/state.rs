@@ -45,10 +45,13 @@
 //!   for all sessions. A gone session matches no selector, and a direct
 //!   message to it fails (R205).
 //! - An end frees the claims and the lead of the session at once. A
-//!   session that stops with no end holds its claims for [`CLAIM_GRACE`]
-//!   after its last sign of life (R9, R206).
+//!   session that stops with no end holds its claims and its lead for
+//!   [`CLAIM_GRACE`] after its last sign of life, also while it is gone
+//!   (R9, R206).
 //! - A call or a keep-alive from a gone session makes it live again, with
-//!   the same ID, threads and cursors (R207).
+//!   the same ID, threads and cursors. After a stop with no end, it gets
+//!   back each claim that no other session took. After an end, it has no
+//!   claims (R207).
 //! - [`State::set_status`] keeps the last status of a session, with the
 //!   time that it was set. `who` shows the status and its age (R182,
 //!   R184).
@@ -1677,6 +1680,9 @@ mod tests {
         let later = now + GONE;
         assert_eq!(shown(&state, later), [docs().who().clone()]);
         let soon = now + CLAIM_GRACE - Duration::from_secs(1);
+        // The lead ends with the claims, not when the session is gone.
+        assert!(is_lead(&state, &api(), soon));
+        assert!(!is_lead(&state, &api(), now + CLAIM_GRACE));
         assert!(
             !state
                 .claim(&docs(), &repo(), "issue-12", soon)

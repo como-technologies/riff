@@ -153,9 +153,10 @@ async fn the_end_hook_ends_the_session_but_not_after_clear() {
     assert!(!shown(&api).await.contains(&"e3".to_owned()));
     assert!(session(&api, "e3").await.claims().is_empty());
 
-    // A call brings the session back, with the same ID.
+    // A call brings the session back, with the same ID and no claims.
     api.register(&me).await.unwrap();
     assert!(shown(&api).await.contains(&"e3".to_owned()));
+    assert!(session(&api, "e3").await.claims().is_empty());
 }
 
 #[tokio::test]

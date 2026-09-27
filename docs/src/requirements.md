@@ -406,10 +406,13 @@
 - **R206** A session is gone when it ended (R205), or when the server
   got no call, no keep-alive and no watch from it for 3 minutes. A gone
   session matches no selector. A direct message to it fails and says
-  that the session is gone. A gone session is not the lead.
+  that the session is gone. An end frees the claims and the lead of
+  the session at once. After a stop with no end, the claims and the
+  lead end together, 5 minutes after the last sign of life (R9).
 - **R207** A call or a keep-alive from a gone session makes it live
-  again, with the same ID, threads and read cursors. It gets back each
-  claim that no other session took.
+  again, with the same ID, threads and read cursors. After a stop with
+  no end, it gets back each claim that no other session took. After an
+  end, it has no claims.
 - **R182** A session sets its status with `riff status` or the `status`
   tool. A status is the current step of the session, and a reason when
   the session is blocked (`--blocked REASON`). A new status replaces the

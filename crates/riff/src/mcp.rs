@@ -328,7 +328,8 @@ impl Tools {
             tick.tick().await;
             loop {
                 tick.tick().await;
-                let _ = tools.api.alive(&tools.me()).await;
+                // A hung request must not stop the next keep-alive.
+                let _ = tokio::time::timeout(every, tools.api.alive(&tools.me())).await;
             }
         })
     }

@@ -144,8 +144,9 @@ sequenceDiagram
   network fault, is gone after 3 minutes. Its claims end 5 minutes
   after its last sign of life.
 - A gone session gets no messages. A `tell` to it fails.
-- When a gone session calls again, it comes back with the same ID,
-  threads and claims, unless another session took a claim.
+- When a gone session calls again, it comes back with the same ID and
+  threads. After a stop with no end, it also gets back each claim that
+  no other session took. After an end, it has no claims.
 - `/clear` does not end the session.
 
 The riff plugin runs the end hook for you. To end a session by hand,
