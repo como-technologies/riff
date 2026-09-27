@@ -66,6 +66,7 @@ pub mod auth;
 pub mod oidc;
 pub mod service;
 pub mod state;
+pub mod store;
 pub mod token;
 
 use std::convert::Infallible;
