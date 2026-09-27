@@ -40,10 +40,31 @@
 //! - Only a person access token gives a session pair (R105).
 //! - [`Tokens::revoke_user`] ends each sign-in of one person at once
 //!   (R20). This ends the session pairs too.
-//! - A token that the server does not know is refused. After a restart
-//!   the server knows no token, so each person signs in again.
+//! - A token that the server does not know is refused.
 //!
 //! The store does no I/O and reads no clock. The caller passes `now`.
+//!
+//! # Saved form
+//!
+//! [`Tokens::to_bytes`] gives the store as JSON, and [`Tokens::from_bytes`]
+//! loads it again (R124). The JSON holds only the hash of each token
+//! (R81). Each time in it is a wall-clock time, so the time that the
+//! server was down counts. The store keeps each time as a deadline in the
+//! future, so a new process can always hold it.
+//!
+//! ```
+//! use std::time::{Instant, SystemTime};
+//! use riff_server::token::Tokens;
+//!
+//! let (now, wall) = (Instant::now(), SystemTime::now());
+//! let mut tokens = Tokens::default();
+//! let pair = tokens.sign_in("mike", "k", now).unwrap();
+//! let bytes = tokens.to_bytes(now, wall);
+//! assert!(!String::from_utf8_lossy(&bytes).contains(&pair.access_token));
+//!
+//! let loaded = Tokens::from_bytes(&bytes, Instant::now(), SystemTime::now()).unwrap();
+//! assert_eq!(loaded.check(&pair.access_token, "k", Instant::now()).unwrap(), "mike");
+//! ```
 //!
 //! # Example
 //!
@@ -76,12 +97,13 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use riff_core::name::{NameError, Who};
 use riff_core::wire::TokenReply;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// An access token works this long (R17).
@@ -138,7 +160,8 @@ struct SignIn {
     user: String,
     /// The thumbprint of the device key.
     jkt: String,
-    last_used: Instant,
+    /// The sign-in ends at this time, unless a refresh comes first.
+    idle_until: Instant,
 }
 
 struct Access {
@@ -151,7 +174,7 @@ struct Access {
 struct Refresh {
     sign_in: u64,
     session: Option<String>,
-    /// When the token was used, if it was.
+    /// For a used token: the server forgets it at this time.
     used: Option<Instant>,
 }
 
@@ -174,7 +197,7 @@ impl Tokens {
             SignIn {
                 user: user.to_owned(),
                 jkt: jkt.to_owned(),
-                last_used: now,
+                idle_until: now + REFRESH_IDLE,
             },
         );
         Ok(self.issue(id, None, now))
@@ -204,8 +227,8 @@ impl Tokens {
             self.revoke(id);
             return Err(Refused::Reused);
         }
-        sign_in.last_used = now;
-        refresh.used = Some(now);
+        sign_in.idle_until = now + REFRESH_IDLE;
+        refresh.used = Some(now + REUSE_WINDOW);
         let session = refresh.session.clone();
         Ok(self.issue(id, session, now))
     }
@@ -280,6 +303,110 @@ impl Tokens {
         ids.len()
     }
 
+    /// The store as JSON, with only the hash of each token (R81). `now`
+    /// and `wall` are the same time on the two clocks.
+    pub fn to_bytes(&self, now: Instant, wall: SystemTime) -> Vec<u8> {
+        let clock = Clock { now, wall };
+        let live = |t: Instant| (now < t).then(|| clock.save(t));
+        let saved = Saved {
+            next_sign_in: self.next_sign_in,
+            sign_ins: self
+                .sign_ins
+                .iter()
+                .filter_map(|(id, s)| {
+                    Some(SavedSignIn {
+                        id: *id,
+                        user: s.user.clone(),
+                        jkt: s.jkt.clone(),
+                        idle_until: live(s.idle_until)?,
+                    })
+                })
+                .collect(),
+            access: self
+                .access
+                .iter()
+                .filter_map(|(hash, a)| {
+                    Some(SavedAccess {
+                        hash: URL_SAFE_NO_PAD.encode(hash),
+                        sign_in: a.sign_in,
+                        session: a.session.clone(),
+                        expires: live(a.expires)?,
+                    })
+                })
+                .collect(),
+            refresh: self
+                .refresh
+                .iter()
+                .filter_map(|(hash, r)| {
+                    Some(SavedRefresh {
+                        hash: URL_SAFE_NO_PAD.encode(hash),
+                        sign_in: r.sign_in,
+                        session: r.session.clone(),
+                        used: match r.used {
+                            Some(forget) => Some(live(forget)?),
+                            None => None,
+                        },
+                    })
+                })
+                .collect(),
+        };
+        serde_json::to_vec(&saved).expect("the saved form is JSON")
+    }
+
+    /// Loads a store from [`Tokens::to_bytes`]. It drops each token and
+    /// sign-in that ended while the server was down.
+    pub fn from_bytes(bytes: &[u8], now: Instant, wall: SystemTime) -> Result<Tokens, LoadError> {
+        let saved: Saved = serde_json::from_slice(bytes).map_err(|e| LoadError(e.to_string()))?;
+        let clock = Clock { now, wall };
+        let mut tokens = Tokens {
+            next_sign_in: saved.next_sign_in,
+            ..Tokens::default()
+        };
+        for s in saved.sign_ins {
+            if s.id >= saved.next_sign_in {
+                return Err(LoadError(format!(
+                    "sign-in {} is not below next_sign_in",
+                    s.id
+                )));
+            }
+            if let Some(idle_until) = clock.load(s.idle_until) {
+                let sign_in = SignIn {
+                    user: s.user,
+                    jkt: s.jkt,
+                    idle_until,
+                };
+                tokens.sign_ins.insert(s.id, sign_in);
+            }
+        }
+        for a in saved.access {
+            if let Some(expires) = clock.load(a.expires) {
+                let access = Access {
+                    sign_in: a.sign_in,
+                    session: a.session,
+                    expires,
+                };
+                tokens.access.insert(unhash(&a.hash)?, access);
+            }
+        }
+        for r in saved.refresh {
+            let used = match r.used {
+                None => None,
+                Some(forget) => match clock.load(forget) {
+                    Some(forget) => Some(forget),
+                    None => continue,
+                },
+            };
+            let refresh = Refresh {
+                sign_in: r.sign_in,
+                session: r.session,
+                used,
+            };
+            tokens.refresh.insert(unhash(&r.hash)?, refresh);
+        }
+        tokens.sweep(now);
+        Ok(tokens)
+    }
+
     fn issue(&mut self, sign_in: u64, session: Option<String>, now: Instant) -> TokenReply {
         let user = self
             .sign_ins
@@ -321,17 +448,91 @@ impl Tokens {
 
     /// Forgets expired access tokens and idle sign-ins.
     fn sweep(&mut self, now: Instant) {
-        self.sign_ins
-            .retain(|_, s| now.duration_since(s.last_used) < REFRESH_IDLE);
+        self.sign_ins.retain(|_, s| now < s.idle_until);
         let live = &self.sign_ins;
         self.access
             .retain(|_, a| now < a.expires && live.contains_key(&a.sign_in));
         self.refresh.retain(|_, r| {
-            live.contains_key(&r.sign_in)
-                && r.used
-                    .is_none_or(|used| now.duration_since(used) < REUSE_WINDOW)
+            live.contains_key(&r.sign_in) && r.used.is_none_or(|forget| now < forget)
         });
     }
+}
+
+/// Why [`Tokens::from_bytes`] failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadError(String);
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the saved token store is not valid: {}", self.0)
+    }
+}
+
+impl std::error::Error for LoadError {}
+
+/// The saved form. Each time is in milliseconds since the Unix epoch.
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    next_sign_in: u64,
+    sign_ins: Vec<SavedSignIn>,
+    access: Vec<SavedAccess>,
+    refresh: Vec<SavedRefresh>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedSignIn {
+    id: u64,
+    user: String,
+    jkt: String,
+    idle_until: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedAccess {
+    hash: String,
+    sign_in: u64,
+    session: Option<String>,
+    expires: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedRefresh {
+    hash: String,
+    sign_in: u64,
+    session: Option<String>,
+    used: Option<u64>,
+}
+
+/// One time on the two clocks. It turns a deadline into a wall-clock
+/// time and back.
+struct Clock {
+    now: Instant,
+    wall: SystemTime,
+}
+
+impl Clock {
+    fn save(&self, deadline: Instant) -> u64 {
+        let wall = self.wall + deadline.saturating_duration_since(self.now);
+        let since = wall.duration_since(UNIX_EPOCH).unwrap_or_default();
+        u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// The deadline, or `None` when it is not in the future.
+    fn load(&self, millis: u64) -> Option<Instant> {
+        let wall = UNIX_EPOCH.checked_add(Duration::from_millis(millis))?;
+        let left = wall.duration_since(self.wall).ok()?;
+        (!left.is_zero())
+            .then(|| self.now.checked_add(left))
+            .flatten()
+    }
+}
+
+fn unhash(text: &str) -> Result<Hash, LoadError> {
+    URL_SAFE_NO_PAD
+        .decode(text)
+        .ok()
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| LoadError(format!("{text} is not a token hash")))
 }
 
 fn random_token() -> String {
@@ -625,6 +826,120 @@ mod tests {
             tokens.for_session(&person.access_token, "k", "bad id", now),
             Err(Refused::Unknown)
         );
+    }
+
+    /// Saves at `now` and loads `down` later, on new clocks.
+    fn restart(tokens: &Tokens, now: Instant, down: Duration) -> (Tokens, Instant) {
+        let wall = SystemTime::now();
+        let bytes = tokens.to_bytes(now, wall);
+        let later = Instant::now() + Duration::from_secs(3600);
+        (
+            Tokens::from_bytes(&bytes, later, wall + down).unwrap(),
+            later,
+        )
+    }
+
+    #[test]
+    fn tokens_work_after_a_restart() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let session = tokens
+            .for_session(&second.access_token, "k", "a", now)
+            .unwrap();
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        let who = |t: &Tokens, token: &str| t.caller(token, "k", now).unwrap().to_string();
+        assert_eq!(who(&loaded, &second.access_token), "mike");
+        assert_eq!(who(&loaded, &session.access_token), "mike/a");
+        let third = loaded.refresh(&session.refresh_token, "k", now).unwrap();
+        assert_eq!(who(&loaded, &third.access_token), "mike/a");
+        assert_eq!(
+            loaded.check(&second.access_token, "thief", now),
+            Err(Refused::WrongKey)
+        );
+    }
+
+    #[test]
+    fn a_used_refresh_token_still_revokes_after_a_restart() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        assert_eq!(
+            loaded.refresh(&first.refresh_token, "k", now),
+            Err(Refused::Reused)
+        );
+        assert_eq!(
+            loaded.check(&second.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+    }
+
+    #[test]
+    fn the_saved_form_holds_no_token() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let text = String::from_utf8(tokens.to_bytes(now, SystemTime::now())).unwrap();
+        for token in [
+            &first.access_token,
+            &first.refresh_token,
+            &second.access_token,
+            &second.refresh_token,
+        ] {
+            assert!(!text.contains(token.as_str()), "{text}");
+        }
+        assert!(text.contains(&URL_SAFE_NO_PAD.encode(hash(&second.access_token))));
+    }
+
+    #[test]
+    fn the_time_that_the_server_was_down_counts() {
+        let (mut tokens, first, now) = signed_in();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (mut loaded, later) = restart(&tokens, now, ACCESS_TTL);
+        assert_eq!(
+            loaded.check(&first.access_token, "k", later),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(loaded.access.len(), 0);
+        // The used refresh token is still known.
+        assert_eq!(
+            loaded.refresh(&first.refresh_token, "k", later),
+            Err(Refused::Reused)
+        );
+    }
+
+    #[test]
+    fn a_restart_forgets_what_ended_while_the_server_was_down() {
+        let (mut tokens, first, now) = signed_in();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (loaded, _) = restart(&tokens, now, REUSE_WINDOW);
+        assert_eq!(loaded.refresh.len(), 1, "only the unused refresh token");
+        let (loaded, _) = restart(&tokens, now, REFRESH_IDLE);
+        assert!(loaded.sign_ins.is_empty() && loaded.refresh.is_empty());
+    }
+
+    #[test]
+    fn a_new_sign_in_after_a_restart_gets_a_new_id() {
+        let (mut tokens, first, now) = signed_in();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (mut loaded, now) = restart(&tokens, now, Duration::ZERO);
+        let other = loaded.sign_in("mike", "k", now).unwrap();
+        loaded.refresh(&first.refresh_token, "k", now).unwrap_err();
+        assert_eq!(
+            loaded.check(&other.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_bad_saved_form_does_not_load() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        assert!(Tokens::from_bytes(b"{", now, wall).is_err());
+        let bad_hash = br#"{"next_sign_in":1,"sign_ins":[],"access":[],
+            "refresh":[{"hash":"abc","sign_in":0,"session":null,"used":null}]}"#;
+        assert!(Tokens::from_bytes(bad_hash, now, wall).is_err());
+        let bad_id = br#"{"next_sign_in":0,"sign_ins":[
+            {"id":0,"user":"mike","jkt":"k","idle_until":18446744073709551615}],
+            "access":[],"refresh":[]}"#;
+        assert!(Tokens::from_bytes(bad_id, now, wall).is_err());
     }
 
     #[test]
