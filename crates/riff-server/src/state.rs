@@ -41,9 +41,9 @@
 //!   keep-alive is not a call (R163).
 //! - A session is gone when it ended ([`State::end`]), or when it had no
 //!   call, no keep-alive ([`State::alive`]) and no watch for [`GONE`]
-//!   (R164, R204). `who` hides a gone session, unless the caller asks
+//!   (R164, R206). `who` hides a gone session, unless the caller asks
 //!   for all sessions. A gone session matches no selector, and a direct
-//!   message to it fails (R205).
+//!   message to it fails (R206).
 //! - An end frees the claims and the lead of the session at once. A
 //!   session that stops with no end holds its claims and its lead for
 //!   [`CLAIM_GRACE`] after its last sign of life, also while it is gone
@@ -156,7 +156,7 @@ use crate::store;
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 
 /// A session with no call, no keep-alive and no watch for this long is
-/// gone (R204). `riff mcp` sends a keep-alive each
+/// gone (R206). `riff mcp` sends a keep-alive each
 /// [`riff_core::wire::ALIVE_EVERY`].
 pub const GONE: Duration = Duration::from_secs(3 * 60);
 
