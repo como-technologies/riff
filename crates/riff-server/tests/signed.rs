@@ -95,6 +95,7 @@ impl Caller {
 
 /// Starts a server that needs sign-in, and loads its state from `store`.
 async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
+    common::client();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
@@ -203,7 +204,7 @@ async fn a_server_without_sign_in_keeps_no_signature() {
     let me: SessionUri = A.parse().unwrap();
     let mut post = Post::new(&me, Some(REPO.parse().unwrap()), vec![], "hi");
     post.sign(&key, now_ms());
-    let client = reqwest::Client::new();
+    let client = common::client();
     let reply = client
         .post(format!("{base}/v1/post"))
         .json(&post)
