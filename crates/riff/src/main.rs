@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
-use riff::{hook, identity, local, login, mcp, plugin, text};
+use riff::{hook, identity, local, login, mcp, plugin, text, tokens};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, Status};
@@ -136,6 +136,32 @@ enum Command {
         #[arg(long, requires = "all")]
         user: Option<String>,
     },
+    /// Measure the token use of riff in Claude Code transcripts. With no
+    /// FILE, it reads each session of this repository in the Claude
+    /// Code projects folder.
+    Tokens {
+        /// Transcript files (SESSION.jsonl). Files with the same name are
+        /// one session.
+        files: Vec<std::path::PathBuf>,
+        /// The Claude Code projects folder. The default is
+        /// $CLAUDE_CONFIG_DIR/projects, or ~/.claude/projects.
+        #[arg(long, value_name = "DIR")]
+        projects: Option<std::path::PathBuf>,
+        /// Only the sessions whose ID starts with ID. Give --session
+        /// again for more sessions.
+        #[arg(long, value_name = "ID")]
+        session: Vec<String>,
+        /// Count from this UTC time on, for example 2026-09-27 or
+        /// 2026-09-27T18:30:11Z.
+        #[arg(long, value_name = "TIME")]
+        since: Option<tokens::Time>,
+        /// Count up to this UTC time.
+        #[arg(long, value_name = "TIME")]
+        until: Option<tokens::Time>,
+        /// Print JSON, to compare a wave with the next one.
+        #[arg(long)]
+        json: bool,
+    },
     /// Run a Claude Code hook. The riff plugin calls it.
     Hook {
         #[command(subcommand)]
@@ -193,6 +219,27 @@ async fn main() -> Result<()> {
     {
         let connected = plugin::connect(claude, &plugin::dir()?)?;
         println!("{}", text::connected(&connected));
+        return Ok(());
+    }
+    if let Command::Tokens {
+        files,
+        projects,
+        session,
+        since,
+        until,
+        json,
+    } = &cli.command
+    {
+        let window = tokens::Window {
+            since: *since,
+            until: *until,
+        };
+        let report = measure_tokens(files, projects.as_deref(), session, &window)?;
+        if *json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            print!("{}", text::tokens(&report));
+        }
         return Ok(());
     }
     let api = Api::new(&cli.server);
@@ -288,6 +335,7 @@ async fn main() -> Result<()> {
             mcp::serve(api, me).await?
         }
         Command::Hook { .. }
+        | Command::Tokens { .. }
         | Command::Connect { .. }
         | Command::Login
         | Command::Logout { .. } => unreachable!("handled before the identity"),
@@ -302,6 +350,40 @@ fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> 
             .default_thread()
             .ok_or_else(|| anyhow::anyhow!("name a thread: this directory is not in git")),
     }
+}
+
+/// The token report of the transcript `files`, or of each session of
+/// this repository in `projects` (01M3JCFE44P47XAZ1STAM5M6JV).
+fn measure_tokens(
+    files: &[std::path::PathBuf],
+    projects: Option<&std::path::Path>,
+    prefixes: &[String],
+    window: &tokens::Window,
+) -> Result<tokens::Report> {
+    let files = if files.is_empty() {
+        let projects = projects
+            .map(std::path::Path::to_path_buf)
+            .or_else(tokens::projects_dir)
+            .ok_or_else(|| anyhow::anyhow!("name the projects folder with --projects"))?;
+        let main = identity::main_worktree(&std::env::current_dir()?)
+            .ok_or_else(|| anyhow::anyhow!("name the transcripts: this directory is not in git"))?;
+        let found = tokens::repo_transcripts(&projects, &main)
+            .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", projects.display()))?;
+        if found.is_empty() {
+            anyhow::bail!(
+                "no transcripts in {}",
+                projects.join(tokens::project_name(&main)).display()
+            );
+        }
+        found
+    } else {
+        files.to_vec()
+    };
+    let mut sessions = tokens::sessions(&files)?;
+    if !prefixes.is_empty() {
+        sessions.retain(|s| prefixes.iter().any(|p| s.id.starts_with(p.as_str())));
+    }
+    Ok(tokens::report(&sessions, window))
 }
 
 /// The SessionStart hook output. It has no URI when riff cannot find the

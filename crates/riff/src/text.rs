@@ -538,6 +538,127 @@ pub fn threads(list: &[ThreadInfo], me: &SessionUri) -> String {
     out
 }
 
+/// A number with a comma between each group of three digits.
+///
+/// ```
+/// assert_eq!(riff::text::grouped(25_600_123), "25,600,123");
+/// assert_eq!(riff::text::grouped(999), "999");
+/// ```
+pub fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The output of `riff tokens`: the numbers of each session, and the
+/// total when there are more sessions.
+///
+/// ```
+/// use riff::tokens::{Measure, Report};
+///
+/// let m = Measure { session: "3505f311".into(), requests: 2, input: 400, mean_context: 200,
+///     only_riff_requests: 1, only_riff_input: 100, ..Default::default() };
+/// let out = riff::text::tokens(&Report::new(vec![m]));
+/// assert!(out.contains("== 3505f311\n"));
+/// assert!(out.contains("requests 2, input 400 tokens (mean context 200), output 0"));
+/// assert!(out.contains("requests that call only riff: 1, 100 input tokens (25.0% of input)"));
+/// assert!(!out.contains("== total"));
+/// assert_eq!(riff::text::tokens(&Report::new(vec![])), "No session has a request in the time.\n");
+/// ```
+pub fn tokens(report: &crate::tokens::Report) -> String {
+    if report.sessions.is_empty() {
+        return "No session has a request in the time.\n".into();
+    }
+    let mut out = String::new();
+    for m in &report.sessions {
+        out.push_str(&measure(m));
+    }
+    if report.sessions.len() > 1 {
+        out.push_str(&measure(&report.total));
+    }
+    out
+}
+
+fn measure(m: &crate::tokens::Measure) -> String {
+    let pct = |part: u64| format!("{:.1}% of input", m.share(part) * 100.0);
+    let g = grouped;
+    let list = |items: Vec<String>| {
+        if items.is_empty() {
+            "none".to_owned()
+        } else {
+            items.join(", ")
+        }
+    };
+    let calls = list(
+        m.riff_calls
+            .iter()
+            .map(|(tool, n)| format!("{tool} {n}"))
+            .collect(),
+    );
+    let results = list(
+        m.riff_results
+            .iter()
+            .map(|(tool, r)| format!("{tool} {} ({} tokens)", r.calls, g(r.tokens)))
+            .collect(),
+    );
+    let mut out = String::new();
+    let _ = writeln!(out, "== {}", m.session);
+    let _ = writeln!(
+        out,
+        "requests {}, input {} tokens (mean context {}), output {}",
+        g(m.requests),
+        g(m.input),
+        g(m.mean_context),
+        g(m.output)
+    );
+    let _ = writeln!(
+        out,
+        "requests that call only riff: {}, {} input tokens ({})",
+        g(m.only_riff_requests),
+        g(m.only_riff_input),
+        pct(m.only_riff_input)
+    );
+    let _ = writeln!(
+        out,
+        "requests that call riff and other tools: {}, {} input tokens ({})",
+        g(m.riff_and_other_requests),
+        g(m.riff_and_other_input),
+        pct(m.riff_and_other_input)
+    );
+    let _ = writeln!(
+        out,
+        "riff in context: {} input tokens ({})",
+        g(m.riff_in_context),
+        pct(m.riff_in_context)
+    );
+    let _ = writeln!(out, "riff skill: {} tokens", g(m.skill));
+    let _ = writeln!(
+        out,
+        "wakes {} ({} started a turn, {} came in a turn); the turns that a wake started: \
+         {} requests, {} input tokens ({})",
+        m.wakes,
+        m.wakes_that_start_a_turn,
+        m.wakes_in_a_turn,
+        g(m.wake_turn_requests),
+        g(m.wake_turn_input),
+        pct(m.wake_turn_input)
+    );
+    let _ = writeln!(out, "riff calls: {calls}");
+    let _ = writeln!(
+        out,
+        "riff tool results: {} tokens: {results}",
+        g(m.riff_result_tokens())
+    );
+    let _ = writeln!(out, "compactions: {}", m.compactions);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::ago;

@@ -224,20 +224,22 @@ fn repo_of(dir: &Path, top: &str) -> Repo {
             name: sanitize(&name),
         };
     }
-    let main = git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .and_then(|common| {
-        Path::new(&common)
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-    })
-    .unwrap_or_else(|| top.to_owned());
+    let main = main_worktree(dir)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| top.to_owned());
     Repo::Git {
         owner: "local".into(),
         name: sanitize(&base_name(&main)),
     }
+}
+
+/// The main worktree of the repository of `dir`. `None` outside git.
+pub fn main_worktree(dir: &Path) -> Option<std::path::PathBuf> {
+    let common = git(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    Path::new(&common).parent().map(Path::to_path_buf)
 }
 
 /// True when `dir` is in a linked worktree, not the main one.

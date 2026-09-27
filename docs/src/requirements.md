@@ -641,6 +641,44 @@
 - **R47** Each session connects through `riff`. Direct connections from an
   agent tool are not supported for now.
 
+## Token use
+
+- **01M3JCFE44P47XAZ1STAM5M6JV** `riff tokens` measures the token use
+  of riff from Claude Code transcripts. It reads the transcript files
+  that a person names. With no file, it reads each session of the
+  repository in the Claude Code projects folder: the folder of the
+  main worktree and the folder of each worktree in
+  `.claude/worktrees`. The files with the same name are one session.
+  `--session ID` keeps only the sessions whose ID starts with `ID`.
+- **01M3JCFE67QMVGZHPWRGJ9Y83D** For each session, `riff tokens`
+  shows the API requests, their input tokens (new, cache write and
+  cache read), their output tokens, and the mean input of a request.
+  A request counts once, by its request ID.
+- **01M3JCFE8AECR4YPSZ1AHC1EAZ** `riff tokens` shows the requests that
+  call only riff, and the requests that call riff and other tools,
+  each with its input and its share of the input. A riff call is a
+  riff MCP tool, or a Bash command that starts with `riff `.
+- **01M3JCFEAGSJESRK7C43SQGTYV** `riff tokens` shows the riff text in
+  the context of each request, summed over the requests, and its
+  share of the input. The riff text is the riff hook context, the riff
+  skill, the riff tool calls and results, the watch and its results,
+  and the wakes. Four characters are one token. A compaction empties
+  it.
+- **01M3JCFECNFS828V7RAF9ZEG95** `riff tokens` shows the size of the
+  riff skill in tokens.
+- **01M3JCFEEVTKYS1CR45EBVW77R** `riff tokens` shows the wakes: all
+  of them, the ones that start a turn and the ones that come in a
+  turn. It shows the requests and the input of the turns that a wake
+  started.
+- **01M3JCFEGZWQ1SC76VF7DA6HX9** `riff tokens` shows the riff tool
+  calls by tool, and the riff tool results by tool: their number and
+  their size in tokens.
+- **01M3JCFEK6Q4YXXJ0ERMJ2KS65** `riff tokens --json` gives the same
+  numbers as JSON: each session, and the total of the sessions.
+- **01M3JCFENCPP20TJRYS505YER6** `riff tokens --since TIME` and
+  `--until TIME` count only the rows in that UTC time. The rows before
+  it still build the riff text in the context.
+
 ## Code
 
 - **R12** All code is Rust.

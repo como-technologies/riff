@@ -13,6 +13,7 @@
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
+//! | `riff tokens` | Measures the token use of riff in Claude Code transcripts. See [`tokens`]. |
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
 //! `riff hook session-start` (see [`hook`]).
@@ -59,3 +60,4 @@ pub mod mcp;
 pub mod plugin;
 pub mod secrets;
 pub mod text;
+pub mod tokens;

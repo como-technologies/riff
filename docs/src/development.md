@@ -51,6 +51,47 @@ It fails when two requirements have the same ID, or when a file cites an
 ID that no requirement has. It warns when a new ID does not have that
 form, for example the next `R` number.
 
+## Measure the token use of riff
+
+`riff tokens` reads the Claude Code transcripts of your sessions and
+shows what riff costs in tokens. Run it in your clone. It reads each
+session of the repository, also the sessions that moved to a
+worktree:
+
+```sh
+riff tokens
+```
+
+For each session, it shows the requests, the input and output tokens,
+the mean context of a request, the requests that call riff, the riff
+text in the context, the size of the riff skill, the wakes, and the
+riff tool results. With more than one session, it also shows the
+total. A token of riff text is 4 characters.
+
+### Measure one wave
+
+Give the start and the end of the wave, in UTC. Save the numbers as
+JSON, so that you can compare the wave with the next one:
+
+```sh
+riff tokens --since 2026-09-27T12:00:00Z --until 2026-09-27T18:30:11Z --json > wave-2.json
+```
+
+The rows before `--since` still count for the riff text in the
+context. They do not count as requests.
+
+### Measure some sessions only
+
+Give the start of each session ID, or the transcript files:
+
+```sh
+riff tokens --session 3505f311 --session d0601225
+riff tokens ~/.claude/projects/-home-mike-src-como-technologies-riff/3505f311-*.jsonl
+```
+
+Files with the same name are one session. When the transcripts are
+not in `~/.claude/projects`, give the folder with `--projects DIR`.
+
 ## Sign in on this machine
 
 Sign-in uses the OAuth client of the Google Cloud project `como-riff`.
