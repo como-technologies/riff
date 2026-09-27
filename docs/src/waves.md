@@ -136,7 +136,7 @@ gh issue list --milestone "Wave 2"
 gh issue edit 71 --milestone Backlog
 ```
 
-To see the items in the backlog:
+### See the items in the backlog
 
 ```sh
 gh issue list --milestone Backlog
