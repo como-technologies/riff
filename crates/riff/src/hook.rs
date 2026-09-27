@@ -24,7 +24,7 @@
 //!
 //! | Source | The session |
 //! |---|---|
-//! | `startup` | Starts the watch. Follows the start routine (R54). |
+//! | `startup` | Starts the watch. Follows the start routine (R54, R166). |
 //! | `resume` | Starts the watch. The old watch stopped with the old process. |
 //! | `clear` | Has a new session ID. Stops the watch of the old ID, starts a new one, and follows the start routine. |
 //! | `compact` | Keeps the watch that runs. Starts one only if none runs. |
@@ -110,7 +110,11 @@ pub fn start_context(uri: Option<&SessionUri>, source: Source) -> String {
          - When the Monitor ends, start it again.\n",
     );
     if matches!(source, Source::Startup | Source::Clear) {
-        out.push_str("- To find work, follow the start routine of the riff skill.\n");
+        out.push_str(
+            "- To find work, follow the start routine of the riff skill. Pick a free \
+             item yourself. Do not wait for a plan or for permission. A scope from \
+             your user wins.\n",
+        );
     }
     writeln!(out, "- {DATA_NOTE}").unwrap();
     out
@@ -180,6 +184,7 @@ mod tests {
     #[test]
     fn new_sessions_get_the_start_routine() {
         assert!(start_context(None, Source::Startup).contains("start routine"));
+        assert!(start_context(None, Source::Startup).contains("Pick a free item yourself"));
         assert!(start_context(None, Source::Clear).contains("start routine"));
         assert!(!start_context(None, Source::Resume).contains("start routine"));
         assert!(!start_context(None, Source::Compact).contains("start routine"));
