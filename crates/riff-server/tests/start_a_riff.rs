@@ -33,10 +33,9 @@ fn the_page_starts_the_server_as_a_service() {
 
 #[test]
 fn the_first_machine_lets_its_riff_take_connections_from_the_network() {
-    assert_eq!(
-        server_commands("add-a-machine.md"),
-        ["riff-server install --listen 0.0.0.0:7878"]
-    );
+    // The first machine, then its update: both keep `--listen`.
+    let listen = "riff-server install --listen 0.0.0.0:7878";
+    assert_eq!(server_commands("add-a-machine.md"), [listen, listen]);
 }
 
 #[test]

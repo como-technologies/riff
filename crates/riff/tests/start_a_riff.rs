@@ -1,7 +1,7 @@
 //! "Start a Riff", the first page of the book for a person: at most
 //! three commands (R4), each one real, and no sign-in. "Add a Machine"
-//! (R203): its commands are real too. No book page names the Cloud Run
-//! URL (R5). The `riff-server` commands of the pages are checked in
+//! (R203): its commands are real too, and its update installs each
+//! machine again. No book page names the Cloud Run URL (R5). The `riff-server` commands of the pages are checked in
 //! `crates/riff-server/tests/start_a_riff.rs`.
 
 use std::fs;
@@ -90,8 +90,30 @@ fn a_second_machine_installs_riff_names_the_first_and_connects() {
         .filter(|c| c.starts_with("riff "))
         .cloned()
         .collect();
-    assert_eq!(riff, ["riff connect claude", "riff who"]);
+    assert_eq!(
+        riff,
+        [
+            "riff connect claude",
+            "riff who",
+            "riff logout",
+            "riff connect claude",
+            "riff connect claude"
+        ]
+    );
     each_is_real(&riff);
+}
+
+#[test]
+fn the_update_on_two_machines_does_the_install_of_each_machine_again() {
+    let page = commands_of("add-a-machine.md");
+    let installs: Vec<&String> = page
+        .iter()
+        .filter(|c| c.starts_with("cargo install "))
+        .collect();
+    // The second machine, then the update of the first and the second.
+    assert_eq!(installs.len(), 3, "{page:?}");
+    assert_eq!(installs[1], &commands()[0]);
+    assert_eq!(installs[2], installs[0]);
 }
 
 #[test]

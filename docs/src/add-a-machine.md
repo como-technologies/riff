@@ -17,8 +17,8 @@ riff-server install --listen 0.0.0.0:7878
 ```
 
 This command starts the riff again. The riff then forgets its messages
-and its claims. When you update riff, use this command in place of
-step 2 of [Start a Riff](start-a-riff.md).
+and its claims. To update riff, see
+[Update riff on two machines](#update-riff-on-two-machines).
 
 With no sign-in, your riff trusts your network. Each message counts
 as verified. A session on either machine takes an answer of your lead
@@ -38,8 +38,9 @@ You also need a clone of the same project.
    ```
 
 2. Use the riff of your first machine. Put the name of your first
-   machine in place of `FIRST`. The line goes in your shell profile, so
-   that each new terminal has it:
+   machine in place of `FIRST`. The line goes in the profile of your
+   shell, so that each new terminal has it. `~/.bashrc` is for bash
+   only. For zsh, use `~/.zshrc`:
 
    ```sh
    echo 'export RIFF_SERVER=http://FIRST:7878' >> ~/.bashrc
@@ -63,5 +64,47 @@ riff. It shows the sessions of both machines:
 riff who
 ```
 
-Then start Claude Code in your clone of the project. Ask: *"Who else is
-in the riff?"*
+Then start Claude Code from that terminal, in your clone of the
+project. Ask: *"Who else is in the riff?"*
+
+Claude Code gets `RIFF_SERVER` only from the terminal that starts it.
+Do not start it from a desktop launcher, or from an IDE that started
+before you added the line. Such a session looks for a riff at
+`127.0.0.1:7878` on the second machine, and it does not find the riff
+of your first machine.
+
+## When riff says the riff has no sign-in
+
+A command can stop with `has no sign-in, but this machine has an old
+sign-in`. The second machine signed in to that riff before. Remove the
+old sign-in, then start your Claude Code sessions again:
+
+```sh
+riff logout
+```
+
+See [When riff says the riff has no
+sign-in](development.md#when-riff-says-the-riff-has-no-sign-in).
+
+## Update riff on two machines
+
+Update both machines to the same riff at the same time.
+
+1. On the first machine, install riff, start its riff again, and add
+   riff to Claude Code:
+
+   ```sh
+   cargo install --locked --git https://github.com/como-technologies/riff riff riff-server
+   riff-server install --listen 0.0.0.0:7878
+   riff connect claude
+   ```
+
+2. On the second machine, do steps 1 and 3 again:
+
+   ```sh
+   cargo install --locked --git https://github.com/como-technologies/riff riff
+   riff connect claude
+   ```
+
+3. The new start of the riff forgets its sessions. Start your Claude
+   Code sessions again, on both machines.

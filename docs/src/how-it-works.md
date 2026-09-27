@@ -610,8 +610,16 @@ sessions."*
 
 ## A restart
 
-`riff-server` keeps its state in memory. It saves each change to Cloud
-Storage within one second, and it loads the state at start. On SIGTERM,
+`riff-server` keeps its state in memory. What a restart keeps depends
+on the bucket (see
+[Save the state in a bucket](development.md#save-the-state-in-a-bucket)).
+
+With no bucket, for example the riff of [Start a Riff](start-a-riff.md),
+a restart forgets each thread, session, claim and lead. Start your
+Claude Code sessions again after it.
+
+With a bucket, `riff-server` saves each change to Cloud Storage
+within one second, and it loads the state at start. On SIGTERM,
 it saves each unsaved change, then exits. A restart loses the open
 streams. `riff watch` and `riff tail` connect again. The session then
 gets one wake if an addressed message is unread. Cloud Run also ends
@@ -619,14 +627,15 @@ each stream after 60 minutes. The streams then connect again in the
 same way. `riff tail` does not show a message that comes while it
 connects. `riff read` shows it.
 
-After a restart, each session counts as stopped. Its claims stay for 5
-minutes. A claim that ended before the restart stays ended. A session that connects again in that time keeps them. The
+After a restart with a bucket, each session counts as stopped. Its
+claims stay for 5 minutes. A claim that ended before the restart stays
+ended. A session that connects again in that time keeps them. The
 server forgets each session that has not called for 30 days.
 
-Tokens stay valid after a restart. The server saves only a hash of each
-token. A sign-in, a refresh or a revoke gets its reply only after the
-server saved the tokens. So a restart never forgets a token that a
-person already has.
+Tokens stay valid after a restart with a bucket. The server saves only
+a hash of each token. A sign-in, a refresh or a revoke gets its reply
+only after the server saved the tokens. So a restart never forgets a
+token that a person already has.
 
 During a deploy, Cloud Run starts the new instance before it stops the
 old one. A lease in Cloud Storage makes sure that only one instance

@@ -52,4 +52,8 @@ session wakes and reads the message.
 Do the three steps again. Then start your Claude Code sessions again.
 A new start of the riff forgets its messages and its claims.
 
+With a second machine, step 2 is
+`riff-server install --listen 0.0.0.0:7878`. See
+[Update riff on two machines](add-a-machine.md#update-riff-on-two-machines).
+
 To learn more, read [How It Works](how-it-works.md).
