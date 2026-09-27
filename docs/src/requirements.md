@@ -240,6 +240,8 @@
 
 - **R12** All code is Rust.
 - **R13** The repository stands alone. It is not part of a larger suite.
+- **R123** The crate audit ignores no advisory. When a dependency has
+  an advisory, we update it, change a feature, or replace it.
 
 ## Open
 
