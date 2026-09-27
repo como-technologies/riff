@@ -97,7 +97,12 @@ enum Command {
     },
     /// Print one line each time a post wakes this session. One watch
     /// runs for each session: a second one stops at once.
-    Watch,
+    Watch {
+        /// Exit after the first wake. For a runner that wakes the
+        /// session when the command exits.
+        #[arg(long)]
+        once: bool,
+    },
     /// Serve the riff tools to an agent session over stdio.
     Mcp,
     /// Remove the sign-in at riff-server from this device. With --all,
@@ -219,13 +224,13 @@ async fn main() -> Result<()> {
             println!("{}", text::released(&thread, &item));
         }
         Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?).await,
-        Command::Watch => {
+        Command::Watch { once } => {
             let me = identity::session(&here, api.base())?;
             let Some(_lock) = lock_watch(&me) else {
                 println!("{}", text::WATCH_RUNS);
                 std::process::exit(1);
             };
-            watch(&api, &me).await
+            watch(&api, &me, once).await
         }
         Command::Mcp => {
             let me = identity::session(&here, api.base())?;
@@ -299,18 +304,24 @@ fn record_session(me: &SessionUri) -> Option<local::Held> {
 async fn tail(api: &Api, thread: &ThreadName) {
     eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let stream = follow(|| api.tail(thread), RETRY);
-    print_each(stream, |tailed| text::message(&tailed.message)).await;
+    print_each(stream, |tailed| text::message(&tailed.message), false).await;
 }
 
-/// Runs until stopped. It connects again when the stream ends (R131).
-async fn watch(api: &Api, me: &riff_core::name::SessionUri) {
+/// Runs until stopped, or with `once` until the first wake (R170). It
+/// connects again when the stream ends (R131).
+async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     let stream = follow(|| api.watch(me), RETRY);
-    print_each(stream, text::wake_line).await;
+    print_each(stream, text::wake_line, once).await;
 }
 
-/// Prints one line for each item. It reports a failed connect on
-/// stderr once, until the next item comes.
-async fn print_each<T>(stream: impl Stream<Item = Result<T>>, line: impl Fn(&T) -> String) {
+/// Prints one line for each item, or with `once` only the first line.
+/// It reports a failed connect on stderr once, until the next item
+/// comes.
+async fn print_each<T>(
+    stream: impl Stream<Item = Result<T>>,
+    line: impl Fn(&T) -> String,
+    once: bool,
+) {
     let mut stream = Box::pin(stream);
     let mut reported = false;
     while let Some(item) = stream.next().await {
@@ -318,6 +329,9 @@ async fn print_each<T>(stream: impl Stream<Item = Result<T>>, line: impl Fn(&T) 
             Ok(item) => {
                 reported = false;
                 println!("{}", line(&item));
+                if once {
+                    return;
+                }
             }
             Err(e) if !reported => {
                 eprintln!(

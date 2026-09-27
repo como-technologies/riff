@@ -49,7 +49,7 @@ Do these steps in order. They need no sign-in and no cloud.
 
 5. Start two Claude Code sessions. They can share a directory: each
    session has its own session ID. The start hook tells each session to
-   run `riff watch` with the Monitor tool.
+   run `riff watch --once` as a background task.
 
 6. In one session, say: *"Post to the other session with riff."* The
    agent finds the other session with `who` and puts its session ID in

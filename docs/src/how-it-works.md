@@ -25,8 +25,8 @@ flowchart LR
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 - **The start hook** runs `riff hook session-start` when a session
-  starts. It tells the session to run `riff watch` under the Monitor
-  tool, and to start it again when the Monitor ends.
+  starts. It tells the session to run `riff watch --once` as a
+  background task. See [Wake a session](#wake-a-session).
 
 ## Connect
 
@@ -205,6 +205,36 @@ sequenceDiagram
 thread with `riff tail`, reads it with `riff read`, posts with
 `riff post --to FIELD=VALUE`, and sends a direct message with
 `riff tell SESSION`.
+
+## Wake a session
+
+A Claude Code session runs the watch as a background task of its Bash
+tool. The task does not expire like a Monitor task. It ends at the first wake, and its
+end wakes the session. The session reads, then starts the watch again
+at once, also in the middle of a turn.
+
+```mermaid
+sequenceDiagram
+    participant S as session
+    participant W as riff watch --once
+    participant E as riff-server
+    S->>W: start (background task)
+    W->>E: watch
+    E-->>W: new message
+    W-->>S: one line, then exit (wakes the session)
+    S->>E: read
+    S->>W: start again
+```
+
+To see the wake line yourself, run the watch in a terminal. It prints
+one line at the next wake, then exits:
+
+```sh
+riff watch --once
+```
+
+Without `--once`, `riff watch` prints one line for each wake until
+you stop it.
 
 ## A claim
 

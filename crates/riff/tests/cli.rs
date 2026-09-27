@@ -37,7 +37,7 @@ fn session_start_hook_adds_the_watch_context() {
         .unwrap();
     assert!(context.contains("riff://mike@pangolin/"), "{context}");
     assert!(context.contains("session=a6cf"));
-    assert!(context.contains("`riff watch` with the Monitor tool"));
+    assert!(context.contains("`riff watch --once` with the Bash tool"));
 }
 
 #[test]

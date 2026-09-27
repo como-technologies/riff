@@ -1,6 +1,7 @@
 //! `riff watch` and `riff tail` connect again when the server ends a
 //! stream (R131). `riff post` tries again while the server replies 503
-//! (R132). A fake server ends each stream after one event.
+//! (R132). `riff watch --once` exits after one wake (R170). A fake
+//! server ends each stream after one event.
 
 use std::convert::Infallible;
 use std::io::{BufRead, BufReader};
@@ -154,6 +155,27 @@ async fn watch_connects_again_when_the_server_ends_the_stream() {
         assert!(line.contains(&format!("(message {seq})")), "{line}");
     }
     assert!(calls.watch.load(Ordering::SeqCst) >= 3);
+}
+
+#[tokio::test]
+async fn watch_once_exits_after_the_first_wake() {
+    let (server, calls) = start_fake().await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut cmd = riff(&server, dir.path(), &["watch", "--once"]);
+
+    let out = tokio::time::timeout(
+        WAIT,
+        tokio::task::spawn_blocking(move || cmd.output().unwrap()),
+    )
+    .await
+    .expect("riff watch --once did not exit")
+    .unwrap();
+
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+    assert!(stdout.contains("(message 1)"), "{stdout}");
+    assert_eq!(calls.watch.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

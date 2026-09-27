@@ -3,22 +3,41 @@
 //! # Design
 //!
 //! A hook cannot call a tool. So the start hook cannot start the watch
-//! itself. It adds context instead, and the session starts the watch
-//! with the Monitor tool (R66).
+//! itself. It adds context instead, and the session starts
+//! `riff watch --once` as a background task of the Bash tool (R66).
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant C as Claude Code
 //!     participant H as riff hook session-start
 //!     participant S as session
-//!     participant W as riff watch
+//!     participant W as riff watch --once
 //!     C->>H: stdin: session_id, source
 //!     H-->>C: stdout: additionalContext
 //!     C->>S: context
-//!     S->>W: Monitor: riff watch
-//!     W-->>S: one line for each wake
-//!     Note over S,W: The Monitor ends after 30 minutes.<br/>The session starts it again (R67).
+//!     S->>W: Bash, run_in_background
+//!     W-->>S: one wake, then exit
+//!     S->>S: read
+//!     S->>W: Bash, run_in_background (R171)
 //! ```
+//!
+//! # Wake sources
+//!
+//! Tested in Claude Code on 2026-09-27:
+//!
+//! | Source | Ends | The session gets |
+//! |---|---|---|
+//! | Monitor tool | after 30 minutes at most | one notice for each line, and a notice at the end |
+//! | Bash with `run_in_background` | when the command exits; a test task ran 20 minutes and more, past the 10-minute limit of a foreground call | one notice when the command exits |
+//!
+//! A notice wakes an idle session. In a turn, it comes with the result
+//! of the next tool call. A Monitor task expires each 30 minutes, and a
+//! busy session often starts it again only at the end of its turn. So
+//! riff uses a background Bash task, which ends only on a wake. The
+//! session reads, then starts the watch again at once. No message is
+//! lost while no watch runs: a new watch wakes the session once if an
+//! addressed message is unread (R49). So the session reads before it
+//! starts the watch again.
 //!
 //! The context depends on the `source` of the start (R68):
 //!
@@ -58,9 +77,6 @@ use serde::Deserialize;
 
 use crate::text::DATA_NOTE;
 
-/// The Monitor timeout for the watch: the maximum that Claude Code allows.
-pub const MONITOR_TIMEOUT_MS: u32 = 1_800_000;
-
 /// Why the session started, as Claude Code gives it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -70,7 +86,7 @@ pub enum Source {
     /// `/clear`. Claude Code gives the session a new session ID, but the
     /// riff session keeps its ID (R168).
     Clear,
-    /// The context was compacted. The Monitor tasks still run.
+    /// The context was compacted. The background tasks still run.
     Compact,
     /// A new session. An unknown source counts as a new session.
     #[default]
@@ -96,10 +112,8 @@ pub fn start_context(uri: Option<&SessionUri>, source: Source, watching: bool) -
         Some(uri) => writeln!(out, "this session is {uri}.").unwrap(),
         None => out.push_str("riff could not find this session. Call the riff whoami tool.\n"),
     }
-    let start = format!(
-        "run `riff watch` with the Monitor tool, with timeout_ms {MONITOR_TIMEOUT_MS} and the \
-         description \"riff wakes\"."
-    );
+    let start = "run `riff watch --once` with the Bash tool, with run_in_background true and \
+                 the description \"riff wakes\".";
     if source == Source::Clear {
         out.push_str(
             "- /clear did not change your riff session. Its session ID and its claims stay. \
@@ -112,8 +126,9 @@ pub fn start_context(uri: Option<&SessionUri>, source: Source, watching: bool) -
         writeln!(out, "- Now {start}").unwrap();
     }
     out.push_str(
-        "- Each line of the watch is a wake. Call the riff read tool with no thread.\n\
-         - When the Monitor ends, start it again.\n",
+        "- When the task ends, call the riff read tool with no thread. Then start the watch \
+         again at once, also in the middle of a turn. When the watch says \"Do not start the \
+         watch again now\", do not start it.\n",
     );
     if matches!(source, Source::Startup | Source::Clear) {
         out.push_str("- To find work, follow the start routine of the riff skill.\n");
@@ -162,11 +177,12 @@ mod tests {
         for source in SOURCES {
             let context = start_context(Some(&uri()), source, false);
             assert!(
-                context.contains("Now run `riff watch` with the Monitor tool"),
+                context.contains("Now run `riff watch --once` with the Bash tool"),
                 "{context}"
             );
-            assert!(context.contains("timeout_ms 1800000"));
-            assert!(context.contains("start it again"));
+            assert!(context.contains("run_in_background true"));
+            assert!(context.contains("start the watch again at once"));
+            assert!(context.contains("middle of a turn"));
             assert!(context.contains(DATA_NOTE));
             assert!(context.contains("session=a6cf"));
         }
@@ -178,7 +194,7 @@ mod tests {
             let context = start_context(Some(&uri()), source, true);
             assert!(context.contains("Keep it."), "{context}");
             assert!(!context.contains("Now run"), "{context}");
-            assert!(context.contains("start it again"));
+            assert!(context.contains("start the watch again at once"));
         }
     }
 

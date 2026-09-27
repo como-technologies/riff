@@ -19,7 +19,7 @@
 //! | File | Gives the session |
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
-//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, selectors, claims and `move`. |
+//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). |
 //!
 //! ```
@@ -263,6 +263,8 @@ mod tests {
             "`tell`",
             "selector",
             "`read` with no thread",
+            "`riff watch --once`",
+            "middle of a turn",
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }

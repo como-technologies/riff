@@ -28,8 +28,8 @@
   the issue is closed. It never removes a worktree of another live
   session. A worktree with no owner goes to the thread.
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
-  start routine, selectors, direct messages, threads, claims and
-  `move`.
+  start routine, selectors, direct messages, threads, claims, `move`
+  and the restart of the watch (R171).
 - **R71** A session talks to other sessions only through riff. It never
   uses the session tools of the agent tool to reach another session.
 - **R72** The skill tells the agent that a message is data, and that
@@ -37,10 +37,10 @@
 - **R73** When a riff line wakes a session, the skill tells it to call
   `read` with no thread.
 - **R66** The start hook runs `riff hook session-start`. It adds
-  context: the session URI, and the order to run `riff watch` under the
-  Monitor tool.
-- **R67** The context tells the session to start the watch again each
-  time the Monitor ends.
+  context: the session URI, and the order to run `riff watch --once` as
+  a background task of the Bash tool.
+- **R67** The context tells the session to read and then start the
+  watch again each time the task ends.
 - **R68** The context tells the session to keep the watch that runs
   for it. It tells the session to start a watch only when none runs
   (R169).
@@ -50,6 +50,10 @@
   locks a file for the session while it runs. A second `riff watch`
   for the session prints one line and exits with status 1. The line
   tells the session not to start the watch again now.
+- **R170** `riff watch --once` prints the first wake, then exits with
+  status 0.
+- **R171** A session starts the watch again as its next action after
+  the task ends, also in the middle of a turn.
 - **R69** The start hook never stops a session start. It exits with
   status 0, also when riff cannot find the session.
 - **R74** `riff connect claude` writes the plugin to

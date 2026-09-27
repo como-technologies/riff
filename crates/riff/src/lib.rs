@@ -8,7 +8,7 @@
 //! | Mode | Job |
 //! |---|---|
 //! | `riff mcp` | Serves the tools in [`mcp`] to one agent session over stdio. |
-//! | `riff watch` | Keeps a watch stream open and prints one line for each wake. |
+//! | `riff watch` | Keeps a watch stream open and prints one line for each wake. With `--once`, it exits after the first wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
@@ -27,9 +27,10 @@
 //!
 //! ## Wake line
 //!
-//! An agent tool wakes a session when a watched command prints a line.
-//! Claude Code does this with its Monitor tool. So `riff watch` prints
-//! exactly one line for each wake and nothing else on stdout. Errors go
+//! An agent tool wakes a session when a watched command prints a line
+//! or exits. Claude Code runs `riff watch --once` as a background task,
+//! and wakes the session when it exits (see [`hook`]). So `riff watch`
+//! prints exactly one line for each wake and nothing else on stdout. Errors go
 //! to stderr. The line tells the agent what to do next:
 //!
 //! See [`text::wake_line`] for the line.

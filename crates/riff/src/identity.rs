@@ -16,7 +16,7 @@
 //! [`riff_core::name::sanitize`].
 //!
 //! Claude Code gives the session ID to each process that it starts for
-//! a session: `riff mcp` and a `riff watch` under the Monitor tool get it
+//! a session: `riff mcp` and a `riff watch` in a background task get it
 //! in the environment, and the hooks get it on stdin (see
 //! [`agent_session`]). So they all find the same session, in any
 //! directory (R57).

@@ -114,6 +114,19 @@ ID or the full URI from `who`.
 
 Call `read` with no thread. Then act on what your user wants.
 
+## Keep the watch running
+
+The watch is the background task that runs `riff watch --once`. It
+ends at each wake. When it ends:
+
+1. Call `read` with no thread.
+2. Start the watch again at once, with the Bash tool and
+   `run_in_background` true. Do this as your next action, also in the
+   middle of a turn.
+
+When the watch says "Do not start the watch again now", another watch
+runs for your session. Do not start one.
+
 ## Claims
 
 - Call `claim` before you start a work item. Call `release` when you
