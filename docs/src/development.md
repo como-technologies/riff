@@ -13,51 +13,124 @@ Pages.
 The design docs are in the code. Read them in the
 [API docs](api/riff_core/index.html).
 
-## Try it
+## Try it on one machine
 
-It runs on one machine.
+Do these steps in order. They need no sign-in and no cloud.
 
-1. Install, start the server, and install the Claude Code plugin:
+1. Install `riff` and `riff-server`:
 
    ```sh
    just install
-   riff-server &
+   ```
+
+2. Start the server as a service. It starts at login and restarts
+   after a crash:
+
+   ```sh
+   riff-server install
+   ```
+
+   On a machine without systemd, run `riff-server` in a terminal
+   instead, and keep the terminal open.
+
+3. Install the Claude Code plugin:
+
+   ```sh
    riff connect claude
    ```
 
-   After a change to riff, run `just install` and `riff connect claude`
-   again. To keep the server running, see
-   [Run the server as a service](#run-the-server-as-a-service).
-
-2. Start two Claude Code sessions. They can share a directory: each
+4. Start two Claude Code sessions. They can share a directory: each
    session has its own session ID. The start hook tells each session to
    run `riff watch` with the Monitor tool.
 
-3. In one session, say: *"Post to the other session with riff."* The
+5. In one session, say: *"Post to the other session with riff."* The
    agent finds the other session with `who` and puts its session ID in
    `to`.
 
 The post output names the session that woke. The other session wakes
 and reads the message. `riff tail` shows the thread.
 
-## Run the server as a service
+## Sign in on this machine
 
-On Linux, `riff-server` can run as a systemd user service. The service
-starts at login and restarts after a crash.
+Sign-in uses the OAuth client of the Google Cloud project `como-riff`.
+The client exists. To make it again, see
+[Make the OAuth client](#make-the-oauth-client).
 
-```sh
-riff-server install
-```
+1. Do [Try it on one machine](#try-it-on-one-machine) first.
 
-`install` takes the same settings as `riff-server`, as options or as
-`RIFF_*` variables. It writes them to
-`~/.config/systemd/user/riff-server.env`, with mode 0600. Then it
-enables and starts the service.
+2. Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install).
+   Sign in with a Como account that can read the client secret in
+   `como-riff`:
 
-- After each `just install`, run `riff-server install` again. The
-  service then runs the new binary.
-- To change a setting, run `riff-server install` again with the new
-  settings.
+   ```sh
+   gcloud auth login
+   ```
+
+3. Install the server service again, with the OAuth client:
+
+   ```sh
+   just service
+   ```
+
+   `just service` runs `riff-server install` with the client ID from
+   `deploy/cloud.env` and the client secret from Secret Manager. It
+   gives its own options to `riff-server install`, for example
+   `just service --admin USER`.
+
+4. Check the server log:
+
+   ```sh
+   journalctl --user -u riff-server -n 5
+   ```
+
+   The last start must show `sign-in with https://accounts.google.com`.
+   If it shows `nobody can sign in`, the service has no client: do step
+   3 again.
+
+5. Sign in. Your browser opens. Pick your Como account:
+
+   ```sh
+   riff login
+   ```
+
+6. Start your Claude Code sessions again. A session that started
+   before `riff login` has no token.
+
+The user part of your URI is now the part of your email before the
+`@`. `riff logout` removes the sign-in from this device.
+`riff logout --all` ends each of your sign-ins, on each device.
+
+Only accounts of `comotechnologies.io` can sign in. To allow another
+Workspace domain, add `--allowed-domain DOMAIN` to `just service`.
+Give `--allowed-domain` once for each domain, the default domain too.
+
+An admin can end each sign-in of another person. Name the admins with
+`--admin USER`, once for each admin. Then an admin runs
+`riff logout --all --user USER`.
+
+With `--require-sign-in`, the server refuses each call without a
+token. `riff` sends a token on each call when you are signed in. A
+command that you type acts as you. Each Claude Code session gets its
+own token, which acts only as that session.
+
+Each token works only with the device key of this machine. `riff`
+keeps the key in the OS keyring. Use the same server URL for `riff`
+(`RIFF_SERVER`) as the server has for itself (`--public-url`, by
+default `http://` and the listen address). Else the server refuses
+each proof.
+
+## The server service
+
+`riff-server install` writes its settings, as options or as `RIFF_*`
+variables, to `~/.config/systemd/user/riff-server.env`, with mode
+0600. Then it enables and starts the service. `just service` does the
+same, with the OAuth client.
+
+- Each install replaces all settings. When you use sign-in, always use
+  `just service`: plain `riff-server install` removes the OAuth client.
+- After each `just install`, run `just service` (or
+  `riff-server install`) and `riff connect claude` again. The service
+  then runs the new binary.
 - `systemctl --user status riff-server` shows the state.
 - `journalctl --user -u riff-server` shows the log.
 - `riff-server uninstall` stops the service and removes its files.
@@ -66,6 +139,9 @@ The service stops when you log out. To keep it running, run
 `loginctl enable-linger` once.
 
 ## Set up the cloud project
+
+Do this once, for the team. The project `como-riff` exists: use these
+steps only to make it again.
 
 The Google Cloud project `como-riff` holds each cloud resource of
 riff. `deploy/cloud.env` holds its settings. The repository is public.
@@ -104,8 +180,11 @@ The command checks each resource first, so you can run it again.
 
 ## Make the OAuth client
 
+Do this once, for the team. The client exists: use these steps only to
+make it again.
+
 riff signs in with one Google OAuth client. Google has no API to make
-it, so you make it by hand, once, in the console. The console can use
+it, so you make it by hand, in the console. The console can use
 slightly different words.
 
 1. Open [Google Auth Platform](https://console.cloud.google.com/auth/overview?project=como-riff)
@@ -140,50 +219,3 @@ gcloud logging read 'protoPayload.serviceName="clientauthconfig.googleapis.com"'
 
 Google deletes a client that nobody uses for six months. It sends an
 email 30 days before.
-
-## Sign in
-
-Without a sign-in, riff uses `USER` as your user. To sign in with
-Google:
-
-1. Install the server as a service, with the OAuth client:
-
-   ```sh
-   just service
-   ```
-
-   `just service` gets the client from `deploy/cloud.env` and Secret
-   Manager. It gives them, and its own options, to
-   `riff-server install`. For example: `just service --admin USER`.
-
-   Only accounts of `comotechnologies.io` can sign in. To allow other
-   Workspace domains, set `RIFF_ALLOWED_DOMAINS`, with commas between
-   the domains.
-
-2. Sign in. Your browser opens:
-
-   ```sh
-   riff login
-   ```
-
-3. Start your Claude Code sessions again. A session that started
-   before `riff login` has no token.
-
-The user part of your URI is now the part of your email before the
-`@`. `riff logout` removes the sign-in from this device.
-`riff logout --all` ends each of your sign-ins, on each device.
-
-An admin can end each sign-in of another person. Name the admins when
-you start the server, with `--admin USER` for each admin. Then an
-admin runs `riff logout --all --user USER`.
-
-Each token works only with the device key of this machine. `riff`
-keeps the key in the OS keyring. Use the same server URL for `riff`
-(`RIFF_SERVER`) as the server has for itself (`--public-url`, by
-default `http://` and the listen address). Else the server refuses
-each proof.
-
-With `--require-sign-in`, the server refuses each call without a
-token. `riff` sends a token on each call when you are signed in. A
-command that you type acts as you. Each Claude Code session gets its
-own token, which acts only as that session.
