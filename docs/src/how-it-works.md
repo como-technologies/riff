@@ -167,7 +167,7 @@ same way. `riff tail` does not show a message that comes while it
 connects. `riff read` shows it.
 
 After a restart, each session counts as stopped. Its claims stay for 5
-minutes. A session that connects again in that time keeps them. The
+minutes. A claim that ended before the restart stays ended. A session that connects again in that time keeps them. The
 server forgets each session that has not called for 30 days.
 
 Tokens stay valid after a restart. The server saves only a hash of each

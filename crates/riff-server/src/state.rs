@@ -48,7 +48,10 @@
 //! [`crate::store`] names the objects in a store.
 //!
 //! - Each change marks the objects that it changes. [`State::changes`]
-//!   gives the marked objects as JSON, and clears the marks.
+//!   gives the marked objects as JSON, and clears the marks. The thread
+//!   objects come before the sessions object. So when only a part of a
+//!   save succeeds, a saved cursor is never after the end of its saved
+//!   thread.
 //! - The open watch streams are not saved. A saved session holds the
 //!   last time that it called, in milliseconds since the Unix epoch.
 //! - [`State::load`] makes a state from the objects. Each session counts
@@ -56,7 +59,12 @@
 //!   [`CLAIM_GRACE`] unless it comes back (R125). A session that has not
 //!   called for [`SESSION_EXPIRY`] is dropped, with its memberships,
 //!   cursors and claims (R126). A cursor of a thread with no object is
-//!   dropped too, so a new thread with the same name starts unread.
+//!   dropped too, so a new thread with the same name starts unread. A
+//!   cursor after the last message of its thread moves back to the last
+//!   message.
+//! - The sessions object holds the time of its save. A claim whose
+//!   holder was stopped for more than [`CLAIM_GRACE`] at that time ended
+//!   before the load. The load drops it (R154).
 //!
 //! # Example
 //!
@@ -159,13 +167,14 @@ struct Stored {
     woken: BTreeSet<Who>,
 }
 
-/// An object of the saved state (R124). See the module docs.
+/// An object of the saved state (R124). See the module docs. Each
+/// thread object sorts before the sessions object.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Object {
-    /// The sessions, with their places, read cursors and claims.
-    Sessions,
     /// One thread, with its members and messages.
     Thread(ThreadName),
+    /// The sessions, with their places, read cursors and claims.
+    Sessions,
 }
 
 impl Object {
@@ -190,6 +199,9 @@ impl Object {
 /// The JSON of the sessions object.
 #[derive(Default, Serialize, Deserialize)]
 struct SavedSessions {
+    /// The time of the save, in milliseconds since the Unix epoch.
+    #[serde(default)]
+    saved_ms: u64,
     sessions: Vec<SavedSession>,
     cursors: Vec<SavedCursor>,
     claims: Vec<SavedClaim>,
@@ -279,10 +291,15 @@ impl State {
             None => SavedSessions::default(),
         };
         let expiry = u64::try_from(SESSION_EXPIRY.as_millis()).unwrap_or(u64::MAX);
+        let grace = u64::try_from(CLAIM_GRACE.as_millis()).unwrap_or(u64::MAX);
         let mut state = State::default();
+        let mut lapsed = BTreeSet::new();
         for s in saved.sessions {
             if now_ms.saturating_sub(s.seen_ms) > expiry {
                 continue;
+            }
+            if saved.saved_ms.saturating_sub(s.seen_ms) > grace {
+                lapsed.insert(s.uri.who().clone());
             }
             let session = Session {
                 place: s.uri.place().clone(),
@@ -301,12 +318,18 @@ impl State {
             state.threads.insert(name, thread);
         }
         for c in saved.cursors {
-            if state.sessions.contains_key(&c.who) && state.threads.contains_key(&c.thread) {
-                state.cursors.insert((c.who, c.thread), c.seq);
+            let last = state
+                .threads
+                .get(&c.thread)
+                .map(|t| t.messages.last().map_or(0, |m| m.message.seq));
+            if let Some(last) = last
+                && state.sessions.contains_key(&c.who)
+            {
+                state.cursors.insert((c.who, c.thread), c.seq.min(last));
             }
         }
         for c in saved.claims {
-            if state.sessions.contains_key(&c.who) {
+            if state.sessions.contains_key(&c.who) && !lapsed.contains(&c.who) {
                 state.claims.insert((c.thread, c.item), c.who);
             }
         }
@@ -672,6 +695,7 @@ impl State {
             })
             .collect();
         SavedSessions {
+            saved_ms: now_ms,
             sessions,
             cursors,
             claims,
@@ -1244,6 +1268,57 @@ mod tests {
     }
 
     #[test]
+    fn a_cursor_after_the_end_of_its_saved_thread_moves_back() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        post(&mut state, &api(), "design", &[], "a");
+        let mut saved = Saved::new();
+        save(&mut state, &mut saved, now, T0);
+        let design = Object::Thread(thread("design"));
+        let old_thread = saved[&design].clone();
+        post(&mut state, &api(), "design", &[], "b");
+        state.read(&tests(), &thread("design"), false, now).unwrap();
+        save(&mut state, &mut saved, now, T0);
+        // Only the sessions object of the second save reached the store.
+        saved.insert(design, old_thread);
+
+        let mut loaded = load(&saved, now, T0);
+        post(&mut loaded, &api(), "design", &[], "new");
+        let unread = loaded
+            .read(&tests(), &thread("design"), false, now)
+            .unwrap();
+        let bodies: Vec<&str> = unread.iter().map(|m| m.body.as_str()).collect();
+        assert_eq!(bodies, ["new"]);
+    }
+
+    #[test]
+    fn a_load_drops_a_claim_that_ended_before_the_save() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.claim(&api(), &repo(), "issue-6", now).unwrap();
+        state.claim(&docs(), &repo(), "issue-7", now).unwrap();
+        // The save is 6 minutes later. The api claim has ended. The docs
+        // session called 1 minute before the save.
+        let minute = Duration::from_secs(60);
+        state.register(&docs(), now + minute * 5);
+        state.register(&tests(), now + minute * 6);
+        let mut saved = Saved::new();
+        save(
+            &mut state,
+            &mut saved,
+            now + minute * 6,
+            T0 + ms(minute * 6),
+        );
+
+        let start = now + minute * 60;
+        let mut loaded = load(&saved, start, T0 + ms(minute * 60));
+        assert!(loaded.uri(api().who()).claims().is_empty());
+        assert_eq!(loaded.uri(docs().who()).claims(), ["issue-7"]);
+        let taken = loaded.claim(&tests(), &repo(), "issue-7", start).unwrap();
+        assert!(!taken.granted);
+    }
+
+    #[test]
     fn changes_gives_each_changed_object_once() {
         let now = Instant::now();
         let mut state = setup(now);
@@ -1252,12 +1327,12 @@ mod tests {
         };
         assert_eq!(
             objects(&mut state),
-            [Object::Sessions, Object::Thread(repo())]
+            [Object::Thread(repo()), Object::Sessions]
         );
         assert!(objects(&mut state).is_empty());
         post(&mut state, &api(), "design", &[], "x");
         let design = Object::Thread(thread("design"));
-        assert_eq!(objects(&mut state), [Object::Sessions, design.clone()]);
+        assert_eq!(objects(&mut state), [design.clone(), Object::Sessions]);
         // A call that only looks changes nothing.
         state.who();
         state.missed(tests().who());
@@ -1266,7 +1341,7 @@ mod tests {
         state.join(&api(), &thread("design"), now);
         assert_eq!(objects(&mut state), [Object::Sessions]);
         state.leave(&api(), &thread("design"), now);
-        assert_eq!(objects(&mut state), [Object::Sessions, design]);
+        assert_eq!(objects(&mut state), [design, Object::Sessions]);
     }
 
     #[test]

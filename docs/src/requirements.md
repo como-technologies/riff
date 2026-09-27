@@ -83,6 +83,8 @@
 - **R125** After a load, each session counts as stopped at the time of
   the load. Its claims end after the grace period (R9), unless it comes
   back.
+- **R154** A load drops each claim whose holder had stopped more than
+  the grace period (R9) before the last save. That claim had ended.
 - **R126** At load, `riff-server` drops each session that it has not
   seen for 30 days.
 - **R127** `riff-server` saves each changed object at most once each
