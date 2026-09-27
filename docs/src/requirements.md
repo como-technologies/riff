@@ -60,6 +60,18 @@
   Storage and loads them at start.
 - **R31** A lost message is acceptable. Sessions and claims are not saved.
   After a restart, sessions register again.
+- **R118** `riff-server` with no command runs in the foreground, in a
+  terminal.
+- **R119** `riff-server install` installs a systemd user service and
+  starts it. The unit runs the binary that ran `install`. It restarts
+  the server after a crash and starts it at login. The settings of
+  `install` go in a file next to the unit, with mode 0600.
+- **R120** `riff-server install` again replaces the unit and the
+  settings, and restarts the service.
+- **R121** `riff-server uninstall` stops and disables the service, and
+  removes the unit and the settings.
+- **R122** When `systemctl --user` does not work, `install` and
+  `uninstall` fail and change nothing.
 - **R32** The token signing key is in Secret Manager.
 - **R33** `riff-server` rejects a token that it does not know. A lost token
   record means the person signs in again.

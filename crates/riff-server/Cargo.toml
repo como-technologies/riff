@@ -29,3 +29,4 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 assert_cmd.workspace = true
 jsonwebtoken = { workspace = true, features = ["use_pem"] }
+tempfile.workspace = true

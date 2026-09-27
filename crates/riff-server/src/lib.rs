@@ -47,6 +47,9 @@
 //!   Each grant needs a DPoP proof; the first pair binds the sign-in to
 //!   its key.
 //!
+//! - `riff-server install` runs the server as a systemd user service.
+//!   See [`service`].
+//!
 //! The server keeps state only in memory. The wire protocol is in
 //! [`riff_core::wire`].
 //!
@@ -61,6 +64,7 @@
 
 pub mod auth;
 pub mod oidc;
+pub mod service;
 pub mod state;
 pub mod token;
 

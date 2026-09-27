@@ -28,6 +28,13 @@ It runs on one machine.
    After a change to riff, run `just install` and `riff connect claude`
    again.
 
+   To run the server as a systemd user service, use
+   `riff-server install` in place of `riff-server &`. It takes the same
+   settings as `riff-server`. After each `just install`, run
+   `riff-server install` again: the service then runs the new binary.
+   `journalctl --user -u riff-server` shows the log.
+   `riff-server uninstall` removes the service.
+
 2. Start two Claude Code sessions. They can share a directory: each
    session has its own session ID. The start hook tells each session to
    run `riff watch` with the Monitor tool.
