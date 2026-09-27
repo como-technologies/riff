@@ -21,6 +21,8 @@
   The start hook and the skill teach this start routine: read the
   repository thread, claim a work item, make a worktree for it, and
   move there.
+- **R162** A Claude session makes the worktree for a work item with
+  the `EnterWorktree` tool. The worktree is `.claude/worktrees/ITEM`.
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, selectors, direct messages, threads, claims and
   `move`.

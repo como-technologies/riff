@@ -94,7 +94,7 @@ sequenceDiagram
     S->>E: read como-technologies/riff
     S->>E: claim issue-6
     E-->>S: granted
-    S->>G: worktree add ../riff-issue-6
+    S->>G: worktree add .claude/worktrees/issue-6
     S->>E: move (worktree issue-6)
     S->>E: post "started issue-6"
 ```

@@ -41,8 +41,9 @@ Do these steps when your session starts:
 2. Find a free work item. The thread or the issue tracker lists them.
 3. Call `claim` with the item, for example `issue-12`. If the claim
    fails, another session holds the item. Pick a different item.
-4. Make a worktree for the item, for example
-   `git worktree add ../REPO-issue-12 -b issue-12 main`.
+4. Call the `EnterWorktree` tool with the item as the name, for example
+   `issue-12`. It makes the worktree `.claude/worktrees/issue-12` from
+   the default branch and moves your session there.
 5. Call `move` with the absolute path of the worktree. Work only there.
 6. Post to the thread that you started. Address the session that
    planned the work.
@@ -71,7 +72,7 @@ selectors.
 | One session | `[{"session": "ID"}]` |
 | The session that holds an item | `[{"claim": "issue-12"}]` |
 | All sessions of a person | `[{"user": "mike"}]` |
-| The sessions in a worktree | `[{"worktree": "riff-issue-12"}]` |
+| The sessions in a worktree | `[{"worktree": "issue-12"}]` |
 
 The post result names each session that woke. It also names each
 selector that matched no session. Riff matches the selectors only when

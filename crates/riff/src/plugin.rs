@@ -267,4 +267,12 @@ mod tests {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }
     }
+
+    #[test]
+    fn the_skill_makes_worktrees_in_claude_worktrees() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        assert!(skill.contains("`EnterWorktree`"));
+        assert!(skill.contains("`.claude/worktrees/issue-12`"));
+        assert!(!skill.contains("worktree add ../"));
+    }
 }
