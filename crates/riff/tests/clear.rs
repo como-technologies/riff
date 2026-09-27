@@ -90,7 +90,7 @@ fn after_clear_each_process_uses_the_id_of_riff_mcp() {
     let context = clear_context(run.path());
     assert!(context.contains("session=old"), "{context}");
     assert!(!context.contains("session=new"), "{context}");
-    assert!(context.contains("claims stay"), "{context}");
+    assert!(context.contains("Your claims are free"), "{context}");
     assert!(context.contains("Now run `riff watch --once`"), "{context}");
 
     // A watch of the old ID runs from before /clear.

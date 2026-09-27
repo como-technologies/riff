@@ -53,10 +53,10 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Alive, Claim, ClaimReply, End, Keys, Kind, Lead, LeadReply, Membership, Message, Post, Posted,
-    Read, ReadReply, Register, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetStatus,
-    SignInConfig, Status, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply,
-    TokenRequest, Wake, WhoReply, WhoRequest,
+    Alive, Claim, ClaimReply, End, Freed, Keys, Kind, Lead, LeadReply, Membership, Message, Post,
+    Posted, Read, ReadReply, Register, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo,
+    SetStatus, SignInConfig, Start, Started, Status, Tailed, ThreadInfo, Threads, ThreadsReply,
+    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -390,6 +390,13 @@ impl Api {
     /// The session ended (R205).
     pub async fn end(&self, me: &SessionUri) -> Result<()> {
         self.call("end", &End { me: me.clone() }).await
+    }
+
+    /// A new start of the session: a new agent process, a resume or a
+    /// `/clear`. Its claims are free at once (01M3JEE1QQCFS5TMZW5N2DAD2D).
+    pub async fn start(&self, me: &SessionUri) -> Result<Vec<Freed>> {
+        let reply: Started = self.call("start", &Start { me: me.clone() }).await?;
+        Ok(reply.freed)
     }
 
     /// Lists the sessions. `all` lists gone sessions too.

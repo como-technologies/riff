@@ -378,6 +378,25 @@ mod tests {
     }
 
     #[test]
+    fn the_skill_picks_up_dropped_work() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "look for the work of an earlier session on the item. See \"Pick up dropped work\"",
+            "## Pick up dropped work",
+            "A new start of a session (a new process, a resume or `/clear`) frees its claims",
+            "git branch -r --list '*issue-12*'",
+            "git worktree list | grep issue-12",
+            "`git reset --hard origin/worktree-issue-12`",
+            "call `EnterWorktree` with its path",
+            "Start again when the earlier work is wrong or too old",
+            "whether you go on or start again, and why",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
+    #[test]
     fn the_skill_teaches_the_pause() {
         let skill = text("riff/skills/riff/SKILL.md");
         let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");

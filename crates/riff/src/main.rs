@@ -12,7 +12,7 @@ use riff::terminal::{Program, Terminal, Tmux};
 use riff::{hook, identity, local, login, mcp, plugin, terminal, text};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, RiffState, Status};
+use riff_core::wire::{Freed, Kind, RiffState, Status};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
@@ -444,12 +444,15 @@ async fn session_start(server: &str) -> String {
         let here = identity::place(&std::env::current_dir().ok()?).ok()?;
         identity::agent(&here, id, api.base()).ok()
     });
-    let (uri, riff) = match uri {
-        Some(uri) => match tokio::time::timeout(hook::STATE_WAIT, start_facts(api, &uri)).await {
-            Ok(Ok((lead, riff))) => (Some(uri.with_lead(lead)), Some(riff)),
-            _ => (Some(uri), None),
-        },
-        None => (None, None),
+    let (uri, riff, freed) = match uri {
+        Some(uri) => {
+            let facts = start_facts(api, &uri, input.source.is_new_start());
+            match tokio::time::timeout(hook::STATE_WAIT, facts).await {
+                Ok(Ok((lead, riff, freed))) => (Some(uri.with_lead(lead)), Some(riff), freed),
+                _ => (Some(uri), None, Vec::new()),
+            }
+        }
+        None => (None, None, Vec::new()),
     };
     let watching = id
         .as_deref()
@@ -460,20 +463,31 @@ async fn session_start(server: &str) -> String {
         input.source,
         watching,
         riff,
+        &freed,
     ))
 }
 
-/// Whether the server names `me` as the lead, and the state of the
-/// riff (01M3JCG48QPCNNTKW34FTR0AMR).
-async fn start_facts(api: Api, me: &SessionUri) -> Result<(bool, RiffState)> {
+/// Whether the server names `me` as the lead, the state of the riff
+/// (01M3JCG48QPCNNTKW34FTR0AMR), and the claims that a new start freed
+/// (01M3JEE1QQCFS5TMZW5N2DAD2D).
+async fn start_facts(
+    api: Api,
+    me: &SessionUri,
+    new_start: bool,
+) -> Result<(bool, RiffState, Vec<Freed>)> {
     let api = api.signed_in(me.who().session())?;
+    let freed = if new_start {
+        api.start(me).await?
+    } else {
+        Vec::new()
+    };
     let riff = api.riff(me).await?;
     let lead = api
         .who(me, false)
         .await?
         .iter()
         .any(|s| s.uri.who() == me.who() && s.uri.lead());
-    Ok((lead, riff))
+    Ok((lead, riff, freed))
 }
 
 /// The status line of the Claude Code session on stdin

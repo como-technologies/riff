@@ -63,7 +63,8 @@ Do these steps when your session starts:
    fails, another session holds the item. Pick a different item.
 4. Read the issue. Find its `Done when:` line: the acceptance criteria.
    If the line is missing, or a session cannot test it, do not start
-   work. Do the steps in "Write acceptance criteria".
+   work. Do the steps in "Write acceptance criteria". Then look for the
+   work of an earlier session on the item. See "Pick up dropped work".
 5. Call the `EnterWorktree` tool with the item as the name, for example
    `issue-12`. It makes the worktree `.claude/worktrees/issue-12` from
    the default branch and moves your session there.
@@ -444,6 +445,31 @@ ends at each wake. When it ends:
 
 When the watch says "Do not start the watch again now", another watch
 runs for your session. Do not start one.
+
+## Pick up dropped work
+
+A new start of a session (a new process, a resume or `/clear`) frees
+its claims. The start context names them. So an item that you claim
+can hold the work of an earlier session, also your own. Before you
+start work on an item, look for that work. Use your item in place of
+`issue-12`:
+
+```sh
+git fetch -q origin
+git branch -r --list '*issue-12*'
+git worktree list | grep issue-12
+```
+
+- A pushed branch, for example `origin/worktree-issue-12`: go on from
+  it. After step 5 of the start routine, in your new worktree, run
+  `git reset --hard origin/worktree-issue-12`, then rebase it on the
+  default branch.
+- A worktree on your machine that no live session uses (see `who`):
+  call `EnterWorktree` with its path in step 5, not a new name.
+- Start again when the earlier work is wrong or too old.
+
+Say in your start post what you found, and whether you go on or start
+again, and why.
 
 ## Claims
 

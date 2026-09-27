@@ -115,7 +115,8 @@
   for it. It tells the session to start a watch only when none runs
   (R169).
 - **R168** After `/clear`, the session keeps its riff session ID, its
-  claims, its threads and its watch (R167). The context says so.
+  lead, its threads and its watch (R167). Its claims are free
+  (01M3JEE1QQCFS5TMZW5N2DAD2D). The context says so.
 - **R169** One `riff watch` runs for each session on a machine. It
   locks a file for the session while it runs. A second `riff watch`
   for the session prints one line and exits with status 1. The line
@@ -378,9 +379,24 @@
 
 - **R8** A new message can wake an idle session.
 - **R9** A claim ends 5 minutes after the last sign of life of its
-  session (R204), unless the session comes back first. A session that
-  waits for its user keeps its claims. A claim ends at once when its
-  session ends (R205).
+  session (R204), unless the same process comes back first, for
+  example after a short network fault. A session that waits for its
+  user keeps its claims. A claim ends at once when its session ends
+  (R205) or starts again (01M3JEE1QQCFS5TMZW5N2DAD2D).
+- **01M3JEE1QQCFS5TMZW5N2DAD2D** A new start of a session is blank: a new
+  agent process, a resume or a `/clear`. The start hook sends a start
+  call, and the claims of the session are free at once. The session
+  keeps its ID (R58, R167, R168), its threads, its read cursors and its
+  lead. A compaction is not a new start.
+- **01M3JEE1SWR05DWQA5WQ8AXFTF** The context of a new start names each claim
+  that the start freed. It tells the session to claim an item again
+  before it goes on with it, and to pick up the earlier work
+  (01M3JEE1W32CMQP8CP2HJ829E7).
+- **01M3JEE1W32CMQP8CP2HJ829E7** When a session takes an item, it looks for the
+  work of an earlier session on the item before it starts: a pushed
+  branch, or a worktree on its machine with no live session. It goes on
+  from that work, or starts again. Its start post says which, and
+  why.
 - **R35** A session has a URI:
   `riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE`.
   It shows who the session is, where it works and what it works on.
@@ -519,13 +535,15 @@
 - **R206** A session is gone when it ended (R205), or when the server
   got no call, no keep-alive and no watch from it for 3 minutes. A gone
   session matches no selector. A direct message to it fails and says
-  that the session is gone. An end frees the claims and the lead of
-  the session at once. After a stop with no end, the claims and the
-  lead end together, 5 minutes after the last sign of life (R9).
+  that the session is gone. An end frees the claims of the session at
+  once. Its lead does not count while it is gone. After a stop with no
+  end, the claims and the lead end together, 5 minutes after the last
+  sign of life (R9).
 - **R207** A call or a keep-alive from a gone session makes it live
   again, with the same ID, threads and read cursors. After a stop with
   no end, it gets back each claim that no other session took. After an
-  end, it has no claims.
+  end, it has no claims. A lead is the lead again, unless another
+  session became the lead (R178).
 - **R182** A session sets its status with `riff status` or the `status`
   tool. A status is the current step of the session, and a reason when
   the session is blocked (`--blocked REASON`). A new status replaces the

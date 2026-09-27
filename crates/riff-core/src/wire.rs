@@ -20,6 +20,7 @@
 //! | `status` | [`SetStatus`] | `null` |
 //! | `alive` | [`Alive`] | `null` |
 //! | `end` | [`End`] | `null` |
+//! | `start` | [`Start`] | [`Started`] |
 //!
 //! `POST /v1/token` is an OAuth 2.1 token endpoint. Its request is a
 //! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
@@ -512,6 +513,28 @@ pub struct LeadReply {
     /// The old lead, when another session was the lead.
     #[serde(default)]
     pub replaced: Option<SessionUri>,
+}
+
+/// `POST /v1/start`: a new start of the session: a new agent process,
+/// a resume or a `/clear` (01M3JEE1QQCFS5TMZW5N2DAD2D). Its claims are free
+/// at once. It keeps its ID, its threads and its lead.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Start {
+    pub me: SessionUri,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Started {
+    /// Each claim that the start freed.
+    #[serde(default)]
+    pub freed: Vec<Freed>,
+}
+
+/// A claim that a new start freed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Freed {
+    pub thread: ThreadName,
+    pub item: String,
 }
 
 /// `POST /v1/riff`: reads the state of the riff. With a `state`, it

@@ -151,6 +151,42 @@ sequenceDiagram
   threads. After a stop with no end, it also gets back each claim that
   no other session took. After an end, it has no claims.
 - `/clear` does not end the session.
+- The lead stays the lead after an end, a resume and `/clear`, unless
+  another session became the lead meanwhile.
+
+### A new start is blank
+
+A session that starts again comes back blank: after `/clear`, after a
+resume, and in a new Claude Code process. It keeps its ID, its threads
+and its lead, but its claims are free at once. The start hook tells
+the session which claims it lost. Another session can take them.
+
+```mermaid
+sequenceDiagram
+    participant C as Claude Code
+    participant H as start hook
+    participant S as riff-server
+    participant B as other session
+    Note over C: /clear, resume or a new process
+    C->>H: start
+    H->>S: start
+    S-->>H: freed: issue-12
+    H-->>C: "This new start freed your claims: issue-12 ..."
+    B->>S: claim issue-12
+    S-->>B: granted
+    B->>B: finds branch worktree-issue-12, goes on from it
+```
+
+A session that takes an item looks for the work of an earlier session
+first: a pushed branch, or a worktree on its machine. It goes on from
+that work, or starts again, and says why. A compaction is not a new
+start: the session keeps its claims.
+
+To see that a new start freed the claims, run this after `/clear`:
+
+```sh
+riff who
+```
 
 The riff plugin runs the end hook for you. To end a session by hand,
 for example one that runs with no plugin, run this in its directory
@@ -256,7 +292,8 @@ riff post --to repo=como-technologies/riff "verify request: issue-6, branch issu
 ## After /clear
 
 `/clear` gives a Claude Code session a new session ID. Riff keeps the
-old ID. The session keeps its claims, its threads and its watch.
+old ID. The session keeps its threads, its lead and its watch. Its
+claims are free: see [A new start is blank](#a-new-start-is-blank).
 
 ```mermaid
 sequenceDiagram
@@ -287,7 +324,7 @@ sequenceDiagram
 - One `riff watch` runs for each session. A second watch for the same
   session stops at once and says why.
 
-To see that the session is in the riff one time, with its claims,
+To see that the session is in the riff one time, with no claims,
 run:
 
 ```sh

@@ -125,8 +125,8 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Keys, Lead, LeadReply,
     Membership, Post, Posted, Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, Riff,
-    RiffReply, ServerMetadata, SetStatus, SignInConfig, TOKEN_EXCHANGE, Tailed, Threads,
-    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    RiffReply, ServerMetadata, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed,
+    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -657,6 +657,7 @@ impl Service {
             .route("/v1/status", post(status))
             .route("/v1/alive", post(alive))
             .route("/v1/end", post(end))
+            .route("/v1/start", post(start))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
@@ -724,6 +725,17 @@ async fn end(
 ) -> Reply<()> {
     acts_as(&s, caller, &r.me)?.end(&r.me, Instant::now());
     Ok(Json(()))
+}
+
+/// A new start of the session: its claims are free at once, and its
+/// lead stays (01M3JEE1QQCFS5TMZW5N2DAD2D).
+async fn start(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<Start>,
+) -> Reply<Started> {
+    let freed = acts_as(&s, caller, &r.me)?.start(&r.me, Instant::now());
+    Ok(Json(Started { freed }))
 }
 
 async fn who(

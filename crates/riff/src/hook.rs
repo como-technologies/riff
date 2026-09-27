@@ -43,10 +43,15 @@
 //!
 //! | Source | The session |
 //! |---|---|
-//! | `startup` | Follows the start routine (R54, R166). |
-//! | `resume` | Continues. |
-//! | `clear` | Keeps its riff session ID and its claims (R168). Follows the start routine. |
-//! | `compact` | Continues. |
+//! | `startup` | A new start. Follows the start routine (R54, R166). |
+//! | `resume` | A new start. Continues, and claims again what it goes on with. |
+//! | `clear` | A new start. Keeps its riff session ID and its lead (R168). Follows the start routine. |
+//! | `compact` | Continues, with its claims. |
+//!
+//! At a new start, the hook sends the start call: the claims of the
+//! session are free at once (01M3JEE1QQCFS5TMZW5N2DAD2D). The context names each
+//! freed claim, and points to "Pick up dropped work" in the skill
+//! (01M3JEE1SWR05DWQA5WQ8AXFTF).
 //!
 //! The context also depends on the state of the riff
 //! (01M3JCG48QPCNNTKW34FTR0AMR). The hook reads it from the server, and
@@ -73,8 +78,8 @@
 //!
 //! let input: StartInput = serde_json::from_str(r#"{"session_id":"a6cf","source":"clear"}"#)?;
 //! assert_eq!(input.source, Source::Clear);
-//! let context = riff::hook::start_context(None, input.source, true, None);
-//! assert!(context.contains("claims stay"));
+//! let context = riff::hook::start_context(None, input.source, true, None, &[]);
+//! assert!(context.contains("claims are free"));
 //! assert!(context.contains("Keep it."));
 //! assert!(!context.contains("TaskStop"));
 //! # Ok::<(), serde_json::Error>(())
@@ -83,7 +88,7 @@
 use std::fmt::Write;
 
 use riff_core::name::SessionUri;
-use riff_core::wire::RiffState;
+use riff_core::wire::{Freed, RiffState};
 use serde::Deserialize;
 
 /// The longest wait of the start hook for the state of the riff.
@@ -141,6 +146,22 @@ pub enum Source {
     Startup,
 }
 
+impl Source {
+    /// True for a new start: a new agent process, a resume or a
+    /// `/clear`. A compaction goes on with the same process and context
+    /// (01M3JEE1QQCFS5TMZW5N2DAD2D).
+    ///
+    /// ```
+    /// use riff::hook::Source;
+    ///
+    /// assert!(Source::Clear.is_new_start());
+    /// assert!(!Source::Compact.is_new_start());
+    /// ```
+    pub fn is_new_start(self) -> bool {
+        self != Source::Compact
+    }
+}
+
 /// The part of the SessionStart hook input that riff uses.
 #[derive(Debug, Default, Deserialize)]
 pub struct StartInput {
@@ -154,15 +175,16 @@ pub struct StartInput {
 /// The context that the start hook adds. `uri` is the session, when the
 /// hook found it. `watching` is true when a watch runs for the session.
 /// `riff` is the state of the riff, when the hook could read it.
+/// `freed` holds each claim that this new start freed.
 ///
 /// ```
 /// use riff::hook::{Source, start_context};
 /// use riff_core::wire::RiffState;
 ///
-/// let paused = start_context(None, Source::Startup, false, Some(RiffState::Paused));
+/// let paused = start_context(None, Source::Startup, false, Some(RiffState::Paused), &[]);
 /// assert!(paused.contains("The riff is paused. Claim nothing."));
 /// assert!(!paused.contains("Pick a free item"));
-/// let running = start_context(None, Source::Startup, false, Some(RiffState::Running));
+/// let running = start_context(None, Source::Startup, false, Some(RiffState::Running), &[]);
 /// assert!(running.contains("Pick a free item yourself"));
 /// ```
 pub fn start_context(
@@ -170,6 +192,7 @@ pub fn start_context(
     source: Source,
     watching: bool,
     riff: Option<RiffState>,
+    freed: &[Freed],
 ) -> String {
     let mut out = String::from("riff: ");
     match uri {
@@ -180,9 +203,22 @@ pub fn start_context(
                  the description \"riff wakes\".";
     if source == Source::Clear {
         out.push_str(
-            "- /clear did not change your riff session. Its session ID and its claims stay. \
-             The riff whoami tool shows them.\n",
+            "- /clear did not change your riff session ID or your lead. Your claims are free: \
+             a new start is blank. The riff whoami tool shows your URI.\n",
         );
+    }
+    if !freed.is_empty() {
+        let items: Vec<String> = freed
+            .iter()
+            .map(|f| format!("{} in {}", f.item, f.thread))
+            .collect();
+        writeln!(
+            out,
+            "- This new start freed your claims: {}. Another session can take them. To go on \
+             with one, claim it again, then see \"Pick up dropped work\" in the riff skill.",
+            items.join(", ")
+        )
+        .unwrap();
     }
     if watching {
         out.push_str("- A task runs `riff watch` for this session. Keep it.\n");
@@ -267,7 +303,7 @@ mod tests {
     #[test]
     fn each_source_starts_the_watch_when_none_runs() {
         for source in SOURCES {
-            let context = start_context(Some(&uri()), source, false, None);
+            let context = start_context(Some(&uri()), source, false, None, &[]);
             assert!(
                 context.contains("Now run `riff watch --once` with the Bash tool"),
                 "{context}"
@@ -283,7 +319,7 @@ mod tests {
     #[test]
     fn each_source_keeps_a_watch_that_runs() {
         for source in SOURCES {
-            let context = start_context(Some(&uri()), source, true, None);
+            let context = start_context(Some(&uri()), source, true, None, &[]);
             assert!(context.contains("Keep it."), "{context}");
             assert!(!context.contains("Now run"), "{context}");
             assert!(context.contains("start the watch again at once"));
@@ -294,19 +330,43 @@ mod tests {
     fn no_source_stops_a_watch() {
         for source in SOURCES {
             for watching in [false, true] {
-                assert!(!start_context(None, source, watching, None).contains("TaskStop"));
+                assert!(!start_context(None, source, watching, None, &[]).contains("TaskStop"));
             }
         }
     }
 
     #[test]
-    fn clear_keeps_the_session_and_its_claims() {
-        let context = start_context(Some(&uri()), Source::Clear, true, None);
-        assert!(context.contains("did not change your riff session"));
-        assert!(context.contains("claims stay"));
+    fn clear_keeps_the_id_and_the_lead_and_frees_the_claims() {
+        let context = start_context(Some(&uri()), Source::Clear, true, None, &[]);
+        assert!(context.contains("did not change your riff session ID or your lead"));
+        assert!(context.contains("Your claims are free"));
         assert!(context.contains("whoami"));
         for source in [Source::Startup, Source::Resume, Source::Compact] {
-            assert!(!start_context(None, source, true, None).contains("claims stay"));
+            assert!(!start_context(None, source, true, None, &[]).contains("claims are free"));
+        }
+    }
+
+    #[test]
+    fn a_new_start_names_each_freed_claim() {
+        let freed = [Freed {
+            thread: "como-technologies/riff".parse().unwrap(),
+            item: "issue-12".into(),
+        }];
+        for source in [Source::Startup, Source::Resume, Source::Clear] {
+            let context = start_context(Some(&uri()), source, true, None, &freed);
+            assert!(
+                context.contains("freed your claims: issue-12 in como-technologies/riff"),
+                "{context}"
+            );
+            assert!(context.contains("Pick up dropped work"), "{context}");
+        }
+        assert!(!start_context(Some(&uri()), Source::Resume, true, None, &[]).contains("freed"));
+    }
+
+    #[test]
+    fn only_a_compaction_is_not_a_new_start() {
+        for source in SOURCES {
+            assert_eq!(source.is_new_start(), source != Source::Compact);
         }
     }
 
@@ -315,7 +375,7 @@ mod tests {
 
     #[test]
     fn new_sessions_in_a_running_riff_get_the_start_routine() {
-        let context = |source| start_context(None, source, false, RUNNING);
+        let context = |source| start_context(None, source, false, RUNNING, &[]);
         assert!(context(Source::Startup).contains("start routine"));
         assert!(context(Source::Startup).contains("Pick a free item yourself"));
         assert!(context(Source::Clear).contains("start routine"));
@@ -326,7 +386,7 @@ mod tests {
     #[test]
     fn a_new_session_in_a_paused_riff_waits_and_says_hello() {
         for source in [Source::Startup, Source::Clear] {
-            let context = start_context(Some(&uri()), source, false, PAUSED);
+            let context = start_context(Some(&uri()), source, false, PAUSED, &[]);
             assert!(context.contains("Claim nothing."), "{context}");
             assert!(context.contains("the session `lead`"), "{context}");
             assert!(context.contains("waiting: the riff is paused"), "{context}");
@@ -337,7 +397,7 @@ mod tests {
     #[test]
     fn the_lead_in_a_paused_riff_tells_its_user() {
         let lead = uri().with_lead(true);
-        let context = start_context(Some(&lead), Source::Startup, false, PAUSED);
+        let context = start_context(Some(&lead), Source::Startup, false, PAUSED, &[]);
         assert!(
             context.contains("You are the lead: tell your user"),
             "{context}"
@@ -349,7 +409,7 @@ mod tests {
     #[test]
     fn a_session_that_continues_in_a_paused_riff_stops() {
         for source in [Source::Resume, Source::Compact] {
-            let context = start_context(Some(&uri()), source, true, PAUSED);
+            let context = start_context(Some(&uri()), source, true, PAUSED, &[]);
             assert!(context.contains("Stop at your next step"), "{context}");
             assert!(!context.contains("start routine"), "{context}");
         }
@@ -357,18 +417,20 @@ mod tests {
 
     #[test]
     fn an_unknown_state_asks_for_whoami_before_work() {
-        let context = start_context(Some(&uri()), Source::Startup, false, None);
+        let context = start_context(Some(&uri()), Source::Startup, false, None, &[]);
         assert!(context.contains("could not read the state"), "{context}");
         assert!(
             context.contains("When the riff is running, follow"),
             "{context}"
         );
-        assert!(!start_context(None, Source::Resume, false, None).contains("state of the riff"));
+        assert!(
+            !start_context(None, Source::Resume, false, None, &[]).contains("state of the riff")
+        );
     }
 
     #[test]
     fn no_uri_asks_for_whoami() {
-        assert!(start_context(None, Source::Startup, false, None).contains("whoami"));
+        assert!(start_context(None, Source::Startup, false, None, &[]).contains("whoami"));
     }
 
     #[test]

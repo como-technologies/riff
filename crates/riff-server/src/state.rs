@@ -45,14 +45,18 @@
 //!   (R164, R206). `who` hides a gone session, unless the caller asks
 //!   for all sessions. A gone session matches no selector, and a direct
 //!   message to it fails (R206).
-//! - An end frees the claims and the lead of the session at once. A
-//!   session that stops with no end holds its claims and its lead for
-//!   [`CLAIM_GRACE`] after its last sign of life, also while it is gone
-//!   (R9, R206).
+//! - An end frees the claims of the session at once. Its lead does not
+//!   count while it is gone. A session that stops with no end holds its
+//!   claims and its lead for [`CLAIM_GRACE`] after its last sign of
+//!   life, also while it is gone (R9, R206).
+//! - [`State::start`] is a new start of a session: a new agent process,
+//!   a resume or a `/clear`. It frees the claims of the session at once,
+//!   and keeps its lead (01M3JEE1QQCFS5TMZW5N2DAD2D).
 //! - A call or a keep-alive from a gone session makes it live again, with
 //!   the same ID, threads and cursors. After a stop with no end, it gets
 //!   back each claim that no other session took. After an end, it has no
-//!   claims (R207).
+//!   claims. A lead is the lead again, unless another session became
+//!   the lead (R207).
 //! - [`State::set_status`] keeps the last status of a session, with the
 //!   time that it was set. `who` shows the status and its age (R182,
 //!   R184).
@@ -154,7 +158,7 @@ use std::time::{Duration, Instant};
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ClaimReply, Keys, LeadReply, Message, Post, RiffReply, RiffState, SessionInfo, Status,
+    ClaimReply, Freed, Keys, LeadReply, Message, Post, RiffReply, RiffState, SessionInfo, Status,
     StatusInfo, Tailed, ThreadInfo, Wake,
 };
 use serde::{Deserialize, Serialize};
@@ -647,8 +651,10 @@ impl State {
     }
 
     /// Records that `me` ended (R205, R206). The session is gone at once.
-    /// Its claims and its lead are free at once. An unknown session
-    /// stays unknown. A later call or keep-alive brings it back.
+    /// Its claims are free at once. Its lead does not count while it is
+    /// gone, and counts again when it comes back, unless another session
+    /// became the lead (R207). An unknown session stays unknown. A later
+    /// call or keep-alive brings it back.
     ///
     /// ```
     /// use std::time::Instant;
@@ -679,8 +685,49 @@ impl State {
         session.last_seen = now;
         session.seen_before_load = None;
         self.claims.retain(|_, holder| holder != who);
-        self.leads.retain(|_, lead| lead != who);
         self.changed.insert(Object::Sessions);
+    }
+
+    /// A new start of `me`: a new agent process, a resume or a `/clear`
+    /// (01M3JEE1QQCFS5TMZW5N2DAD2D). The session is live, with its ID,
+    /// threads, cursors and lead. Each of its claims is free at once. It
+    /// gives the claims that it freed.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::RiffState;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
+    /// let thread = mike.default_thread().unwrap();
+    /// state.claim(&mike, &thread, "issue-12", now).unwrap();
+    ///
+    /// let freed = state.start(&mike, now);
+    /// assert_eq!(freed[0].item, "issue-12");
+    /// let me = state.uri(mike.who(), now);
+    /// assert!(me.claims().is_empty());
+    /// assert!(me.lead(), "the lead stays the lead");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn start(&mut self, me: &SessionUri, now: Instant) -> Vec<Freed> {
+        let who = self.arrive(me, now);
+        let mut freed = Vec::new();
+        self.claims.retain(|(thread, item), holder| {
+            let mine = *holder == who;
+            if mine {
+                freed.push(Freed {
+                    thread: thread.clone(),
+                    item: item.clone(),
+                });
+            }
+            !mine
+        });
+        freed
     }
 
     /// Each known session with its URI now, whether it is live, and the
@@ -1732,6 +1779,32 @@ mod tests {
         assert!(!is_lead(&state, &api(), now));
         let taken = state.claim(&docs(), &repo(), "issue-12", now).unwrap();
         assert!(taken.granted);
+        // A resume brings the session back as the lead, with no claims.
+        state.start(&api(), now);
+        assert!(is_lead(&state, &api(), now));
+        assert!(state.uri(api().who(), now).claims().is_empty());
+    }
+
+    #[test]
+    fn a_new_start_frees_the_claims_and_keeps_the_lead_and_the_threads() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.watch_started(&api(), now);
+        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        state
+            .claim(&api(), &thread("api-v2"), "issue-7", now)
+            .unwrap();
+        post(&mut state, &tests(), "como-technologies/riff", &[], "one");
+
+        let freed = state.start(&api(), now);
+        let items: Vec<&str> = freed.iter().map(|f| f.item.as_str()).collect();
+        assert_eq!(items, ["issue-7", "issue-12"]);
+        assert!(state.uri(api().who(), now).claims().is_empty());
+        assert!(is_lead(&state, &api(), now));
+        assert_eq!(state.read(&api(), &repo(), false, now).unwrap().len(), 1);
+        let taken = state.claim(&docs(), &repo(), "issue-12", now).unwrap();
+        assert!(taken.granted, "the item is free at once");
+        assert!(state.start(&api(), now).is_empty());
     }
 
     #[test]
