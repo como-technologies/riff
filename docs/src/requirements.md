@@ -135,6 +135,13 @@
   certificates. It runs as a user that is not root.
 - **R151** Cloud Build builds the image as its own service account.
   That account can only build and store images.
+- **R160** CI deploys `riff-server`. Each push to `main` that changes
+  the server builds the image in CI, pushes it to the image repository
+  of the project, and deploys it, after the gate passes.
+- **R161** CI signs in to Google Cloud with the OIDC token of GitHub.
+  No key exists. Only the `main` branch of the repository can sign in.
+  The deploy account can push images, deploy the service, and run it
+  as `riff-server`.
 - **R152** Cloud Run lets each caller in. `riff-server` checks each
   token itself (R5).
 - **R143** The Google Cloud project `como-riff` holds each cloud

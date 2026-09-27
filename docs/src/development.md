@@ -285,27 +285,34 @@ email 30 days before.
 Do [Set up the cloud project](#set-up-the-cloud-project) and
 [Make the OAuth client](#make-the-oauth-client) first.
 
-Cloud Run serves riff at `riff.comotechnologies.io`. Google must know
-that you own the domain. Do this once. The first command lists the
-domains that you own. If `comotechnologies.io` is not in the list, the
-second command opens Search Console, where you add it:
+CI deploys riff. Each push to `main` that changes the server builds
+the image and deploys it, after the gate passes. The job signs in to
+Google Cloud from GitHub with no key. See the deploys:
 
 ```sh
-gcloud domains list-user-verified
-gcloud domains verify comotechnologies.io
+gh run list --workflow CI --branch main
 ```
 
-Build the image and deploy it:
+### Deploy by hand
+
+Cloud Build builds the image from `Dockerfile`. Cloud Run then runs one
+instance of the service `riff-server`, with sign-in:
 
 ```sh
 just deploy
 ```
 
-Cloud Build builds the image from `Dockerfile`. Cloud Run then runs one
-instance of the service `riff-server`, with sign-in. The first deploy
-also maps the domain to the service. gcloud then shows DNS records. Add
-them at the DNS host of `comotechnologies.io`. Google then makes the
-certificate. That can take some hours.
+### Map the domain
+
+Cloud Run serves riff at `riff.comotechnologies.io`. Do this once.
+
+1. Google must know that you own the domain. In
+   [Search Console](https://search.google.com/search-console), add a
+   **Domain** property `comotechnologies.io`, and verify it.
+2. At the DNS host of `comotechnologies.io`, add a CNAME record: name
+   `riff`, value `ghs.googlehosted.com`.
+3. Run `just deploy`. It maps the domain to the service once. Google
+   then makes the certificate. That can take some hours.
 
 ### Check the service
 

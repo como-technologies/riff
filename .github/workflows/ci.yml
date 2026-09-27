@@ -38,6 +38,75 @@ jobs:
       - name: CI gate
         run: just ci
 
+  deploy:
+    # A push to main that changes the server builds the image and deploys
+    # it to Cloud Run (R160). The job signs in to Google Cloud with the
+    # OIDC token of GitHub; no key exists (R161). One deploy runs at a
+    # time; a newer push waits for it.
+    name: Deploy
+    needs: gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Find server changes
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          paths="crates/riff-server crates/riff-core Cargo.toml Cargo.lock Dockerfile rust-toolchain.toml deploy"
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null && git diff --quiet "$BEFORE" HEAD -- $paths; then
+            echo "server=false" >> "$GITHUB_OUTPUT"
+            echo "No server change: no deploy."
+          else
+            echo "server=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Read the cloud settings
+        if: steps.changed.outputs.server == 'true'
+        run: |
+          grep -E '^[A-Z_]+=' deploy/cloud.env >> "$GITHUB_ENV"
+          . deploy/cloud.env
+          echo "IMAGE=$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$GITHUB_SHA" >> "$GITHUB_ENV"
+
+      - uses: google-github-actions/auth@v3
+        if: steps.changed.outputs.server == 'true'
+        with:
+          workload_identity_provider: projects/${{ env.CLOUD_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: ${{ env.CLOUD_DEPLOY_ACCOUNT }}@${{ env.CLOUD_PROJECT }}.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v3
+        if: steps.changed.outputs.server == 'true'
+
+      - name: Let Docker push to the image repository
+        if: steps.changed.outputs.server == 'true'
+        run: gcloud auth configure-docker "$CLOUD_REGION-docker.pkg.dev" --quiet
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.changed.outputs.server == 'true'
+
+      - uses: docker/build-push-action@v7
+        if: steps.changed.outputs.server == 'true'
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy
+        if: steps.changed.outputs.server == 'true'
+        run: deploy/deploy.sh --image "$IMAGE"
+
   audit:
     # A separate job, so a new advisory cannot hide a code failure (and the
     # reverse). The weekly schedule runs only this job.
