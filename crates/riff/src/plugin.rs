@@ -19,7 +19,7 @@
 //! | File | Gives the session |
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
-//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
+//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). |
 //!
 //! ```
@@ -66,6 +66,24 @@ macro_rules! embed {
 /// let check = skill.find("Find its `Done when:` line").unwrap();
 /// assert!(skill.find("Call `claim`").unwrap() < check);
 /// assert!(check < skill.find("Call the `EnterWorktree` tool").unwrap());
+/// ```
+///
+/// The skill tells a session to take its work from the current wave
+/// (R166). Only its part "Waves on GitHub" names the objects of the
+/// forge that hold a wave (R222):
+///
+/// ```
+/// let (_, skill) = riff::plugin::FILES
+///     .iter()
+///     .find(|(path, _)| path.ends_with("SKILL.md"))
+///     .unwrap();
+/// let step = skill.find("2. Find a free work item").unwrap();
+/// assert!(skill[step..].starts_with("2. Find a free work item: an open issue of the current wave"));
+/// let forge = skill.find("### Waves on GitHub").unwrap();
+/// let end = forge + skill[forge..].find("\n## ").unwrap();
+/// assert!(!skill[..forge].contains("milestone"));
+/// assert!(skill[forge..end].contains("milestone"));
+/// assert!(!skill[end..].contains("milestone"));
 /// ```
 pub const FILES: &[(&str, &str)] = &[
     embed!(".claude-plugin/marketplace.json"),
@@ -310,6 +328,55 @@ mod tests {
         }
         assert!(!skill.contains("branch -D"));
         assert!(!skill.contains("--force"));
+    }
+
+    #[test]
+    fn the_skill_teaches_waves() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "## Waves",
+            "The current wave is the open wave with the lowest number",
+            "The next wave is the open wave after it",
+            "an open issue of the current wave",
+            "take an item of the next wave whose needs are merged",
+            "Never take an item whose needs are open",
+            "When the repository has no waves",
+            "`Needs:` line",
+            "`Merged in COMMIT`",
+            "A wave ends when each of its items is merged",
+            "`tell` the lead",
+            "### Plan the waves",
+            "Do these steps only when you are the lead",
+            "Look for open items with no wave",
+            "Each item is in a later wave than each of its needs",
+            "No item blocks or breaks the other work of its wave",
+            "the last number plus one",
+            "what it needs, and what needs it",
+            "end the wave",
+            "### Waves on GitHub",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+        assert!(!skill.contains("milestones do not set the order"));
+    }
+
+    #[test]
+    fn the_waves_on_github_give_a_command_for_each_step() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let forge = &skill[skill.find("### Waves on GitHub").unwrap()..];
+        let forge = &forge[..forge.find("\n## ").unwrap()];
+        for command in [
+            "`gh api repos/OWNER/REPO/milestones --jq",
+            "`gh issue list --milestone \"Wave 2\"`",
+            "`gh issue list --search no:milestone`",
+            "`gh api repos/OWNER/REPO/milestones -f title=\"Wave 6\"`",
+            "`gh issue edit 12 --milestone \"Wave 3\"`",
+            "`gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed`",
+        ] {
+            assert!(forge.contains(command), "no {command:?} in {forge}");
+        }
+        assert!(!forge.contains("\\|"), "a table cell escapes a pipe");
     }
 
     #[test]

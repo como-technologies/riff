@@ -16,10 +16,6 @@ The book in `docs/src/` holds the requirements and the big picture.
   reasoning.
 - No users yet. Change any interface freely. No compatibility shims.
 - Work on `main`, or fast-forward a local branch into it.
-- Each work item is a GitHub issue in the milestone of its wave:
-  `Wave 1`, `Wave 2` and so on. The current wave is the open wave with
-  the lowest number. Take a free item from the current wave. When it
-  has none, take an item from the next wave whose needs are merged.
 
 ## User docs (STRONG REQUIREMENT)
 

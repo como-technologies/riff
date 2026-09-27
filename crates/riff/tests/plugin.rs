@@ -156,6 +156,44 @@ fn connect_writes_the_skill_with_the_verify_flow() {
 }
 
 #[test]
+fn connect_writes_the_skill_with_the_waves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    connect(&bin, tmp.path(), tmp.path()).success();
+    let skill = tmp
+        .path()
+        .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
+    let skill = std::fs::read_to_string(skill).unwrap();
+    let pos = |text: &str| {
+        skill
+            .find(text)
+            .unwrap_or_else(|| panic!("no {text:?} in {skill}"))
+    };
+
+    // Start step 2 takes an item of the current wave, before the claim.
+    let step = pos("2. Find a free work item: an open issue of the current wave");
+    let claim = pos("3. Call `claim` with the item");
+    assert!(step < claim);
+
+    // The concept comes first, then the work of the lead, then the forge.
+    let waves = pos("## Waves\n");
+    let lead = pos("### Plan the waves");
+    let forge = pos("### Waves on GitHub");
+    let next = pos("## Write acceptance criteria");
+    assert!(claim < waves && waves < lead && lead < forge && forge < next);
+    for (i, text) in [
+        (
+            waves,
+            "The current wave is the open wave with the lowest number.",
+        ),
+        (lead, "Do these steps only when you are the lead."),
+        (forge, "A wave is a milestone named `Wave N`."),
+    ] {
+        assert!(skill[i..].contains(text), "no {text:?} in {skill}");
+    }
+}
+
+#[test]
 fn connect_says_when_it_removed_the_old_entry() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = fake_claude(tmp.path(), 0);
