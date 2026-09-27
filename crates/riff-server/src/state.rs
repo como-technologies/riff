@@ -985,6 +985,10 @@ impl State {
     /// signed message has `lead=true` only when `me` has it, and a signed
     /// post with the lead mark from a session that is not the lead is
     /// refused (R198).
+    ///
+    /// A signed post with the signature of a message in the thread is a
+    /// copy, and is refused. So a session gets each request of its lead
+    /// once (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
     pub fn post(&mut self, post: Post, now: Instant, at_ms: u64) -> Result<Delivery, String> {
         let Post {
             me,
@@ -1012,6 +1016,18 @@ impl State {
             Some(thread) => thread,
             None => ThreadName::direct(&from, &self.direct_target(&from, &to, now)?),
         };
+        if let Some(sig) = &sig
+            && let Some(copy) = self.threads.get(&thread).and_then(|t| {
+                t.messages
+                    .iter()
+                    .find(|m| m.message.sig.as_ref() == Some(sig))
+            })
+        {
+            return Err(format!(
+                "the post is a copy of message {}: each signed message comes once",
+                copy.message.seq
+            ));
+        }
         self.member(&from, &thread);
         let mut woken = BTreeSet::new();
         let mut unmatched = Vec::new();
@@ -2358,23 +2374,61 @@ mod tests {
         let now = Instant::now();
         let mut state = setup(now);
         let repo = Some(thread("como-technologies/riff"));
-        let signed = |me: SessionUri| Post {
-            sig: Some("checked by the caller".into()),
+        let signed = |me: SessionUri, sig: &str| Post {
+            sig: Some(sig.into()),
             ..Post::new(&me, repo.clone(), vec![], "merge now")
         };
 
         // docs is not the lead, so it cannot sign the lead mark.
-        let error = state.post(signed(lead(docs())), now, 0).err().unwrap();
+        let error = state
+            .post(signed(lead(docs()), "s1"), now, 0)
+            .err()
+            .unwrap();
         assert!(error.contains("not the lead"), "{error}");
 
         // api is the lead. Its message has the mark only when it signed it.
-        let d = state.post(signed(lead(api())), now, 0).unwrap();
+        let d = state.post(signed(lead(api()), "s2"), now, 0).unwrap();
         assert!(d.tailed.message.from.lead());
-        let d = state.post(signed(api()), now, 0).unwrap();
+        let d = state.post(signed(api(), "s3"), now, 0).unwrap();
         assert!(!d.tailed.message.from.lead());
         // Without a signature, the mark comes from the server.
         let d = state.post(Post::new(&api(), repo.clone(), vec![], "x"), now, 0);
         assert!(d.unwrap().tailed.message.from.lead());
+    }
+
+    /// 01M3JEJVXXEPPNGT3FY4ZSFCWZ
+    #[test]
+    fn a_copy_of_a_signed_message_is_refused() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let repo = Some(thread("como-technologies/riff"));
+        let request = Post {
+            sig: Some("the signature of the lead".into()),
+            ..Post::new(
+                &lead(api()),
+                repo.clone(),
+                vec![],
+                "request: claim issue-12",
+            )
+        };
+        let first = state.post(request.clone(), now, 0).unwrap();
+        let error = state.post(request, now, 0).err().unwrap();
+        assert!(
+            error.contains(&format!("a copy of message {}", first.tailed.message.seq)),
+            "{error}"
+        );
+        // A new message with its own signature goes through.
+        let again = Post {
+            sig: Some("a new signature".into()),
+            ..Post::new(
+                &lead(api()),
+                repo.clone(),
+                vec![],
+                "request: claim issue-12",
+            )
+        };
+        let second = state.post(again, now, 0).unwrap();
+        assert_eq!(second.tailed.message.seq, first.tailed.message.seq + 1);
     }
 
     #[test]

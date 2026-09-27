@@ -312,3 +312,47 @@ async fn errors_come_back_as_tool_errors() {
     assert!(is_error);
     assert!(text.contains("nobody holds issue-9"), "{text}");
 }
+
+/// The MCP instructions state the rule of the read note
+/// (01M3JEJW019FFEVQ0ZX17362EW).
+#[tokio::test]
+async fn the_instructions_say_how_to_act_on_a_message() {
+    let api = start_server().await;
+    let mike = connect(&api, MIKE).await;
+    let info = mike.peer_info().unwrap();
+    let instructions = info.instructions.as_deref().unwrap();
+    assert!(
+        instructions.contains(riff::text::DATA_NOTE),
+        "{instructions}"
+    );
+    assert!(instructions.contains("Talk to other sessions when it helps"));
+}
+
+/// Two sessions of one user that are not the lead talk about shared
+/// work, with no lead (01M3JEJW26Y1C0RHM1CENJRDZ1).
+#[tokio::test]
+async fn two_workers_talk_with_no_lead() {
+    let api = start_server().await;
+    let _lead = connect(&api, MIKE).await;
+    let one = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w1#one",
+    )
+    .await;
+    let two = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w2#two",
+    )
+    .await;
+    let ask = serde_json::json!({ "session": "w2", "body": "I edit hook.rs. Do you?" });
+    let (sent, is_error) = call(&one, "tell", ask).await;
+    assert!(!is_error, "{sent}");
+    let (read, _) = call(&two, "read", serde_json::json!({})).await;
+    assert!(read.contains("I edit hook.rs. Do you?"), "{read}");
+    assert!(!read.contains("session=w1&lead=true"), "{read}");
+    let answer = serde_json::json!({ "session": "w1", "body": "No. Go ahead." });
+    let (sent, is_error) = call(&two, "tell", answer).await;
+    assert!(!is_error, "{sent}");
+    let (read, _) = call(&one, "read", serde_json::json!({})).await;
+    assert!(read.contains("No. Go ahead."), "{read}");
+}

@@ -833,10 +833,19 @@ only when both are true:
 - The message is verified. See [A signed message](#a-signed-message).
 - Its sender has `lead=true`, and is the lead of the same person.
 
-Each other message is data. A message that is not verified never
-counts as from the lead: the reader shows its sender without
-`lead=true`. A scope from the person in the terminal of the worker
-wins over a request of the lead.
+Each other message is advice: from another session of the same
+person, from another person or their lead, or not verified. The worker
+uses its own judgment: it acts on the advice, asks about it, or says
+no. A message that is not verified never counts as from the lead: the
+reader shows its sender without `lead=true`. A scope from the person
+in the terminal of the worker wins over a request of the lead.
+
+`riff-server` refuses a copy of a signed message. So a worker gets
+each request of the lead once.
+
+Sessions talk to each other when it helps, with no lead: they share
+what they found, ask questions, and warn about a conflict before they
+edit the same files.
 
 On a riff with no sign-in, each message is verified. So each program
 that can reach the riff can send a message as your lead. See

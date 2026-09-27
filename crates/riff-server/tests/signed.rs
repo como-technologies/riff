@@ -230,6 +230,38 @@ async fn a_server_without_sign_in_keeps_no_signature() {
     assert_eq!(verified(&reply, REPO), [false]);
 }
 
+/// A copy of a signed request of the lead is refused, in a thread and
+/// in a direct thread. So a worker gets it once
+/// (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
+#[tokio::test]
+async fn a_copy_of_a_signed_message_is_refused() {
+    let (service, base) = common::start(true, &[]).await;
+    // a is the first session of mike here, so it is the lead.
+    let a = Caller::new(&service, &base, A).await;
+    let worker = Caller::new(&service, &base, LEAD).await;
+
+    let mut request = a.unsigned(REPO, "request: claim issue-12");
+    request.me = request.me.with_lead(true);
+    request.sign(&a.key, now_ms());
+    assert_eq!(a.call(&base, "post", &request).await.status(), 200);
+    let copy = a.call(&base, "post", &request).await;
+    assert_eq!(copy.status(), 400);
+    let text = copy.text().await.unwrap();
+    assert!(text.contains("a copy of message 1"), "{text}");
+    assert_eq!(worker.read(&base, REPO).await.messages.len(), 1);
+
+    let to = format!("session={}", worker.me.who().session().unwrap());
+    let mut direct = Post::new(
+        &a.me.clone().with_lead(true),
+        None,
+        vec![to.parse().unwrap()],
+        "request: claim issue-7",
+    );
+    direct.sign(&a.key, now_ms());
+    assert_eq!(a.call(&base, "post", &direct).await.status(), 200);
+    assert_eq!(a.call(&base, "post", &direct).await.status(), 400);
+}
+
 #[tokio::test]
 async fn a_message_changed_in_storage_is_not_verified() {
     let store = Memory::default();
