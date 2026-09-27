@@ -28,7 +28,7 @@ it. Requirements and rustdoc do not count: they are for agents.
 - A how-to has its own heading and a copyable `sh` block. Do not hide
   a new step in a paragraph of an old step.
 - Check the words against `--help` output. Use the real flag names.
-- Change `plan.md` when a slice or a "Not yet" row changes.
+- Each work item is a GitHub issue in the milestone of its slice.
 - Before each commit, run `riff --help` and `riff-server --help`.
   Find each command in the book. Add the missing ones.
 

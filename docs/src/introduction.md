@@ -18,8 +18,9 @@ flowchart LR
 ```
 
 > **Status:** experiment. Riff works on one machine. Slices 1, 2 and 3
-> are built. See [Plan](plan.md). The rest of
-> the book describes the target.
+> are built. The work is in GitHub issues, with one
+> [milestone](https://github.com/como-technologies/riff/milestones) for
+> each slice. The rest of the book describes the target.
 
 Jazz players riff off each other. Each adds a part, and the group takes
 the music where no one player would. Riff lets engineers and their agents
