@@ -343,9 +343,9 @@
 - **R226** When `riff` gets no token, it asks `riff-server` if it has
   sign-in. At a riff with no sign-in, the command stops and says to run
   `riff logout`, while this machine keeps a sign-in for that riff. When
-  that sign-in is gone, it says to try again or to start the session
-  again. `riff` keeps the old sign-in until the person runs
-  `riff logout`.
+  that sign-in is gone, it says to start the agent session again, or
+  to run the command again. `riff` keeps the old sign-in until the
+  person runs `riff logout`.
 - **R227** No error tells a person to run `riff login` at a riff with
   no sign-in.
 - **R159** A session keeps the user of its first call. The server

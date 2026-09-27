@@ -273,8 +273,8 @@ pub fn signed_out(had: bool, server: &str) -> String {
 /// assert_eq!(
 ///     riff::text::no_sign_in(server, false),
 ///     "riff-server at http://127.0.0.1:7878 has no sign-in. This process \
-///      started with an old sign-in of this machine. Try again, or start \
-///      your agent session again."
+///      started with an old sign-in of this machine. Start your agent \
+///      session again, or run the command again."
 /// );
 /// ```
 pub fn no_sign_in(server: &str, kept: bool) -> String {
@@ -286,7 +286,8 @@ pub fn no_sign_in(server: &str, kept: bool) -> String {
     } else {
         format!(
             "riff-server at {server} has no sign-in. This process started with an \
-             old sign-in of this machine. Try again, or start your agent session again."
+             old sign-in of this machine. Start your agent session again, or run the \
+             command again."
         )
     }
 }
