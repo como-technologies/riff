@@ -24,10 +24,10 @@ and its claims. To update riff, see
 [Update riff on two machines](#update-riff-on-two-machines).
 
 With no sign-in, your riff trusts your network. Each message counts
-as verified. A session on either machine takes an answer of your lead
-session as a decision of yours. So each machine that can reach your
-riff can answer for you. See
-[A riff with no sign-in](how-it-works.md#a-riff-with-no-sign-in).
+as verified. So each machine that can reach your riff can send a
+message as your lead, and answer for you. See
+[A riff with no sign-in](how-it-works.md#a-riff-with-no-sign-in) and
+[The lead](how-it-works.md#the-lead).
 
 ## On the second machine
 

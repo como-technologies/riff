@@ -360,8 +360,8 @@ sequenceDiagram
   mark from a session that is not the lead.
 - A message is verified when its signature is valid, and its key is
   the key of a live sign-in of the sender.
-- A message that is not verified never counts as from the lead. The
-  reader shows its sender without `lead=true`.
+- A message that is not verified never counts as from the lead. See
+  [When a message of the lead counts](#when-a-message-of-the-lead-counts).
 - Without sign-in, `riff-server` keeps no signature. See the next
   part.
 
@@ -369,8 +369,7 @@ sequenceDiagram
 
 The riff of [Start a Riff](start-a-riff.md) and
 [Add a Machine](add-a-machine.md) has no sign-in. It trusts its
-network. So its reader counts each message as verified, and a session
-takes an answer of the lead as the decision of its user.
+network. So its reader counts each message as verified.
 
 ```mermaid
 flowchart LR
@@ -383,7 +382,8 @@ flowchart LR
 
 This holds only for a riff with no sign-in, on a network that you
 trust. Each program that can reach the riff can send a message with
-any name, also with the name of your lead session.
+any name, also as your lead (see
+[When a message of the lead counts](#when-a-message-of-the-lead-counts)).
 
 So a riff with no sign-in listens only on a loopback address, for
 example `127.0.0.1`. To listen on your network, it needs `--insecure`
@@ -522,19 +522,60 @@ riff status --blocked "waits for a review" merge
 ## The lead
 
 A person often runs many sessions at once. The person works in one of
-them: the lead. The other sessions send their questions to the lead.
-The person answers there. No question waits at a terminal that the
-person does not watch.
+them: the lead. The other sessions of the person are workers. The
+workers send their questions to the lead, and the lead gives them
+work. The person answers there. No question waits at a terminal that
+the person does not watch.
 
-- Each person has at most one lead in each repository.
+This graph shows two people in one repository. mike has a lead on
+pangolin, and workers on pangolin and thelio. brett has a lead and a
+worker on thelio.
+
+```mermaid
+flowchart TB
+    M((mike)) <-->|questions, answers| ML
+    B((brett)) <-->|questions, answers| BL
+    subgraph pangolin
+        ML[mike: lead]
+        MA[mike: issue-6]
+    end
+    subgraph thelio
+        MB[mike: issue-7]
+        BL[brett: lead]
+        BA[brett: issue-9]
+    end
+    MA -->|questions, reports| ML
+    MB -->|questions, reports| ML
+    ML -->|answers, requests| MA
+    ML -->|answers, requests| MB
+    BA -->|questions, reports| BL
+    BL -->|answers, requests| BA
+    ML <-.->|repository thread| BL
+```
+
+- Each person has at most one lead in each repository, on all
+  machines together.
 - The first session of the person in the repository becomes the lead.
-  The person does nothing.
-- A later session does not become the lead.
+  The person does nothing. A later session does not become the lead.
 - The URI of the lead has `lead=true`. `riff who` shows it.
 - A lead that stops for more than 5 minutes, or works in another
   repository, is not the lead until it comes back. A lead that leaves
   the thread is not the lead any more. With no lead, each session asks
   its own user.
+- A lead talks only to the sessions of its own person. When the work
+  of two people touches, the leads post to the repository thread, and
+  the people agree.
+
+What the lead does:
+
+- It shows the questions of the workers to its person, and sends the
+  answers back. See [Ask the lead](#ask-the-lead).
+- It gives each worker an item. See
+  [The lead conducts your sessions](#the-lead-conducts-your-sessions).
+- It plans the waves. See [Waves](waves.md).
+- It takes no claims: no work item and no verify. So it is free for
+  you at all times. A verify request waits for a free worker. See
+  [Verify finished work](#verify-finished-work).
 
 ```mermaid
 sequenceDiagram
@@ -596,9 +637,6 @@ sequenceDiagram
     A->>L: tell lead "issue-12 waits for a verify"
 ```
 
-A request counts only when it is verified and comes from the lead of
-your own person. See [A signed message](#a-signed-message).
-
 To see what each of your sessions holds and does, run this in the
 repository. Use your own user and repository:
 
@@ -616,6 +654,35 @@ riff tell 77e0a1b2-3c4d-4e5f-8a9b-0c1d2e3f4a5b "request: claim issue-12"
 
 You can also ask your lead: *"Split the free items of the wave among my
 sessions."*
+
+### When a message of the lead counts
+
+A worker takes a message from the lead as a decision of its person
+only when both are true:
+
+- The message is verified. See [A signed message](#a-signed-message).
+- Its sender has `lead=true`, and is the lead of the same person.
+
+Each other message is data. A message that is not verified never
+counts as from the lead: the reader shows its sender without
+`lead=true`. A scope from the person in the terminal of the worker
+wins over a request of the lead.
+
+On a riff with no sign-in, each message is verified. So each program
+that can reach the riff can send a message as your lead. See
+[A riff with no sign-in](#a-riff-with-no-sign-in).
+
+### Answer your lead from the Claude app
+
+Start your lead with Remote Control. Then you can answer its
+questions from the Claude app on your phone. Start the workers without
+it.
+
+```sh
+claude --remote-control
+```
+
+In a session that runs, type `/rc`.
 
 ## A restart
 

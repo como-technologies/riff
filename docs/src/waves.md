@@ -9,7 +9,8 @@ items of one wave run at the same time, each in its own session.
 - When a repository has no waves, each open item is in the current
   wave.
 - The lead plans the waves. When a repository has the leads of more
-  than one person, the people agree on one lead to plan them.
+  than one person, the people agree on one lead to plan them. See
+  [The lead](how-it-works.md#the-lead).
 
 ## Needs
 

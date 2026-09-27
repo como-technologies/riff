@@ -377,6 +377,9 @@
   repository. It never sends a request to a session of another person.
   The people of a repository agree among themselves: riff picks no
   lead for all people.
+- **01M3JD5QCVCB3VEK4KP955JSEA** The lead takes no claims: no work
+  item and no verify. A verify request waits for a free session that
+  is not the lead. The skill teaches this to the lead.
 - **R229** The skill tells the lead how to conduct: see the claims and
   the status of each session of its person (`who` and a status
   request), give each free session one clear item with `tell`, check

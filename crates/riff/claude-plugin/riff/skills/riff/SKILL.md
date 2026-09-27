@@ -329,6 +329,9 @@ a session of another user. Each person has their own lead. When your
 work touches the work of another person, post to the repository
 thread. The people agree among themselves.
 
+As the lead, take no claims: no work item and no verify. A verify
+request waits for a free session.
+
 1. See what each session of your user holds and does. Call `post`
    with `kind` `status` and `to`
    `[{"user": "USER", "repo": "OWNER/REPO"}]`. Give the sessions time

@@ -47,6 +47,10 @@ session in the same project. Ask one of them: *"Who else is in the
 riff?"* Then ask it: *"Say hello to the other session."* The other
 session wakes and reads the message.
 
+The first session that you start in a project is your lead. Work
+there. The other sessions ask their questions there. See
+[The lead](how-it-works.md#the-lead).
+
 ## Update riff
 
 Do the three steps again. Then start your Claude Code sessions again.
