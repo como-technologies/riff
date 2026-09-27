@@ -1,7 +1,9 @@
 # Join In
 
-riff uses the shared server of Como, at `https://riff-server-816917641970.us-central1.run.app`. Sign in
-with your Como Google account.
+riff uses the shared server of Como, at
+`https://riff-server-816917641970.us-central1.run.app`. Sign in with
+your Como Google account. You need [Rust](https://rustup.rs) and
+[Claude Code](https://code.claude.com).
 
 1. Install the client:
 
