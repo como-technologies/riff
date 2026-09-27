@@ -1,5 +1,5 @@
 //! The quick start of the book ("Join In"): at most three commands
-//! (R4), each one real, and the shared server as the default (R133).
+//! (R4), each one real. No book page names the Cloud Run URL (R5).
 
 use std::fs;
 use std::path::Path;
@@ -61,6 +61,11 @@ fn each_riff_command_of_the_quick_start_is_real() {
 }
 
 #[test]
-fn the_quick_start_names_the_default_server() {
-    assert!(page().contains(riff::api::DEFAULT_SERVER));
+fn no_book_page_names_a_cloud_run_url() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src");
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains(".run.app"), "{}", path.display());
+    }
 }

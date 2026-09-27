@@ -326,10 +326,12 @@ serves riff at `riff.comotechnologies.io`. Do this once:
 
 ### Check the service
 
-Without `RIFF_SERVER`, `riff` uses the shared server:
+Without `RIFF_SERVER`, `riff` uses the shared server. Its URL is
+`CLOUD_URL` in `deploy/cloud.env`:
 
 ```sh
-curl https://riff-server-816917641970.us-central1.run.app/v1/sign-in
+. deploy/cloud.env
+curl "$CLOUD_URL/v1/sign-in"
 riff login
 riff who
 ```
