@@ -69,6 +69,14 @@
 - **R194** A criterion that only a check after the merge can test does
   not stop a pass. The verifier names it in the result. The issue stays
   open until that check passes.
+- **R202** The verify worktree is
+  `MAIN/.claude/worktrees/verify-ITEM-ID`, detached at the commit.
+  MAIN is the main worktree. ID is the first 4 characters of the
+  session ID of the verifier. The verifier makes it with
+  `git worktree add --detach` and enters it by path, from the main
+  worktree or from a worktree of its own. After the verify, it goes
+  back to where it came from, then runs `git worktree remove` with no
+  force.
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, the verify flow (R188), selectors, direct messages,
   threads, claims, `move`, the restart of the watch (R171) and

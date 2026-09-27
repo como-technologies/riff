@@ -138,6 +138,21 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     ] {
         assert!(section.contains(text), "no {text:?} in {section}");
     }
+
+    // The verify worktree has a name of its own and works from any
+    // worktree (R202): add it by path, then remove it with no force.
+    let verifier = &section[check..];
+    let add = verifier
+        .find("`git worktree add --detach MAIN/.claude/worktrees/verify-issue-12-a6cf COMMIT`")
+        .unwrap();
+    let enter = verifier
+        .find("Call `EnterWorktree` with that path")
+        .unwrap();
+    let back = verifier.find("Go back to where you came").unwrap();
+    let remove = verifier.find("`git worktree remove PATH`").unwrap();
+    assert!(add < enter && enter < back && back < remove, "{verifier}");
+    assert!(verifier.contains("Do not force."), "{verifier}");
+    assert!(!verifier.contains("`ExitWorktree` with action `remove`"));
 }
 
 #[test]
