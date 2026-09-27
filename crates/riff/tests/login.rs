@@ -153,7 +153,7 @@ async fn login_signs_in_and_keeps_the_sign_in() {
         Ok("ada".to_owned())
     );
     assert_eq!(login::stored(api.base()).unwrap(), Some(sign_in.clone()));
-    assert_eq!(login::user(api.base()).as_deref(), Some("ada"));
+    assert_eq!(login::user(api.base()).unwrap().as_deref(), Some("ada"));
 
     // A live access token comes from the keyring as it is.
     assert_eq!(

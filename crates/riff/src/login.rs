@@ -48,7 +48,7 @@
 //! use riff::login::{self, SignIn};
 //!
 //! let server = "http://127.0.0.1:7878";
-//! assert_eq!(login::user(server), None);
+//! assert_eq!(login::user(server)?, None);
 //! let sign_in = SignIn {
 //!     user: "mike".into(),
 //!     access_token: "a-1".into(),
@@ -56,7 +56,7 @@
 //!     expires_at: 0,
 //! };
 //! login::store(server, &sign_in)?;
-//! assert_eq!(login::user(server).as_deref(), Some("mike"));
+//! assert_eq!(login::user(server)?.as_deref(), Some("mike"));
 //! assert!(login::logout(server)?);
 //! assert_eq!(login::stored(server)?, None);
 //! # Ok::<(), anyhow::Error>(())
@@ -118,10 +118,10 @@ pub fn store(server: &str, sign_in: &SignIn) -> Result<()> {
     secrets::set(&secret_name(server), &serde_json::to_string(sign_in)?)
 }
 
-/// The user of the sign-in at `server`. `None` when there is no
-/// sign-in, or the keyring cannot be read.
-pub fn user(server: &str) -> Option<String> {
-    stored(server).ok().flatten().map(|s| s.user)
+/// The user of the sign-in at `server`, or `None` when there is no
+/// sign-in. A keyring error is an error (R157).
+pub fn user(server: &str) -> Result<Option<String>> {
+    Ok(stored(server)?.map(|s| s.user))
 }
 
 /// Removes the sign-in at `server` from this device. Returns false when

@@ -183,6 +183,14 @@
   It shows who the session is, where it works and what it works on.
 - **R36** Who: USER comes from the sign-in. ID is the session ID of the
   agent tool. For Claude Code, this is `CLAUDE_CODE_SESSION_ID`.
+- **R157** When `riff` cannot read the sign-in from the keyring, the
+  command stops and says why. `riff` uses `USER` only when there is no
+  sign-in.
+- **R158** When `riff` cannot open the keyring, the command stops,
+  unless `RIFF_USER` is set. With `RIFF_USER`, it sends no token.
+- **R159** A session keeps the user of its first call. The server
+  refuses a call with a known session ID and another user, with status
+  409. The reply tells the session to set `RIFF_USER` or to sign in.
 - **R55** Where: HOST, OWNER/REPO and WORKTREE come from the machine and
   from git. They are true at the start and change with `move`.
 - **R56** What: the URI has one `claim` part for each claim that the

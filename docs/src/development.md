@@ -99,6 +99,29 @@ The client exists. To make it again, see
 
 The user part of your URI is now the part of your email before the
 `@`. `riff logout` removes the sign-in from this device.
+
+### When riff cannot read the keyring
+
+`riff` keeps your sign-in in the OS keyring. When it cannot read the
+keyring, each command stops with `riff cannot find your user`. The
+next lines say why. Unlock the keyring and run the command again. On
+Linux, a Secret Service must run, for example GNOME Keyring.
+
+On a machine with no keyring, name your user yourself:
+
+```sh
+export RIFF_USER=USER
+```
+
+`riff` then sends no token. A server with `--require-sign-in` refuses
+it.
+
+### When riff says a session is known as another user
+
+The server keeps one user for each session. A call with the same
+session ID and another user fails with `session ID is known as user
+USER`. That happens when the session started before `riff login`. Start
+the Claude Code session again, as a new session.
 `riff logout --all` ends each of your sign-ins, on each device.
 
 Only accounts of `comotechnologies.io` can sign in. To allow another

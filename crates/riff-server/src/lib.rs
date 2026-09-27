@@ -663,8 +663,7 @@ async fn register(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Register>,
 ) -> Reply<()> {
-    acts_as(caller, &r.me)?;
-    s.state().register(&r.me, Instant::now());
+    acts_as(&s, caller, &r.me)?.register(&r.me, Instant::now());
     Ok(Json(()))
 }
 
@@ -679,9 +678,8 @@ async fn threads(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Threads>,
 ) -> Reply<ThreadsReply> {
-    acts_as(caller, &r.me)?;
     Ok(Json(ThreadsReply {
-        threads: s.state().threads(&r.me, Instant::now()),
+        threads: acts_as(&s, caller, &r.me)?.threads(&r.me, Instant::now()),
     }))
 }
 
@@ -690,8 +688,7 @@ async fn join(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Membership>,
 ) -> Reply<()> {
-    acts_as(caller, &r.me)?;
-    s.state().join(&r.me, &r.thread, Instant::now());
+    acts_as(&s, caller, &r.me)?.join(&r.me, &r.thread, Instant::now());
     Ok(Json(()))
 }
 
@@ -700,8 +697,7 @@ async fn leave(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Membership>,
 ) -> Reply<()> {
-    acts_as(caller, &r.me)?;
-    s.state().leave(&r.me, &r.thread, Instant::now());
+    acts_as(&s, caller, &r.me)?.leave(&r.me, &r.thread, Instant::now());
     Ok(Json(()))
 }
 
@@ -710,9 +706,7 @@ async fn post_message(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Post>,
 ) -> Reply<Posted> {
-    acts_as(caller, &r.me)?;
-    let delivery = s
-        .state()
+    let delivery = acts_as(&s, caller, &r.me)?
         .post(&r.me, r.thread, r.to, r.body, Instant::now(), now_ms())
         .map_err(bad_request)?;
     Ok(Json(posted(&s, delivery)))
@@ -723,9 +717,7 @@ async fn read(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Read>,
 ) -> Reply<ReadReply> {
-    acts_as(caller, &r.me)?;
-    let messages = s
-        .state()
+    let messages = acts_as(&s, caller, &r.me)?
         .read(&r.me, &r.thread, r.all, Instant::now())
         .map_err(not_found)?;
     Ok(Json(ReadReply { messages }))
@@ -736,9 +728,7 @@ async fn claim(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Claim>,
 ) -> Reply<ClaimReply> {
-    acts_as(caller, &r.me)?;
-    let reply = s
-        .state()
+    let reply = acts_as(&s, caller, &r.me)?
         .claim(&r.me, &r.thread, &r.item, Instant::now())
         .map_err(bad_request)?;
     Ok(Json(reply))
@@ -749,8 +739,7 @@ async fn release(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Claim>,
 ) -> Reply<()> {
-    acts_as(caller, &r.me)?;
-    s.state()
+    acts_as(&s, caller, &r.me)?
         .release(&r.me, &r.thread, &r.item, Instant::now())
         .map_err(bad_request)?;
     Ok(Json(()))
@@ -932,17 +921,25 @@ fn for_session(
 }
 
 /// Refuses a request that acts as another user or session than its
-/// token (R104). Without a token check, each request passes.
-fn acts_as(
+/// token (R104), with 403. Without a token check, that part passes.
+/// Refuses a known session ID under a new user (R159), with 409. Gives
+/// the state, locked, so no other call comes between the check and the
+/// change.
+fn acts_as<'a>(
+    s: &'a Server,
     caller: Option<Extension<SignedIn>>,
     me: &SessionUri,
-) -> Result<(), (StatusCode, String)> {
-    match caller {
-        Some(Extension(caller)) => caller
+) -> Result<MutexGuard<'a, State>, (StatusCode, String)> {
+    if let Some(Extension(caller)) = caller {
+        caller
             .may_act_as(me.who())
-            .map_err(|message| (StatusCode::FORBIDDEN, message)),
-        None => Ok(()),
+            .map_err(|message| (StatusCode::FORBIDDEN, message))?;
     }
+    let state = s.state();
+    state
+        .check_user(me)
+        .map_err(|message| (StatusCode::CONFLICT, message))?;
+    Ok(state)
 }
 
 /// Names the sign-in provider, for `riff login`.
@@ -965,10 +962,9 @@ async fn watch(
     caller: Option<Extension<SignedIn>>,
     Query(q): Query<WatchQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
-    acts_as(caller, &q.uri)?;
     let rx = s.wakes.subscribe();
     let missed = {
-        let mut state = s.state();
+        let mut state = acts_as(&s, caller, &q.uri)?;
         let now = Instant::now();
         state.watch_started(&q.uri, now);
         state.missed(q.uri.who())

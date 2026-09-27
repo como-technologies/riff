@@ -46,7 +46,8 @@
 //! carries the session URI of its sender as `me`. The server finds the
 //! session by the *who* part of that URI. When the server needs
 //! sign-in, the *who* part must match the token, or the reply is 403
-//! (R104).
+//! (R104). A session keeps the user of its first call: a known session
+//! ID with another user gets 409 (R159).
 //! Only `register` sets the place of a known session; each other call
 //! uses the URI only to make a session that the server does not know.
 //!

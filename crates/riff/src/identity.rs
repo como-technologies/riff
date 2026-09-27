@@ -5,7 +5,7 @@
 //!
 //! | Part | Source, in order |
 //! |---|---|
-//! | user | `RIFF_USER`, then the sign-in at the server (see [`crate::login`]), then `USER`. |
+//! | user | `RIFF_USER`, then the sign-in at the server (see [`crate::login`]), then `USER`. A keyring error stops the command (R157, R158). |
 //! | session | `RIFF_SESSION`, then `CLAUDE_CODE_SESSION_ID`. A person has none. |
 //! | host | `RIFF_HOST`, then `cloud` in a cloud session, then the machine name without its domain. |
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
@@ -66,12 +66,15 @@ pub fn agent(place: &Place, id: &str, server: &str) -> Result<SessionUri> {
 }
 
 /// The user for `server`: from `RIFF_USER`, the sign-in, or `USER`.
-/// Only a missing `RIFF_USER` makes it read the keyring.
+/// Only a missing `RIFF_USER` makes it read the keyring. A keyring error
+/// stops it, also when riff cannot open the keyring: `USER` stands in
+/// only when there is no sign-in (R157, R158).
 fn user(server: &str) -> Result<String> {
     let riff_user = std::env::var("RIFF_USER").ok();
     let signed_in = match riff_user {
         Some(_) => None,
-        None => login::user(server),
+        None => login::user(server)
+            .context("riff cannot find your user. Unlock the keyring, or set RIFF_USER")?,
     };
     pick_user(
         riff_user.as_deref(),
@@ -82,7 +85,8 @@ fn user(server: &str) -> Result<String> {
 
 /// The user from `RIFF_USER`, the user of the sign-in, and `USER`, in
 /// that order (R36). Without a sign-in, `USER` stands in until the
-/// server checks tokens.
+/// server checks tokens. The caller passes no sign-in only when there
+/// is none, never when the keyring failed (R157).
 ///
 /// ```
 /// use riff::identity::pick_user;

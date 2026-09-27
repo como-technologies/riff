@@ -19,6 +19,9 @@
 //! set, the first call sets the store of the OS. A test sets the mock
 //! store of `keyring-core` first, so tests never touch the real keyring.
 //!
+//! Each keyring error is an error, also when riff cannot open the
+//! keyring. [`has_keyring`] tells the caller which case it is.
+//!
 //! # Example
 //!
 //! ```
@@ -62,6 +65,12 @@ pub fn delete(name: &str) -> Result<()> {
         Ok(()) | Err(Error::NoEntry) => Ok(()),
         Err(e) => Err(fail("delete", name, e)),
     }
+}
+
+/// True when a keyring store is set, or riff can open the keyring of
+/// the OS.
+pub fn has_keyring() -> bool {
+    keyring_core::get_default_store().is_some() || keyring::Entry::store_status().is_ok()
 }
 
 fn entry(name: &str) -> Result<Entry> {

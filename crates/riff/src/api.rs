@@ -44,7 +44,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
-use crate::{device, login};
+use crate::{device, login, secrets};
 
 /// The server that `riff` uses when nothing else is set.
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
@@ -214,9 +214,11 @@ impl Api {
     /// A client that sends a token on each request, when this device
     /// has a sign-in at the server. `session` is the session ID of the
     /// caller, or `None` for a person. The token acts only as that
-    /// caller (R19). Without a sign-in, the client sends no token.
+    /// caller (R19). Without a sign-in, the client sends no token. A
+    /// keyring error is an error (R157). When riff cannot open the
+    /// keyring, the client sends no token (R158).
     pub fn signed_in(mut self, session: Option<&str>) -> Result<Self> {
-        if login::stored(&self.base).ok().flatten().is_none() {
+        if !secrets::has_keyring() || login::stored(&self.base)?.is_none() {
             return Ok(self);
         }
         self.auth = Some(Arc::new(Auth {
@@ -484,8 +486,12 @@ impl Api {
             .send(reqwest::Method::GET, &format!("/v1/{op}"), |r| {
                 r.query(query)
             })
-            .await?
-            .error_for_status()?;
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            bail!("{op} failed ({status}): {text}");
+        }
         let mut buffer = String::new();
         let lines = response.bytes_stream().flat_map(move |chunk| {
             let lines: Vec<Result<String>> = match chunk {

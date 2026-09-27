@@ -19,6 +19,8 @@
 //!   session that the server does not know makes it, in the place from
 //!   its URI. Only [`State::register`] changes the place of a known
 //!   session (R55, R64).
+//! - A session keeps the user of its first call. [`State::check_user`]
+//!   refuses its session ID under another user (R159).
 //! - A session joins the thread of its repository when the server makes
 //!   it, and each time it registers.
 //! - A post joins its sender to the thread. It wakes each other session
@@ -358,6 +360,48 @@ impl State {
     /// Marks an object as changed again, for example after a failed save.
     pub fn mark_changed(&mut self, object: Object) {
         self.changed.insert(object);
+    }
+
+    /// Refuses `me` when the server knows its session ID under another
+    /// user (R159). The server keys a session by user and session ID, so
+    /// a new user would make a second session with the same ID. A
+    /// session that the server knows under this user passes, so two
+    /// entries from before this rule keep working.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::state::State;
+    ///
+    /// let mut state = State::default();
+    /// let mike = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse().unwrap();
+    /// let other = "riff://sandman@pangolin/como-technologies/riff?session=a6cf".parse().unwrap();
+    /// state.register(&mike, Instant::now());
+    /// assert!(state.check_user(&mike).is_ok());
+    /// let error = state.check_user(&other).unwrap_err();
+    /// assert!(error.contains("known as user mike"), "{error}");
+    /// ```
+    pub fn check_user(&self, me: &SessionUri) -> Result<(), String> {
+        let who = me.who();
+        let Some(id) = who.session() else {
+            return Ok(());
+        };
+        if self.sessions.contains_key(who) {
+            return Ok(());
+        }
+        match self
+            .sessions
+            .keys()
+            .find(|known| known.session() == Some(id))
+        {
+            Some(known) => Err(format!(
+                "session {id} is known as user {}, not {}. riff found another user for \
+                 this session. Set RIFF_USER={} for the session, or start a new session.",
+                known.user(),
+                who.user(),
+                known.user()
+            )),
+            None => Ok(()),
+        }
     }
 
     /// Records a session and its place now, and joins it to the thread
@@ -781,6 +825,30 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].thread, repo());
         assert_eq!(threads[0].members.len(), 3);
+    }
+
+    #[test]
+    fn a_known_session_id_under_a_new_user_is_refused() {
+        let state = setup(Instant::now());
+        let other_user = uri("riff://brett@pangolin/como-technologies/riff?session=a1#api");
+        assert!(state.check_user(&other_user).is_err());
+        assert!(state.check_user(&api()).is_ok());
+        let person = uri("riff://brett@pangolin");
+        assert!(state.check_user(&person).is_ok());
+        let new_session = uri("riff://brett@pangolin/como-technologies/riff?session=b9");
+        assert!(state.check_user(&new_session).is_ok());
+    }
+
+    #[test]
+    fn two_entries_from_before_the_rule_keep_working() {
+        let now = Instant::now();
+        let mut state = State::default();
+        let mike = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
+        let sandman = uri("riff://sandman@pangolin/como-technologies/riff?session=a1");
+        state.register(&mike, now);
+        state.register(&sandman, now);
+        assert!(state.check_user(&mike).is_ok());
+        assert!(state.check_user(&sandman).is_ok());
     }
 
     #[test]
