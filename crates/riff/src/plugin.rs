@@ -19,7 +19,7 @@
 //! | File | Gives the session |
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
-//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, selectors, claims, `move` and the restart of the watch. |
+//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). |
 //!
 //! ```
@@ -54,6 +54,19 @@ macro_rules! embed {
 }
 
 /// Each plugin file: its path in the marketplace directory, and its text.
+///
+/// The skill tells a session to read the `Done when:` line of an issue
+/// after it claims the issue, and before it starts work (R173):
+///
+/// ```
+/// let (_, skill) = riff::plugin::FILES
+///     .iter()
+///     .find(|(path, _)| path.ends_with("SKILL.md"))
+///     .unwrap();
+/// let check = skill.find("Find its `Done when:` line").unwrap();
+/// assert!(skill.find("Call `claim`").unwrap() < check);
+/// assert!(check < skill.find("Call the `EnterWorktree` tool").unwrap());
+/// ```
 pub const FILES: &[(&str, &str)] = &[
     embed!(".claude-plugin/marketplace.json"),
     embed!("riff/.claude-plugin/plugin.json"),
@@ -297,5 +310,25 @@ mod tests {
         }
         assert!(!skill.contains("branch -D"));
         assert!(!skill.contains("--force"));
+    }
+
+    #[test]
+    fn the_skill_asks_for_acceptance_criteria() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "Write acceptance criteria",
+            "`Done when:` line",
+            "a session cannot test it, do not start work",
+            "what to run or look at, and what the result must be",
+            "ASD-STE100",
+            "Post to the repository thread that the issue now has criteria",
+            "Call `release` with the item",
+            "Pick a different item",
+            "Do not implement an issue in the claim in which you wrote its criteria",
+            "reviews them",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
     }
 }

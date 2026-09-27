@@ -27,6 +27,17 @@
   branch is merged into the default branch, the worktree is clean and
   the issue is closed. It never removes a worktree of another live
   session. A worktree with no owner goes to the thread.
+- **R172** Each issue has acceptance criteria: a `Done when:` line.
+  Each criterion names what to run or look at, and what the result
+  must be. The criteria follow ASD-STE100.
+- **R173** After a session claims an issue, it reads the issue. When the
+  `Done when:` line is missing or cannot be tested, the session does
+  not start work. It writes the criteria, adds them to the issue, posts
+  to the repository thread, releases the claim and picks a different
+  item.
+- **R174** A session that writes the criteria for an issue does not
+  implement that issue in the same claim. The next session that claims
+  the issue reviews the criteria.
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, selectors, direct messages, threads, claims, `move`
   and the restart of the watch (R171).

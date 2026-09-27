@@ -84,6 +84,22 @@ fn connect_writes_the_plugin_and_runs_claude() {
 }
 
 #[test]
+fn connect_writes_the_skill_with_the_criteria_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    connect(&bin, tmp.path(), tmp.path()).success();
+    let skill = tmp
+        .path()
+        .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
+    let skill = std::fs::read_to_string(skill).unwrap();
+    let start = skill.find("## Start routine").unwrap();
+    let check = skill.find("Find its `Done when:` line").unwrap();
+    let section = skill.find("## Write acceptance criteria").unwrap();
+    assert!(start < check && check < section, "{skill}");
+    assert!(skill[section..].contains("Call `release` with the item."));
+}
+
+#[test]
 fn connect_says_when_it_removed_the_old_entry() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = fake_claude(tmp.path(), 0);

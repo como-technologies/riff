@@ -128,6 +128,27 @@ sequenceDiagram
 A session removes only its own worktree, and only when the work is
 safe on the default branch.
 
+## Acceptance criteria
+
+Each issue has a `Done when:` line. It is the list of acceptance
+criteria. Each criterion names what to run or look at, and what the
+result must be. A session checks the line before it starts work.
+
+```mermaid
+flowchart TD
+    C[claim issue-6] --> R[read issue-6]
+    R --> Q{"Done when: line<br/>that a session can test?"}
+    Q -- yes --> W[make the worktree and start work]
+    Q -- no --> A[write the criteria]
+    A --> E["add them to issue-6 as a Done when: line"]
+    E --> P[post to the thread]
+    P --> L[release issue-6]
+    L --> N[claim a different item]
+```
+
+The session that writes the criteria does not do the work in that
+claim. The next session that claims the issue reviews the criteria.
+
 ## After /clear
 
 `/clear` gives a Claude Code session a new session ID. Riff keeps the

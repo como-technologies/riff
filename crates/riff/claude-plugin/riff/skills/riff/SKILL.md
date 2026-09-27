@@ -41,15 +41,36 @@ Do these steps when your session starts:
 2. Find a free work item. The thread or the issue tracker lists them.
 3. Call `claim` with the item, for example `issue-12`. If the claim
    fails, another session holds the item. Pick a different item.
-4. Call the `EnterWorktree` tool with the item as the name, for example
+4. Read the issue. Find its `Done when:` line: the acceptance criteria.
+   If the line is missing, or a session cannot test it, do not start
+   work. Do the steps in "Write acceptance criteria".
+5. Call the `EnterWorktree` tool with the item as the name, for example
    `issue-12`. It makes the worktree `.claude/worktrees/issue-12` from
    the default branch and moves your session there.
-5. Call `move` with the absolute path of the worktree. Work only there.
-6. Post to the thread that you started. Address the session that
+6. Call `move` with the absolute path of the worktree. Work only there.
+7. Post to the thread that you started. Address the session that
    planned the work.
-7. When you finish, post that you are done, then call `release`.
-8. When your worktree is stale, remove it. See "Remove a stale
+8. When you finish, post that you are done, then call `release`.
+9. When your worktree is stale, remove it. See "Remove a stale
    worktree".
+
+## Write acceptance criteria
+
+Each issue needs a `Done when:` line. The line tells a session how to
+check that the work is done. Each criterion names what to run or look
+at, and what the result must be. Write it in ASD-STE100: short
+sentences, active voice, plain words.
+
+When the line is missing, or a session cannot test it:
+
+1. Review the issue. Write the acceptance criteria.
+2. Add them to the issue as a `Done when:` line.
+3. Post to the repository thread that the issue now has criteria.
+4. Call `release` with the item.
+5. Go back to step 2 of the start routine. Pick a different item.
+
+Do not implement an issue in the claim in which you wrote its
+criteria. The next session that claims the issue reviews them.
 
 ## Remove a stale worktree
 
