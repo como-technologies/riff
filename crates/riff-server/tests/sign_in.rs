@@ -124,26 +124,26 @@ async fn an_id_token_gives_riff_tokens_for_its_user() {
     let key = Key::generate();
     let reply = exchange_with(
         &server,
-        &id_token(&issuer, "Mike@comotechnologies.io", DEFAULT_DOMAIN),
+        &id_token(&issuer, "Ada@comotechnologies.io", DEFAULT_DOMAIN),
         Some(&key),
     )
     .await;
     assert_eq!(reply.status(), 200);
     assert_eq!(reply.headers()["cache-control"], "no-store");
     let pair: TokenReply = reply.json().await.unwrap();
-    assert_eq!(pair.user, "mike");
+    assert_eq!(pair.user, "ada");
     assert_eq!(
         service
             .tokens()
             .check(&pair.access_token, &key.thumbprint(), Instant::now()),
-        Ok("mike".to_owned())
+        Ok("ada".to_owned())
     );
 }
 
 #[tokio::test]
 async fn an_exchange_without_a_proof_is_refused() {
     let (_, server, issuer) = start().await;
-    let token = id_token(&issuer, "mike@comotechnologies.io", DEFAULT_DOMAIN);
+    let token = id_token(&issuer, "ada@comotechnologies.io", DEFAULT_DOMAIN);
     let reply = exchange_with(&server, &token, None).await;
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
@@ -155,7 +155,7 @@ async fn a_bad_id_token_is_refused() {
     let (_, server, _) = start().await;
     let other = id_token(
         "https://other.test",
-        "mike@comotechnologies.io",
+        "ada@comotechnologies.io",
         DEFAULT_DOMAIN,
     );
     let reply = exchange(&server, &other).await;
@@ -180,10 +180,10 @@ async fn a_server_without_a_provider_has_no_sign_in() {
 #[tokio::test]
 async fn an_account_from_another_domain_is_refused() {
     let (service, server, issuer) = start().await;
-    let reply = exchange(&server, &id_token(&issuer, "mike@gmail.com", "gmail.com")).await;
+    let reply = exchange(&server, &id_token(&issuer, "ada@gmail.com", "gmail.com")).await;
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
     assert_eq!(error.error, "invalid_grant");
     // No sign-in started.
-    assert_eq!(service.tokens().revoke_user("mike"), 0);
+    assert_eq!(service.tokens().revoke_user("ada"), 0);
 }

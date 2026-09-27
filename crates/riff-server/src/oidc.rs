@@ -38,7 +38,7 @@
 //! ```
 //! use riff_server::oidc::user_of;
 //!
-//! assert_eq!(user_of("Mike.Sandman@comotechnologies.io").unwrap(), "mike.sandman");
+//! assert_eq!(user_of("Ada.Lovelace@comotechnologies.io").unwrap(), "ada.lovelace");
 //! assert!(user_of("no-at-sign").is_err());
 //! ```
 
@@ -269,7 +269,7 @@ mod tests {
             "iss": ISSUER,
             "aud": "riff-client",
             "exp": now() + 3600,
-            "email": "Mike@comotechnologies.io",
+            "email": "Ada@comotechnologies.io",
             "email_verified": true,
             "hd": "comotechnologies.io",
         })
@@ -305,8 +305,8 @@ mod tests {
         assert_eq!(
             identity,
             Ok(Identity {
-                email: "Mike@comotechnologies.io".into(),
-                user: "mike".into(),
+                email: "Ada@comotechnologies.io".into(),
+                user: "ada".into(),
             })
         );
     }

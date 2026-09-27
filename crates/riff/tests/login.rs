@@ -72,7 +72,7 @@ async fn provider_token(
         "iss": fake.issuer,
         "aud": CLIENT,
         "exp": now + 3600,
-        "email": "Mike@comotechnologies.io",
+        "email": "Ada@comotechnologies.io",
         "email_verified": true,
         "hd": "comotechnologies.io",
     });
@@ -145,15 +145,15 @@ fn browser(url: &str) {
 async fn login_signs_in_and_keeps_the_sign_in() {
     let (service, api) = start().await;
     let sign_in = login::login(&api, browser).await.unwrap();
-    assert_eq!(sign_in.user, "mike");
+    assert_eq!(sign_in.user, "ada");
     assert_eq!(
         service
             .tokens()
             .check(&sign_in.access_token, &jkt(&api), Instant::now()),
-        Ok("mike".to_owned())
+        Ok("ada".to_owned())
     );
     assert_eq!(login::stored(api.base()).unwrap(), Some(sign_in.clone()));
-    assert_eq!(login::user(api.base()).as_deref(), Some("mike"));
+    assert_eq!(login::user(api.base()).as_deref(), Some("ada"));
 
     // A live access token comes from the keyring as it is.
     assert_eq!(
@@ -181,7 +181,7 @@ async fn an_old_access_token_is_refreshed() {
     assert_ne!(fresh, first.access_token);
     assert_eq!(
         service.tokens().check(&fresh, &jkt(&api), Instant::now()),
-        Ok("mike".to_owned())
+        Ok("ada".to_owned())
     );
     let kept = login::stored(api.base()).unwrap().unwrap();
     assert_eq!(kept.access_token, fresh);

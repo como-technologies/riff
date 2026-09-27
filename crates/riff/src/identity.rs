@@ -87,9 +87,9 @@ fn user(server: &str) -> Result<String> {
 /// ```
 /// use riff::identity::pick_user;
 ///
-/// assert_eq!(pick_user(None, Some("mike"), Some("sandman")).unwrap(), "mike");
+/// assert_eq!(pick_user(None, Some("mike"), Some("lovelace")).unwrap(), "mike");
 /// assert_eq!(pick_user(Some("brett"), Some("mike"), None).unwrap(), "brett");
-/// assert_eq!(pick_user(None, None, Some("Sandman")).unwrap(), "sandman");
+/// assert_eq!(pick_user(None, None, Some("Lovelace")).unwrap(), "lovelace");
 /// assert!(pick_user(None, None, None).is_err());
 /// ```
 pub fn pick_user(

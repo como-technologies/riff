@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
-authors = ["Mike Sandman <mike@thesandmans.com>"]
+authors = ["Mike Sandman"]
 repository = "https://github.com/como-technologies/riff"
 
 # One version per dependency for the whole workspace. Use the latest
