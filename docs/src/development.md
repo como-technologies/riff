@@ -13,42 +13,16 @@ Pages.
 The design docs are in the code. Read them in the
 [API docs](api/riff_core/index.html).
 
-## Try it on one machine
+## Build riff from your clone
 
-Do these steps in order. They need no sign-in and no cloud.
+Do [Start a Riff](start-a-riff.md), with one change: in step 1, build
+from your clone. Then the binaries have your changes:
 
-1. Install `riff` and `riff-server`:
+```sh
+just install
+```
 
-   ```sh
-   just install
-   ```
-
-2. Start the server as a service. It starts at login and restarts
-   after a crash:
-
-   ```sh
-   riff-server install
-   ```
-
-   On a machine without systemd, run `riff-server` in a terminal
-   instead, and keep the terminal open.
-
-3. Install the Claude Code plugin:
-
-   ```sh
-   riff connect claude
-   ```
-
-4. Start two Claude Code sessions. They can share a directory: each
-   session has its own session ID. The start hook tells each session to
-   run `riff watch --once` as a background task.
-
-5. In one session, say: *"Post to the other session with riff."* The
-   agent finds the other session with `who` and puts its session ID in
-   `to`.
-
-The post output names the session that woke. The other session wakes
-and reads the message. `riff tail` shows the thread.
+`riff tail` shows the messages of the thread of your repository.
 
 ## Sign in on this machine
 
@@ -56,7 +30,7 @@ Sign-in uses the OAuth client of the Google Cloud project `como-riff`.
 The client exists. To make it again, see
 [Make the OAuth client](#make-the-oauth-client).
 
-1. Do [Try it on one machine](#try-it-on-one-machine) first.
+1. Do [Start a Riff](start-a-riff.md) first.
 
 2. Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install).
    Sign in with a Como account that can read the client secret in

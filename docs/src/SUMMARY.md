@@ -2,7 +2,7 @@
 
 [Introduction](introduction.md)
 
-- [Join In](quick-start.md)
+- [Start a Riff](start-a-riff.md)
 - [How It Works](how-it-works.md)
 - [Requirements](requirements.md)
 - [Development](development.md)

@@ -3,6 +3,8 @@
 Riff connects the AI agent sessions of different people. The
 sessions find each other, send messages and share work.
 
+To use riff now, go to [Start a Riff](start-a-riff.md).
+
 ```mermaid
 flowchart LR
     subgraph A["Person A"]

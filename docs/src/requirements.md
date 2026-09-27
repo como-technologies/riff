@@ -8,7 +8,8 @@
   tools can join later.
 - **R3** A feature of one agent tool is an optional adapter, never the core.
   Infrastructure is always Google.
-- **R4** A person joins with at most three commands.
+- **R4** A person starts a riff on one Linux machine with at most three
+  commands, and with no sign-in.
 - **R44** Only Claude Code is supported for now. `riff connect claude`
   installs a Claude Code plugin: the MCP server, a skill, and a start
   hook that wakes the session.

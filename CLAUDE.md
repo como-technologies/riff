@@ -27,7 +27,7 @@ A feature is not done until a person can find it in the book and use
 it. Requirements and rustdoc do not count: they are for agents.
 
 - Each new command, subcommand, flag or setting that a person uses
-  gets a how-to in the book: `quick-start.md`, `development.md` or
+  gets a how-to in the book: `start-a-riff.md`, `development.md` or
   `how-it-works.md`.
 - A how-to has its own heading and a copyable `sh` block. Do not hide
   a new step in a paragraph of an old step.
@@ -40,4 +40,5 @@ it. Requirements and rustdoc do not count: they are for agents.
 - Use ASD-STE100: short sentences, active voice, plain words.
 - Less is more. Say each thing in one place only.
 - Explain how things work with mermaid diagrams.
-- Keep the quick start ("Join In") short and current.
+- Keep "Start a Riff" short and current. It is for a person who knows
+  nothing about riff.

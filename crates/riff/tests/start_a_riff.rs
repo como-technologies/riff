@@ -1,18 +1,20 @@
-//! The quick start of the book ("Join In"): at most three commands
-//! (R4), each one real. No book page names the Cloud Run URL (R5).
+//! "Start a Riff", the first page of the book for a person: at most
+//! three commands (R4), each one real, and no sign-in. No book page
+//! names the Cloud Run URL (R5). The `riff-server` commands of the page
+//! are checked in `crates/riff-server/tests/start_a_riff.rs`.
 
 use std::fs;
 use std::path::Path;
 
 use assert_cmd::Command;
 
-/// The text of `docs/src/quick-start.md`.
+/// The text of `docs/src/start-a-riff.md`.
 fn page() -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/quick-start.md");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/start-a-riff.md");
     fs::read_to_string(path).unwrap()
 }
 
-/// The commands in the `sh` blocks of the quick start, in order.
+/// The commands in the `sh` blocks of the page, in order.
 fn commands() -> Vec<String> {
     let mut commands = Vec::new();
     let mut in_sh = false;
@@ -27,29 +29,29 @@ fn commands() -> Vec<String> {
 }
 
 #[test]
-fn a_person_joins_with_at_most_three_commands() {
+fn a_person_starts_a_riff_with_at_most_three_commands() {
     let commands = commands();
     assert!(!commands.is_empty());
     assert!(commands.len() <= 3, "{commands:?}");
 }
 
 #[test]
-fn the_install_command_installs_riff_from_its_repository() {
+fn the_install_command_installs_riff_and_its_server_from_the_repository() {
     let install = &commands()[0];
     let words: Vec<&str> = install.split_whitespace().collect();
     assert_eq!(words[..3], ["cargo", "install", "--locked"], "{install}");
     let git = words.iter().position(|w| *w == "--git").unwrap();
     assert_eq!(words[git + 1], env!("CARGO_PKG_REPOSITORY"));
-    assert_eq!(words.last(), Some(&env!("CARGO_PKG_NAME")));
+    assert_eq!(words[git + 2..], [env!("CARGO_PKG_NAME"), "riff-server"]);
 }
 
 #[test]
-fn each_riff_command_of_the_quick_start_is_real() {
+fn each_riff_command_of_the_page_is_real_and_none_signs_in() {
     let riff: Vec<String> = commands()
         .into_iter()
         .filter(|c| c.starts_with("riff "))
         .collect();
-    assert_eq!(riff, ["riff login", "riff connect claude"]);
+    assert_eq!(riff, ["riff connect claude"]);
     for command in riff {
         Command::cargo_bin("riff")
             .unwrap()
