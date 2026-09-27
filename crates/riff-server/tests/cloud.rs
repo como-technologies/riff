@@ -21,6 +21,35 @@ fn run(script: &str, found: &[&str]) -> String {
 
 /// Runs a script with arguments. See [`run`].
 fn run_with(script: &str, args: &[&str], found: &[&str]) -> String {
+    run_in(&deploy(), script, args, found)
+}
+
+/// A copy of `deploy/` whose `cloud.env` sets `CLOUD_URL` to `url`.
+fn deploy_with_url(url: &str) -> tempfile::TempDir {
+    let copy = tempfile::tempdir().unwrap();
+    let dir = copy.path().join("deploy");
+    fs::create_dir(&dir).unwrap();
+    for entry in fs::read_dir(deploy()).unwrap() {
+        let path = entry.unwrap().path();
+        fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
+    }
+    let env = fs::read_to_string(dir.join("cloud.env")).unwrap();
+    let env: Vec<String> = env
+        .lines()
+        .map(|l| {
+            if l.starts_with("CLOUD_URL=") {
+                format!("CLOUD_URL={url}")
+            } else {
+                l.to_owned()
+            }
+        })
+        .collect();
+    fs::write(dir.join("cloud.env"), env.join("\n") + "\n").unwrap();
+    copy
+}
+
+/// Runs a script from the directory `scripts`. See [`run`].
+fn run_in(scripts: &Path, script: &str, args: &[&str], found: &[&str]) -> String {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("calls");
     let found_file = dir.path().join("found");
@@ -54,7 +83,7 @@ esac
         dir.path().display(),
         std::env::var("PATH").unwrap()
     );
-    let out = Command::new(deploy().join(script))
+    let out = Command::new(scripts.join(script))
         .args(args)
         .env("PATH", path)
         .output()
@@ -163,7 +192,7 @@ fn deploy_runs_one_instance_with_sign_in() {
         "--build-service-account projects/como-riff/serviceAccounts/riff-build@",
         "--min-instances 1 --max-instances 1 --no-cpu-throttling",
         "--concurrency 1000 --timeout 3600",
-        "RIFF_PUBLIC_URL=https://riff.comotechnologies.io,",
+        "RIFF_PUBLIC_URL=https://riff-server-816917641970.us-central1.run.app,",
         "RIFF_REQUIRE_SIGN_IN=true,",
         "RIFF_BUCKET=como-riff-state",
         "--set-secrets RIFF_OIDC_CLIENT_SECRET=riff-oidc-client-secret:latest",
@@ -173,8 +202,12 @@ fn deploy_runs_one_instance_with_sign_in() {
 }
 
 #[test]
-fn deploy_maps_the_domain_once() {
-    let calls = run("deploy.sh", &[]);
+fn deploy_maps_the_domain_once_when_the_url_is_the_domain() {
+    let copy = deploy_with_url("https://riff.comotechnologies.io");
+    let scripts = copy.path().join("deploy");
+    let calls = run_in(&scripts, "deploy.sh", &[], &[]);
+    let deploy = line(&calls, "run deploy riff-server ");
+    assert!(deploy.contains("RIFF_PUBLIC_URL=https://riff.comotechnologies.io,"));
     let map = line(
         &calls,
         "beta run domain-mappings create --service riff-server ",
@@ -182,8 +215,15 @@ fn deploy_maps_the_domain_once() {
     assert!(map.contains("--domain riff.comotechnologies.io"), "{map}");
     assert!(map.contains("--region us-central1"), "{map}");
 
-    let calls = run("deploy.sh", &["beta run domain-mappings describe"]);
+    let found = ["beta run domain-mappings describe"];
+    let calls = run_in(&scripts, "deploy.sh", &[], &found);
     assert!(!calls.contains("domain-mappings create"), "{calls}");
+}
+
+#[test]
+fn deploy_maps_no_domain_while_the_url_is_the_cloud_run_url() {
+    let calls = run("deploy.sh", &[]);
+    assert!(!calls.contains("domain-mappings"), "{calls}");
 }
 
 #[test]

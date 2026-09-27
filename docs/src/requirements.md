@@ -106,9 +106,11 @@
 
 ## Cloud
 
-- **R5** `riff-server` runs on Google Cloud Run. Its public URL is
-  `https://riff.comotechnologies.io`. It runs with `--require-sign-in`.
-- **R6** Cloud Run maps the domain to the service. Google manages the
+- **R5** `riff-server` runs on Google Cloud Run. It runs with
+  `--require-sign-in`. For now, its public URL is its Cloud Run URL,
+  `https://riff-server-816917641970.us-central1.run.app`.
+- **R6** Later, its public URL is `https://riff.comotechnologies.io`.
+  Cloud Run then maps the domain to the service. Google manages the
   certificate.
 - **R29** Only one instance of `riff-server` serves at a time. An
   instance is one running `riff-server` process. Cloud Run keeps one

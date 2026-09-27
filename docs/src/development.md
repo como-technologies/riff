@@ -304,22 +304,24 @@ just deploy
 
 ### Map the domain
 
-Cloud Run serves riff at `riff.comotechnologies.io`. Do this once.
+For now, riff uses the Cloud Run URL of the service. Later, Cloud Run
+serves riff at `riff.comotechnologies.io`. Do this once:
 
 1. Google must know that you own the domain. In
    [Search Console](https://search.google.com/search-console), add a
    **Domain** property `comotechnologies.io`, and verify it.
 2. At the DNS host of `comotechnologies.io`, add a CNAME record: name
    `riff`, value `ghs.googlehosted.com`.
-3. Run `just deploy`. It maps the domain to the service once. Google
+3. In `deploy/cloud.env`, set `CLOUD_URL=https://riff.comotechnologies.io`.
+4. Run `just deploy`. It maps the domain to the service once. Google
    then makes the certificate. That can take some hours.
 
 ### Check the service
 
 ```sh
-curl https://riff.comotechnologies.io/v1/sign-in
-RIFF_SERVER=https://riff.comotechnologies.io riff login
-RIFF_SERVER=https://riff.comotechnologies.io riff who
+curl https://riff-server-816917641970.us-central1.run.app/v1/sign-in
+RIFF_SERVER=https://riff-server-816917641970.us-central1.run.app riff login
+RIFF_SERVER=https://riff-server-816917641970.us-central1.run.app riff who
 ```
 
 The first command shows the issuer and the client ID.
