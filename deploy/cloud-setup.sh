@@ -29,8 +29,9 @@ else
     gcloud secrets create "$CLOUD_SECRET" --replication-policy automatic "${project[@]}"
 fi
 
-versions=$(gcloud secrets versions list "$CLOUD_SECRET" --filter=state=enabled \
-    --limit 1 --format="value(name)" "${project[@]}")
+# gcloud warns when it filters an empty list, so hide its stderr.
+versions=$(gcloud secrets versions list "$CLOUD_SECRET" --filter=state=ENABLED \
+    --limit 1 --format="value(name)" "${project[@]}" 2>/dev/null)
 if [ -z "$RIFF_OIDC_CLIENT_ID" ] || [ -z "$versions" ]; then
     echo
     echo "Next: make the OAuth client by hand. See \"Make the OAuth client\""
