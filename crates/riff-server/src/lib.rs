@@ -58,6 +58,9 @@
 //! - The server knows the [`store::Version`] of each object. Each save
 //!   names it, so a save over the changes of another instance fails
 //!   (R141). A failed save marks its object as changed again.
+//! - The token store is the object [`store::TOKENS`]. A call that
+//!   changes it gets its reply only after the save (R128). When that
+//!   save fails, the reply is 503, and the task saves the tokens again.
 //!
 //! The wire protocol is in [`riff_core::wire`].
 //!
@@ -80,6 +83,7 @@ pub mod token;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -106,7 +110,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::state::{Delivery, State};
-use crate::store::{SESSIONS, Store, StoreError, THREADS, Version};
+use crate::store::{SESSIONS, Store, StoreError, THREADS, TOKENS, Version};
 use crate::token::Tokens;
 
 /// Events that a slow stream may miss before it drops them.
@@ -122,6 +126,10 @@ struct Server {
     config: Config,
     state: Mutex<State>,
     tokens: Mutex<Tokens>,
+    /// The number of changes to the token store.
+    tokens_changes: AtomicU64,
+    /// The number of changes to the token store that are saved.
+    tokens_saved: AtomicU64,
     replay: Mutex<Replay>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
@@ -211,6 +219,55 @@ impl Server {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    /// The token store for a change. The change is counted, and
+    /// [`Server::save_tokens_since`] saves it.
+    fn tokens_change(&self) -> MutexGuard<'_, Tokens> {
+        let tokens = self.tokens();
+        self.tokens_changes.fetch_add(1, Ordering::SeqCst);
+        tokens
+    }
+
+    /// True when a change after the first `mark` changes is not saved.
+    fn tokens_unsaved(&self, mark: u64) -> bool {
+        let saved = self.tokens_saved.load(Ordering::SeqCst).max(mark);
+        self.tokens_changes.load(Ordering::SeqCst) > saved
+    }
+
+    /// Saves the token store now, when a change after the first `mark`
+    /// changes is not saved (R128). A server with no store does nothing.
+    async fn save_tokens_since(&self, mark: u64) -> Result<(), StoreError> {
+        let Some(saved) = &self.saved else {
+            return Ok(());
+        };
+        if !self.tokens_unsaved(mark) {
+            return Ok(());
+        }
+        let mut versions = saved.versions.lock().await;
+        // A save that ran while this call waited for the lock can hold
+        // the change already.
+        if !self.tokens_unsaved(mark) {
+            return Ok(());
+        }
+        self.save_tokens(saved, &mut versions).await
+    }
+
+    async fn save_tokens(
+        &self,
+        saved: &Saved,
+        versions: &mut HashMap<String, Version>,
+    ) -> Result<(), StoreError> {
+        let (bytes, changes) = {
+            let tokens = self.tokens();
+            let changes = self.tokens_changes.load(Ordering::SeqCst);
+            (tokens.to_bytes(Instant::now(), SystemTime::now()), changes)
+        };
+        let known = versions.get(TOKENS).copied();
+        let version = saved.store.save(TOKENS, bytes, known).await?;
+        versions.insert(TOKENS.into(), version);
+        self.tokens_saved.fetch_max(changes, Ordering::SeqCst);
+        Ok(())
+    }
+
     fn deliver(&self, delivery: Delivery) {
         // A send fails only when nobody listens. That is not an error.
         for wake in delivery.wakes {
@@ -245,7 +302,7 @@ impl Default for Service {
 impl Service {
     /// A new server with these settings. It saves nothing.
     pub fn new(config: Config) -> Self {
-        Service::build(config, State::default(), None)
+        Service::build(config, State::default(), Tokens::default(), None)
     }
 
     /// A server with the state that `store` holds. It saves each change
@@ -278,6 +335,14 @@ impl Service {
         if let Some(loaded) = &sessions {
             versions.insert(SESSIONS.into(), loaded.version);
         }
+        let tokens = match store.load(TOKENS).await? {
+            Some(loaded) => {
+                versions.insert(TOKENS.into(), loaded.version);
+                Tokens::from_bytes(&loaded.bytes, Instant::now(), SystemTime::now())
+                    .map_err(|e| StoreError::Failed(e.to_string()))?
+            }
+            None => Tokens::default(),
+        };
         let state = State::load(
             sessions.as_ref().map(|loaded| loaded.bytes.as_slice()),
             threads
@@ -292,18 +357,20 @@ impl Service {
             store,
             versions: tokio::sync::Mutex::new(versions),
         };
-        let service = Service::build(config, state, Some(saved));
+        let service = Service::build(config, state, tokens, Some(saved));
         service.save_each_second();
         Ok(service)
     }
 
-    fn build(config: Config, state: State, saved: Option<Saved>) -> Self {
+    fn build(config: Config, state: State, tokens: Tokens, saved: Option<Saved>) -> Self {
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         Service(Arc::new(Server {
             config,
             state: Mutex::new(state),
-            tokens: Mutex::new(Tokens::default()),
+            tokens: Mutex::new(tokens),
+            tokens_changes: AtomicU64::new(0),
+            tokens_saved: AtomicU64::new(0),
             replay: Mutex::new(Replay::default()),
             wakes,
             tail,
@@ -321,7 +388,11 @@ impl Service {
         };
         let mut versions = saved.versions.lock().await;
         let changes = self.0.state().changes(Instant::now(), now_ms());
-        let mut result = Ok(());
+        let mut result = if self.0.tokens_unsaved(0) {
+            self.0.save_tokens(saved, &mut versions).await
+        } else {
+            Ok(())
+        };
         for (object, bytes) in changes {
             let name = object.name();
             let known = versions.get(&name).copied();
@@ -528,6 +599,7 @@ async fn token(
     let Ok(proof) = s.proof(&headers, "POST", auth::TOKEN_PATH, None) else {
         return refuse("invalid_dpop_proof");
     };
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
     let reply = match r.grant_type.as_str() {
         "refresh_token" => refresh(&s, &r, &proof),
         TOKEN_EXCHANGE => match r.subject_token_type.as_deref() {
@@ -537,6 +609,13 @@ async fn token(
         },
         _ => Err("unsupported_grant_type"),
     };
+    if let Err(error) = s.save_tokens_since(mark).await {
+        tracing::error!("the token store was not saved: {error}");
+        let error = TokenError {
+            error: "temporarily_unavailable".into(),
+        };
+        return (StatusCode::SERVICE_UNAVAILABLE, no_store(), Json(error)).into_response();
+    }
     match reply {
         Ok(pair) => (no_store(), Json(pair)).into_response(),
         Err(error) => refuse(error),
@@ -566,7 +645,12 @@ async fn revoke(
             format!("{caller} is not an admin; only an admin revokes another person"),
         ));
     }
-    let sign_ins = s.tokens().revoke_user(&user);
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let sign_ins = s.tokens_change().revoke_user(&user);
+    s.save_tokens_since(mark).await.map_err(|error| {
+        tracing::error!("the token store was not saved: {error}");
+        (StatusCode::SERVICE_UNAVAILABLE, error.to_string())
+    })?;
     tracing::info!(%caller, %user, sign_ins, "revoked");
     Ok(Json(Revoked { user, sign_ins }))
 }
@@ -611,7 +695,7 @@ fn refresh(s: &Server, r: &TokenRequest, proof: &dpop::Proof) -> Result<TokenRep
         return Err("invalid_grant");
     }
     s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
-    s.tokens()
+    s.tokens_change()
         .refresh(token, &proof.jkt, Instant::now())
         .map_err(|_| "invalid_grant")
 }
@@ -630,7 +714,7 @@ async fn exchange(
     })?;
     s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
     tracing::info!("{} signed in as {}", identity.email, identity.user);
-    s.tokens()
+    s.tokens_change()
         .sign_in(&identity.user, &proof.jkt, Instant::now())
         .map_err(|_| "invalid_grant")
 }
@@ -649,7 +733,7 @@ fn for_session(
         return Err("invalid_grant");
     }
     s.first_use(proof).map_err(|_| "invalid_dpop_proof")?;
-    s.tokens()
+    s.tokens_change()
         .for_session(token, &proof.jkt, session, now)
         .map_err(|_| "invalid_grant")
 }

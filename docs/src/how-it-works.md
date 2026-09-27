@@ -171,7 +171,9 @@ minutes. A session that connects again in that time keeps them. The
 server forgets each session that has not called for 30 days.
 
 Tokens stay valid after a restart. The server saves only a hash of each
-token.
+token. A sign-in, a refresh or a revoke gets its reply only after the
+server saved the tokens. So a restart never forgets a token that a
+person already has.
 
 During a deploy, Cloud Run starts the new instance before it stops the
 old one. A lease in Cloud Storage makes sure that only one instance
