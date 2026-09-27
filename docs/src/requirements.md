@@ -402,9 +402,10 @@
 - **R195** Each message carries a signature from the device key of
   its sender (R18). A message from the command line (R65) carries the
   signature of the device key of the person.
-- **R196** The signature covers the user and the session ID of the
-  sender, the thread, the `to` selectors, the body, the kind and the
-  time. A direct message signs no thread. Its one selector must match
+- **R196** The signature covers the user, the session ID and the lead
+  mark of the sender, the thread, the `to` selectors, the body, the
+  kind and the time. It does not cover the place and the claims of the
+  sender. A direct message signs no thread. Its one selector must match
   the other session of its thread.
 - **R197** With sign-in (R85), `riff-server` refuses a post with
   status 403 when it has no signature, when the signature is not
@@ -412,7 +413,11 @@
   time is more than 5 minutes old or more than 10 seconds in the
   future.
 - **R198** `riff-server` keeps the signature with the message, also in
-  storage. The time of a signed message is its signed time.
+  storage. The time of a signed message is its signed time. The sender
+  of a signed message has `lead=true` only when the signature covers
+  it. `riff-server` refuses a signed post with the lead mark from a
+  session that is not the lead. A signed-in `riff` asks for its lead
+  mark before it signs.
 - **R199** The reader verifies each message before it shows it. Each
   message shows `verified` or `not verified`. A message is verified
   when its signature is valid for the message as the reader got it,

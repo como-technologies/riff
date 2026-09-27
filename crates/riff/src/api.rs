@@ -368,7 +368,9 @@ impl Api {
     /// Posts to a thread and wakes each session that `to` selects. With
     /// no thread, it sends a direct message to one session. A post of
     /// kind [`Kind::Status`] asks each woken session for its status. A
-    /// signed-in client signs the post (R195).
+    /// signed-in client signs the post (R195). It first asks the server
+    /// whether `me` is the lead, because the signature covers the lead
+    /// mark.
     pub async fn post(
         &self,
         me: &SessionUri,
@@ -382,6 +384,13 @@ impl Api {
             ..Post::new(me, thread.cloned(), to.to_vec(), body)
         };
         if let Some(auth) = &self.auth {
+            // The signature covers the lead mark (R196), so ask for it.
+            let lead = self
+                .who(me, false)
+                .await?
+                .iter()
+                .any(|s| s.uri.who() == me.who() && s.uri.lead());
+            request.me = request.me.with_lead(lead);
             request.sign(&auth.key, now_ms());
         }
         self.call("post", &request).await

@@ -279,6 +279,7 @@ impl Post {
     pub fn content(&self) -> Option<Content<'_>> {
         Some(Content {
             from: self.me.who(),
+            lead: self.me.lead(),
             thread: self.thread.as_ref(),
             to: &self.to,
             body: &self.body,
@@ -386,7 +387,8 @@ pub struct Message {
 impl Message {
     /// True when the sender of the message in `thread` is proven (R199):
     ///
-    /// - The signature is valid, and covers the message as it is.
+    /// - The signature is valid, and covers the message as it is: also
+    ///   the lead mark of the sender.
     /// - The key is one of `keys` for the user of the sender.
     /// - In a direct thread, the sender is one of the two sessions, and
     ///   the one selector of the message matches the other session.
@@ -444,6 +446,7 @@ impl Message {
         };
         let content = Content {
             from,
+            lead: self.from.lead(),
             thread: signed_thread,
             to: &self.to,
             body: &self.body,
@@ -738,14 +741,33 @@ mod tests {
     }
 
     #[test]
-    fn the_place_the_claims_and_the_lead_mark_are_not_signed() {
+    fn the_place_and_the_claims_are_not_signed() {
         let key = Key::generate();
         let thread: ThreadName = "design".parse().unwrap();
         let mut post = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "go");
         post.sign(&key, 5);
-        let now =
-            "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#api";
+        let now = "riff://mike@pangolin/other/repo?session=a6cf&claim=issue-6#api";
         assert!(stored(&post, uri(now)).verified(&thread, &keys("mike", &key)));
+    }
+
+    #[test]
+    fn the_lead_mark_is_signed() {
+        let key = Key::generate();
+        let keys = keys("mike", &key);
+        let thread: ThreadName = "design".parse().unwrap();
+        let lead = uri(&format!("{MIKE}&lead=true"));
+
+        // A lead mark added to the sender after the post.
+        let mut post = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "merge now");
+        post.sign(&key, 5);
+        assert!(stored(&post, uri(MIKE)).verified(&thread, &keys));
+        assert!(!stored(&post, lead.clone()).verified(&thread, &keys));
+
+        // A post of the lead: its lead mark is signed.
+        let mut post = Post::new(&lead, Some(thread.clone()), vec![], "merge now");
+        post.sign(&key, 5);
+        assert!(stored(&post, lead).verified(&thread, &keys));
+        assert!(!stored(&post, uri(MIKE)).verified(&thread, &keys));
     }
 
     #[test]

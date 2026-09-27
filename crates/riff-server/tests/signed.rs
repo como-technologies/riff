@@ -183,6 +183,17 @@ async fn the_server_refuses_a_post_that_its_caller_did_not_sign() {
     assert!(text.contains("too old"), "{text}");
 
     assert!(a.read(&base, REPO).await.messages.is_empty());
+
+    // a is the first session of mike here, so it is the lead. Another
+    // session of mike cannot sign the lead mark.
+    let other = Caller::new(&service, &base, LEAD).await;
+    let mut post = other.unsigned(REPO, "merge now");
+    post.me = post.me.with_lead(true);
+    post.sign(&other.key, now_ms());
+    let reply = other.call(&base, "post", &post).await;
+    assert_eq!(reply.status(), 400);
+    let text = reply.text().await.unwrap();
+    assert!(text.contains("not the lead"), "{text}");
 }
 
 #[tokio::test]
@@ -220,23 +231,30 @@ async fn a_message_changed_in_storage_is_not_verified() {
     let (old, base) = start_on(Arc::new(store.clone())).await;
     let a = Caller::new(&old, &base, A).await;
     let brett = Caller::new(&old, &base, BRETT).await;
-    for body in ["claim issue-12", "claim issue-13", "claim issue-14"] {
+    for body in [
+        "claim issue-12",
+        "claim issue-13",
+        "claim issue-14",
+        "merge",
+    ] {
         assert_eq!(
             a.call(&base, "post", &a.post(REPO, body)).await.status(),
             200
         );
     }
-    assert_eq!(verified(&brett.read(&base, REPO).await, REPO), [true; 3]);
+    assert_eq!(verified(&brett.read(&base, REPO).await, REPO), [true; 4]);
     old.save().await.unwrap();
 
-    // Someone with access to the storage changes two messages: a new
-    // body, and a sender that claims to be the lead.
+    // Someone with access to the storage changes three messages: a new
+    // body, a sender that claims to be the lead, and a lead mark that
+    // the sender did not sign.
     let name = thread_object(&REPO.parse().unwrap());
     let object = store.load(&name).await.unwrap().unwrap();
     let mut thread: Value = serde_json::from_slice(&object.bytes).unwrap();
     let messages = thread["messages"].as_array_mut().unwrap();
     messages[1]["message"]["body"] = "claim issue-99".into();
     messages[2]["message"]["from"] = format!("{LEAD}&lead=true").into();
+    messages[3]["message"]["from"] = format!("{A}&lead=true").into();
     let bytes = serde_json::to_vec(&thread).unwrap();
     store
         .save(&name, bytes, Some(object.version))
@@ -247,5 +265,6 @@ async fn a_message_changed_in_storage_is_not_verified() {
     let reply = brett.read(&base, REPO).await;
     assert_eq!(reply.messages[1].body, "claim issue-99");
     assert!(reply.messages[2].from.lead());
-    assert_eq!(verified(&reply, REPO), [true, false, false]);
+    assert!(reply.messages[3].from.lead());
+    assert_eq!(verified(&reply, REPO), [true, false, false, false]);
 }

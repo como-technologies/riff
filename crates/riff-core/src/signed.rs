@@ -17,9 +17,9 @@
 //!        payload the JSON of Content, not in the sig
 //! ```
 //!
-//! [`Content`] is what the signature covers: the who of the sender, the
-//! thread of the post, the `to` selectors, the body, the kind and the
-//! time (R196).
+//! [`Content`] is what the signature covers: the who and the lead mark
+//! of the sender, the thread of the post, the `to` selectors, the body,
+//! the kind and the time (R196).
 //! Its JSON has one form only, so the sender and each reader make the
 //! same bytes.
 //!
@@ -51,6 +51,7 @@
 //!     thread: Some(&thread),
 //!     to: &[],
 //!     body: "ready",
+//!     lead: false,
 //!     kind: Kind::Message,
 //!     at_ms: 1_000,
 //! };
@@ -86,6 +87,9 @@ pub const TYP: &str = "riff-message";
 pub struct Content<'a> {
     /// The user and the session ID of the sender.
     pub from: &'a Who,
+    /// True when the sender posts as the lead (R198). The place and the
+    /// claims of the sender are not signed.
+    pub lead: bool,
     /// The thread of the post. `None` for a direct message.
     pub thread: Option<&'a ThreadName>,
     pub to: &'a [Selector],
@@ -200,6 +204,7 @@ mod tests {
             thread: Some(&thread),
             to: &to,
             body: "ready",
+            lead: false,
             kind: Kind::Message,
             at_ms: 1_000,
         };
@@ -232,6 +237,10 @@ mod tests {
                 ..content
             },
             Content {
+                lead: true,
+                ..content
+            },
+            Content {
                 kind: Kind::Status,
                 ..content
             },
@@ -257,6 +266,7 @@ mod tests {
             thread: None,
             to: &[],
             body: "hi",
+            lead: false,
             kind: Kind::Message,
             at_ms: 5,
         };
@@ -273,6 +283,7 @@ mod tests {
             thread: None,
             to: &[],
             body: "hi",
+            lead: false,
             kind: Kind::Message,
             at_ms: 5,
         };
@@ -297,6 +308,7 @@ mod tests {
             thread: None,
             to: &[],
             body: "hi",
+            lead: false,
             kind: Kind::Message,
             at_ms: 5,
         };
@@ -314,6 +326,7 @@ mod tests {
             thread: None,
             to: &[],
             body: "hi",
+            lead: false,
             kind: Kind::Message,
             at_ms: 5,
         };
@@ -331,6 +344,7 @@ mod tests {
             thread: None,
             to: &[],
             body: "hi",
+            lead: false,
             kind: Kind::Message,
             at_ms: 5,
         };

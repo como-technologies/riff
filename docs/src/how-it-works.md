@@ -298,9 +298,12 @@ sequenceDiagram
     participant E as riff-server
     participant S as storage
     participant B as brett (tests)
-    A->>A: sign the sender, thread, to, body, kind and time
+    A->>E: who: am I the lead?
+    E-->>A: the lead mark of mike (api)
+    A->>A: sign the sender, lead mark, thread, to, body, kind and time
     A->>E: post and signature
     E->>E: check that the key of the token signed it
+    E->>E: check the lead mark
     E->>S: save the message and its signature
     B->>E: read
     E-->>B: the messages and the keys of each sender
@@ -309,6 +312,8 @@ sequenceDiagram
 ```
 
 - The server refuses a post that the key of its token did not sign.
+- The signature covers the lead mark. The server refuses a signed lead
+  mark from a session that is not the lead.
 - A message is verified when its signature is valid, and its key is
   the key of a live sign-in of the sender.
 - A message that is not verified never counts as from the lead. The

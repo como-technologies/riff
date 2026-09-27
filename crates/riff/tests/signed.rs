@@ -142,20 +142,17 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
     )
     .await
     .unwrap();
-    other
-        .post(
-            &uri(OTHER),
-            Some(&repo()),
-            &[],
-            "claim issue-13",
-            Default::default(),
-        )
-        .await
-        .unwrap();
+    for body in ["claim issue-13", "merge now"] {
+        other
+            .post(&uri(OTHER), Some(&repo()), &[], body, Default::default())
+            .await
+            .unwrap();
+    }
     old.save().await.unwrap();
 
-    // Someone with access to the storage makes the second message claim
-    // to come from the lead.
+    // Someone with access to the storage makes the second and the third
+    // message claim to come from the lead: the second gets the URI of the
+    // lead, the third gets only the lead mark.
     let name = thread_object(&repo());
     let object = store.load(&name).await.unwrap().unwrap();
     let mut thread: Value = serde_json::from_slice(&object.bytes).unwrap();
@@ -163,6 +160,9 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
     let from_lead = messages[0]["message"]["from"].clone();
     assert!(from_lead.as_str().unwrap().contains("lead=true"));
     messages[1]["message"]["from"] = from_lead;
+    let from_other = messages[2]["message"]["from"].as_str().unwrap();
+    let marked = from_other.replacen("session=c3", "session=c3&lead=true", 1);
+    messages[2]["message"]["from"] = marked.into();
     let bytes = serde_json::to_vec(&thread).unwrap();
     store
         .save(&name, bytes, Some(object.version))
@@ -180,9 +180,13 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
         out.contains(&format!("[1] {LEAD}&lead=true (verified): claim issue-12")),
         "{out}"
     );
-    // The reader does not show the second message as from the lead.
+    // The reader does not show the other messages as from the lead.
     assert!(
         out.contains(&format!("[2] {LEAD} (not verified): claim issue-13")),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!("[3] {OTHER} (not verified): merge now")),
         "{out}"
     );
 }

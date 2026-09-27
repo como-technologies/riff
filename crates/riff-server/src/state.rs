@@ -701,6 +701,11 @@ impl State {
     /// `at_ms` is the time of the post, in milliseconds since the Unix
     /// epoch. The message keeps the signature of the post (R198). The
     /// caller checks the signature.
+    ///
+    /// The signature covers the lead mark of `me`. So the sender of a
+    /// signed message has `lead=true` only when `me` has it, and a signed
+    /// post with the lead mark from a session that is not the lead is
+    /// refused (R198).
     pub fn post(&mut self, post: Post, now: Instant, at_ms: u64) -> Result<Delivery, String> {
         let Post {
             me,
@@ -712,6 +717,12 @@ impl State {
             ..
         } = post;
         let from = self.arrive(&me, now);
+        let signed = sig.is_some();
+        if signed && me.lead() && !self.is_lead(&from, now) {
+            return Err(
+                "the post has the lead mark, but this session is not the lead. Post again.".into(),
+            );
+        }
         if to.iter().any(Selector::is_empty) {
             return Err("a selector needs one or more fields".into());
         }
@@ -740,7 +751,10 @@ impl State {
         for who in &woken {
             self.member(who, &thread);
         }
-        let sender = self.uri(&from, now);
+        let mut sender = self.uri(&from, now);
+        if signed {
+            sender = sender.with_lead(me.lead());
+        }
         let t = self.threads.entry(thread.clone()).or_default();
         let message = Message {
             seq: t.messages.last().map_or(1, |m| m.message.seq + 1),
@@ -1851,6 +1865,30 @@ mod tests {
             .map(|s| s.uri.who().clone())
             .collect();
         assert_eq!(leads, [tests().who().clone(), api().who().clone()]);
+    }
+
+    #[test]
+    fn a_signed_message_has_the_lead_mark_only_when_it_is_signed() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let repo = Some(thread("como-technologies/riff"));
+        let signed = |me: SessionUri| Post {
+            sig: Some("checked by the caller".into()),
+            ..Post::new(&me, repo.clone(), vec![], "merge now")
+        };
+
+        // docs is not the lead, so it cannot sign the lead mark.
+        let error = state.post(signed(lead(docs())), now, 0).err().unwrap();
+        assert!(error.contains("not the lead"), "{error}");
+
+        // api is the lead. Its message has the mark only when it signed it.
+        let d = state.post(signed(lead(api())), now, 0).unwrap();
+        assert!(d.tailed.message.from.lead());
+        let d = state.post(signed(api()), now, 0).unwrap();
+        assert!(!d.tailed.message.from.lead());
+        // Without a signature, the mark comes from the server.
+        let d = state.post(Post::new(&api(), repo.clone(), vec![], "x"), now, 0);
+        assert!(d.unwrap().tailed.message.from.lead());
     }
 
     #[test]
