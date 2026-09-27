@@ -131,6 +131,10 @@
   bucket is private.
 - **R135** The image holds only the `riff-server` binary and CA
   certificates. It runs as a user that is not root.
+- **R151** Cloud Build builds the image as its own service account.
+  That account can only build and store images.
+- **R152** Cloud Run lets each caller in. `riff-server` checks each
+  token itself (R5).
 - **R143** The Google Cloud project `como-riff` holds each cloud
   resource of riff. It holds nothing else.
 - **R144** `deploy/cloud.env` holds the cloud settings and the OAuth
@@ -266,6 +270,8 @@
 - **R117** Each fetch from the sign-in provider stops after 10 seconds.
 - **R146** At start, `riff-server` checks its OAuth client with the
   provider. When the provider refuses the client, `riff-server` stops.
+- **R153** When `riff-server` cannot reach the provider at start, it
+  logs a warning and serves.
 - **R92** USER is the part of the verified email before the `@`, in
   lower case.
 - **R93** `riff logout` removes the sign-in at one server from the

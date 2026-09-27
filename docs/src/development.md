@@ -83,9 +83,10 @@ The client exists. To make it again, see
    journalctl --user -u riff-server -n 5
    ```
 
-   The last start must show `sign-in with https://accounts.google.com`.
-   If it shows `nobody can sign in`, the service has no client: do step
-   3 again.
+   The last start must show `sign-in with https://accounts.google.com`
+   and `the provider knows the OAuth client`. If it shows `nobody can
+   sign in`, the service has no client: do step 3 again. If it shows
+   `riff-server stops`, Google refused the client. The line says why.
 
 5. Sign in. Your browser opens. Pick your Como account:
 
@@ -192,7 +193,10 @@ just cloud-setup
 ```
 
 The command checks each resource first, so you can run it again.
-It makes the bucket `como-riff-state`. The bucket has one lifecycle
+It makes the bucket `como-riff-state` and two service accounts.
+`riff-server` runs as `riff-server`. That account can read and write
+only the bucket, and read only the client secret. Cloud Build builds
+the image as `riff-build`. The bucket has one lifecycle
 rule. The rule deletes each thread object 30 days after its last
 change. The rule does not touch the sessions, the tokens or the lease.
 
@@ -247,3 +251,50 @@ gcloud logging read 'protoPayload.serviceName="clientauthconfig.googleapis.com"'
 
 Google deletes a client that nobody uses for six months. It sends an
 email 30 days before.
+
+## Deploy
+
+Do [Set up the cloud project](#set-up-the-cloud-project) and
+[Make the OAuth client](#make-the-oauth-client) first.
+
+Cloud Run serves riff at `riff.comotechnologies.io`. Google must know
+that you own the domain. Do this once. The first command lists the
+domains that you own. If `comotechnologies.io` is not in the list, the
+second command opens Search Console, where you add it:
+
+```sh
+gcloud domains list-user-verified
+gcloud domains verify comotechnologies.io
+```
+
+Build the image and deploy it:
+
+```sh
+just deploy
+```
+
+Cloud Build builds the image from `Dockerfile`. Cloud Run then runs one
+instance of the service `riff-server`, with sign-in. The first deploy
+also maps the domain to the service. gcloud then shows DNS records. Add
+them at the DNS host of `comotechnologies.io`. Google then makes the
+certificate. That can take some hours.
+
+### Check the service
+
+```sh
+curl https://riff.comotechnologies.io/v1/sign-in
+RIFF_SERVER=https://riff.comotechnologies.io riff login
+RIFF_SERVER=https://riff.comotechnologies.io riff who
+```
+
+The first command shows the issuer and the client ID.
+
+### See the log
+
+```sh
+gcloud run services logs read riff-server --project como-riff \
+  --region us-central1 --limit 20
+```
+
+Each start shows `the provider knows the OAuth client`. When Google
+refuses the client, the log shows `riff-server stops` and why.

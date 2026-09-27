@@ -19,7 +19,9 @@ if [ "$(gcloud billing projects describe "$CLOUD_PROJECT" --format='value(billin
 fi
 echo "Project $CLOUD_PROJECT: exists, with billing."
 
-gcloud services enable secretmanager.googleapis.com storage.googleapis.com "${project[@]}"
+gcloud services enable secretmanager.googleapis.com storage.googleapis.com \
+    iam.googleapis.com run.googleapis.com cloudbuild.googleapis.com \
+    artifactregistry.googleapis.com "${project[@]}"
 echo "APIs: on."
 
 if gcloud secrets describe "$CLOUD_SECRET" "${project[@]}" >/dev/null 2>&1; then
@@ -40,6 +42,27 @@ fi
 # The rule deletes each thread object 30 days after its last change (R46).
 gcloud storage buckets update "$bucket" --lifecycle-file lifecycle.json "${project[@]}"
 echo "Bucket $CLOUD_BUCKET: lifecycle rule set."
+
+account() { echo "$1@$CLOUD_PROJECT.iam.gserviceaccount.com"; }
+for name in "$CLOUD_RUN_ACCOUNT" "$CLOUD_BUILD_ACCOUNT"; do
+    if gcloud iam service-accounts describe "$(account "$name")" "${project[@]}" >/dev/null 2>&1; then
+        echo "Service account $name: exists."
+    else
+        echo "Service account $name: making it."
+        gcloud iam service-accounts create "$name" --display-name "$name" "${project[@]}"
+    fi
+done
+# riff-server reads and writes only its bucket, and reads only its
+# secret (R134). The build account may only build and store images.
+run_account=serviceAccount:$(account "$CLOUD_RUN_ACCOUNT")
+gcloud storage buckets add-iam-policy-binding "$bucket" --member "$run_account" \
+    --role roles/storage.objectUser "${project[@]}" >/dev/null
+gcloud secrets add-iam-policy-binding "$CLOUD_SECRET" --member "$run_account" \
+    --role roles/secretmanager.secretAccessor "${project[@]}" >/dev/null
+gcloud projects add-iam-policy-binding "$CLOUD_PROJECT" \
+    --member "serviceAccount:$(account "$CLOUD_BUILD_ACCOUNT")" \
+    --role roles/run.builder --condition None >/dev/null
+echo "Service accounts: roles set."
 
 # gcloud warns when it filters an empty list, so hide its stderr.
 versions=$(gcloud secrets versions list "$CLOUD_SECRET" --filter=state=ENABLED \

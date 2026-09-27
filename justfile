@@ -85,6 +85,10 @@ service *ARGS:
 cloud-setup:
     deploy/cloud-setup.sh
 
+# Build the image with Cloud Build and deploy it to Cloud Run (R136)
+deploy:
+    deploy/deploy.sh
+
 # Store the OAuth client: the secret in Secret Manager, the ID in deploy/cloud.env
 oauth-client:
     deploy/oauth-client.sh

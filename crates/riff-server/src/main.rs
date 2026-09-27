@@ -8,7 +8,7 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
-use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
+use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
 use riff_server::{Service, service};
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -191,12 +191,14 @@ async fn main() -> std::io::Result<()> {
     tracing::info!("riff-server listens on {}", listener.local_addr()?);
     if let Some(client_id) = cli.client_id {
         tracing::info!("sign-in with {}", cli.issuer);
-        config.provider = Some(Provider {
+        let provider = Provider {
             issuer: cli.issuer,
             client_id,
             client_secret: cli.client_secret,
             allowed_domains: cli.allowed_domains,
-        });
+        };
+        check_client(&provider).await;
+        config.provider = Some(provider);
     } else {
         tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");
     }
@@ -226,6 +228,22 @@ async fn main() -> std::io::Result<()> {
             tracing::info!("stopping: saving the state");
             service.save().await.map_err(std::io::Error::other)
         }
+    }
+}
+
+/// Stops the process when the provider refuses the OAuth client
+/// (R146). When the provider does not answer, the server serves (R153).
+async fn check_client(provider: &Provider) {
+    match provider
+        .check_client(&oidc::client(oidc::FETCH_TIMEOUT))
+        .await
+    {
+        Ok(()) => tracing::info!("the provider knows the OAuth client"),
+        Err(e @ SignInError::Client(_)) => {
+            tracing::error!("riff-server stops: {e}");
+            std::process::exit(1);
+        }
+        Err(e) => tracing::warn!("cannot check the OAuth client: {e}"),
     }
 }
 

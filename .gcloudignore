@@ -1,0 +1,3 @@
+# The files that `just deploy` does not send to Cloud Build.
+.git
+#!include:.gitignore

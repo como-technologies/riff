@@ -28,6 +28,9 @@
 //!   [`Provider::allowed_domains`] (R15). An account with no `hd` is
 //!   refused.
 //!
+//! At start, the server checks its client with the provider (R146, see
+//! [`Provider::check_client`]).
+//!
 //! The user part of the session URI is the part of the email before
 //! the `@`, in lower case (see [`user_of`]). The server fetches the
 //! discovery document and the JWKS at each sign-in. A person signs in
@@ -93,6 +96,8 @@ pub enum SignInError {
     Provider(String),
     /// The ID token is not valid.
     Invalid(String),
+    /// The provider refuses the OAuth client of riff.
+    Client(String),
 }
 
 impl fmt::Display for SignInError {
@@ -100,11 +105,22 @@ impl fmt::Display for SignInError {
         match self {
             SignInError::Provider(why) => write!(f, "the sign-in provider failed: {why}"),
             SignInError::Invalid(why) => write!(f, "the ID token is not valid: {why}"),
+            SignInError::Client(why) => write!(f, "the provider refuses the OAuth client: {why}"),
         }
     }
 }
 
 impl std::error::Error for SignInError {}
+
+/// The code that [`Provider::check_client`] sends. No provider issued it.
+pub const CHECK_CODE: &str = "riff-client-check";
+
+/// An error reply of a token endpoint (RFC 6749, section 5.2).
+#[derive(Deserialize)]
+struct OAuthError {
+    error: String,
+    error_description: Option<String>,
+}
 
 #[derive(Deserialize)]
 struct Claims {
@@ -120,6 +136,38 @@ impl Provider {
             issuer: self.issuer.clone(),
             client_id: self.client_id.clone(),
             client_secret: self.client_secret.clone(),
+        }
+    }
+
+    /// Checks the client with the provider (R146). It sends
+    /// [`CHECK_CODE`] to the token endpoint, with the client ID and the
+    /// secret. A provider that knows the client refuses only the code,
+    /// with `invalid_grant`. Each other OAuth error gives
+    /// [`SignInError::Client`]. A reply with status 5xx, or no reply,
+    /// gives [`SignInError::Provider`].
+    pub async fn check_client(&self, http: &reqwest::Client) -> Result<(), SignInError> {
+        let discovery: Discovery = fetch(http, &Discovery::url(&self.issuer)).await?;
+        let url = discovery.token_endpoint;
+        let provider = |e: reqwest::Error| SignInError::Provider(format!("{url}: {e}"));
+        let mut form = vec![
+            ("grant_type", "authorization_code"),
+            ("code", CHECK_CODE),
+            ("redirect_uri", "http://127.0.0.1"),
+            ("client_id", &self.client_id),
+        ];
+        if let Some(secret) = &self.client_secret {
+            form.push(("client_secret", secret));
+        }
+        let reply = http.post(&url).form(&form).send().await.map_err(provider)?;
+        let status = reply.status();
+        if status.is_server_error() {
+            return Err(SignInError::Provider(format!("{url}: status {status}")));
+        }
+        let reply: OAuthError = reply.json().await.map_err(provider)?;
+        match (reply.error.as_str(), reply.error_description) {
+            ("invalid_grant", _) => Ok(()),
+            (error, Some(why)) => Err(SignInError::Client(format!("{error}: {why}"))),
+            (error, None) => Err(SignInError::Client(error.to_owned())),
         }
     }
 
