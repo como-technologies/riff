@@ -578,10 +578,11 @@ riff post --kind status --to user=mike,repo=como-technologies/riff
 riff who
 ```
 
-To give a session an item by hand, use its session ID from `riff who`:
+To give a session an item by hand, use its full session ID from the
+`session=` part of its URI in `riff who`:
 
 ```sh
-riff tell 77e0 "request: claim issue-12"
+riff tell 77e0a1b2-3c4d-4e5f-8a9b-0c1d2e3f4a5b "request: claim issue-12"
 ```
 
 You can also ask your lead: *"Split the free items of the wave among my

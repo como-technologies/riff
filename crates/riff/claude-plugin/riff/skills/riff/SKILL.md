@@ -327,10 +327,11 @@ thread. The people agree among themselves.
    `[{"user": "USER", "repo": "OWNER/REPO"}]`. Give the sessions time
    to answer, then call `who`. It shows the claims and the status of
    each session.
-2. Give each free session one clear item. Call `tell` with the session
-   ID and a request, for example `request: claim issue-12` or
-   `request: stop and release issue-7`. Give two sessions two different
-   items. Pick items with low conflict between them.
+2. Give each free session one clear item of the current wave (see
+   "Waves"). Call `tell` with the session ID and a request, for
+   example `request: claim issue-12` or `request: stop and release
+   issue-7`. Give two sessions two different items. Pick items with low
+   conflict between them.
 3. Check the progress in `who`, and with a new status request when the
    statuses are old.
 4. Answer the questions of your sessions. See "Questions for your

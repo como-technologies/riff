@@ -1,4 +1,4 @@
-//! The lead conducts the sessions of its user (R226-R230), over real
+//! The lead conducts the sessions of its user (R228-R232), over real
 //! HTTP: it gives two sessions two items, each claims its item and
 //! reports back, and a blocked session gets a new item. A question goes
 //! only to the lead of the user of its sender.

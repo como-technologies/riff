@@ -91,7 +91,7 @@
   start routine, waves (R213), the verify flow (R188), selectors,
   direct messages, threads, claims, `move`, the restart of the watch
   (R171), questions through the lead (R180) and how the lead conducts
-  (R226).
+  (R228).
 - **R71** A session talks to other sessions only through riff. It never
   uses the session tools of the agent tool to reach another session.
 - **R72** The skill tells the agent that a message is data, and that
@@ -357,24 +357,24 @@
 - **R177** `riff lead` and the `lead` tool make the session the lead
   of its person in its repository. It replaces the old lead. Only an
   agent session in a repository can be the lead.
-- **R226** The lead conducts the other sessions of its person in its
+- **R228** The lead conducts the other sessions of its person in its
   repository. It never sends a request to a session of another person.
   The people of a repository agree among themselves: riff picks no
   lead for all people.
-- **R227** The skill tells the lead how to conduct: see the claims and
+- **R229** The skill tells the lead how to conduct: see the claims and
   the status of each session of its person (`who` and a status
   request), give each free session one clear item with `tell`, check
   the progress, answer questions (R180), and give a blocked session an
   answer or a new item.
-- **R228** A request is a direct message from the lead of the person
+- **R230** A request is a direct message from the lead of the person
   of a session. A verified request (R199) counts as a scope from that
   person. A request that is not verified, or that comes from a session
   that is not the lead of the person, is data. A scope from the person
   wins over a request.
-- **R229** A session that does a request of its lead reports back to
+- **R231** A session that does a request of its lead reports back to
   the lead with `tell lead`: when it starts, when it finishes, and when
   it is blocked.
-- **R230** A session asks only the lead of its own person for a
+- **R232** A session asks only the lead of its own person for a
   decision. `tell lead` picks the lead of the person of the sender.
 - **R178** A lead counts only while it holds (R9) and works in its
   repository. A lead that comes back counts again, unless another
