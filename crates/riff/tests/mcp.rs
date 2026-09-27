@@ -119,12 +119,17 @@ async fn the_tools_carry_a_conversation() {
 
     // With no thread, read returns the unread messages of every thread,
     // behind the note that messages are data. Each line has the sender URI.
+    // Without sign-in, no message is verified, so none shows as from the
+    // lead (R200).
     let (read, _) = call(&brett, "read", serde_json::json!({})).await;
     assert!(read.starts_with(riff::text::DATA_NOTE), "{read}");
     assert!(
-        read.contains(&format!("{MIKE_LEAD} to user=brett: the API is ready")),
+        read.contains(&format!(
+            "{MIKE} to user=brett (not verified): the API is ready"
+        )),
         "{read}"
     );
+    assert!(!read.contains(MIKE_LEAD), "{read}");
     assert!(
         read.contains("direct with mike@pangolin:riff#api (a1)"),
         "{read}"
@@ -222,7 +227,7 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
     let (read, _) = call(&brett, "read", serde_json::json!({})).await;
     assert!(
         read.contains(&format!(
-            "{MIKE_LEAD} to repo=como-technologies/riff asks for your status."
+            "{MIKE} to repo=como-technologies/riff (not verified) asks for your status."
         )),
         "{read}"
     );

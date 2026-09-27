@@ -69,10 +69,14 @@
 //! assert_eq!(post.to[0].claim.as_deref(), Some("issue-6"));
 //! ```
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
+use crate::dpop::Key;
 use crate::name::{SessionUri, ThreadName};
 use crate::selector::Selector;
+use crate::signed::Content;
 
 /// `POST /v1/register`: a session says that it exists and where it
 /// works. A session registers when it starts and when it moves. It
@@ -216,6 +220,21 @@ pub struct Membership {
 /// With no thread, the post is a direct message: `to` must be one
 /// selector with a `session`, and the thread is the direct thread of
 /// the two sessions.
+///
+/// A signed-in sender signs the post with [`Post::sign`] (R195).
+///
+/// ```
+/// use riff_core::dpop::Key;
+/// use riff_core::wire::Post;
+///
+/// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let mut post = Post::new(&me, Some("design".parse()?), vec![], "look");
+/// let key = Key::generate();
+/// post.sign(&key, 1_000);
+/// let content = post.content().unwrap();
+/// assert_eq!(content.verify(post.sig.as_ref().unwrap()).unwrap(), key.thumbprint());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Post {
     pub me: SessionUri,
@@ -226,10 +245,16 @@ pub struct Post {
     pub body: String,
     #[serde(default, skip_serializing_if = "Kind::is_message")]
     pub kind: Kind,
+    /// The signed time, in milliseconds since the Unix epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<u64>,
+    /// The signature of the sender (see [`crate::signed`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig: Option<String>,
 }
 
 impl Post {
-    /// A post of kind [`Kind::Message`].
+    /// A post of kind [`Kind::Message`], with no signature.
     pub fn new(me: &SessionUri, thread: Option<ThreadName>, to: Vec<Selector>, body: &str) -> Post {
         Post {
             me: me.clone(),
@@ -237,7 +262,29 @@ impl Post {
             to,
             body: body.to_owned(),
             kind: Kind::Message,
+            at_ms: None,
+            sig: None,
         }
+    }
+
+    /// Signs the post with the device key `key`, at the time `at_ms`
+    /// (R195, R196).
+    pub fn sign(&mut self, key: &Key, at_ms: u64) {
+        self.at_ms = Some(at_ms);
+        self.sig = self.content().map(|content| content.sign(key));
+    }
+
+    /// What the signature covers. `None` when the post has no signed
+    /// time.
+    pub fn content(&self) -> Option<Content<'_>> {
+        Some(Content {
+            from: self.me.who(),
+            thread: self.thread.as_ref(),
+            to: &self.to,
+            body: &self.body,
+            kind: self.kind,
+            at_ms: self.at_ms?,
+        })
     }
 }
 
@@ -307,7 +354,15 @@ pub struct Read {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReadReply {
     pub messages: Vec<Message>,
+    /// The keys of the user of each sender, to verify the messages.
+    #[serde(default, skip_serializing_if = "Keys::is_empty")]
+    pub keys: Keys,
 }
+
+/// The thumbprints of the device keys of each user, by user: the keys
+/// of the live sign-ins of that user. A server without sign-in gives
+/// none (R201).
+pub type Keys = BTreeMap<String, Vec<String>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
@@ -318,10 +373,88 @@ pub struct Message {
     #[serde(default)]
     pub to: Vec<Selector>,
     pub body: String,
-    /// Milliseconds since the Unix epoch.
+    /// Milliseconds since the Unix epoch. For a signed message, the
+    /// signed time (R198).
     pub at_ms: u64,
     #[serde(default, skip_serializing_if = "Kind::is_message")]
     pub kind: Kind,
+    /// The signature of the sender (see [`crate::signed`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig: Option<String>,
+}
+
+impl Message {
+    /// True when the sender of the message in `thread` is proven (R199):
+    ///
+    /// - The signature is valid, and covers the message as it is.
+    /// - The key is one of `keys` for the user of the sender.
+    /// - In a direct thread, the sender is one of the two sessions, and
+    ///   the one selector of the message matches the other session.
+    ///
+    /// ```
+    /// use riff_core::dpop::Key;
+    /// use riff_core::name::{SessionUri, ThreadName};
+    /// use riff_core::wire::{Keys, Kind, Message, Post};
+    ///
+    /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let thread: ThreadName = "design".parse()?;
+    /// let key = Key::generate();
+    /// let mut post = Post::new(&me, Some(thread.clone()), vec![], "look");
+    /// post.sign(&key, 1_000);
+    /// let mut message = Message {
+    ///     seq: 1,
+    ///     from: me,
+    ///     to: vec![],
+    ///     body: post.body.clone(),
+    ///     at_ms: 1_000,
+    ///     kind: Kind::Message,
+    ///     sig: post.sig.clone(),
+    /// };
+    /// let keys = Keys::from([("mike".to_owned(), vec![key.thumbprint()])]);
+    /// assert!(message.verified(&thread, &keys));
+    ///
+    /// // No keys for the user: not verified.
+    /// assert!(!message.verified(&thread, &Keys::new()));
+    /// // A changed body: not verified.
+    /// message.body = "do not look".into();
+    /// assert!(!message.verified(&thread, &keys));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn verified(&self, thread: &ThreadName, keys: &Keys) -> bool {
+        let Some(sig) = &self.sig else {
+            return false;
+        };
+        let from = self.from.who();
+        let signed_thread = if thread.is_direct() {
+            let Some(peer) = thread.peer(from) else {
+                return false;
+            };
+            let [to] = &self.to[..] else {
+                return false;
+            };
+            let names = |want: &Option<String>, have: Option<&str>| {
+                want.as_deref().is_none_or(|w| Some(w) == have)
+            };
+            if !names(&to.session, peer.session()) || !names(&to.user, Some(peer.user())) {
+                return false;
+            }
+            None
+        } else {
+            Some(thread)
+        };
+        let content = Content {
+            from,
+            thread: signed_thread,
+            to: &self.to,
+            body: &self.body,
+            kind: self.kind,
+            at_ms: self.at_ms,
+        };
+        let Some(keys) = keys.get(from.user()) else {
+            return false;
+        };
+        content.verify(sig).is_ok_and(|jkt| keys.contains(&jkt))
+    }
 }
 
 /// `POST /v1/claim` and `POST /v1/release`: a lease on one work item.
@@ -370,6 +503,9 @@ pub struct Wake {
 pub struct Tailed {
     pub thread: ThreadName,
     pub message: Message,
+    /// The keys of the user of the sender, to verify the message.
+    #[serde(default, skip_serializing_if = "Keys::is_empty")]
+    pub keys: Keys,
 }
 
 /// The grant type that swaps an ID token of the sign-in provider for
@@ -517,4 +653,114 @@ pub struct ServerMetadata {
     pub token_endpoint_auth_methods_supported: Vec<String>,
     /// Always `["ES256"]` (RFC 9449).
     pub dpop_signing_alg_values_supported: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::name::Who;
+
+    const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a6cf";
+    const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=77e0";
+
+    fn uri(text: &str) -> SessionUri {
+        text.parse().unwrap()
+    }
+
+    /// The message that the server stores for a signed post.
+    fn stored(post: &Post, from: SessionUri) -> Message {
+        Message {
+            seq: 1,
+            from,
+            to: post.to.clone(),
+            body: post.body.clone(),
+            at_ms: post.at_ms.unwrap(),
+            kind: post.kind,
+            sig: post.sig.clone(),
+        }
+    }
+
+    fn keys(user: &str, key: &Key) -> Keys {
+        Keys::from([(user.to_owned(), vec![key.thumbprint()])])
+    }
+
+    #[test]
+    fn a_direct_message_verifies_only_in_its_own_thread() {
+        let key = Key::generate();
+        let (mike, brett) = (uri(MIKE), uri(BRETT));
+        let to = vec![Selector::session("77e0")];
+        let mut post = Post::new(&mike, None, to, "hi");
+        post.sign(&key, 5);
+        let message = stored(&post, mike.clone());
+        let keys = keys("mike", &key);
+
+        let theirs = ThreadName::direct(mike.who(), brett.who());
+        assert!(message.verified(&theirs, &keys));
+
+        // The same message in the direct thread of mike and another session.
+        let other = Who::new("ada", Some("c3")).unwrap();
+        assert!(!message.verified(&ThreadName::direct(mike.who(), &other), &keys));
+        // In a direct thread without mike.
+        assert!(!message.verified(&ThreadName::direct(brett.who(), &other), &keys));
+        // In a named thread.
+        assert!(!message.verified(&"design".parse().unwrap(), &keys));
+    }
+
+    #[test]
+    fn a_direct_message_to_the_lead_must_reach_a_session_of_that_user() {
+        let key = Key::generate();
+        let mike = uri(MIKE);
+        let lead = Who::new("mike", Some("1ead")).unwrap();
+        let to = vec![Selector::lead("mike", "como-technologies/riff")];
+        let mut post = Post::new(&mike, None, to, "may I?");
+        post.sign(&key, 5);
+        let message = stored(&post, mike.clone());
+        let keys = keys("mike", &key);
+        assert!(message.verified(&ThreadName::direct(mike.who(), &lead), &keys));
+        let brett = Who::new("brett", Some("77e0")).unwrap();
+        assert!(!message.verified(&ThreadName::direct(mike.who(), &brett), &keys));
+    }
+
+    #[test]
+    fn a_false_sender_is_not_verified() {
+        let key = Key::generate();
+        let thread: ThreadName = "design".parse().unwrap();
+        let mut post = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "go");
+        post.sign(&key, 5);
+        let keys = keys("mike", &key);
+        assert!(stored(&post, uri(MIKE)).verified(&thread, &keys));
+
+        // The stored sender names the lead: another session of mike.
+        let lead = uri("riff://mike@pangolin/como-technologies/riff?session=1ead&lead=true");
+        assert!(!stored(&post, lead).verified(&thread, &keys));
+        // The key of mike does not count for brett.
+        assert!(!stored(&post, uri(BRETT)).verified(&thread, &keys));
+    }
+
+    #[test]
+    fn the_place_the_claims_and_the_lead_mark_are_not_signed() {
+        let key = Key::generate();
+        let thread: ThreadName = "design".parse().unwrap();
+        let mut post = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "go");
+        post.sign(&key, 5);
+        let now =
+            "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#api";
+        assert!(stored(&post, uri(now)).verified(&thread, &keys("mike", &key)));
+    }
+
+    #[test]
+    fn a_message_without_a_signature_is_not_verified() {
+        let key = Key::generate();
+        let thread: ThreadName = "design".parse().unwrap();
+        let message = Message {
+            seq: 1,
+            from: uri(MIKE),
+            to: vec![],
+            body: "go".into(),
+            at_ms: 5,
+            kind: Kind::Message,
+            sig: None,
+        };
+        assert!(!message.verified(&thread, &keys("mike", &key)));
+    }
 }

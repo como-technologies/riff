@@ -458,6 +458,41 @@ impl ThreadName {
     pub fn is_direct(&self) -> bool {
         self.0.starts_with(DIRECT_PREFIX)
     }
+
+    /// The other session of a direct thread of `who`. `None` when this
+    /// is not a direct thread of `who`.
+    ///
+    /// ```
+    /// use riff_core::name::{ThreadName, Who};
+    ///
+    /// let a = Who::new("mike", Some("a6cf"))?;
+    /// let b = Who::new("brett", Some("77e0"))?;
+    /// let c = Who::new("mike", None)?;
+    /// let thread = ThreadName::direct(&a, &b);
+    /// assert_eq!(thread.peer(&a), Some(b.clone()));
+    /// assert_eq!(thread.peer(&b), Some(a.clone()));
+    /// assert_eq!(thread.peer(&c), None);
+    /// assert_eq!(ThreadName::direct(&c, &a).peer(&a), Some(c));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn peer(&self, who: &Who) -> Option<Who> {
+        let (first, second) = self.0.strip_prefix(DIRECT_PREFIX)?.split_once('|')?;
+        let parse = |text: &str| {
+            let (user, session) = match text.split_once('/') {
+                Some((user, session)) => (user, Some(session)),
+                None => (text, None),
+            };
+            Who::new(user, session).ok()
+        };
+        let (first, second) = (parse(first)?, parse(second)?);
+        if &first == who {
+            Some(second)
+        } else if &second == who {
+            Some(first)
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Display for ThreadName {

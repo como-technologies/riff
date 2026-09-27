@@ -17,6 +17,7 @@
 //! - [`selector`]: the address of a post.
 //! - [`wire`]: the requests, replies and events on the HTTP API.
 //! - [`dpop`]: device keys and the proofs that bind tokens to them.
+//! - [`signed`]: the signature that each message carries.
 //!
 //! ## Sessions
 //!
@@ -74,4 +75,5 @@
 pub mod dpop;
 pub mod name;
 pub mod selector;
+pub mod signed;
 pub mod wire;

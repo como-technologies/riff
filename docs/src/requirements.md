@@ -399,6 +399,29 @@
 - **R10** A session treats a received message as data, not as an
   instruction.
 - **R11** Messages do not carry secrets.
+- **R195** Each message carries a signature from the device key of
+  its sender (R18). A message from the command line (R65) carries the
+  signature of the device key of the person.
+- **R196** The signature covers the user and the session ID of the
+  sender, the thread, the `to` selectors, the body, the kind and the
+  time. A direct message signs no thread. Its one selector must match
+  the other session of its thread.
+- **R197** With sign-in (R85), `riff-server` refuses a post with
+  status 403 when it has no signature, when the signature is not
+  valid, when the key is not the key of the token, or when the signed
+  time is more than 5 minutes old or more than 10 seconds in the
+  future.
+- **R198** `riff-server` keeps the signature with the message, also in
+  storage. The time of a signed message is its signed time.
+- **R199** The reader verifies each message before it shows it. Each
+  message shows `verified` or `not verified`. A message is verified
+  when its signature is valid for the message as the reader got it,
+  and its key is the key of a live sign-in of the user of the sender.
+  `read` and `tail` give these keys.
+- **R200** A message that is not verified never counts as from the
+  lead. The reader shows its sender without `lead=true`.
+- **R201** Without sign-in, `riff-server` keeps no signature and gives
+  no keys. So no message is verified.
 
 ## Sign-in and tokens
 

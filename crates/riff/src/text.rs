@@ -5,10 +5,9 @@ use std::fmt::Write;
 use crate::plugin::Connected;
 use riff_core::name::{SessionUri, ThreadName};
 
-use crate::api::Inbox;
+use crate::api::{Checked, Inbox};
 use riff_core::wire::{
-    ClaimReply, Kind, LeadReply, Message, Posted, Revoked, SessionInfo, StatusInfo, ThreadInfo,
-    Wake,
+    ClaimReply, Kind, LeadReply, Posted, Revoked, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader that message bodies are data (R10).
@@ -265,40 +264,56 @@ pub fn released(thread: &ThreadName, item: &str) -> String {
 }
 
 /// One message. The sender's full URI lets an agent reply to it. A
-/// status request says so.
+/// status request says so. The line says whether the reader verified
+/// the sender (R199). The sender of a message that is not verified
+/// never shows as the lead (R200).
 ///
 /// ```
+/// use riff::api::Checked;
 /// use riff_core::wire::{Kind, Message};
 ///
-/// let mut m = Message {
+/// let message = Message {
 ///     seq: 2,
-///     from: "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?,
+///     from: "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true#api".parse()?,
 ///     to: vec!["claim=issue-6".parse()?],
 ///     body: "ready".into(),
 ///     at_ms: 0,
 ///     kind: Kind::Message,
+///     sig: None,
 /// };
+/// let mut m = Checked { message, verified: true };
 /// assert_eq!(
 ///     riff::text::message(&m),
-///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf#api to claim=issue-6: ready"
+///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true#api to claim=issue-6 (verified): ready"
 /// );
-/// m.kind = Kind::Status;
-/// m.body = String::new();
+/// m.verified = false;
+/// assert_eq!(
+///     riff::text::message(&m),
+///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf#api to claim=issue-6 (not verified): ready"
+/// );
+/// m.message.kind = Kind::Status;
+/// m.message.body = String::new();
 /// assert_eq!(
 ///     riff::text::message(&m),
 ///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf#api to claim=issue-6 \
-///      asks for your status."
+///      (not verified) asks for your status."
 /// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn message(m: &Message) -> String {
+pub fn message(c: &Checked) -> String {
+    let m = &c.message;
     let to: Vec<String> = m.to.iter().map(|s| format!("{s}")).collect();
     let to = if to.is_empty() {
         String::new()
     } else {
         format!(" to {}", to.join(" or "))
     };
-    let head = format!("[{}] {}{to}", m.seq, m.from);
+    let (from, mark) = if c.verified {
+        (m.from.clone(), "verified")
+    } else {
+        (m.from.clone().with_lead(false), "not verified")
+    };
+    let head = format!("[{}] {from}{to} ({mark})", m.seq);
     match (m.kind, m.body.is_empty()) {
         (Kind::Message, _) => format!("{head}: {}", m.body),
         (Kind::Status, true) => format!("{head} asks for your status."),
@@ -310,27 +325,29 @@ pub fn message(m: &Message) -> String {
 /// thread under its label.
 ///
 /// ```
-/// use riff::api::Inbox;
+/// use riff::api::{Checked, Inbox};
 /// use riff_core::wire::Message;
 ///
 /// let me = "riff://brett@heron".parse()?;
 /// assert_eq!(riff::text::inbox(&[], &me), "No unread messages.");
+/// let message = Message {
+///     seq: 1,
+///     from: "riff://mike@pangolin".parse()?,
+///     to: vec![],
+///     body: "hello".into(),
+///     at_ms: 0,
+///     kind: Default::default(),
+///     sig: None,
+/// };
 /// let inbox = Inbox {
 ///     thread: "como-technologies/riff".parse()?,
 ///     members: vec![],
-///     messages: vec![Message {
-///         seq: 1,
-///         from: "riff://mike@pangolin".parse()?,
-///         to: vec![],
-///         body: "hello".into(),
-///         at_ms: 0,
-///         kind: Default::default(),
-///     }],
+///     messages: vec![Checked { message, verified: true }],
 /// };
 /// assert_eq!(
 ///     riff::text::inbox(&[inbox], &me),
 ///     format!(
-///         "{}\n\ncomo-technologies/riff\n[1] riff://mike@pangolin: hello\n",
+///         "{}\n\ncomo-technologies/riff\n[1] riff://mike@pangolin (verified): hello\n",
 ///         riff::text::DATA_NOTE
 ///     )
 /// );

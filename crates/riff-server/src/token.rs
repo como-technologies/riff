@@ -95,7 +95,7 @@
 //! assert_eq!(tokens.check(&session.access_token, "jkt-laptop", now), Err(Refused::Unknown));
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -301,6 +301,35 @@ impl Tokens {
             self.revoke(*id);
         }
         ids.len()
+    }
+
+    /// The thumbprints of the device keys of the live sign-ins of
+    /// `user`, sorted, each once. A reader checks the signature of a
+    /// message from `user` against them (R199).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{REFRESH_IDLE, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.sign_in("mike", "laptop", now).unwrap();
+    /// tokens.sign_in("mike", "desktop", now).unwrap();
+    /// tokens.sign_in("mike", "laptop", now).unwrap();
+    /// tokens.sign_in("brett", "heron", now).unwrap();
+    /// assert_eq!(tokens.keys("mike", now), ["desktop", "laptop"]);
+    /// assert!(tokens.keys("mike", now + REFRESH_IDLE).is_empty());
+    /// tokens.revoke_user("brett");
+    /// assert!(tokens.keys("brett", now).is_empty());
+    /// ```
+    pub fn keys(&self, user: &str, now: Instant) -> Vec<String> {
+        let keys: BTreeSet<&str> = self
+            .sign_ins
+            .values()
+            .filter(|s| s.user == user && now < s.idle_until)
+            .map(|s| s.jkt.as_str())
+            .collect();
+        keys.into_iter().map(str::to_owned).collect()
     }
 
     /// The store as JSON, with only the hash of each token (R81). `now`

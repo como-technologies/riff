@@ -131,7 +131,8 @@ use std::time::{Duration, Instant};
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ClaimReply, LeadReply, Message, Post, SessionInfo, Status, StatusInfo, Tailed, ThreadInfo, Wake,
+    ClaimReply, Keys, LeadReply, Message, Post, SessionInfo, Status, StatusInfo, Tailed,
+    ThreadInfo, Wake,
 };
 use serde::{Deserialize, Serialize};
 
@@ -698,7 +699,8 @@ impl State {
     /// Adds a message to a thread and wakes each session that `to`
     /// selects (R51). With no thread, the post is a direct message (R62).
     /// `at_ms` is the time of the post, in milliseconds since the Unix
-    /// epoch.
+    /// epoch. The message keeps the signature of the post (R198). The
+    /// caller checks the signature.
     pub fn post(&mut self, post: Post, now: Instant, at_ms: u64) -> Result<Delivery, String> {
         let Post {
             me,
@@ -706,6 +708,8 @@ impl State {
             to,
             body,
             kind,
+            sig,
+            ..
         } = post;
         let from = self.arrive(&me, now);
         if to.iter().any(Selector::is_empty) {
@@ -745,6 +749,7 @@ impl State {
             body,
             at_ms,
             kind,
+            sig,
         };
         t.messages.push(Stored {
             message: message.clone(),
@@ -759,7 +764,11 @@ impl State {
             wakes,
             woken: woken.iter().map(|who| self.uri(who, now)).collect(),
             unmatched,
-            tailed: Tailed { thread, message },
+            tailed: Tailed {
+                thread,
+                message,
+                keys: Keys::new(),
+            },
         })
     }
 

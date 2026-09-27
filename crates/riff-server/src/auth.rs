@@ -36,6 +36,8 @@
 //!   one. A missing token, or a token or proof that the server refuses,
 //!   gives 401 with a `WWW-Authenticate` challenge. The challenge names
 //!   the resource metadata.
+//! - With sign-in, each post needs a signature from the device key of
+//!   its token ([`SignedIn::check_post`], R197), or the reply is 403.
 //! - The token endpoint refuses a `resource` other than the public URL
 //!   with `invalid_target` (RFC 8707).
 //! - The server has no authorization endpoint (R83). So the metadata
@@ -59,7 +61,7 @@ use std::collections::{HashSet, VecDeque};
 
 use riff_core::dpop::{ALG, MAX_AGE, MAX_SKEW};
 use riff_core::name::Who;
-use riff_core::wire::{ResourceMetadata, ServerMetadata, TOKEN_EXCHANGE};
+use riff_core::wire::{Post, ResourceMetadata, ServerMetadata, TOKEN_EXCHANGE};
 
 use crate::oidc::Provider;
 
@@ -168,7 +170,11 @@ impl Config {
 /// server puts it in the extensions of each request that passed the
 /// token check.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignedIn(pub Who);
+pub struct SignedIn {
+    pub who: Who,
+    /// The thumbprint of the device key of the token.
+    pub jkt: String,
+}
 
 impl SignedIn {
     /// Refuses a request whose `me` is another user or another session
@@ -178,17 +184,69 @@ impl SignedIn {
     /// use riff_core::name::{SessionUri, Who};
     /// use riff_server::auth::SignedIn;
     ///
-    /// let caller = SignedIn(Who::new("mike", Some("a6cf")).unwrap());
+    /// let caller = SignedIn { who: Who::new("mike", Some("a6cf")).unwrap(), jkt: "k".into() };
     /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse().unwrap();
     /// assert!(caller.may_act_as(me.who()).is_ok());
     /// let other: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b7d0".parse().unwrap();
     /// assert!(caller.may_act_as(other.who()).is_err());
     /// ```
     pub fn may_act_as(&self, who: &Who) -> Result<(), String> {
-        if &self.0 == who {
+        if &self.who == who {
             return Ok(());
         }
-        Err(format!("this token acts only as {}, not as {who}", self.0))
+        Err(format!(
+            "this token acts only as {}, not as {who}",
+            self.who
+        ))
+    }
+
+    /// Checks the signature of a post from this caller (R197). The post
+    /// needs a signature from the device key of the token, and a signed
+    /// time at most [`MAX_AGE`] seconds old and at most [`MAX_SKEW`]
+    /// seconds in the future. `now_ms` is the time of the server, in
+    /// milliseconds since the Unix epoch. Gives the signed time.
+    ///
+    /// ```
+    /// use riff_core::dpop::Key;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Post;
+    /// use riff_server::auth::SignedIn;
+    ///
+    /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let key = Key::generate();
+    /// let caller = SignedIn { who: me.who().clone(), jkt: key.thumbprint() };
+    /// let mut post = Post::new(&me, Some("design".parse()?), vec![], "look");
+    /// assert!(caller.check_post(&post, 9_000).is_err());
+    ///
+    /// post.sign(&key, 9_000);
+    /// assert_eq!(caller.check_post(&post, 9_000), Ok(9_000));
+    ///
+    /// // A signature from another key than the key of the token.
+    /// post.sign(&Key::generate(), 9_000);
+    /// assert!(caller.check_post(&post, 9_000).is_err());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn check_post(&self, post: &Post, now_ms: u64) -> Result<u64, String> {
+        let (Some(sig), Some(content)) = (&post.sig, post.content()) else {
+            return Err("this server needs a signature on each message. Update riff.".into());
+        };
+        self.may_act_as(content.from)?;
+        let jkt = content
+            .verify(sig)
+            .map_err(|e| format!("the message signature is refused: {e}"))?;
+        if jkt != self.jkt {
+            return Err("the message is signed with another key than the key of the token".into());
+        }
+        let at_ms = content.at_ms;
+        if now_ms.saturating_sub(at_ms) > MAX_AGE * 1000 {
+            return Err("the message time is too old. Check the clock of this machine.".into());
+        }
+        if at_ms > now_ms.saturating_add(MAX_SKEW * 1000) {
+            return Err(
+                "the message time is in the future. Check the clock of this machine.".into(),
+            );
+        }
+        Ok(at_ms)
     }
 }
 
@@ -305,7 +363,64 @@ impl Replay {
 
 #[cfg(test)]
 mod tests {
+    use riff_core::dpop::Key;
+    use riff_core::name::SessionUri;
+    use riff_core::selector::Selector;
+
     use super::*;
+
+    fn signed(key: &Key, at_ms: u64) -> (SignedIn, Post) {
+        let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf"
+            .parse()
+            .unwrap();
+        let caller = SignedIn {
+            who: me.who().clone(),
+            jkt: key.thumbprint(),
+        };
+        let mut post = Post::new(&me, None, vec![Selector::session("b7d0")], "go");
+        post.sign(key, at_ms);
+        (caller, post)
+    }
+
+    #[test]
+    fn a_post_needs_a_time_near_the_server_time() {
+        let key = Key::generate();
+        let now = 1_000_000;
+        let (caller, post) = signed(&key, now - MAX_AGE * 1000);
+        assert!(caller.check_post(&post, now).is_ok());
+        let (caller, post) = signed(&key, now - MAX_AGE * 1000 - 1);
+        let error = caller.check_post(&post, now).unwrap_err();
+        assert!(error.contains("too old"), "{error}");
+        let (caller, post) = signed(&key, now + MAX_SKEW * 1000);
+        assert!(caller.check_post(&post, now).is_ok());
+        let (caller, post) = signed(&key, now + MAX_SKEW * 1000 + 1);
+        let error = caller.check_post(&post, now).unwrap_err();
+        assert!(error.contains("in the future"), "{error}");
+    }
+
+    #[test]
+    fn a_post_must_be_signed_as_the_caller() {
+        let key = Key::generate();
+        let (caller, mut post) = signed(&key, 5);
+        post.me = "riff://mike@pangolin/como-technologies/riff?session=1ead"
+            .parse()
+            .unwrap();
+        post.sign(&key, 5);
+        let error = caller.check_post(&post, 5).unwrap_err();
+        assert!(error.contains("acts only as mike/a6cf"), "{error}");
+    }
+
+    #[test]
+    fn a_changed_post_is_refused() {
+        let key = Key::generate();
+        let (caller, mut post) = signed(&key, 5);
+        post.body = "stop".into();
+        let error = caller.check_post(&post, 5).unwrap_err();
+        assert!(error.contains("not valid for this message"), "{error}");
+        post.sig = None;
+        let error = caller.check_post(&post, 5).unwrap_err();
+        assert!(error.contains("needs a signature"), "{error}");
+    }
 
     #[test]
     fn replay_forgets_old_proofs_in_order() {

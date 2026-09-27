@@ -36,6 +36,12 @@
 //!   acts only as its session.
 //! - A token exchange also swaps a person access token for a session
 //!   pair (R19, see [`token`]).
+//! - With sign-in, a post needs a signature from the device key of its
+//!   token ([`auth::SignedIn::check_post`]). The message keeps the
+//!   signature. `read` and each `tail` event give the keys of the live
+//!   sign-ins of each sender ([`token::Tokens::keys`]), so the reader
+//!   verifies each message (see [`riff_core::signed`]). Without sign-in,
+//!   the server keeps no signature and gives no keys (R201).
 //! - A layer checks the access token and its DPoP proof. It guards
 //!   `/v1/revoke` always, and each other `/v1` route except `/v1/token`
 //!   with [`auth::Config::require_sign_in`]. It puts the
@@ -110,9 +116,9 @@ use futures::{Stream, StreamExt};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, Claim, ClaimReply, ID_TOKEN_TYPE, Lead, LeadReply, Membership, Post, Posted,
-    Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, ServerMetadata, SetStatus,
-    SignInConfig, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError, TokenReply,
+    ACCESS_TOKEN_TYPE, Claim, ClaimReply, ID_TOKEN_TYPE, Keys, Lead, LeadReply, Membership, Post,
+    Posted, Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, ServerMetadata,
+    SetStatus, SignInConfig, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError, TokenReply,
     TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
@@ -235,7 +241,20 @@ impl Server {
             .caller(token, &proof.jkt, Instant::now())
             .map_err(Refusal::token)?;
         self.first_use(&proof)?;
-        Ok(SignedIn(who))
+        Ok(SignedIn {
+            who,
+            jkt: proof.jkt,
+        })
+    }
+
+    /// The keys of the live sign-ins of each user (R199).
+    fn keys<'a>(&self, users: impl IntoIterator<Item = &'a str>) -> Keys {
+        let tokens = self.tokens();
+        let now = Instant::now();
+        users
+            .into_iter()
+            .map(|user| (user.to_owned(), tokens.keys(user, now)))
+            .collect()
     }
 
     fn replay(&self) -> MutexGuard<'_, Replay> {
@@ -710,14 +729,32 @@ async fn leave(
     Ok(Json(()))
 }
 
+/// Adds a message. With sign-in, the post needs a valid signature from
+/// the key of its token (R197), and the message keeps it. Without
+/// sign-in, the message keeps no signature (R201).
 async fn post_message(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Post>,
+    Json(mut r): Json<Post>,
 ) -> Reply<Posted> {
-    let delivery = acts_as(&s, caller, &r.me)?
-        .post(r, Instant::now(), now_ms())
+    let now_ms = now_ms();
+    let at_ms = match &caller {
+        Some(Extension(caller)) => caller
+            .check_post(&r, now_ms)
+            .map_err(|message| (StatusCode::FORBIDDEN, message))?,
+        None => {
+            r.sig = None;
+            now_ms
+        }
+    };
+    let signed = caller.is_some();
+    let me = r.me.clone();
+    let mut delivery = acts_as(&s, caller, &me)?
+        .post(r, Instant::now(), at_ms)
         .map_err(bad_request)?;
+    if signed {
+        delivery.tailed.keys = s.keys([me.who().user()]);
+    }
     Ok(Json(posted(&s, delivery)))
 }
 
@@ -732,15 +769,23 @@ async fn status(
     Ok(Json(()))
 }
 
+/// Gives the messages. With sign-in, the reply holds the keys of each
+/// sender, so the reader can verify each message (R199).
 async fn read(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Read>,
 ) -> Reply<ReadReply> {
+    let signed = caller.is_some();
     let messages = acts_as(&s, caller, &r.me)?
         .read(&r.me, &r.thread, r.all, Instant::now())
         .map_err(not_found)?;
-    Ok(Json(ReadReply { messages }))
+    let keys = if signed {
+        s.keys(messages.iter().map(|m| m.from.who().user()))
+    } else {
+        Keys::new()
+    };
+    Ok(Json(ReadReply { messages, keys }))
 }
 
 async fn claim(
@@ -825,7 +870,7 @@ async fn token(
 /// token. Only an admin names another person.
 async fn revoke(
     AxumState(s): AxumState<Shared>,
-    Extension(SignedIn(caller)): Extension<SignedIn>,
+    Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
     Json(r): Json<Revoke>,
 ) -> Reply<Revoked> {
     let caller = caller.user().to_owned();

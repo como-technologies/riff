@@ -343,7 +343,12 @@ fn record_session(me: &SessionUri) -> Option<local::Held> {
 async fn tail(api: &Api, thread: &ThreadName) {
     eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let stream = follow(|| api.tail(thread), RETRY);
-    print_each(stream, |tailed| text::message(&tailed.message), false).await;
+    print_each(
+        stream,
+        |tailed| text::message(&tailed.clone().into()),
+        false,
+    )
+    .await;
 }
 
 /// Runs until stopped, or with `once` until the first wake (R170). It

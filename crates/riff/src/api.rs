@@ -16,6 +16,14 @@
 //! client needs it. After that, the client refreshes it with its own
 //! refresh token. When the refresh fails, it does a new exchange.
 //!
+//! # Signatures
+//!
+//! A signed-in client signs each post with its device key (R195, see
+//! [`riff_core::signed`]). The reader checks each message before it
+//! shows it: [`Api::read`] and [`checked`] give a [`Checked`] message
+//! (R199). Without sign-in, the server keeps no signature, so no
+//! message is verified (R201).
+//!
 //! # Tries
 //!
 //! Cloud Run can stop a call or a stream at any time: at a deploy, and
@@ -36,9 +44,10 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Claim, ClaimReply, Kind, Lead, LeadReply, Membership, Message, Post, Posted, Read, ReadReply,
-    Register, Revoke, Revoked, SessionInfo, SetStatus, SignInConfig, Status, Tailed, ThreadInfo,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Claim, ClaimReply, Keys, Kind, Lead, LeadReply, Membership, Message, Post, Posted, Read,
+    ReadReply, Register, Revoke, Revoked, SessionInfo, SetStatus, SignInConfig, Status, Tailed,
+    ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
+    WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -358,7 +367,8 @@ impl Api {
 
     /// Posts to a thread and wakes each session that `to` selects. With
     /// no thread, it sends a direct message to one session. A post of
-    /// kind [`Kind::Status`] asks each woken session for its status.
+    /// kind [`Kind::Status`] asks each woken session for its status. A
+    /// signed-in client signs the post (R195).
     pub async fn post(
         &self,
         me: &SessionUri,
@@ -367,10 +377,13 @@ impl Api {
         body: &str,
         kind: Kind,
     ) -> Result<Posted> {
-        let request = Post {
+        let mut request = Post {
             kind,
             ..Post::new(me, thread.cloned(), to.to_vec(), body)
         };
+        if let Some(auth) = &self.auth {
+            request.sign(&auth.key, now_ms());
+        }
         self.call("post", &request).await
     }
 
@@ -435,19 +448,25 @@ impl Api {
         Ok(out)
     }
 
+    /// The unread messages (or all of them) of one thread, each checked
+    /// with the keys that the server gives (R199).
     pub async fn read(
         &self,
         me: &SessionUri,
         thread: &ThreadName,
         all: bool,
-    ) -> Result<Vec<Message>> {
+    ) -> Result<Vec<Checked>> {
         let request = Read {
             me: me.clone(),
             thread: thread.clone(),
             all,
         };
         let reply: ReadReply = self.call("read", &request).await?;
-        Ok(reply.messages)
+        Ok(reply
+            .messages
+            .into_iter()
+            .map(|message| checked(thread, message, &reply.keys))
+            .collect())
     }
 
     pub async fn claim(
@@ -561,12 +580,59 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// Milliseconds since the Unix epoch, for signatures.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// The messages to show from one thread.
 pub struct Inbox {
     pub thread: ThreadName,
     /// Empty when the caller named the thread.
     pub members: Vec<SessionUri>,
-    pub messages: Vec<Message>,
+    pub messages: Vec<Checked>,
+}
+
+/// A message, and whether the reader proved its sender (R199).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Checked {
+    pub message: Message,
+    pub verified: bool,
+}
+
+/// Checks one message of `thread` with the keys that the server gave.
+/// See [`Message::verified`].
+///
+/// ```
+/// use riff::api::checked;
+/// use riff_core::wire::{Keys, Message};
+///
+/// let message = Message {
+///     seq: 1,
+///     from: "riff://mike@pangolin".parse()?,
+///     to: vec![],
+///     body: "hello".into(),
+///     at_ms: 0,
+///     kind: Default::default(),
+///     sig: None,
+/// };
+/// let thread = "como-technologies/riff".parse()?;
+/// assert!(!checked(&thread, message, &Keys::new()).verified);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn checked(thread: &ThreadName, message: Message, keys: &Keys) -> Checked {
+    Checked {
+        verified: message.verified(thread, keys),
+        message,
+    }
+}
+
+impl From<Tailed> for Checked {
+    fn from(tailed: Tailed) -> Self {
+        checked(&tailed.thread, tailed.message, &tailed.keys)
+    }
 }
 
 fn membership(me: &SessionUri, thread: &ThreadName) -> Membership {

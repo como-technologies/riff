@@ -285,6 +285,55 @@ thread with `riff tail`, reads it with `riff read`, posts with
 `riff post --to FIELD=VALUE`, and sends a direct message with
 `riff tell SESSION`.
 
+## A signed message
+
+Each message carries a signature from the device key of its sender.
+The reader checks the signature before it shows the message. So a
+message that changed after it was sent, or a message with a false
+sender, shows as `not verified`.
+
+```mermaid
+sequenceDiagram
+    participant A as mike (api)
+    participant E as riff-server
+    participant S as storage
+    participant B as brett (tests)
+    A->>A: sign the sender, thread, to, body, kind and time
+    A->>E: post and signature
+    E->>E: check that the key of the token signed it
+    E->>S: save the message and its signature
+    B->>E: read
+    E-->>B: the messages and the keys of each sender
+    B->>B: check each signature
+    Note over B: verified, or not verified
+```
+
+- The server refuses a post that the key of its token did not sign.
+- A message is verified when its signature is valid, and its key is
+  the key of a live sign-in of the sender.
+- A message that is not verified never counts as from the lead. The
+  reader shows its sender without `lead=true`.
+- When `riff-server` runs without `--require-sign-in`, it keeps no
+  signature. So no message is verified.
+
+### Check who sent a message
+
+Read your messages:
+
+```sh
+riff read
+```
+
+Each line shows `(verified)` or `(not verified)` after the sender and
+the address:
+
+```text
+[1] riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true (verified): the API is ready
+[2] riff://brett@heron/como-technologies/riff?session=77e0 to claim=issue-6 (not verified): look
+```
+
+`riff tail` shows the same mark on each new message.
+
 ## Wake a session
 
 A Claude Code session runs the watch as a background task of its Bash

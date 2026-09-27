@@ -1,0 +1,251 @@
+//! Signed messages (R195-R201), over HTTP: the check at the server, the
+//! keys for the reader, and a message that changed in storage.
+
+mod common;
+
+use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use riff_core::dpop::Key;
+use riff_core::name::{SessionUri, ThreadName};
+use riff_core::wire::{Post, ReadReply, TokenReply};
+use riff_server::Service;
+use riff_server::auth::Config;
+use riff_server::store::{Memory, Store, thread_object};
+use serde::Serialize;
+use serde_json::Value;
+
+const A: &str = "riff://mike@pangolin/como-technologies/riff?session=a";
+const LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=lead";
+const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b";
+const MIKE: &str = "riff://mike@pangolin";
+const REPO: &str = "como-technologies/riff";
+
+fn now_ms() -> u64 {
+    let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    u64::try_from(since.as_millis()).unwrap()
+}
+
+/// A caller that is signed in: its device key, its access token and its
+/// URI. A URI with a session ID gets a session token (R19).
+struct Caller {
+    key: Key,
+    token: String,
+    me: SessionUri,
+}
+
+impl Caller {
+    async fn new(service: &Service, base: &str, me: &str) -> Caller {
+        let me: SessionUri = me.parse().unwrap();
+        let key = Key::generate();
+        let person = service
+            .tokens()
+            .sign_in(me.who().user(), &key.thumbprint(), Instant::now())
+            .unwrap();
+        let Some(session) = me.who().session() else {
+            return Caller {
+                key,
+                token: person.access_token,
+                me,
+            };
+        };
+        let form = format!(
+            "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange\
+             &subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token\
+             &subject_token={}&session={session}",
+            person.access_token
+        );
+        let reply = common::refresh(base, &key, &form).await;
+        assert_eq!(reply.status(), 200);
+        let pair: TokenReply = reply.json().await.unwrap();
+        Caller {
+            key,
+            token: pair.access_token,
+            me,
+        }
+    }
+
+    async fn call(&self, base: &str, op: &str, body: &impl Serialize) -> reqwest::Response {
+        common::post(&format!("{base}/v1/{op}"), &self.key, Some(&self.token))
+            .json(body)
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// A post to `thread` with no signature.
+    fn unsigned(&self, thread: &str, body: &str) -> Post {
+        Post::new(&self.me, Some(thread.parse().unwrap()), vec![], body)
+    }
+
+    /// A post to `thread`, signed now with the key of the caller.
+    fn post(&self, thread: &str, body: &str) -> Post {
+        let mut post = self.unsigned(thread, body);
+        post.sign(&self.key, now_ms());
+        post
+    }
+
+    async fn read(&self, base: &str, thread: &str) -> ReadReply {
+        let request = serde_json::json!({ "me": self.me, "thread": thread, "all": true });
+        let reply = self.call(base, "read", &request).await;
+        assert_eq!(reply.status(), 200);
+        reply.json().await.unwrap()
+    }
+}
+
+/// Starts a server that needs sign-in, and loads its state from `store`.
+async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let config = Config {
+        require_sign_in: true,
+        lease: common::LEASE,
+        ..Config::new(&url)
+    };
+    let service = Service::load(config, store).await.unwrap();
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (service, url)
+}
+
+/// True when each message of the reply is verified.
+fn verified(reply: &ReadReply, thread: &str) -> Vec<bool> {
+    let thread: ThreadName = thread.parse().unwrap();
+    reply
+        .messages
+        .iter()
+        .map(|m| m.verified(&thread, &reply.keys))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_signed_message_shows_as_verified_to_the_reader() {
+    let (service, base) = common::start(true, &[]).await;
+    let a = Caller::new(&service, &base, A).await;
+    let person = Caller::new(&service, &base, MIKE).await;
+    let brett = Caller::new(&service, &base, BRETT).await;
+
+    assert_eq!(
+        a.call(&base, "post", &a.post(REPO, "ready")).await.status(),
+        200
+    );
+    // A post from the command line carries the key of the person (R195).
+    let from_person = person.post(REPO, "me too");
+    assert_eq!(person.call(&base, "post", &from_person).await.status(), 200);
+
+    let reply = brett.read(&base, REPO).await;
+    assert_eq!(verified(&reply, REPO), [true, true]);
+    assert!(reply.messages.iter().all(|m| m.sig.is_some()));
+    let mut keys = vec![a.key.thumbprint(), person.key.thumbprint()];
+    keys.sort();
+    assert_eq!(reply.keys["mike"], keys);
+}
+
+#[tokio::test]
+async fn the_server_refuses_a_post_that_its_caller_did_not_sign() {
+    let (service, base) = common::start(true, &[]).await;
+    let a = Caller::new(&service, &base, A).await;
+    let refused = |post: Post| {
+        let a = &a;
+        let base = &base;
+        async move {
+            let reply = a.call(base, "post", &post).await;
+            (reply.status().as_u16(), reply.text().await.unwrap())
+        }
+    };
+
+    let (status, text) = refused(a.unsigned(REPO, "no signature")).await;
+    assert_eq!(status, 403);
+    assert!(text.contains("needs a signature"), "{text}");
+
+    let mut post = a.unsigned(REPO, "another key");
+    post.sign(&Key::generate(), now_ms());
+    let (status, text) = refused(post).await;
+    assert_eq!(status, 403);
+    assert!(text.contains("another key"), "{text}");
+
+    // The sender URI names another session of the same user.
+    let mut post = a.unsigned(REPO, "I am the lead");
+    post.me = LEAD.parse().unwrap();
+    post.sign(&a.key, now_ms());
+    assert_eq!(refused(post).await.0, 403);
+
+    let mut post = a.post(REPO, "ready");
+    post.body = "not ready".into();
+    let (status, text) = refused(post).await;
+    assert_eq!(status, 403);
+    assert!(text.contains("not valid for this message"), "{text}");
+
+    let mut post = a.unsigned(REPO, "old");
+    post.sign(&a.key, now_ms() - 301_000);
+    let (status, text) = refused(post).await;
+    assert_eq!(status, 403);
+    assert!(text.contains("too old"), "{text}");
+
+    assert!(a.read(&base, REPO).await.messages.is_empty());
+}
+
+#[tokio::test]
+async fn a_server_without_sign_in_keeps_no_signature() {
+    let (_service, base) = common::start(false, &[]).await;
+    let key = Key::generate();
+    let me: SessionUri = A.parse().unwrap();
+    let mut post = Post::new(&me, Some(REPO.parse().unwrap()), vec![], "hi");
+    post.sign(&key, now_ms());
+    let client = reqwest::Client::new();
+    let reply = client
+        .post(format!("{base}/v1/post"))
+        .json(&post)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 200);
+    let reply: ReadReply = client
+        .post(format!("{base}/v1/read"))
+        .json(&serde_json::json!({ "me": A, "thread": REPO }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reply.messages[0].sig, None);
+    assert!(reply.keys.is_empty());
+    assert_eq!(verified(&reply, REPO), [false]);
+}
+
+#[tokio::test]
+async fn a_message_changed_in_storage_is_not_verified() {
+    let store = Memory::default();
+    let (old, base) = start_on(Arc::new(store.clone())).await;
+    let a = Caller::new(&old, &base, A).await;
+    let brett = Caller::new(&old, &base, BRETT).await;
+    for body in ["claim issue-12", "claim issue-13", "claim issue-14"] {
+        assert_eq!(
+            a.call(&base, "post", &a.post(REPO, body)).await.status(),
+            200
+        );
+    }
+    assert_eq!(verified(&brett.read(&base, REPO).await, REPO), [true; 3]);
+    old.save().await.unwrap();
+
+    // Someone with access to the storage changes two messages: a new
+    // body, and a sender that claims to be the lead.
+    let name = thread_object(&REPO.parse().unwrap());
+    let object = store.load(&name).await.unwrap().unwrap();
+    let mut thread: Value = serde_json::from_slice(&object.bytes).unwrap();
+    let messages = thread["messages"].as_array_mut().unwrap();
+    messages[1]["message"]["body"] = "claim issue-99".into();
+    messages[2]["message"]["from"] = format!("{LEAD}&lead=true").into();
+    let bytes = serde_json::to_vec(&thread).unwrap();
+    store
+        .save(&name, bytes, Some(object.version))
+        .await
+        .unwrap();
+
+    let (_new, base) = start_on(Arc::new(store)).await;
+    let reply = brett.read(&base, REPO).await;
+    assert_eq!(reply.messages[1].body, "claim issue-99");
+    assert!(reply.messages[2].from.lead());
+    assert_eq!(verified(&reply, REPO), [true, false, false]);
+}

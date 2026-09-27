@@ -69,10 +69,12 @@ async fn tail(State(calls): State<Shared>) -> impl IntoResponse {
         body: format!("stream {seq}"),
         at_ms: 0,
         kind: Kind::Message,
+        sig: None,
     };
     once(Tailed {
         thread: repo(),
         message,
+        keys: Default::default(),
     })
 }
 

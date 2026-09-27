@@ -113,7 +113,7 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
 
     let unread = api.read(&brett, &wake.thread, false).await.unwrap();
     assert_eq!(unread.len(), 1);
-    assert_eq!(unread[0].body, "a direct message");
+    assert_eq!(unread[0].message.body, "a direct message");
 }
 
 #[tokio::test]
@@ -241,7 +241,7 @@ async fn a_status_request_wakes_each_session_and_who_shows_each_answer() {
             .unwrap();
         assert_eq!(wake.kind, Kind::Status);
         let messages = api.read(me, &thread, false).await.unwrap();
-        assert_eq!(messages[0].kind, Kind::Status);
+        assert_eq!(messages[0].message.kind, Kind::Status);
         let blocked = (step == "merge").then(|| "waits for a review".to_owned());
         let status = Status {
             step: step.into(),

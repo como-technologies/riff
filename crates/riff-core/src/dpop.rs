@@ -142,8 +142,13 @@ impl Key {
             ath: access_token.map(token_hash),
         };
         let signing_input = format!("{}.{}", json_b64(&header), json_b64(&claims));
-        let signature: Signature = self.0.sign(signing_input.as_bytes());
-        format!("{signing_input}.{}", B64.encode(signature.to_bytes()))
+        format!("{signing_input}.{}", self.sign(signing_input.as_bytes()))
+    }
+
+    /// The ES256 signature of `input`, as base64url.
+    pub(crate) fn sign(&self, input: &[u8]) -> String {
+        let signature: Signature = self.0.sign(input);
+        B64.encode(signature.to_bytes())
     }
 }
 
@@ -167,7 +172,7 @@ impl Jwk {
         B64.encode(Sha256::digest(canonical.as_bytes()))
     }
 
-    fn verifying_key(&self) -> Result<VerifyingKey, DpopError> {
+    pub(crate) fn verifying_key(&self) -> Result<VerifyingKey, DpopError> {
         if self.kty != "EC" || self.crv != "P-256" {
             return Err(DpopError::new("the jwk is not a P-256 key"));
         }
@@ -304,7 +309,7 @@ struct Claims {
     ath: Option<String>,
 }
 
-fn json_b64<T: Serialize>(value: &T) -> String {
+pub(crate) fn json_b64<T: Serialize>(value: &T) -> String {
     B64.encode(serde_json::to_vec(value).expect("the proof parts serialize"))
 }
 

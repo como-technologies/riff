@@ -193,7 +193,9 @@ async fn read_shows_unread_messages_of_the_repository_thread() {
     let (out, code) = riff(&server, dir, "brett", &["read"]).await;
     assert_eq!(
         out,
-        format!("{note}\n\ncomo-technologies/riff\n[1] riff://mike@pangolin: the API is ready\n")
+        format!(
+            "{note}\n\ncomo-technologies/riff\n[1] riff://mike@pangolin (not verified): the API is ready\n"
+        )
     );
     assert_eq!(code, 0);
 
@@ -202,7 +204,7 @@ async fn read_shows_unread_messages_of_the_repository_thread() {
 
     let (out, _) = riff(&server, dir, "brett", &["read", "--all"]).await;
     assert!(
-        out.contains("[1] riff://mike@pangolin: the API is ready"),
+        out.contains("[1] riff://mike@pangolin (not verified): the API is ready"),
         "{out}"
     );
 }
@@ -222,7 +224,7 @@ async fn read_takes_a_named_thread() {
     .await;
     let (out, code) = riff(&server, dir, "brett", &["read", "--thread", "api-v2"]).await;
     assert!(
-        out.ends_with("api-v2\n[1] riff://mike@pangolin: v2 plan\n"),
+        out.ends_with("api-v2\n[1] riff://mike@pangolin (not verified): v2 plan\n"),
         "{out}"
     );
     assert_eq!(code, 0);
@@ -263,8 +265,8 @@ async fn tell_sends_a_direct_message_to_a_session() {
     assert!(
         out.ends_with(
             "direct with mike@pangolin\n\
-             [1] riff://mike@pangolin to session=b2: are you there?\n\
-             [2] riff://mike@pangolin to session=b2: and now?\n"
+             [1] riff://mike@pangolin to session=b2 (not verified): are you there?\n\
+             [2] riff://mike@pangolin to session=b2 (not verified): and now?\n"
         ),
         "{out}"
     );
@@ -336,7 +338,7 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     let (out, _) = agent(&server, dir, "mike", "a1", &["read"]).await;
     assert!(
         out.ends_with(
-            "[1] riff://mike@pangolin to repo=como-technologies/riff asks for your status.\n"
+            "[1] riff://mike@pangolin to repo=como-technologies/riff (not verified) asks for your status.\n"
         ),
         "{out}"
     );
