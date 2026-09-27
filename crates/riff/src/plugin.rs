@@ -483,6 +483,24 @@ mod tests {
         }
     }
 
+    /// 01M3JD8WWMK2ZQTFER4TJFV37V
+    #[test]
+    fn the_skill_names_the_backlog() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let forge = &skill[skill.find("### Waves on GitHub").unwrap()..];
+        let forge = &forge[..forge.find("\n## ").unwrap()];
+        let forge = forge.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "The backlog is the milestone `Backlog`",
+            "An item in the backlog is not free work: no session starts it",
+            "Only the lead moves an item from the backlog into a wave",
+            "`gh issue edit 12 --milestone Backlog`",
+        ] {
+            assert!(forge.contains(word), "the skill does not say {word:?}");
+        }
+        assert!(!skill.contains("`Later`"), "an old milestone example");
+    }
+
     #[test]
     fn the_skill_asks_for_acceptance_criteria() {
         let skill = text("riff/skills/riff/SKILL.md");
