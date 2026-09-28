@@ -166,6 +166,31 @@ fn a_person_updates_riff_with_riff_update() {
     each_is_real(&update);
 }
 
+/// "Start a Team Riff" (01M3MEFG6F102T1H8DFJ38EJ4A): the owner uses the
+/// riff, signs in first, then invites each person. Each `riff` command
+/// is real. The server part of the page runs in
+/// `crates/riff-server/tests/start_a_team_riff.rs`.
+#[test]
+fn the_owner_of_a_team_riff_signs_in_then_invites() {
+    let commands = commands_of("start-a-team-riff.md");
+    assert!(
+        commands.contains(&"echo 'export RIFF_SERVER=URL' >> ~/.bashrc".to_owned()),
+        "{commands:?}"
+    );
+    let riff: Vec<String> = commands
+        .into_iter()
+        .filter(|c| c.starts_with("riff "))
+        .collect();
+    assert_eq!(riff, ["riff login", "riff invite EMAIL"]);
+    each_is_real(&riff);
+}
+
+/// "Start a Riff" links the path for a team.
+#[test]
+fn start_a_riff_links_start_a_team_riff() {
+    assert!(page("start-a-riff.md").contains("(start-a-team-riff.md)"));
+}
+
 #[test]
 fn no_book_page_names_a_cloud_run_url() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src");

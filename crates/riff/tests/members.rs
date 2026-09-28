@@ -53,10 +53,21 @@ async fn the_owner_invites_lists_and_removes() {
     let signed_in = api.clone().signed_in(None).unwrap();
 
     let invited = signed_in.invite("bob@gmail.com").await.unwrap();
-    assert_eq!(
-        text::invited(&invited),
-        "Invited bob@gmail.com. They can now run riff login."
+    // The answer names the address of the riff, and the lines to join
+    // it (01M3MEF4B33Z6WVJMDP29C7SS2).
+    let answer = text::invited(&invited);
+    assert!(
+        answer.starts_with(&format!(
+            "Invited bob@gmail.com to the riff at {}.",
+            api.base()
+        )),
+        "{answer}"
     );
+    assert!(
+        answer.contains(&format!("export RIFF_SERVER={}'", api.base())),
+        "{answer}"
+    );
+    assert!(answer.ends_with("\nriff connect claude"), "{answer}");
     let bob_key = Key::generate().thumbprint();
     let bob = service
         .tokens()

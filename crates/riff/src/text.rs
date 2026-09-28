@@ -370,19 +370,38 @@ pub fn new_riff(server: &str) -> String {
     )
 }
 
-/// The answer to `riff invite`.
+/// The answer to `riff invite`: the address of the riff and the lines
+/// that the person runs to join (01M3MEF4B33Z6WVJMDP29C7SS2). The
+/// lines are the ones of "Join a Riff" in the book, and hold no secret.
 ///
 /// ```
 /// use riff_core::wire::Invited;
 ///
-/// let done = Invited { email: "bob@gmail.com".into() };
+/// let done = Invited {
+///     email: "bob@gmail.com".into(),
+///     address: "https://riff.example.com".into(),
+/// };
 /// assert_eq!(
 ///     riff::text::invited(&done),
-///     "Invited bob@gmail.com. They can now run riff login."
+///     "Invited bob@gmail.com to the riff at https://riff.example.com.\n\
+///      Send them these lines to join. The lines hold no secret:\n\
+///      \n\
+///      cargo install --locked --git https://github.com/como-technologies/riff riff\n\
+///      echo 'export RIFF_SERVER=https://riff.example.com' >> ~/.bashrc\n\
+///      riff connect claude"
 /// );
 /// ```
 pub fn invited(done: &Invited) -> String {
-    format!("Invited {}. They can now run riff login.", done.email)
+    let Invited { email, address } = done;
+    format!(
+        "Invited {email} to the riff at {address}.\n\
+         Send them these lines to join. The lines hold no secret:\n\
+         \n\
+         cargo install --locked --git {} riff\n\
+         echo 'export RIFF_SERVER={address}' >> ~/.bashrc\n\
+         riff connect claude",
+        env!("CARGO_PKG_REPOSITORY")
+    )
 }
 
 /// The answer to `riff remove`.

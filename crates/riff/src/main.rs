@@ -164,7 +164,8 @@ enum Command {
     },
     /// Let a person join this riff: add their verified email to the
     /// members. They need no allowed domain. Only the owner or an admin
-    /// can.
+    /// can. It prints the address of the riff and the lines that the
+    /// person runs to join.
     Invite {
         /// The email that the person signs in with.
         email: String,

@@ -68,10 +68,8 @@ its owner for its URL, and for an invite (`riff invite EMAIL`).
    riff connect claude
    ```
 
-To run a riff with sign-in yourself, make your own OAuth client (see
-[Make your own OAuth client](development.md#make-your-own-oauth-client)),
-then see [Deploy](development.md#deploy). riff has no built-in
-sign-in app.
+To run a riff with sign-in for your team, see
+[Start a Team Riff](start-a-team-riff.md).
 
 ## Use it
 
