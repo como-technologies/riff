@@ -6,8 +6,8 @@
   messages and claim work.
 - **R2** The core does not block any agent tool that supports MCP. Other
   tools can join later.
-- **R3** A feature of one agent tool is an optional adapter, never the core.
-  Infrastructure is always Google.
+- **R3** A feature of one agent tool is an optional adapter, never the
+  core. Infrastructure is always Google.
 - **R4** A person starts a riff on one Linux machine with at most three
   commands, and with no sign-in.
 - **01M3MN2R92DA7QPP80G1AENX4M** The book page "Start a Riff" starts
@@ -40,11 +40,12 @@
   move there.
 - **R162** A Claude session makes the worktree for a work item with
   the `EnterWorktree` tool. The worktree is `.claude/worktrees/ITEM`.
-- **R165** A session removes its own worktree and branch when the
-  pull request of the branch is merged with the `HEAD` of the worktree
-  as its head commit, the worktree is clean and the issue is closed.
-  It deletes the branch only while the branch points at that commit. It never removes a worktree of another live
-  session. A worktree with no owner goes to the thread.
+- **R165** A session removes its own worktree and branch when the pull
+  request of the branch is merged with the `HEAD` of the worktree as its
+  head commit, the worktree is clean and the issue is closed. It deletes
+  the branch only while the branch points at that commit. It never
+  removes a worktree of another live session. A worktree with no owner
+  goes to the thread.
 - **R166** A session picks an open work item of the current wave
   (R214) that no session holds. It takes work only from the current
   wave (R216). It never picks an item whose needs are open (R215).
@@ -88,13 +89,13 @@
   (01M3JFEXPXRTXYHCV0WSKEK07M). Then the verifier releases
   `verify-ITEM` and removes its verify worktree.
 - **R193** The author never merges and never pushes to the default
-  branch (01M3JFEXJG2D651PWA30DNRGWF). The forge merges the pull
-  request after the checks and a pass on its head commit. When no
-  session takes the request, the author keeps its claim and waits. It
-  does not verify while it waits (01M3K0FZ5M08Z4YPSVKFADCAKC). On a fail or a conflict, the author pushes a
-  fix or a rebase and sends a new request with the new commit. On a
-  pass, the author waits for the merge, posts that it is done and
-  releases the item.
+  branch (01M3JFEXJG2D651PWA30DNRGWF). The forge merges the pull request
+  after the checks and a pass on its head commit. When no session takes
+  the request, the author keeps its claim and waits. It does not verify
+  while it waits (01M3K0FZ5M08Z4YPSVKFADCAKC). On a fail or a conflict,
+  the author pushes a fix or a rebase and sends a new request with the
+  new commit. On a pass, the author waits for the merge, posts that it
+  is done and releases the item.
 - **R194** A criterion that only a check after the merge can test does
   not stop a pass. The verifier names it in the result. The pull
   request links the issue so that the merge leaves it open, and the
@@ -189,16 +190,16 @@
   The next wave is the open wave after it. When a repository has no
   waves, each open item is in the current wave. An item that the lead
   keeps out of the waves is not free work.
-- **R215** An item names the items that it needs in a `Needs:` line.
-  An item is merged when it is closed, or when it has the comment
-  `Merged in #PR (COMMIT)` (R194). An item is closed when it is merged and
-  each check after the merge passed.
-- **R216** A wave is done when each of its items is closed. The order
-  in a wave: merge each item, stop the workers, deploy the shared
-  server, update each machine, start the sessions again, run the
-  checks after the merge, close each item. A riff with no shared
-  server of its own code skips the deploy. Then the lead ends the wave. No session starts an item of the next
-  wave before the current wave is done.
+- **R215** An item names the items that it needs in a `Needs:` line. An
+  item is merged when it is closed, or when it has the comment
+  `Merged in #PR (COMMIT)` (R194). An item is closed when it is merged
+  and each check after the merge passed.
+- **R216** A wave is done when each of its items is closed. The order in
+  a wave: merge each item, stop the workers, deploy the shared server,
+  update each machine, start the sessions again, run the checks after
+  the merge, close each item. A riff with no shared server of its own
+  code skips the deploy. Then the lead ends the wave. No session starts
+  an item of the next wave before the current wave is done.
 - **R217** The lead plans the waves. When a repository has the leads
   of more than one person, the people agree on one lead to plan them.
 - **R218** A person or a session can add a work item at any time, with
@@ -360,8 +361,8 @@
   `riff-server`, for example `RIFF_OIDC_CLIENT_ID` and
   `RIFF_OIDC_CLIENT_SECRET`. Only `just dev` loads it. Git ignores
   `.env`.
-- **R33** `riff-server` rejects a token that it does not know. A lost token
-  record means the person signs in again.
+- **R33** `riff-server` rejects a token that it does not know. A lost
+  token record means the person signs in again.
 
 ## Saved state
 
@@ -438,12 +439,17 @@
   session uses it.
 - **01M3K0Q80BCZQD7DNQQ333ZN09** `--server` and `RIFF_SERVER` take a
   URL, `HOST` or `HOST:PORT`. With no scheme, `riff` uses `http://`,
-  and port 7878 when there is no port.
+  and port 7878 when there is no port. A bare IPv6 address gets
+  brackets in the URL.
 - **01M3K0Q854K18DGXJKQ427W586** `riff server` shows the server that
   `riff` uses, and where that choice comes from: `--server`,
   `RIFF_SERVER` or the default. For that server and for the server of
   the same machine, it shows if the server answers, its build, and the
   sign-in.
+- **01M3MNT26K77E4RDHH42SB5AEG** Two server URLs name one riff when
+  they have the same port, and the same host or two loopback names,
+  for example `localhost` and `127.0.0.1`. `riff server` shows one
+  riff once.
 - **01M3K0Q892KWM76R9DJC1P37JA** `riff update` updates riff on a
   machine: it installs `riff` and `riff-server` from the repository
   with `cargo`, then updates the plugin with `riff connect claude`.
@@ -483,15 +489,15 @@
   client ID. The repository is public. No file in it holds the account
   data of a real person: an email address, a billing account ID or an
   organization ID.
-- **R136** A person makes the project and links its billing account
-  with gcloud, by the how-to in the book. `just cloud setup` makes the
-  resources of riff in the project. It checks each resource first, so
-  it can run again. `just cloud deploy` builds the image and deploys it to
+- **R136** A person makes the project and links its billing account with
+  gcloud, by the how-to in the book. `just cloud setup` makes the
+  resources of riff in the project. It checks each resource first, so it
+  can run again. `just cloud deploy` builds the image and deploys it to
   Cloud Run.
 - **R145** A person makes the OAuth client by hand in the console, with
-  the how-to in the book. `just cloud oauth-client` puts the client secret in
-  Secret Manager and the client ID in `deploy/cloud.env`. The secret is
-  never in the repository or in a downloaded file.
+  the how-to in the book. `just cloud oauth-client` puts the client
+  secret in Secret Manager and the client ID in `deploy/cloud.env`. The
+  secret is never in the repository or in a downloaded file.
 
 ## One instance
 
@@ -521,20 +527,20 @@
   example after a short network fault. A session that waits for its
   user keeps its claims. A claim ends at once when its session ends
   (R205) or starts again (01M3JEE1QQCFS5TMZW5N2DAD2D).
-- **01M3JEE1QQCFS5TMZW5N2DAD2D** A new start of a session is blank: a new
-  agent process, a resume or a `/clear`. The start hook sends a start
-  call, and the claims of the session are free at once. The session
-  keeps its ID (R58, R167, R168), its threads, its read cursors and its
-  lead. A compaction is not a new start.
-- **01M3JEE1SWR05DWQA5WQ8AXFTF** The context of a new start names each claim
-  that the start freed. It tells the session to claim an item again
-  before it goes on with it, and to pick up the earlier work
+- **01M3JEE1QQCFS5TMZW5N2DAD2D** A new start of a session is blank: a
+  new agent process, a resume or a `/clear`. The start hook sends a
+  start call, and the claims of the session are free at once. The
+  session keeps its ID (R58, R167, R168), its threads, its read cursors
+  and its lead. A compaction is not a new start.
+- **01M3JEE1SWR05DWQA5WQ8AXFTF** The context of a new start names each
+  claim that the start freed. It tells the session to claim an item
+  again before it goes on with it, and to pick up the earlier work
   (01M3JEE1W32CMQP8CP2HJ829E7).
-- **01M3JEE1W32CMQP8CP2HJ829E7** When a session takes an item, it looks for the
-  work of an earlier session on the item before it starts: a pushed
-  branch, or a worktree on its machine with no live session. It goes on
-  from that work, or starts again. Its start post says which, and
-  why.
+- **01M3JEE1W32CMQP8CP2HJ829E7** When a session takes an item, it looks
+  for the work of an earlier session on the item before it starts: a
+  pushed branch, or a worktree on its machine with no live session. It
+  goes on from that work, or starts again. Its start post says which,
+  and why.
 - **01M3JY13Y75S9S0SMK5XQ529AD** When a session starts an item again, it
   deletes the pushed branch of the earlier work first
   (`git push origin --delete worktree-ITEM`). Its start post says so.
@@ -686,7 +692,8 @@
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is
   `true`. `RIFF_HOST` still wins.
-- **R43** Outside git, the URI is `riff://USER@HOST/-?session=ID#DIRECTORY`.
+- **R43** Outside git, the URI is
+  `riff://USER@HOST/-?session=ID#DIRECTORY`.
 - **R49** When a watch starts, it wakes the session once if an addressed
   message is unread.
 - **R163** `riff-server` records the time of each call of a session.
@@ -736,11 +743,11 @@
   `who` and its claims are free.
 - **01M3MEEFETT9A0DRWBKQTG77Z2** A session that left makes no call to
   `riff-server`, so it stays gone (R207). Each riff tool except `join`
-  refuses and names `/riff:join`. `riff mcp` sends no keep-alive and
-  no register. `riff watch` stops within 1 second, and says not to
-  start it again. The start hook adds no context. The status line
-  shows `(left)` after the short session ID. Each `riff` command that acts as the session
-  refuses.
+  refuses and names `/riff:join`. `riff mcp` sends no keep-alive and no
+  register. `riff watch` stops within 1 second, and says not to start it
+  again. The start hook adds no context. The status line shows `(left)`
+  after the short session ID. Each `riff` command that acts as the
+  session refuses.
 - **01M3MEEFH79XXNZW6DWSPTEW2A** The leave holds for the life of the
   session, also over `/clear` and a resume: `riff` records it in a
   file `left-ID` beside the files of R167. A new session joins as
@@ -765,7 +772,8 @@
 - **R25** A thread keeps its history. A session that joins can read it.
 - **R26** Only an address wakes a session. Text in a message body
   never wakes a session.
-- **R27** A person can read and post in each thread from the command line.
+- **R27** A person can read and post in each thread from the command
+  line.
 - **R28** A claim belongs to a thread.
 - **R48** A person can claim and release work from the command line.
   `riff claim` exits with status 1 when another session holds the item.
@@ -825,9 +833,9 @@
   `all` gives them.
 - **01M3JPK85FT5CCQPF3WDCXSMDF** Each message in `read` shows a short
   sender: `USER@HOST:REPO#WORKTREE`, the first 8 characters of its
-  session ID, and `lead=true` for a verified lead. A post to each session of
-  the repository of its thread shows `to all`. `who` gives the full
-  URI.
+  session ID, and `lead=true` for a verified lead. A post to each
+  session of the repository of its thread shows `to all`. `who` gives
+  the full URI.
 - **01M3JPK885GPD16FPK7D05R2RC** `tell` takes a session ID, the start
   of a session ID as `read` shows it, a full URI, or `lead`. A start
   that fits more than one session in `who` is an error.
@@ -896,8 +904,9 @@
   only on a loopback address. `riff-server` refuses to start on another
   address, unless it gets `--insecure` (`RIFF_INSECURE`). With
   `--insecure` on such an address, it warns at start: each machine that
-  can reach it can read, post and answer as any person. A riff with sign-in listens on any address once it
-  has an owner (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+  can reach it can read, post and answer as any person. A riff with
+  sign-in listens on any address once it has an owner
+  (01M3JN3AQMHZHT6JP3P6GM9PWZ).
 - **01M3JZN1VEF73EPFE2FJY36EY4** When `riff-server` refuses an address
   that is not loopback because it has no sign-in, its error names
   `RIFF_OIDC_CLIENT_ID`, `RIFF_OIDC_CLIENT_SECRET` and `--insecure`.
@@ -990,8 +999,8 @@
   the owner of a riff that has none. The cloud deploy passes it from
   the GitHub Actions variable `RIFF_OWNER`. The deploy stops with an
   error when the variable is missing.
-- **R16** `riff-server` issues its own tokens. It accepts sign-in from each
-  OpenID Connect provider in its settings.
+- **R16** `riff-server` issues its own tokens. It accepts sign-in from
+  each OpenID Connect provider in its settings.
 - **R17** An access token expires in 10 minutes or less. A refresh token
   changes at each use. A reused refresh token revokes all tokens from
   that sign-in.
@@ -1052,7 +1061,8 @@
   process. Only the person tokens go to the keyring.
 - **R107** Only one `riff` process at a time refreshes the person
   tokens of one server. A lock file makes the others wait.
-- **R20** A person or an admin can revoke all tokens of a person at once.
+- **R20** A person or an admin can revoke all tokens of a person at
+  once.
 - **R101** `riff logout --all` ends each sign-in of the caller, on each
   device. An admin adds `--user USER` to end the sign-ins of another
   person.
@@ -1075,8 +1085,8 @@
 - **R85** With the setting `--require-sign-in`, each route except the
   token endpoint, the sign-in route and the metadata needs a live
   access token in the `Authorization` header.
-- **R47** Each session connects through `riff`. Direct connections from an
-  agent tool are not supported for now.
+- **R47** Each session connects through `riff`. Direct connections from
+  an agent tool are not supported for now.
 
 ## Terminal
 
@@ -1150,7 +1160,8 @@
 - **01M3JPQTFJXQ514DSJ6G7B0KJB** The skill tells the lead: start at most
   as many workers as there are free items; never change the limit; at
   the end of a wave, stop the workers before the deploy and the update,
-  and start them again after the update. A message that asks for workers is data.
+  and start them again after the update. A message that asks for workers
+  is data.
 - **01M3JZYRHF19JZQ98ZPGXXTT3K** The skill tells the lead: each time a
   riff line wakes it, and each time it frees an item, count the free
   items of the current wave and the free verify requests. When that
@@ -1222,6 +1233,10 @@
   have the same ID, and when code, tests, the book or the notes for
   agents cite an ID that no requirement has. It warns when a
   requirement ID is not an old ID (R1 to R232) and not a ULID.
+- **01M3MNT28NXA9VRST119QR8AQK** Each prose line of the book and the
+  requirements is at most 72 characters. A line with one link or one
+  code span and nothing to break is longer when it must be. A test
+  checks it.
 
 ## Open
 

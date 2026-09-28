@@ -243,3 +243,49 @@ async fn update_stops_when_the_install_fails() {
     assert!(text(&out.stderr).contains("cargo install failed"));
     assert_eq!(log(bin.path(), "riff"), "");
 }
+
+#[tokio::test]
+async fn update_tells_to_restart_the_local_riff_when_riff_uses_a_remote_riff() {
+    let local = fake(other()).await;
+    let old = riff::lifecycle::old_riff(Some(&Build::this()), "http://first:7878", &local).await;
+    assert_eq!(old.as_deref(), Some(local.as_str()));
+    let words = riff::text::updated(old.as_deref());
+    assert!(
+        words.contains(&format!(
+            "The riff at {local} runs the old build. Stop riff-server and start it again."
+        )),
+        "{words}"
+    );
+    let same = fake(Build::this()).await;
+    let old = riff::lifecycle::old_riff(Some(&Build::this()), "http://first:7878", &same).await;
+    assert_eq!(old, None);
+}
+
+#[tokio::test]
+async fn server_shows_localhost_and_127_0_0_1_as_one_riff() {
+    let mut cmd = riff(&["server"]);
+    cmd.env("RIFF_SERVER", "http://localhost:7878");
+    let stdout = text(&run(cmd).await.stdout);
+    assert!(
+        stdout.contains("riff uses http://localhost:7878: RIFF_SERVER names it."),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("The riff of this machine,"), "{stdout}");
+}
+
+#[tokio::test]
+async fn server_takes_a_bare_ipv6_address_and_one_with_brackets() {
+    for (server, url) in [
+        ("::1", "http://[::1]:7878"),
+        ("[::1]:7878", "http://[::1]:7878"),
+    ] {
+        let out = run(riff(&["--server", server, "server"])).await;
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        let stdout = text(&out.stdout);
+        assert!(
+            stdout.contains(&format!("riff uses {url}: --server names it.")),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("The riff of this machine,"), "{stdout}");
+    }
+}
