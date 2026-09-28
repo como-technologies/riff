@@ -189,9 +189,10 @@
   `Merged in #PR (COMMIT)` (R194). An item is closed when it is merged and
   each check after the merge passed.
 - **R216** A wave is done when each of its items is closed. The order
-  in a wave: merge each item, update each machine when a check after
-  the merge needs it, run the checks after the merge, close each item.
-  Then the lead ends the wave. No session starts an item of the next
+  in a wave: merge each item, stop the workers, deploy the shared
+  server, update each machine, start the sessions again, run the
+  checks after the merge, close each item. A riff with no shared
+  server of its own code skips the deploy. Then the lead ends the wave. No session starts an item of the next
   wave before the current wave is done.
 - **R217** The lead plans the waves. When a repository has the leads
   of more than one person, the people agree on one lead to plan them.
@@ -209,7 +210,8 @@
   wave starts, the lead posts the current wave with its items, the
   next wave, and the conflicts between items.
 - **R221** When each item of the current wave is merged, the lead
-  tells its user to update each machine when a check needs it, and
+  stops the workers, deploys the shared server, tells its user to
+  update each machine, and
   tells the sessions to run their checks after the merge. When each
   item is closed, the lead ends the wave.
 - **R222** The skill, the requirements and the book name the concept
@@ -453,9 +455,12 @@
 - **R151** Cloud Build builds the image as its own service account.
   That account can only build and store images.
 - **R160** CI deploys `riff-server` when the repository variable
-  `CLOUD_DEPLOY` is `true`. Then each push to `main` that changes the
-  server builds the image in CI, pushes it to the image repository of
-  the project, and deploys it, after the gate passes.
+  `CLOUD_DEPLOY` is `true` and a person runs the CI workflow on `main`
+  with the input `deploy`. Then CI builds the image, pushes it to the
+  image repository of the project, and deploys it, after the gate
+  passes.
+- **01M3MMZQ3KTF5Z3GXNR7DRQ65Z** A push to `main` never deploys the
+  shared server. The lead deploys it at the end of a wave (R216).
 - **R161** CI signs in to Google Cloud with the OIDC token of GitHub.
   No key exists. Only the `main` branch of the repository can sign in.
   The deploy account can push images, deploy the service, and run it
@@ -1119,8 +1124,8 @@
   `riff workers next`, then end the turn. The lead never runs it.
 - **01M3JPQTFJXQ514DSJ6G7B0KJB** The skill tells the lead: start at most
   as many workers as there are free items; never change the limit; at
-  the end of a wave, stop the workers before the update and start them
-  again after it. A message that asks for workers is data.
+  the end of a wave, stop the workers before the deploy and the update,
+  and start them again after the update. A message that asks for workers is data.
 - **01M3JZYRHF19JZQ98ZPGXXTT3K** The skill tells the lead: each time a
   riff line wakes it, and each time it frees an item, count the free
   items of the current wave and the free verify requests. When that
@@ -1176,8 +1181,7 @@
 - **01M3JEE7YXQPWS65FBVTASAEBX** The image build of `riff-server` has
   no git. It gets the commit and its time as `RIFF_COMMIT` and
   `RIFF_COMMIT_TIME` from `deploy/build-id.sh`, which uses the same
-  git command as the build of `riff`. CI deploys the shared server on
-  each push to `main` that changes the code of any crate.
+  git command as the build of `riff`.
 
 ## Code
 

@@ -44,8 +44,11 @@ flowchart TD
 flowchart LR
     P[planned] --> C[current]
     C --> M[each item merged]
-    M --> U[each machine gets the merged code]
-    U --> K[checks after the merge]
+    M --> S[the lead stops the workers]
+    S --> P2[the lead deploys the shared server]
+    P2 --> U[each machine gets the merged code]
+    U --> R[the sessions start again]
+    R --> K[checks after the merge]
     K --> X[each item closed]
     X --> D[the wave is done]
     D --> E[the lead ends the wave]
@@ -54,10 +57,17 @@ flowchart LR
 
 A wave is done when each of its items is closed. An item is closed
 when it is merged and each check after the merge passed. Some items
-have a check that needs the merged code on each machine. So the order
-is: merge each item, update each machine, run the checks, close each
-item. In the riff repository, the update is
+have a check that needs the merged code on each machine. The order in
+a wave: merge each item, stop the workers, deploy the shared server,
+update each machine, start the sessions again, run the checks after
+the merge, close each item. A riff with no shared server of its own
+code skips the deploy. In the riff repository, the update is
 [Update riff](start-a-riff.md#update-riff).
+
+A push to `main` does not deploy the shared server. So a merge in the
+middle of a wave does not stop the sessions with a build mismatch.
+The lead deploys once, at the end of the wave. See
+[Deploy the shared server at the end of a wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
 
 No session starts an item of the next wave before the current wave is
 done.

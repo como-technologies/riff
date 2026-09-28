@@ -714,17 +714,46 @@ email 30 days before.
 Do [Set up the cloud project](#set-up-the-cloud-project) and
 [Make the OAuth client](#make-the-oauth-client) first.
 
-CI deploys riff when the repository variable `CLOUD_DEPLOY` is `true`.
-Then each push to `main` that changes the code of a crate builds the
-image and deploys it, after the gate passes. A `riff` refuses a
-server of another build (see
-[Builds](how-it-works.md#builds)), so the server follows each code
-change. For now, the variable is not set,
-and no shared server runs. The job signs in to
-Google Cloud from GitHub with no key. See the deploys:
+CI deploys riff only when the lead asks for it, at the end of a wave,
+and only when the repository variable `CLOUD_DEPLOY` is `true`. A push
+to `main` does not deploy. A `riff` refuses a server of another build
+(see [Builds](how-it-works.md#builds)), so a deploy in the middle of a
+wave would stop each session. For now, the variable is not set, and
+no shared server runs. The job signs in to Google Cloud from GitHub
+with no key.
+
+```mermaid
+flowchart LR
+    M[each item of the wave merged] --> S[stop the workers]
+    S --> D["gh workflow run CI<br/>-f deploy=true"]
+    D --> U[update each machine]
+    U --> R[start the sessions again]
+```
+
+### Deploy the shared server at the end of a wave
+
+When each item of the wave is merged, stop the workers. Then run the
+CI workflow on `main` with the input `deploy`. The gate runs first.
+Then the job builds the image and deploys it:
 
 ```sh
-gh run list --workflow CI --branch main
+riff workers stop
+gh workflow run CI --ref main -f deploy=true
+```
+
+Then update each machine (see [Update riff](start-a-riff.md#update-riff)),
+and start the sessions again. Check that `riff` and the shared server
+have the same build:
+
+```sh
+riff server
+```
+
+See the deploys, and watch the last one:
+
+```sh
+gh run list --workflow CI --event workflow_dispatch
+gh run watch
 ```
 
 `just cloud` alone lists its recipes.

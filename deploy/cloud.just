@@ -17,7 +17,7 @@ oauth-client:
 deploy:
     ./deploy.sh
 
-# Turn the shared server on: CI deploys each server change, and this deploys now
+# Turn the shared server on: CI can deploy at the end of each wave, and this deploys now
 up:
     gh variable set CLOUD_DEPLOY --body true
     ./deploy.sh
@@ -42,7 +42,7 @@ status:
     #!/usr/bin/env bash
     set -euo pipefail
     . ./cloud.env
-    echo "CI deploys: $(gh variable get CLOUD_DEPLOY 2>/dev/null || echo 'no (CLOUD_DEPLOY is not set)')"
+    echo "CI can deploy: $(gh variable get CLOUD_DEPLOY 2>/dev/null || echo 'no (CLOUD_DEPLOY is not set)')"
     where=(--project "$CLOUD_PROJECT" --region "$CLOUD_REGION")
     if gcloud run services describe "$CLOUD_SERVICE" "${where[@]}" >/dev/null 2>&1; then
         gcloud run services describe "$CLOUD_SERVICE" "${where[@]}" \
