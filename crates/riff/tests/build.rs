@@ -1,8 +1,9 @@
 //! `riff` and a `riff-server` of another build (01M3JEE7P46GWXR1BD4Q1TTSGN
-//! to 01M3JEE7WT04BKX377VW5GDSPY, 01M3MNVT7G701SDP1Z1THMRDQ2 to
-//! 01M3MNVTC248YYJJQKFD9H1WY9). A fake server names another wire
-//! version, or no build. A real server with another build in its reply
-//! has the same wire version.
+//! to 01M3JEE7WT04BKX377VW5GDSPY, 01M3MX1DYY6AVDW946NR0B9T2C to
+//! 01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MNVTC248YYJJQKFD9H1WY9). A fake server
+//! names a version that this riff cannot talk to, or no build. A real
+//! server with another build in its reply names a version that it can
+//! talk to.
 
 use std::convert::Infallible;
 use std::io::Read;
@@ -18,26 +19,32 @@ use axum::response::sse::{Event, Sse};
 use axum::routing::get;
 use futures::Stream;
 use isolated::Isolated;
-use riff_core::build::{Build, HEADER, VERSION, WIRE};
+use riff_core::build::{Build, HEADER, Semver, VERSION};
 use riff_core::wire::{Kind, Message, Tailed};
 
-/// A build with another commit and another wire version, at `time`.
-fn other(time: &str) -> Build {
+/// The version of this riff.
+fn this() -> Semver {
+    Build::this().semver().unwrap()
+}
+
+/// A build of `version` with another commit.
+fn at(version: Semver) -> Build {
     Build {
+        version: version.to_string(),
         commit: "0000deadbeef".into(),
-        time: time.into(),
-        wire: WIRE + 1,
-        ..Build::this()
+        time: "2000-01-01T00:00:00Z".into(),
     }
 }
 
-/// A build with another commit and the same wire version.
-fn same_wire() -> Build {
-    Build {
-        commit: "0000deadbeef".into(),
-        time: "2000-01-01T00:00:00Z".into(),
-        ..Build::this()
-    }
+/// A server of the line before this riff: this riff is newer, and
+/// cannot talk to it.
+fn older() -> Build {
+    at(this().line_before().unwrap())
+}
+
+/// A server two lines after this riff: it refuses this riff.
+fn much_newer() -> Build {
+    at(this().line_after().line_after())
 }
 
 /// A layer that names `build` in each reply, or no build.
@@ -102,9 +109,10 @@ fn one_message() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     ))
 }
 
-/// A fake server with a tail stream and a watch stream. While `other`
-/// is true, it names another wire version.
-async fn streams(other_wire: Arc<AtomicBool>) -> String {
+/// A fake server with a tail stream and a watch stream. While
+/// `other_line` is true, it names a version that this riff cannot talk
+/// to.
+async fn streams(other_line: Arc<AtomicBool>) -> String {
     let router = axum::Router::new()
         .route("/v1/tail", get(|| async { one_message() }))
         .route(
@@ -112,8 +120,8 @@ async fn streams(other_wire: Arc<AtomicBool>) -> String {
             get(|| async { Sse::new(futures::stream::pending::<Result<Event, Infallible>>()) }),
         )
         .layer(axum::middleware::map_response(move |r: Response| {
-            let build = if other_wire.load(Ordering::SeqCst) {
-                other("2999-01-01T00:00:00Z")
+            let build = if other_line.load(Ordering::SeqCst) {
+                much_newer()
             } else {
                 Build::this()
             };
@@ -182,13 +190,11 @@ async fn wait_for(limit: Duration, test: impl Fn() -> bool) -> bool {
 }
 
 /// `join`, `post` and `read` each fail, and name both builds and the
-/// side to update (01M3JEE7RDTDD3KQMKH41E8D57).
+/// side to update (01M3MX1E65XGWDZ062PQ9YXQ5T).
 async fn each_call_fails(server: Option<Build>, step: &str) {
     let url = fake(server.clone()).await;
     let dir = tempfile::tempdir().unwrap();
-    let theirs = server.map_or("a build from before the wire version".into(), |b| {
-        b.to_string()
-    });
+    let theirs = server.map_or("an older build".into(), |b| b.to_string());
     for args in [
         &["read"][..],
         &["post", "--thread", "t", "hi"],
@@ -206,16 +212,13 @@ async fn each_call_fails(server: Option<Build>, step: &str) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_newer_riff_is_refused_and_names_the_server_to_update() {
-    each_call_fails(Some(other("2000-01-01T00:00:00Z")), "Update riff-server").await;
+    each_call_fails(Some(older()), "Update riff-server").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_older_riff_is_refused_and_names_riff_to_update() {
-    each_call_fails(
-        Some(other("2999-01-01T00:00:00Z")),
-        "Update riff on this machine",
-    )
-    .await;
+    each_call_fails(Some(much_newer()), "Update riff on this machine").await;
+    each_call_fails(Some(much_newer()), riff_core::build::UPDATE_URL).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -236,27 +239,60 @@ async fn the_same_build_works_and_who_and_whoami_show_it() {
     }
 }
 
-/// 01M3MNVT7G701SDP1Z1THMRDQ2, 01M3MNVT9TYNXZ8V845BHKQADV
-#[tokio::test(flavor = "multi_thread")]
-async fn another_build_with_the_same_wire_works_and_notes_it_once() {
-    let theirs = same_wire();
+/// Runs `riff who` against a real server that names `theirs`. It
+/// works, and prints `note` once.
+async fn works_and_notes_once(theirs: Build, note: &str) {
     let url = real(theirs.clone()).await;
     let dir = tempfile::tempdir().unwrap();
     let out = run(riff(&url, dir.path(), &["who"])).await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stderr}");
-    let note = riff_core::build::other_build(&Build::this(), &theirs);
-    assert_eq!(stderr.matches(&note).count(), 1, "{stderr}");
+    assert_eq!(stderr.matches(note).count(), 1, "{stderr}");
+    assert_eq!(
+        stderr.matches("riff-server runs build").count(),
+        1,
+        "{stderr}"
+    );
     let line = format!(
-        "riff has the build {VERSION}; riff-server has the build {theirs}. The wire matches."
+        "riff has the build {VERSION}; riff-server has the build {theirs}. The versions can talk."
     );
     assert!(stdout.contains(&line), "{stdout}");
+}
+
+/// 01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E8M9TKBN90P4DYKH3H8: the same
+/// line and another patch.
+#[tokio::test(flavor = "multi_thread")]
+async fn another_patch_of_the_line_works_and_notes_it_once() {
+    let theirs = at(Semver {
+        patch: this().patch + 3,
+        ..this()
+    });
+    let note = format!(
+        "riff-server runs build {theirs}; this riff runs build {VERSION}. Run riff update \
+         when you can."
+    );
+    works_and_notes_once(theirs, &note).await;
+}
+
+/// 01M3MX1E1EY1M7JGNCN6FCEVQK: a server of the line after this riff
+/// talks with it, and the note says to update soon.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_of_the_next_line_works_with_the_update_note() {
+    let next = this().line_after();
+    let theirs = at(next);
+    let note = format!(
+        "riff-server runs build {theirs}; this riff runs build {VERSION}. riff-server {} will \
+         refuse riff {}. Run riff update soon.",
+        next.line_after().line(),
+        this().line()
+    );
+    works_and_notes_once(theirs, &note).await;
 }
 
 /// 01M3JEE7TPZMNK7X6JXJ7GWFPP
 #[tokio::test(flavor = "multi_thread")]
 async fn the_start_hook_tells_the_session_of_the_mismatch() {
-    let url = fake(Some(other("2000-01-01T00:00:00Z"))).await;
+    let url = fake(Some(older())).await;
     let dir = tempfile::tempdir().unwrap();
     let mut cmd = riff(&url, dir.path(), &["hook", "session-start"]);
     cmd.env_remove("RIFF_SESSION")
@@ -287,12 +323,13 @@ async fn the_start_hook_tells_the_session_of_the_mismatch() {
     assert!(!context.contains("riff watch --once"), "{context}");
 }
 
-/// `riff tail` and `riff watch` wait on another wire version, and go on
-/// when the wire matches again (01M3MNVTC248YYJJQKFD9H1WY9).
+/// `riff tail` and `riff watch` wait on a version that they cannot talk
+/// to, and go on when the versions can talk again
+/// (01M3MNVTC248YYJJQKFD9H1WY9).
 #[tokio::test(flavor = "multi_thread")]
-async fn tail_and_watch_wait_on_another_wire_and_go_on() {
-    let other_wire = Arc::new(AtomicBool::new(true));
-    let url = streams(other_wire.clone()).await;
+async fn tail_and_watch_wait_on_another_line_and_go_on() {
+    let other_line = Arc::new(AtomicBool::new(true));
+    let url = streams(other_line.clone()).await;
     let tail_dir = tempfile::tempdir().unwrap();
     let watch_dir = tempfile::tempdir().unwrap();
     let (mut tail, tail_out, tail_err) = spawn(
@@ -315,7 +352,7 @@ async fn tail_and_watch_wait_on_another_wire_and_go_on() {
     assert_eq!(read(&tail_err).matches("do not match").count(), 1);
     assert_eq!(read(&watch_err).matches("do not match").count(), 1);
 
-    other_wire.store(false, Ordering::SeqCst);
+    other_line.store(false, Ordering::SeqCst);
     let back = wait_for(Duration::from_secs(15), || {
         read(&tail_out).contains("back again")
     })
@@ -388,4 +425,33 @@ fn the_book_has_the_part_that_the_error_names() {
     let heading = format!("### {}{}\n", anchor[..1].to_uppercase(), &anchor[1..]);
     assert!(book.contains(&heading), "no {heading:?}");
     assert!(book.contains("```sh\nriff --version\nriff-server --version\n```"));
+}
+
+/// The notes and the error in the book are the real text
+/// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T).
+#[test]
+fn the_book_shows_the_real_notes_and_error() {
+    use riff_core::build::{Mismatch, other_build};
+
+    let book = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let b = |s: &str| s.parse::<Build>().unwrap();
+    let server = b("0.4.0 7213825ab1c2 2026-09-27T20:10:44Z");
+    for text in [
+        other_build(
+            &b("0.4.0 929605821e54 2026-09-27T22:03:01Z"),
+            &b("0.4.3 7213825ab1c2 2026-09-27T20:10:44Z"),
+        ),
+        other_build(&b("0.3.2 929605821e54 2026-09-20T22:03:01Z"), &server),
+        Mismatch {
+            riff: Some(b("0.2.0 929605821e54 2026-09-27T22:03:01Z")),
+            server: Some(b("0.4.0 7213825ab1c2 2026-09-28T20:10:44Z")),
+        }
+        .to_string(),
+    ] {
+        let block = format!("```text\nriff: {text}\n```");
+        assert!(book.contains(&block), "the book has no {block}");
+    }
 }

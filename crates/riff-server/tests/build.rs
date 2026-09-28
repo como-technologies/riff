@@ -1,20 +1,25 @@
-//! `riff-server` refuses a `riff` of another wire version, takes a
-//! `riff` of another build with the same wire version, and names its own
+//! `riff-server` refuses a `riff` of a version that it cannot talk to,
+//! takes a `riff` of its line or of the line before, and names its own
 //! build in each reply (01M3JEE7P46GWXR1BD4Q1TTSGN,
-//! 01M3JEE7RDTDD3KQMKH41E8D57, 01M3MNVT7G701SDP1Z1THMRDQ2).
+//! 01M3MX1E65XGWDZ062PQ9YXQ5T, 01M3MX1DYY6AVDW946NR0B9T2C,
+//! 01M3MX1E1EY1M7JGNCN6FCEVQK).
 
 mod common;
 
-use riff_core::build::{Build, HEADER, VERSION, WIRE};
+use riff_core::build::{Build, HEADER, Semver, VERSION};
 use riff_server::auth::RESOURCE_METADATA_PATH;
 
-/// A build with another commit and another wire version, at `time`.
-fn other(time: &str) -> Build {
+/// The version of this server.
+fn this() -> Semver {
+    Build::this().semver().unwrap()
+}
+
+/// A build of `version` with another commit.
+fn at(version: Semver) -> Build {
     Build {
+        version: version.to_string(),
         commit: "0000deadbeef".into(),
-        time: time.into(),
-        wire: WIRE + 1,
-        ..Build::this()
+        time: "2000-01-01T00:00:00Z".into(),
     }
 }
 
@@ -46,23 +51,29 @@ async fn a_call_of_this_build_passes_the_check() {
 }
 
 #[tokio::test]
-async fn another_build_with_the_same_wire_passes_the_check() {
+async fn a_riff_of_this_line_or_the_line_before_passes_the_check() {
     let (_service, url) = common::start(false, &[]).await;
-    let same_wire = Build {
-        wire: WIRE,
-        ..other("2000-01-01T00:00:00Z")
-    };
-    for path in CALLS {
-        let (status, theirs, _) = call(&url, path, Some(&same_wire)).await;
-        assert_ne!(status, 409, "{path}");
-        assert_eq!(theirs, VERSION, "{path}");
+    let before = this().line_before().unwrap();
+    for version in [
+        Semver {
+            patch: this().patch + 3,
+            ..this()
+        },
+        before,
+        Semver { patch: 9, ..before },
+    ] {
+        for path in CALLS {
+            let (status, theirs, body) = call(&url, path, Some(&at(version))).await;
+            assert_ne!(status, 409, "{version} {path}: {body}");
+            assert_eq!(theirs, VERSION, "{path}");
+        }
     }
 }
 
 #[tokio::test]
 async fn an_older_riff_is_refused_and_told_to_update_riff() {
     let (_service, url) = common::start(false, &[]).await;
-    let old = other("2000-01-01T00:00:00Z");
+    let old = at(this().line_before().unwrap().line_before().unwrap());
     for path in CALLS {
         let (status, theirs, body) = call(&url, path, Some(&old)).await;
         assert_eq!(status, 409, "{path}");
@@ -72,13 +83,14 @@ async fn an_older_riff_is_refused_and_told_to_update_riff() {
             "{body}"
         );
         assert!(body.contains("Update riff on this machine"), "{body}");
+        assert!(body.contains(riff_core::build::UPDATE_URL), "{body}");
     }
 }
 
 #[tokio::test]
 async fn a_newer_riff_is_refused_and_told_to_update_the_server() {
     let (_service, url) = common::start(false, &[]).await;
-    let new = other("2999-01-01T00:00:00Z");
+    let new = at(this().line_after());
     for path in CALLS {
         let (status, _, body) = call(&url, path, Some(&new)).await;
         assert_eq!(status, 409, "{path}");
@@ -96,10 +108,7 @@ async fn a_riff_with_no_build_is_refused() {
     for path in CALLS {
         let (status, _, body) = call(&url, path, None).await;
         assert_eq!(status, 409, "{path}");
-        assert!(
-            body.contains("a build from before the wire version"),
-            "{body}"
-        );
+        assert!(body.contains("riff (an older build)"), "{body}");
     }
 }
 

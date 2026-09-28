@@ -137,22 +137,24 @@ async fn server_names_another_build_and_a_riff_that_does_not_answer() {
     let stdout = text(&run(cmd).await.stdout);
     assert!(
         stdout.contains(&format!(
-            "{url}: answers, another build, {}; the wire matches. Run riff update when you can.",
+            "{url}: answers, another build, {}; the versions can talk. Run riff update when \
+             you can.",
             other()
         )),
         "{stdout}"
     );
-    let other_wire = Build {
-        wire: other().wire + 1,
+    let this = Build::this().semver().unwrap();
+    let other_line = Build {
+        version: this.line_after().line_after().to_string(),
         ..other()
     };
-    let url = fake(other_wire.clone()).await;
+    let url = fake(other_line.clone()).await;
     let mut cmd = riff(&["server"]);
     cmd.env("RIFF_SERVER", &url);
     let stdout = text(&run(cmd).await.stdout);
     assert!(
         stdout.contains(&format!(
-            "{url}: answers, another wire version, {other_wire}."
+            "{url}: answers, a version that this riff cannot talk to, {other_line}."
         )),
         "{stdout}"
     );

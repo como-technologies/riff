@@ -1082,8 +1082,8 @@ async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
 }
 
 /// Prints each message of `thread`. It reports an error once, in red
-/// for another wire version, and tries again until the stream comes
-/// back (01M3MNVTC248YYJJQKFD9H1WY9).
+/// for a version that it cannot talk to, and tries again until the
+/// stream comes back (01M3MNVTC248YYJJQKFD9H1WY9).
 async fn tail_each(api: &Api, thread: &ThreadName) {
     let (warning, error) = (riff::style::WARNING, riff::style::ERROR);
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
@@ -1146,8 +1146,8 @@ async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
 
 /// Prints one line for each item, or with `once` only the first line.
 /// It reports a failed connect on stderr once, until the next item
-/// comes. Another wire version is a failed connect too: the watch waits
-/// for an update (01M3MNVTC248YYJJQKFD9H1WY9).
+/// comes. A version that it cannot talk to is a failed connect too: the
+/// watch waits for an update (01M3MNVTC248YYJJQKFD9H1WY9).
 async fn print_each<T>(
     stream: impl Stream<Item = Result<T>>,
     line: impl Fn(&T) -> String,

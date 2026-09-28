@@ -1,9 +1,10 @@
-//! A change to a wire type bumps the wire version
-//! (01M3MNVT7G701SDP1Z1THMRDQ2). `wire.json` keeps the wire version and
-//! the JSON schema of each wire type. The test fails when the schema
-//! changes and `WIRE` stays the same.
+//! A change to a wire type starts a new line of the version
+//! (01M3MX1E3R5WESVHA8RZXFQR1J). `wire.json` keeps the last release and
+//! the JSON schema of each wire type in it. The test fails when the
+//! schema changes and the crate version stays on the line of that
+//! release.
 //!
-//! After a bump of `WIRE`, record the new schema:
+//! At each release, record the release and its schema:
 //!
 //! ```sh
 //! RIFF_BLESS=1 cargo test -p riff-core --test wire
@@ -12,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use riff_core::build::WIRE;
+use riff_core::build::Semver;
 use riff_core::wire::*;
 use schemars::schema_for;
 use serde_json::{Value, json};
@@ -106,37 +107,61 @@ fn path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("wire.json")
 }
 
-/// The check: `Ok` when the snapshot holds this schema and this wire
-/// version. Else the step that fixes it.
-fn check(snapshot: &Value, schema: &Value, wire: u32) -> Result<(), String> {
-    let same_schema = &snapshot["schema"] == schema;
-    let same_wire = snapshot["wire"] == json!(wire);
-    match (same_schema, same_wire) {
-        (true, true) => Ok(()),
-        (false, true) => Err(format!(
-            "the wire types changed, and WIRE stays {wire}. Bump WIRE in \
-             crates/riff-core/src/build.rs, then run: RIFF_BLESS=1 cargo test -p riff-core \
-             --test wire"
-        )),
-        _ => Err(format!(
-            "WIRE is {wire}, and wire.json has another schema or wire version. Record them: \
-             RIFF_BLESS=1 cargo test -p riff-core --test wire"
-        )),
+/// The version of the crates.
+fn version() -> Semver {
+    env!("CARGO_PKG_VERSION").parse().unwrap()
+}
+
+/// The check: `Ok` when the schema is the schema of the release in the
+/// snapshot, or `version` starts a new line after that release. Else
+/// the step that fixes it.
+fn check(snapshot: &Value, schema: &Value, version: Semver) -> Result<(), String> {
+    let Some(release) = snapshot["release"]
+        .as_str()
+        .and_then(|r| r.parse::<Semver>().ok())
+    else {
+        return Err(
+            "wire.json names no release. Record it: RIFF_BLESS=1 cargo test -p \
+                    riff-core --test wire"
+                .into(),
+        );
+    };
+    if version.same_line(release) {
+        if &snapshot["schema"] == schema {
+            return Ok(());
+        }
+        return Err(format!(
+            "the wire types changed since the release {release}, and the version {version} \
+             stays on its line {}. Set the version {}: see \"Change a wire type\" in \
+             development.md",
+            release.line(),
+            release.line_after()
+        ));
     }
+    if version > release {
+        return Ok(());
+    }
+    Err(format!(
+        "wire.json names the release {release}, after the version {version}. Record the \
+         release: RIFF_BLESS=1 cargo test -p riff-core --test wire"
+    ))
 }
 
 #[test]
-fn the_wire_types_match_the_wire_version() {
+fn the_wire_types_match_the_line_of_the_version() {
     let schema = current();
     let text = std::fs::read_to_string(path()).unwrap_or_else(|_| "{}".into());
     let snapshot: Value = serde_json::from_str(&text).unwrap();
-    let result = check(&snapshot, &schema, WIRE);
+    let result = check(&snapshot, &schema, version());
     if std::env::var_os("RIFF_BLESS").is_some() {
-        // A bless never hides a change with no bump.
-        if snapshot["wire"] == json!(WIRE) && snapshot["schema"] != schema {
-            panic!("{}", result.unwrap_err());
+        // A bless never hides a change with no new line.
+        if let Err(step) = result
+            && step.starts_with("the wire types changed")
+        {
+            panic!("{step}");
         }
-        let text = serde_json::to_string_pretty(&json!({ "wire": WIRE, "schema": schema }));
+        let release = version().to_string();
+        let text = serde_json::to_string_pretty(&json!({ "release": release, "schema": schema }));
         std::fs::write(path(), text.unwrap() + "\n").unwrap();
         return;
     }
@@ -146,26 +171,44 @@ fn the_wire_types_match_the_wire_version() {
 }
 
 #[test]
-fn a_change_to_a_wire_type_with_no_bump_fails() {
+fn a_change_to_a_wire_type_with_no_bump_of_the_minor_fails() {
+    let v = |s: &str| s.parse::<Semver>().unwrap();
     let schema = current();
-    let snapshot = json!({ "wire": WIRE, "schema": schema });
-    assert_eq!(check(&snapshot, &schema, WIRE), Ok(()));
+    let snapshot = json!({ "release": "0.4.0", "schema": schema });
+    assert_eq!(check(&snapshot, &schema, v("0.4.0")), Ok(()));
+    assert_eq!(check(&snapshot, &schema, v("0.4.3")), Ok(()));
 
-    // A new field in Post, and WIRE stays the same.
+    // A new field in Post, and the version stays on the line 0.4.
     let mut changed = schema.clone();
     changed["Post"]["properties"]["new"] = json!({ "type": "string" });
-    let err = check(&snapshot, &changed, WIRE).unwrap_err();
-    assert!(err.contains("Bump WIRE"), "{err}");
+    for version in ["0.4.0", "0.4.1"] {
+        let err = check(&snapshot, &changed, v(version)).unwrap_err();
+        assert!(
+            err.contains("since the release 0.4.0") && err.contains("Set the version 0.5.0"),
+            "{err}"
+        );
+    }
 
-    // With a bump, the step is to record the new schema.
-    let err = check(&snapshot, &changed, WIRE + 1).unwrap_err();
+    // A bump of the minor starts a new line.
+    assert_eq!(check(&snapshot, &changed, v("0.5.0")), Ok(()));
+    // After 1.0, the major.
+    let snapshot = json!({ "release": "1.2.0", "schema": schema });
+    let err = check(&snapshot, &changed, v("1.3.0")).unwrap_err();
+    assert!(err.contains("Set the version 2.0.0"), "{err}");
+    assert_eq!(check(&snapshot, &changed, v("2.0.0")), Ok(()));
+
+    // A release after the version, or no release, needs a new record.
+    let err = check(&snapshot, &schema, v("0.9.0")).unwrap_err();
     assert!(err.contains("RIFF_BLESS=1"), "{err}");
+    let err = check(&json!({ "schema": schema }), &schema, v("0.4.0")).unwrap_err();
+    assert!(err.contains("names no release"), "{err}");
 
     // A new doc comment is no change.
+    let snapshot = json!({ "release": "0.4.0", "schema": schema });
     let mut documented = schema;
     documented["Post"]["description"] = json!("new words");
     strip_descriptions(&mut documented);
-    assert_eq!(check(&snapshot, &documented, WIRE), Ok(()));
+    assert_eq!(check(&snapshot, &documented, v("0.4.0")), Ok(()));
 }
 
 #[test]

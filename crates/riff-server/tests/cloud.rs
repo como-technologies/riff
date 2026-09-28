@@ -405,7 +405,7 @@ fn the_book_makes_a_release() {
         "riff workers stop\n",
         "sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml\n",
         "sed -i 's/\"version\": \".*\"/\"version\": \"0.2.0\"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json\n",
-        "cargo update --workspace\n",
+        "cargo update --workspace\nRIFF_BLESS=1 cargo test -p riff-core --test wire\n",
         "git tag v0.2.0 origin/main\n",
         "git push origin v0.2.0\n",
         "`Release check`",
@@ -454,9 +454,11 @@ fn release_check(args: &[&str]) -> std::process::Output {
 }
 
 /// A checkout whose crates have the version `crates` in Cargo.toml and
-/// `locked` in Cargo.lock.
+/// `locked` in Cargo.lock, and whose wire.json records the release
+/// `crates`.
 fn checkout(crates: &str, locked: &str) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
+    record(root.path(), crates);
     fs::write(
         root.path().join("Cargo.toml"),
         format!("[workspace.package]\nedition = \"2024\"\nversion = \"{crates}\"\n"),
@@ -470,20 +472,34 @@ fn checkout(crates: &str, locked: &str) -> tempfile::TempDir {
     root
 }
 
+/// Writes the wire.json of a checkout at `root` with the release
+/// `release`, in the form of the bless of `tests/wire.rs`.
+fn record(root: &Path, release: &str) {
+    let dir = root.join("crates/riff-core");
+    fs::create_dir_all(&dir).unwrap();
+    let text = serde_json::to_string_pretty(&serde_json::json!({
+        "release": release,
+        "schema": { "Post": {} },
+    }))
+    .unwrap();
+    fs::write(dir.join("wire.json"), text + "\n").unwrap();
+}
+
 /// 01M3MRMAY3P1K151RGAP9K6GSH: the deploy checks out the release tag of
 /// its input and checks it before it builds. So it refuses an input
 /// that is not a tag vX.Y.Z.
 #[test]
 fn the_deploy_takes_only_a_release_tag() {
     let (_, job) = ci_parts();
-    let checkout = job.find("ref: refs/tags/${{ inputs.tag }}").unwrap();
+    let tag_checkout = job.find("ref: refs/tags/${{ inputs.tag }}").unwrap();
     let check = job.find("run: deploy/release-check.sh \"$TAG\"").unwrap();
     let build = job.find("docker/build-push-action@").unwrap();
-    assert!(checkout < check && check < build, "{job}");
+    assert!(tag_checkout < check && check < build, "{job}");
     assert!(job.contains("TAG: ${{ inputs.tag }}"), "{job}");
     assert!(job.contains("riff-server:$TAG"), "{job}");
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let root = root.to_str().unwrap();
+    let this = env!("CARGO_PKG_VERSION");
+    let dir = checkout(this, this);
+    let root = dir.path().to_str().unwrap();
     for bad in ["", "main", "v0.2", "0.2.0", "v0.2.0-rc1", "refs/heads/main"] {
         let out = release_check(&[bad, root]);
         assert!(!out.status.success(), "{bad} passed");
@@ -493,8 +509,7 @@ fn the_deploy_takes_only_a_release_tag() {
             "{stderr}"
         );
     }
-    let this = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let out = release_check(&[&this, root]);
+    let out = release_check(&[&format!("v{this}"), root]);
     assert!(out.status.success(), "{out:?}");
 }
 
@@ -536,6 +551,33 @@ fn the_tag_check_fails_a_tag_of_another_version() {
             .contains("the tag v0.2.0 is not the version of riff in Cargo.lock: 0.1.0."),
         "{out:?}"
     );
+}
+
+/// 01M3MX1E3R5WESVHA8RZXFQR1J: a release records its wire types. The
+/// check fails a tag that is not the release in wire.json, and the form
+/// of the bless is the form that the check reads.
+#[test]
+fn the_tag_check_fails_a_release_with_no_record_of_its_wire_types() {
+    let root = checkout("0.3.0", "0.3.0");
+    let path = root.path().to_str().unwrap();
+    assert!(release_check(&["v0.3.0", path]).status.success());
+    record(root.path(), "0.2.0");
+    let out = release_check(&["v0.3.0", path]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(
+            "the tag v0.3.0 is not the release in crates/riff-core/wire.json: 0.2.0. Run \
+             RIFF_BLESS=1 cargo test -p riff-core --test wire."
+        ),
+        "{stderr}"
+    );
+    fs::remove_file(root.path().join("crates/riff-core/wire.json")).unwrap();
+    let stderr = String::from_utf8_lossy(&release_check(&["v0.3.0", path]).stderr).into_owned();
+    assert!(stderr.contains("wire.json: none."), "{stderr}");
+    // The wire.json of the repository has the same form.
+    let real = fs::read_to_string(deploy().join("../crates/riff-core/wire.json")).unwrap();
+    assert!(real.starts_with("{\n  \"release\": \""), "{}", &real[..40]);
 }
 
 #[test]

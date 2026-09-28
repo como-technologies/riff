@@ -52,6 +52,32 @@ It fails when two requirements have the same ID, or when a file cites an
 ID that no requirement has. It warns when a new ID does not have that
 form, for example the next `R` number.
 
+## Change a wire type
+
+A change to a message, the API or the header starts a new line of the
+version (see [Builds](how-it-works.md#builds)). While the major is 0,
+set the next minor in the same pull request. This example goes from
+the release `0.3.x` to `0.4.0`:
+
+```sh
+sed -i 's/^version = ".*"/version = "0.4.0"/' Cargo.toml
+sed -i 's/"version": ".*"/"version": "0.4.0"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
+cargo update --workspace
+```
+
+Set it once for each release. When `main` already has the new line,
+change nothing.
+
+`crates/riff-core/wire.json` holds the wire types of the last release.
+This test fails when a wire type changes and the version stays on the
+line of that release. Its error names the version to set:
+
+```sh
+cargo test -p riff-core --test wire
+```
+
+Do not record `wire.json` in the pull request. The release records it.
+
 ## Check a pull request on GitHub
 
 Each pull request has the same form. The form links the pull request to
@@ -804,8 +830,11 @@ flowchart LR
 
 An admin makes the release when each item of the wave is merged. Stop
 the workers first. Set the new version in `Cargo.toml` and in the
-`plugin.json` of the plugin, and update `Cargo.lock`. This example
-makes `v0.2.0`:
+`plugin.json` of the plugin, and update `Cargo.lock`. When the wave
+changed a wire type, `main` already has the new line (see
+[Change a wire type](#change-a-wire-type)): keep it. Then record the
+wire types of the release in `crates/riff-core/wire.json`. This
+example makes `v0.2.0`:
 
 ```sh
 riff workers stop
@@ -813,6 +842,7 @@ git switch -c release-v0.2.0 origin/main
 sed -i 's/^version = ".*"/version = "0.2.0"/' Cargo.toml
 sed -i 's/"version": ".*"/"version": "0.2.0"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
 cargo update --workspace
+RIFF_BLESS=1 cargo test -p riff-core --test wire
 git commit -am "Release v0.2.0"
 git push -u origin HEAD
 ```
@@ -827,7 +857,8 @@ git push origin v0.2.0
 ```
 
 CI runs the job `Release check` for the tag. It fails when the tag is
-not the version of the crates. Watch it:
+not the version of the crates, or not the release in `wire.json`.
+Watch it:
 
 ```sh
 gh run list --workflow CI --event push --limit 1
