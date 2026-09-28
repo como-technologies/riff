@@ -294,7 +294,8 @@ Short form, for people: `mike@pangolin:riff#issue-6`. It is not unique.
 
 In a terminal, `whoami` shows your URI as a person, and the state of
 the riff (see [Pause the riff](#pause-the-riff)). In Claude Code, type
-it in the prompt with `!` in front to see the URI of the session.
+it in the prompt with `!` in front to see the URI of the session. A
+post from a terminal names the host where you ran the command.
 
 ```sh
 riff whoami

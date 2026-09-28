@@ -221,3 +221,29 @@ async fn a_session_with_work_pushes_a_wip_branch_and_keeps_its_claim() {
     let held = who.iter().find(|s| s.uri.who() == worker.who()).unwrap();
     assert_eq!(held.uri.claims(), ["issue-12"]);
 }
+
+/// mike has live sessions on hosts `a` and `b`. A resume on `b` gives
+/// the person of mike the host `b`. A pause on `a` then posts a note
+/// from `mike@a` (01M3MWW8KYJ3ZV91X22RBSAF33).
+#[tokio::test]
+async fn a_pause_names_the_host_where_it_ran() {
+    let api = start_server().await;
+    let on_a = uri("riff://mike@a/como-technologies/riff?session=s1");
+    let on_b = uri("riff://mike@b/como-technologies/riff?session=s2");
+    for me in [&on_a, &on_b] {
+        api.register(me).await.unwrap();
+    }
+    let person_on_b = uri("riff://mike@b/como-technologies/riff");
+    api.set_riff(&person_on_b, RiffState::Running)
+        .await
+        .unwrap();
+
+    let person_on_a = uri("riff://mike@a/como-technologies/riff");
+    let (reply, _) = api.set_riff(&person_on_a, RiffState::Paused).await.unwrap();
+    assert!(reply.changed);
+
+    let news = api.read(&on_b, &repo(), false).await.unwrap();
+    let senders: Vec<String> = news.iter().map(|m| m.message.from.short()).collect();
+    assert_eq!(senders, ["mike@b:riff", "mike@a:riff"], "{news:?}");
+    assert!(news[1].message.body.contains("paused"), "{news:?}");
+}
