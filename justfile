@@ -81,6 +81,19 @@ install:
 serve:
     cargo run -p riff-server
 
+# 01M3JY12HASECNN6SFQ880JT5H. The trap prints the restore steps also on Ctrl-C.
+# Run this tree's debug builds: riff for Claude Code, riff-server in the foreground
+dev *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --workspace
+    mkdir -p ~/.cargo/bin
+    ln -sf "{{justfile_directory()}}/target/debug/riff" ~/.cargo/bin/riff
+    target/debug/riff connect claude
+    systemctl --user stop riff-server 2>/dev/null || true
+    trap 'printf "\nRestore the release setup:\n  just install\n  systemctl --user start riff-server\n"' EXIT
+    target/debug/riff-server {{ARGS}}
+
 # riff-server on this machine: just local RECIPE
 mod local 'deploy/local.just'
 

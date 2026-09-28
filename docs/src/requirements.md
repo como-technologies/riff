@@ -336,6 +336,14 @@
   removes the unit and the settings.
 - **R122** When `systemctl --user` does not work, `install` and
   `uninstall` fail and change nothing.
+- **01M3JY12HASECNN6SFQ880JT5H** `just dev [ARGS]` builds the
+  workspace in debug. It links `~/.cargo/bin/riff` to the debug `riff`
+  of its tree, and runs `riff connect claude` with it. It stops the
+  service `riff-server` if the service runs. Then it runs the debug
+  `riff-server` with `ARGS` in the foreground. When the server ends,
+  also on Ctrl-C, it prints the steps that restore the release setup:
+  `just install` and `systemctl --user start riff-server`. It does not
+  start the service again.
 - **R33** `riff-server` rejects a token that it does not know. A lost token
   record means the person signs in again.
 

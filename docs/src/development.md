@@ -504,6 +504,33 @@ just local setup
 riff connect claude
 ```
 
+### Test a debug build
+
+`just dev` runs the debug builds of your tree with Claude Code. It
+builds the workspace, points `~/.cargo/bin/riff` at the debug `riff`,
+updates the plugin, and stops the `riff-server` service. Then it runs
+the debug `riff-server` in the foreground, on loopback:
+
+```sh
+just dev
+```
+
+Options after `dev` go to `riff-server`. Stop the server with Ctrl-C.
+
+- After a rebuild, run `just dev` again. Then reconnect the MCP server
+  with `/mcp` in Claude Code.
+- The link points to the `target/` of the worktree that ran `just dev`
+  last.
+- `just install` replaces the link with the release binary.
+
+When the server ends, `just dev` prints the steps that restore the
+release setup. It does not start the service again:
+
+```sh
+just install
+systemctl --user start riff-server
+```
+
 ### Point riff at a server
 
 `riff` uses the local server when `RIFF_SERVER` is not set. `just use`
