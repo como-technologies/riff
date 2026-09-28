@@ -63,6 +63,7 @@ pub mod next;
 pub mod plugin;
 pub mod secrets;
 pub mod settings;
+pub mod style;
 pub mod terminal;
 pub mod text;
 pub mod worker;

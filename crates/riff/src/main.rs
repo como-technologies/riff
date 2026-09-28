@@ -52,6 +52,10 @@ enum Command {
         /// List gone sessions too.
         #[arg(long)]
         all: bool,
+        /// When to use color. `auto` uses color only when stdout is a
+        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
     },
     /// Post a message to a thread.
     Post {
@@ -439,10 +443,11 @@ async fn main() -> Result<()> {
                 Err(e) => eprintln!("riff: cannot read the state of the riff: {e:#}"),
             }
         }
-        Command::Who { all } => {
-            println!("{}", text::riff_state(api.riff(&me).await?));
-            println!("{}", text::build_line());
-            print!("{}", text::who(&api.who(&me, all).await?, &me));
+        Command::Who { all, color } => {
+            use_color(color);
+            let state = api.riff(&me).await?;
+            let sessions = api.who(&me, all).await?;
+            anstream::print!("{}", text::who_view(state, &sessions, &me));
         }
         Command::Pause => pause(&api, &me, RiffState::Paused).await?,
         Command::Resume => pause(&api, &me, RiffState::Running).await?,
@@ -940,7 +945,8 @@ fn record_session(me: &SessionUri) -> Option<local::Held> {
         .flatten()
 }
 
-/// When `riff tail` uses color (01M3JDCA9070MY30AYHK3Y67EF).
+/// When `riff tail` and `riff who` use color
+/// (01M3JDCA9070MY30AYHK3Y67EF, 01M3MEW75WC7Y4M1BKQ7SXRPNR).
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum ColorWhen {
     Auto,
@@ -948,16 +954,21 @@ enum ColorWhen {
     Never,
 }
 
-/// Runs until stopped. It connects again when the stream ends (R131).
-/// Each message is a [`text::block`]. The status lines go to stderr
-/// (01M3JDCA6R894JG6SDJ2R7AFMN).
-async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
+/// Sets the color of each later `anstream` print.
+fn use_color(color: ColorWhen) {
     anstream::ColorChoice::write_global(match color {
         ColorWhen::Auto => anstream::ColorChoice::Auto,
         ColorWhen::Always => anstream::ColorChoice::Always,
         ColorWhen::Never => anstream::ColorChoice::Never,
     });
-    let (warning, error) = (text::WARNING, text::ERROR);
+}
+
+/// Runs until stopped. It connects again when the stream ends (R131).
+/// Each message is a [`text::block`]. The status lines go to stderr
+/// (01M3JDCA6R894JG6SDJ2R7AFMN).
+async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
+    use_color(color);
+    let (warning, error) = (riff::style::WARNING, riff::style::ERROR);
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let mut stream = Box::pin(follow(|| api.tail(thread), RETRY));
     let mut lost = false;
