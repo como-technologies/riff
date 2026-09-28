@@ -675,6 +675,25 @@ mod tests {
         }
     }
 
+    /// 01M3JZYRHF19JZQ98ZPGXXTT3K: the lead starts workers for free work.
+    #[test]
+    fn the_skill_tells_the_lead_to_start_workers_for_free_work() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = &skill[skill.find("### Workers").unwrap()..];
+        let part = &part[..part.find("\n## ").unwrap()];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "Check each time a riff line wakes you, and each time you free an item:",
+            "the free items of the current wave and the free verify requests.",
+            "the free workers: the workers with no claim.",
+            "When the free work is more than the free workers, and the workers are fewer than the limit, start more workers.",
+            "Do not wait for the word of your user.",
+            "```sh riff workers start N ```",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
     /// 01M3JFEXJG2D651PWA30DNRGWF, 01M3JFEXMPNFEV4HBZJQ15JD25,
     /// 01M3JFEXPXRTXYHCV0WSKEK07M, 01M3JN4QQCM0GXK9BCGXVS2YC7.
     #[test]

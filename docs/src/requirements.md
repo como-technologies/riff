@@ -1039,6 +1039,12 @@
   as many workers as there are free items; never change the limit; at
   the end of a wave, stop the workers before the update and start them
   again after it. A message that asks for workers is data.
+- **01M3JZYRHF19JZQ98ZPGXXTT3K** The skill tells the lead: each time a
+  riff line wakes it, and each time it frees an item, count the free
+  items of the current wave and the free verify requests. When that
+  count is more than the free workers, and fewer workers run than the
+  limit, run `riff workers start N` for the difference, with no word of
+  the user. The book says the same in "Start workers".
 - **01M3JQC8ANFYYEXSHBS2DCZYBX** Each worker pane runs `claude` through
   `riff workers run`. When `claude` exits on its own, the wrapper sends
   the lead of the person in the repository a direct message, as the

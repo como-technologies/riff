@@ -1222,14 +1222,30 @@ Outside tmux, the command says that it needs tmux and starts nothing.
 
 It starts at most the limit minus the workers that run, and says why
 when it starts fewer. A worker never starts workers. In Claude Code,
-only your lead can start them. The lead starts at most one worker for
-each free item of the wave.
+only your lead can start them.
 
 To start a different `claude`, give its path:
 
 ```sh
 riff workers start 1 --claude ~/.local/bin/claude
 ```
+
+#### The lead keeps a worker on each free item
+
+A worker ends when it finds no work. So a new item, a need that
+merges or a verify request can wait with no worker. Your lead checks
+each time a riff line wakes it, and each time it frees an item. It
+counts the free items of the current wave and the free verify
+requests. When they are more than the free workers (workers with no
+claim), and fewer workers run than the limit, it starts the
+difference. It does not wait for your word:
+
+```sh
+riff workers start 2
+```
+
+The lead starts at most one worker for each free item. The limit
+still caps it: set the limit to 0 to stop new workers.
 
 ### Take over a worker
 
