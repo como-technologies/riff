@@ -104,7 +104,7 @@ time.
 - An item names the items that it needs in a `Needs:` line, for
   example `Needs: #12, #15`. An item with no `Needs:` line needs
   nothing.
-- An item is merged when it is closed, or when it has a note
+- An item is merged when it is closed, or when it has a comment
   `Merged in #PR (COMMIT)`.
 - An item is closed when it is merged and each check after the merge
   passed.
@@ -234,9 +234,9 @@ result (see "Questions for your user").
 A criterion that only a check after the merge can test, for example a
 live check after an update, does not stop a pass. The verifier names
 it in the result. Link the issue so that the merge leaves it open. After
-the merge, add a note to the issue: `Merged in #PR (COMMIT)`, and the
-check that is left. The note tells the other sessions that the item is
-merged (see "Waves").
+the merge, add a comment to the issue: `Merged in #PR (COMMIT)`, and
+the check that is left. The comment tells the other sessions that the
+item is merged (see "Waves").
 
 ### Verify the work of another session
 
