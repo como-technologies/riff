@@ -48,6 +48,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 # ── Testing ──
 assert_cmd = "2.2"
 tempfile = "3"
+tower = { version = "0.5.3", features = ["util"] }
 
 [profile.release]
 strip = true

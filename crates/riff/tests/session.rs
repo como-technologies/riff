@@ -38,6 +38,7 @@ async fn start(expires_at: u64) -> (Service, Api) {
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
         expires_at,
+        riff_id: None,
     };
     login::store(api.base(), &sign_in).unwrap();
     (service, api)

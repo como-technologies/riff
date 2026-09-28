@@ -95,7 +95,6 @@ fn a_second_machine_installs_riff_names_the_first_and_connects() {
         [
             "riff connect claude",
             "riff who",
-            "riff logout",
             "riff connect claude",
             "riff connect claude",
             "riff resume"

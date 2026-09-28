@@ -349,6 +349,24 @@ pub fn workers_started(count: u16, window: &str, dir: &std::path::Path) -> Strin
     )
 }
 
+/// The error when the server is a new riff: the sign-in of this machine
+/// is for a riff that is gone (01M3JNVBRS35B3CD67367JF7SJ). riff removed
+/// it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::new_riff("http://h:7878"),
+///     "This riff is new. Run riff login. \
+///      (riff removed the old sign-in of this machine for http://h:7878.)"
+/// );
+/// ```
+pub fn new_riff(server: &str) -> String {
+    format!(
+        "This riff is new. Run riff login. \
+         (riff removed the old sign-in of this machine for {server}.)"
+    )
+}
+
 /// The answer to `riff invite`.
 ///
 /// ```

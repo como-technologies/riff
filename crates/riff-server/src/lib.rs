@@ -499,6 +499,9 @@ impl Service {
         };
         let until = asked + config.lease.valid_for;
         let service = Service::build(config, state, tokens, http, Some(saved), Some(until), start);
+        // Save the tokens once, so that a new riff ID stays
+        // (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
+        drop(service.0.tokens_change());
         service.keep_lease(lease);
         service.save_each_second();
         Ok(service)
@@ -1222,7 +1225,7 @@ fn acts_as<'a>(
 /// Names the sign-in provider, for `riff login`.
 async fn sign_in_config(AxumState(s): AxumState<Shared>) -> Reply<SignInConfig> {
     match &s.config.provider {
-        Some(provider) => Ok(Json(provider.config())),
+        Some(provider) => Ok(Json(provider.config(s.tokens().riff_id()))),
         None => Err(not_found("this riff-server has no sign-in provider".into())),
     }
 }

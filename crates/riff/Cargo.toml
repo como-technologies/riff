@@ -39,3 +39,4 @@ axum.workspace = true
 jsonwebtoken = { workspace = true, features = ["use_pem"] }
 rmcp = { workspace = true, features = ["client"] }
 tempfile.workspace = true
+tower.workspace = true

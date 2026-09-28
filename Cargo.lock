@@ -2286,6 +2286,7 @@ dependencies = [
  "tempfile",
  "textwrap",
  "tokio",
+ "tower",
 ]
 
 [[package]]

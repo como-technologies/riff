@@ -58,6 +58,7 @@ async fn restart_with_no_sign_in(expired: bool) -> String {
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
         expires_at: u64::MAX,
+        riff_id: None,
     };
     login::store(&url, &sign_in).unwrap();
     let api = Api::new(&url).signed_in(Some("s1")).unwrap();
@@ -65,6 +66,7 @@ async fn restart_with_no_sign_in(expired: bool) -> String {
     if expired {
         let old = SignIn {
             expires_at: 0,
+            riff_id: None,
             ..sign_in
         };
         login::store(&url, &old).unwrap();
@@ -125,6 +127,7 @@ async fn a_riff_that_cannot_be_reached_keeps_the_first_error() {
             access_token: "a".into(),
             refresh_token: "r".into(),
             expires_at: 0,
+            riff_id: None,
         },
     )
     .unwrap();

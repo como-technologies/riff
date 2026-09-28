@@ -16,6 +16,13 @@
 //! client needs it. After that, the client refreshes it with its own
 //! refresh token. When the refresh fails, it does a new exchange.
 //!
+//! Before its first token, a signed-in client checks the riff ID of its
+//! sign-in against the riff ID of the server, once
+//! ([`Api::check_riff`], 01M3JNVBRS35B3CD67367JF7SJ). Another ID, or
+//! none, means that the riff of the sign-in is gone. The client then
+//! removes the sign-in, and the call fails with
+//! [`text::new_riff`]. The next command runs with no sign-in.
+//!
 //! When the client gets no token, it asks the server if it has sign-in
 //! ([`Api::has_sign_in`]). A riff with no sign-in cannot give a token,
 //! so a sign-in of this machine for it is old. The error then names
@@ -184,6 +191,8 @@ struct Auth {
     session: Option<String>,
     /// The session pair, once the client has one.
     pair: Mutex<Option<Pair>>,
+    /// Set once [`Api::check_riff`] passed.
+    riff_checked: tokio::sync::OnceCell<()>,
 }
 
 struct Pair {
@@ -282,6 +291,7 @@ impl Api {
             key: device::key(&self.base)?,
             session: session.map(str::to_owned),
             pair: Mutex::new(None),
+            riff_checked: tokio::sync::OnceCell::new(),
         }));
         Ok(self)
     }
@@ -294,8 +304,28 @@ impl Api {
         }
     }
 
+    /// Removes the sign-in of this device when the server is another
+    /// riff than the riff of the sign-in (01M3JNVBRS35B3CD67367JF7SJ).
+    /// The error then says to run `riff login`. When riff cannot ask the
+    /// server, or the server has no sign-in, it goes on.
+    pub async fn check_riff(&self) -> Result<()> {
+        let Ok(config) = self.sign_in_config().await else {
+            return Ok(());
+        };
+        let old = login::stored(&self.base)?
+            .is_some_and(|s| s.riff_id.as_deref() != Some(config.riff_id.as_str()));
+        if old {
+            login::logout(&self.base)?;
+            bail!(text::new_riff(&self.base));
+        }
+        Ok(())
+    }
+
     /// A live access token for the caller.
     async fn access_token(&self, auth: &Auth) -> Result<String> {
+        auth.riff_checked
+            .get_or_try_init(|| self.check_riff())
+            .await?;
         let Some(session) = &auth.session else {
             return login::access_token(&self.anonymous()).await;
         };

@@ -142,12 +142,14 @@ struct Claims {
 }
 
 impl Provider {
-    /// What `GET /v1/sign-in` gives to `riff login`.
-    pub fn config(&self) -> SignInConfig {
+    /// What `GET /v1/sign-in` gives to `riff login`, for the riff with
+    /// the ID `riff_id`.
+    pub fn config(&self, riff_id: &str) -> SignInConfig {
         SignInConfig {
             issuer: self.issuer.clone(),
             client_id: self.client_id.clone(),
             client_secret: self.client_secret.clone(),
+            riff_id: riff_id.to_owned(),
         }
     }
 

@@ -40,6 +40,7 @@ fn sign_in(service: &Service, api: &Api, email: &str) -> TokenReply {
         access_token: pair.access_token.clone(),
         refresh_token: pair.refresh_token.clone(),
         expires_at: u64::MAX,
+        riff_id: None,
     };
     login::store(api.base(), &sign_in).unwrap();
     pair

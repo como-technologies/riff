@@ -48,6 +48,25 @@
 //!
 //! The store does no I/O and reads no clock. The caller passes `now`.
 //!
+//! # Riff ID
+//!
+//! Each store has a riff ID: random, made with the store
+//! (01M3JNVBPMZ1K9WX7Q7DP6Y0DH). It is in the saved form, so a restart
+//! on the same store keeps it. A new store is a new riff with a new ID.
+//! `riff` keeps the ID with its sign-in, and so finds a sign-in of a
+//! riff that is gone.
+//!
+//! ```
+//! use std::time::{Instant, SystemTime};
+//! use riff_server::token::Tokens;
+//!
+//! let (now, wall) = (Instant::now(), SystemTime::now());
+//! let tokens = Tokens::default();
+//! assert_ne!(tokens.riff_id(), Tokens::default().riff_id());
+//! let loaded = Tokens::from_bytes(&tokens.to_bytes(now, wall), now, wall).unwrap();
+//! assert_eq!(loaded.riff_id(), tokens.riff_id());
+//! ```
+//!
 //! # Owner and members
 //!
 //! The store also keeps who may join the riff, by verified email in
@@ -224,6 +243,17 @@ pub struct Tokens {
     owner: Option<String>,
     /// The email of each member, in lower case.
     members: BTreeSet<String>,
+    riff_id: RiffId,
+}
+
+/// The ID of one riff. [`Default`] makes a new, random one.
+#[derive(Clone)]
+struct RiffId(String);
+
+impl Default for RiffId {
+    fn default() -> Self {
+        RiffId(random_token())
+    }
 }
 
 struct SignIn {
@@ -364,6 +394,11 @@ impl Tokens {
     pub fn name_owner(&mut self, email: &str) -> &str {
         self.owner
             .get_or_insert_with(|| email.trim().to_lowercase())
+    }
+
+    /// The ID of this riff (see "Riff ID" in the module docs).
+    pub fn riff_id(&self) -> &str {
+        &self.riff_id.0
     }
 
     /// The email of the owner, or `None` before the first sign-in.
@@ -601,6 +636,7 @@ impl Tokens {
             users: self.users.clone(),
             owner: self.owner.clone(),
             members: self.members.clone(),
+            riff_id: Some(self.riff_id.0.clone()),
             sign_ins: self
                 .sign_ins
                 .iter()
@@ -654,6 +690,8 @@ impl Tokens {
             users: saved.users,
             owner: saved.owner,
             members: saved.members,
+            // A saved form from before the riff ID gets a new one.
+            riff_id: saved.riff_id.map(RiffId).unwrap_or_default(),
             ..Tokens::default()
         };
         for s in saved.sign_ins {
@@ -776,6 +814,9 @@ struct Saved {
     owner: Option<String>,
     #[serde(default)]
     members: BTreeSet<String>,
+    /// The riff ID (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
+    #[serde(default)]
+    riff_id: Option<String>,
     sign_ins: Vec<SavedSignIn>,
     access: Vec<SavedAccess>,
     refresh: Vec<SavedRefresh>,

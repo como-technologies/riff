@@ -685,6 +685,9 @@ pub struct SignInConfig {
     /// secret: it ships to each person who signs in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
+    /// The ID of this riff (01M3JNVBPMZ1K9WX7Q7DP6Y0DH). `riff` keeps it
+    /// with its sign-in. Another ID means that the riff is new.
+    pub riff_id: String,
 }
 
 /// The fields that riff uses from the discovery document of an OpenID
