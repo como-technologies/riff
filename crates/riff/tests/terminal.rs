@@ -189,10 +189,12 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert_eq!(ids.len(), 3, "{log}");
     assert!(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2]);
     let dir = main.display();
+    // Each pane runs claude through the wrapper (01M3JQC8ANFYYEXSHBS2DCZYBX).
     let env = |id: &str| {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
-             'claude' 'Join the riff.'"
+             '{}' workers run 'claude' 'Join the riff.'",
+            env!("CARGO_BIN_EXE_riff")
         )
     };
     let pane = |id: &str| format!("-d -c {dir} -P -F #{{pane_id}} {}", env(id));

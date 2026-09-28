@@ -1282,3 +1282,42 @@ sequenceDiagram
 `riff workers next` works only in a worker that holds no claims. riff
 never clears the lead: you work in it. To see the context of a worker,
 type `/context` in its pane.
+
+### How a worker ends
+
+Each worker pane runs `claude` through `riff workers run`. The wrapper
+waits for `claude`, and never starts it again: a crash loop costs
+tokens. Your lead decides.
+
+```mermaid
+flowchart TD
+    W[a worker] --> Q{how does it end?}
+    Q -- "claude exits on its own, for example a crash" --> C["the wrapper tells the lead:<br/>pane, session ID, exit code"]
+    Q -- "no claim and no free item" --> D["riff workers done:<br/>it tells the lead, leaves riff who,<br/>and its pane closes"]
+    Q -- "riff workers stop" --> S[the pane closes, no message]
+    Q -- "it waits for a verify" --> K[it keeps its claim and waits]
+```
+
+When `claude` exits on its own, your lead gets a direct message:
+
+```text
+worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, exit code 1.
+riff does not start it again. Look at the pane, then start a worker again with riff workers start 1.
+```
+
+A worker with no claim, and no free item or verify request, ends
+itself. The start hook tells each worker to run this command in its
+Bash tool:
+
+```sh
+riff workers done
+```
+
+It tells the lead that the worker has no work, leaves `riff who` at
+once, and closes the pane of the worker. Outside a worker, and in a
+worker that holds a claim, it refuses and does nothing.
+A worker that finished an item runs `riff workers next` first (see
+[A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
+runs `riff workers done` only when its start routine then finds no
+work. A worker that waits for a verify keeps its claim, and does not
+end.

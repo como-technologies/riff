@@ -105,6 +105,16 @@ pub fn agent(place: &Place, id: &str, server: &str) -> Result<SessionUri> {
     ))
 }
 
+/// The URI of the person at `place`, with no session, also inside an
+/// agent session. The wrapper of a worker uses it
+/// (01M3JQC8ANFYYEXSHBS2DCZYBX).
+pub fn person(place: &Place, server: &str) -> Result<SessionUri> {
+    Ok(SessionUri::new(
+        Who::new(&user(server)?, None)?,
+        place.clone(),
+    ))
+}
+
 /// The user for `server`: from `RIFF_USER`, the sign-in, or `USER`.
 /// Only a missing `RIFF_USER` makes it read the keyring. A keyring error
 /// stops it, also when riff cannot open the keyring: `USER` stands in

@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
-use riff::{hook, identity, local, login, mcp, next, plugin, settings, terminal, text};
+use riff::{hook, identity, local, login, mcp, next, plugin, settings, terminal, text, worker};
 use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -229,6 +229,19 @@ enum Workers {
         /// shows it.
         pane: Option<String>,
     },
+    /// Run CLAUDE as a worker, and wait. When it exits on its own, tell
+    /// the lead the pane, the session ID and the exit code. It never
+    /// starts CLAUDE again. Each worker pane runs it
+    Run {
+        /// The claude command.
+        claude: std::path::PathBuf,
+        /// The arguments of CLAUDE.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// In a worker with no work: tell the lead, leave `riff who`, and
+    /// end the worker. Its pane closes
+    Done,
 }
 
 #[derive(Subcommand)]
@@ -452,6 +465,15 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
         }
         Some(Workers::Stop { pane }) => stop_workers(pane.as_deref(), server).await,
         Some(Workers::Next) => next_item(server).await,
+        Some(Workers::Run { claude, args }) => {
+            std::process::exit(worker::run(claude, args, server).await?)
+        }
+        Some(Workers::Done) => {
+            let place = identity::place(&std::env::current_dir()?)?;
+            let me = identity::session(&place, server)?;
+            let api = Api::new(server).signed_in(me.who().session())?;
+            worker::done(&api, &me).await
+        }
     }
 }
 
@@ -484,8 +506,9 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     let main = identity::main_worktree(&dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
     let base = Api::new(server).base().to_owned();
+    let riff = std::env::current_exe()?;
     let programs: Vec<Program> = (0..start)
-        .map(|_| Program::worker(claude, &main, &base, &terminal::new_session_id()))
+        .map(|_| Program::worker(&riff, claude, &main, &base, &terminal::new_session_id()))
         .collect();
     let window = tmux.workers(&programs)?;
     println!("{}", text::workers_started(start, &window, &main));
@@ -723,6 +746,9 @@ async fn session_start(server: &str) -> String {
     };
     if let Some(behind) = behind {
         context.push_str(&behind.line());
+    }
+    if worker::is_worker() {
+        context.push_str(hook::WORKER_LINE);
     }
     hook::start_output(&context)
 }
