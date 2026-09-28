@@ -61,11 +61,15 @@ async fn call(
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a1#issue-12";
 const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b2";
 
+/// Runs git in `dir` with no git settings of the user or the machine,
+/// for example a signature for each commit.
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .unwrap();
     assert!(out.status.success(), "git {args:?}: {out:?}");
@@ -87,6 +91,9 @@ fn clone_on(root: &Path, branch: &str) -> std::path::PathBuf {
     );
     git(&work, &["config", "user.name", "Mike"]);
     git(&work, &["config", "user.email", "mike@example.com"]);
+    // The leave tool runs git with the settings of the user. The settings
+    // of the clone win over a signature for each commit.
+    git(&work, &["config", "commit.gpgsign", "false"]);
     git(
         &work,
         &["commit", "--quiet", "--allow-empty", "-m", "start"],

@@ -709,7 +709,7 @@
   refuses and names `/riff:join`. `riff mcp` sends no keep-alive and
   no register. `riff watch` stops within 1 second, and says not to
   start it again. The start hook adds no context. The status line
-  shows `riff: left`. Each `riff` command that acts as the session
+  shows `(left)` after the short session ID. Each `riff` command that acts as the session
   refuses.
 - **01M3MEEFH79XXNZW6DWSPTEW2A** The leave holds for the life of the
   session, also over `/clear` and a resume: `riff` records it in a
