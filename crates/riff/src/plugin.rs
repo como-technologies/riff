@@ -726,7 +726,8 @@ mod tests {
         }
     }
 
-    /// 01M3JPMQG9FDB719BC8MDCBNBA, 01M3JPMQJCC3F19QAJ84EKMVKA.
+    /// 01M3JPMQG9FDB719BC8MDCBNBA, 01M3JPMQJCC3F19QAJ84EKMVKA,
+    /// 01M3JY1TBPQHH6WPPBTF42T64H.
     #[test]
     fn the_skill_wakes_only_the_sessions_that_must_act() {
         let skill = text("riff/skills/riff/SKILL.md");
@@ -737,6 +738,7 @@ mod tests {
             "| A board, or a change to the waves | `note` |",
             "| A verify request | `message` | `[{\"user\": \"USER\", \"repo\": \"OWNER/REPO\", \"lead\": true}]` |",
             "| A verify result | `message` | `[{\"claim\": \"issue-12\"}]` |",
+            "When your user has no live lead, each live session of your user in the repository with no claim wakes in its place.",
             "Post a note that you are done",
             "post the board as a note",
             "Do both steps in the same response: two tool calls in one message.",

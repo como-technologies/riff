@@ -67,6 +67,10 @@
 //!   session. Each session that its selectors match still joins the
 //!   thread, so it sees the note at its next `read`
 //!   (01M3JPMQE6S7YM4HPEVGXWK7ET).
+//! - In a thread, a selector with `lead=true` that matches no live
+//!   session matches each live session with no claim that its other
+//!   fields match. So a verify request to the lead of the author reaches
+//!   a free session when the lead is gone (01M3JY1TBPQHH6WPPBTF42T64H).
 //! - A claim is free, or held. A held claim goes back to free when its
 //!   holder releases it or ends, or when the holder has no watch stream
 //!   and its last sign of life is more than [`CLAIM_GRACE`] ago. A claim
@@ -1041,16 +1045,30 @@ impl State {
         let mut woken = BTreeSet::new();
         let mut unmatched = Vec::new();
         for selector in &to {
-            let matched: Vec<Who> = self
+            let live = |who: &&Who| **who != from && !self.sessions[*who].gone(now);
+            let mut matched: Vec<Who> = self
                 .sessions
                 .keys()
-                .filter(|who| {
-                    **who != from
-                        && !self.sessions[*who].gone(now)
-                        && selector.matches(&self.uri(who, now))
-                })
+                .filter(live)
+                .filter(|who| selector.matches(&self.uri(who, now)))
                 .cloned()
                 .collect();
+            if matched.is_empty() && selector.lead == Some(true) {
+                let free = Selector {
+                    lead: None,
+                    ..selector.clone()
+                };
+                matched = self
+                    .sessions
+                    .keys()
+                    .filter(live)
+                    .filter(|who| {
+                        let uri = self.uri(who, now);
+                        uri.claims().is_empty() && free.matches(&uri)
+                    })
+                    .cloned()
+                    .collect();
+            }
             if matched.is_empty() {
                 unmatched.push(selector.clone());
             }
@@ -2532,6 +2550,29 @@ mod tests {
         assert_eq!(woken(&d), [api().who().clone()]);
         let d = post(&mut state, &tests(), "x", &["user=mike,lead=false"], "hi");
         assert_eq!(woken(&d), [docs().who().clone()]);
+    }
+
+    #[test]
+    fn a_lead_selector_with_no_live_lead_wakes_the_free_sessions() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let sel = ["user=mike,repo=como-technologies/riff,lead=true"];
+        let request = |state: &mut State| post(state, &tests(), "x", &sel, "verify request");
+        state.end(&api(), now);
+        let d = request(&mut state);
+        assert_eq!(woken(&d), [docs().who().clone()]);
+        assert!(d.unmatched.is_empty());
+
+        state.claim(&docs(), &repo(), "issue-12", now).unwrap();
+        let d = request(&mut state);
+        assert!(woken(&d).is_empty(), "a session with a claim is not free");
+        assert_eq!(d.unmatched, to(&sel));
+
+        state.register(&api(), now);
+        state.lead(&api(), now).unwrap();
+        state.release(&docs(), &repo(), "issue-12", now).unwrap();
+        let d = request(&mut state);
+        assert_eq!(woken(&d), [api().who().clone()], "a live lead wakes alone");
     }
 
     #[test]
