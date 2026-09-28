@@ -935,6 +935,10 @@
   person types a key.
 - **01M3JD394YFA3TQRE3E72ZER4Z** A worker starts with no Remote
   Control. The book starts the lead with `claude --remote-control`.
+- **01M3JV0ZNGKDFMRR9ACT0480V9** `riff workers start` runs each worker
+  with the flag settings `{"remoteControlAtStartup":false}`. So a
+  worker has no Remote Control, also when the user settings turn on
+  `remoteControlAtStartup`.
 - **01M3JD3973J7A9BG8G9EP9TVDP** Outside tmux, `riff workers start`
   says that it needs tmux, starts nothing and exits with status 1.
 - **01M3JD399ABBWE3DJT5BVXAFH5** tmux is one terminal backend. Its

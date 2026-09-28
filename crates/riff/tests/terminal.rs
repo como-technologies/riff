@@ -193,7 +193,8 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     let env = |id: &str| {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
-             '{}' workers run 'claude' 'Join the riff.'",
+             '{}' workers run 'claude' '--settings' \
+             '{{\"remoteControlAtStartup\":false}}' 'Join the riff.'",
             env!("CARGO_BIN_EXE_riff")
         )
     };
@@ -218,8 +219,15 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
             "select-layout -t @7 tiled".to_owned(),
         ]
     );
-    // A worker has no Remote Control (01M3JD394YFA3TQRE3E72ZER4Z).
+    // A worker has no Remote Control (01M3JD394YFA3TQRE3E72ZER4Z), also
+    // when the user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9).
     assert!(!log.contains("remote-control"), "{log}");
+    assert_eq!(
+        log.matches(r#"'--settings' '{"remoteControlAtStartup":false}'"#)
+            .count(),
+        3,
+        "{log}"
+    );
 }
 
 #[test]
@@ -234,7 +242,7 @@ fn a_second_start_adds_panes_to_the_same_window() {
     let log = m.log();
     assert_eq!(log.matches("new-window").count(), 1, "{log}");
     assert_eq!(log.matches("split-window -t @7").count(), 2, "{log}");
-    assert!(log.contains("'/opt/claude' 'Join the riff.'"), "{log}");
+    assert!(log.contains("run '/opt/claude' '--settings'"), "{log}");
 }
 
 #[test]

@@ -38,9 +38,14 @@
 //! No message starts a process. Only a local command starts workers.
 //!
 //! A worker starts with no Remote Control, so the Claude app lists only
-//! the lead (01M3JD394YFA3TQRE3E72ZER4Z). Each pane gets the riff-server
-//! URL of the session that makes it, so all of them talk to the same
-//! riff (01M3JD39BASN1GNJTZXXKBCNZ9).
+//! the lead (01M3JD394YFA3TQRE3E72ZER4Z). The flag settings
+//! [`NO_REMOTE_CONTROL`] outrank the user settings, so a worker has no
+//! Remote Control also when the user settings turn on
+//! `remoteControlAtStartup` (01M3JV0ZNGKDFMRR9ACT0480V9). `riff workers
+//! next` keeps the same process, so each next item has none too.
+//!
+//! Each pane gets the riff-server URL of the session that makes it, so
+//! all of them talk to the same riff (01M3JD39BASN1GNJTZXXKBCNZ9).
 //!
 //! # The workers of a machine
 //!
@@ -87,6 +92,9 @@ pub const WORKERS: &str = "workers";
 pub const WORKERS_WINDOW: &str = "riff-workers";
 /// The first prompt of a worker.
 pub const JOIN: &str = "Join the riff.";
+/// The flag settings of a worker: no Remote Control, also when the
+/// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9).
+pub const NO_REMOTE_CONTROL: &str = r#"{"remoteControlAtStartup":false}"#;
 
 /// A program to run in a new pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,14 +179,17 @@ impl Program {
     /// A worker: `claude "Join the riff."` through `riff workers run`
     /// (see [`crate::worker`]) in the main worktree, with
     /// `RIFF_WORKER=1`, its riff session ID in `RIFF_SESSION`, and no
-    /// Remote Control.
+    /// Remote Control: the flag settings [`NO_REMOTE_CONTROL`].
     ///
     /// ```
     /// use riff::terminal::Program;
     /// let worker = Program::worker(
     ///     "/bin/riff".as_ref(), "claude".as_ref(), "/src/riff".as_ref(), "http://h:7878", "w1",
     /// );
-    /// assert_eq!(worker.command, "'/bin/riff' workers run 'claude' 'Join the riff.'");
+    /// assert_eq!(
+    ///     worker.command,
+    ///     r#"'/bin/riff' workers run 'claude' '--settings' '{"remoteControlAtStartup":false}' 'Join the riff.'"#,
+    /// );
     /// assert!(worker.env.contains(&("RIFF_WORKER".into(), "1".into())));
     /// assert!(worker.env.contains(&("RIFF_SESSION".into(), "w1".into())));
     /// assert_eq!(worker.session.as_deref(), Some("w1"));
@@ -193,9 +204,11 @@ impl Program {
                 ("RIFF_SESSION".into(), session.into()),
             ],
             command: format!(
-                "{} workers run {} {}",
+                "{} workers run {} {} {} {}",
                 quote(&riff.to_string_lossy()),
                 quote(&claude.to_string_lossy()),
+                quote("--settings"),
+                quote(NO_REMOTE_CONTROL),
                 quote(JOIN)
             ),
             session: Some(session.into()),

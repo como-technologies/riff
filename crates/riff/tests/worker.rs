@@ -156,6 +156,32 @@ async fn the_wrapper_marks_claude_as_a_worker() {
     );
 }
 
+/// The wrapper gives `claude` each argument as it is, also the flag
+/// settings that turn off Remote Control (01M3JV0ZNGKDFMRR9ACT0480V9).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_wrapper_gives_claude_the_flag_settings() {
+    let api = start_server().await;
+    lead(&api).await;
+    let dir = repo();
+    let seen = dir.path().join("seen");
+    let claude = fake_claude(
+        dir.path(),
+        &format!("printf '%s\\n' \"$@\" > '{}'", seen.display()),
+    );
+    let out = riff(&api, dir.path(), "w1")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .args(["--settings", riff::terminal::NO_REMOTE_CONTROL])
+        .arg(riff::terminal::JOIN)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(seen).unwrap(),
+        "--settings\n{\"remoteControlAtStartup\":false}\nJoin the riff.\n"
+    );
+}
+
 /// A worker with no work runs `riff workers done`. It tells the lead,
 /// then ends: it leaves `riff who` within 10 seconds, and its wrapper
 /// exits.
