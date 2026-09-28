@@ -404,6 +404,7 @@ fn the_book_makes_a_release() {
         "An admin makes the release",
         "riff workers stop\n",
         "sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml\n",
+        "sed -i 's/\"version\": \".*\"/\"version\": \"0.2.0\"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json\n",
         "cargo update --workspace\n",
         "git tag v0.2.0 origin/main\n",
         "git push origin v0.2.0\n",
@@ -427,6 +428,21 @@ fn the_book_makes_a_release() {
     let bumped = fs::read_to_string(root.path().join("Cargo.toml")).unwrap();
     assert!(bumped.contains("\nversion = \"0.2.0\"\n"), "{bumped}");
     assert!(bumped.contains("tokio = { version = \"1."), "{bumped}");
+    let plugin = root.path().join("plugin.json");
+    fs::copy(
+        deploy().join("../crates/riff/claude-plugin/riff/.claude-plugin/plugin.json"),
+        &plugin,
+    )
+    .unwrap();
+    let bump = Command::new("sh")
+        .arg("-c")
+        .arg("sed -i 's/\"version\": \".*\"/\"version\": \"0.2.0\"/' plugin.json")
+        .current_dir(root.path())
+        .status()
+        .unwrap();
+    assert!(bump.success());
+    let bumped = fs::read_to_string(&plugin).unwrap();
+    assert!(bumped.contains("\"version\": \"0.2.0\""), "{bumped}");
 }
 
 /// Runs `deploy/release-check.sh` with `args`.

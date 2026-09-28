@@ -791,13 +791,15 @@ flowchart LR
 ### Make a release
 
 An admin makes the release when each item of the wave is merged. Stop
-the workers first. Set the new version in `Cargo.toml`, and update
-`Cargo.lock`. This example makes `v0.2.0`:
+the workers first. Set the new version in `Cargo.toml` and in the
+`plugin.json` of the plugin, and update `Cargo.lock`. This example
+makes `v0.2.0`:
 
 ```sh
 riff workers stop
 git switch -c release-v0.2.0 origin/main
 sed -i 's/^version = ".*"/version = "0.2.0"/' Cargo.toml
+sed -i 's/"version": ".*"/"version": "0.2.0"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
 cargo update --workspace
 git commit -am "Release v0.2.0"
 git push -u origin HEAD
