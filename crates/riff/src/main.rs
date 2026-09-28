@@ -267,9 +267,6 @@ enum Workers {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// In a worker with no work: tell the lead, leave `riff who`, and
-    /// end the worker. Its pane closes
-    Done,
 }
 
 #[derive(Subcommand)]
@@ -518,12 +515,6 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
         Some(Workers::Next) => next_item(server).await,
         Some(Workers::Run { claude, args }) => {
             std::process::exit(worker::run(claude, args, server).await?)
-        }
-        Some(Workers::Done) => {
-            let place = identity::place(&std::env::current_dir()?)?;
-            let me = identity::session(&place, server)?;
-            let api = Api::new(server).signed_in(me.who().session())?;
-            worker::done(&api, &me).await
         }
     }
 }

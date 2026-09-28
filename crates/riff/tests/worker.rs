@@ -1,5 +1,6 @@
-//! How a worker ends, and what its lead sees
-//! (01M3JQC8ANFYYEXSHBS2DCZYBX to 01M3JQC8GVFWC47NTN4NKE730P). A fake
+//! How a worker ends, how it waits with no work, and what its lead sees
+//! (01M3JQC8ANFYYEXSHBS2DCZYBX, 01M3JQC8ETHRAWSJPHMKA062SQ,
+//! 01M3K0AXMCVRST7HYH4DM8B3AN, 01M3K0AXRNA0F2920E9QCSDFQZ). A fake
 //! `claude` runs in place of Claude Code.
 
 use std::io::Write;
@@ -72,8 +73,7 @@ fn riff(api: &Api, dir: &Path, session: &str) -> Command {
         .env("TMUX_PANE", "%5")
         .env("XDG_RUNTIME_DIR", dir)
         .env_remove("CLAUDE_CODE_SESSION_ID")
-        .env_remove("RIFF_WORKER")
-        .env_remove("RIFF_WORKER_PID");
+        .env_remove("RIFF_WORKER");
     cmd
 }
 
@@ -128,7 +128,7 @@ async fn a_worker_that_exits_tells_the_lead() {
     );
 }
 
-/// The worker gets `RIFF_WORKER=1` and the process ID of its wrapper.
+/// The worker gets `RIFF_WORKER=1`.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_wrapper_marks_claude_as_a_worker() {
     let api = start_server().await;
@@ -137,23 +137,15 @@ async fn the_wrapper_marks_claude_as_a_worker() {
     let seen = dir.path().join("seen");
     let claude = fake_claude(
         dir.path(),
-        &format!(
-            "echo \"$RIFF_WORKER $RIFF_WORKER_PID\" > '{}'",
-            seen.display()
-        ),
+        &format!("echo \"$RIFF_WORKER\" > '{}'", seen.display()),
     );
-    let child = riff(&api, dir.path(), "w1")
+    let out = riff(&api, dir.path(), "w1")
         .args(["workers", "run"])
         .arg(&claude)
-        .spawn()
+        .output()
         .unwrap();
-    let pid = child.id();
-    let out = child.wait_with_output().unwrap();
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        std::fs::read_to_string(seen).unwrap().trim(),
-        format!("1 {pid}")
-    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(std::fs::read_to_string(seen).unwrap().trim(), "1");
 }
 
 /// The wrapper gives `claude` each argument as it is, also the flag
@@ -182,42 +174,53 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     );
 }
 
-/// A worker with no work runs `riff workers done`. It tells the lead,
-/// then ends: it leaves `riff who` within 10 seconds, and its wrapper
-/// exits.
+/// A worker with no work sets its status idle and keeps its watch. It
+/// stays in `riff who`, and a request of the lead wakes it.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_worker_with_no_work_tells_the_lead_and_ends() {
+async fn a_request_of_the_lead_wakes_an_idle_worker() {
     let api = start_server().await;
     let lead = lead(&api).await;
     let dir = repo();
-    let claude = fake_claude(
-        dir.path(),
-        "\"$RIFF_BIN\" status 'looking for work' >/dev/null\n\
-         \"$RIFF_BIN\" workers done\n\
-         sleep 30",
-    );
-    let begin = Instant::now();
-    let out = riff(&api, dir.path(), "w2")
-        .args(["workers", "run"])
-        .arg(&claude)
+    let status = riff(&api, dir.path(), "w2")
+        .args(["status", riff::worker::IDLE])
+        .env("RIFF_WORKER", "1")
         .output()
         .unwrap();
-    assert!(begin.elapsed() < Duration::from_secs(10), "{out:?}");
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(status.status.success(), "{status:?}");
+    let watch = riff(&api, dir.path(), "w2")
+        .args(["watch", "--once"])
+        .env("RIFF_WORKER", "1")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
 
-    let read = lead_reads(&api, &lead).await;
+    // The idle worker is live in `riff who`, with its status. The limit
+    // only stops a hang: a slow machine still passes.
+    let begin = Instant::now();
+    let idle = loop {
+        let who = api.who(&lead, false).await.unwrap();
+        if let Some(w2) = who
+            .into_iter()
+            .find(|s| s.uri.who().session() == Some("w2") && s.live)
+        {
+            break w2;
+        }
+        assert!(begin.elapsed() < Duration::from_secs(60), "no live w2");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(idle.status.unwrap().status.step, riff::worker::IDLE);
+
+    api.tell(&lead, "w2", "request: claim issue-12")
+        .await
+        .unwrap();
+    let out = tokio::task::spawn_blocking(move || watch.wait_with_output().unwrap())
+        .await
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let line = String::from_utf8_lossy(&out.stdout);
     assert!(
-        read.contains(
-            "worker done: I hold no claim and find no free item. I end now, and my pane %5 closes."
-        ),
-        "{read}"
-    );
-    // Only the message of done: the wrapper sends no crash message.
-    assert!(!read.contains("worker stopped"), "{read}");
-    let who = api.who(&lead, false).await.unwrap();
-    assert!(
-        who.iter().all(|s| s.uri.who().session() != Some("w2")),
-        "{who:?}"
+        line.contains("riff: mike@pangolin:riff (lead1) wrote to you in a direct message"),
+        "{line}"
     );
 }
 
@@ -249,65 +252,8 @@ async fn a_hangup_stops_the_worker_with_no_message() {
     assert_eq!(lead_reads(&api, &lead).await, "No unread messages.");
 }
 
-/// A worker that holds a claim, for example while it waits for a
-/// verify, does not end: `riff workers done` refuses and does nothing.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_worker_that_holds_a_claim_does_not_end() {
-    let api = start_server().await;
-    let lead = lead(&api).await;
-    api.set_riff(&lead, riff_core::wire::RiffState::Running)
-        .await
-        .unwrap();
-    lead_reads(&api, &lead).await;
-    let dir = repo();
-    let d = dir.path().display();
-    let claude = fake_claude(
-        dir.path(),
-        &format!(
-            "\"$RIFF_BIN\" claim issue-12 >/dev/null\n\
-             \"$RIFF_BIN\" workers done 2> '{d}/done.err'\n\
-             echo $? > '{d}/done.code'"
-        ),
-    );
-    let out = riff(&api, dir.path(), "w6")
-        .args(["workers", "run"])
-        .arg(&claude)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let code = std::fs::read_to_string(dir.path().join("done.code")).unwrap();
-    assert_ne!(code.trim(), "0");
-    let err = std::fs::read_to_string(dir.path().join("done.err")).unwrap();
-    assert!(err.contains("you still hold issue-12"), "{err}");
-
-    // No done message, and the worker is still in `riff who` with its claim.
-    let read = lead_reads(&api, &lead).await;
-    assert!(!read.contains("worker done"), "{read}");
-    let who = api.who(&lead, false).await.unwrap();
-    let w6 = who
-        .iter()
-        .find(|s| s.uri.who().session() == Some("w6"))
-        .expect("w6 stays in riff who");
-    assert_eq!(w6.uri.claims(), ["issue-12"]);
-}
-
-/// `riff workers done` outside a worker refuses and ends nothing.
-#[tokio::test(flavor = "multi_thread")]
-async fn done_outside_a_worker_refuses() {
-    let api = start_server().await;
-    lead(&api).await;
-    let dir = repo();
-    let out = riff(&api, dir.path(), "w4")
-        .args(["workers", "done"])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("not a worker"), "{stderr}");
-}
-
 /// The start hook tells a session with `RIFF_WORKER=1` that it is a
-/// worker, what to do with no work, and to wait for a verify.
+/// worker, to wait idle with no work, and to wait for a verify.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_start_hook_tells_a_worker() {
     let api = start_server().await;
@@ -334,9 +280,13 @@ async fn the_start_hook_tells_a_worker() {
         worker.contains("You are a worker (RIFF_WORKER=1)"),
         "{worker}"
     );
-    assert!(worker.contains("riff workers done"), "{worker}");
+    assert!(!worker.contains("riff workers done"), "{worker}");
     assert!(
-        worker.contains("While you wait for a verify, keep your claim and wait. Do not end."),
+        worker.contains("set your status `idle: waits for work`, keep your watch running"),
+        "{worker}"
+    );
+    assert!(
+        worker.contains("While you wait for a verify, keep your claim and wait."),
         "{worker}"
     );
     assert!(!context(false).contains("You are a worker"));

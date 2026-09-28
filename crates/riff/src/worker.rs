@@ -4,16 +4,22 @@
 //!
 //! Each worker pane of `riff workers start` runs `claude` through
 //! `riff workers run` (01M3JQC8ANFYYEXSHBS2DCZYBX). The wrapper starts
-//! `claude`, and waits. A worker ends in one of three ways:
+//! `claude`, and waits. A worker ends in one of two ways:
 //!
 //! | End | Who acts | The lead gets |
 //! |---|---|---|
 //! | `claude` exits on its own, for example after a crash | the wrapper | a direct message with the pane, the session ID and the exit code |
-//! | the worker has no work | `riff workers done`, in the worker | a direct message from the worker: it has no work |
 //! | `riff workers stop` | the command | nothing: the person or the lead asked for it |
 //!
 //! The wrapper never starts `claude` again: a crash loop costs tokens.
 //! The lead decides.
+//!
+//! A worker with no work does not end. It sets its status
+//! [`IDLE`], keeps its watch and ends its turn
+//! (01M3K0AXMCVRST7HYH4DM8B3AN). An idle session costs nothing. A
+//! request of the lead wakes it with its next item
+//! (01M3K0AXRNA0F2920E9QCSDFQZ). No command ends a worker from inside
+//! (01M3K0AXPFSWNG7YPVXE65W464).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -23,16 +29,11 @@
 //!     participant S as riff-server
 //!     participant L as lead
 //!     P->>W: start
-//!     W->>C: start, RIFF_WORKER_PID=W
+//!     W->>C: start, RIFF_WORKER=1
 //!     alt claude exits
 //!         C-->>W: exit code
 //!         W->>S: tell lead: pane, session, exit code
 //!         S->>L: wake
-//!     else no work
-//!         C->>S: riff workers done: tell lead, end
-//!         S->>L: wake
-//!         C->>W: SIGTERM
-//!         W->>C: SIGTERM
 //!     else riff workers stop
 //!         P->>W: SIGHUP, the pane closes
 //!         W->>C: SIGTERM
@@ -50,7 +51,7 @@ use std::path::Path;
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::Api;
@@ -59,8 +60,13 @@ use crate::identity;
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
 
-/// The variable that holds the process ID of the wrapper.
-pub const WRAPPER_PID: &str = "RIFF_WORKER_PID";
+/// The status of a worker with no work. It waits for a request of the
+/// lead (01M3K0AXMCVRST7HYH4DM8B3AN).
+///
+/// ```
+/// assert_eq!(riff::worker::IDLE, "idle: waits for work");
+/// ```
+pub const IDLE: &str = "idle: waits for work";
 
 /// How long the wrapper waits for `claude` after it sends SIGTERM.
 pub const STOP_WAIT: Duration = Duration::from_secs(5);
@@ -93,7 +99,6 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let mut child = tokio::process::Command::new(claude)
         .args(args)
         .env(WORKER, "1")
-        .env(WRAPPER_PID, std::process::id().to_string())
         .spawn()
         .with_context(|| format!("cannot start {}", claude.display()))?;
     let status = tokio::select! {
@@ -142,41 +147,6 @@ async fn tell_lead(server: &str, body: &str) -> Result<()> {
     let me = identity::person(&place, server)?;
     let api = Api::new(server).signed_in(None)?;
     api.tell(&me, crate::api::LEAD, body).await?;
-    Ok(())
-}
-
-/// `riff workers done`: a worker with no work tells the lead, sends the
-/// end call, and stops its wrapper (01M3JQC8CN72WAVPE3189216C8). `api`
-/// acts as the session `me`.
-pub async fn done(api: &Api, me: &riff_core::name::SessionUri) -> Result<()> {
-    let Some(pid) = std::env::var(WRAPPER_PID)
-        .ok()
-        .and_then(|p| p.parse::<u32>().ok())
-    else {
-        bail!("this session is not a worker: {WRAPPER_PID} is not set");
-    };
-    // A worker that holds a claim, for example while it waits for a
-    // verify, does not end (01M3JQC8GVFWC47NTN4NKE730P).
-    let sessions = api.who(me, false).await?;
-    if let Some(info) = sessions.iter().find(|s| s.uri.who() == me.who())
-        && !info.uri.claims().is_empty()
-    {
-        bail!(crate::text::done_holds_claims(info.uri.claims()));
-    }
-    let pane = std::env::var("TMUX_PANE").ok();
-    api.tell(
-        me,
-        crate::api::LEAD,
-        &crate::text::worker_done(pane.as_deref()),
-    )
-    .await?;
-    api.end(me).await?;
-    let killed = std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status()?;
-    if !killed.success() {
-        bail!("cannot stop the worker wrapper {pid}");
-    }
     Ok(())
 }
 

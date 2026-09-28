@@ -714,6 +714,41 @@ mod tests {
         }
     }
 
+    /// 01M3K0AXMCVRST7HYH4DM8B3AN: a worker with no work waits idle.
+    #[test]
+    fn the_skill_tells_a_worker_with_no_work_to_wait_idle() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        assert!(!skill.contains("riff workers done"));
+        let part = &skill[skill.find("### When you are a worker").unwrap()..];
+        let part = &part[..part.find("\n## ").unwrap()];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "and you hold no claim, you are idle.",
+            "Set your status `idle: waits for work`, keep the watch running, and end your turn.",
+            "Do not end this session.",
+            "While you wait for a verify, keep your claim and wait.",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
+    /// 01M3K0AXRNA0F2920E9QCSDFQZ, 01M3K0AXPFSWNG7YPVXE65W464: the lead
+    /// gives free work to a free worker first, and ends workers.
+    #[test]
+    fn the_skill_tells_the_lead_to_give_work_to_an_idle_worker() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = &skill[skill.find("### Workers").unwrap()..];
+        let part = &part[..part.find("### When you are a worker").unwrap()];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "A free worker waits idle, with the status `idle: waits for work`.",
+            "Give free work to a free worker first: `tell` it `request: claim ITEM`. The request wakes it.",
+            "A worker never ends itself. End workers with `riff workers stop` when you decide",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
     /// 01M3JFEXJG2D651PWA30DNRGWF, 01M3JFEXMPNFEV4HBZJQ15JD25,
     /// 01M3JFEXPXRTXYHCV0WSKEK07M, 01M3JN4QQCM0GXK9BCGXVS2YC7.
     #[test]

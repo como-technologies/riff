@@ -279,13 +279,19 @@ impl Source {
 
 /// The line of the start context of a worker: a session with
 /// `RIFF_WORKER=1` (01M3JQC8ETHRAWSJPHMKA062SQ). A worker with no work
-/// ends; a worker that waits for a verify does not
-/// (01M3JQC8GVFWC47NTN4NKE730P).
+/// waits idle, and a worker that waits for a verify keeps its claim
+/// (01M3K0AXMCVRST7HYH4DM8B3AN).
+///
+/// ```
+/// assert!(riff::hook::WORKER_LINE.contains(riff::worker::IDLE));
+/// assert!(!riff::hook::WORKER_LINE.contains("workers done"));
+/// ```
 pub const WORKER_LINE: &str = "- You are a worker (RIFF_WORKER=1). When you finish an item, run \
 `riff workers next` (step 11 of the start routine). When the start routine finds no free item and \
-no free verify request, and you hold no claim, run `riff workers done` with the Bash tool: it \
-tells the lead that you have no work, and ends this session. While you wait for a verify, keep \
-your claim and wait. Do not end.\n";
+no free verify request, and you hold no claim, set your status `idle: waits for work`, keep your \
+watch running, and end your turn. Do not end this session: the lead gives you work with a \
+request, and ends workers when it decides. While you wait for a verify, keep your claim and \
+wait.\n";
 
 /// The part of the SessionStart hook input that riff uses.
 #[derive(Debug, Default, Deserialize)]

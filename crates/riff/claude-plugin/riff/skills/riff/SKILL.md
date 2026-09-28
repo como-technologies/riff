@@ -89,7 +89,9 @@ Do these steps when your session starts:
 11. In a worker (`RIFF_WORKER=1`), when you hold no claims, run
     `riff workers next`, then end your turn with no more tool calls.
     riff clears your context and tells you to join the riff, so you
-    start your next item fresh. The lead never runs it.
+    start your next item fresh. The lead never runs it. When the start
+    routine then finds no work, wait idle. See "When you are a
+    worker".
 
 ## Waves
 
@@ -516,17 +518,20 @@ In tmux, you can start worker sessions on your machine with
 `riff workers start N`. Each worker joins the riff and follows the
 start routine.
 
-Keep a worker on each free item. Workers end with `riff workers done`
-when they find no work, so free work can wait with no worker. Check
-each time a riff line wakes you, and each time you free an item: a
-need merges, your user decides a scope, or a new item joins the
-current wave.
+Keep a worker on each free item. A worker with no work waits idle, so
+give it work before you start a new one. Check each time a riff line
+wakes you, and each time you free an item: a need merges, your user
+decides a scope, or a new item joins the current wave.
 
 1. Count the free work: the free items of the current wave and the
    free verify requests.
 2. Run `riff workers`. Count the workers, and the free workers: the
-   workers with no claim. `riff workers limit` shows the limit.
-3. When the free work is more than the free workers, and the workers
+   workers with no claim. A free worker waits idle, with the status
+   `idle: waits for work`. `riff workers limit` shows the limit.
+3. Give free work to a free worker first: `tell` it
+   `request: claim ITEM`. The request wakes it. Give two workers two
+   different items.
+4. When the free work is more than the free workers, and the workers
    are fewer than the limit, start more workers. Do not wait for the
    word of your user. N is the free work minus the free workers:
 
@@ -538,6 +543,8 @@ current wave.
    that run.
 
 - Start at most as many workers as there are free items.
+- A worker never ends itself. End workers with `riff workers stop`
+  when you decide, for example when the waves have no more work.
 - Never change the limit of workers (`riff workers limit`). Only your
   user sets it. When the limit stops a worker, tell your user.
 - `riff workers` lists the workers: pane, session ID, claims, status.
@@ -550,10 +557,9 @@ current wave.
 A worker never starts workers, and a session that is not the lead
 cannot: `riff workers start` refuses.
 
-When a worker ends, you get a direct message. `worker stopped` means
-that its `claude` exited on its own: riff does not start it again.
-Tell your user, and start a new worker only on their word.
-`worker done` means that it had no work.
+When the `claude` of a worker exits on its own, you get a direct
+message `worker stopped`. riff does not start it again. Tell your
+user, and start a new worker only on their word.
 
 ### When you are a worker
 
@@ -562,10 +568,11 @@ The start hook tells a worker that it is one (`RIFF_WORKER=1`).
 - When you finish an item, run `riff workers next` (step 11 of the
   start routine). You start the next item with a fresh context.
 - When the start routine finds no free item and no free verify
-  request, and you hold no claim, run `riff workers done` with the
-  Bash tool. It tells the lead that you have no work, and ends this
-  session.
-- While you wait for a verify, keep your claim and wait. Do not end.
+  request, and you hold no claim, you are idle. Set your status
+  `idle: waits for work`, keep the watch running, and end your turn.
+  Do not end this session. The lead gives you work with a request, and
+  ends workers when it decides.
+- While you wait for a verify, keep your claim and wait.
 
 ## A request from your lead
 
