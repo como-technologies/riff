@@ -13,8 +13,8 @@ use riff_core::selector::Selector;
 
 use crate::api::{Checked, Inbox};
 use riff_core::wire::{
-    ClaimReply, Invited, Kind, LeadReply, MembersReply, Posted, Removed, Revoked, RiffReply,
-    RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    AdminSet, ClaimReply, Invited, Kind, LeadReply, MembersReply, Posted, Removed, Revoked,
+    RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -402,6 +402,33 @@ pub fn removed(done: &Removed) -> String {
         "Removed {} and ended {} sign-in{plural}.",
         done.email, done.sign_ins
     )
+}
+
+/// The answer to `riff admin add` and `riff admin remove`.
+///
+/// ```
+/// use riff_core::wire::AdminSet;
+///
+/// let added = AdminSet { email: "bob@gmail.com".into(), admin: true };
+/// assert_eq!(
+///     riff::text::admin_set(&added),
+///     "bob@gmail.com is now an admin. They can invite and remove members."
+/// );
+/// let removed = AdminSet { email: "bob@gmail.com".into(), admin: false };
+/// assert_eq!(
+///     riff::text::admin_set(&removed),
+///     "bob@gmail.com is now a member, not an admin."
+/// );
+/// ```
+pub fn admin_set(done: &AdminSet) -> String {
+    if done.admin {
+        format!(
+            "{} is now an admin. They can invite and remove members.",
+            done.email
+        )
+    } else {
+        format!("{} is now a member, not an admin.", done.email)
+    }
 }
 
 /// The answer to `riff members`.

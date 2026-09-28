@@ -414,7 +414,26 @@ device. Only the owner or an admin can remove. The owner stays:
 riff remove bob@gmail.com
 ```
 
-A person of an allowed domain can still sign in after a removal.
+A person of an allowed domain can still sign in after a removal. To
+remove an admin, first make the admin a member again.
+
+### Make a person an admin
+
+An admin can invite and remove members. Only the owner can make an
+admin. The person is also a member:
+
+```sh
+riff admin add bob@gmail.com
+```
+
+### Make an admin a member again
+
+The person stays a member, but can no longer invite or remove. Only
+the owner can do this. The owner stays an admin:
+
+```sh
+riff admin remove bob@gmail.com
+```
 
 ### See the members
 

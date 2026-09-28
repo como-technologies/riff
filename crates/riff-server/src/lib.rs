@@ -32,7 +32,9 @@
 //!   the owner and a setting ([`auth::Config::admins`]). Each admin is
 //!   named by verified email (R210).
 //! - `POST /v1/invite`, `/v1/remove` and `/v1/members` change and show
-//!   who may join the riff. See "Owner and members" in [`token`].
+//!   who may join the riff. `POST /v1/admin` lets the owner make a
+//!   person an admin, or an admin a member again. See "Owner and
+//!   members" in [`token`].
 //! - Each route with a `me` acts only as the [`auth::SignedIn`] caller
 //!   of its token: the same user and the same session ID, or 403
 //!   (R104). A person token acts only as the person. A session token
@@ -108,7 +110,7 @@ pub mod state;
 pub mod store;
 pub mod token;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -126,11 +128,11 @@ use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Invite, Invited, Keys, Lead,
-    LeadReply, Members, MembersReply, Membership, Post, Posted, Read, ReadReply, Register, Remove,
-    Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffReply, ServerMetadata, SetStatus,
-    SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError,
-    TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, AdminSet, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Invite, Invited,
+    Keys, Lead, LeadReply, Members, MembersReply, Membership, Post, Posted, Read, ReadReply,
+    Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffReply, ServerMetadata,
+    SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -680,6 +682,7 @@ impl Service {
             .route("/v1/invite", post(invite))
             .route("/v1/remove", post(remove))
             .route("/v1/members", post(members))
+            .route("/v1/admin", post(admin))
             .route_layer(guard());
         routes
             .merge(revoke)
@@ -1025,6 +1028,40 @@ async fn remove(
     Ok(Json(Removed { email, sign_ins }))
 }
 
+/// Makes a person an admin, or an admin a member again. Only the owner
+/// can.
+async fn admin(
+    AxumState(s): AxumState<Shared>,
+    Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
+    Json(r): Json<SetAdmin>,
+) -> Reply<AdminSet> {
+    if !s.tokens().is_owner(caller.user()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "{} is not the owner; only the owner adds or removes an admin",
+                caller.user()
+            ),
+        ));
+    }
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let email = if r.admin {
+        s.tokens_change()
+            .add_admin(&r.email)
+            .map_err(|e| bad_request(e.to_string()))?
+    } else {
+        s.tokens_change()
+            .remove_admin(&r.email)
+            .map_err(bad_request)?
+    };
+    saved(&s, mark).await?;
+    tracing::info!(%caller, %email, admin = r.admin, "admin set");
+    Ok(Json(AdminSet {
+        email,
+        admin: r.admin,
+    }))
+}
+
 /// Shows who may join the riff.
 async fn members(
     AxumState(s): AxumState<Shared>,
@@ -1034,7 +1071,11 @@ async fn members(
     let tokens = s.tokens();
     Json(MembersReply {
         owner: tokens.owner().map(str::to_owned),
-        admins: s.config.admins.clone(),
+        admins: {
+            let mut admins: BTreeSet<String> = tokens.admins().map(str::to_owned).collect();
+            admins.extend(s.config.admins.iter().map(|a| a.trim().to_lowercase()));
+            admins.into_iter().collect()
+        },
         members: tokens.members().map(str::to_owned).collect(),
         allowed_domains: s
             .config

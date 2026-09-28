@@ -172,6 +172,12 @@ enum Command {
     /// List who may join this riff: the owner, the admins, the members
     /// and the allowed domains.
     Members,
+    /// Make a person an admin, or an admin a member again. An admin can
+    /// invite and remove members. Only the owner can.
+    Admin {
+        #[command(subcommand)]
+        command: Admin,
+    },
     /// Print the status line of a Claude Code session: its short session
     /// ID, its claims, and `lead` or `blocked`. Claude Code runs it with
     /// the session on stdin. It always exits with status 0.
@@ -193,6 +199,20 @@ enum Command {
     Workers {
         #[command(subcommand)]
         command: Option<Workers>,
+    },
+}
+
+#[derive(Subcommand)]
+enum Admin {
+    /// Make a person an admin. The person is also a member.
+    Add {
+        /// The email that the person signs in with.
+        email: String,
+    },
+    /// Make an admin a member again. The owner stays an admin.
+    Remove {
+        /// The email of the admin.
+        email: String,
     },
 }
 
@@ -347,6 +367,15 @@ async fn main() -> Result<()> {
             println!("{}", text::members(&api.signed_in(None)?.members().await?));
             return Ok(());
         }
+        Command::Admin { command } => {
+            let (email, admin) = match command {
+                Admin::Add { email } => (email, true),
+                Admin::Remove { email } => (email, false),
+            };
+            let done = api.signed_in(None)?.set_admin(email, admin).await?;
+            println!("{}", text::admin_set(&done));
+            return Ok(());
+        }
         _ => {}
     }
     let here = identity::place(&std::env::current_dir()?)?;
@@ -442,7 +471,8 @@ async fn main() -> Result<()> {
         | Command::Logout { .. }
         | Command::Invite { .. }
         | Command::Remove { .. }
-        | Command::Members => unreachable!("handled before the identity"),
+        | Command::Members
+        | Command::Admin { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }
