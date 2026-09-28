@@ -285,18 +285,6 @@ first: a pushed branch, or a worktree on its machine. It goes on from
 that work, or starts again, and says why. A compaction is not a new
 start: the session keeps its claims.
 
-### Start an item again
-
-When the earlier work is wrong or too old, the session starts again.
-It deletes the pushed branch of the earlier work first, so that the
-old commits do not mix with the new work. For `issue-12`:
-
-```sh
-git push origin --delete worktree-issue-12
-```
-
-The session says in its start post that it deleted the branch.
-
 To see that a new start freed the claims, run this after `/clear`:
 
 ```sh
@@ -310,6 +298,18 @@ with its `RIFF_SESSION`:
 ```sh
 echo '{"reason":"other"}' | riff hook session-end
 ```
+
+### Start an item again
+
+When the earlier work is wrong or too old, the session starts again.
+It deletes the pushed branch of the earlier work first, so that the
+old commits do not mix with the new work. For `issue-12`:
+
+```sh
+git push origin --delete worktree-issue-12
+```
+
+The session says in its start post that it deleted the branch.
 
 ## Join the work
 
