@@ -606,6 +606,7 @@ fn the_book_has_a_how_to_for_each_step() {
         ("### Stop the workers", "riff workers stop\n"),
         ("### Stop the workers", "riff workers stop %3"),
         ("### A worker goes to its next item", "riff workers next"),
+        ("### A worker with no work waits idle", "riff workers\n"),
     ] {
         let how = &part[part.find(heading).unwrap()..];
         let next = how[4..].find("\n### ").map_or(how.len(), |n| n + 4);
@@ -631,4 +632,6 @@ fn the_book_has_a_how_to_for_each_step() {
     for command in ["start", "limit", "next", "stop"] {
         assert!(help.contains(&format!("  {command} ")), "{help}");
     }
+    // No command ends a worker from inside (01M3K0AXPFSWNG7YPVXE65W464).
+    assert!(!help.contains("  done "), "{help}");
 }

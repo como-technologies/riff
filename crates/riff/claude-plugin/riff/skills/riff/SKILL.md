@@ -88,7 +88,9 @@ Do these steps when your session starts:
 11. In a worker (`RIFF_WORKER=1`), when you hold no claims, run
     `riff workers next`, then end your turn with no more tool calls.
     riff clears your context and tells you to join the riff, so you
-    start your next item fresh. The lead never runs it.
+    start your next item fresh. The lead never runs it. When the start
+    routine then finds no work, wait idle. See "When you are a
+    worker".
 
 ## Waves
 
@@ -532,6 +534,13 @@ current wave.
    that run.
 
 - Start at most as many workers as there are free items.
+- Give free work to an idle worker first. An idle worker holds no
+  claim and has the status `idle: waits for work`. When an item or a
+  verify request is free, `tell` an idle worker
+  `request: claim ITEM`. Start a new worker only when no worker is
+  idle.
+- A worker never ends itself. End workers with `riff workers stop`
+  when you decide, for example when the waves have no more work.
 - Never change the limit of workers (`riff workers limit`). Only your
   user sets it. When the limit stops a worker, tell your user.
 - `riff workers` lists the workers: pane, session ID, claims, status.
@@ -544,10 +553,9 @@ current wave.
 A worker never starts workers, and a session that is not the lead
 cannot: `riff workers start` refuses.
 
-When a worker ends, you get a direct message. `worker stopped` means
-that its `claude` exited on its own: riff does not start it again.
-Tell your user, and start a new worker only on their word.
-`worker done` means that it had no work.
+When the `claude` of a worker exits on its own, you get a direct
+message `worker stopped`. riff does not start it again. Tell your
+user, and start a new worker only on their word.
 
 ### When you are a worker
 
@@ -556,10 +564,11 @@ The start hook tells a worker that it is one (`RIFF_WORKER=1`).
 - When you finish an item, run `riff workers next` (step 11 of the
   start routine). You start the next item with a fresh context.
 - When the start routine finds no free item and no free verify
-  request, and you hold no claim, run `riff workers done` with the
-  Bash tool. It tells the lead that you have no work, and ends this
-  session.
-- While you wait for a verify, keep your claim and wait. Do not end.
+  request, and you hold no claim, you are idle. Set your status
+  `idle: waits for work`, keep the watch running, and end your turn.
+  Do not end this session. The lead gives you work with a request, and
+  ends workers when it decides.
+- While you wait for a verify, keep your claim and wait.
 
 ## A request from your lead
 

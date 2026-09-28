@@ -1051,16 +1051,21 @@
   person: the pane, the session ID and the exit code. It never starts
   `claude` again. On SIGTERM or SIGHUP, it stops `claude` and sends no
   message.
-- **01M3JQC8CN72WAVPE3189216C8** `riff workers done` works only in a
-  worker that holds no claim. It tells the lead that the worker has no
-  work, sends the end call of the session, and stops the wrapper, so
-  the pane closes. With a claim, it refuses and does nothing.
 - **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
   start context of such a session says that it is a worker.
-- **01M3JQC8GVFWC47NTN4NKE730P** A worker with no claim, and no free
-  item or verify request, runs `riff workers done`. A worker that waits
-  for a verify keeps its claim and does not end. The start hook and
+- **01M3K0AXMCVRST7HYH4DM8B3AN** A worker with no claim, and no free
+  item or verify request, sets its status `idle: waits for work`, keeps
+  its watch, and ends its turn. It does not end its session. A worker
+  that waits for a verify keeps its claim and waits. The start hook and
   the skill say so.
+- **01M3K0AXPFSWNG7YPVXE65W464** No riff command ends a worker from
+  inside the worker. The lead or the person ends workers with
+  `riff workers stop`.
+- **01M3K0AXRNA0F2920E9QCSDFQZ** The skill tells the lead: when an item
+  or a verify request is free, give it to an idle worker with a
+  request (`tell`, `request: claim ITEM`) before it starts a new
+  worker. End workers with `riff workers stop` when the lead decides.
+  A request of the lead wakes an idle worker.
 
 ## Builds
 

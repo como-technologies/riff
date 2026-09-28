@@ -691,40 +691,6 @@ pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitSt
     )
 }
 
-/// The refusal of `riff workers done` while the worker holds `claims`
-/// (01M3JQC8GVFWC47NTN4NKE730P).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::done_holds_claims(&["issue-12".into()]),
-///     "you still hold issue-12, so you do not end. While you wait for a verify, keep the \
-///      claim and wait. riff workers done did nothing."
-/// );
-/// ```
-pub fn done_holds_claims(claims: &[String]) -> String {
-    format!(
-        "you still hold {}, so you do not end. While you wait for a verify, keep the claim and \
-         wait. riff workers done did nothing.",
-        claims.join(", ")
-    )
-}
-
-/// What a worker with no work tells the lead before it ends
-/// (01M3JQC8CN72WAVPE3189216C8).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::worker_done(Some("%3")),
-///     "worker done: I hold no claim and find no free item. I end now, and my pane %3 closes."
-/// );
-/// ```
-pub fn worker_done(pane: Option<&str>) -> String {
-    format!(
-        "worker done: I hold no claim and find no free item. I end now, and my pane {} closes.",
-        pane.unwrap_or("unknown")
-    )
-}
-
 /// The answer to `riff logout --all`.
 ///
 /// ```

@@ -1326,9 +1326,10 @@ tokens. Your lead decides.
 
 ```mermaid
 flowchart TD
-    W[a worker] --> Q{how does it end?}
+    W[a worker] --> Q{what happens?}
     Q -- "claude exits on its own, for example a crash" --> C["the wrapper tells the lead:<br/>pane, session ID, exit code"]
-    Q -- "no claim and no free item" --> D["riff workers done:<br/>it tells the lead, leaves riff who,<br/>and its pane closes"]
+    Q -- "no claim and no free item" --> I["it waits idle:<br/>status idle: waits for work,<br/>its watch runs"]
+    I -- "a request of the lead" --> N[it claims the item]
     Q -- "riff workers stop" --> S[the pane closes, no message]
     Q -- "it waits for a verify" --> K[it keeps its claim and waits]
 ```
@@ -1340,19 +1341,28 @@ worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, exit code
 riff does not start it again. Look at the pane, then start a worker again with riff workers start 1.
 ```
 
-A worker with no claim, and no free item or verify request, ends
-itself. The start hook tells each worker to run this command in its
-Bash tool:
+A worker never ends itself. The lead or you end workers with
+`riff workers stop` (see [Stop the workers](#stop-the-workers)).
+
+### A worker with no work waits idle
+
+A worker with no claim, and no free item or verify request, waits. It
+sets its status, keeps its watch running, and ends its turn. An idle
+session costs nothing. `riff workers` shows it:
 
 ```sh
-riff workers done
+riff workers
 ```
 
-It tells the lead that the worker has no work, leaves `riff who` at
-once, and closes the pane of the worker. Outside a worker, and in a
-worker that holds a claim, it refuses and does nothing.
-A worker that finished an item runs `riff workers next` first (see
+```text
+%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims
+  status 2m ago: idle: waits for work
+```
+
+When an item or a verify request is free, your lead gives it to an
+idle worker with a request, before it starts a new worker. The request
+wakes the worker, and it claims the item. A worker that finished an
+item runs `riff workers next` first (see
 [A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
-runs `riff workers done` only when its start routine then finds no
-work. A worker that waits for a verify keeps its claim, and does not
-end.
+waits idle only when its start routine then finds no work. A worker
+that waits for a verify keeps its claim, and waits.
