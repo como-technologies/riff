@@ -430,9 +430,10 @@
 - **01M3K0Q892KWM76R9DJC1P37JA** `riff update` updates riff on a
   machine: it installs `riff` and `riff-server` from the repository
   with `cargo`, then updates the plugin with `riff connect claude`.
-  When `riff` uses a server on the same machine that runs another build
-  than the new `riff-server`, it tells the person to start
-  `riff-server` again. It does not restart it.
+  When the server on the same machine runs another build than the new
+  `riff-server`, it tells the person to start `riff-server` again. It
+  does not restart it. That server is the server of `riff` when it is
+  on the same machine, else `http://127.0.0.1:7878`.
 - **01M3K0Q8C9NK4NY6TJWRMJS7ZQ** The shared server of Como turns on,
   turns off, deploys and shows its state and log with the recipes of
   `just cloud`, through `gcloud` and `gh`. They are for the

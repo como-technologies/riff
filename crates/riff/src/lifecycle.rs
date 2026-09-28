@@ -172,7 +172,8 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// Updates riff on this machine (01M3K0Q892KWM76R9DJC1P37JA): installs
 /// the new binaries with `cargo`, updates the plugin with the new
 /// `riff connect claude --claude CLAUDE`, and then looks at the riff at
-/// `server`. It returns the last words for the person.
+/// `server` when it is on this machine, else at [`DEFAULT_SERVER`]. It
+/// returns the last words for the person.
 pub async fn update(cargo: &Path, claude: &Path, server: &str) -> Result<String> {
     run(Command::new(cargo).args(install_args()), "cargo install")?;
     run(
@@ -181,9 +182,11 @@ pub async fn update(cargo: &Path, claude: &Path, server: &str) -> Result<String>
             .arg(claude),
         "riff connect claude",
     )?;
-    if !is_loopback(server) {
-        return Ok(crate::text::updated(None));
-    }
+    let server = if is_loopback(server) {
+        server
+    } else {
+        DEFAULT_SERVER
+    };
     let out = Command::new("riff-server")
         .arg("--version")
         .output()

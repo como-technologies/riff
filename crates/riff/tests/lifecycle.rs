@@ -226,12 +226,13 @@ async fn update_tells_to_restart_a_local_riff_of_the_old_build() {
 }
 
 #[tokio::test]
-async fn update_leaves_a_riff_on_another_machine() {
+async fn update_looks_at_the_riff_of_this_machine_when_riff_uses_another() {
     let bin = tempfile::tempdir().unwrap();
     let out = run(update(bin.path(), 0, "http://first:7878")).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert!(!text(&out.stdout).contains("Stop riff-server"));
-    assert_eq!(log(bin.path(), "riff-server"), "");
+    let stdout = text(&out.stdout);
+    assert!(!stdout.contains("first"), "{stdout}");
+    assert_eq!(log(bin.path(), "riff-server"), "--version\n");
 }
 
 #[tokio::test]
