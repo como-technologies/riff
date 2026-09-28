@@ -1009,7 +1009,8 @@ async fn invite(
         .map_err(|e| bad_request(e.to_string()))?;
     saved(&s, mark).await?;
     tracing::info!(%caller, %email, "invited");
-    Ok(Json(Invited { email }))
+    let address = s.config.public_url.clone();
+    Ok(Json(Invited { email, address }))
 }
 
 /// Removes a member and ends each sign-in of that person. Only an admin

@@ -764,6 +764,9 @@ pub struct Invite {
 pub struct Invited {
     /// The email of the member, in lower case.
     pub email: String,
+    /// The public address of the riff: the `--public-url` of the
+    /// server. The member puts it in `RIFF_SERVER`.
+    pub address: String,
 }
 
 /// `POST /v1/remove`: removes a member and ends each sign-in of that

@@ -405,8 +405,9 @@ account can join. Only the owner or an admin can invite:
 riff invite bob@gmail.com
 ```
 
-The person then does [Sign in on this machine](#sign-in-on-this-machine)
-from step 5, with `RIFF_SERVER` set to your riff. Before the invite,
+It prints the address of the riff (the `--public-url` of the server)
+and the lines that the person runs to join. Send them to the person.
+Before the invite,
 `riff login` stops with `bob@gmail.com is not a member of this riff`.
 
 ### Remove a person

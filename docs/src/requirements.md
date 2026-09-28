@@ -880,6 +880,17 @@
   person (R20). Only the owner or an admin can do either. The owner
   cannot be removed. `riff members` shows the owner, the admins, the
   members and the allowed domains to each person who signed in.
+- **01M3MEF4B33Z6WVJMDP29C7SS2** `riff invite EMAIL` prints the public
+  address of the riff (the `--public-url` of `riff-server`) and the
+  lines that the person runs to join: install `riff`, set
+  `RIFF_SERVER` to the address, and `riff connect claude`. The lines
+  hold no secret.
+- **01M3MEFG6F102T1H8DFJ38EJ4A** The book page "Start a Team Riff"
+  starts a riff with sign-in for a team, on a Linux host that the team
+  reaches, behind a TLS proxy: the OIDC app of the team in the
+  environment of `riff-server`, `--public-url`, `--owner`, a sign-in of
+  the owner, and `riff invite EMAIL` for each person. No secret is on
+  the page.
 - **01M3JN3ANE676DT5WQ2NTG47DK** `riff-server` keeps the owner and the
   members with the tokens in its state. They stay after a restart with
   a bucket.

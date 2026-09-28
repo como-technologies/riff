@@ -170,6 +170,8 @@ async fn the_owner_invites_and_removes_a_person() {
     assert_eq!(status, 200, "{body}");
     let invited: Invited = serde_json::from_str(&body).unwrap();
     assert_eq!(invited.email, "bob@gmail.com");
+    // The reply names the public address of the riff (01M3MEF4B33Z6WVJMDP29C7SS2).
+    assert_eq!(invited.address, url);
     let bob = sign_in(&url, &issuer, "bob@gmail.com", None).await.unwrap();
     assert_eq!(bob.pair.user, "bob");
 
