@@ -435,6 +435,18 @@ the owner can do this. The owner stays an admin:
 riff admin remove bob@gmail.com
 ```
 
+### Pass the owner role
+
+A riff has one owner. The owner can pass the role to a member or an
+admin. You stay an admin. Only the owner can do this:
+
+```sh
+riff owner bob@gmail.com
+```
+
+The new owner stays after a restart. The `--owner` setting of
+`riff-server` names the owner only of a new riff.
+
 ### See the members
 
 It shows the owner, the admins, the members and the allowed domains:

@@ -33,7 +33,7 @@
 //! its reply is [`Revoked`]. A missing or bad token gets status 401. A
 //! person who is not an admin and names another user gets status 403.
 //!
-//! Four calls change or show who may join the riff
+//! Five calls change or show who may join the riff
 //! (01M3JN3AHMK532XMRDASD4XD5D). Each needs an access token and a DPoP
 //! proof, like `revoke`:
 //!
@@ -43,10 +43,12 @@
 //! | `POST /v1/remove` | [`Remove`] | [`Removed`] | an admin |
 //! | `POST /v1/members` | [`Members`] | [`MembersReply`] | each person |
 //! | `POST /v1/admin` | [`SetAdmin`] | [`AdminSet`] | the owner |
+//! | `POST /v1/owner` | [`PassOwner`] | [`OwnerPassed`] | the owner |
 //!
 //! A person who is not an admin gets status 403 from `invite` and
 //! `remove`. A person who is not the owner gets status 403 from
-//! `admin`. `remove` of the owner or of an admin gets status 400.
+//! `admin` and `owner`. `owner` to a person who is not a member or an
+//! admin gets status 400. `remove` of the owner or of an admin gets status 400.
 //!
 //! Two metadata documents follow the MCP authorization spec (R22):
 //!
@@ -807,6 +809,29 @@ pub struct AdminSet {
     pub email: String,
     /// True when the person is now an admin.
     pub admin: bool,
+}
+
+/// `POST /v1/owner`: the owner passes the owner role to a member or an
+/// admin. The old owner stays an admin.
+///
+/// ```
+/// use riff_core::wire::PassOwner;
+///
+/// let pass = PassOwner { email: "bob@gmail.com".into() };
+/// assert_eq!(serde_json::to_string(&pass).unwrap(), r#"{"email":"bob@gmail.com"}"#);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PassOwner {
+    pub email: String,
+}
+
+/// The reply to [`PassOwner`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerPassed {
+    /// The email of the new owner, in lower case.
+    pub owner: String,
+    /// The email of the old owner, now an admin.
+    pub admin: String,
 }
 
 /// `POST /v1/members`: shows who may join the riff.

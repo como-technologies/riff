@@ -62,10 +62,10 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     AdminSet, Alive, Claim, ClaimReply, End, Freed, Invite, Invited, Keys, Kind, Lead, LeadReply,
-    Members, MembersReply, Membership, Message, Post, Posted, Read, ReadReply, Register, Remove,
-    Removed, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetAdmin, SetStatus,
-    SignInConfig, Start, Started, Status, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError,
-    TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Members, MembersReply, Membership, Message, OwnerPassed, PassOwner, Post, Posted, Read,
+    ReadReply, Register, Remove, Removed, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo,
+    SetAdmin, SetStatus, SignInConfig, Start, Started, Status, Tailed, ThreadInfo, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -722,6 +722,16 @@ impl Api {
             admin,
         };
         self.call("admin", &request).await
+    }
+
+    /// Passes the owner role to a member or an admin. Only the owner
+    /// can.
+    pub async fn pass_owner(&self, email: &str) -> Result<OwnerPassed> {
+        self.need_sign_in().await?;
+        let request = PassOwner {
+            email: email.to_owned(),
+        };
+        self.call("owner", &request).await
     }
 
     /// Who may join the riff.

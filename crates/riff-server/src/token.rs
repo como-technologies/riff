@@ -85,7 +85,10 @@
 //! person an admin with [`Tokens::add_admin`], and a member again with
 //! [`Tokens::remove_admin`]. The store keeps these admins; the admins
 //! of the settings (R210) add to them. An admin that the owner made
-//! is removed only after the owner takes the role back.
+//! is removed only after the owner takes the role back. The owner
+//! passes the owner role to a member or an admin with
+//! [`Tokens::pass_owner`]; the old owner stays an admin. A riff has one
+//! owner at a time.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -494,6 +497,49 @@ impl Tokens {
         if !self.admins.remove(&email) {
             return Err(format!("{email} is not an admin that the owner made"));
         }
+        Ok(email)
+    }
+
+    /// Passes the owner role to a member or an admin
+    /// (01M3JYX8NPZASQY6031R35H39P). `admins` are the admin emails of
+    /// the settings (R210). The old owner stays an admin and a member.
+    /// Returns the email of the new owner in lower case. The caller
+    /// checks that the owner asks.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// tokens.invite("bob@gmail.com").unwrap();
+    /// assert_eq!(tokens.pass_owner(" Bob@gmail.com", &[]).unwrap(), "bob@gmail.com");
+    /// assert_eq!(tokens.owner(), Some("bob@gmail.com"));
+    /// assert_eq!(tokens.admins().collect::<Vec<_>>(), ["ada@gmail.com"]);
+    ///
+    /// // Only to a member or an admin.
+    /// assert!(tokens.pass_owner("carol@gmail.com", &[]).is_err());
+    /// ```
+    pub fn pass_owner(&mut self, email: &str, admins: &[String]) -> Result<String, String> {
+        let email = email.trim().to_lowercase();
+        let Some(old) = self.owner.clone() else {
+            return Err("this riff has no owner yet".into());
+        };
+        if old == email {
+            return Err(format!("{email} is the owner of this riff already"));
+        }
+        let admin = admins.iter().any(|a| a.trim().to_lowercase() == email);
+        if !self.members.contains(&email) && !self.admins.contains(&email) && !admin {
+            return Err(format!(
+                "{email} is not a member of this riff; run riff invite {email} first"
+            ));
+        }
+        self.members.remove(&email);
+        self.admins.remove(&email);
+        self.members.insert(old.clone());
+        self.admins.insert(old);
+        self.owner = Some(email.clone());
         Ok(email)
     }
 
@@ -1330,6 +1376,40 @@ mod tests {
         assert!(loaded.is_admin("bob", &[]));
         assert!(loaded.is_owner("ada"));
         assert!(!loaded.is_owner("bob"));
+    }
+
+    #[test]
+    fn a_passed_owner_role_stays_after_a_restart_with_the_old_setting() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        tokens.name_owner("ada@gmail.com");
+        tokens.invite("bob@gmail.com").unwrap();
+        tokens.pass_owner("bob@gmail.com", &[]).unwrap();
+        let (mut loaded, _) = restart(&tokens, now, Duration::from_secs(5));
+        // The old `--owner` setting names the owner only of a new riff.
+        assert_eq!(loaded.name_owner("ada@gmail.com"), "bob@gmail.com");
+        assert_eq!(loaded.admins().collect::<Vec<_>>(), ["ada@gmail.com"]);
+        assert_eq!(loaded.members().collect::<Vec<_>>(), ["ada@gmail.com"]);
+    }
+
+    #[test]
+    fn the_owner_role_passes_only_to_a_member_or_an_admin() {
+        let mut tokens = Tokens::default();
+        assert!(tokens.pass_owner("bob@gmail.com", &[]).is_err());
+        tokens.name_owner("ada@gmail.com");
+        let refused = tokens.pass_owner("bob@gmail.com", &[]).unwrap_err();
+        assert!(refused.contains("riff invite"), "{refused}");
+        assert!(tokens.pass_owner("ada@gmail.com", &[]).is_err());
+        // An admin of the settings may take the role.
+        let admins = ["Bob@gmail.com".to_owned()];
+        assert_eq!(
+            tokens.pass_owner("bob@gmail.com", &admins).unwrap(),
+            "bob@gmail.com"
+        );
+        // The role goes back: the admin that the owner made takes it.
+        tokens.pass_owner("ada@gmail.com", &[]).unwrap();
+        assert_eq!(tokens.owner(), Some("ada@gmail.com"));
+        assert_eq!(tokens.admins().collect::<Vec<_>>(), ["bob@gmail.com"]);
     }
 
     #[test]

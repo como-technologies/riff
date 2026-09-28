@@ -1,4 +1,4 @@
-//! `riff invite`, `riff remove`, `riff members` and `riff admin` against a real
+//! `riff invite`, `riff remove`, `riff members`, `riff admin` and `riff owner` against a real
 //! server (01M3JN3AHMK532XMRDASD4XD5D). The sign-in is in the mock
 //! store of `keyring-core`, so the tests run in process.
 
@@ -184,4 +184,53 @@ async fn a_removed_admin_cannot_invite() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("not an admin"), "{error}");
+}
+
+#[tokio::test]
+async fn the_owner_passes_the_role_to_a_member() {
+    let (service, api) = start().await;
+    sign_in(&service, &api, "ada@gmail.com");
+    let ada = api.clone().signed_in(None).unwrap();
+    ada.invite("bob@gmail.com").await.unwrap();
+    let error = ada.pass_owner("carol@gmail.com").await.unwrap_err();
+    assert!(error.to_string().contains("not a member"), "{error}");
+    let passed = ada.pass_owner("Bob@gmail.com").await.unwrap();
+    assert_eq!(
+        text::owner_passed(&passed),
+        "bob@gmail.com is now the owner. ada@gmail.com stays an admin."
+    );
+
+    sign_in(&service, &api, "bob@gmail.com");
+    let list = api
+        .clone()
+        .signed_in(None)
+        .unwrap()
+        .members()
+        .await
+        .unwrap();
+    assert_eq!(
+        text::members(&list),
+        "owner: bob@gmail.com\nadmins: ada@gmail.com\nmembers: ada@gmail.com\nallowed domains: none"
+    );
+}
+
+#[tokio::test]
+async fn only_the_owner_passes_the_role() {
+    let (service, api) = start().await;
+    let owner_key = Key::generate().thumbprint();
+    service
+        .tokens()
+        .admit("ada@gmail.com", false, &[], &owner_key, Instant::now())
+        .unwrap();
+    service.tokens().invite("bob@gmail.com").unwrap();
+    sign_in(&service, &api, "bob@gmail.com");
+    let error = api
+        .clone()
+        .signed_in(None)
+        .unwrap()
+        .pass_owner("bob@gmail.com")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("not the owner"), "{error}");
+    assert_eq!(service.tokens().owner(), Some("ada@gmail.com"));
 }

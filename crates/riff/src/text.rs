@@ -13,8 +13,8 @@ use riff_core::selector::Selector;
 
 use crate::api::{Checked, Inbox};
 use riff_core::wire::{
-    AdminSet, ClaimReply, Invited, Kind, LeadReply, MembersReply, Posted, Removed, Revoked,
-    RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    AdminSet, ClaimReply, Invited, Kind, LeadReply, MembersReply, OwnerPassed, Posted, Removed,
+    Revoked, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -429,6 +429,24 @@ pub fn admin_set(done: &AdminSet) -> String {
     } else {
         format!("{} is now a member, not an admin.", done.email)
     }
+}
+
+/// The answer to `riff owner`.
+///
+/// ```
+/// use riff_core::wire::OwnerPassed;
+///
+/// let done = OwnerPassed { owner: "bob@gmail.com".into(), admin: "ada@gmail.com".into() };
+/// assert_eq!(
+///     riff::text::owner_passed(&done),
+///     "bob@gmail.com is now the owner. ada@gmail.com stays an admin."
+/// );
+/// ```
+pub fn owner_passed(done: &OwnerPassed) -> String {
+    format!(
+        "{} is now the owner. {} stays an admin.",
+        done.owner, done.admin
+    )
 }
 
 /// The answer to `riff members`.

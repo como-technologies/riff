@@ -1,7 +1,8 @@
 //! The owner and the members of a riff, over HTTP
 //! (01M3JN3AD44CC98AGMVP43F56G, 01M3JN3AFA2SAX0CEC1Y6E4NM5,
 //! 01M3JN3AHMK532XMRDASD4XD5D, 01M3JN3ANE676DT5WQ2NTG47DK,
-//! 01M3JY7T109BR860EQBSKEFDHY, 01M3JY7T3645CMQ8CS4T4ABZTP).
+//! 01M3JY7T109BR860EQBSKEFDHY, 01M3JY7T3645CMQ8CS4T4ABZTP,
+//! 01M3JYX8NPZASQY6031R35H39P, 01M3JYX8QSEZDB5RZJ3Y57DR4Y).
 
 mod common;
 
@@ -10,8 +11,8 @@ use std::time::Duration;
 
 use riff_core::dpop::Key;
 use riff_core::wire::{
-    AdminSet, ID_TOKEN_TYPE, Invite, Invited, MembersReply, Remove, Removed, SetAdmin,
-    TOKEN_EXCHANGE, TokenError, TokenReply, TokenRequest,
+    AdminSet, ID_TOKEN_TYPE, Invite, Invited, MembersReply, OwnerPassed, PassOwner, Remove,
+    Removed, SetAdmin, TOKEN_EXCHANGE, TokenError, TokenReply, TokenRequest,
 };
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -128,6 +129,14 @@ async fn set_admin(url: &str, by: &Person, email: &str, admin: bool) -> (u16, St
     })
     .unwrap();
     call(url, by, "admin", body).await
+}
+
+async fn pass_owner(url: &str, by: &Person, email: &str) -> (u16, String) {
+    let body = serde_json::to_value(PassOwner {
+        email: email.into(),
+    })
+    .unwrap();
+    call(url, by, "owner", body).await
 }
 
 async fn members(url: &str, by: &Person) -> MembersReply {
@@ -336,4 +345,53 @@ async fn the_owner_makes_an_admin_that_stays_after_a_restart() {
     let (status, body) = invite(&url, &bob, "carol@gmail.com").await;
     assert_eq!(status, 403, "{body}");
     assert_eq!(members(&url, &ada).await.members, ["bob@gmail.com"]);
+}
+
+/// The owner passes the role to a member. The member is the owner, and
+/// the old owner an admin. Only the owner passes it, and only to a
+/// member or an admin. The new owner stays after a restart on the same
+/// store, also with the old `--owner` setting.
+#[tokio::test]
+async fn the_owner_passes_the_role_that_stays_after_a_restart() {
+    let issuer = common::fake_provider().await;
+    let store = Memory::default();
+    let ada_owner = Some("ada@gmail.com");
+    let (old, url) = serve(&issuer, &[], ada_owner, Some(Arc::new(store.clone()))).await;
+    let ada = sign_in(&url, &issuer, "ada@gmail.com", None).await.unwrap();
+    assert_eq!(invite(&url, &ada, "bob@gmail.com").await.0, 200);
+    let bob = sign_in(&url, &issuer, "bob@gmail.com", None).await.unwrap();
+
+    // A member cannot pass the role.
+    let (status, body) = pass_owner(&url, &bob, "bob@gmail.com").await;
+    assert_eq!(status, 403);
+    assert!(body.contains("only the owner"), "{body}");
+    // The owner cannot pass it to a person who is not a member.
+    let (status, body) = pass_owner(&url, &ada, "carol@gmail.com").await;
+    assert_eq!(status, 400);
+    assert!(body.contains("not a member"), "{body}");
+    assert_eq!(old.tokens().owner(), Some("ada@gmail.com"));
+
+    let (status, body) = pass_owner(&url, &ada, "Bob@gmail.com").await;
+    assert_eq!(status, 200, "{body}");
+    let passed: OwnerPassed = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        (passed.owner.as_str(), passed.admin.as_str()),
+        ("bob@gmail.com", "ada@gmail.com")
+    );
+    // The old owner is an admin now: can invite, but not pass the role.
+    assert_eq!(invite(&url, &ada, "carol@gmail.com").await.0, 200);
+    assert_eq!(pass_owner(&url, &ada, "carol@gmail.com").await.0, 403);
+    old.save().await.unwrap();
+
+    let (new, url) = serve(&issuer, &[], ada_owner, Some(Arc::new(store))).await;
+    tokio::time::timeout(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    assert_eq!(new.tokens().owner(), Some("bob@gmail.com"));
+    let bob = sign_in(&url, &issuer, "bob@gmail.com", None).await.unwrap();
+    let list = members(&url, &bob).await;
+    assert_eq!(list.owner.as_deref(), Some("bob@gmail.com"));
+    assert_eq!(list.admins, ["ada@gmail.com"]);
+    assert_eq!(list.members, ["ada@gmail.com", "carol@gmail.com"]);
+    assert_eq!(set_admin(&url, &bob, "ada@gmail.com", false).await.0, 200);
 }
