@@ -402,11 +402,11 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
 
     let (out, _) = riff(&server, dir, "mike", &["who"]).await;
     assert!(
-        out.contains("?session=a1&lead=true\n  status 0s ago: write the tests\n"),
+        out.contains("?session=a1&lead=true\n       status 0s ago: write the tests\n"),
         "{out}"
     );
     assert!(
-        out.contains("?session=b2\n  blocked 0s ago: waits for a review (step: merge)\n"),
+        out.contains("?session=b2\n       blocked 0s ago: waits for a review (step: merge)\n"),
         "{out}"
     );
 

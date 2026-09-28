@@ -242,17 +242,35 @@ riff who
 ```
 
 The first line shows the state of the riff. Each other line shows a
-session, its state and its URI:
+session: its name, its state, `(you)`, `lead` and its claims, and its
+URI:
 
 ```text
 The riff is running.
-mike@pangolin:riff#issue-6 (a6cf) live  riff://mike@pangolin/...
-brett@heron:riff (77e0) idle 2m  riff://brett@heron/...
+riff and riff-server have the build 0.1.0 ...
+mike@pangolin:riff#issue-6 (a6cf)  live  (you)  lead issue-6  riff://mike@pangolin/...
+brett@heron:riff (77e0)  idle 2m  riff://brett@heron/...
 ```
 
 `live` means the session has an open watch. `idle 2m` means its last
 call was 2 minutes ago. A session with a status has a second line. See
 [A status](#a-status).
+
+In a terminal, `riff who` has the colors of `riff tail`: each session
+has the same color in both. `running` is green and `paused` is yellow.
+A blocked status is red. The `who` tool of a session stays plain.
+
+### List the sessions without color
+
+Color goes only to a terminal. `--color never` turns it off also in a
+terminal. `NO_COLOR=1` does the same. `--color always` keeps the color
+in a pipe:
+
+```sh
+riff who --color never
+riff who > sessions.txt
+riff who --color always | less -R
+```
 
 `who` does not list a gone session. A session is gone when it ended, or
 when it stopped for 3 minutes. To list gone sessions too:
@@ -864,10 +882,10 @@ step, when it is blocked, and when it releases. `riff who` shows each
 status with its age:
 
 ```text
-mike@pangolin:riff#issue-6 (a6cf) live  riff://mike@pangolin/...
-  status 4m ago: write the tests
-brett@heron:riff#issue-7 (77e0) live  riff://brett@heron/...
-  blocked 1m ago: waits for a review (step: merge)
+mike@pangolin:riff#issue-6 (a6cf)  live  issue-6  riff://mike@pangolin/...
+       status 4m ago: write the tests
+brett@heron:riff#issue-7 (77e0)  live  issue-7  riff://brett@heron/...
+       blocked 1m ago: waits for a review (step: merge)
 ```
 
 A status request is a post of kind `status`. It wakes each session

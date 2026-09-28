@@ -644,6 +644,16 @@
   removes each escape sequence and each control character from the
   body and the names. It keeps newlines and tabs. A body cannot change
   the terminal.
+- **01M3MEW73CDSJDSKX32XW80WZH** `riff who` uses the styles of
+  `riff tail`, from one shared module. The state of the riff is bold:
+  `running` green, `paused` yellow. The build line is dim. The name of
+  each session is bold, in the same color as in `riff tail`. `live` is
+  green, the idle time dim, `(you)` bold, `lead` and each claim muted,
+  the URI dim. The status is under the session, with the indent of a
+  body in `riff tail`, and a dim age. A blocked status is red. The MCP
+  `who` tool stays plain.
+- **01M3MEW75WC7Y4M1BKQ7SXRPNR** `riff who --color <auto|always|never>`
+  controls the color, the same as `riff tail --color`.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
   line of a Claude Code session: `riff`, the short session ID of
   `riff who`, `lead`, each claim, and `blocked`. It is the
