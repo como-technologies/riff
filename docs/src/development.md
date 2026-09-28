@@ -302,15 +302,18 @@ the Claude Code session again, as a new session.
 
 ### Allow another domain
 
-Only accounts of `comotechnologies.io` can sign in. To allow another
-Workspace domain, add `--allowed-domain DOMAIN` to `just local setup`.
+The accounts of `comotechnologies.io` can sign in, and the owner and
+the members (see [Owner and members](#owner-and-members)). To allow
+another Workspace domain, add `--allowed-domain DOMAIN` to
+`just local setup`.
 Give `--allowed-domain` once for each domain, the default domain too.
 Two domains do not share a user: `alice@a.com` and `alice@b.com` both
 give `alice`, and only the first account gets it.
 
 ### Name an admin
 
-An admin can end each sign-in of another person. Name each admin by
+An admin can end each sign-in of another person, and invite and
+remove members. The owner is an admin. Name each other admin by
 verified email, once for each admin:
 
 ```sh
@@ -349,6 +352,78 @@ riff-server install --issuer https://login.example.com --client-id ID --client-s
 
 Without `--client-id`, the server has no sign-in.
 
+## Owner and members
+
+```mermaid
+flowchart TD
+    A[a person signs in] --> O{owner, admin or member?}
+    O -- yes --> IN[signed in]
+    O -- no --> D{allowed domain?}
+    D -- yes --> IN
+    D -- no --> N{riff has no owner and no admin?}
+    N -- yes --> OW[signed in as the owner]
+    N -- no --> R[refused: ask the owner for an invite]
+```
+
+The first person who signs in to a riff is its owner. The owner is an
+admin. On a riff with `--admin`, only an admin becomes the owner.
+
+A riff with sign-in listens only on a loopback address until it has an
+owner. So the first person signs in on the machine of the server. A
+server with no bucket forgets its owner when it starts again. To let
+it listen on your network, name the owner in the settings.
+
+### Become the owner
+
+On the machine of the server, after `just local setup`, sign in first:
+
+```sh
+riff login
+```
+
+### Name the owner when you set up the server
+
+A server that must listen on the network at once needs an owner. Name
+it by verified email:
+
+```sh
+just local setup --owner alice@example.com --listen 0.0.0.0:7878
+```
+
+A riff that has an owner keeps it. `--owner` does not change it.
+
+### Invite a person
+
+A member needs no allowed domain, so a person with a personal Google
+account can join. Only the owner or an admin can invite:
+
+```sh
+riff invite bob@gmail.com
+```
+
+The person then does [Sign in on this machine](#sign-in-on-this-machine)
+from step 5, with `RIFF_SERVER` set to your riff. Before the invite,
+`riff login` stops with `bob@gmail.com is not a member of this riff`.
+
+### Remove a person
+
+It removes the member and ends each sign-in of that person, on each
+device. Only the owner or an admin can remove. The owner stays:
+
+```sh
+riff remove bob@gmail.com
+```
+
+A person of an allowed domain can still sign in after a removal.
+
+### See the members
+
+It shows the owner, the admins, the members and the allowed domains:
+
+```sh
+riff members
+```
+
 ## The server service
 
 `riff-server install` writes its settings, as options or as `RIFF_*`
@@ -362,6 +437,9 @@ the same, with the OAuth client.
   `--insecure`.
 - With no sign-in, an address that is not loopback needs `--insecure`.
   Else `install` fails and changes nothing.
+- With sign-in, an address that is not loopback needs an owner:
+  `--owner EMAIL`, or a bucket that holds one. `install` with a bucket
+  does not check it. The server checks it at start.
 - `riff-server uninstall` stops the service and removes its files.
 
 ### Remove a setting of the service
@@ -586,6 +664,26 @@ gh run list --workflow CI --branch main
 ```
 
 `just cloud` alone lists its recipes.
+
+### Name the owner of the cloud riff
+
+The cloud riff listens on the network, so it needs an owner from its
+first start. Each deploy passes the GitHub Actions variable
+`RIFF_OWNER` as `--owner`. With no variable, the deploy stops. Set it
+once, with your verified email:
+
+```sh
+gh variable set RIFF_OWNER --body alice@comotechnologies.io
+```
+
+For `just cloud up` and [Deploy by hand](#deploy-by-hand), export it in
+your shell too:
+
+```sh
+export RIFF_OWNER=alice@comotechnologies.io
+```
+
+A riff that has an owner keeps it, so a new value names nobody new.
 
 ### Turn the shared server on
 

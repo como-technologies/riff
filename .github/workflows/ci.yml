@@ -112,6 +112,8 @@ jobs:
 
       - name: Deploy
         if: steps.changed.outputs.server == 'true'
+        env:
+          RIFF_OWNER: ${{ vars.RIFF_OWNER }}
         run: deploy/deploy.sh --image "$IMAGE"
 
   audit:

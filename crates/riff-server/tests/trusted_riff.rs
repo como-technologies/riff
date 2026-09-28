@@ -130,7 +130,47 @@ fn loopback_needs_no_flag_and_gives_no_warning() {
 }
 
 #[test]
-fn a_server_that_requires_sign_in_listens_anywhere_with_no_flag() {
-    let (_server, _, log) = serve(&["--listen", "0.0.0.0:0", "--require-sign-in"]);
+fn a_server_with_sign_in_and_an_owner_listens_anywhere_with_no_flag() {
+    let (_server, _, log) = serve(&[
+        "--listen",
+        "0.0.0.0:0",
+        "--require-sign-in",
+        "--owner",
+        "ada@gmail.com",
+    ]);
     assert!(!log.contains("any person"), "{log}");
+}
+
+/// A riff with sign-in and no owner listens only on loopback, so that
+/// the first sign-in comes from its own machine
+/// (01M3JN3AQMHZHT6JP3P6GM9PWZ). --insecure does not change that.
+#[test]
+fn a_server_with_sign_in_and_no_owner_refuses_a_network_address() {
+    for args in [
+        &["--listen", "0.0.0.0:0", "--require-sign-in"][..],
+        &["--listen", "0.0.0.0:0", "--require-sign-in", "--insecure"][..],
+    ] {
+        let out = server(args).output().unwrap();
+        assert!(!out.status.success(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("no owner"), "{stderr}");
+        assert!(stderr.contains("--owner"), "{stderr}");
+    }
+    let (_server, _, _) = serve(&["--listen", "127.0.0.1:0", "--require-sign-in"]);
+}
+
+#[test]
+fn an_owner_that_is_not_an_email_is_refused() {
+    let out = server(&[
+        "--listen",
+        "127.0.0.1:0",
+        "--require-sign-in",
+        "--owner",
+        "ada",
+    ])
+    .output()
+    .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not an email"), "{stderr}");
 }

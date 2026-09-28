@@ -40,6 +40,13 @@ struct Cli {
     )]
     admins: Vec<String>,
 
+    /// The verified email of the owner of a new riff. Without it, the
+    /// first person who signs in is the owner, and the server listens
+    /// only on a loopback address until then. A riff that has an owner
+    /// keeps it.
+    #[arg(long, env = "RIFF_OWNER", global = true)]
+    owner: Option<String>,
+
     /// The URL where people reach the server. It is the OAuth resource
     /// and issuer. The default is http://<listen>.
     #[arg(long, env = "RIFF_PUBLIC_URL", global = true)]
@@ -127,6 +134,9 @@ impl Cli {
         if !self.admins.is_empty() {
             settings.push(("RIFF_ADMINS", self.admins.join(",")));
         }
+        if let Some(owner) = &self.owner {
+            settings.push(("RIFF_OWNER", owner.clone()));
+        }
         if let Some(url) = &self.public_url {
             settings.push(("RIFF_PUBLIC_URL", url.clone()));
         }
@@ -195,7 +205,11 @@ fn check_settings(settings: &[(String, String)]) -> std::io::Result<(SocketAddr,
         })?;
     let trusted =
         get("RIFF_OIDC_CLIENT_ID").is_none_or(str::is_empty) && !on("RIFF_REQUIRE_SIGN_IN");
-    let warning = listen::check(listen, trusted, on("RIFF_INSECURE"))
+    // The bucket can hold an owner. riff-server checks it at start.
+    let owned = ["RIFF_OWNER", "RIFF_BUCKET"]
+        .iter()
+        .any(|name| get(name).is_some_and(|v| !v.trim().is_empty()));
+    let warning = listen::check(listen, trusted, on("RIFF_INSECURE"), owned)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     Ok((listen, warning))
 }
@@ -261,7 +275,16 @@ async fn run() -> std::io::Result<()> {
     if let Some(command) = &cli.command {
         return manage(&cli, &matches, command);
     }
-    let warning = listen::check(cli.listen, cli.trusted(), cli.insecure)
+    if let Some(owner) = cli.owner.as_deref().filter(|o| !o.contains('@')) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("the owner {owner} is not an email"),
+        ));
+    }
+    // The bucket can hold an owner: check again after the load.
+    let trusted = cli.trusted();
+    let owned = cli.owner.is_some() || cli.bucket.is_some();
+    let warning = listen::check(cli.listen, trusted, cli.insecure, owned)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -280,6 +303,7 @@ async fn run() -> std::io::Result<()> {
     let mut config = Config::new(&public_url);
     config.require_sign_in = cli.require_sign_in;
     config.admins = cli.admins;
+    config.owner = cli.owner;
     for admin in &config.admins {
         if !admin.contains('@') {
             tracing::warn!("the admin {admin} is not an email: it names nobody (R210)");
@@ -312,6 +336,9 @@ async fn run() -> std::io::Result<()> {
             Service::new(config)
         }
     };
+    let owned = service.tokens().owner().is_some();
+    listen::check(cli.listen, trusted, cli.insecure, owned)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let stop = async {
         tokio::select! {
             _ = terminate.recv() => {}
@@ -367,6 +394,7 @@ mod tests {
         let cli = Cli::parse_from([
             "riff-server",
             "--admin=a@comotechnologies.io",
+            "--owner=o@gmail.com",
             "--public-url=https://x",
             "--require-sign-in",
             "--insecure",
@@ -409,8 +437,13 @@ mod tests {
         assert!(check_settings(&s(&[open, ("RIFF_INSECURE", "false")])).is_err());
         let (_, warning) = check_settings(&s(&[open, ("RIFF_INSECURE", "true")])).unwrap();
         assert!(warning.is_some());
-        let (_, warning) = check_settings(&s(&[open, ("RIFF_OIDC_CLIENT_ID", "id")])).unwrap();
+        // With sign-in: only loopback until the riff has an owner.
+        let signed = ("RIFF_OIDC_CLIENT_ID", "id");
+        assert!(check_settings(&s(&[open, signed])).is_err());
+        let (_, warning) = check_settings(&s(&[open, signed, ("RIFF_OWNER", "o@x.io")])).unwrap();
         assert!(warning.is_none());
+        // A bucket can hold the owner: riff-server checks it at start.
+        assert!(check_settings(&s(&[open, signed, ("RIFF_BUCKET", "b")])).is_ok());
         let (listen, _) = check_settings(&[]).unwrap();
         assert_eq!(listen.to_string(), "127.0.0.1:7878");
     }

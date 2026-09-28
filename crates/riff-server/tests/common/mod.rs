@@ -5,6 +5,12 @@
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::routing::get;
+use axum::{Json, Router};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use riff_core::wire::Discovery;
+use serde_json::{Value, json};
+
 use riff_core::dpop::Key;
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -103,4 +109,53 @@ pub async fn refresh(base: &str, key: &Key, form: &str) -> reqwest::Response {
         .send()
         .await
         .unwrap()
+}
+
+const KEY: &str = include_str!("../../testdata/test-only-rsa-key.pem");
+const JWKS: &str = include_str!("../../testdata/test-only-jwks.json");
+
+/// A sign-in provider with only the two documents that the server
+/// fetches: the discovery document and the JWKS. Returns its issuer.
+pub async fn fake_provider() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let discovery = Discovery {
+        issuer: issuer.clone(),
+        authorization_endpoint: format!("{issuer}/authorize"),
+        token_endpoint: format!("{issuer}/token"),
+        jwks_uri: format!("{issuer}/jwks"),
+    };
+    let jwks: Value = serde_json::from_str(JWKS).unwrap();
+    let router = Router::new()
+        .route(
+            "/.well-known/openid-configuration",
+            get(move || async move { Json(discovery) }),
+        )
+        .route("/jwks", get(move || async move { Json(jwks) }));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    issuer
+}
+
+/// An ID token of [`fake_provider`] for the client `riff-client`, with
+/// a verified email. `domain` is the `hd` claim: `None` for a personal
+/// account.
+pub fn id_token(issuer: &str, email: &str, domain: Option<&str>) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("test".into());
+    let mut claims = json!({
+        "iss": issuer,
+        "aud": "riff-client",
+        "exp": now() + 3600,
+        "email": email,
+        "email_verified": true,
+    });
+    if let Some(domain) = domain {
+        claims["hd"] = json!(domain);
+    }
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_rsa_pem(KEY.as_bytes()).unwrap(),
+    )
+    .unwrap()
 }

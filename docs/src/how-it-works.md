@@ -158,7 +158,7 @@ sequenceDiagram
     C->>G: open browser, sign in
     G-->>C: Google ID token
     C->>E: Google ID token + device public key
-    E->>E: check signature and domain
+    E->>E: check signature; owner, admin, member or allowed domain
     E-->>C: riff tokens, bound to the device key
     Note over C: tokens and key go to the OS keyring
 ```

@@ -24,9 +24,13 @@
 //! - `iss` is the issuer, `aud` is the client ID, and `exp` is in the
 //!   future.
 //! - `email_verified` is true.
-//! - `hd`, the Google Workspace domain of the account, is one of
-//!   [`Provider::allowed_domains`] (R15). An account with no `hd` is
-//!   refused.
+//!
+//! The check does not refuse an account outside the allowed domains. It
+//! only says in [`Identity::allowed_domain`] whether `hd`, the Google
+//! Workspace domain of the account, is one of
+//! [`Provider::allowed_domains`] (R15, R94). An account with no `hd` is
+//! not in an allowed domain. The members decide the rest: see
+//! [`crate::token::Tokens::admit`].
 //!
 //! At start, the server checks its client with the provider (R146, see
 //! [`Provider::check_client`]).
@@ -93,6 +97,8 @@ pub struct Identity {
     pub email: String,
     /// The user part of the session URI.
     pub user: String,
+    /// True when the `hd` of the account is an allowed domain (R15).
+    pub allowed_domain: bool,
 }
 
 /// Why a sign-in failed.
@@ -210,21 +216,20 @@ impl Provider {
         if claims.email_verified != Some(true) {
             return Err(SignInError::Invalid("the email is not verified".into()));
         }
-        let domain = claims.hd.unwrap_or_default();
-        if !self
-            .allowed_domains
-            .iter()
-            .any(|allowed| allowed.eq_ignore_ascii_case(&domain))
-        {
-            return Err(SignInError::Invalid(format!(
-                "the domain {domain:?} is not allowed"
-            )));
-        }
+        let allowed_domain = claims.hd.is_some_and(|domain| {
+            self.allowed_domains
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(&domain))
+        });
         let email = claims
             .email
             .ok_or_else(|| SignInError::Invalid("the token has no email".into()))?;
         let user = user_of(&email)?;
-        Ok(Identity { email, user })
+        Ok(Identity {
+            email,
+            user,
+            allowed_domain,
+        })
     }
 }
 
@@ -362,17 +367,38 @@ mod tests {
             Ok(Identity {
                 email: "Ada@comotechnologies.io".into(),
                 user: "ada".into(),
+                allowed_domain: true,
             })
         );
     }
 
+    fn in_allowed_domain(provider: &Provider, claims: &Value) -> bool {
+        provider
+            .verify(&jwks(), &sign(claims, "test"))
+            .unwrap()
+            .allowed_domain
+    }
+
     #[test]
-    fn each_allowed_domain_may_sign_in() {
+    fn each_allowed_domain_is_allowed() {
         let mut provider = provider();
         provider.allowed_domains = vec!["example.com".into(), "ComoTechnologies.io".into()];
-        assert!(provider.verify(&jwks(), &sign(&claims(), "test")).is_ok());
+        assert!(in_allowed_domain(&provider, &claims()));
         provider.allowed_domains = vec!["example.com".into()];
-        assert!(provider.verify(&jwks(), &sign(&claims(), "test")).is_err());
+        assert!(!in_allowed_domain(&provider, &claims()));
+    }
+
+    /// An account with no `hd`, or another `hd`, is valid but not in an
+    /// allowed domain (R94). Only an invite lets it in.
+    #[test]
+    fn a_personal_account_is_not_in_an_allowed_domain() {
+        let mut no_domain = claims();
+        no_domain.as_object_mut().unwrap().remove("hd");
+        assert!(!in_allowed_domain(&provider(), &no_domain));
+        assert!(!in_allowed_domain(
+            &provider(),
+            &with("hd", json!("gmail.com"))
+        ));
     }
 
     #[test]
@@ -387,10 +413,6 @@ mod tests {
         assert!(refused(&with("aud", json!("other-client"))));
         assert!(refused(&with("exp", json!(now() - 3600))));
         assert!(refused(&with("email_verified", json!(false))));
-        assert!(refused(&with("hd", json!("gmail.com"))));
-        let mut no_domain = claims();
-        no_domain.as_object_mut().unwrap().remove("hd");
-        assert!(refused(&no_domain));
         let mut no_email = claims();
         no_email.as_object_mut().unwrap().remove("email");
         assert!(refused(&no_email));

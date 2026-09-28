@@ -48,6 +48,35 @@
 //!
 //! The store does no I/O and reads no clock. The caller passes `now`.
 //!
+//! # Owner and members
+//!
+//! The store also keeps who may join the riff, by verified email in
+//! lower case. [`Tokens::admit`] is the sign-in of a person from the
+//! provider. It lets a person in when one of these is true:
+//!
+//! - The person is the owner, a member or an admin.
+//! - The account is in an allowed domain (R15).
+//! - The riff has no owner and no admin: the person becomes the owner.
+//!
+//! The first person that [`Tokens::admit`] lets in is the owner
+//! (01M3JN3AD44CC98AGMVP43F56G). On a riff with admins, only an admin
+//! becomes the owner. The owner is an admin. An admin adds a member
+//! with [`Tokens::invite`] and removes one with [`Tokens::remove`]. A
+//! removal ends each sign-in of that person (R20).
+//!
+//! ```mermaid
+//! flowchart TD
+//!     A[verified email] --> O{owner, member or admin?}
+//!     O -- yes --> IN[sign in]
+//!     O -- no --> D{allowed domain?}
+//!     D -- yes --> IN
+//!     D -- no --> N{no owner and no admin?}
+//!     N -- yes --> IN
+//!     N -- no --> R[refuse: ask the owner for an invite]
+//!     IN --> F{no owner yet, and an admin or no admins?}
+//!     F -- yes --> OW[the person is the owner]
+//! ```
+//!
 //! # Saved form
 //!
 //! [`Tokens::to_bytes`] gives the store as JSON, and [`Tokens::from_bytes`]
@@ -158,6 +187,8 @@ pub enum NoSignIn {
     Email(String),
     /// Another email holds the USER (R209). It names the USER.
     Taken(String),
+    /// The person may not join the riff. It names the email.
+    NotMember(String),
 }
 
 impl fmt::Display for NoSignIn {
@@ -167,6 +198,10 @@ impl fmt::Display for NoSignIn {
             NoSignIn::Taken(user) => write!(
                 f,
                 "the user {user} belongs to another account; ask an admin"
+            ),
+            NoSignIn::NotMember(email) => write!(
+                f,
+                "{email} is not a member of this riff; ask its owner to run: riff invite {email}"
             ),
         }
     }
@@ -185,6 +220,10 @@ pub struct Tokens {
     next_sign_in: u64,
     /// The verified email of each USER, in lower case (R209).
     users: BTreeMap<String, String>,
+    /// The email of the owner, in lower case.
+    owner: Option<String>,
+    /// The email of each member, in lower case.
+    members: BTreeSet<String>,
 }
 
 struct SignIn {
@@ -260,6 +299,151 @@ impl Tokens {
             },
         );
         Ok(self.issue(id, None, now))
+    }
+
+    /// Signs in a person from the provider, when the person may join the
+    /// riff (see "Owner and members" in the module docs).
+    /// `allowed_domain` is true when the account is in an allowed domain
+    /// (R15). `admins` are the admin emails of the settings (R210).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{NoSignIn, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// // The first person is the owner, from any domain.
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// assert_eq!(tokens.owner(), Some("ada@gmail.com"));
+    ///
+    /// // A person with no invite and no allowed domain is refused.
+    /// let refused = tokens.admit("bob@gmail.com", false, &[], "k2", now);
+    /// assert_eq!(refused, Err(NoSignIn::NotMember("bob@gmail.com".into())));
+    ///
+    /// // After an invite, the person signs in.
+    /// tokens.invite("Bob@gmail.com").unwrap();
+    /// assert!(tokens.admit("bob@gmail.com", false, &[], "k2", now).is_ok());
+    /// ```
+    pub fn admit(
+        &mut self,
+        email: &str,
+        allowed_domain: bool,
+        admins: &[String],
+        jkt: &str,
+        now: Instant,
+    ) -> Result<TokenReply, NoSignIn> {
+        let email = email.trim().to_lowercase();
+        let admin = admins.iter().any(|a| a.trim().to_lowercase() == email);
+        let new_riff = self.owner.is_none() && admins.is_empty();
+        let may_join = admin
+            || allowed_domain
+            || new_riff
+            || self.owner.as_ref() == Some(&email)
+            || self.members.contains(&email);
+        if !may_join {
+            return Err(NoSignIn::NotMember(email));
+        }
+        let pair = self.sign_in(&email, jkt, now)?;
+        if self.owner.is_none() && (admins.is_empty() || admin) {
+            self.owner = Some(email);
+        }
+        Ok(pair)
+    }
+
+    /// Names the owner of a riff that has none, for example from a
+    /// setting (01M3JN3ASSV9SA0QZKXXJ0RTEV). A riff that has an owner
+    /// keeps it. Returns the owner.
+    ///
+    /// ```
+    /// use riff_server::token::Tokens;
+    ///
+    /// let mut tokens = Tokens::default();
+    /// assert_eq!(tokens.name_owner(" Ada@X.io"), "ada@x.io");
+    /// assert_eq!(tokens.name_owner("bob@x.io"), "ada@x.io");
+    /// ```
+    pub fn name_owner(&mut self, email: &str) -> &str {
+        self.owner
+            .get_or_insert_with(|| email.trim().to_lowercase())
+    }
+
+    /// The email of the owner, or `None` before the first sign-in.
+    pub fn owner(&self) -> Option<&str> {
+        self.owner.as_deref()
+    }
+
+    /// The emails of the members, sorted.
+    pub fn members(&self) -> impl Iterator<Item = &str> {
+        self.members.iter().map(String::as_str)
+    }
+
+    /// True when `user` is an admin: the owner, or an email in `admins`
+    /// (R210).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k", now).unwrap();
+    /// tokens.sign_in("bob@x.io", "k", now).unwrap();
+    /// assert!(tokens.is_admin("ada", &[]));
+    /// assert!(!tokens.is_admin("bob", &[]));
+    /// assert!(tokens.is_admin("bob", &[" Bob@X.io".into()]));
+    /// ```
+    pub fn is_admin(&self, user: &str, admins: &[String]) -> bool {
+        let Some(email) = self.email_of(user) else {
+            return false;
+        };
+        self.owner.as_deref() == Some(email)
+            || admins.iter().any(|a| a.trim().to_lowercase() == email)
+    }
+
+    /// Adds a member by verified email. Returns the email in lower case.
+    /// The caller checks that an admin asks.
+    pub fn invite(&mut self, email: &str) -> Result<String, NoSignIn> {
+        let email = email.trim().to_lowercase();
+        user_of(&email).map_err(|e| NoSignIn::Email(e.to_string()))?;
+        self.members.insert(email.clone());
+        Ok(email)
+    }
+
+    /// Removes a member by verified email, and ends each sign-in of that
+    /// person (R20). A person of an allowed domain can still sign in.
+    /// The owner cannot go. Returns the email in lower case and the
+    /// number of sign-ins that ended. The caller checks that an admin
+    /// asks.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// tokens.invite("bob@gmail.com").unwrap();
+    /// let bob = tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
+    /// assert_eq!(tokens.remove("bob@gmail.com").unwrap(), ("bob@gmail.com".into(), 1));
+    /// assert_eq!(tokens.check(&bob.access_token, "k2", now), Err(Refused::Unknown));
+    /// assert!(tokens.admit("bob@gmail.com", false, &[], "k2", now).is_err());
+    /// assert!(tokens.remove("ada@gmail.com").is_err());
+    /// ```
+    pub fn remove(&mut self, email: &str) -> Result<(String, usize), String> {
+        let email = email.trim().to_lowercase();
+        if self.owner.as_ref() == Some(&email) {
+            return Err(format!(
+                "{email} is the owner of this riff; the owner stays"
+            ));
+        }
+        self.members.remove(&email);
+        let users: Vec<String> = self
+            .users
+            .iter()
+            .filter(|(_, held)| **held == email)
+            .map(|(user, _)| user.clone())
+            .collect();
+        let sign_ins = users.iter().map(|user| self.revoke_user(user)).sum();
+        Ok((email, sign_ins))
     }
 
     /// True when `token` is a refresh token of a live sign-in on the
@@ -415,6 +599,8 @@ impl Tokens {
         let saved = Saved {
             next_sign_in: self.next_sign_in,
             users: self.users.clone(),
+            owner: self.owner.clone(),
+            members: self.members.clone(),
             sign_ins: self
                 .sign_ins
                 .iter()
@@ -466,6 +652,8 @@ impl Tokens {
         let mut tokens = Tokens {
             next_sign_in: saved.next_sign_in,
             users: saved.users,
+            owner: saved.owner,
+            members: saved.members,
             ..Tokens::default()
         };
         for s in saved.sign_ins {
@@ -582,6 +770,12 @@ struct Saved {
     next_sign_in: u64,
     /// The verified email of each USER (R209).
     users: BTreeMap<String, String>,
+    /// The owner and the members (01M3JN3ANE676DT5WQ2NTG47DK). A saved form from
+    /// before them has none.
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    members: BTreeSet<String>,
     sign_ins: Vec<SavedSignIn>,
     access: Vec<SavedAccess>,
     refresh: Vec<SavedRefresh>,

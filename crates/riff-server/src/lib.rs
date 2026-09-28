@@ -28,9 +28,11 @@
 //!
 //! - `POST /v1/token` swaps a refresh token for a new pair. The token
 //!   store has its own lock, so a refresh never waits for the state.
-//! - `POST /v1/revoke` ends each sign-in of a person. The admins are a
-//!   setting ([`auth::Config::admins`]). Each admin is named by verified
-//!   email (R210).
+//! - `POST /v1/revoke` ends each sign-in of a person. The admins are
+//!   the owner and a setting ([`auth::Config::admins`]). Each admin is
+//!   named by verified email (R210).
+//! - `POST /v1/invite`, `/v1/remove` and `/v1/members` change and show
+//!   who may join the riff. See "Owner and members" in [`token`].
 //! - Each route with a `me` acts only as the [`auth::SignedIn`] caller
 //!   of its token: the same user and the same session ID, or 403
 //!   (R104). A person token acts only as the person. A session token
@@ -124,10 +126,11 @@ use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Keys, Lead, LeadReply,
-    Membership, Post, Posted, Read, ReadReply, Register, ResourceMetadata, Revoke, Revoked, Riff,
-    RiffReply, ServerMetadata, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Invite, Invited, Keys, Lead,
+    LeadReply, Members, MembersReply, Membership, Post, Posted, Read, ReadReply, Register, Remove,
+    Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffReply, ServerMetadata, SetStatus,
+    SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, Threads, ThreadsReply, TokenError,
+    TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -512,6 +515,10 @@ impl Service {
         until: Option<Instant>,
         start: u64,
     ) -> Self {
+        let mut tokens = tokens;
+        if let Some(owner) = &config.owner {
+            tokens.name_owner(owner);
+        }
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         let mut replay = Replay::default();
@@ -667,6 +674,9 @@ impl Service {
         }
         let revoke = Router::new()
             .route("/v1/revoke", post(revoke))
+            .route("/v1/invite", post(invite))
+            .route("/v1/remove", post(remove))
+            .route("/v1/members", post(members))
             .route_layer(guard());
         routes
             .merge(revoke)
@@ -944,14 +954,7 @@ async fn revoke(
     let user = r
         .user
         .map_or_else(|| caller.clone(), |u| u.trim().to_lowercase());
-    // An admin is named by verified email (R210).
-    let email = s.tokens().email_of(&caller).unwrap_or_default().to_owned();
-    let admin = !email.is_empty()
-        && s.config
-            .admins
-            .iter()
-            .any(|a| a.trim().to_lowercase() == email);
-    if user != caller && !admin {
+    if user != caller && !s.tokens().is_admin(&caller, &s.config.admins) {
         return Err((
             StatusCode::FORBIDDEN,
             format!("{caller} is not an admin; only an admin revokes another person"),
@@ -965,6 +968,78 @@ async fn revoke(
     })?;
     tracing::info!(%caller, %user, sign_ins, "revoked");
     Ok(Json(Revoked { user, sign_ins }))
+}
+
+/// Refuses a caller who is not an admin, with 403.
+fn admin_only(s: &Server, caller: &Who, what: &str) -> Result<(), (StatusCode, String)> {
+    let caller = caller.user();
+    if s.tokens().is_admin(caller, &s.config.admins) {
+        return Ok(());
+    }
+    Err((
+        StatusCode::FORBIDDEN,
+        format!("{caller} is not an admin; only an admin can {what}"),
+    ))
+}
+
+/// Saves the token store after a change, or replies 503.
+async fn saved(s: &Server, mark: u64) -> Result<(), (StatusCode, String)> {
+    s.save_tokens_since(mark).await.map_err(|error| {
+        tracing::error!("the token store was not saved: {error}");
+        (StatusCode::SERVICE_UNAVAILABLE, error.to_string())
+    })
+}
+
+/// Adds a member. Only an admin can.
+async fn invite(
+    AxumState(s): AxumState<Shared>,
+    Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
+    Json(r): Json<Invite>,
+) -> Reply<Invited> {
+    admin_only(&s, &caller, "invite a person")?;
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let email = s
+        .tokens_change()
+        .invite(&r.email)
+        .map_err(|e| bad_request(e.to_string()))?;
+    saved(&s, mark).await?;
+    tracing::info!(%caller, %email, "invited");
+    Ok(Json(Invited { email }))
+}
+
+/// Removes a member and ends each sign-in of that person. Only an admin
+/// can.
+async fn remove(
+    AxumState(s): AxumState<Shared>,
+    Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
+    Json(r): Json<Remove>,
+) -> Reply<Removed> {
+    admin_only(&s, &caller, "remove a person")?;
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let (email, sign_ins) = s.tokens_change().remove(&r.email).map_err(bad_request)?;
+    saved(&s, mark).await?;
+    tracing::info!(%caller, %email, sign_ins, "removed");
+    Ok(Json(Removed { email, sign_ins }))
+}
+
+/// Shows who may join the riff.
+async fn members(
+    AxumState(s): AxumState<Shared>,
+    Extension(_): Extension<SignedIn>,
+    Json(Members {}): Json<Members>,
+) -> Json<MembersReply> {
+    let tokens = s.tokens();
+    Json(MembersReply {
+        owner: tokens.owner().map(str::to_owned),
+        admins: s.config.admins.clone(),
+        members: tokens.members().map(str::to_owned).collect(),
+        allowed_domains: s
+            .config
+            .provider
+            .as_ref()
+            .map(|p| p.allowed_domains.clone())
+            .unwrap_or_default(),
+    })
 }
 
 /// Lets a request through only with a live access token in the
@@ -1082,11 +1157,18 @@ async fn exchange(
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
     let pair = s
         .tokens_change()
-        .sign_in(&identity.email, &proof.jkt, Instant::now())
+        .admit(
+            &identity.email,
+            identity.allowed_domain,
+            &s.config.admins,
+            &proof.jkt,
+            Instant::now(),
+        )
         .map_err(|e| {
             tracing::info!("sign-in refused for {}: {e}", identity.email);
-            // Another email holds the USER (R209), or the email gives no
-            // USER (R208). Both refuse the person, who must read why.
+            // The person is not a member, another email holds the USER
+            // (R209), or the email gives no USER (R208). Each refuses the
+            // person, who must read why.
             TokenError {
                 error: "access_denied".into(),
                 error_description: Some(e.to_string()),

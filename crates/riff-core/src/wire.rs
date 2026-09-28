@@ -33,6 +33,19 @@
 //! its reply is [`Revoked`]. A missing or bad token gets status 401. A
 //! person who is not an admin and names another user gets status 403.
 //!
+//! Three calls change or show who may join the riff
+//! (01M3JN3AHMK532XMRDASD4XD5D). Each needs an access token and a DPoP
+//! proof, like `revoke`:
+//!
+//! | Path | Request | Reply | Who |
+//! |---|---|---|---|
+//! | `POST /v1/invite` | [`Invite`] | [`Invited`] | an admin |
+//! | `POST /v1/remove` | [`Remove`] | [`Removed`] | an admin |
+//! | `POST /v1/members` | [`Members`] | [`MembersReply`] | each person |
+//!
+//! A person who is not an admin gets status 403 from `invite` and
+//! `remove`. `remove` of the owner gets status 400.
+//!
 //! Two metadata documents follow the MCP authorization spec (R22):
 //!
 //! | Path | Reply |
@@ -718,6 +731,61 @@ pub struct Revoked {
     pub user: String,
     /// The number of sign-ins that ended.
     pub sign_ins: usize,
+}
+
+/// `POST /v1/invite`: adds a member, by verified email.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invite {
+    pub email: String,
+}
+
+/// The reply to [`Invite`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invited {
+    /// The email of the member, in lower case.
+    pub email: String,
+}
+
+/// `POST /v1/remove`: removes a member and ends each sign-in of that
+/// person.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Remove {
+    pub email: String,
+}
+
+/// The reply to [`Remove`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Removed {
+    /// The email, in lower case.
+    pub email: String,
+    /// The number of sign-ins that ended.
+    pub sign_ins: usize,
+}
+
+/// `POST /v1/members`: shows who may join the riff.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Members {}
+
+/// The reply to [`Members`].
+///
+/// ```
+/// use riff_core::wire::MembersReply;
+///
+/// let reply: MembersReply = serde_json::from_str(
+///     r#"{"owner":"ada@gmail.com","admins":[],"members":["bob@gmail.com"],"allowed_domains":["x.io"]}"#,
+/// ).unwrap();
+/// assert_eq!(reply.owner.as_deref(), Some("ada@gmail.com"));
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MembersReply {
+    /// The email of the owner. `None` before the first sign-in.
+    pub owner: Option<String>,
+    /// The admin emails of the settings (R210).
+    pub admins: Vec<String>,
+    /// The email of each member, sorted.
+    pub members: Vec<String>,
+    /// The allowed domains (R15).
+    pub allowed_domains: Vec<String>,
 }
 
 /// An OAuth error reply, for example `{"error":"invalid_grant"}`.

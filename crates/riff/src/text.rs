@@ -11,8 +11,8 @@ use riff_core::name::{SessionUri, ThreadName};
 
 use crate::api::{Checked, Inbox};
 use riff_core::wire::{
-    ClaimReply, Kind, LeadReply, Posted, Revoked, RiffReply, RiffState, SessionInfo, StatusInfo,
-    ThreadInfo, Wake,
+    ClaimReply, Invited, Kind, LeadReply, MembersReply, Posted, Removed, Revoked, RiffReply,
+    RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -346,6 +346,73 @@ pub fn workers_started(count: u16, window: &str, dir: &std::path::Path) -> Strin
         "Started {count} {workers} in {}, in the tmux window {window}. \
          To see them: tmux select-window -t {window}",
         dir.display()
+    )
+}
+
+/// The answer to `riff invite`.
+///
+/// ```
+/// use riff_core::wire::Invited;
+///
+/// let done = Invited { email: "bob@gmail.com".into() };
+/// assert_eq!(
+///     riff::text::invited(&done),
+///     "Invited bob@gmail.com. They can now run riff login."
+/// );
+/// ```
+pub fn invited(done: &Invited) -> String {
+    format!("Invited {}. They can now run riff login.", done.email)
+}
+
+/// The answer to `riff remove`.
+///
+/// ```
+/// use riff_core::wire::Removed;
+///
+/// let done = Removed { email: "bob@gmail.com".into(), sign_ins: 1 };
+/// assert_eq!(
+///     riff::text::removed(&done),
+///     "Removed bob@gmail.com and ended 1 sign-in."
+/// );
+/// ```
+pub fn removed(done: &Removed) -> String {
+    let plural = if done.sign_ins == 1 { "" } else { "s" };
+    format!(
+        "Removed {} and ended {} sign-in{plural}.",
+        done.email, done.sign_ins
+    )
+}
+
+/// The answer to `riff members`.
+///
+/// ```
+/// use riff_core::wire::MembersReply;
+///
+/// let reply = MembersReply {
+///     owner: Some("ada@gmail.com".into()),
+///     admins: vec![],
+///     members: vec!["bob@gmail.com".into()],
+///     allowed_domains: vec!["x.io".into()],
+/// };
+/// assert_eq!(
+///     riff::text::members(&reply),
+///     "owner: ada@gmail.com\nadmins: none\nmembers: bob@gmail.com\nallowed domains: x.io"
+/// );
+/// ```
+pub fn members(reply: &MembersReply) -> String {
+    let list = |items: &[String]| {
+        if items.is_empty() {
+            "none".to_owned()
+        } else {
+            items.join(", ")
+        }
+    };
+    format!(
+        "owner: {}\nadmins: {}\nmembers: {}\nallowed domains: {}",
+        reply.owner.as_deref().unwrap_or("none yet"),
+        list(&reply.admins),
+        list(&reply.members),
+        list(&reply.allowed_domains)
     )
 }
 

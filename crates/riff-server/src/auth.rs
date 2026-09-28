@@ -89,6 +89,9 @@ pub struct Config {
     pub require_sign_in: bool,
     /// The people who may revoke the tokens of any person (R20).
     pub admins: Vec<String>,
+    /// The email of the owner of a new riff
+    /// (01M3JN3ASSV9SA0QZKXXJ0RTEV). A riff that has an owner keeps it.
+    pub owner: Option<String>,
     /// The OpenID Connect provider that people sign in with. Without
     /// it, nobody can sign in.
     pub provider: Option<Provider>,
@@ -110,6 +113,7 @@ impl Config {
             public_url: public_url.trim_end_matches('/').to_owned(),
             require_sign_in: false,
             admins: Vec::new(),
+            owner: None,
             provider: None,
             lease: crate::lease::Timing::default(),
         }

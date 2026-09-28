@@ -162,7 +162,32 @@ fn install_on_the_network_with_no_sign_in_needs_insecure() {
 }
 
 #[test]
-fn install_with_sign_in_listens_anywhere_with_no_flag() {
+fn install_with_sign_in_and_an_owner_listens_anywhere_with_no_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let systemctl = fake_systemctl(tmp.path(), 0);
+    let bin = systemctl.to_str().unwrap();
+    let out = server(
+        tmp.path(),
+        &[
+            "install",
+            "--systemctl",
+            bin,
+            "--listen",
+            "0.0.0.0:7878",
+            "--require-sign-in",
+            "--owner",
+            "ada@gmail.com",
+        ],
+    )
+    .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
+    assert!(!stdout.contains("Warning:"), "{stdout}");
+    let env = settings(tmp.path());
+    assert!(env.contains("RIFF_OWNER=\"ada@gmail.com\"\n"), "{env}");
+}
+
+#[test]
+fn install_with_sign_in_and_no_owner_listens_only_on_loopback() {
     let tmp = tempfile::tempdir().unwrap();
     let systemctl = fake_systemctl(tmp.path(), 0);
     let bin = systemctl.to_str().unwrap();
@@ -177,9 +202,10 @@ fn install_with_sign_in_listens_anywhere_with_no_flag() {
             "--require-sign-in",
         ],
     )
-    .success();
-    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(!stdout.contains("Warning:"), "{stdout}");
+    .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+    assert!(stderr.contains("RIFF_OWNER"), "{stderr}");
+    assert!(!tmp.path().join("systemd").exists());
 }
 
 #[test]
