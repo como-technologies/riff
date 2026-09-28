@@ -58,6 +58,11 @@ use std::process::Command;
 pub const MAX_DEPTH: usize = 8;
 
 /// A lock on a file. It ends when this value drops or the process ends.
+///
+/// The lock belongs to the open file, not to this value. A child process
+/// that another thread starts gets a copy of the open file, and holds the
+/// lock until it runs its program. So the lock can outlive the drop for a
+/// short time.
 #[derive(Debug)]
 pub struct Held(File);
 
@@ -273,24 +278,61 @@ pub fn parent_in_stat(stat: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    /// [`record`] when the lock is free. Other tests start child
+    /// processes, so a dropped lock can live on for a short time (see
+    /// [`Held`]).
+    fn record_when_free(dir: &Path, agent: u32, session: &str) -> Held {
+        let begin = Instant::now();
+        loop {
+            if let Some(held) = record(dir, agent, session).unwrap() {
+                return held;
+            }
+            assert!(begin.elapsed() < Duration::from_secs(10), "no free lock");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 
     #[test]
     fn a_second_record_for_one_agent_waits_for_the_first() {
         let run = tempfile::tempdir().unwrap();
-        let first = record(run.path(), 42, "a").unwrap().unwrap();
+        let first = record_when_free(run.path(), 42, "a");
         assert!(record(run.path(), 42, "b").unwrap().is_none());
         assert_eq!(recorded(run.path(), 42).as_deref(), Some("a"));
         drop(first);
-        let second = record(run.path(), 42, "b").unwrap().unwrap();
+        let second = record_when_free(run.path(), 42, "b");
         assert_eq!(recorded(run.path(), 42).as_deref(), Some("b"));
         drop(second);
     }
 
     #[test]
+    fn a_record_is_free_again_while_other_threads_start_processes() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let spawner = std::thread::spawn({
+            let stop = stop.clone();
+            move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = Command::new("true").status();
+                }
+            }
+        });
+        let run = tempfile::tempdir().unwrap();
+        for _ in 0..500 {
+            drop(record_when_free(run.path(), 42, "a"));
+            drop(record_when_free(run.path(), 42, "b"));
+        }
+        stop.store(true, Ordering::Relaxed);
+        spawner.join().unwrap();
+    }
+
+    #[test]
     fn a_shorter_session_replaces_a_longer_one() {
         let run = tempfile::tempdir().unwrap();
-        drop(record(run.path(), 42, "a-long-session").unwrap());
-        let _held = record(run.path(), 42, "b").unwrap().unwrap();
+        drop(record_when_free(run.path(), 42, "a-long-session"));
+        let _held = record_when_free(run.path(), 42, "b");
         assert_eq!(recorded(run.path(), 42).as_deref(), Some("b"));
     }
 
