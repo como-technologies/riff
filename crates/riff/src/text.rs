@@ -1309,6 +1309,104 @@ where
     out
 }
 
+/// What `riff server` shows (01M3K0Q854K18DGXJKQ427W586): the build of
+/// `riff`, the riff that it uses and where that choice comes from, and
+/// one line for each riff: answers or not, its build, and sign-in.
+///
+/// ```
+/// use riff::api::Probe;
+/// use riff::lifecycle::{Seen, Source, View};
+/// use riff_core::build::Build;
+///
+/// let local = Seen {
+///     url: "http://127.0.0.1:7878".into(),
+///     answer: Ok(Probe { build: Some(Build::this()), sign_in: Some(false) }),
+///     signed_in: false,
+/// };
+/// let view = View { source: Source::Default, used: local.clone(), local: None };
+/// let text = riff::text::server_view(&view);
+/// assert!(text.starts_with(&format!("riff {}\n", riff_core::build::VERSION)), "{text}");
+/// assert!(text.contains("riff uses http://127.0.0.1:7878: the riff of this machine"), "{text}");
+/// assert!(text.contains("answers, the same build. It has no sign-in"), "{text}");
+///
+/// let shared = Seen {
+///     url: "https://riff.example.com".into(),
+///     answer: Ok(Probe { build: None, sign_in: None }),
+///     signed_in: true,
+/// };
+/// let down = Seen { answer: Err("refused".into()), ..local };
+/// let view = View { source: Source::Env, used: shared, local: Some(down) };
+/// let text = riff::text::server_view(&view);
+/// assert!(text.contains("riff uses https://riff.example.com: RIFF_SERVER names it."), "{text}");
+/// assert!(text.contains("names no build"), "{text}");
+/// assert!(text.ends_with("The riff of this machine, http://127.0.0.1:7878: no answer."), "{text}");
+/// ```
+pub fn server_view(view: &crate::lifecycle::View) -> String {
+    use crate::lifecycle::Source;
+
+    let why = match view.source {
+        Source::Flag => "--server names it.",
+        Source::Env => "RIFF_SERVER names it.",
+        Source::Default => {
+            "the riff of this machine. RIFF_SERVER or --server names another riff."
+        }
+    };
+    let mut out = format!(
+        "riff {}\nriff uses {}: {why}\n{}",
+        riff_core::build::VERSION,
+        view.used.url,
+        seen_line(&view.used.url, &view.used)
+    );
+    if let Some(local) = &view.local {
+        let label = format!("The riff of this machine, {}", local.url);
+        let _ = write!(out, "\n{}", seen_line(&label, local));
+    }
+    out
+}
+
+/// One line of [`server_view`] for the riff `seen`, named `label`.
+fn seen_line(label: &str, seen: &crate::lifecycle::Seen) -> String {
+    let probe = match &seen.answer {
+        Ok(probe) => probe,
+        Err(_) => return format!("{label}: no answer."),
+    };
+    let build = match &probe.build {
+        None => "names no build: an old riff-server".to_owned(),
+        Some(b) if b.matches(&riff_core::build::Build::this()) => "the same build".to_owned(),
+        Some(b) => format!(
+            "another build, {b}. See \"When the builds do not match\" in How It Works"
+        ),
+    };
+    let sign_in = match (probe.sign_in, seen.signed_in) {
+        (None, _) => "",
+        (Some(false), _) => " It has no sign-in: it trusts its network.",
+        (Some(true), true) => " It has sign-in, and you are signed in.",
+        (Some(true), false) => " It has sign-in. You are not signed in: run riff login.",
+    };
+    format!("{label}: answers, {build}.{sign_in}")
+}
+
+/// The last words of `riff update` (01M3K0Q892KWM76R9DJC1P37JA). `old` is
+/// the riff of this machine when it runs another build than the new
+/// riff-server.
+///
+/// ```
+/// let done = riff::text::updated(None);
+/// assert!(done.contains("Start your Claude Code sessions again"), "{done}");
+/// let old = riff::text::updated(Some("http://127.0.0.1:7878"));
+/// assert!(old.contains("Stop riff-server and start it again."), "{old}");
+/// ```
+pub fn updated(old: Option<&str>) -> String {
+    let restart = match old {
+        Some(url) => format!(
+            "The riff at {url} runs the old build. Stop riff-server and start it again. \
+             A new start forgets the messages and the claims, and the riff is paused.\n"
+        ),
+        None => String::new(),
+    };
+    format!("riff is up to date. {restart}Start your Claude Code sessions again.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
