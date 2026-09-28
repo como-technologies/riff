@@ -945,21 +945,21 @@ static SERVER_BUILD: std::sync::Mutex<Option<Build>> = std::sync::Mutex::new(Non
 static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The build of the last `riff-server` that answered this process with
-/// the same wire version. `None` before the first answer.
+/// a version that it can talk to. `None` before the first answer.
 pub fn server_build() -> Option<Build> {
     SERVER_BUILD.lock().ok()?.clone()
 }
 
-/// Refuses a reply of a `riff-server` with another wire version, or
-/// that names no build: an older server (01M3JEE7RDTDD3KQMKH41E8D57). The
-/// error is a [`Mismatch`]. Another build with the same wire version
-/// goes on, with one note on stderr for each process
-/// (01M3MNVT9TYNXZ8V845BHKQADV).
+/// Refuses a reply of a `riff-server` of a version that this `riff`
+/// cannot talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T).
+/// The error is a [`Mismatch`]. Another build that it can talk to goes
+/// on, with one note on stderr for each process
+/// (01M3MX1E8M9TKBN90P4DYKH3H8).
 fn check_build(response: &reqwest::Response) -> Result<()> {
     let this = Build::this();
     let server = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
     match server {
-        Some(server) if server.talks_with(&this) => {
+        Some(server) if build::compatible(&this, &server) => {
             if !server.matches(&this) && !NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                 eprintln!("riff: {}", build::other_build(&this, &server));
             }

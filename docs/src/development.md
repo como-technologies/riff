@@ -804,8 +804,11 @@ flowchart LR
 
 An admin makes the release when each item of the wave is merged. Stop
 the workers first. Set the new version in `Cargo.toml` and in the
-`plugin.json` of the plugin, and update `Cargo.lock`. This example
-makes `v0.2.0`:
+`plugin.json` of the plugin, and update `Cargo.lock`. Each wave
+release bumps the minor, so that a change to a message, the API or the
+header starts a new line (see [Builds](how-it-works.md#builds)). When
+`main` already has the new minor, keep it. This example makes
+`v0.2.0`:
 
 ```sh
 riff workers stop

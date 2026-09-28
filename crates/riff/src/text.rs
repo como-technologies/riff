@@ -296,7 +296,7 @@ pub fn riff_state(state: RiffState) -> String {
 }
 
 /// The builds of `riff` and of `server`, its `riff-server`, after a call
-/// that the server answered: so the wire matches
+/// that the server answered: so the versions can talk
 /// (01M3JEE7WT04BKX377VW5GDSPY). `None` is the build of `riff`.
 ///
 /// ```
@@ -311,13 +311,13 @@ pub fn riff_state(state: RiffState) -> String {
 /// assert!(line.starts_with(&format!("riff has the build {version} ")), "{line}");
 /// let server = format!("; riff-server has the build {version} 0000deadbeef ");
 /// assert!(line.contains(&server), "{line}");
-/// assert!(line.ends_with(". The wire matches."), "{line}");
+/// assert!(line.ends_with(". The versions can talk."), "{line}");
 /// ```
 pub fn build_line(server: Option<&Build>) -> String {
     let this = Build::this();
     match server {
         Some(server) if !server.matches(&this) => format!(
-            "riff has the build {this}; riff-server has the build {server}. The wire matches."
+            "riff has the build {this}; riff-server has the build {server}. The versions can talk."
         ),
         _ => format!("riff and riff-server have the build {this}."),
     }
@@ -1651,12 +1651,13 @@ fn seen_line(label: &str, seen: &crate::lifecycle::Seen) -> String {
     let build = match &probe.build {
         None => "names no build: an old riff-server".to_owned(),
         Some(b) if b.matches(&Build::this()) => "the same build".to_owned(),
-        Some(b) if b.talks_with(&Build::this()) => {
-            format!("another build, {b}; the wire matches. Run riff update when you can")
+        Some(b) if riff_core::build::compatible(&Build::this(), b) => {
+            format!("another build, {b}; the versions can talk. Run riff update when you can")
         }
         Some(b) => {
             format!(
-                "another wire version, {b}. See \"When the wire does not match\" in How It Works"
+                "a version that this riff cannot talk to, {b}. See \"When the versions do not \
+                 match\" in How It Works"
             )
         }
     };

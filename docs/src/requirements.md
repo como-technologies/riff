@@ -1289,35 +1289,48 @@
 
 - **01M3JEE7KZR5VVJGZQD82AA6NH** Replaced by
   01M3MNVT7G701SDP1Z1THMRDQ2.
-- **01M3MNVT7G701SDP1Z1THMRDQ2** A build names the crate version, the
-  last commit that changed `crates`, `Cargo.toml` or `Cargo.lock`, the
-  UTC time of that commit, and the wire version. The wire version is
-  one number, `WIRE` in `riff-core`. A change to a message, the API or
-  the header bumps it. A test fails when the JSON schema of a wire
-  type changes and `WIRE` stays the same. A message is valid only
-  between a `riff` and a `riff-server` of the same wire version.
+- **01M3MNVT7G701SDP1Z1THMRDQ2** Replaced by
+  01M3MX1DYY6AVDW946NR0B9T2C and 01M3MX1E3R5WESVHA8RZXFQR1J.
+- **01M3MX1DYY6AVDW946NR0B9T2C** A build names the crate version, the
+  last commit that changed `crates`, `Cargo.toml` or `Cargo.lock`, and
+  the UTC time of that commit. The crate version is a semantic version.
+  Its line is the major, and the minor while the major is 0. A `riff`
+  and a `riff-server` of the same line talk.
+- **01M3MX1E1EY1M7JGNCN6FCEVQK** `riff-server` also talks with a `riff`
+  of the line before its own: `0.3.x` on a `0.4` server, `1.x` on a
+  `2` server. It does not talk with a `riff` of a later line.
+- **01M3MX1E3R5WESVHA8RZXFQR1J** A change to a message, the API or the
+  header starts a new line of the version. Each wave release bumps the
+  minor.
 - **01M3JEE7P46GWXR1BD4Q1TTSGN** Each call of `riff` names its build in
   the header `riff-build`. Each reply of `riff-server` names the build
   of the server in the same header.
-- **01M3JEE7RDTDD3KQMKH41E8D57** `riff-server` refuses each call of a
-  `riff` with another wire version, or that names no build, with
-  status 409. `riff` refuses each reply of a `riff-server` with
-  another wire version, or that names no build. The error names both
-  builds, the older side, and the step to update it. The OAuth
-  metadata stays open to each client.
-- **01M3MNVT9TYNXZ8V845BHKQADV** With the same wire version and
-  another build, `riff` goes on. Each `riff` process prints one note
-  to stderr: `riff-server runs build X; this riff runs build Y. Run
-  riff update when you can.` `riff server` shows both builds and that
-  the wire matches.
-- **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the wire does not match, the
+- **01M3JEE7RDTDD3KQMKH41E8D57** Replaced by
+  01M3MX1E65XGWDZ062PQ9YXQ5T.
+- **01M3MX1E65XGWDZ062PQ9YXQ5T** `riff-server` refuses each call of a
+  `riff` that it cannot talk to, or that names no build, with status
+  409. `riff` refuses each reply of a `riff-server` that it cannot
+  talk to, or that names no build. The error names both builds, the
+  lines that the server talks with, the older side, the step to update
+  it, and the link to the book. The OAuth metadata stays open to each
+  client.
+- **01M3MNVT9TYNXZ8V845BHKQADV** Replaced by
+  01M3MX1E8M9TKBN90P4DYKH3H8.
+- **01M3MX1E8M9TKBN90P4DYKH3H8** With another build that it can talk
+  to, `riff` goes on. Each `riff` process prints one note to stderr:
+  `riff-server runs build X; this riff runs build Y. Run riff update
+  when you can.` When `riff` is on the line before the server, the
+  note names the next line of the server that refuses it, and ends
+  `Run riff update soon.` `riff server` shows both builds and that the
+  versions can talk.
+- **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the versions cannot talk, the
   start hook gives the session the error, and tells it to tell its
   user at once and not to use the riff.
-- **01M3MNVTC248YYJJQKFD9H1WY9** On another wire version, `riff watch`
-  and `riff tail` do not stop. They print the error once, try again
-  every 5 seconds, and go on when the wire matches. When a new `riff`
-  binary is on disk, they run it in their place with the same
-  arguments.
+- **01M3MNVTC248YYJJQKFD9H1WY9** On a version that they cannot talk
+  to, `riff watch` and `riff tail` do not stop. They print the error
+  once, try again every 5 seconds, and go on when the versions can
+  talk. When a new `riff` binary is on disk, they run it in their
+  place with the same arguments.
 - **01M3MNVTE6GAK4WRSCFGYVS0BE** When a new `riff` binary is on disk,
   `riff mcp` replies to its next tool call that riff was updated, and
   exits with no end call, so that the claims of the session stay.

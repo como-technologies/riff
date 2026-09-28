@@ -112,18 +112,31 @@ riff --server 127.0.0.1:7878 who
 ## Builds
 
 A build of `riff` or `riff-server` is the crate version, the last
-commit that changed the code, the time of that commit, and the wire
-version. A commit that changes only the book keeps the build.
+commit that changed the code, and the time of that commit. A commit
+that changes only the book keeps the build.
 
-The wire version is one number. It changes only when a message, the
-API or the header changes. Most merges keep it.
+The version is a semantic version, `MAJOR.MINOR.PATCH`. It tells which
+versions can talk. The line of a version is its major, and its minor
+while the major is 0: `0.4.1` is on the line `0.4`, and `1.2.0` is on
+the line `1`. A change to a message, the API or the header starts a
+new line. Most merges keep the line.
+
+`riff-server` talks with a `riff` of its own line, and of the line
+before. So you have one release to update `riff` in:
+
+| riff | riff-server | Result |
+|---|---|---|
+| 0.4.0 | 0.4.3 | They talk. riff tells you once to update. |
+| 0.3.2 | 0.4.0 | They talk. riff tells you to update soon. |
+| 0.4.0 | 0.3.2 | riff-server refuses: update riff-server. |
+| 0.2.0 | 0.4.0 | riff-server refuses: update riff. |
 
 Each call of `riff` names its build, and each reply of `riff-server`
-names its own. Each side compares the wire versions:
+names its own. Each side compares the versions:
 
 ```mermaid
 flowchart LR
-    R["riff<br/>0.1.0 929605821e54 wire 1"] -- "call, with the build of riff" --> S{"riff-server:<br/>the same wire version?"}
+    R["riff<br/>0.3.2 929605821e54"] -- "call, with the build of riff" --> S{"riff-server 0.4.0:<br/>riff on the line 0.4 or 0.3?"}
     S -- yes --> OK["the reply. Another build:<br/>riff tells you once to update"]
     S -- no --> E["409: both builds, and the side to update"]
 ```
@@ -136,16 +149,23 @@ riff-server --version
 ```
 
 `riff whoami` and `riff who` also show the build, after the server
-answers: `riff and riff-server have the build 0.1.0 929605821e54
-2026-09-27T22:03:01Z wire 1.` When the builds differ, the line shows
-both builds and says that the wire matches.
+answers: `riff and riff-server have the build 0.4.0 929605821e54
+2026-09-27T22:03:01Z.` When the builds differ, the line shows both
+builds and says that the versions can talk.
 
 ### When the builds differ
 
 `riff` works. Each `riff` process tells you once:
 
 ```text
-riff: riff-server runs build 0.1.0 7213825ab1c2 2026-09-27T20:10:44Z wire 1; this riff runs build 0.1.0 929605821e54 2026-09-27T22:03:01Z wire 1. Run riff update when you can.
+riff: riff-server runs build 0.4.3 7213825ab1c2 2026-09-27T20:10:44Z; this riff runs build 0.4.0 929605821e54 2026-09-27T22:03:01Z. Run riff update when you can.
+```
+
+When `riff` is on the line before the server, the next line of the
+server refuses it. The note says so:
+
+```text
+riff: riff-server runs build 0.4.0 7213825ab1c2 2026-09-27T20:10:44Z; this riff runs build 0.3.2 929605821e54 2026-09-20T22:03:01Z. riff-server 0.5 will refuse riff 0.3. Run riff update soon.
 ```
 
 Update riff on this machine when you can:
@@ -168,17 +188,18 @@ start it again. In the session, reconnect the riff server:
 Pick the riff server, then **Reconnect**. `/mcp reconnect all`
 reconnects each server that failed.
 
-### When the wire does not match
+### When the versions do not match
 
 Each `riff` command fails with an error like this one:
 
 ```text
-riff: this riff (0.1.0 929605821e54 2026-09-27T22:03:01Z wire 2) and its riff-server (0.1.0 7213825ab1c2 2026-09-27T20:10:44Z wire 1) do not match. Messages are valid only between the same wire version. Update riff-server, on the machine of the riff.
+riff: this riff (0.2.0 929605821e54 2026-09-27T22:03:01Z) and its riff-server (0.4.0 7213825ab1c2 2026-09-28T20:10:44Z) do not match. riff-server 0.4 talks only with riff 0.4 and 0.3. Update riff on this machine, then start your sessions again. See https://como-technologies.github.io/riff/how-it-works.html#when-the-versions-do-not-match
 ```
 
 A new session gets the same error at its start. It tells you, and it
 does not use the riff. `riff watch` and `riff tail` print the error
-once, try again every 5 seconds, and go on when the wire matches.
+once, try again every 5 seconds, and go on when the versions can
+talk.
 [`riff server`](#show-the-riffs) shows both builds.
 
 Update the older side:
