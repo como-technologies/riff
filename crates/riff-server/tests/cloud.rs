@@ -327,14 +327,7 @@ fn the_deploy_account_pushes_images_and_deploys_the_service() {
 
 #[test]
 fn ci_deploys_after_the_gate_with_no_key() {
-    let text = fs::read_to_string(deploy().join("../.github/workflows/ci.yml")).unwrap();
-    let job = text
-        .split_once("\n  deploy:\n")
-        .unwrap()
-        .1
-        .split_once("\n  audit:\n")
-        .unwrap()
-        .0;
+    let (_, job) = ci_parts();
     for part in [
         "needs: gate",
         "github.ref == 'refs/heads/main'",
@@ -350,6 +343,54 @@ fn ci_deploys_after_the_gate_with_no_key() {
         !job.contains("credentials_json"),
         "the job must not use a key"
     );
+}
+
+/// The deploy job of the CI workflow, and the triggers of the workflow.
+fn ci_parts() -> (String, String) {
+    let text = fs::read_to_string(deploy().join("../.github/workflows/ci.yml")).unwrap();
+    let (on, rest) = text.split_once("\njobs:\n").unwrap();
+    let job = rest
+        .split_once("\n  deploy:\n")
+        .unwrap()
+        .1
+        .split_once("\n  audit:\n")
+        .unwrap()
+        .0;
+    (on.to_owned(), job.to_owned())
+}
+
+/// 01M3MMZQ3KTF5Z3GXNR7DRQ65Z: a push to main never deploys. Only a
+/// run by hand with the input `deploy` does (R160).
+#[test]
+fn only_a_run_by_hand_deploys() {
+    let (on, job) = ci_parts();
+    assert!(on.contains("\n  workflow_dispatch:\n"), "{on}");
+    assert!(on.contains("\n      deploy:\n"), "{on}");
+    assert!(on.contains("type: boolean"), "{on}");
+    let when = job.lines().find(|l| l.trim().starts_with("if:")).unwrap();
+    assert!(
+        when.contains("github.event_name == 'workflow_dispatch'"),
+        "{when}"
+    );
+    assert!(when.contains("inputs.deploy"), "{when}");
+    assert!(!when.contains("'push'"), "{when}");
+    assert!(!job.contains("github.event.before"), "{job}");
+}
+
+/// The book how-to runs the workflow with the real input name.
+#[test]
+fn the_book_deploys_at_the_end_of_a_wave() {
+    let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
+    let part = &page[page
+        .find("### Deploy the shared server at the end of a wave\n")
+        .unwrap()..];
+    let part = &part[..part[4..].find("\n### ").unwrap()];
+    assert!(part.contains("```sh\n"), "{part}");
+    assert!(
+        part.contains("gh workflow run CI --ref main -f deploy=true"),
+        "{part}"
+    );
+    assert!(part.contains("riff workers stop"), "{part}");
 }
 
 #[test]

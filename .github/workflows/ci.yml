@@ -9,6 +9,14 @@ on:
     # Weekly advisory sweep (Mondays 06:00 UTC). New RUSTSEC advisories
     # arrive without a code change, so the audit job runs on a schedule.
     - cron: "0 6 * * 1"
+  # The lead deploys the shared server at the end of a wave
+  # (01M3MMZQ3KTF5Z3GXNR7DRQ65Z): gh workflow run CI --ref main -f deploy=true
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the shared server after the gate
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,14 +47,15 @@ jobs:
         run: just ci
 
   deploy:
-    # When the repository variable CLOUD_DEPLOY is true, a push to main
-    # that changes the server builds the image and deploys it to Cloud
-    # Run (R160). The job signs in to Google Cloud with the
-    # OIDC token of GitHub; no key exists (R161). One deploy runs at a
-    # time; a newer push waits for it.
+    # A run of this workflow by hand, with the input deploy, builds the
+    # image and deploys it to Cloud Run, when the repository variable
+    # CLOUD_DEPLOY is true (R160). A push to main never deploys
+    # (01M3MMZQ3KTF5Z3GXNR7DRQ65Z). The job signs in to Google Cloud
+    # with the OIDC token of GitHub; no key exists (R161). One deploy
+    # runs at a time; a newer run waits for it.
     name: Deploy
     needs: gate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CLOUD_DEPLOY == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main' && vars.CLOUD_DEPLOY == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,23 +68,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Find server changes
-        id: changed
-        env:
-          BEFORE: ${{ github.event.before }}
-        run: |
-          # Each crate change makes a new build, and riff refuses a
-          # riff-server of another build (01M3JEE7YXQPWS65FBVTASAEBX).
-          paths="crates Cargo.toml Cargo.lock Dockerfile rust-toolchain.toml deploy"
-          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null && git diff --quiet "$BEFORE" HEAD -- $paths; then
-            echo "server=false" >> "$GITHUB_OUTPUT"
-            echo "No code change: no deploy."
-          else
-            echo "server=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Read the cloud settings
-        if: steps.changed.outputs.server == 'true'
         run: |
           grep -E '^[A-Z_]+=' deploy/cloud.env >> "$GITHUB_ENV"
           . deploy/cloud.env
@@ -83,23 +76,18 @@ jobs:
           deploy/build-id.sh >> "$GITHUB_ENV"
 
       - uses: google-github-actions/auth@v3
-        if: steps.changed.outputs.server == 'true'
         with:
           workload_identity_provider: projects/${{ env.CLOUD_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/github
           service_account: ${{ env.CLOUD_DEPLOY_ACCOUNT }}@${{ env.CLOUD_PROJECT }}.iam.gserviceaccount.com
 
       - uses: google-github-actions/setup-gcloud@v3
-        if: steps.changed.outputs.server == 'true'
 
       - name: Let Docker push to the image repository
-        if: steps.changed.outputs.server == 'true'
         run: gcloud auth configure-docker "$CLOUD_REGION-docker.pkg.dev" --quiet
 
       - uses: docker/setup-buildx-action@v4
-        if: steps.changed.outputs.server == 'true'
 
       - uses: docker/build-push-action@v7
-        if: steps.changed.outputs.server == 'true'
         with:
           context: .
           push: true
@@ -111,7 +99,6 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Deploy
-        if: steps.changed.outputs.server == 'true'
         env:
           RIFF_OWNER: ${{ vars.RIFF_OWNER }}
         run: deploy/deploy.sh --image "$IMAGE"

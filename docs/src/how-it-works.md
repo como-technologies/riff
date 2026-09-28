@@ -152,9 +152,9 @@ Update the older side, then start your Claude Code sessions again:
 - **riff** on this machine, and **riff-server** of your own riff: do
   [Update riff](start-a-riff.md#update-riff). When you joined a riff,
   see [Update riff](join-a-riff.md#update-riff) of Join a Riff.
-- **The shared server:** CI deploys it after each push to `main` that
-  changes the code. To deploy it by hand, see
-  [Deploy](development.md#deploy).
+- **The shared server:** the lead deploys it at the end of each wave.
+  A push to `main` does not deploy it. See
+  [Deploy the shared server at the end of a wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
 
 ## A clone that is behind
 
@@ -1410,7 +1410,7 @@ riff workers stop %3
 It closes the pane of each worker. The session leaves `riff who`, and
 its claims are free at once. Another session can take its item from
 its pushed branch. At the end of a wave, the lead stops the workers
-before the update, and starts them again after it.
+before the deploy and the update, and starts them again after them.
 
 ### A worker goes to its next item
 
