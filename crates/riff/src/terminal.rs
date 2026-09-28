@@ -168,20 +168,23 @@ impl Program {
         }
     }
 
-    /// A worker: `claude "Join the riff."` in the main worktree, with
+    /// A worker: `claude "Join the riff."` through `riff workers run`
+    /// (see [`crate::worker`]) in the main worktree, with
     /// `RIFF_WORKER=1`, its riff session ID in `RIFF_SESSION`, and no
     /// Remote Control.
     ///
     /// ```
     /// use riff::terminal::Program;
-    /// let worker = Program::worker("claude".as_ref(), "/src/riff".as_ref(), "http://h:7878", "w1");
-    /// assert_eq!(worker.command, "'claude' 'Join the riff.'");
+    /// let worker = Program::worker(
+    ///     "/bin/riff".as_ref(), "claude".as_ref(), "/src/riff".as_ref(), "http://h:7878", "w1",
+    /// );
+    /// assert_eq!(worker.command, "'/bin/riff' workers run 'claude' 'Join the riff.'");
     /// assert!(worker.env.contains(&("RIFF_WORKER".into(), "1".into())));
     /// assert!(worker.env.contains(&("RIFF_SESSION".into(), "w1".into())));
     /// assert_eq!(worker.session.as_deref(), Some("w1"));
     /// assert!(!worker.command.contains("remote-control"));
     /// ```
-    pub fn worker(claude: &Path, main: &Path, server: &str, session: &str) -> Self {
+    pub fn worker(riff: &Path, claude: &Path, main: &Path, server: &str, session: &str) -> Self {
         Program {
             dir: main.to_owned(),
             env: vec![
@@ -189,7 +192,12 @@ impl Program {
                 ("RIFF_WORKER".into(), "1".into()),
                 ("RIFF_SESSION".into(), session.into()),
             ],
-            command: format!("{} {}", quote(&claude.to_string_lossy()), quote(JOIN)),
+            command: format!(
+                "{} workers run {} {}",
+                quote(&riff.to_string_lossy()),
+                quote(&claude.to_string_lossy()),
+                quote(JOIN)
+            ),
             session: Some(session.into()),
         }
     }

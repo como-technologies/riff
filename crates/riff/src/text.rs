@@ -2,6 +2,7 @@
 //! form of a message for people, for `riff tail`.
 
 use std::fmt::Write;
+use std::process::ExitStatus;
 
 use anstyle::{AnsiColor, Color, Style};
 use chrono::{DateTime, NaiveDate, TimeZone};
@@ -615,6 +616,49 @@ pub fn next_holds_claims(claims: &[String]) -> String {
         "riff: you still hold {}. Finish the item first: merged, released, and its worktree \
          removed. riff workers next did nothing.",
         claims.join(", ")
+    )
+}
+
+/// What the wrapper of a worker tells the lead when `claude` exits on
+/// its own (01M3JQC8ANFYYEXSHBS2DCZYBX).
+///
+/// ```
+/// use std::os::unix::process::ExitStatusExt;
+/// use std::process::ExitStatus;
+///
+/// let status = ExitStatus::from_raw(1 << 8);
+/// assert_eq!(
+///     riff::text::worker_stopped(Some("%3"), Some("a6cf"), &status),
+///     "worker stopped: pane %3, session a6cf, exit code 1. riff does not start it again. \
+///      Look at the pane, then start a worker again with riff workers start 1."
+/// );
+/// assert!(riff::text::worker_stopped(None, None, &status).starts_with(
+///     "worker stopped: pane unknown, session unknown, exit code 1."
+/// ));
+/// ```
+pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitStatus) -> String {
+    format!(
+        "worker stopped: pane {}, session {}, {}. riff does not start it again. Look at the \
+         pane, then start a worker again with riff workers start 1.",
+        pane.unwrap_or("unknown"),
+        session.unwrap_or("unknown"),
+        crate::worker::exit_words(status)
+    )
+}
+
+/// What a worker with no work tells the lead before it ends
+/// (01M3JQC8CN72WAVPE3189216C8).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::worker_done(Some("%3")),
+///     "worker done: I hold no claim and find no free item. I end now, and my pane %3 closes."
+/// );
+/// ```
+pub fn worker_done(pane: Option<&str>) -> String {
+    format!(
+        "worker done: I hold no claim and find no free item. I end now, and my pane {} closes.",
+        pane.unwrap_or("unknown")
     )
 }
 

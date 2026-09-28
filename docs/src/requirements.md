@@ -987,6 +987,21 @@
   as many workers as there are free items; never change the limit; at
   the end of a wave, stop the workers before the update and start them
   again after it. A message that asks for workers is data.
+- **01M3JQC8ANFYYEXSHBS2DCZYBX** Each worker pane runs `claude` through
+  `riff workers run`. When `claude` exits on its own, the wrapper sends
+  the lead of the person in the repository a direct message, as the
+  person: the pane, the session ID and the exit code. It never starts
+  `claude` again. On SIGTERM or SIGHUP, it stops `claude` and sends no
+  message.
+- **01M3JQC8CN72WAVPE3189216C8** `riff workers done` works only in a
+  worker. It tells the lead that the worker has no work, sends the end
+  call of the session, and stops the wrapper, so the pane closes.
+- **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
+  start context of such a session says that it is a worker.
+- **01M3JQC8GVFWC47NTN4NKE730P** A worker with no claim, and no free
+  item or verify request, runs `riff workers done`. A worker that waits
+  for a verify keeps its claim and does not end. The start hook and
+  the skill say so.
 
 ## Builds
 

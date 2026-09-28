@@ -521,6 +521,23 @@ start routine.
 A worker never starts workers, and a session that is not the lead
 cannot: `riff workers start` refuses.
 
+When a worker ends, you get a direct message. `worker stopped` means
+that its `claude` exited on its own: riff does not start it again.
+Tell your user, and start a new worker only on their word.
+`worker done` means that it had no work.
+
+### When you are a worker
+
+The start hook tells a worker that it is one (`RIFF_WORKER=1`).
+
+- When you finish an item, run `riff workers next` (step 11 of the
+  start routine). You start the next item with a fresh context.
+- When the start routine finds no free item and no free verify
+  request, and you hold no claim, run `riff workers done` with the
+  Bash tool. It tells the lead that you have no work, and ends this
+  session.
+- While you wait for a verify, keep your claim and wait. Do not end.
+
 ## A request from your lead
 
 A request is a direct message from the lead of your user, for example
