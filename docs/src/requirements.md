@@ -1079,11 +1079,35 @@
   each OpenID Connect provider in its settings.
 - **R17** An access token expires in 10 minutes or less. A refresh token
   changes at each use. A reused refresh token revokes all tokens from
-  that sign-in.
+  that sign-in, except after a lost reply
+  (01M3MX4TG7PNNETZ986DQS10JJ).
 - **R110** Only the device key of a sign-in can revoke it by reuse. A
   reused refresh token with another key is refused and changes nothing.
 - **R116** `riff-server` keeps a used refresh token for 24 hours, to
   find reuse. After that, the token is not known.
+- **01M3MX4TG7PNNETZ986DQS10JJ** A used refresh token counts as
+  reused only after the refresh token of the pair that its last use
+  gave was used. Before that, the reply of the last use was lost: when
+  the token comes back with the device key of its sign-in,
+  `riff-server` ends that unused pair and gives a new pair. So a stolen
+  refresh token that comes back after the next refresh still revokes
+  the sign-in.
+- **01M3MX4TSEH18FSNQ28GEH2GFJ** `riff` says that the sign-in ended
+  only when `riff-server` refuses the grant with `invalid_grant`. Each
+  other error of a refresh keeps its own text.
+- **01M3MX4V43SF2XFCZWANHD19WV** `riff-server` checks no version on
+  `/v1/token` and `/v1/sign-in`, and `riff` checks none on their
+  replies. So `riff login` and a refresh work when the versions do not
+  match.
+- **01M3MX4VCEBTY0DN4JMF624WYE** When `riff-server` replies 401 to a
+  call with a token, `riff` drops that token, gets a new one, and sends
+  the call once more. When the server refuses the person token in a
+  swap for a session token, `riff` refreshes the person token once and
+  asks again.
+- **01M3MX4VM8CK1GAGJAM2P29NWH** When the sign-in of the machine ended,
+  `riff watch` and `riff tail` say so once and try again (R148). Each
+  tool of `riff mcp` says so in its result. After `riff login` on the
+  machine, each of them goes on with no restart.
 - **R80** A sign-in ends when none of its refresh tokens is used for
   30 days. The person then signs in again.
 - **R81** `riff-server` keeps only a hash of each token, never the

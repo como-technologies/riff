@@ -134,6 +134,7 @@ async fn a_riff_that_cannot_be_reached_keeps_the_first_error() {
     let person = Api::new(&url).signed_in(None).unwrap();
     let error = person.who(&me("mike"), false).await.unwrap_err();
     let error = format!("{error:#}");
-    assert!(error.contains("the sign-in ended"), "{error}");
+    // Only a refused grant ends the sign-in (01M3MX4TSEH18FSNQ28GEH2GFJ).
+    assert!(!error.contains("the sign-in ended"), "{error}");
     assert!(error.contains("cannot reach riff-server"), "{error}");
 }

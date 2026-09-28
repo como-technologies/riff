@@ -101,21 +101,59 @@ async fn an_old_access_token_is_refreshed() {
     assert_ne!(kept.refresh_token, first.refresh_token);
 }
 
+/// A kept sign-in with an expired access token, so that the next
+/// [`login::access_token`] refreshes it.
+fn expired(sign_in: SignIn) -> SignIn {
+    SignIn {
+        expires_at: 0,
+        ..sign_in
+    }
+}
+
+/// Refreshes the kept sign-in twice, and returns the first sign-in: its
+/// refresh token was used before the last refresh.
+async fn refresh_twice(api: &Api) -> SignIn {
+    let first = login::login(api, browser).await.unwrap();
+    login::store(api.base(), &expired(first.clone())).unwrap();
+    login::access_token(api).await.unwrap();
+    let second = login::stored(api.base()).unwrap().unwrap();
+    login::store(api.base(), &expired(second)).unwrap();
+    login::access_token(api).await.unwrap();
+    first
+}
+
 #[tokio::test]
 async fn a_used_refresh_token_ends_the_sign_in() {
     let (_, api) = start().await;
-    let first = login::login(&api, browser).await.unwrap();
-    let old = SignIn {
-        expires_at: 0,
-        ..first
-    };
-    login::store(api.base(), &old).unwrap();
-    login::access_token(&api).await.unwrap();
+    let first = refresh_twice(&api).await;
 
-    // Someone replays the old refresh token.
-    login::store(api.base(), &old).unwrap();
+    // Someone replays the old refresh token after the next refresh.
+    login::store(api.base(), &expired(first)).unwrap();
     let error = login::access_token(&api).await.unwrap_err();
-    assert!(format!("{error:#}").contains("run riff login"), "{error:#}");
+    assert_eq!(
+        format!("{error:#}"),
+        format!(
+            "{}: riff-server refused the token request: invalid_grant",
+            login::ENDED
+        )
+    );
+}
+
+/// The same refresh token again before the next refresh is a lost reply:
+/// the sign-in stays (01M3MX4TG7PNNETZ986DQS10JJ).
+#[tokio::test]
+async fn a_refresh_token_again_before_the_next_refresh_keeps_the_sign_in() {
+    let (service, api) = start().await;
+    let first = login::login(&api, browser).await.unwrap();
+    login::store(api.base(), &expired(first.clone())).unwrap();
+    login::access_token(&api).await.unwrap();
+    // The reply of that refresh got lost: the keyring holds the old pair.
+    login::store(api.base(), &expired(first)).unwrap();
+    let fresh = login::access_token(&api).await.unwrap();
+    assert_eq!(
+        service.tokens().check(&fresh, &jkt(&api), Instant::now()),
+        Ok("ada".to_owned())
+    );
 }
 
 /// At a riff with sign-in, an ended sign-in still says `riff login`
@@ -123,14 +161,8 @@ async fn a_used_refresh_token_ends_the_sign_in() {
 #[tokio::test]
 async fn a_call_with_an_ended_sign_in_says_to_run_riff_login() {
     let (_, api) = start().await;
-    let first = login::login(&api, browser).await.unwrap();
-    let old = SignIn {
-        expires_at: 0,
-        ..first
-    };
-    login::store(api.base(), &old).unwrap();
-    login::access_token(&api).await.unwrap();
-    login::store(api.base(), &old).unwrap();
+    let first = refresh_twice(&api).await;
+    login::store(api.base(), &expired(first)).unwrap();
 
     assert!(api.has_sign_in().await.unwrap());
     let me = "riff://ada@pangolin/como-technologies/riff"

@@ -42,13 +42,23 @@ async fn refresh_rotates_and_reuse_revokes() {
         Ok("mike".to_owned())
     );
 
-    // The same refresh token again: refused, and the sign-in ends.
+    // After the next refresh, the first refresh token again: refused,
+    // and the sign-in ends.
+    let next = format!(
+        "grant_type=refresh_token&refresh_token={}",
+        second.refresh_token
+    );
+    let third: TokenReply = common::refresh(&url, &key, &next)
+        .await
+        .json()
+        .await
+        .unwrap();
     let refused = error(common::refresh(&url, &key, &form).await).await;
     assert_eq!(refused, (400, "invalid_grant".into()));
     assert!(
         service
             .tokens()
-            .check(&second.access_token, &jkt, now)
+            .check(&third.access_token, &jkt, Instant::now())
             .is_err()
     );
 }
@@ -66,7 +76,6 @@ async fn unknown_tokens_and_grants_are_refused() {
     );
 }
 
-/// A store whose saves fail.
 /// A store whose saves fail, except the saves of the lease.
 #[derive(Default)]
 struct Broken(Memory);
@@ -161,4 +170,102 @@ async fn a_token_change_that_is_not_saved_gets_503() {
     // A refusal that changes nothing needs no save.
     let unknown = common::refresh(&url, &key, "grant_type=refresh_token&refresh_token=x").await;
     assert_eq!(error(unknown).await, (400, "invalid_grant".into()));
+}
+
+/// A store whose saves of the tokens fail while `failing` is true.
+#[derive(Clone, Default)]
+struct Failing {
+    store: Memory,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl riff_server::store::Store for Failing {
+    fn load<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+        self.store.load(name)
+    }
+
+    fn list<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<Vec<String>, StoreError>> {
+        self.store.list(prefix)
+    }
+
+    fn save<'a>(
+        &'a self,
+        name: &'a str,
+        bytes: Vec<u8>,
+        known: Option<Version>,
+    ) -> futures::future::BoxFuture<'a, Result<Version, StoreError>> {
+        if name == TOKENS && self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Box::pin(async { Err(StoreError::Failed("the disk is busy".into())) });
+        }
+        self.store.save(name, bytes, known)
+    }
+}
+
+/// A 503 after a failed save loses the reply of a refresh. The same
+/// refresh token again gets a new pair, and the sign-in stays
+/// (01M3MX4TG7PNNETZ986DQS10JJ).
+#[tokio::test]
+async fn a_refresh_again_after_a_503_keeps_the_sign_in() {
+    let store = Failing::default();
+    let (service, url) = common::start_on(Arc::new(store.clone())).await;
+    let key = Key::generate();
+    let jkt = key.thumbprint();
+    let first = service
+        .tokens()
+        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
+        .unwrap();
+    let form = format!(
+        "grant_type=refresh_token&refresh_token={}",
+        first.refresh_token
+    );
+    let busy = |on: bool| store.failing.store(on, std::sync::atomic::Ordering::SeqCst);
+    busy(true);
+    let lost = common::refresh(&url, &key, &form).await;
+    assert_eq!(error(lost).await, (503, "temporarily_unavailable".into()));
+    busy(false);
+    let reply = common::refresh(&url, &key, &form).await;
+    assert_eq!(reply.status(), 200);
+    let second: TokenReply = reply.json().await.unwrap();
+    assert_eq!(
+        service
+            .tokens()
+            .check(&second.access_token, &jkt, Instant::now()),
+        Ok("mike".to_owned())
+    );
+}
+
+/// `riff login` and a refresh work with each version of `riff`: the
+/// server checks no version on `/v1/token` and `/v1/sign-in`
+/// (01M3MX4V43SF2XFCZWANHD19WV). A call with no version header shows it.
+#[tokio::test]
+async fn the_token_and_the_sign_in_take_each_version() {
+    let (_service, url) = common::start(false, &[]).await;
+    let client = reqwest::Client::new();
+    let token = client
+        .post(format!("{url}/v1/token"))
+        .form(&[("grant_type", "refresh_token"), ("refresh_token", "nope")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(error(token).await, (400, "invalid_dpop_proof".into()));
+    let sign_in = client
+        .get(format!("{url}/v1/sign-in"))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(sign_in.status(), 409);
+    // Each other call still checks the version.
+    let join = client
+        .post(format!("{url}/v1/join"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(join.status(), 409);
 }

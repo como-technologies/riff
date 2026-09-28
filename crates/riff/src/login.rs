@@ -37,6 +37,11 @@
 //! a lock file makes the others wait (R107). Two processes that use one
 //! refresh token would end the sign-in.
 //!
+//! Only a refusal of the grant says that the sign-in ended
+//! ([`ENDED`], 01M3MX4TSEH18FSNQ28GEH2GFJ). Each other error of a
+//! refresh keeps its own text: for example a server that is down, or
+//! another version.
+//!
 //! [`session_token`] swaps the person access token for a session pair
 //! (R19). The session pair stays in the memory of the process
 //! (see [`crate::api::Api::signed_in`]); it never goes to the keyring.
@@ -78,11 +83,15 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
-use crate::api::Api;
+use crate::api::{Api, TokenRefused};
 use crate::{device, secrets};
 
 /// [`access_token`] refreshes when less than this is left.
 pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
+
+/// The error of a refresh that the server refused: the sign-in ended
+/// (01M3MX4TSEH18FSNQ28GEH2GFJ).
+pub const ENDED: &str = "the sign-in ended: run riff login";
 
 /// How long `riff login` waits for the browser.
 pub const BROWSER_WAIT: Duration = Duration::from_secs(5 * 60);
@@ -241,7 +250,10 @@ pub async fn access_token(api: &Api) -> Result<String> {
             &device::key(api.base())?,
         )
         .await
-        .context("the sign-in ended: run riff login")?;
+        .map_err(|e| match e.downcast_ref::<TokenRefused>() {
+            Some(refused) if refused.ended() => e.context(ENDED),
+            _ => e,
+        })?;
     let fresh = SignIn {
         expires_at: now() + pair.expires_in,
         user: pair.user,
@@ -253,14 +265,48 @@ pub async fn access_token(api: &Api) -> Result<String> {
     Ok(fresh.access_token)
 }
 
+/// Drops the person access token `token` at `server` when the keyring
+/// still holds it, so that the next [`access_token`] refreshes the pair
+/// (01M3MX4VCEBTY0DN4JMF624WYE). The server did not take the token.
+pub async fn forget(server: &str, token: &str) -> Result<()> {
+    let _lock = refresh_lock(server).await?;
+    if let Some(sign_in) = stored(server)?
+        && sign_in.access_token == token
+    {
+        let old = SignIn {
+            expires_at: 0,
+            ..sign_in
+        };
+        store(server, &old)?;
+    }
+    Ok(())
+}
+
 /// A new session pair for `session`, from the person access token of
 /// the server of `api` (R19). The pair works only for that session.
+/// When the server does not take the person access token, it refreshes
+/// the person pair once and asks again (01M3MX4VCEBTY0DN4JMF624WYE).
 pub async fn session_token(api: &Api, session: &str) -> Result<TokenReply> {
     let person = access_token(api).await?;
+    match exchange(api, session, &person).await {
+        Err(e)
+            if e.downcast_ref::<TokenRefused>()
+                .is_some_and(TokenRefused::ended) =>
+        {
+            forget(api.base(), &person).await?;
+            let person = access_token(api).await?;
+            exchange(api, session, &person).await
+        }
+        reply => reply,
+    }
+}
+
+/// Swaps the person access token `person` for a session pair.
+async fn exchange(api: &Api, session: &str, person: &str) -> Result<TokenReply> {
     api.token(
         &TokenRequest {
             grant_type: TOKEN_EXCHANGE.into(),
-            subject_token: Some(person),
+            subject_token: Some(person.to_owned()),
             subject_token_type: Some(ACCESS_TOKEN_TYPE.into()),
             session: Some(session.to_owned()),
             ..TokenRequest::default()

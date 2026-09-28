@@ -36,6 +36,12 @@
 //!   its access and refresh tokens stops working. The server keeps a
 //!   used refresh token for [`REUSE_WINDOW`]. After that, it is not
 //!   known (R116).
+//! - A lost reply is not a reuse (01M3MX4TG7PNNETZ986DQS10JJ). When the
+//!   refresh token of the pair that the last use gave is still unused,
+//!   the reply of that use never came back: for example a 503 after a
+//!   failed save, or a process that stopped. The server then ends that
+//!   pair and gives a new one. Only a reuse after the next refresh
+//!   revokes the sign-in.
 //! - A sign-in expires when no refresh token of it is used for
 //!   [`REFRESH_IDLE`].
 //! - A refresh gives a pair of the same kind: a session pair stays for
@@ -148,9 +154,14 @@
 //! let who = tokens.caller(&session.access_token, "jkt-laptop", now).unwrap();
 //! assert_eq!(who.to_string(), "mike/a6cf");
 //!
-//! // A second use revokes the sign-in.
-//! assert_eq!(tokens.refresh(&first.refresh_token, "jkt-laptop", now), Err(Refused::Reused));
+//! // A second use before the next refresh is a lost reply: it ends the
+//! // pair of the first use and gives a new one.
+//! let again = tokens.refresh(&first.refresh_token, "jkt-laptop", now).unwrap();
 //! assert_eq!(tokens.check(&second.access_token, "jkt-laptop", now), Err(Refused::Unknown));
+//!
+//! // A use after the next refresh revokes the sign-in.
+//! tokens.refresh(&again.refresh_token, "jkt-laptop", now).unwrap();
+//! assert_eq!(tokens.refresh(&first.refresh_token, "jkt-laptop", now), Err(Refused::Reused));
 //! assert_eq!(tokens.check(&session.access_token, "jkt-laptop", now), Err(Refused::Unknown));
 //! ```
 
@@ -285,6 +296,15 @@ struct Refresh {
     session: Option<String>,
     /// For a used token: the server forgets it at this time.
     used: Option<Instant>,
+    /// For a used token: the pair that its last use gave.
+    gave: Option<Gave>,
+}
+
+/// The hashes of the pair that one refresh gave.
+#[derive(Clone, Copy)]
+struct Gave {
+    access: Hash,
+    refresh: Hash,
 }
 
 impl Tokens {
@@ -648,14 +668,34 @@ impl Tokens {
         if sign_in.jkt != jkt {
             return Err(Refused::WrongKey);
         }
-        if refresh.used.is_some() {
-            self.revoke(id);
-            return Err(Refused::Reused);
-        }
         sign_in.idle_until = now + REFRESH_IDLE;
-        refresh.used = Some(now + REUSE_WINDOW);
         let session = refresh.session.clone();
-        Ok(self.issue(id, session, now))
+        let gave = refresh.gave;
+        if refresh.used.is_some() {
+            // The reply of the last use never came back when its pair is
+            // unused: a lost reply, not a theft (01M3MX4TG7PNNETZ986DQS10JJ).
+            let lost = gave.filter(|g| {
+                self.refresh
+                    .get(&g.refresh)
+                    .is_some_and(|r| r.used.is_none())
+            });
+            let Some(lost) = lost else {
+                self.revoke(id);
+                return Err(Refused::Reused);
+            };
+            self.access.remove(&lost.access);
+            self.refresh.remove(&lost.refresh);
+        } else {
+            refresh.used = Some(now + REUSE_WINDOW);
+        }
+        let pair = self.issue(id, session, now);
+        if let Some(refresh) = self.refresh.get_mut(&hash(token)) {
+            refresh.gave = Some(Gave {
+                access: hash(&pair.access_token),
+                refresh: hash(&pair.refresh_token),
+            });
+        }
+        Ok(pair)
     }
 
     /// Swaps a live person access token for a session pair in the same
@@ -821,6 +861,10 @@ impl Tokens {
                             Some(forget) => Some(live(forget)?),
                             None => None,
                         },
+                        gave: r.gave.map(|g| SavedGave {
+                            access: URL_SAFE_NO_PAD.encode(g.access),
+                            refresh: URL_SAFE_NO_PAD.encode(g.refresh),
+                        }),
                     })
                 })
                 .collect(),
@@ -877,10 +921,18 @@ impl Tokens {
                     None => continue,
                 },
             };
+            let gave = match r.gave {
+                Some(g) => Some(Gave {
+                    access: unhash(&g.access)?,
+                    refresh: unhash(&g.refresh)?,
+                }),
+                None => None,
+            };
             let refresh = Refresh {
                 sign_in: r.sign_in,
                 session: r.session,
                 used,
+                gave,
             };
             tokens.refresh.insert(unhash(&r.hash)?, refresh);
         }
@@ -909,6 +961,7 @@ impl Tokens {
                 sign_in,
                 session,
                 used: None,
+                gave: None,
             },
         );
         TokenReply {
@@ -998,6 +1051,15 @@ struct SavedRefresh {
     sign_in: u64,
     session: Option<String>,
     used: Option<u64>,
+    /// A saved form from before it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gave: Option<SavedGave>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedGave {
+    access: String,
+    refresh: String,
 }
 
 /// One time on the two clocks. It turns a deadline into a wall-clock
@@ -1134,17 +1196,87 @@ mod tests {
     fn reuse_revokes_the_sign_in() {
         let (mut tokens, first, now) = signed_in();
         let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let third = tokens.refresh(&second.refresh_token, "k", now).unwrap();
         assert_eq!(
             tokens.refresh(&first.refresh_token, "k", now),
             Err(Refused::Reused)
         );
         assert_eq!(
-            tokens.check(&second.access_token, "k", now),
+            tokens.check(&third.access_token, "k", now),
             Err(Refused::Unknown)
         );
         assert_eq!(
-            tokens.refresh(&second.refresh_token, "k", now),
+            tokens.refresh(&third.refresh_token, "k", now),
             Err(Refused::Unknown)
+        );
+    }
+
+    #[test]
+    fn a_lost_reply_gives_a_new_pair_and_ends_the_lost_one() {
+        let (mut tokens, first, now) = signed_in();
+        // The reply with this pair never came back.
+        let lost = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let again = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            tokens.check(&again.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
+        assert_eq!(
+            tokens.check(&lost.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(
+            tokens.refresh(&lost.refresh_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        // Each lost reply counts, until the next refresh.
+        let third = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            tokens.check(&again.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        let fourth = tokens.refresh(&third.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            tokens.refresh(&first.refresh_token, "k", now),
+            Err(Refused::Reused)
+        );
+        assert_eq!(
+            tokens.check(&fourth.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+    }
+
+    #[test]
+    fn a_lost_reply_of_a_session_refresh_keeps_the_session() {
+        let (mut tokens, person, now) = signed_in();
+        let first = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let again = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let who = tokens.caller(&again.access_token, "k", now).unwrap();
+        assert_eq!(who.to_string(), "mike/a");
+        assert_eq!(
+            tokens.check(&person.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_lost_reply_still_counts_after_a_restart() {
+        let (mut tokens, first, now) = signed_in();
+        let lost = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        let again = loaded.refresh(&first.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            loaded.check(&lost.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        loaded.refresh(&again.refresh_token, "k", now).unwrap();
+        let (mut loaded, now) = restart(&loaded, now, Duration::from_secs(5));
+        assert_eq!(
+            loaded.refresh(&first.refresh_token, "k", now),
+            Err(Refused::Reused)
         );
     }
 
@@ -1168,7 +1300,8 @@ mod tests {
         let other = tokens
             .sign_in("mike@comotechnologies.io", "k", now)
             .unwrap();
-        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        tokens.refresh(&second.refresh_token, "k", now).unwrap();
         tokens.refresh(&first.refresh_token, "k", now).unwrap_err();
         assert_eq!(
             tokens.check(&other.access_token, "k", now),
@@ -1484,13 +1617,14 @@ mod tests {
     fn a_used_refresh_token_still_revokes_after_a_restart() {
         let (mut tokens, first, now) = signed_in();
         let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let third = tokens.refresh(&second.refresh_token, "k", now).unwrap();
         let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
         assert_eq!(
             loaded.refresh(&first.refresh_token, "k", now),
             Err(Refused::Reused)
         );
         assert_eq!(
-            loaded.check(&second.access_token, "k", now),
+            loaded.check(&third.access_token, "k", now),
             Err(Refused::Unknown)
         );
     }
@@ -1514,7 +1648,8 @@ mod tests {
     #[test]
     fn the_time_that_the_server_was_down_counts() {
         let (mut tokens, first, now) = signed_in();
-        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        tokens.refresh(&second.refresh_token, "k", now).unwrap();
         let (mut loaded, later) = restart(&tokens, now, ACCESS_TTL);
         assert_eq!(
             loaded.check(&first.access_token, "k", later),
@@ -1541,7 +1676,8 @@ mod tests {
     #[test]
     fn a_new_sign_in_after_a_restart_gets_a_new_id() {
         let (mut tokens, first, now) = signed_in();
-        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        tokens.refresh(&second.refresh_token, "k", now).unwrap();
         let (mut loaded, now) = restart(&tokens, now, Duration::ZERO);
         let other = loaded
             .sign_in("mike@comotechnologies.io", "k", now)
@@ -1572,7 +1708,8 @@ mod tests {
         let first = tokens
             .for_session(&person.access_token, "k", "a", now)
             .unwrap();
-        tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        tokens.refresh(&second.refresh_token, "k", now).unwrap();
         tokens.refresh(&first.refresh_token, "k", now).unwrap_err();
         assert_eq!(
             tokens.check(&person.access_token, "k", now),
