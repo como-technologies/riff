@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
-use riff::{hook, identity, local, login, mcp, plugin, terminal, text};
+use riff::{hook, identity, local, login, mcp, plugin, settings, terminal, text};
 use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -186,10 +186,12 @@ enum Command {
         #[command(subcommand)]
         tool: Tool,
     },
-    /// Start the worker sessions of this machine. They need tmux.
+    /// Start, list and stop the worker sessions of this machine. They
+    /// need tmux. With no subcommand, it lists each worker: its pane,
+    /// its session ID, its claims and its status
     Workers {
         #[command(subcommand)]
-        command: Workers,
+        command: Option<Workers>,
     },
 }
 
@@ -197,7 +199,9 @@ enum Command {
 enum Workers {
     /// Start COUNT worker sessions in the tmux window riff-workers, one
     /// pane each. Each pane runs `claude "Join the riff."` in the main
-    /// worktree. Outside tmux, it starts nothing.
+    /// worktree. It starts at most the limit minus the workers that run.
+    /// It refuses in a worker, and in an agent session that is not the
+    /// lead. Outside tmux, it starts nothing.
     Start {
         /// The number of workers.
         #[arg(value_parser = clap::value_parser!(u16).range(1..))]
@@ -205,6 +209,20 @@ enum Workers {
         /// The claude command.
         #[arg(long, default_value = "claude")]
         claude: std::path::PathBuf,
+    },
+    /// Show or set the most workers on this machine. The default is 0,
+    /// so no worker starts until you set it. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.limit
+    Limit {
+        /// The new limit. Leave it out to show the limit.
+        limit: Option<u16>,
+    },
+    /// End each worker of this machine, or only the worker in PANE. Each
+    /// worker leaves `riff who` and frees its claims at once
+    Stop {
+        /// The tmux pane of one worker, for example %3. `riff workers`
+        /// shows it.
+        pane: Option<String>,
     },
 }
 
@@ -262,11 +280,8 @@ async fn main() -> Result<()> {
         println!("{}", text::connected(&connected));
         return Ok(());
     }
-    if let Command::Workers {
-        command: Workers::Start { count, claude },
-    } = &cli.command
-    {
-        return start_workers(*count, claude, &cli.server);
+    if let Command::Workers { command } = &cli.command {
+        return workers(command.as_ref(), &cli.server).await;
     }
     let api = Api::new(&cli.server);
     match &cli.command {
@@ -403,19 +418,144 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Starts `count` workers in tmux (01M3JD392Q5ANX0FPZ51W7B0E3). Outside
+/// `riff workers` and its subcommands.
+async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
+    match command {
+        None => list_workers(server).await,
+        Some(Workers::Start { count, claude }) => start_workers(*count, claude, server).await,
+        Some(Workers::Limit { limit }) => {
+            let path = settings::path()?;
+            if let Some(limit) = limit {
+                settings::set_workers_limit(&path, *limit)?;
+            }
+            println!(
+                "{}",
+                text::workers_limit(settings::workers_limit(&path)?, &path)
+            );
+            Ok(())
+        }
+        Some(Workers::Stop { pane }) => stop_workers(pane.as_deref(), server).await,
+    }
+}
+
+/// Starts `count` workers in tmux (01M3JD392Q5ANX0FPZ51W7B0E3), at most
+/// the limit of the machine minus the workers that run
+/// (01M3JPQT57PJCRBQYJNDVESS04). It refuses in a worker and in an agent
+/// session that is not the lead (01M3JPQT79FE47518Z8DFFQYYG). Outside
 /// tmux, it starts nothing and fails (01M3JD3973J7A9BG8G9EP9TVDP).
-fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
+async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
+    if let Some(why) = start_refusal(server).await {
+        eprintln!("{why}");
+        std::process::exit(1);
+    }
+    let limit = settings::workers_limit(&settings::path()?)?;
+    if limit == 0 {
+        eprintln!("{}", text::NO_WORKER_LIMIT);
+        std::process::exit(1);
+    }
     let Some(tmux) = Tmux::from_env() else {
         eprintln!("{}", text::NO_TMUX);
         std::process::exit(1);
     };
+    let run = tmux.worker_panes()?.len();
+    let start = terminal::room(count, limit, run);
+    if start == 0 {
+        eprintln!("{}", text::workers_full(limit, run));
+        std::process::exit(1);
+    }
     let dir = std::env::current_dir()?;
     let main = identity::main_worktree(&dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
-    let worker = Program::worker(claude, &main, Api::new(server).base());
-    let window = tmux.workers(&vec![worker; usize::from(count)])?;
-    println!("{}", text::workers_started(count, &window, &main));
+    let base = Api::new(server).base().to_owned();
+    let programs: Vec<Program> = (0..start)
+        .map(|_| Program::worker(claude, &main, &base, &terminal::new_session_id()))
+        .collect();
+    let window = tmux.workers(&programs)?;
+    println!("{}", text::workers_started(start, &window, &main));
+    if start < count {
+        println!("{}", text::workers_limited(count - start, limit, run));
+    }
+    Ok(())
+}
+
+/// Why this process may not start workers, or `None` when it may
+/// (01M3JPQT79FE47518Z8DFFQYYG). A person in a plain terminal may. A
+/// worker may not. An agent session may only when it is the lead.
+async fn start_refusal(server: &str) -> Option<String> {
+    if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
+        return Some(text::WORKER_STARTS_NO_WORKER.into());
+    }
+    let id = identity::session_id()?;
+    let lead = async {
+        let here = identity::place(&std::env::current_dir()?)?;
+        let api = Api::new(server);
+        let me = identity::agent(&here, &id, api.base())?;
+        let sessions = api.signed_in(Some(&id))?.who(&me, false).await?;
+        anyhow::Ok(
+            sessions
+                .iter()
+                .any(|s| s.uri.who() == me.who() && s.uri.lead()),
+        )
+    };
+    match lead.await {
+        Ok(true) => None,
+        Ok(false) => Some(text::NOT_THE_LEAD_STARTS_NO_WORKER.into()),
+        Err(e) => Some(format!(
+            "riff: cannot check that this session is the lead, so it starts no worker: {e:#}"
+        )),
+    }
+}
+
+/// Lists the workers of this machine, with their claims and status in
+/// `riff who` (01M3JPQTBDGT54WN7FZP9CD6B5).
+async fn list_workers(server: &str) -> Result<()> {
+    let panes = Tmux::machine().worker_panes()?;
+    let who = async {
+        let here = identity::place(&std::env::current_dir()?)?;
+        let api = Api::new(server);
+        let me = identity::me(&here, api.base())?;
+        api.signed_in(me.who().session())?.who(&me, false).await
+    };
+    let sessions = if panes.is_empty() {
+        Vec::new()
+    } else {
+        who.await.unwrap_or_else(|e| {
+            eprintln!("riff: cannot read riff who: {e:#}");
+            Vec::new()
+        })
+    };
+    print!("{}", text::workers(&panes, &sessions));
+    Ok(())
+}
+
+/// Ends each worker of this machine, or the one in `pane`: it kills the
+/// pane, then sends the end call of the session
+/// (01M3JPQTDFW3C7QBSZZ2M831MH).
+async fn stop_workers(pane: Option<&str>, server: &str) -> Result<()> {
+    let tmux = Tmux::machine();
+    let mut panes = tmux.worker_panes()?;
+    if let Some(pane) = pane {
+        panes.retain(|w| w.pane == pane);
+        if panes.is_empty() {
+            anyhow::bail!("no worker runs in the pane {pane}. `riff workers` lists them");
+        }
+    }
+    let here = identity::place(&std::env::current_dir()?)?;
+    let api = Api::new(server);
+    for worker in &panes {
+        tmux.kill(&worker.pane)?;
+        let ended = async {
+            let me = identity::agent(&here, &worker.session, api.base())?;
+            api.clone().signed_in(Some(&worker.session))?.end(&me).await
+        };
+        if let Err(e) = ended.await {
+            eprintln!(
+                "riff: stopped the pane {}, but the end call of its session failed: {e:#}",
+                worker.pane
+            );
+        }
+    }
+    println!("{}", text::workers_stopped(panes.len()));
     Ok(())
 }
 

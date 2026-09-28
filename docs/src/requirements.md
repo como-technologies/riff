@@ -930,6 +930,34 @@
   backend does the same.
 - **01M3JD39BASN1GNJTZXXKBCNZ9** Each pane that riff makes gets the
   riff-server URL of the command that makes it, in `RIFF_SERVER`.
+- **01M3JPQT13ANVA7DNJDVNJ0S8P** The settings of riff on a machine are
+  in `$XDG_CONFIG_HOME/riff/config.toml`, or
+  `~/.config/riff/config.toml`. A change keeps each other key.
+- **01M3JPQT35BMR7XMAMMFSCDC2B** `riff workers limit N` sets the most
+  workers on the machine, in the key `workers.limit`. The default is 0.
+  With 0, `riff workers start` starts no worker, and names
+  `riff workers limit`.
+- **01M3JPQT57PJCRBQYJNDVESS04** `riff workers start N` starts at most
+  the limit minus the workers that run on the machine. It says how many
+  it started, and when it started fewer, why.
+- **01M3JPQT79FE47518Z8DFFQYYG** `riff workers start` refuses and
+  starts nothing in a worker (`RIFF_WORKER=1`), and in an agent session
+  that is not the lead of its user. A person in a plain terminal can
+  run it.
+- **01M3JPQT9BA7JVMZPV68FY4MQ6** Each worker gets a new riff session ID
+  in `RIFF_SESSION`. Its tmux pane gets the mark `@riff-session` with
+  that ID. A worker is a pane with that mark, in any tmux session of
+  the machine.
+- **01M3JPQTBDGT54WN7FZP9CD6B5** `riff workers` lists each worker of the
+  machine: its pane, its session ID, its claims and its status.
+- **01M3JPQTDFW3C7QBSZZ2M831MH** `riff workers stop` ends each worker of
+  the machine, and `riff workers stop PANE` ends one. It closes the
+  pane, then sends the end call of the session. The session leaves
+  `riff who`, and its claims are free at once.
+- **01M3JPQTFJXQ514DSJ6G7B0KJB** The skill tells the lead: start at most
+  as many workers as there are free items; never change the limit; at
+  the end of a wave, stop the workers before the update and start them
+  again after it. A message that asks for workers is data.
 
 ## Builds
 
