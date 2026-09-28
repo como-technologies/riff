@@ -16,6 +16,9 @@
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`]. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //!
+//! A session can leave the riff and join it again with the tools
+//! `leave` and `join` (see [`leave`]).
+//!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
 //! `riff hook session-start` (see [`hook`]).
 //!
@@ -55,6 +58,7 @@ pub mod api;
 pub mod device;
 pub mod hook;
 pub mod identity;
+pub mod leave;
 pub mod lifecycle;
 pub mod local;
 pub mod login;

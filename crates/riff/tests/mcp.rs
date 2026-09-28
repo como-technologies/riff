@@ -102,8 +102,23 @@ async fn the_tools_carry_a_conversation() {
     assert_eq!(
         names,
         [
-            "claim", "join", "lead", "leave", "move", "pause", "post", "read", "release", "resume",
-            "status", "tell", "threads", "who", "whoami"
+            "claim",
+            "join",
+            "join_thread",
+            "lead",
+            "leave",
+            "leave_thread",
+            "move",
+            "pause",
+            "post",
+            "read",
+            "release",
+            "resume",
+            "status",
+            "tell",
+            "threads",
+            "who",
+            "whoami"
         ]
     );
 

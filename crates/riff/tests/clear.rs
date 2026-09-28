@@ -111,6 +111,89 @@ fn after_clear_each_process_uses_the_id_of_riff_mcp() {
     assert!(stdout(&whoami).contains("session=new"), "{whoami:?}");
 }
 
+/// A leave holds over `/clear` (01M3MEEFH79XXNZW6DWSPTEW2A): each process
+/// after `/clear` finds the leave of the ID of `riff mcp`, and makes no
+/// call (01M3MEEFETT9A0DRWBKQTG77Z2).
+#[test]
+fn a_leave_holds_over_clear() {
+    let run = tempfile::tempdir().unwrap();
+    let mcp = riff(run.path(), "old", &["mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let me = std::process::id();
+    wait_for("riff mcp records its session", || {
+        local::recorded(&files(run.path()), me).is_some()
+    });
+    // No server listens, so the watch keeps trying to connect.
+    let watch = riff(run.path(), "old", &["watch", "--once"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for("the watch takes its lock", || {
+        local::watching(&files(run.path()), "old")
+    });
+
+    // The leave tool writes the record.
+    local::leave(&files(run.path()), "old").unwrap();
+    let start = Instant::now();
+    let out = watch.wait_with_output().unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(out.status.success());
+    assert_eq!(stdout(&out), format!("{}\n", riff::text::WATCH_LEFT));
+
+    // After /clear: no context, no watch, no command, a plain status line.
+    let mut hook = riff(run.path(), "new", &["hook", "session-start"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(
+        hook.stdin.as_mut().unwrap(),
+        br#"{"session_id":"new","source":"clear"}"#,
+    )
+    .unwrap();
+    let out = hook.wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(stdout(&out), "");
+
+    let watch = riff(run.path(), "new", &["watch", "--once"])
+        .output()
+        .unwrap();
+    assert!(watch.status.success());
+    assert_eq!(stdout(&watch), format!("{}\n", riff::text::WATCH_LEFT));
+    assert!(stdout(&watch).contains("Do not start the watch again now."));
+
+    let who = riff(run.path(), "new", &["who"])
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(!who.status.success());
+    let err = String::from_utf8_lossy(&who.stderr);
+    assert!(err.contains(riff::text::LEFT_COMMAND), "{err}");
+
+    let mut line = riff(run.path(), "new", &["statusline"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(line.stdin.as_mut().unwrap(), br#"{"session_id":"new"}"#).unwrap();
+    assert_eq!(
+        stdout(&line.wait_with_output().unwrap()),
+        "riff old (left)\n"
+    );
+
+    // A new session joins as usual.
+    stop(mcp);
+    let context = clear_context(run.path());
+    assert!(context.contains("session=new"), "{context}");
+}
+
 #[test]
 fn one_watch_runs_for_each_session() {
     let run = tempfile::tempdir().unwrap();

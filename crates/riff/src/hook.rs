@@ -69,6 +69,9 @@
 //! session to start one. So after `/clear`, the session keeps the watch
 //! from before `/clear`: it runs for the same ID.
 //!
+//! A session that left the riff gets no context, and the hook makes no
+//! call (01M3MEEFETT9A0DRWBKQTG77Z2, see [`crate::leave`]).
+//!
 //! The hook never stops a session start (R69). When it cannot find the
 //! session, the context has no URI, and the hook still exits with
 //! status 0.

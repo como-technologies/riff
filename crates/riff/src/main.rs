@@ -24,6 +24,10 @@ const RETRY: Duration = Duration::from_secs(5);
 /// The longest time that `riff statusline` waits for riff-server.
 const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 
+/// How often a watch looks for a leave of its session
+/// (01M3MEEFETT9A0DRWBKQTG77Z2).
+const LEFT_POLL: Duration = Duration::from_millis(250);
+
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
 #[command(version = riff_core::build::VERSION, about)]
@@ -340,7 +344,10 @@ async fn main() -> Result<()> {
         event: HookEvent::SessionStart,
     } = cli.command
     {
-        println!("{}", session_start(&cli.server).await);
+        let output = session_start(&cli.server).await;
+        if !output.is_empty() {
+            println!("{output}");
+        }
         return Ok(());
     }
     if let Command::Hook {
@@ -430,6 +437,20 @@ async fn main() -> Result<()> {
     }
     let here = identity::place(&std::env::current_dir()?)?;
     let me = identity::me(&here, api.base())?;
+    // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
+    // `riff mcp` still runs: its `join` tool brings the session back.
+    if let Some(id) = me.who().session()
+        && local::left_here(id)
+    {
+        match cli.command {
+            Command::Mcp => {}
+            Command::Watch { .. } => {
+                println!("{}", text::WATCH_LEFT);
+                return Ok(());
+            }
+            _ => anyhow::bail!(text::LEFT_COMMAND),
+        }
+    }
     let api = api.signed_in(me.who().session())?;
     match cli.command {
         Command::Whoami => {
@@ -509,7 +530,11 @@ async fn main() -> Result<()> {
         Command::Mcp => {
             let me = identity::session(&here, api.base())?;
             let _record = record_session(&me);
-            let tail = tail_beside_lead(&api, &me);
+            let tail = async {
+                if !me.who().session().is_some_and(local::left_here) {
+                    tail_beside_lead(&api, &me).await;
+                }
+            };
             let (_, served) = tokio::join!(tail, mcp::serve(api.clone(), me.clone()));
             served?
         }
@@ -791,6 +816,10 @@ async fn session_start(server: &str) -> String {
     let _ = std::io::stdin().read_to_string(&mut stdin);
     let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
     let id = identity::agent_session(input.session_id);
+    // A session that left gets no riff context (01M3MEEFETT9A0DRWBKQTG77Z2).
+    if id.as_deref().is_some_and(local::left_here) {
+        return String::new();
+    }
     let api = Api::new(server);
     let cwd = std::env::current_dir().ok();
     let uri = id.as_deref().zip(cwd.as_deref()).and_then(|(id, cwd)| {
@@ -870,6 +899,9 @@ async fn statusline(server: &str) -> String {
     let Some(id) = identity::agent_session(input.session_id) else {
         return "riff: no session".into();
     };
+    if local::left_here(&id) {
+        return text::statusline_left(&id);
+    }
     let find = async {
         let here = identity::place(&std::env::current_dir()?)?;
         let api = Api::new(server);
@@ -900,6 +932,9 @@ async fn session_end(server: &str) {
     let Some(id) = identity::agent_session(input.session_id) else {
         return;
     };
+    if local::left_here(&id) {
+        return;
+    }
     let ended = async {
         let here = identity::place(&std::env::current_dir()?)?;
         let api = Api::new(server);
@@ -995,10 +1030,22 @@ async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
 }
 
 /// Runs until stopped, or with `once` until the first wake (R170). It
-/// connects again when the stream ends (R131).
+/// connects again when the stream ends (R131). It stops when the session
+/// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2).
 async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     let stream = follow(|| api.watch(me), RETRY);
-    print_each(stream, text::wake_line, once).await;
+    let left = async {
+        let Some(id) = me.who().session() else {
+            return std::future::pending().await;
+        };
+        while !local::left_here(id) {
+            tokio::time::sleep(LEFT_POLL).await;
+        }
+    };
+    tokio::select! {
+        () = print_each(stream, text::wake_line, once) => {}
+        () = left => println!("{}", text::WATCH_LEFT),
+    }
 }
 
 /// Prints one line for each item, or with `once` only the first line.

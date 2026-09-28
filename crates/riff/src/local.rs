@@ -27,8 +27,10 @@
 //! | `mcp-PID` | `riff mcp`. PID is its parent: the agent tool. | The session ID. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
 //! | `next-ID` | `riff workers next` of a worker. The Stop hook takes it (see [`crate::next`]). | The tmux pane of the worker. |
+//! | `left-ID` | The `leave` tool. The `join` tool removes it. | Nothing. The file counts. |
 //!
-//! Each writer holds a lock on its file while it runs. The system ends
+//! The writers of `mcp-PID` and `watch-ID` hold a lock on the file while
+//! they run. The system ends
 //! the lock when the process ends, also after a crash. A file with no
 //! lock is stale, and riff ignores it. So a PID that the system gives
 //! to a new process again does not find a stale session.
@@ -151,6 +153,49 @@ pub fn watching(dir: &Path, session: &str) -> bool {
 
 fn watch_file(dir: &Path, session: &str) -> PathBuf {
     dir.join(format!("watch-{}", riff_core::name::sanitize(session)))
+}
+
+/// Records that the session `session` left the riff
+/// (01M3MEEFC9ZQVW2KC9FNJ75MTY). The record has no lock: it outlives
+/// `riff mcp`, so it holds over a resume and `/clear`.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// assert!(!riff::local::left(run.path(), "a6cf"));
+/// riff::local::leave(run.path(), "a6cf")?;
+/// assert!(riff::local::left(run.path(), "a6cf"));
+/// assert!(!riff::local::left(run.path(), "b2"));
+/// riff::local::join(run.path(), "a6cf")?;
+/// assert!(!riff::local::left(run.path(), "a6cf"));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn leave(dir: &Path, session: &str) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(left_file(dir, session), "")
+}
+
+/// Removes the record of [`leave`]. A session with no record is in the
+/// riff already.
+pub fn join(dir: &Path, session: &str) -> io::Result<()> {
+    match std::fs::remove_file(left_file(dir, session)) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// True when the session `session` left the riff.
+pub fn left(dir: &Path, session: &str) -> bool {
+    left_file(dir, session).exists()
+}
+
+/// True when the session `session` left the riff, with the files in
+/// [`dir`]. False with no directory.
+pub fn left_here(session: &str) -> bool {
+    dir().is_some_and(|dir| left(&dir, session))
+}
+
+fn left_file(dir: &Path, session: &str) -> PathBuf {
+    dir.join(format!("left-{}", riff_core::name::sanitize(session)))
 }
 
 /// Opens `path` and takes its lock. `None` when another open file holds

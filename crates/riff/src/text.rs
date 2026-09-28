@@ -29,6 +29,86 @@ pub const WATCH_RUNS: &str = "riff: a riff watch runs for this session already, 
 you. This watch stops. Do not start the watch again now. Start it again only when the task of \
 that watch ends.";
 
+/// The refusal of each riff tool except `join` in a session that left
+/// the riff (01M3MEEFETT9A0DRWBKQTG77Z2).
+pub const LEFT: &str = "This session left the riff. The riff tools do not work until it \
+joins again: your user runs /riff:join, or says \"join the riff\". Then call the riff join tool.";
+
+/// The start of the refusal of the `leave` tool when it cannot push the
+/// work of the session (01M3MEEFC9ZQVW2KC9FNJ75MTY).
+pub const LEAVE_REFUSED: &str = "You are still in the riff, with your claims. riff cannot push \
+your work: ";
+
+/// The refusal of a `riff` command that acts as a session that left the
+/// riff (01M3MEEFETT9A0DRWBKQTG77Z2).
+pub const LEFT_COMMAND: &str = "this session left the riff. Run /riff:join in the session to \
+join again";
+
+/// The one line of a watch in a session that left the riff
+/// (01M3MEEFETT9A0DRWBKQTG77Z2).
+pub const WATCH_LEFT: &str = "riff: this session left the riff. This watch stops. Do not start \
+the watch again now. Start it again only after the riff join tool.";
+
+/// The status line of a session that left the riff.
+///
+/// ```
+/// assert_eq!(riff::text::statusline_left("2a880834-aaaa"), "riff 2a880834 (left)");
+/// ```
+pub fn statusline_left(id: &str) -> String {
+    let short: String = id.chars().take(ID_CHARS).collect();
+    format!("riff {short} (left)")
+}
+
+/// The result of the `leave` tool (01M3MEEFC9ZQVW2KC9FNJ75MTY). `wip`
+/// names the branch that got a WIP push, if any.
+///
+/// ```
+/// let text = riff::text::left(Some("worktree-issue-12"), &["issue-12".into()]);
+/// assert!(text.contains("pushed the branch worktree-issue-12"));
+/// assert!(text.contains("freed your claims: issue-12"));
+/// assert!(text.contains("/riff:join"));
+/// assert!(!riff::text::left(None, &[]).contains("pushed"));
+/// ```
+pub fn left(wip: Option<&str>, freed: &[String]) -> String {
+    let mut out = String::from("You left the riff. You are not in `who`, and no post wakes you.\n");
+    if let Some(branch) = wip {
+        let _ = writeln!(
+            out,
+            "- riff pushed the branch {branch}, with a WIP commit of each change."
+        );
+    }
+    if !freed.is_empty() {
+        let _ = writeln!(out, "- The leave freed your claims: {}.", freed.join(", "));
+    }
+    out.push_str(
+        "- Your watch stops within 1 second, and tells you not to start it again. Do not start \
+         it. When the task of the watch ends, do not call the riff read tool.\n\
+         - Do not call the riff tools: each one except join refuses. Work on as a plain session.\n\
+         - To join again, your user runs /riff:join or says \"join the riff\".",
+    );
+    out
+}
+
+/// The result of the `join` tool (01M3MEEFKX14QCQM0F9ZYW93PP).
+///
+/// ```
+/// let uri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let text = riff::text::joined(&uri);
+/// assert!(text.contains("session=a6cf"));
+/// assert!(text.contains("riff watch --once"));
+/// assert!(text.contains("start routine"));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn joined(me: &SessionUri) -> String {
+    format!(
+        "You joined the riff again as {me}.\n\
+         - Now run `riff watch --once` with the Bash tool, with run_in_background true and the \
+         description \"riff wakes\". When the task ends, call the riff read tool with no thread \
+         and start the watch again at once, in the same response.\n\
+         - Then follow the start routine of the riff skill."
+    )
+}
+
 /// The characters of a session ID that [`name`] shows.
 const ID_CHARS: usize = 8;
 
