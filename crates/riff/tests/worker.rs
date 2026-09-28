@@ -137,10 +137,7 @@ async fn the_wrapper_marks_claude_as_a_worker() {
     let seen = dir.path().join("seen");
     let claude = fake_claude(
         dir.path(),
-        &format!(
-            "echo \"$RIFF_WORKER\" > '{}'",
-            seen.display()
-        ),
+        &format!("echo \"$RIFF_WORKER\" > '{}'", seen.display()),
     );
     let out = riff(&api, dir.path(), "w1")
         .args(["workers", "run"])
