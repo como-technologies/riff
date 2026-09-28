@@ -2,27 +2,18 @@
 //! a fake browser that follows the redirects. The keyring is the mock
 //! store of `keyring-core`.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Once};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+mod common;
 
-use axum::extract::{Form, Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect};
-use axum::routing::{get, post};
-use axum::{Json, Router};
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use std::sync::{Arc, Mutex, Once};
+use std::time::Instant;
+
+use axum::Router;
+use common::{CLIENT, FakeProvider, browser};
 use riff::api::Api;
 use riff::login::{self, SignIn};
-use riff_core::wire::Discovery;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
-use serde_json::{Value, json};
-
-const KEY: &str = include_str!("../../riff-server/testdata/test-only-rsa-key.pem");
-const JWKS: &str = include_str!("../../riff-server/testdata/test-only-jwks.json");
-const CLIENT: &str = "riff-client";
 
 static MOCK_KEYRING: Once = Once::new();
 
@@ -32,83 +23,11 @@ fn mock_keyring() {
     });
 }
 
-/// The code challenge of each code that the fake provider gave out.
-#[derive(Clone, Default)]
-struct Fake {
-    issuer: String,
-    codes: Arc<Mutex<HashMap<String, String>>>,
-}
-
-async fn authorize(State(fake): State<Fake>, Query(q): Query<HashMap<String, String>>) -> Redirect {
-    assert_eq!(q["client_id"], CLIENT);
-    assert_eq!(q["code_challenge_method"], "S256");
-    let code = format!("code-{}", fake.codes.lock().unwrap().len());
-    fake.codes
-        .lock()
-        .unwrap()
-        .insert(code.clone(), q["code_challenge"].clone());
-    let to = format!("{}?code={code}&state={}", q["redirect_uri"], q["state"]);
-    Redirect::to(&to)
-}
-
-async fn provider_token(
-    State(fake): State<Fake>,
-    Form(f): Form<HashMap<String, String>>,
-) -> impl IntoResponse {
-    let challenge = fake.codes.lock().unwrap().remove(&f["code"]);
-    if challenge != Some(login::challenge(&f["code_verifier"])) || f["client_id"] != CLIENT {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "invalid_grant"})),
-        );
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("test".into());
-    let claims = json!({
-        "iss": fake.issuer,
-        "aud": CLIENT,
-        "exp": now + 3600,
-        "email": "Ada@comotechnologies.io",
-        "email_verified": true,
-        "hd": "comotechnologies.io",
-    });
-    let id_token = encode(
-        &header,
-        &claims,
-        &EncodingKey::from_rsa_pem(KEY.as_bytes()).unwrap(),
-    )
-    .unwrap();
-    (StatusCode::OK, Json(json!({ "id_token": id_token })))
-}
-
+/// A fake provider that signs in Ada, and its issuer.
 async fn fake_provider() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let issuer = format!("http://{}", listener.local_addr().unwrap());
-    let discovery = Discovery {
-        issuer: issuer.clone(),
-        authorization_endpoint: format!("{issuer}/authorize"),
-        token_endpoint: format!("{issuer}/token"),
-        jwks_uri: format!("{issuer}/jwks"),
-    };
-    let jwks: Value = serde_json::from_str(JWKS).unwrap();
-    let router = Router::new()
-        .route(
-            "/.well-known/openid-configuration",
-            get(move || async move { Json(discovery) }),
-        )
-        .route("/jwks", get(move || async move { Json(jwks) }))
-        .route("/authorize", get(authorize))
-        .route("/token", post(provider_token))
-        .with_state(Fake {
-            issuer: issuer.clone(),
-            ..Fake::default()
-        });
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    issuer
+    FakeProvider::start("Ada@comotechnologies.io", Some(DEFAULT_DOMAIN))
+        .await
+        .issuer
 }
 
 async fn start() -> (Service, Api) {
@@ -133,12 +52,6 @@ async fn start() -> (Service, Api) {
 /// The thumbprint of the device key of this machine for the server.
 fn jkt(api: &Api) -> String {
     riff::device::key(api.base()).unwrap().thumbprint()
-}
-
-/// A browser that goes to the URL and follows each redirect.
-fn browser(url: &str) {
-    let url = url.to_owned();
-    tokio::spawn(async move { reqwest::get(url).await.unwrap().error_for_status().unwrap() });
 }
 
 #[tokio::test]

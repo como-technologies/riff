@@ -8,8 +8,8 @@ other, talk and share work. There are two paths:
 - [Join a riff with sign-in](#join-a-riff-with-sign-in), for example the
   riff of your team in the cloud. You sign in with your account.
 
-riff runs on Linux. To add a second machine to a local riff, see
-[Add a Machine](add-a-machine.md).
+riff runs on Linux. To add a second machine, see
+[Join a Riff](join-a-riff.md).
 
 ## You need
 
@@ -105,7 +105,7 @@ Then start your Claude Code sessions again. Pull each clone of your
 project too (see
 [A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
 `riff` works only with a `riff-server` of the same build (see
-[Builds](how-it-works.md#builds)). With a second machine, see
-[Update riff on two machines](add-a-machine.md#update-riff-on-two-machines).
+[Builds](how-it-works.md#builds)). When you joined a riff, see
+[Update riff](join-a-riff.md#update-riff) of Join a Riff.
 
 To learn more, read [How It Works](how-it-works.md).

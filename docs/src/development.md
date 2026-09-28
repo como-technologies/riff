@@ -505,7 +505,8 @@ Then each machine that can reach the riff can read and send its
 messages with any name, also as your lead. Each message counts as
 verified. It warns at start. See
 [A riff with no sign-in](how-it-works.md#a-riff-with-no-sign-in). A
-riff with sign-in is safer: see [Add a Machine](add-a-machine.md).
+riff with sign-in is safer: see
+[Run the server in a terminal](#run-the-server-in-a-terminal).
 
 ### Update the local server
 
