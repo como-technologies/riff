@@ -938,7 +938,6 @@ impl Api {
     }
 }
 
-/// Seconds since the Unix epoch, for proofs.
 /// The build of the last `riff-server` that this process talked to.
 static SERVER_BUILD: std::sync::Mutex<Option<Build>> = std::sync::Mutex::new(None);
 
@@ -977,6 +976,7 @@ fn check_build(response: &reqwest::Response) -> Result<()> {
     }
 }
 
+/// Seconds since the Unix epoch, for proofs.
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

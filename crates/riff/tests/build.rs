@@ -358,7 +358,8 @@ async fn tail_and_watch_run_the_new_binary() {
         std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::rename(&new, &binary).unwrap();
 
-        let ran = wait_for(Duration::from_secs(10), || marker.exists()).await;
+        // The line ends with a newline once the script wrote all of it.
+        let ran = wait_for(Duration::from_secs(10), || read(&marker).ends_with('\n')).await;
         let _ = (child.kill(), child.wait());
         assert!(ran, "{args:?}: {}", read(&err));
         assert_eq!(read(&marker).trim(), args.join(" "), "{args:?}");
