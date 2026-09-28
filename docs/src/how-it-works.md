@@ -533,10 +533,14 @@ gives it to a session with no claim, or starts a worker for it. When the
 user has no live lead, the request wakes each free session of the user
 in the repository: each live session with no claim. Each other session
 sees it at its next read. A verify request is free work: a session picks
-it like any other item. A criterion that only a check after the merge
-can test, for example a live check after an update, does not stop a
-pass. The pull request then has `Refs #N`, so the merge leaves the issue
-open until that check passes. The `gh` steps are in
+it like any other item.
+
+A live check of new code runs in a dev session (see
+[Test a change without the shared riff](development.md#test-a-change-without-the-shared-riff)).
+A criterion that only the shared riff can test is a check after the
+release. It does not stop a pass. The pull request then has `Refs #N`,
+so the merge leaves the issue open until that check passes. The `gh`
+steps are in
 [Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github).
 
 ### Ask for a verify by hand

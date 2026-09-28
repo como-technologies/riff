@@ -69,7 +69,7 @@ Milestone: Wave 3
 
 - The first line links the issue. Use `Closes #N` in the last pull
   request of the issue. Use `Refs #N` in each other one, and when a
-  check after the merge is left.
+  check after the release is left.
 - The last lines are trailers: the issue, and its milestone.
 - Give the pull request the milestone of its issue. Do not end the
   title with `(#N)`. GitHub adds the number of the pull request.
@@ -523,31 +523,51 @@ riff-server
 riff connect claude
 ```
 
-### Test a debug build
+### Test a change without the shared riff
 
-`just dev` runs the debug builds of your tree with Claude Code. It
-builds the workspace, points `~/.cargo/bin/riff` at the debug `riff`,
-and updates the plugin. Then it runs the debug `riff-server` in the
-foreground, on loopback. Stop your other `riff-server` first:
+We build riff with riff. So each machine has two tracks:
+
+- The installed `riff`, `riff-server` and plugin are a release. Only
+  `riff update` changes them. Your sessions riff with them.
+- The code under test runs from its worktree, against a `riff-server`
+  of the same worktree. It never talks to the shared riff.
+
+```mermaid
+flowchart LR
+    subgraph Release["installed release"]
+        S[your sessions] --> R[shared riff]
+    end
+    subgraph Tree["worktree"]
+        D["just dev session<br/>target/debug/riff"] --> L["riff-server of the tree<br/>127.0.0.1:7900+"]
+    end
+```
+
+Run `just dev` in the worktree:
 
 ```sh
 just dev
 ```
 
-Options after `dev` go to `riff-server`. Stop the server with Ctrl-C.
+It builds the workspace, and runs the debug `riff-server` of the tree
+on the first free port from 7900. Its log goes to
+`target/dev-server.log`. Then it starts Claude Code with the plugin of
+the tree and the debug `riff` of the tree. The installed plugin is off
+in that session only. When you end Claude Code, `just dev` stops the
+server. It changes nothing that is installed.
 
-- After a rebuild, run `just dev` again. Then reconnect the MCP server
-  with `/mcp` in Claude Code.
-- The link points to the `target/` of the worktree that ran `just dev`
-  last.
-- `just install` replaces the link with the release binary.
+- Options after `dev` go to `riff-server`. Do not give `--listen`.
+- In the dev session, `riff server` names the server of the tree and
+  the build of the tree.
+- After a rebuild, end Claude Code and run `just dev` again.
 
-When the server ends, `just dev` prints the step that restores the
-release setup:
+Use a dev session for a live check of new code, for example a new
+plugin command, hook or skill text. It needs no release and no update
+of the machine. A worker never runs `riff update`, `cargo install` of
+riff, `just install` or `riff connect` in a worktree.
 
-```sh
-just install
-```
+A criterion that only the shared riff can test is a check after the
+release. Its item stays open until the release of the wave. See
+[Waves](waves.md).
 
 ### Test a debug build with sign-in
 
@@ -561,10 +581,10 @@ printf 'RIFF_OIDC_CLIENT_ID=%s\nRIFF_OIDC_CLIENT_SECRET=%s\n' ID SECRET > .env
 just dev
 ```
 
-In a second terminal, sign in:
+In the dev session, sign in to the server of the tree:
 
 ```sh
-riff login
+! riff login
 ```
 
 ## Save the state in a bucket
