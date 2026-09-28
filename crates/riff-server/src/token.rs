@@ -906,13 +906,14 @@ impl Tokens {
     }
 }
 
-/// Why [`Tokens::from_bytes`] failed.
+/// Why [`Tokens::from_bytes`] failed. The text does not name the
+/// object: [`crate::store::StoreError::NotValid`] does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadError(String);
 
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "the saved token store is not valid: {}", self.0)
+        f.write_str(&self.0)
     }
 }
 

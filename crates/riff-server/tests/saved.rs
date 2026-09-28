@@ -120,3 +120,21 @@ async fn a_save_that_finds_another_version_stops_the_server() {
     server.save().await.unwrap();
     assert_eq!(store.load(SESSIONS).await.unwrap().unwrap().bytes, b"{}");
 }
+
+#[tokio::test]
+async fn a_saved_object_that_is_not_valid_stops_the_load_and_names_the_object() {
+    for name in [SESSIONS, "threads/como-technologies%2Friff"] {
+        let store = Memory::default();
+        store.save(name, b"[]".to_vec(), None).await.unwrap();
+        let error = common::load_on(Arc::new(store)).await.err().unwrap();
+        let StoreError::NotValid { object, fix, .. } = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(object, name);
+        assert_eq!(fix, &None);
+        assert!(
+            error.to_string().ends_with("remove the old state."),
+            "{error}"
+        );
+    }
+}

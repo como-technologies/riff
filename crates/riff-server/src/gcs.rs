@@ -310,6 +310,14 @@ impl Store for Gcs {
     ) -> BoxFuture<'a, Result<Version, StoreError>> {
         self.save_object(name, bytes, known).boxed()
     }
+
+    fn locate(&self, name: &str) -> String {
+        format!("gs://{}/{name}", self.bucket)
+    }
+
+    fn empty_command(&self) -> Option<String> {
+        Some(format!("gcloud storage rm 'gs://{}/**'", self.bucket))
+    }
 }
 
 /// The reply, or [`StoreError::Failed`] when the call failed or its
