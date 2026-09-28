@@ -1382,6 +1382,20 @@ When `riff mcp` of the lead starts, it adds a pane with `riff tail` of
 the repository thread beside the lead. It adds the pane once: a restart,
 a `/clear` or a resume of the lead does not add another one.
 
+Only the lead gets the `riff tail` pane. You have one lead in each
+repository, on one machine. It is not one lead for each machine. A
+session that is not the lead gets no pane, also when it is the only
+session on its machine.
+
+### Watch the riff on another machine
+
+On a machine with no lead, start `riff tail` yourself. Name the
+thread, so that the directory does not matter:
+
+```sh
+riff tail como-technologies/riff
+```
+
 ### Set the limit of workers
 
 No worker starts until you set a limit. It is the most workers that
