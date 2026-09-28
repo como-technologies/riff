@@ -33,13 +33,14 @@ fn the_page_starts_the_server_as_a_service() {
 
 #[test]
 fn the_first_machine_lets_its_riff_take_connections_from_the_network() {
-    // The first machine needs `--insecure` with no sign-in
-    // (01M3JCE4ZD4DZCQ21FA69RT52D). Its update keeps both settings
+    // The first machine has sign-in, with the OAuth client of the
+    // person in the environment, and an owner (01M3JZN229S3YA3BR6GN5H3MTY,
+    // 01M3JN3AQMHZHT6JP3P6GM9PWZ). Its update keeps the settings
     // (01M3JCE5477135XSD740DG7KFT).
     assert_eq!(
         server_commands("add-a-machine.md"),
         [
-            "riff-server install --listen 0.0.0.0:7878 --insecure",
+            "riff-server install --listen 0.0.0.0:7878 --owner EMAIL",
             "riff-server install"
         ]
     );

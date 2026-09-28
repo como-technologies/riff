@@ -30,6 +30,10 @@ fn claude_accepts_the_written_plugin() {
     }
 }
 
+/// A riff that does not answer, so `riff connect claude` checks no
+/// real riff and opens no browser. It warns.
+const NO_SERVER: &str = "http://127.0.0.1:1";
+
 /// A fake `claude` command that logs its arguments. It fails `mcp
 /// remove`, as `claude` does when there is no old entry.
 fn fake_claude(dir: &Path, remove_status: u8) -> PathBuf {
@@ -54,6 +58,7 @@ fn connect(bin: &Path, data: &Path, cwd: &Path) -> assert_cmd::assert::Assert {
         .unwrap()
         .args(["connect", "claude", "--claude"])
         .arg(bin)
+        .env("RIFF_SERVER", NO_SERVER)
         .env("XDG_DATA_HOME", data)
         .env("HOME", data.join("home"))
         .env_remove("CLAUDE_CONFIG_DIR")
@@ -323,6 +328,7 @@ fn claude_installs_the_plugin_and_drops_the_old_entry() {
         assert_cmd::Command::cargo_bin("riff")
             .unwrap()
             .args(["connect", "claude"])
+            .env("RIFF_SERVER", NO_SERVER)
             .env("XDG_DATA_HOME", tmp.path())
             .env("CLAUDE_CONFIG_DIR", &config)
             .current_dir(tmp.path())

@@ -194,7 +194,8 @@ enum Command {
         #[command(subcommand)]
         event: HookEvent,
     },
-    /// Install the riff plugin in an agent tool. Run it again to update
+    /// Install the riff plugin in an agent tool. When the riff has
+    /// sign-in and this machine has none, sign in. Run it again to update
     /// the plugin.
     Connect {
         #[command(subcommand)]
@@ -334,6 +335,11 @@ async fn main() -> Result<()> {
         );
         let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
         println!("{}", text::connected(&connected));
+        match login::ensure(&Api::new(&cli.server), open_browser).await {
+            Ok(Some(_)) => println!("{}", text::connect_signed_in(&cli.server)),
+            Ok(None) => {}
+            Err(e) => anstream::eprintln!("riff: {}", text::connect_no_sign_in(&cli.server, &e)),
+        }
         return Ok(());
     }
     if let Command::Workers { command } = &cli.command {
@@ -342,11 +348,7 @@ async fn main() -> Result<()> {
     let api = Api::new(&cli.server);
     match &cli.command {
         Command::Login => {
-            let sign_in = login::login(&api, |url| {
-                eprintln!("riff: sign in with your browser. If it does not open, go to:\n{url}");
-                let _ = open::that_detached(url);
-            })
-            .await?;
+            let sign_in = login::login(&api, open_browser).await?;
             println!("{}", text::signed_in(&sign_in.user, api.base()));
             return Ok(());
         }
@@ -488,6 +490,12 @@ async fn main() -> Result<()> {
         | Command::Owner { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
+}
+
+/// Shows the authorize URL of a sign-in, and opens it in the browser.
+fn open_browser(url: &str) {
+    eprintln!("riff: sign in with your browser. If it does not open, go to:\n{url}");
+    let _ = open::that_detached(url);
 }
 
 /// `riff workers` and its subcommands.

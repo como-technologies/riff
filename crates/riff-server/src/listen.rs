@@ -5,6 +5,9 @@
 //! A riff with no sign-in ([`crate::auth::Config::trusted`]) trusts each
 //! caller. So it listens only on a loopback address, unless the person
 //! gives `--insecure` (`RIFF_INSECURE`) (01M3JCE4ZD4DZCQ21FA69RT52D).
+//! Its error names the settings of sign-in, `RIFF_OIDC_CLIENT_ID` and
+//! `RIFF_OIDC_CLIENT_SECRET`, and `--insecure`
+//! (01M3JZN1VEF73EPFE2FJY36EY4).
 //!
 //! A riff with sign-in listens only on a loopback address until it has
 //! an owner. So the first person who signs in, the owner, signs in from
@@ -48,7 +51,9 @@ use std::net::SocketAddr;
 /// let local = "127.0.0.1:7878".parse().unwrap();
 /// // No sign-in: only loopback, unless --insecure.
 /// assert_eq!(check(local, true, false, false), Ok(None));
-/// assert!(check(open, true, false, false).unwrap_err().contains("--insecure"));
+/// let error = check(open, true, false, false).unwrap_err();
+/// assert!(error.contains("--insecure"));
+/// assert!(error.contains("RIFF_OIDC_CLIENT_ID and RIFF_OIDC_CLIENT_SECRET"));
 /// assert!(check(open, true, true, false).unwrap().unwrap().contains("any person"));
 /// // With sign-in: only loopback until the riff has an owner.
 /// assert_eq!(check(local, false, false, false), Ok(None));
@@ -82,8 +87,9 @@ pub fn check(
     }
     Err(format!(
         "this riff has no sign-in, so it listens only on a loopback address, not on {listen}. \
-         Add --insecure (RIFF_INSECURE) to let each machine that can reach it \
-         read, post and answer as any person."
+         For sign-in, set RIFF_OIDC_CLIENT_ID and RIFF_OIDC_CLIENT_SECRET to the OAuth client \
+         of your own OIDC app. Or add --insecure (RIFF_INSECURE) to let each machine that can \
+         reach it read, post and answer as any person."
     ))
 }
 

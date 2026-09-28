@@ -13,8 +13,9 @@
 - **R203** A person adds a second machine to the riff of a first machine
   on a network that they trust. The riff of the first machine takes
   connections from the network. The second machine names that riff with
-  `RIFF_SERVER`. With no sign-in, each machine that can reach the riff
-  can read and send its messages.
+  `RIFF_SERVER`. The riff of the first machine has sign-in with the
+  OAuth client of the person, and the person signs in on each machine
+  (01M3JZN229S3YA3BR6GN5H3MTY).
 - **R44** Only Claude Code is supported for now. `riff connect claude`
   installs a Claude Code plugin: the MCP server, a skill, and a start
   hook that wakes the session.
@@ -812,12 +813,28 @@
   can reach it can read, post and answer as any person. `install` does
   the same check. A riff with sign-in listens on any address once it
   has an owner (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+- **01M3JZN1VEF73EPFE2FJY36EY4** When `riff-server` refuses an address
+  that is not loopback because it has no sign-in, its error names
+  `RIFF_OIDC_CLIENT_ID`, `RIFF_OIDC_CLIENT_SECRET` and `--insecure`.
 - **01M3JCE51T84JZKJ0NR89TPDNY** `riff-server` never terminates TLS. A
   proxy or the platform in front of it does, for example Cloud Run.
 
 ## Sign-in and tokens
 
 - **R14** The first sign-in provider is Google.
+- **01M3JZN229S3YA3BR6GN5H3MTY** riff has no built-in sign-in provider.
+  No client ID and no client secret is in the source or in a binary.
+  Each person who runs a riff with sign-in makes their own OAuth client
+  and gives it to `riff-server` in the environment:
+  `RIFF_OIDC_CLIENT_ID` and `RIFF_OIDC_CLIENT_SECRET`.
+- **01M3JZN1XQVVNVD0MJVM8J91HC** A `riff-server` with an OAuth client
+  (`RIFF_OIDC_CLIENT_ID`) requires sign-in, as with
+  `--require-sign-in`.
+- **01M3JZN1ZZED3FXQEFNJ4KVCN5** `riff connect claude` installs the
+  plugin, then runs `riff login` when the riff has sign-in and this
+  machine has no sign-in for it. An old sign-in
+  (01M3JNVBRS35B3CD67367JF7SJ) does not count. When riff cannot check
+  or the sign-in fails, the command warns and says what to do.
 - **R15** `riff-server` accepts the accounts of its allowed domains, and
   the people of 01M3JN3AFA2SAX0CEC1Y6E4NM5. The allowed domains are a
   setting. The default is `comotechnologies.io`.

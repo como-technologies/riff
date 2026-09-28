@@ -89,8 +89,8 @@ dev *ARGS:
     cargo build --workspace
     mkdir -p ~/.cargo/bin
     ln -sf "{{justfile_directory()}}/target/debug/riff" ~/.cargo/bin/riff
-    target/debug/riff connect claude
     systemctl --user stop riff-server 2>/dev/null || true
+    target/debug/riff connect claude
     trap 'printf "\nRestore the release setup:\n  just install\n  systemctl --user start riff-server\n"' EXIT
     target/debug/riff-server {{ARGS}}
 

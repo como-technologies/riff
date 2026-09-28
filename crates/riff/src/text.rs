@@ -757,6 +757,19 @@ pub fn signed_in(user: &str, server: &str) -> String {
     format!("You signed in to {server} as {user}.")
 }
 
+/// The line of `riff connect claude` after it signed in. It names no
+/// user: `riff whoami` shows it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::connect_signed_in("http://127.0.0.1:7878"),
+///     "You signed in to http://127.0.0.1:7878. riff whoami shows your user."
+/// );
+/// ```
+pub fn connect_signed_in(server: &str) -> String {
+    format!("You signed in to {server}. riff whoami shows your user.")
+}
+
 /// The answer to `riff logout`. `had` is false when there was no
 /// sign-in.
 ///
@@ -817,6 +830,25 @@ pub fn no_sign_in(server: &str, kept: bool) -> String {
 /// ```
 pub fn nobody_signs_in(server: &str) -> String {
     format!("riff-server at {server} has no sign-in. Nobody is signed in to it.")
+}
+
+/// The warning of `riff connect claude` when it cannot check the sign-in
+/// or the sign-in fails. The plugin is installed.
+///
+/// ```
+/// let error = anyhow::anyhow!("cannot reach riff-server");
+/// assert_eq!(
+///     riff::text::connect_no_sign_in("http://127.0.0.1:7878", &error),
+///     "the plugin is installed, but riff cannot check the sign-in at \
+///      http://127.0.0.1:7878: cannot reach riff-server. When the riff runs, \
+///      run riff connect claude again."
+/// );
+/// ```
+pub fn connect_no_sign_in(server: &str, error: &anyhow::Error) -> String {
+    format!(
+        "the plugin is installed, but riff cannot check the sign-in at {server}: {error:#}. \
+         When the riff runs, run riff connect claude again."
+    )
 }
 
 /// The answer to a release.

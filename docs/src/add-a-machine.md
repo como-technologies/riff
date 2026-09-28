@@ -1,33 +1,46 @@
 # Add a Machine
 
 The sessions of a second Linux machine can join the riff of your first
-machine. Do this only on a network that you trust. Each machine that
-can reach your first machine can then read and send messages in your
-riff, with any name.
+machine. A riff that takes connections from your network needs
+sign-in. You sign in on each machine with the same Google account.
 
-You do not sign in on either machine. riff uses the name that you log
-in with on each machine.
+## Make your OAuth client
+
+riff has no built-in sign-in app. Make your own Google OAuth client
+once. See
+[Make your own OAuth client](development.md#make-your-own-oauth-client).
+Keep its client ID and its client secret. Do not commit them.
 
 ## On the first machine
 
-Let the riff of your first machine take connections from your network:
+1. Let the riff of your first machine take connections from your
+   network, with sign-in. Put your client ID in place of `ID`, your
+   client secret in place of `SECRET`, and the email of your Google
+   account in place of `EMAIL`:
 
-```sh
-riff-server install --listen 0.0.0.0:7878 --insecure
-```
+   ```sh
+   export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET
+   riff-server install --listen 0.0.0.0:7878 --owner EMAIL
+   ```
 
-A riff with no sign-in listens only on `127.0.0.1`. `--insecure` lets
-it listen on your network. Without it, `riff-server` does not start.
+   `riff-server install` keeps the settings in a file that only you
+   can read. A riff with sign-in listens on your network only when it
+   has an owner. `--owner` names you as the owner.
 
-This command starts the riff again. The riff then forgets its messages
-and its claims. To update riff, see
+2. This command starts the riff again. The riff then forgets its
+   messages, its claims and its sessions. Sign in on the first
+   machine. Your browser opens:
+
+   ```sh
+   riff login
+   ```
+
+To update riff, see
 [Update riff on two machines](#update-riff-on-two-machines).
 
-With no sign-in, your riff trusts your network. Each message counts
-as verified. So each machine that can reach your riff can send a
-message as your lead, and answer for you. See
-[A riff with no sign-in](how-it-works.md#a-riff-with-no-sign-in) and
-[The lead](how-it-works.md#the-lead).
+riff-server has no TLS. On your network, the traffic is plain HTTP.
+Each call carries a proof from the key of its machine, so a copied
+token does not work on another machine.
 
 ## On the second machine
 
@@ -52,7 +65,9 @@ You also need a clone of the same project.
    If the second machine cannot find that name, use the address of the
    first machine. `hostname -I` on the first machine shows it.
 
-3. Add riff to Claude Code:
+3. Open a new terminal, so that it has `RIFF_SERVER`. Add riff to
+   Claude Code. It signs you in: use the same Google account as on the
+   first machine:
 
    ```sh
    riff connect claude
@@ -60,8 +75,8 @@ You also need a clone of the same project.
 
 ## Check it
 
-Open a new terminal on the second machine, and list the sessions of the
-riff. It shows the sessions of both machines:
+On the second machine, list the sessions of the riff. It shows the
+sessions of both machines:
 
 ```sh
 riff who
@@ -81,8 +96,9 @@ of your first machine.
 Update both machines to the same riff at the same time.
 
 1. On the first machine, install riff, start its riff again, and add
-   riff to Claude Code. `riff-server install` keeps `--listen` and
-   `--insecure` from the last install:
+   riff to Claude Code. `riff-server install` keeps the OAuth client,
+   `--listen` and `--owner` from the last install. The new riff forgets
+   each sign-in, so `riff connect claude` signs you in again:
 
    ```sh
    cargo install --locked --git https://github.com/como-technologies/riff riff riff-server

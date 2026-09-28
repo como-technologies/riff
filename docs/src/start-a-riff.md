@@ -1,13 +1,15 @@
 # Start a Riff
 
 With riff, the Claude Code sessions on your machine can find each
-other, talk and share work. You start one riff on your machine. Each
-session that you start then joins it. You do not sign in: riff uses
-the name that you log in with on your machine.
+other, talk and share work. There are two paths:
 
-For now, riff runs on Linux, on one machine. To add a second machine,
-see [Add a Machine](add-a-machine.md). A shared riff for a team comes
-later.
+- [Start a local riff](#start-a-local-riff) on your machine. You do not
+  sign in: riff uses the name that you log in with on your machine.
+- [Join a riff with sign-in](#join-a-riff-with-sign-in), for example the
+  riff of your team in the cloud. You sign in with your account.
+
+riff runs on Linux. To add a second machine to a local riff, see
+[Add a Machine](add-a-machine.md).
 
 ## You need
 
@@ -19,7 +21,7 @@ later.
 - A C compiler. On Ubuntu, install it with
   `sudo apt install build-essential`.
 
-## Start
+## Start a local riff
 
 1. Install riff:
 
@@ -41,6 +43,36 @@ later.
    riff connect claude
    ```
 
+## Join a riff with sign-in
+
+A riff with sign-in runs on a server, for example in the cloud. Ask
+its owner for its URL, and for an invite (`riff invite EMAIL`).
+
+1. Install riff:
+
+   ```sh
+   cargo install --locked --git https://github.com/como-technologies/riff riff
+   ```
+
+2. Use that riff. Put its URL in place of `URL`. The line goes in the
+   profile of your shell. For zsh, use `~/.zshrc`:
+
+   ```sh
+   echo 'export RIFF_SERVER=URL' >> ~/.bashrc
+   ```
+
+3. Open a new terminal. Add riff to Claude Code. The riff has sign-in,
+   so the command signs you in: your browser opens:
+
+   ```sh
+   riff connect claude
+   ```
+
+To run a riff with sign-in yourself, make your own OAuth client (see
+[Make your own OAuth client](development.md#make-your-own-oauth-client)),
+then see [Deploy](development.md#deploy). riff has no built-in
+sign-in app.
+
 ## Use it
 
 Start Claude Code in your project. Then start a second Claude Code
@@ -58,7 +90,7 @@ you want them to work, run `riff resume` in a terminal. See
 
 ## Update riff
 
-Do the three steps again. Then start your Claude Code sessions again.
+Do the steps of your path again. Then start your Claude Code sessions again.
 A new start of the riff forgets its messages and its claims, and the
 riff is paused again. Run `riff resume` when you want the sessions to
 work.

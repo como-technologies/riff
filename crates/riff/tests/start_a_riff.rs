@@ -1,5 +1,7 @@
-//! "Start a Riff", the first page of the book for a person: at most
-//! three commands (R4), each one real, and no sign-in. "Add a Machine"
+//! "Start a Riff", the first page of the book for a person: a local riff
+//! with at most three commands (R4), each one real, and no sign-in. A
+//! riff with sign-in: `riff connect claude` signs in
+//! (01M3JZN1ZZED3FXQEFNJ4KVCN5). "Add a Machine"
 //! (R203): its commands are real too, and its update installs each
 //! machine again. No book page names the Cloud Run URL (R5). The `riff-server` commands of the pages are checked in
 //! `crates/riff-server/tests/start_a_riff.rs`.
@@ -9,15 +11,19 @@ use std::path::Path;
 
 use assert_cmd::Command;
 
-/// The commands in the `sh` blocks of the book page `name`, in order.
-fn commands_of(name: &str) -> Vec<String> {
+/// The text of the book page `name`.
+fn page(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../docs/src")
         .join(name);
-    let page = fs::read_to_string(path).unwrap();
+    fs::read_to_string(path).unwrap()
+}
+
+/// The commands in the `sh` blocks of `text`, in order.
+fn commands_in(text: &str) -> Vec<String> {
     let mut commands = Vec::new();
     let mut in_sh = false;
-    for line in page.lines().map(str::trim) {
+    for line in text.lines().map(str::trim) {
         if line.starts_with("```") {
             in_sh = !in_sh && line == "```sh";
         } else if in_sh && !line.is_empty() && !line.starts_with('#') {
@@ -27,9 +33,36 @@ fn commands_of(name: &str) -> Vec<String> {
     commands
 }
 
-/// The commands of "Start a Riff".
+/// The commands of the book page `name`, in order.
+fn commands_of(name: &str) -> Vec<String> {
+    commands_in(&page(name))
+}
+
+/// The commands of one `##` part of the book page `name`.
+fn commands_of_part(name: &str, heading: &str) -> Vec<String> {
+    let page = page(name);
+    let start = page
+        .find(&format!("\n## {heading}\n"))
+        .unwrap_or_else(|| panic!("{heading} is in {name}"));
+    let rest = &page[start + 1..];
+    let part = rest[3..].find("\n## ").map_or(rest, |end| &rest[..end + 3]);
+    commands_in(part)
+}
+
+/// The commands of "Start a local riff".
 fn commands() -> Vec<String> {
-    commands_of("start-a-riff.md")
+    commands_of_part("start-a-riff.md", "Start a local riff")
+}
+
+#[test]
+fn a_person_joins_a_riff_with_sign_in_with_riff_connect_claude() {
+    let commands = commands_of_part("start-a-riff.md", "Join a riff with sign-in");
+    assert_eq!(commands.len(), 3, "{commands:?}");
+    assert!(
+        commands[1].contains("export RIFF_SERVER=URL"),
+        "{commands:?}"
+    );
+    assert_eq!(commands[2], "riff connect claude");
 }
 
 /// Checks that each `riff` command in `commands` runs with `--help`.
@@ -73,8 +106,8 @@ fn each_riff_command_of_the_page_is_real_and_none_signs_in() {
 
 #[test]
 fn a_second_machine_installs_riff_names_the_first_and_connects() {
-    let commands = commands_of("add-a-machine.md");
-    let install: Vec<&str> = commands[1].split_whitespace().collect();
+    let commands = commands_of_part("add-a-machine.md", "On the second machine");
+    let install: Vec<&str> = commands[0].split_whitespace().collect();
     assert_eq!(
         install.last(),
         Some(&env!("CARGO_PKG_NAME")),
@@ -82,10 +115,17 @@ fn a_second_machine_installs_riff_names_the_first_and_connects() {
     );
     assert!(install.contains(&env!("CARGO_PKG_REPOSITORY")));
     assert!(
-        commands[2].contains("export RIFF_SERVER=http://FIRST:7878"),
+        commands[1].contains("export RIFF_SERVER=http://FIRST:7878"),
         "{commands:?}"
     );
-    let riff: Vec<String> = commands
+    // The first machine gets the OAuth client of the person from the
+    // environment (01M3JZN229S3YA3BR6GN5H3MTY).
+    let first = commands_of_part("add-a-machine.md", "On the first machine");
+    assert_eq!(
+        first[0],
+        "export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET"
+    );
+    let riff: Vec<String> = commands_of("add-a-machine.md")
         .iter()
         .filter(|c| c.starts_with("riff "))
         .cloned()
@@ -93,6 +133,7 @@ fn a_second_machine_installs_riff_names_the_first_and_connects() {
     assert_eq!(
         riff,
         [
+            "riff login",
             "riff connect claude",
             "riff who",
             "riff connect claude",
