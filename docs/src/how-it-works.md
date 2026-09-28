@@ -299,6 +299,18 @@ with its `RIFF_SESSION`:
 echo '{"reason":"other"}' | riff hook session-end
 ```
 
+### Start an item again
+
+When the earlier work is wrong or too old, the session starts again.
+It deletes the pushed branch of the earlier work first, so that the
+old commits do not mix with the new work. For `issue-12`:
+
+```sh
+git push origin --delete worktree-issue-12
+```
+
+The session says in its start post that it deleted the branch.
+
 ## Join the work
 
 A new session starts in the main worktree. It finds its own work: it
