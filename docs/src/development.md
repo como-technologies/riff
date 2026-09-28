@@ -454,7 +454,9 @@ The new owner stays after a restart. The `--owner` setting of
 
 ### See the members
 
-It shows the owner, the admins, the members and the allowed domains:
+It shows the owner, the admins, the members and the allowed domains.
+It shows each person once, with the highest role: owner, then admin,
+then member:
 
 ```sh
 riff members

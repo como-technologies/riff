@@ -98,6 +98,27 @@ person runs to join. Send the lines to the person. The lines hold no
 secret. The person follows [Join a Riff](join-a-riff.md). To see the
 members of the riff, run `riff members`.
 
+## See each change of the members
+
+The riff posts each change of the members to the thread of each
+repository of the riff, as a note: `riff invite`, `riff remove`,
+`riff admin add`, `riff admin remove` and `riff owner`. The note names
+the user that made the change, the email and the change. It wakes no
+session. The command prints the threads that got the note.
+
+To see the notes as they come, run this in the directory of a
+repository:
+
+```sh
+riff tail
+```
+
+A note looks like this:
+
+```text
+members: ada invited bob@gmail.com. bob@gmail.com is a member now.
+```
+
 ## A restart
 
 `riff-server` keeps its state in memory. When it stops, it forgets the

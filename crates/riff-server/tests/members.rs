@@ -393,7 +393,8 @@ async fn the_owner_passes_the_role_that_stays_after_a_restart() {
     let bob = sign_in(&url, &issuer, "bob@gmail.com", None).await.unwrap();
     let list = members(&url, &bob).await;
     assert_eq!(list.owner.as_deref(), Some("bob@gmail.com"));
+    // The old owner shows once, as an admin (01M3MN157X8N9QKER1AJEPEJVX).
     assert_eq!(list.admins, ["ada@gmail.com"]);
-    assert_eq!(list.members, ["ada@gmail.com", "carol@gmail.com"]);
+    assert_eq!(list.members, ["carol@gmail.com"]);
     assert_eq!(set_admin(&url, &bob, "ada@gmail.com", false).await.0, 200);
 }

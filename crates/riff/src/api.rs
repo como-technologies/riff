@@ -73,6 +73,18 @@ use tokio::sync::Mutex;
 
 use crate::{device, login, secrets, text};
 
+/// A change of the members that `riff-server` made, and the posts of
+/// its note (01M3MN14ZCTRVD3T455P6TFK1B). The change stands also when
+/// the post fails (01M3MN1537Z0K3BRK6H2BZKZT0).
+#[derive(Debug)]
+pub struct Changed<T> {
+    /// The reply of `riff-server` to the change.
+    pub done: T,
+    /// The note in the thread of each repository, or the error of the
+    /// post.
+    pub news: Result<Vec<Posted>>,
+}
+
 /// The server that `riff` uses when nothing else is set: the server on
 /// this machine (R133). `RIFF_SERVER` names another server.
 ///
@@ -714,30 +726,51 @@ impl Api {
             state: Some(state),
         };
         let reply: RiffReply = self.call("riff", &request).await?;
-        let mut posted = Vec::new();
         if !reply.changed {
-            return Ok((reply, posted));
+            return Ok((reply, Vec::new()));
         }
+        let body = text::riff_news(state);
+        let posted = self
+            .post_to_each_repo(me, false, &body, Kind::Message)
+            .await?;
+        Ok((reply, posted))
+    }
+
+    /// Posts `body` to the thread of each repository of a session in
+    /// `who` (`all` counts the gone sessions too), to that repository.
+    async fn post_to_each_repo(
+        &self,
+        me: &SessionUri,
+        all: bool,
+        body: &str,
+        kind: Kind,
+    ) -> Result<Vec<Posted>> {
         let mut repos: Vec<ThreadName> = self
-            .who(me, false)
+            .who(me, all)
             .await?
             .into_iter()
             .filter_map(|s| s.uri.default_thread())
             .collect();
         repos.sort();
         repos.dedup();
-        let body = text::riff_news(state);
+        let mut posted = Vec::new();
         for repo in repos {
             let to = Selector {
                 repo: Some(repo.to_string()),
                 ..Selector::default()
             };
-            posted.push(
-                self.post(me, Some(&repo), &[to], &body, Kind::Message)
-                    .await?,
-            );
+            posted.push(self.post(me, Some(&repo), &[to], body, kind).await?);
         }
-        Ok((reply, posted))
+        Ok(posted)
+    }
+
+    /// Posts the note of a change of the members, from `me`, to the
+    /// thread of each repository of the riff: the repository of each
+    /// session in `riff who --all` (01M3MN14ZCTRVD3T455P6TFK1B). The
+    /// note wakes no session.
+    async fn members_news<T>(&self, me: &SessionUri, done: T, body: &str) -> Changed<T> {
+        let news = self.post_to_each_repo(me, true, body, Kind::Note).await;
+        Changed { done, news }
     }
 
     /// The wakes for one session, on one connection. The session is
@@ -767,43 +800,58 @@ impl Api {
     }
 
     /// Adds a member of the riff, by verified email. Only an admin can.
-    pub async fn invite(&self, email: &str) -> Result<Invited> {
+    /// `me` is the person, and posts the note of the change.
+    pub async fn invite(&self, me: &SessionUri, email: &str) -> Result<Changed<Invited>> {
         self.need_sign_in().await?;
         let request = Invite {
             email: email.to_owned(),
         };
-        self.call("invite", &request).await
+        let done: Invited = self.call("invite", &request).await?;
+        let body = text::invited_news(me.who().user(), &done);
+        Ok(self.members_news(me, done, &body).await)
     }
 
     /// Removes a member of the riff and ends each sign-in of that person.
-    /// Only an admin can.
-    pub async fn remove(&self, email: &str) -> Result<Removed> {
+    /// Only an admin can. `me` is the person, and posts the note of the
+    /// change.
+    pub async fn remove(&self, me: &SessionUri, email: &str) -> Result<Changed<Removed>> {
         self.need_sign_in().await?;
         let request = Remove {
             email: email.to_owned(),
         };
-        self.call("remove", &request).await
+        let done: Removed = self.call("remove", &request).await?;
+        let body = text::removed_news(me.who().user(), &done);
+        Ok(self.members_news(me, done, &body).await)
     }
 
     /// Makes a person an admin, or an admin a member again. Only the
-    /// owner can.
-    pub async fn set_admin(&self, email: &str, admin: bool) -> Result<AdminSet> {
+    /// owner can. `me` is the person, and posts the note of the change.
+    pub async fn set_admin(
+        &self,
+        me: &SessionUri,
+        email: &str,
+        admin: bool,
+    ) -> Result<Changed<AdminSet>> {
         self.need_sign_in().await?;
         let request = SetAdmin {
             email: email.to_owned(),
             admin,
         };
-        self.call("admin", &request).await
+        let done: AdminSet = self.call("admin", &request).await?;
+        let body = text::admin_news(me.who().user(), &done);
+        Ok(self.members_news(me, done, &body).await)
     }
 
     /// Passes the owner role to a member or an admin. Only the owner
-    /// can.
-    pub async fn pass_owner(&self, email: &str) -> Result<OwnerPassed> {
+    /// can. `me` is the person, and posts the note of the change.
+    pub async fn pass_owner(&self, me: &SessionUri, email: &str) -> Result<Changed<OwnerPassed>> {
         self.need_sign_in().await?;
         let request = PassOwner {
             email: email.to_owned(),
         };
-        self.call("owner", &request).await
+        let done: OwnerPassed = self.call("owner", &request).await?;
+        let body = text::owner_news(me.who().user(), &done);
+        Ok(self.members_news(me, done, &body).await)
     }
 
     /// Who may join the riff.

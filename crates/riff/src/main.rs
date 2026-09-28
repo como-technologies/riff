@@ -410,13 +410,17 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Command::Invite { email } => {
-            let done = api.signed_in(None)?.invite(email).await?;
-            println!("{}", text::invited(&done));
+            let me = person(&api)?;
+            let changed = api.signed_in(None)?.invite(&me, email).await?;
+            println!("{}", text::invited(&changed.done));
+            print_members_news(&changed.news);
             return Ok(());
         }
         Command::Remove { email } => {
-            let done = api.signed_in(None)?.remove(email).await?;
-            println!("{}", text::removed(&done));
+            let me = person(&api)?;
+            let changed = api.signed_in(None)?.remove(&me, email).await?;
+            println!("{}", text::removed(&changed.done));
+            print_members_news(&changed.news);
             return Ok(());
         }
         Command::Members => {
@@ -428,13 +432,17 @@ async fn main() -> Result<()> {
                 Admin::Add { email } => (email, true),
                 Admin::Remove { email } => (email, false),
             };
-            let done = api.signed_in(None)?.set_admin(email, admin).await?;
-            println!("{}", text::admin_set(&done));
+            let me = person(&api)?;
+            let changed = api.signed_in(None)?.set_admin(&me, email, admin).await?;
+            println!("{}", text::admin_set(&changed.done));
+            print_members_news(&changed.news);
             return Ok(());
         }
         Command::Owner { email } => {
-            let done = api.signed_in(None)?.pass_owner(email).await?;
-            println!("{}", text::owner_passed(&done));
+            let me = person(&api)?;
+            let changed = api.signed_in(None)?.pass_owner(&me, email).await?;
+            println!("{}", text::owner_passed(&changed.done));
+            print_members_news(&changed.news);
             return Ok(());
         }
         _ => {}
@@ -558,6 +566,22 @@ async fn main() -> Result<()> {
         | Command::Owner { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
+}
+
+/// The person on this host, with no session and no repository. It posts
+/// the note of a change of the members (01M3MN14ZCTRVD3T455P6TFK1B).
+fn person(api: &Api) -> Result<SessionUri> {
+    let here = identity::place(&std::env::current_dir()?)?;
+    identity::person(&Place::host_only(here.host())?, api.base())
+}
+
+/// Prints where the note of a change of the members went, or the error
+/// of its post on stderr (01M3MN1537Z0K3BRK6H2BZKZT0).
+fn print_members_news(news: &Result<Vec<riff_core::wire::Posted>>) {
+    match news {
+        Ok(_) => println!("{}", text::members_news(news)),
+        Err(_) => anstream::eprintln!("{}", text::members_news(news)),
+    }
 }
 
 /// Shows the authorize URL of a sign-in, and opens it in the browser.

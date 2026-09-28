@@ -108,7 +108,7 @@ pub mod state;
 pub mod store;
 pub mod token;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -1091,21 +1091,18 @@ async fn owner(
     Ok(Json(OwnerPassed { owner, admin }))
 }
 
-/// Shows who may join the riff.
+/// Shows who may join the riff: each person once, with the highest
+/// role.
 async fn members(
     AxumState(s): AxumState<Shared>,
     Extension(_): Extension<SignedIn>,
     Json(Members {}): Json<Members>,
 ) -> Json<MembersReply> {
-    let tokens = s.tokens();
+    let (owner, admins, members) = s.tokens().roles(&s.config.admins);
     Json(MembersReply {
-        owner: tokens.owner().map(str::to_owned),
-        admins: {
-            let mut admins: BTreeSet<String> = tokens.admins().map(str::to_owned).collect();
-            admins.extend(s.config.admins.iter().map(|a| a.trim().to_lowercase()));
-            admins.into_iter().collect()
-        },
-        members: tokens.members().map(str::to_owned).collect(),
+        owner,
+        admins,
+        members,
         allowed_domains: s
             .config
             .provider

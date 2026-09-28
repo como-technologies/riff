@@ -549,6 +549,123 @@ pub fn owner_passed(done: &OwnerPassed) -> String {
     )
 }
 
+/// The note of `riff invite` in each repository thread
+/// (01M3MN14ZCTRVD3T455P6TFK1B). `user` made the change.
+///
+/// ```
+/// use riff_core::wire::Invited;
+///
+/// let done = Invited { email: "bob@gmail.com".into(), address: "https://r.io".into() };
+/// assert_eq!(
+///     riff::text::invited_news("ada", &done),
+///     "members: ada invited bob@gmail.com. bob@gmail.com is a member now."
+/// );
+/// ```
+pub fn invited_news(user: &str, done: &Invited) -> String {
+    let email = &done.email;
+    format!("members: {user} invited {email}. {email} is a member now.")
+}
+
+/// The note of `riff remove` in each repository thread
+/// (01M3MN14ZCTRVD3T455P6TFK1B).
+///
+/// ```
+/// use riff_core::wire::Removed;
+///
+/// let done = Removed { email: "bob@gmail.com".into(), sign_ins: 2 };
+/// assert_eq!(
+///     riff::text::removed_news("ada", &done),
+///     "members: ada removed bob@gmail.com. bob@gmail.com is not a member now."
+/// );
+/// ```
+pub fn removed_news(user: &str, done: &Removed) -> String {
+    let email = &done.email;
+    format!("members: {user} removed {email}. {email} is not a member now.")
+}
+
+/// The note of `riff admin add` and `riff admin remove` in each
+/// repository thread (01M3MN14ZCTRVD3T455P6TFK1B).
+///
+/// ```
+/// use riff_core::wire::AdminSet;
+///
+/// let added = AdminSet { email: "bob@gmail.com".into(), admin: true };
+/// assert_eq!(
+///     riff::text::admin_news("ada", &added),
+///     "members: ada made bob@gmail.com an admin."
+/// );
+/// let removed = AdminSet { email: "bob@gmail.com".into(), admin: false };
+/// assert_eq!(
+///     riff::text::admin_news("ada", &removed),
+///     "members: ada made bob@gmail.com a member again, not an admin."
+/// );
+/// ```
+pub fn admin_news(user: &str, done: &AdminSet) -> String {
+    let email = &done.email;
+    if done.admin {
+        format!("members: {user} made {email} an admin.")
+    } else {
+        format!("members: {user} made {email} a member again, not an admin.")
+    }
+}
+
+/// The note of `riff owner` in each repository thread
+/// (01M3MN14ZCTRVD3T455P6TFK1B).
+///
+/// ```
+/// use riff_core::wire::OwnerPassed;
+///
+/// let done = OwnerPassed { owner: "bob@gmail.com".into(), admin: "ada@gmail.com".into() };
+/// assert_eq!(
+///     riff::text::owner_news("ada", &done),
+///     "members: ada passed the owner role to bob@gmail.com. ada@gmail.com stays an admin."
+/// );
+/// ```
+pub fn owner_news(user: &str, done: &OwnerPassed) -> String {
+    format!(
+        "members: {user} passed the owner role to {}. {} stays an admin.",
+        done.owner, done.admin
+    )
+}
+
+/// The line after a change of the members: where its note went, or why
+/// it did not go (01M3MN1537Z0K3BRK6H2BZKZT0).
+///
+/// ```
+/// use riff_core::wire::Posted;
+///
+/// let posted = vec![Posted {
+///     thread: "como-technologies/riff".parse().unwrap(),
+///     seq: 4,
+///     woken: vec![],
+///     unmatched: vec![],
+/// }];
+/// assert_eq!(
+///     riff::text::members_news(&Ok(posted)),
+///     "Posted a note of the change to como-technologies/riff."
+/// );
+/// assert_eq!(
+///     riff::text::members_news(&Ok(vec![])),
+///     "Posted no note of the change: no session is in a repository."
+/// );
+/// assert_eq!(
+///     riff::text::members_news(&Err(anyhow::anyhow!("403"))),
+///     "riff: the change is done, but riff cannot post a note of it: 403"
+/// );
+/// ```
+pub fn members_news(news: &anyhow::Result<Vec<Posted>>) -> String {
+    match news {
+        Ok(posted) if posted.is_empty() => {
+            "Posted no note of the change: no session is in a repository.".into()
+        }
+        Ok(posted) => {
+            let threads: Vec<String> = posted.iter().map(|p| p.thread.to_string()).collect();
+            format!("Posted a note of the change to {}.", threads.join(", "))
+        }
+        Err(e) => format!("riff: the change is done, but riff cannot post a note of it: {e:#}"),
+    }
+}
+
 /// The answer to `riff members`.
 ///
 /// ```

@@ -856,9 +856,10 @@ pub struct MembersReply {
     /// The email of the owner. `None` before the first sign-in.
     pub owner: Option<String>,
     /// The email of each admin, sorted: the admins that the owner made
-    /// and the admins of the settings (R210).
+    /// and the admins of the settings (R210). The owner is not in it.
     pub admins: Vec<String>,
-    /// The email of each member, sorted.
+    /// The email of each member that is not the owner and not an admin,
+    /// sorted (01M3MN157X8N9QKER1AJEPEJVX).
     pub members: Vec<String>,
     /// The allowed domains (R15).
     pub allowed_domains: Vec<String>,
