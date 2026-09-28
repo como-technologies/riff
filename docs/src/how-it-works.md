@@ -1088,6 +1088,9 @@ riff login
 ```
 
 The command after it runs with no sign-in, so it gives no other error.
+
+### A restart with a bucket
+
 A restart with a bucket keeps the riff ID, and your sign-in stays.
 
 With a bucket, `riff-server` saves each change to Cloud Storage

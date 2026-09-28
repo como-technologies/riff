@@ -391,3 +391,29 @@ async fn a_sign_in_from_before_the_riff_id_is_old() {
     let next = api.clone().signed_in(None).unwrap();
     next.who(&ada(), false).await.unwrap();
 }
+
+/// In "A restart" of the book, the text about a bucket has its own
+/// heading, after the heading for a restart with no bucket.
+#[test]
+fn the_book_keeps_the_bucket_out_of_the_restart_with_no_bucket() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let no_bucket = page
+        .find("\n### After a restart with no bucket, run riff login\n")
+        .expect("a heading for a restart with no bucket");
+    let rest = &page[no_bucket + 1..];
+    let end = rest[4..].find("\n#").map_or(rest.len(), |i| i + 4);
+    let part = &rest[..end];
+    for text in ["with a bucket", "With a bucket"] {
+        assert!(
+            !part.contains(text),
+            "{text:?} is under the no-bucket heading"
+        );
+    }
+    assert!(
+        rest[end..].starts_with("\n### A restart with a bucket\n"),
+        "the bucket heading follows the no-bucket heading"
+    );
+}
