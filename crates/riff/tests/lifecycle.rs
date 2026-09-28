@@ -4,11 +4,14 @@
 //! `riff` and a fake `riff-server` that log their arguments.
 
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::Duration;
 
 use axum::http::HeaderValue;
 use axum::response::Response;
+use riff::lifecycle::PROBE_WAIT;
 use riff_core::build::{Build, HEADER};
 
 /// A build with another commit.
@@ -159,6 +162,41 @@ async fn server_names_another_build_and_a_riff_that_does_not_answer() {
     );
     assert!(
         stdout.contains("http://127.0.0.1:9: no answer."),
+        "{stdout}"
+    );
+}
+
+/// A fake D-Bus in `dir`. It takes each connection and says nothing
+/// for longer than [`PROBE_WAIT`], then closes it. So a keyring call
+/// through it waits that long, the same as a keyring on a busy machine.
+/// Returns the value for `DBUS_SESSION_BUS_ADDRESS`.
+fn slow_bus(dir: &Path) -> String {
+    let path = dir.join("bus");
+    let listener = UnixListener::bind(&path).unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                std::thread::sleep(PROBE_WAIT + Duration::from_secs(1));
+                drop(stream);
+            });
+        }
+    });
+    format!("unix:path={}", path.display())
+}
+
+/// 01M3MX598VTWZ02R7J6AYJB2E5: a slow keyring does not hide a riff that
+/// answers. riff reads the sign-in of the riff of this machine only
+/// after the probe of the riff that `riff` uses ends.
+#[tokio::test]
+async fn server_shows_a_riff_that_answers_also_with_a_slow_keyring() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = fake(Build::this()).await;
+    let mut cmd = riff(&["server"]);
+    cmd.env("RIFF_SERVER", &url)
+        .env("DBUS_SESSION_BUS_ADDRESS", slow_bus(dir.path()));
+    let stdout = text(&run(cmd).await.stdout);
+    assert!(
+        stdout.contains(&format!("{url}: answers, the same build.")),
         "{stdout}"
     );
 }

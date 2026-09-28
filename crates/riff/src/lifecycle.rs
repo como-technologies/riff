@@ -17,6 +17,13 @@
 //! machine about themselves, with [`Api::probe`]. It shows each one on
 //! one line (01M3K0Q854K18DGXJKQ427W586). See [`crate::text::server_view`].
 //!
+//! Only the network counts in the wait of a probe
+//! (01M3MX598VTWZ02R7J6AYJB2E5). The two probes run at the same time.
+//! riff reads the sign-ins from the keyring only after both probes end.
+//! A keyring call blocks its task. A slow keyring in that task would use
+//! up the wait of the other probe, and a riff that answers would show
+//! "no answer".
+//!
 //! `riff update` does the update of a machine in one command
 //! (01M3K0Q892KWM76R9DJC1P37JA). It installs a release: the git tag
 //! `vX.Y.Z` of the crate version X.Y.Z (01M3MRMASMP59PKHAV92XSV7XE), not
@@ -101,12 +108,15 @@ pub struct View {
     pub local: Option<Seen>,
 }
 
-/// Asks the riff at `url` about itself.
-pub async fn look(url: &str) -> Seen {
-    let answer = Api::new(url)
-        .probe(PROBE_WAIT)
-        .await
-        .map_err(|e| format!("{e:#}"));
+/// Asks the riff of `api` about itself, within [`PROBE_WAIT`].
+async fn probe(api: &Api) -> Result<Probe, String> {
+    api.probe(PROBE_WAIT).await.map_err(|e| format!("{e:#}"))
+}
+
+/// What `riff` saw of the riff at `url`: its `answer`, and the sign-in
+/// of this machine from the keyring. The keyring call blocks, so call
+/// it only after each probe ends (01M3MX598VTWZ02R7J6AYJB2E5).
+fn seen(url: &str, answer: Result<Probe, String>) -> Seen {
     Seen {
         url: url.to_owned(),
         answer,
@@ -117,11 +127,27 @@ pub async fn look(url: &str) -> Seen {
 /// Looks at the riff at `server`, from `source`, and at the riff of
 /// this machine at `local` when it is another riff (see [`same_riff`]).
 /// `riff` passes [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
+///
+/// ```
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+/// use riff::lifecycle::{Source, view};
+///
+/// let view = view("http://127.0.0.1:9", "http://127.0.0.1:7878", Source::Flag).await;
+/// assert!(view.used.answer.is_err());
+/// assert!(!view.used.signed_in);
+/// assert_eq!(view.local.unwrap().url, "http://127.0.0.1:7878");
+/// # }
+/// ```
 pub async fn view(server: &str, local: &str, source: Source) -> View {
+    let used = Api::new(server);
     let (used, local) = if same_riff(server, local) {
-        (look(server).await, None)
+        (seen(server, probe(&used).await), None)
     } else {
-        tokio::join!(look(server), async { Some(look(local).await) })
+        let other = Api::new(local);
+        let (a, b) = tokio::join!(probe(&used), probe(&other));
+        (seen(server, a), Some(seen(local, b)))
     };
     View {
         source,
@@ -384,7 +410,7 @@ pub async fn update(
 /// riff (01M3K0Q892KWM76R9DJC1P37JA).
 pub async fn old_riff(new: Option<&Build>, server: &str, local: &str) -> Option<String> {
     let url = if is_loopback(server) { server } else { local };
-    let running = look(url).await.answer.ok()?.build?;
+    let running = probe(&Api::new(url)).await.ok()?.build?;
     (!new?.matches(&running)).then(|| url.to_owned())
 }
 

@@ -466,6 +466,9 @@
   sign-in.
 - **01M3MRMB2M0RM1JFVJ0W695SHB** `riff server` shows the release of
   `riff`, and the release of each server that answers with a build.
+- **01M3MX598VTWZ02R7J6AYJB2E5** Only the network counts in the wait
+  of `riff server` for an answer. A slow keyring does not make a server
+  that answers show "no answer".
 - **01M3MNT26K77E4RDHH42SB5AEG** Two server URLs name one riff when
   they have the same port, and the same host or two loopback names,
   for example `localhost` and `127.0.0.1`. `riff server` shows one
