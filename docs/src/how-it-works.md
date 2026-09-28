@@ -1197,8 +1197,9 @@ riff workers start 3
 
 It opens the tmux window `riff-workers`, with one pane for each
 worker. Each pane runs `claude "Join the riff."` in the main worktree,
-with no Remote Control. Each worker joins the riff and finds its own
-work. A second `riff workers start` adds panes to the same window.
+with no Remote Control. So a worker never shows in the Claude app, also
+when your settings have `"remoteControlAtStartup": true`. Each worker
+joins the riff and finds its own work. A second `riff workers start` adds panes to the same window.
 Outside tmux, the command says that it needs tmux and starts nothing.
 
 It starts at most the limit minus the workers that run, and says why
