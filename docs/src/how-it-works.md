@@ -338,7 +338,10 @@ sequenceDiagram
 ```
 
 A session removes only its own worktree, and only when the work is
-safe on the default branch.
+safe on the default branch. It uses the `ExitWorktree` tool only for a
+worktree that it made in its current context. After `/clear` or
+`riff workers next`, the tool says that the session is not the owner.
+Then the session runs `git worktree remove` in the main worktree.
 
 ## Acceptance criteria
 
@@ -402,8 +405,14 @@ sequenceDiagram
     end
 ```
 
+Only a session that holds no claim verifies. A session that waits for
+its own verify keeps its claim and does not verify: a verify fills its
+context and costs tokens. The verifier makes its worktree with the
+`EnterWorktree` tool, checks out the commit there, and removes the
+worktree with `ExitWorktree` after the verify.
+
 A verify request wakes only the lead of the author's user. The lead
-gives it to a free session. When the user has no live lead, the
+gives it to a session with no claim, or starts a worker for it. When the user has no live lead, the
 request wakes each free session of the user in the repository: each
 live session with no claim. Each other session sees it at its next
 read. A verify request is free work: a session picks it like any other

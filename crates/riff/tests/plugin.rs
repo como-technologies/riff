@@ -154,20 +154,23 @@ fn connect_writes_the_skill_with_the_verify_flow() {
         assert!(flat.contains(text), "no {text:?} in {section}");
     }
 
-    // The verify worktree has a name of its own and works from any
-    // worktree (R202): add it by path, then remove it with no force.
+    // The verify worktree has a name of its own
+    // (01M3K0FZ7X1NCPHXFN6WA4T3ES): the tools make it and remove it,
+    // with no `git worktree add` by hand and no `cd`.
     let verifier = &section[check..];
-    let add = verifier
-        .find("`git worktree add --detach MAIN/.claude/worktrees/verify-issue-12-a6cf COMMIT`")
-        .unwrap();
-    let enter = verifier
-        .find("Call `EnterWorktree` with that path")
-        .unwrap();
-    let back = verifier.find("Go back to where you came").unwrap();
-    let remove = verifier.find("`git worktree remove PATH`").unwrap();
-    assert!(add < enter && enter < back && back < remove, "{verifier}");
-    assert!(verifier.contains("Do not force."), "{verifier}");
-    assert!(!verifier.contains("`ExitWorktree` with action `remove`"));
+    let flat = verifier.split_whitespace().collect::<Vec<_>>().join(" ");
+    let at = |text: &str| {
+        flat.find(text)
+            .unwrap_or_else(|| panic!("no {text:?} in {verifier}"))
+    };
+    let enter = at("Call `EnterWorktree` with a name");
+    let name = at("`verify-issue-12-a6cf`");
+    let checkout = at("`git checkout --detach COMMIT` there. Do not `cd`.");
+    let release = at("Call `release` with `verify-issue-12`.");
+    let remove = at("call `ExitWorktree` with action `remove` and `discard_changes` set to true.");
+    assert!(enter < name && name < checkout && checkout < release && release < remove);
+    assert!(!verifier.contains("worktree add"), "{verifier}");
+    assert!(!verifier.contains("`keep`"), "{verifier}");
 }
 
 #[test]

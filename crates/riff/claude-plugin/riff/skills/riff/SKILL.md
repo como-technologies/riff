@@ -56,7 +56,8 @@ Do these steps when your session starts:
    2 only when the riff is running.
 2. Find a free work item: an open issue of the current wave that no
    session holds, or a verify request that no session holds (see
-   "Waves" and "Verify finished work"). Take work only from the
+   "Waves" and "Verify finished work"). Take a verify request only
+   when you hold no claim. Take work only from the
    current wave. Never take an item whose needs are open. When the
    current wave has no free item, verify the work of another session,
    run your checks after the merge, or wait. Pick the item that you
@@ -220,7 +221,7 @@ are in "Pull requests on GitHub".
    it at its next `read`. For example:
    `verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4`.
 5. Keep your claim. Set your status to blocked: waits for a verify.
-   While you wait, you can verify the work of another session. If no
+   While you wait, do not verify the work of another session. If no
    session takes the request, wait.
 6. On a fail, fix the work and push it. On a conflict with the default
    branch, rebase on it and push. A pass counts only for its commit, so
@@ -242,7 +243,11 @@ item is merged (see "Waves").
 
 ### Verify the work of another session
 
-A verify request is free work. Pick it like any other item.
+A verify request is free work for a session that holds no claim. Pick
+it like any other item. A session that holds a claim, also one that
+waits for its own verify, does not verify: a verify fills its context
+and costs tokens. The lead gives the request to a session with no
+claim, or starts a worker for it.
 
 1. Skip the request when its issue is closed, or when the thread has
    a result for its commit.
@@ -250,14 +255,11 @@ A verify request is free work. Pick it like any other item.
    `verify-issue-12`. If the claim fails, another session verifies.
    Pick a different item.
 3. Read the issue. Find its `Done when:` line.
-4. Make a verify worktree of your own. Its name is the claim and the
-   first 4 characters of your session ID, for example
-   `verify-issue-12-a6cf`. MAIN is the path of the main worktree: the
-   first line of `git worktree list`. Run `git fetch origin BRANCH`,
-   then
-   `git worktree add --detach MAIN/.claude/worktrees/verify-issue-12-a6cf COMMIT`.
-   Call `EnterWorktree` with that path, then `move` with it. This
-   works from the main worktree and from a worktree of your own.
+4. Make a verify worktree of your own. Call `EnterWorktree` with a
+   name: the claim and the first 4 characters of your session ID, for
+   example `verify-issue-12-a6cf`. Call `move` with the absolute path
+   of the new worktree. Then run `git fetch origin BRANCH` and
+   `git checkout --detach COMMIT` there. Do not `cd`.
 5. Test each criterion. Do not change the code.
 6. Post the result to the author, with `to` `[{"claim": "issue-12"}]`:
    - Pass: each criterion, with what you did to check it.
@@ -266,12 +268,11 @@ A verify request is free work. Pick it like any other item.
    Put the same result on the pull request as a comment that names
    the commit. Then set the verify status of that commit: success on a
    pass, failure on a fail. A success lets the forge merge.
-7. Call `release` with `verify-issue-12`. Go back to where you came
-   from. From a worktree of your own, call `EnterWorktree` with its
-   path. From the main worktree, call `ExitWorktree` with action
-   `keep`. Call `move` with the path where you are now.
-8. Remove the verify worktree: `git worktree remove PATH`. It holds no
-   work. Do not force. If the command fails, post the path to the
+7. Call `release` with `verify-issue-12`.
+8. Remove the verify worktree: call `ExitWorktree` with action
+   `remove` and `discard_changes` set to true. The worktree holds no
+   work: the commit is on the branch of the author. Call `move` with
+   the path where you are now. If the tool fails, post the path to the
    thread.
 
 ### Pull requests on GitHub
@@ -324,17 +325,20 @@ A worktree is stale when all of these are true:
 To remove your stale worktree:
 
 1. Call `move` with the absolute path of the main worktree.
-2. If you made the worktree with `EnterWorktree`, call `ExitWorktree`
-   with action `remove` and `discard_changes` set to true. The tool
-   compares with the local default branch, which can be behind. The
-   three checks show that no work is lost.
-3. If you entered the worktree with `path`, run
-   `git worktree remove PATH`, then
-   `git update-ref -d refs/heads/BRANCH HEADREF`. HEADREF is the head
-   commit of the merged pull request. A squash merge leaves the branch
-   out of the default branch, so `git branch -d` refuses it. The
-   `update-ref` deletes the branch only while it points at HEADREF. Do
-   not force.
+2. If you made the worktree with `EnterWorktree` in this context, call
+   `ExitWorktree` with action `remove` and `discard_changes` set to
+   true. The tool compares with the local default branch, which can be
+   behind. The three checks show that no work is lost.
+3. In each other case, run `git -C MAIN worktree remove PATH`, then
+   `git -C MAIN update-ref -d refs/heads/BRANCH HEADREF`. MAIN is the
+   path of the main worktree: the first line of `git worktree list`.
+   The other cases are: you entered the worktree with `path`, or you
+   made it before `riff workers next` or `/clear`. After a new
+   context, `ExitWorktree` says that this session is not the owner.
+   HEADREF is the head commit of the merged pull request. A squash
+   merge leaves the branch out of the default branch, so
+   `git branch -d` refuses it. The `update-ref` deletes the branch only
+   while it points at HEADREF. Do not force.
 
 If a step fails, leave the worktree and post its name to the thread.
 
@@ -482,7 +486,9 @@ work touches the work of another person, post to the repository
 thread. The people agree among themselves.
 
 As the lead, take no claims: no work item and no verify. A verify
-request waits for a free session.
+request waits for a free session. Give a verify request only to a
+session with no claim. When no such session is free, start a worker
+for it (see "Workers").
 
 1. See what each session of your user holds and does. Call `post`
    with `kind` `status` and `to`
