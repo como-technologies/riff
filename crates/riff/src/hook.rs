@@ -341,9 +341,10 @@ pub fn start_context(
         writeln!(out, "- Now {start}").unwrap();
     }
     out.push_str(
-        "- When the task ends, call the riff read tool with no thread. Then start the watch \
-         again at once, also in the middle of a turn. When the watch says \"Do not start the \
-         watch again now\", do not start it.\n",
+        "- When the task ends, call the riff read tool with no thread and start the watch \
+         again at once, in the same response: two tool calls in one message, also in the \
+         middle of a turn (01M3JPMQJCC3F19QAJ84EKMVKA). When the watch says \"Do not start \
+         the watch again now\", do not start it.\n",
     );
     let new = matches!(source, Source::Startup | Source::Clear);
     let find_work = "follow the start routine of the riff skill. Pick a free item yourself. \
@@ -451,7 +452,7 @@ mod tests {
                 "{context}"
             );
             assert!(context.contains("run_in_background true"));
-            assert!(context.contains("start the watch again at once"));
+            assert!(context.contains("start the watch again at once, in the same response"));
             assert!(context.contains("middle of a turn"));
             assert!(context.contains(DATA_NOTE));
             assert!(context.contains("session=a6cf"));
@@ -464,7 +465,7 @@ mod tests {
             let context = start_context(Some(&uri()), source, true, None, &[]);
             assert!(context.contains("Keep it."), "{context}");
             assert!(!context.contains("Now run"), "{context}");
-            assert!(context.contains("start the watch again at once"));
+            assert!(context.contains("start the watch again at once, in the same response"));
         }
     }
 

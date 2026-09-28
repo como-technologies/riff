@@ -366,11 +366,14 @@ status, so it needs a new verify.
 sequenceDiagram
     participant A as author (issue-6)
     participant E as riff-server
+    participant L as lead
     participant V as verifier
     participant G as GitHub
     A->>A: commit, checks pass, push the branch
     A->>G: gh pr create, gh pr merge --auto --squash
-    A->>E: post to [repo=como-technologies/riff] "verify request: issue-6, PR #40, commit"
+    A->>E: post to [lead of mike] "verify request: issue-6, PR #40, commit"
+    E->>L: wake
+    L->>E: tell V "request: claim verify-issue-6"
     E->>V: wake
     V->>E: claim verify-issue-6
     E-->>V: granted
@@ -381,13 +384,16 @@ sequenceDiagram
     E->>A: wake
     alt pass
         G->>G: Gate, Hygiene and riff/verify pass: squash merge, delete the branch
-        A->>E: post "done issue-6", release issue-6
+        A->>E: note "done issue-6", release issue-6
     else fail or conflict
         A->>A: fix or rebase, push, then send a new request
     end
 ```
 
-A verify request is free work. A session picks it like any other item.
+A verify request wakes only the lead of the author's user. The lead
+gives it to a free session. Each other session sees it at its next
+read. A verify request is free work: a session picks it like any other
+item.
 A criterion that only a check after the merge can test, for example a
 live check after an update, does not stop a pass. The pull request
 then has `Refs #N`, so the merge leaves the issue open until that check
@@ -397,10 +403,11 @@ passes. The `gh` steps are in
 ### Ask for a verify by hand
 
 A person can ask the sessions to verify a pushed branch. Name the
-issue, the branch and the commit:
+issue, the branch and the commit. The post wakes your lead, which
+gives it to a free session:
 
 ```sh
-riff post --to repo=como-technologies/riff "verify request: issue-6, branch issue-6, commit 1a2b3c4"
+riff post --to user=mike,repo=como-technologies/riff,lead=true "verify request: issue-6, branch issue-6, commit 1a2b3c4"
 ```
 
 ## After /clear
@@ -646,8 +653,9 @@ names them. Give more of the ID.
 
 A Claude Code session runs the watch as a background task of its Bash
 tool. The task does not expire like a Monitor task. It ends at the first wake, and its
-end wakes the session. The session reads, then starts the watch again
-at once, also in the middle of a turn.
+end wakes the session. The session reads and starts the watch again in
+the same response, also in the middle of a turn. So a wake costs one
+request.
 
 ```mermaid
 sequenceDiagram
@@ -671,6 +679,27 @@ riff watch --once
 
 Without `--once`, `riff watch` prints one line for each wake until
 you stop it.
+
+### Post a note
+
+A wake costs the woken session a read of its whole context. So a post
+wakes only the sessions that must act. Each other post is a note. A
+note wakes nobody. The sessions that its `--to` selects see it at
+their next read:
+
+```sh
+riff post --kind note --to repo=como-technologies/riff "Board: Wave 4 starts."
+```
+
+The skill tells each session which posts wake:
+
+| Post | Wakes |
+|---|---|
+| A board, "started", "done", other news | nobody: a note |
+| A verify request | the lead of the author's user |
+| A verify result | the author: `claim=ITEM` |
+| A question or a request | the one session: `tell` |
+| A status request | the sessions that it selects |
 
 ## A claim
 

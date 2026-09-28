@@ -664,6 +664,30 @@ mod tests {
         }
     }
 
+    /// 01M3JPMQG9FDB719BC8MDCBNBA, 01M3JPMQJCC3F19QAJ84EKMVKA.
+    #[test]
+    fn the_skill_wakes_only_the_sessions_that_must_act() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "### Wake only the sessions that must act",
+            "A note wakes nobody.",
+            "| A board, or a change to the waves | `note` |",
+            "| A verify request | `message` | `[{\"user\": \"USER\", \"repo\": \"OWNER/REPO\", \"lead\": true}]` |",
+            "| A verify result | `message` | `[{\"claim\": \"issue-12\"}]` |",
+            "Post a note that you are done",
+            "post the board as a note",
+            "Do both steps in the same response: two tool calls in one message.",
+            "Call `read` with no thread, and start the watch again, in the same response",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+        assert!(
+            !flat.contains("so that the sessions of the repository wake"),
+            "a verify request wakes each session"
+        );
+    }
+
     /// 01M3JD8WWMK2ZQTFER4TJFV37V
     #[test]
     fn the_skill_names_the_backlog() {
@@ -692,7 +716,7 @@ mod tests {
             "a session cannot test it, do not start work",
             "what to run or look at, and what the result must be",
             "ASD-STE100",
-            "Post to the repository thread that the issue now has criteria",
+            "Post a note to the repository thread that the issue now has criteria",
             "Call `release` with the item",
             "Pick a different item",
             "Do not implement an issue in the claim in which you wrote its criteria",

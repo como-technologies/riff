@@ -331,7 +331,10 @@ impl Post {
 ///
 /// assert_eq!(serde_json::to_string(&Kind::Status).unwrap(), r#""status""#);
 /// assert_eq!("status".parse::<Kind>(), Ok(Kind::Status));
+/// assert_eq!(serde_json::to_string(&Kind::Note).unwrap(), r#""note""#);
+/// assert_eq!("note".parse::<Kind>(), Ok(Kind::Note));
 /// assert!("other".parse::<Kind>().is_err());
+/// assert!(Kind::Note.needs_body() && !Kind::Status.needs_body());
 /// ```
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
@@ -344,11 +347,20 @@ pub enum Kind {
     /// A status request. Each session that it wakes sets its status
     /// with `status`. It does not post a reply.
     Status,
+    /// A note: it informs and wakes no session. A session sees it at its
+    /// next `read` (01M3JPMQE6S7YM4HPEVGXWK7ET).
+    Note,
 }
 
 impl Kind {
     pub fn is_message(&self) -> bool {
         *self == Kind::Message
+    }
+
+    /// True when a post of this kind needs a body. Only a status request
+    /// needs none.
+    pub fn needs_body(&self) -> bool {
+        *self != Kind::Status
     }
 }
 
@@ -359,7 +371,8 @@ impl std::str::FromStr for Kind {
         match text {
             "message" => Ok(Kind::Message),
             "status" => Ok(Kind::Status),
-            _ => Err(format!("no kind {text}: use message or status")),
+            "note" => Ok(Kind::Note),
+            _ => Err(format!("no kind {text}: use message, status or note")),
         }
     }
 }
