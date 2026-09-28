@@ -15,7 +15,7 @@ use riff_core::dpop::Key;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::lease::Timing;
-use riff_server::store::Store;
+use riff_server::store::{Store, StoreError};
 
 /// The HTTP client of each test. The build of a client blocks the
 /// runtime for up to 250 ms under load: half of the [`LEASE`] serve
@@ -81,6 +81,16 @@ pub async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (service, url)
+}
+
+/// Loads a server from `store` with the [`LEASE`] times, and does not
+/// serve it.
+pub async fn load_on(store: Arc<dyn Store>) -> Result<Service, StoreError> {
+    let config = Config {
+        lease: LEASE,
+        ..Config::new("http://127.0.0.1:7878")
+    };
+    Service::load(config, store).await
 }
 
 pub fn now() -> u64 {

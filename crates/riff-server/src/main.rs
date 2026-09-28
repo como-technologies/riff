@@ -157,9 +157,15 @@ async fn run() -> std::io::Result<()> {
         Some(bucket) => {
             tracing::info!("state in gs://{bucket}");
             let store = Arc::new(Gcs::new(bucket));
-            Service::load(config, store)
-                .await
-                .map_err(std::io::Error::other)?
+            match Service::load(config, store).await {
+                Ok(service) => service,
+                Err(e) => {
+                    // The text names the object and the fix
+                    // (01M3MMXYS1V8CA89D2XHKPR6C4).
+                    tracing::error!("riff-server stops: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         None => {
             tracing::warn!("no RIFF_BUCKET: the state is not saved");

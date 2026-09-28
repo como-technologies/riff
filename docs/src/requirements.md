@@ -391,6 +391,11 @@
 - **R149** When the lifecycle rule (R46) deleted a thread object, the
   next save of that thread saves it again as a new object. It is not a
   failed save (R141).
+- **01M3MMXYS1V8CA89D2XHKPR6C4** When `riff-server` cannot read a saved
+  object at start, for example state of an old format, it does not
+  migrate it. It logs one error at the ERROR level and stops. The error
+  names the object, for example `gs://BUCKET/tokens`, and the fix: stop
+  each server of the store and remove the old state, with the command.
 
 ## Cloud
 

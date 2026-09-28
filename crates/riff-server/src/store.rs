@@ -23,6 +23,27 @@
 //! [`StoreError::Conflict`] (R141). So a second instance cannot write
 //! over the changes of the first without notice.
 //!
+//! # An object that the server cannot read
+//!
+//! A store can hold state of an old format, for example a token store
+//! from before a change of its fields. riff-server does not migrate it:
+//! the load fails with [`StoreError::NotValid`]. Its text names the
+//! object, with [`Store::locate`], and the fix: remove the old state,
+//! with [`Store::empty_command`] when the store has one
+//! (01M3MMXYS1V8CA89D2XHKPR6C4).
+//!
+//! ```
+//! use riff_server::store::{Memory, StoreError, TOKENS};
+//!
+//! let error = StoreError::not_valid(&Memory::default(), TOKENS, "missing field `users`");
+//! assert_eq!(
+//!     error.to_string(),
+//!     "cannot read the saved object tokens: missing field `users`. \
+//!      It can be state of an old format. To start again with an empty state, \
+//!      stop each server of this store and remove the old state."
+//! );
+//! ```
+//!
 //! # Example
 //!
 //! ```
@@ -83,6 +104,35 @@ pub enum StoreError {
     Conflict(String),
     /// The store did not do the call.
     Failed(String),
+    /// The store holds an object that the server cannot read. `object`
+    /// is its full name, from [`Store::locate`].
+    NotValid {
+        object: String,
+        why: String,
+        /// The command that removes the old state, when the store has
+        /// one.
+        fix: Option<String>,
+    },
+}
+
+/// A saved object that the server cannot read: its name in the store,
+/// and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unreadable {
+    pub name: String,
+    pub why: String,
+}
+
+impl StoreError {
+    /// The error for the object `name` of `store`, which the server
+    /// cannot read for the reason `why`.
+    pub fn not_valid(store: &dyn Store, name: &str, why: impl fmt::Display) -> StoreError {
+        StoreError::NotValid {
+            object: store.locate(name),
+            why: why.to_string(),
+            fix: store.empty_command(),
+        }
+    }
 }
 
 impl fmt::Display for StoreError {
@@ -90,6 +140,18 @@ impl fmt::Display for StoreError {
         match self {
             StoreError::Conflict(name) => write!(f, "another version of {name} is in the store"),
             StoreError::Failed(message) => f.write_str(message),
+            StoreError::NotValid { object, why, fix } => {
+                write!(
+                    f,
+                    "cannot read the saved object {object}: {why}. \
+                     It can be state of an old format. To start again with an empty state, \
+                     stop each server of this store and remove the old state"
+                )?;
+                match fix {
+                    Some(command) => write!(f, ": {command}"),
+                    None => f.write_str("."),
+                }
+            }
         }
     }
 }
@@ -112,6 +174,18 @@ pub trait Store: Send + Sync {
         bytes: Vec<u8>,
         known: Option<Version>,
     ) -> BoxFuture<'a, Result<Version, StoreError>>;
+
+    /// The full name of the object `name`, for a person, for example
+    /// `gs://BUCKET/tokens`.
+    fn locate(&self, name: &str) -> String {
+        name.to_owned()
+    }
+
+    /// A command that removes each object of the store, when the store
+    /// has one.
+    fn empty_command(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The name of the object that holds a thread: [`THREADS`] and the

@@ -171,7 +171,7 @@ use riff_core::wire::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::store;
+use crate::store::{self, Unreadable};
 
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
@@ -448,10 +448,14 @@ impl State {
         threads: impl IntoIterator<Item = (&'a str, &'a [u8])>,
         now: Instant,
         now_ms: u64,
-    ) -> Result<State, String> {
+    ) -> Result<State, Unreadable> {
+        let unreadable = |name: &str, e: serde_json::Error| Unreadable {
+            name: name.to_owned(),
+            why: e.to_string(),
+        };
         let saved: SavedSessions = match sessions {
             Some(bytes) => {
-                serde_json::from_slice(bytes).map_err(|e| format!("{}: {e}", store::SESSIONS))?
+                serde_json::from_slice(bytes).map_err(|e| unreadable(store::SESSIONS, e))?
             }
             None => SavedSessions::default(),
         };
@@ -484,7 +488,7 @@ impl State {
         }
         for (object, bytes) in threads {
             let Named::<ThreadName, Thread> { name, mut thread } =
-                serde_json::from_slice(bytes).map_err(|e| format!("{object}: {e}"))?;
+                serde_json::from_slice(bytes).map_err(|e| unreadable(object, e))?;
             thread
                 .members
                 .retain(|who| state.sessions.contains_key(who));
@@ -2419,10 +2423,11 @@ mod tests {
         let error = State::load(Some(b"{".as_slice()), [], now, T0)
             .err()
             .unwrap();
-        assert!(error.starts_with("sessions: "), "{error}");
+        assert_eq!(error.name, "sessions");
+        assert!(error.why.contains("EOF"), "{error:?}");
         let threads = [("threads/x", b"[]".as_slice())];
         let error = State::load(None, threads, now, T0).err().unwrap();
-        assert!(error.starts_with("threads/x: "), "{error}");
+        assert_eq!(error.name, "threads/x");
     }
 
     fn is_lead(state: &State, u: &SessionUri, now: Instant) -> bool {

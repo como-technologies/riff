@@ -475,7 +475,7 @@ impl Service {
             Some(loaded) => {
                 versions.insert(TOKENS.into(), loaded.version);
                 Tokens::from_bytes(&loaded.bytes, Instant::now(), SystemTime::now())
-                    .map_err(|e| StoreError::Failed(e.to_string()))?
+                    .map_err(|e| StoreError::not_valid(&*store, TOKENS, e))?
             }
             None => Tokens::default(),
         };
@@ -487,7 +487,7 @@ impl Service {
             Instant::now(),
             now_ms(),
         )
-        .map_err(StoreError::Failed)?;
+        .map_err(|e| StoreError::not_valid(&*store, &e.name, e.why))?;
         tracing::info!(threads = threads.len(), "loaded the state");
         let asked = Instant::now();
         if !lease.held().await? {

@@ -336,3 +336,24 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     let claim = json!({ "me": mike, "thread": repo, "item": "issue-44" });
     assert_eq!(call(&base, "claim", claim).await["granted"], false);
 }
+
+/// A token store from before the owner and members change: it has no
+/// `users` field.
+const OLD_TOKENS: &str = r#"{"next_sign_in":0,"sign_ins":[],"access":[],"refresh":[]}"#;
+
+#[tokio::test]
+async fn a_token_store_of_an_old_format_stops_the_load_with_the_fix() {
+    let (_fake, url) = start().await;
+    let old = store(&url);
+    old.save(TOKENS, OLD_TOKENS.into(), None).await.unwrap();
+
+    let error = common::load_on(Arc::new(store(&url))).await.err().unwrap();
+    assert!(matches!(error, StoreError::NotValid { .. }), "{error:?}");
+    assert_eq!(
+        error.to_string(),
+        "cannot read the saved object gs://riff-test/tokens: missing field `users` \
+         at line 1 column 57. It can be state of an old format. To start again with an \
+         empty state, stop each server of this store and remove the old state: \
+         gcloud storage rm 'gs://riff-test/**'"
+    );
+}

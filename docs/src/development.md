@@ -583,6 +583,27 @@ and then loads the state. Only one server serves from a bucket. When a
 new server takes the lease, the old one replies 503 and exits after 60
 seconds.
 
+### Start again with an empty state
+
+`riff-server` does not migrate saved state of an old format. When it
+cannot read an object of the bucket, it stops at start. Cloud Run
+starts it again and again, and each call gets 503. The log shows
+`riff-server stops: cannot read the saved object`, with the name of
+the object and the reason (see [See the shared log](#see-the-shared-log)).
+
+Remove the old state, and start again with an empty bucket. Stop the
+shared server first, so that no server saves the old state again:
+
+```sh
+just cloud down
+gcloud storage rm 'gs://como-riff-state/**'
+just cloud up
+```
+
+The new state has no threads, sessions, claims or members. The deploy
+names the owner again. Each person signs in again with `riff login`,
+and the owner invites each member again.
+
 ## Set up the cloud project
 
 Do this once, for the team. The project `como-riff` exists: use these
