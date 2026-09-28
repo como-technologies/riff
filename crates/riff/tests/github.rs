@@ -1,6 +1,7 @@
 //! Pull requests on GitHub: the project settings of Claude Code deny a
 //! push to `main` (01M3JFEXJG2D651PWA30DNRGWF), and `just github` sets up
-//! the repository (01M3JFEXG85AJK8ZE8N807EQVB). A fake `gh` on `PATH`
+//! the repository (01M3JFEXG85AJK8ZE8N807EQVB) with a ruleset that has
+//! no bypass (01M3JN4QQCM0GXK9BCGXVS2YC7). A fake `gh` on `PATH`
 //! writes each call and its input to a log.
 
 use std::os::unix::fs::PermissionsExt;
@@ -170,11 +171,8 @@ fn just_github_sets_the_repository_and_makes_the_ruleset() {
         rules["conditions"]["ref_name"]["include"],
         serde_json::json!(["~DEFAULT_BRANCH"])
     );
-    // The only bypass is the repository admin role (ID 5).
-    assert_eq!(
-        rules["bypass_actors"],
-        serde_json::json!([{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }])
-    );
+    // No actor can bypass the ruleset (01M3JN4QQCM0GXK9BCGXVS2YC7).
+    assert_eq!(rules["bypass_actors"], serde_json::json!([]));
     let rule = |kind: &str| {
         rules["rules"]
             .as_array()

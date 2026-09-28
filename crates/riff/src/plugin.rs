@@ -631,7 +631,7 @@ mod tests {
     }
 
     /// 01M3JFEXJG2D651PWA30DNRGWF, 01M3JFEXMPNFEV4HBZJQ15JD25,
-    /// 01M3JFEXPXRTXYHCV0WSKEK07M.
+    /// 01M3JFEXPXRTXYHCV0WSKEK07M, 01M3JN4QQCM0GXK9BCGXVS2YC7.
     #[test]
     fn the_skill_merges_by_pull_request() {
         let skill = text("riff/skills/riff/SKILL.md");
@@ -642,6 +642,9 @@ mod tests {
             "You never merge, and you never push to the default branch.",
             "A pass counts only for its commit",
             "`Merged in #PR (COMMIT)`",
+            "Turn on auto-merge with a squash at once, before any other push.",
+            "Never turn it on after a push.",
+            "the ruleset on `main` has no bypass. Never change the ruleset.",
         ] {
             assert!(flat.contains(word), "the skill does not say {word:?}");
         }

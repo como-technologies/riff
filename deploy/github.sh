@@ -9,8 +9,8 @@
 #   deletes the branch after the merge.
 # - The ruleset `main` on the default branch: a change needs a pull
 #   request with 0 approvals and the checks Gate, Hygiene and
-#   riff/verify. No force push, no deletion. Only the repository admin
-#   role can bypass it.
+#   riff/verify. No force push, no deletion. No actor can bypass it
+#   (01M3JN4QQCM0GXK9BCGXVS2YC7).
 set -euo pipefail
 
 REPO="${1:-como-technologies/riff}"
@@ -26,16 +26,13 @@ NAME=main
     -f squash_merge_commit_message=PR_BODY \
     -F delete_branch_on_merge=true >/dev/null
 
-# The repository role `admin` has the ID 5.
 RULESET=$(cat <<'JSON'
 {
   "name": "main",
   "target": "branch",
   "enforcement": "active",
   "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
-  "bypass_actors": [
-    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
-  ],
+  "bypass_actors": [],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },

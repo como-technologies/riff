@@ -203,8 +203,9 @@ are in "Pull requests on GitHub".
 1. Commit your work. The checks of your repository pass.
 2. Push your branch, so that a session on another machine can fetch
    it: `git push -u origin HEAD`.
-3. Open a pull request for the branch, and turn on auto-merge with a
-   squash. Link the issue in its body. Give it the wave of the issue.
+3. Open a pull request for the branch. Link the issue in its body.
+   Give it the wave of the issue. Turn on auto-merge with a squash at
+   once, before any other push. Never turn it on after a push.
 4. Post a verify request to your repository thread. Name the issue,
    the pull request and the commit. Use `to` `[{"repo": "OWNER/REPO"}]`,
    so that the sessions of the repository wake. For example:
@@ -296,7 +297,8 @@ Milestone: Wave 3
 | Find the pull request of a branch | `gh pr view BRANCH --json number,state,headRefOid` |
 
 For a fail, set `state=failure`. Never run `gh pr merge --admin`, and
-never push to `main`: the project settings deny both.
+never push to `main`: the project settings deny both, and the ruleset
+on `main` has no bypass. Never change the ruleset.
 
 ## Remove a stale worktree
 

@@ -241,18 +241,25 @@
   `main` on the default branch needs a pull request with 0 approvals
   and the checks `Gate`, `Hygiene` and `riff/verify`. A branch need not
   be up to date with `main`. No force push and no deletion of `main`.
-  The only bypass is the repository admin role, so that our user can
-  push a fix.
+- **01M3JN4QQCM0GXK9BCGXVS2YC7** The ruleset `main` has no bypass
+  actor. GitHub refuses a push to `main` and a merge that skips a
+  check, from each session and from each person. For an urgent fix,
+  our user turns the ruleset off, pushes, and turns it on again with
+  `just github`.
 - **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
-  `gh pr merge --admin`. Each session uses the GitHub account of our
-  user, so GitHub cannot stop it. The project settings of Claude Code
-  deny both, and the skill says it.
+  `gh pr merge --admin`. The project settings of Claude Code deny both,
+  and the skill says it.
+- **01M3JN4QVR3JCRWC8TFJJTCPHF** Each session uses the GitHub account
+  of our user, so the author of a pull request can set `riff/verify`
+  on its own commit. We accept this gap until the sessions act with
+  their own GitHub identity (#97).
 - **01M3JFEXMPNFEV4HBZJQ15JD25** The author opens a pull request with
   `gh pr create`, with the milestone of the issue and the body form of
   the hygiene check, and turns on auto-merge with
-  `gh pr merge --auto --squash`. The last pull request of an issue has
-  `Closes #N`. Each other one, and one with a check after the merge
-  left, has `Refs #N`.
+  `gh pr merge --auto --squash` at once, before any other push. No
+  session runs `gh pr merge` after a push. The last pull request of an
+  issue has `Closes #N`. Each other one, and one with a check after the
+  merge left, has `Refs #N`.
 - **01M3JFEXPXRTXYHCV0WSKEK07M** The verifier puts its result on the
   pull request as a comment that names the commit. It sets the commit
   status `riff/verify` on that commit: `success` on a pass, `failure`
