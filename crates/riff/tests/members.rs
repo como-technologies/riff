@@ -1,4 +1,4 @@
-//! `riff invite`, `riff remove` and `riff members` against a real
+//! `riff invite`, `riff remove`, `riff members` and `riff admin` against a real
 //! server (01M3JN3AHMK532XMRDASD4XD5D). The sign-in is in the mock
 //! store of `keyring-core`, so the tests run in process.
 
@@ -106,4 +106,82 @@ async fn members_needs_a_sign_in() {
     let (_, api) = start().await;
     let error = api.members().await.unwrap_err();
     assert_eq!(error.to_string(), text::nobody_signs_in(api.base()));
+}
+
+#[tokio::test]
+async fn the_owner_makes_an_admin_who_invites_and_removes() {
+    let (service, api) = start().await;
+    sign_in(&service, &api, "ada@gmail.com");
+    let added = api
+        .clone()
+        .signed_in(None)
+        .unwrap()
+        .set_admin("Bob@gmail.com", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        text::admin_set(&added),
+        "bob@gmail.com is now an admin. They can invite and remove members."
+    );
+
+    sign_in(&service, &api, "bob@gmail.com");
+    let bob = api.clone().signed_in(None).unwrap();
+    bob.invite("carol@gmail.com").await.unwrap();
+    bob.invite("dan@gmail.com").await.unwrap();
+    bob.remove("dan@gmail.com").await.unwrap();
+    let list = bob.members().await.unwrap();
+    assert_eq!(
+        text::members(&list),
+        "owner: ada@gmail.com\nadmins: bob@gmail.com\nmembers: bob@gmail.com, carol@gmail.com\nallowed domains: none"
+    );
+}
+
+#[tokio::test]
+async fn only_the_owner_adds_an_admin() {
+    let (service, api) = start().await;
+    let owner_key = Key::generate().thumbprint();
+    service
+        .tokens()
+        .admit("ada@gmail.com", false, &[], &owner_key, Instant::now())
+        .unwrap();
+    service.tokens().invite("bob@gmail.com").unwrap();
+    service.tokens().add_admin("carol@gmail.com").unwrap();
+    for email in ["bob@gmail.com", "carol@gmail.com"] {
+        sign_in(&service, &api, email);
+        let signed_in = api.clone().signed_in(None).unwrap();
+        for admin in [true, false] {
+            let error = signed_in
+                .set_admin("carol@gmail.com", admin)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("not the owner"), "{error}");
+        }
+    }
+    assert_eq!(
+        service.tokens().admins().collect::<Vec<_>>(),
+        ["carol@gmail.com"]
+    );
+}
+
+#[tokio::test]
+async fn a_removed_admin_cannot_invite() {
+    let (service, api) = start().await;
+    sign_in(&service, &api, "ada@gmail.com");
+    let ada = api.clone().signed_in(None).unwrap();
+    ada.set_admin("bob@gmail.com", true).await.unwrap();
+    let removed = ada.set_admin("bob@gmail.com", false).await.unwrap();
+    assert_eq!(
+        text::admin_set(&removed),
+        "bob@gmail.com is now a member, not an admin."
+    );
+
+    sign_in(&service, &api, "bob@gmail.com");
+    let error = api
+        .clone()
+        .signed_in(None)
+        .unwrap()
+        .invite("carol@gmail.com")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("not an admin"), "{error}");
 }

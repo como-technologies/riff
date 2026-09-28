@@ -81,7 +81,11 @@
 //! (01M3JN3AD44CC98AGMVP43F56G). On a riff with admins, only an admin
 //! becomes the owner. The owner is an admin. An admin adds a member
 //! with [`Tokens::invite`] and removes one with [`Tokens::remove`]. A
-//! removal ends each sign-in of that person (R20).
+//! removal ends each sign-in of that person (R20). The owner makes a
+//! person an admin with [`Tokens::add_admin`], and a member again with
+//! [`Tokens::remove_admin`]. The store keeps these admins; the admins
+//! of the settings (R210) add to them. An admin that the owner made
+//! is removed only after the owner takes the role back.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -243,6 +247,8 @@ pub struct Tokens {
     owner: Option<String>,
     /// The email of each member, in lower case.
     members: BTreeSet<String>,
+    /// The email of each admin that the owner made, in lower case.
+    admins: BTreeSet<String>,
     riff_id: RiffId,
 }
 
@@ -363,7 +369,8 @@ impl Tokens {
         now: Instant,
     ) -> Result<TokenReply, NoSignIn> {
         let email = email.trim().to_lowercase();
-        let admin = admins.iter().any(|a| a.trim().to_lowercase() == email);
+        let admin =
+            self.admins.contains(&email) || admins.iter().any(|a| a.trim().to_lowercase() == email);
         let new_riff = self.owner.is_none() && admins.is_empty();
         let may_join = admin
             || allowed_domain
@@ -411,8 +418,8 @@ impl Tokens {
         self.members.iter().map(String::as_str)
     }
 
-    /// True when `user` is an admin: the owner, or an email in `admins`
-    /// (R210).
+    /// True when `user` is an admin: the owner, an admin that the owner
+    /// made ([`Tokens::add_admin`]), or an email in `admins` (R210).
     ///
     /// ```
     /// use std::time::Instant;
@@ -431,7 +438,63 @@ impl Tokens {
             return false;
         };
         self.owner.as_deref() == Some(email)
+            || self.admins.contains(email)
             || admins.iter().any(|a| a.trim().to_lowercase() == email)
+    }
+
+    /// True when `user` is the owner.
+    pub fn is_owner(&self, user: &str) -> bool {
+        self.email_of(user).is_some() && self.email_of(user) == self.owner.as_deref()
+    }
+
+    /// The emails of the admins that the owner made, sorted. The admins
+    /// of the settings (R210) are not in it.
+    pub fn admins(&self) -> impl Iterator<Item = &str> {
+        self.admins.iter().map(String::as_str)
+    }
+
+    /// Makes a person an admin, by verified email
+    /// (01M3JY7T109BR860EQBSKEFDHY). The person is also a member, so
+    /// stays a member after [`Tokens::remove_admin`]. Returns the email
+    /// in lower case. The caller checks that the owner asks.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// assert_eq!(tokens.add_admin(" Bob@gmail.com").unwrap(), "bob@gmail.com");
+    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
+    /// assert!(tokens.is_admin("bob", &[]));
+    ///
+    /// assert_eq!(tokens.remove_admin("bob@gmail.com").unwrap(), "bob@gmail.com");
+    /// assert!(!tokens.is_admin("bob", &[]));
+    /// assert_eq!(tokens.members().collect::<Vec<_>>(), ["bob@gmail.com"]);
+    ///
+    /// // The owner stays an admin.
+    /// assert!(tokens.remove_admin("ada@gmail.com").is_err());
+    /// ```
+    pub fn add_admin(&mut self, email: &str) -> Result<String, NoSignIn> {
+        let email = self.invite(email)?;
+        self.admins.insert(email.clone());
+        Ok(email)
+    }
+
+    /// Makes an admin a member again. The owner stays an admin. Returns
+    /// the email in lower case. The caller checks that the owner asks.
+    pub fn remove_admin(&mut self, email: &str) -> Result<String, String> {
+        let email = email.trim().to_lowercase();
+        if self.owner.as_ref() == Some(&email) {
+            return Err(format!(
+                "{email} is the owner of this riff; the owner stays an admin"
+            ));
+        }
+        if !self.admins.remove(&email) {
+            return Err(format!("{email} is not an admin that the owner made"));
+        }
+        Ok(email)
     }
 
     /// Adds a member by verified email. Returns the email in lower case.
@@ -468,6 +531,11 @@ impl Tokens {
         if self.owner.as_ref() == Some(&email) {
             return Err(format!(
                 "{email} is the owner of this riff; the owner stays"
+            ));
+        }
+        if self.admins.contains(&email) {
+            return Err(format!(
+                "{email} is an admin; the owner runs riff admin remove {email} first"
             ));
         }
         self.members.remove(&email);
@@ -636,6 +704,7 @@ impl Tokens {
             users: self.users.clone(),
             owner: self.owner.clone(),
             members: self.members.clone(),
+            admins: self.admins.clone(),
             riff_id: Some(self.riff_id.0.clone()),
             sign_ins: self
                 .sign_ins
@@ -690,6 +759,7 @@ impl Tokens {
             users: saved.users,
             owner: saved.owner,
             members: saved.members,
+            admins: saved.admins,
             // A saved form from before the riff ID gets a new one.
             riff_id: saved.riff_id.map(RiffId).unwrap_or_default(),
             ..Tokens::default()
@@ -814,6 +884,10 @@ struct Saved {
     owner: Option<String>,
     #[serde(default)]
     members: BTreeSet<String>,
+    /// The admins that the owner made (01M3JY7T3645CMQ8CS4T4ABZTP). A
+    /// saved form from before them has none.
+    #[serde(default)]
+    admins: BTreeSet<String>,
     /// The riff ID (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
     #[serde(default)]
     riff_id: Option<String>,
@@ -1238,6 +1312,39 @@ mod tests {
             Tokens::from_bytes(&bytes, later, wall + down).unwrap(),
             later,
         )
+    }
+
+    #[test]
+    fn the_admins_stay_after_a_restart() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        tokens
+            .admit("ada@gmail.com", false, &[], "k1", now)
+            .unwrap();
+        tokens.add_admin("bob@gmail.com").unwrap();
+        tokens
+            .admit("bob@gmail.com", false, &[], "k2", now)
+            .unwrap();
+        let (loaded, _) = restart(&tokens, now, Duration::from_secs(5));
+        assert_eq!(loaded.admins().collect::<Vec<_>>(), ["bob@gmail.com"]);
+        assert!(loaded.is_admin("bob", &[]));
+        assert!(loaded.is_owner("ada"));
+        assert!(!loaded.is_owner("bob"));
+    }
+
+    #[test]
+    fn an_admin_is_removed_only_after_the_role() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        tokens
+            .admit("ada@gmail.com", false, &[], "k1", now)
+            .unwrap();
+        tokens.add_admin("bob@gmail.com").unwrap();
+        let refused = tokens.remove("bob@gmail.com").unwrap_err();
+        assert!(refused.contains("riff admin remove"), "{refused}");
+        tokens.remove_admin("bob@gmail.com").unwrap();
+        assert!(tokens.remove("bob@gmail.com").is_ok());
+        assert!(tokens.remove_admin("bob@gmail.com").is_err());
     }
 
     #[test]

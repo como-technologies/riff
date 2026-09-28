@@ -33,7 +33,7 @@
 //! its reply is [`Revoked`]. A missing or bad token gets status 401. A
 //! person who is not an admin and names another user gets status 403.
 //!
-//! Three calls change or show who may join the riff
+//! Four calls change or show who may join the riff
 //! (01M3JN3AHMK532XMRDASD4XD5D). Each needs an access token and a DPoP
 //! proof, like `revoke`:
 //!
@@ -42,9 +42,11 @@
 //! | `POST /v1/invite` | [`Invite`] | [`Invited`] | an admin |
 //! | `POST /v1/remove` | [`Remove`] | [`Removed`] | an admin |
 //! | `POST /v1/members` | [`Members`] | [`MembersReply`] | each person |
+//! | `POST /v1/admin` | [`SetAdmin`] | [`AdminSet`] | the owner |
 //!
 //! A person who is not an admin gets status 403 from `invite` and
-//! `remove`. `remove` of the owner gets status 400.
+//! `remove`. A person who is not the owner gets status 403 from
+//! `admin`. `remove` of the owner or of an admin gets status 400.
 //!
 //! Two metadata documents follow the MCP authorization spec (R22):
 //!
@@ -778,6 +780,35 @@ pub struct Removed {
     pub sign_ins: usize,
 }
 
+/// `POST /v1/admin`: the owner makes a person an admin, or an admin a
+/// member again.
+///
+/// ```
+/// use riff_core::wire::SetAdmin;
+///
+/// let add = SetAdmin { email: "bob@gmail.com".into(), admin: true };
+/// assert_eq!(
+///     serde_json::to_string(&add).unwrap(),
+///     r#"{"email":"bob@gmail.com","admin":true}"#
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetAdmin {
+    pub email: String,
+    /// True makes the person an admin. False makes an admin a member
+    /// again.
+    pub admin: bool,
+}
+
+/// The reply to [`SetAdmin`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminSet {
+    /// The email, in lower case.
+    pub email: String,
+    /// True when the person is now an admin.
+    pub admin: bool,
+}
+
 /// `POST /v1/members`: shows who may join the riff.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Members {}
@@ -796,7 +827,8 @@ pub struct Members {}
 pub struct MembersReply {
     /// The email of the owner. `None` before the first sign-in.
     pub owner: Option<String>,
-    /// The admin emails of the settings (R210).
+    /// The email of each admin, sorted: the admins that the owner made
+    /// and the admins of the settings (R210).
     pub admins: Vec<String>,
     /// The email of each member, sorted.
     pub members: Vec<String>,

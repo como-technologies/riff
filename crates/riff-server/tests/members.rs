@@ -1,6 +1,7 @@
 //! The owner and the members of a riff, over HTTP
 //! (01M3JN3AD44CC98AGMVP43F56G, 01M3JN3AFA2SAX0CEC1Y6E4NM5,
-//! 01M3JN3AHMK532XMRDASD4XD5D, 01M3JN3ANE676DT5WQ2NTG47DK).
+//! 01M3JN3AHMK532XMRDASD4XD5D, 01M3JN3ANE676DT5WQ2NTG47DK,
+//! 01M3JY7T109BR860EQBSKEFDHY, 01M3JY7T3645CMQ8CS4T4ABZTP).
 
 mod common;
 
@@ -9,8 +10,8 @@ use std::time::Duration;
 
 use riff_core::dpop::Key;
 use riff_core::wire::{
-    ID_TOKEN_TYPE, Invite, Invited, MembersReply, Remove, Removed, TOKEN_EXCHANGE, TokenError,
-    TokenReply, TokenRequest,
+    AdminSet, ID_TOKEN_TYPE, Invite, Invited, MembersReply, Remove, Removed, SetAdmin,
+    TOKEN_EXCHANGE, TokenError, TokenReply, TokenRequest,
 };
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -118,6 +119,15 @@ async fn remove(url: &str, by: &Person, email: &str) -> (u16, String) {
     })
     .unwrap();
     call(url, by, "remove", body).await
+}
+
+async fn set_admin(url: &str, by: &Person, email: &str, admin: bool) -> (u16, String) {
+    let body = serde_json::to_value(SetAdmin {
+        email: email.into(),
+        admin,
+    })
+    .unwrap();
+    call(url, by, "admin", body).await
 }
 
 async fn members(url: &str, by: &Person) -> MembersReply {
@@ -276,4 +286,54 @@ async fn the_owner_and_the_members_stay_after_a_restart() {
             .await
             .is_err()
     );
+}
+
+/// The owner makes an admin, who invites and removes. Only the owner
+/// adds or removes an admin. The admins stay after a restart on the
+/// same store, and the admins of the settings add to them.
+#[tokio::test]
+async fn the_owner_makes_an_admin_that_stays_after_a_restart() {
+    let issuer = common::fake_provider().await;
+    let store = Memory::default();
+    let (old, url) = serve(&issuer, &[], None, Some(Arc::new(store.clone()))).await;
+    let ada = sign_in(&url, &issuer, "ada@gmail.com", None).await.unwrap();
+    let (status, body) = set_admin(&url, &ada, "Bob@gmail.com", true).await;
+    assert_eq!(status, 200, "{body}");
+    let set: AdminSet = serde_json::from_str(&body).unwrap();
+    assert_eq!((set.email.as_str(), set.admin), ("bob@gmail.com", true));
+
+    let bob = sign_in(&url, &issuer, "bob@gmail.com", None).await.unwrap();
+    assert_eq!(invite(&url, &bob, "carol@gmail.com").await.0, 200);
+    let carol = sign_in(&url, &issuer, "carol@gmail.com", None)
+        .await
+        .unwrap();
+    // Neither an admin nor a member adds or removes an admin.
+    for (by, admin) in [(&bob, true), (&bob, false), (&carol, true)] {
+        let (status, body) = set_admin(&url, by, "carol@gmail.com", admin).await;
+        assert_eq!(status, 403);
+        assert!(body.contains("only the owner"), "{body}");
+    }
+    // An admin cannot remove an admin, nor the owner remove the owner role.
+    let (status, body) = remove(&url, &bob, "bob@gmail.com").await;
+    assert_eq!(status, 400);
+    assert!(body.contains("riff admin remove"), "{body}");
+    assert_eq!(set_admin(&url, &ada, "ada@gmail.com", false).await.0, 400);
+    old.save().await.unwrap();
+
+    let (new, url) = serve(&issuer, &["Dan@gmail.com"], None, Some(Arc::new(store))).await;
+    tokio::time::timeout(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    assert_eq!(new.tokens().admins().collect::<Vec<_>>(), ["bob@gmail.com"]);
+    let bob = sign_in(&url, &issuer, "bob@gmail.com", None).await.unwrap();
+    let list = members(&url, &bob).await;
+    assert_eq!(list.admins, ["bob@gmail.com", "dan@gmail.com"]);
+    assert_eq!(remove(&url, &bob, "carol@gmail.com").await.0, 200);
+
+    // The owner makes bob a member again. He can no longer invite.
+    let ada = sign_in(&url, &issuer, "ada@gmail.com", None).await.unwrap();
+    assert_eq!(set_admin(&url, &ada, "bob@gmail.com", false).await.0, 200);
+    let (status, body) = invite(&url, &bob, "carol@gmail.com").await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(members(&url, &ada).await.members, ["bob@gmail.com"]);
 }

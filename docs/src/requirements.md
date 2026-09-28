@@ -824,6 +824,14 @@
 - **01M3JN3ANE676DT5WQ2NTG47DK** `riff-server` keeps the owner and the
   members with the tokens in its state. They stay after a restart with
   a bucket.
+- **01M3JY7T109BR860EQBSKEFDHY** `riff admin add EMAIL` makes a person
+  an admin and a member. `riff admin remove EMAIL` makes an admin a
+  member again. Only the owner can do either. The owner stays an admin.
+  `riff remove` refuses an admin that the owner made.
+- **01M3JY7T3645CMQ8CS4T4ABZTP** `riff-server` keeps the admins that
+  the owner made with the owner and the members. They stay after a
+  restart with a bucket. The admins of R210 add to them. `riff members`
+  shows both.
 - **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
   loopback address until it has an owner, so the owner signs in from
   the machine of the server. `riff-server` refuses another address at

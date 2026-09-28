@@ -61,11 +61,11 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Alive, Claim, ClaimReply, End, Freed, Invite, Invited, Keys, Kind, Lead, LeadReply, Members,
-    MembersReply, Membership, Message, Post, Posted, Read, ReadReply, Register, Remove, Removed,
-    Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetStatus, SignInConfig, Start,
-    Started, Status, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply,
-    TokenRequest, Wake, WhoReply, WhoRequest,
+    AdminSet, Alive, Claim, ClaimReply, End, Freed, Invite, Invited, Keys, Kind, Lead, LeadReply,
+    Members, MembersReply, Membership, Message, Post, Posted, Read, ReadReply, Register, Remove,
+    Removed, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetAdmin, SetStatus,
+    SignInConfig, Start, Started, Status, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError,
+    TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -711,6 +711,17 @@ impl Api {
             email: email.to_owned(),
         };
         self.call("remove", &request).await
+    }
+
+    /// Makes a person an admin, or an admin a member again. Only the
+    /// owner can.
+    pub async fn set_admin(&self, email: &str, admin: bool) -> Result<AdminSet> {
+        self.need_sign_in().await?;
+        let request = SetAdmin {
+            email: email.to_owned(),
+            admin,
+        };
+        self.call("admin", &request).await
     }
 
     /// Who may join the riff.
