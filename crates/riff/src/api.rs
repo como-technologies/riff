@@ -939,20 +939,42 @@ impl Api {
 }
 
 /// Seconds since the Unix epoch, for proofs.
-/// Refuses a reply of a `riff-server` whose build does not match this
-/// `riff`, or that names no build: an older server
-/// (01M3JEE7RDTDD3KQMKH41E8D57). The error is a [`Mismatch`].
+/// The build of the last `riff-server` that this process talked to.
+static SERVER_BUILD: std::sync::Mutex<Option<Build>> = std::sync::Mutex::new(None);
+
+/// True once this process printed the note of another build.
+static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The build of the last `riff-server` that answered this process with
+/// the same wire version. `None` before the first answer.
+pub fn server_build() -> Option<Build> {
+    SERVER_BUILD.lock().ok()?.clone()
+}
+
+/// Refuses a reply of a `riff-server` with another wire version, or
+/// that names no build: an older server (01M3JEE7RDTDD3KQMKH41E8D57). The
+/// error is a [`Mismatch`]. Another build with the same wire version
+/// goes on, with one note on stderr for each process
+/// (01M3MNVT9TYNXZ8V845BHKQADV).
 fn check_build(response: &reqwest::Response) -> Result<()> {
     let this = Build::this();
     let server = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
-    if server.as_ref().is_some_and(|s| s.matches(&this)) {
-        return Ok(());
+    match server {
+        Some(server) if server.talks_with(&this) => {
+            if !server.matches(&this) && !NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("riff: {}", build::other_build(&this, &server));
+            }
+            if let Ok(mut seen) = SERVER_BUILD.lock() {
+                *seen = Some(server);
+            }
+            Ok(())
+        }
+        server => Err(Mismatch {
+            riff: Some(this),
+            server,
+        }
+        .into()),
     }
-    Err(Mismatch {
-        riff: Some(this),
-        server,
-    }
-    .into())
 }
 
 fn now() -> u64 {

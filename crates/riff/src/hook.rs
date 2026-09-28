@@ -407,7 +407,7 @@ pub fn start_context(
 /// ```
 /// use riff_core::build::Mismatch;
 ///
-/// let m = Mismatch { riff: Some("0.1.0 bbbb 2026-09-27T11:00:00Z".parse().unwrap()), server: None };
+/// let m = Mismatch { riff: Some("0.1.0 bbbb 2026-09-27T11:00:00Z wire 1".parse().unwrap()), server: None };
 /// let context = riff::hook::mismatch_context(None, &m);
 /// assert!(context.contains("do not match"));
 /// assert!(context.contains("Tell your user now"));

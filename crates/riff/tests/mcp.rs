@@ -194,7 +194,7 @@ async fn the_tools_carry_a_conversation() {
     assert!(refused.contains("the riff is paused"), "{refused}");
     let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
     assert!(me.contains("The riff is paused. Nobody claims work. Your user or the lead resumes it with `riff resume`.\n"), "{me}");
-    assert!(me.ends_with(&riff::text::build_line()), "{me}");
+    assert!(me.ends_with(&riff::text::build_line(None)), "{me}");
     let (resumed, _) = call(&brett, "resume", serde_json::json!({})).await;
     assert_eq!(
         resumed,
@@ -406,4 +406,41 @@ async fn two_workers_talk_with_no_lead() {
     assert!(!is_error, "{sent}");
     let (read, _) = call(&one, "read", serde_json::json!({})).await;
     assert!(read.contains("No. Go ahead."), "{read}");
+}
+
+/// After a new binary on disk, the next tool call says so, and the
+/// tools stop (01M3MNVTE6GAK4WRSCFGYVS0BE).
+#[tokio::test]
+async fn a_new_binary_stops_the_tools_at_the_next_call() {
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("riff");
+    std::fs::write(&path, "old").unwrap();
+    let me: SessionUri = MIKE.parse().unwrap();
+    api.register(&me).await.unwrap();
+    let tools = Tools::new(api.clone(), me).with_binary(Some(riff::binary::Binary::at(&path)));
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let served = tools.clone();
+    tokio::spawn(async move {
+        served
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let client = ().serve(client_io).await.unwrap();
+    let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
+    assert!(!failed, "{text}");
+
+    // A new file in its place, as `cargo install` does.
+    std::fs::write(dir.path().join("new"), "new binary").unwrap();
+    std::fs::rename(dir.path().join("new"), &path).unwrap();
+    let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
+    assert!(failed);
+    assert_eq!(text, riff::binary::MCP_NEW);
+    assert!(text.contains("/mcp"), "{text}");
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), tools.stopped());
+    assert!(stopped.await.is_ok(), "the tools did not stop");
 }

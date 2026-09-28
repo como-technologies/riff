@@ -46,6 +46,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
 const SCHEME: &str = "riff://";
@@ -79,7 +80,9 @@ impl std::error::Error for NameError {}
 /// assert_eq!(Who::new("mike", None)?.to_string(), "mike");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Who {
     user: String,
     session: Option<String>,
@@ -542,6 +545,23 @@ impl From<ThreadName> for String {
         name.0
     }
 }
+
+/// A session URI and a thread name go on the wire as a string.
+macro_rules! string_schema {
+    ($($t:ident),*) => {$(
+        impl JsonSchema for $t {
+            fn schema_name() -> std::borrow::Cow<'static, str> {
+                stringify!($t).into()
+            }
+
+            fn json_schema(_: &mut SchemaGenerator) -> Schema {
+                json_schema!({ "type": "string" })
+            }
+        }
+    )*};
+}
+
+string_schema!(SessionUri, ThreadName);
 
 #[cfg(test)]
 mod tests {

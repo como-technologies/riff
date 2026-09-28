@@ -1137,13 +1137,15 @@ async fn require_token(
         .into_response()
 }
 
-/// Refuses a call from a `riff` whose build does not match the build of
-/// this server, or that names no build (01M3JEE7RDTDD3KQMKH41E8D57). The
-/// OAuth metadata stays open to each client.
+/// Refuses a call from a `riff` with another wire version than this
+/// server, or that names no build (01M3JEE7RDTDD3KQMKH41E8D57). Another
+/// build with the same wire version goes on
+/// (01M3MNVT7G701SDP1Z1THMRDQ2). The OAuth metadata stays open to each
+/// client.
 async fn check_build(request: Request, next: Next) -> Response {
     let this = Build::this();
     let riff = Build::from_header(request.headers().get(build::HEADER).map(|v| v.as_bytes()));
-    if riff.as_ref().is_some_and(|r| r.matches(&this)) {
+    if riff.as_ref().is_some_and(|r| r.talks_with(&this)) {
         return next.run(request).await;
     }
     let mismatch = Mismatch {

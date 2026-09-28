@@ -11,8 +11,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, settings, terminal, text,
-    worker,
+    binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, settings,
+    terminal, text, worker,
 };
 use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -472,7 +472,11 @@ async fn main() -> Result<()> {
         Command::Whoami => {
             println!("{}  {me}", text::name(&me));
             match api.riff(&me).await {
-                Ok(state) => println!("{}\n{}", text::riff_state(state), text::build_line()),
+                Ok(state) => println!(
+                    "{}\n{}",
+                    text::riff_state(state),
+                    text::build_line(riff::api::server_build().as_ref())
+                ),
                 Err(e) => eprintln!("riff: cannot read the state of the riff: {e:#}"),
             }
         }
@@ -1041,9 +1045,20 @@ fn use_color(color: ColorWhen) {
 
 /// Runs until stopped. It connects again when the stream ends (R131).
 /// Each message is a [`text::block`]. The status lines go to stderr
-/// (01M3JDCA6R894JG6SDJ2R7AFMN).
+/// (01M3JDCA6R894JG6SDJ2R7AFMN). On a new binary, it runs it
+/// (01M3MNVTC248YYJJQKFD9H1WY9).
 async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
     use_color(color);
+    tokio::select! {
+        () = tail_each(api, thread) => {}
+        () = binary::follow_update() => {}
+    }
+}
+
+/// Prints each message of `thread`. It reports an error once, in red
+/// for another wire version, and tries again until the stream comes
+/// back (01M3MNVTC248YYJJQKFD9H1WY9).
+async fn tail_each(api: &Api, thread: &ThreadName) {
     let (warning, error) = (riff::style::WARNING, riff::style::ERROR);
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let mut stream = Box::pin(follow(|| api.tail(thread), RETRY));
@@ -1064,13 +1079,14 @@ async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
                 last_day = Some(at.date_naive());
                 anstream::println!("{block}");
             }
-            Err(e) if e.downcast_ref::<Mismatch>().is_some() => {
-                anstream::eprintln!("{error}riff: {e}{error:#}");
-                std::process::exit(1);
-            }
             Err(e) if !lost => {
+                let style = if e.downcast_ref::<Mismatch>().is_some() {
+                    error
+                } else {
+                    warning
+                };
                 anstream::eprintln!(
-                    "{warning}riff: {e:#}. Trying again every {} seconds.{warning:#}",
+                    "{style}riff: {e:#}. Trying again every {} seconds.{style:#}",
                     RETRY.as_secs()
                 );
                 lost = true;
@@ -1083,7 +1099,8 @@ async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
 
 /// Runs until stopped, or with `once` until the first wake (R170). It
 /// connects again when the stream ends (R131). It stops when the session
-/// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2).
+/// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2). On a new binary, it runs
+/// it (01M3MNVTC248YYJJQKFD9H1WY9).
 async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     let stream = follow(|| api.watch(me), RETRY);
     let left = async {
@@ -1097,12 +1114,14 @@ async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     tokio::select! {
         () = print_each(stream, text::wake_line, once) => {}
         () = left => println!("{}", text::WATCH_LEFT),
+        () = binary::follow_update() => {}
     }
 }
 
 /// Prints one line for each item, or with `once` only the first line.
 /// It reports a failed connect on stderr once, until the next item
-/// comes.
+/// comes. Another wire version is a failed connect too: the watch waits
+/// for an update (01M3MNVTC248YYJJQKFD9H1WY9).
 async fn print_each<T>(
     stream: impl Stream<Item = Result<T>>,
     line: impl Fn(&T) -> String,
@@ -1118,12 +1137,6 @@ async fn print_each<T>(
                 if once {
                     return;
                 }
-            }
-            // A mismatch stays until a person updates riff: stop, so that
-            // the line wakes the session (01M3JEE7TPZMNK7X6JXJ7GWFPP).
-            Err(e) if e.downcast_ref::<Mismatch>().is_some() => {
-                println!("riff: {e}");
-                std::process::exit(1);
             }
             Err(e) if !reported => {
                 eprintln!(
