@@ -302,12 +302,15 @@ pub fn riff_state(state: RiffState) -> String {
 /// ```
 /// use riff_core::build::Build;
 ///
+/// let version = env!("CARGO_PKG_VERSION");
 /// let line = riff::text::build_line(None);
-/// assert!(line.starts_with("riff and riff-server have the build 0.1.0 "), "{line}");
+/// let start = format!("riff and riff-server have the build {version} ");
+/// assert!(line.starts_with(&start), "{line}");
 /// let other = Build { commit: "0000deadbeef".into(), ..Build::this() };
 /// let line = riff::text::build_line(Some(&other));
-/// assert!(line.starts_with("riff has the build 0.1.0 "), "{line}");
-/// assert!(line.contains("; riff-server has the build 0.1.0 0000deadbeef "), "{line}");
+/// assert!(line.starts_with(&format!("riff has the build {version} ")), "{line}");
+/// let server = format!("; riff-server has the build {version} 0000deadbeef ");
+/// assert!(line.contains(&server), "{line}");
 /// assert!(line.ends_with(". The wire matches."), "{line}");
 /// ```
 pub fn build_line(server: Option<&Build>) -> String {
