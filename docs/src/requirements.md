@@ -710,6 +710,12 @@
   news are notes. A verify request wakes the lead of the author's user.
   A verify result wakes the holder of the item. A question or a request
   goes to one session with `tell`.
+- **01M3JY1TBPQHH6WPPBTF42T64H** In a thread, a selector with
+  `lead=true` that matches no live session matches each live session
+  with no claim that its other fields match. So a verify request
+  reaches a free session of the author's user when that user has no
+  live lead. With a live lead, it wakes only the lead. The skill and
+  the book say so.
 - **01M3JPMQJCC3F19QAJ84EKMVKA** The skill and the start hook tell a
   session to call `read` and start the watch again in the same
   response, so that a wake costs one request.

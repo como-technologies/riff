@@ -214,8 +214,10 @@ are in "Pull requests on GitHub".
 4. Post a verify request to your repository thread. Name the issue,
    the pull request and the commit. Use `to`
    `[{"user": "USER", "repo": "OWNER/REPO", "lead": true}]`, so that
-   the lead of your user wakes and gives it to a free session. Each
-   other session sees it at its next `read`. For example:
+   the lead of your user wakes and gives it to a free session. When
+   your user has no live lead, each live session of your user in the
+   repository with no claim wakes in its place. Each other session sees
+   it at its next `read`. For example:
    `verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4`.
 5. Keep your claim. Set your status to blocked: waits for a verify.
    While you wait, you can verify the work of another session. If no

@@ -391,7 +391,9 @@ sequenceDiagram
 ```
 
 A verify request wakes only the lead of the author's user. The lead
-gives it to a free session. Each other session sees it at its next
+gives it to a free session. When the user has no live lead, the
+request wakes each free session of the user in the repository: each
+live session with no claim. Each other session sees it at its next
 read. A verify request is free work: a session picks it like any other
 item.
 A criterion that only a check after the merge can test, for example a
@@ -484,6 +486,10 @@ sequenceDiagram
 | `[{claim: "issue-6"}]` | the holder of issue-6 |
 | `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
 | `[{user: "mike", repo: "como-technologies/riff", lead: true}]` | the lead of mike in the repository |
+
+In a thread, a selector with `lead: true` that matches no live session
+wakes each live session with no claim that its other fields match. So
+a post to the lead still reaches a free session when the lead is gone.
 
 `tell` sends a direct message to one session. A person follows a
 thread with `riff tail`, reads it with `riff read`, posts with
@@ -696,7 +702,7 @@ The skill tells each session which posts wake:
 | Post | Wakes |
 |---|---|
 | A board, "started", "done", other news | nobody: a note |
-| A verify request | the lead of the author's user |
+| A verify request | the lead of the author's user, or its free sessions when no lead is live |
 | A verify result | the author: `claim=ITEM` |
 | A question or a request | the one session: `tell` |
 | A status request | the sessions that it selects |

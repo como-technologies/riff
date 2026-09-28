@@ -5,6 +5,9 @@
 //! and `to` that the skill gives for it. The worker gets at most half
 //! the wakes, and still wakes for its verify result, and for the
 //! question and the request to it.
+//!
+//! A verify request to the lead of the author reaches a free session
+//! when that lead is gone (01M3JY1TBPQHH6WPPBTF42T64H).
 
 use riff::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
@@ -230,4 +233,40 @@ async fn the_worker_reads_each_note() {
             );
         }
     }
+}
+
+/// Posts a verify request from `a` to the lead of mike, as the skill
+/// does, and returns the sessions that woke.
+async fn verify_request(riff: &Riff) -> Vec<SessionUri> {
+    let lead = [selector("user=mike,repo=como-technologies/riff,lead=true")];
+    riff.api
+        .post(
+            &riff.a,
+            Some(&repo()),
+            &lead,
+            "verify request: issue-10, PR #40, commit 1a2b3c4",
+            Kind::Message,
+        )
+        .await
+        .unwrap()
+        .woken
+}
+
+#[tokio::test]
+async fn a_verify_request_wakes_only_a_live_lead() {
+    let riff = riff().await;
+    let woken = verify_request(&riff).await;
+    let woken: Vec<_> = woken.iter().map(SessionUri::who).collect();
+    assert_eq!(woken, [riff.lead.who()]);
+}
+
+#[tokio::test]
+async fn a_verify_request_with_no_live_lead_wakes_a_free_session() {
+    let riff = riff().await;
+    let free = uri("riff://mike@thelio/como-technologies/riff?session=f4");
+    riff.api.register(&free).await.unwrap();
+    riff.api.end(&riff.lead).await.unwrap();
+    let woken = verify_request(&riff).await;
+    let woken: Vec<_> = woken.iter().map(SessionUri::who).collect();
+    assert_eq!(woken, [free.who()], "only the session with no claim wakes");
 }
