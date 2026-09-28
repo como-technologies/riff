@@ -206,7 +206,7 @@ fn loopback_host(host: &str) -> bool {
 /// ```
 /// use riff::lifecycle::version_build;
 ///
-/// let b = version_build("riff-server 0.1.0 929605821e54 2026-09-27T22:03:01Z\n").unwrap();
+/// let b = version_build("riff-server 0.1.0 929605821e54 2026-09-27T22:03:01Z wire 1\n").unwrap();
 /// assert_eq!(b.commit, "929605821e54");
 /// assert!(version_build("riff-server").is_none());
 /// ```

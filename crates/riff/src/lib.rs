@@ -55,6 +55,7 @@
 //! user. Each other message is advice (R10).
 
 pub mod api;
+pub mod binary;
 pub mod device;
 pub mod hook;
 pub mod hygiene;

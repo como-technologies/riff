@@ -1210,25 +1210,42 @@
 
 ## Builds
 
-- **01M3JEE7KZR5VVJGZQD82AA6NH** A message is valid only between a
-  `riff` and a `riff-server` of builds that match. Two builds match
-  when they have the same crate version and the same commit. The
-  commit of a build is the last commit that changed `crates`,
-  `Cargo.toml` or `Cargo.lock`. A build also names the UTC time of
-  that commit.
+- **01M3JEE7KZR5VVJGZQD82AA6NH** Replaced by
+  01M3MNVT7G701SDP1Z1THMRDQ2.
+- **01M3MNVT7G701SDP1Z1THMRDQ2** A build names the crate version, the
+  last commit that changed `crates`, `Cargo.toml` or `Cargo.lock`, the
+  UTC time of that commit, and the wire version. The wire version is
+  one number, `WIRE` in `riff-core`. A change to a message, the API or
+  the header bumps it. A test fails when the JSON schema of a wire
+  type changes and `WIRE` stays the same. A message is valid only
+  between a `riff` and a `riff-server` of the same wire version.
 - **01M3JEE7P46GWXR1BD4Q1TTSGN** Each call of `riff` names its build in
   the header `riff-build`. Each reply of `riff-server` names the build
   of the server in the same header.
 - **01M3JEE7RDTDD3KQMKH41E8D57** `riff-server` refuses each call of a
-  `riff` whose build does not match, or that names no build, with
-  status 409. `riff` refuses each reply of a `riff-server` whose build
-  does not match, or that names no build. The error names both
+  `riff` with another wire version, or that names no build, with
+  status 409. `riff` refuses each reply of a `riff-server` with
+  another wire version, or that names no build. The error names both
   builds, the older side, and the step to update it. The OAuth
   metadata stays open to each client.
-- **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the builds do not match, the
+- **01M3MNVT9TYNXZ8V845BHKQADV** With the same wire version and
+  another build, `riff` goes on. Each `riff` process prints one note
+  to stderr: `riff-server runs build X; this riff runs build Y. Run
+  riff update when you can.` `riff server` shows both builds and that
+  the wire matches.
+- **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the wire does not match, the
   start hook gives the session the error, and tells it to tell its
-  user at once and not to use the riff. `riff watch` and `riff tail`
-  print the error and stop.
+  user at once and not to use the riff.
+- **01M3MNVTC248YYJJQKFD9H1WY9** On another wire version, `riff watch`
+  and `riff tail` do not stop. They print the error once, try again
+  every 5 seconds, and go on when the wire matches. When a new `riff`
+  binary is on disk, they run it in their place with the same
+  arguments.
+- **01M3MNVTE6GAK4WRSCFGYVS0BE** When a new `riff` binary is on disk,
+  `riff mcp` replies to its next tool call that riff was updated, and
+  exits with no end call, so that the claims of the session stay.
+  Claude Code does not start it again. The book tells the person to
+  reconnect it with `/mcp`.
 - **01M3JEE7WT04BKX377VW5GDSPY** `riff --version`,
   `riff-server --version`, `riff whoami`, `riff who` and the whoami
   tool show the build.

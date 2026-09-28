@@ -1,17 +1,19 @@
-//! `riff-server` refuses a `riff` of another build, and names its own
+//! `riff-server` refuses a `riff` of another wire version, takes a
+//! `riff` of another build with the same wire version, and names its own
 //! build in each reply (01M3JEE7P46GWXR1BD4Q1TTSGN,
-//! 01M3JEE7RDTDD3KQMKH41E8D57).
+//! 01M3JEE7RDTDD3KQMKH41E8D57, 01M3MNVT7G701SDP1Z1THMRDQ2).
 
 mod common;
 
-use riff_core::build::{Build, HEADER, VERSION};
+use riff_core::build::{Build, HEADER, VERSION, WIRE};
 use riff_server::auth::RESOURCE_METADATA_PATH;
 
-/// A build with another commit, at `time`.
+/// A build with another commit and another wire version, at `time`.
 fn other(time: &str) -> Build {
     Build {
         commit: "0000deadbeef".into(),
         time: time.into(),
+        wire: WIRE + 1,
         ..Build::this()
     }
 }
@@ -38,6 +40,20 @@ async fn a_call_of_this_build_passes_the_check() {
     let (_service, url) = common::start(false, &[]).await;
     for path in CALLS {
         let (status, theirs, _) = call(&url, path, Some(&Build::this())).await;
+        assert_ne!(status, 409, "{path}");
+        assert_eq!(theirs, VERSION, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn another_build_with_the_same_wire_passes_the_check() {
+    let (_service, url) = common::start(false, &[]).await;
+    let same_wire = Build {
+        wire: WIRE,
+        ..other("2000-01-01T00:00:00Z")
+    };
+    for path in CALLS {
+        let (status, theirs, _) = call(&url, path, Some(&same_wire)).await;
         assert_ne!(status, 409, "{path}");
         assert_eq!(theirs, VERSION, "{path}");
     }
@@ -80,7 +96,10 @@ async fn a_riff_with_no_build_is_refused() {
     for path in CALLS {
         let (status, _, body) = call(&url, path, None).await;
         assert_eq!(status, 409, "{path}");
-        assert!(body.contains("a build from before the check"), "{body}");
+        assert!(
+            body.contains("a build from before the wire version"),
+            "{body}"
+        );
     }
 }
 

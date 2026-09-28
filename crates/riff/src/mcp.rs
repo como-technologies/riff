@@ -28,6 +28,10 @@
 //!
 //! A session that left the riff makes no call (see [`crate::leave`]).
 //! Each tool except `join` refuses, and the keep-alive waits.
+//!
+//! After `riff update`, the next tool call replies
+//! [`crate::binary::MCP_NEW`], and `riff mcp` exits with no end call, so
+//! that the claims of the session stay (01M3MNVTE6GAK4WRSCFGYVS0BE).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,6 +47,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::api::Api;
+use crate::binary::{Binary, MCP_NEW};
 use crate::{identity, leave, local, text};
 
 #[derive(Clone)]
@@ -55,6 +60,10 @@ pub struct Tools {
     local: Option<PathBuf>,
     /// True while the session is out of the riff.
     left: Arc<AtomicBool>,
+    /// The binary on disk at the start. A new one stops the tools.
+    binary: Option<Binary>,
+    /// Told when a tool saw a new binary and gave its reply.
+    stop: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -141,7 +150,23 @@ impl Tools {
             dir: Arc::new(Mutex::new(std::env::current_dir().unwrap_or_default())),
             local: None,
             left: Arc::new(AtomicBool::new(false)),
+            binary: None,
+            stop: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Watches `binary` on disk. After a new binary, each tool replies
+    /// [`MCP_NEW`], and [`Tools::stopped`] ends
+    /// (01M3MNVTE6GAK4WRSCFGYVS0BE).
+    pub fn with_binary(mut self, binary: Option<Binary>) -> Self {
+        self.binary = binary;
+        self
+    }
+
+    /// Ends one second after a tool replied [`MCP_NEW`], so that the
+    /// reply reaches the agent first.
+    pub async fn stopped(&self) {
+        self.stop.notified().await;
     }
 
     /// Keeps the record of a leave in `local`. When the record is there,
@@ -181,7 +206,11 @@ Show the state of the riff: paused or running."
             .and_then(|list| list.into_iter().find(|s| s.uri.who() == me.who()))
             .map_or(me.clone(), |s| s.uri);
         let state = match self.api.riff(&me).await {
-            Ok(state) => format!("{}\n{}", text::riff_state(state), text::build_line()),
+            Ok(state) => format!(
+                "{}\n{}",
+                text::riff_state(state),
+                text::build_line(crate::api::server_build().as_ref())
+            ),
             Err(e) => format!("riff cannot read the state of the riff: {e:#}"),
         };
         Ok(format!("{}\n{now}\n{state}", text::name(&now)))
@@ -198,7 +227,7 @@ Show the state of the riff: paused or running."
         Ok(format!(
             "{}\n{}\n{}",
             text::riff_state(state),
-            text::build_line(),
+            text::build_line(crate::api::server_build().as_ref()),
             text::who(&sessions, &me)
         ))
     }
@@ -262,6 +291,7 @@ commit and pushes the branch. Then it frees your claims, and you leave `who`. Ea
 or says \"join the riff\". Then start the watch and follow the start routine of the riff skill."
     )]
     async fn join(&self) -> ToolResult {
+        self.check_binary()?;
         let me = self.me();
         if let (Some(dir), Some(id)) = (&self.local, me.who().session()) {
             local::join(dir, id).map_err(err)?;
@@ -426,10 +456,25 @@ impl Tools {
     /// The session, or the refusal when it left the riff
     /// (01M3MEEFETT9A0DRWBKQTG77Z2).
     fn here(&self) -> Result<SessionUri, String> {
+        self.check_binary()?;
         if self.left() {
             return Err(text::LEFT.into());
         }
         Ok(self.me())
+    }
+
+    /// [`MCP_NEW`] when a new binary is on disk
+    /// (01M3MNVTE6GAK4WRSCFGYVS0BE).
+    fn check_binary(&self) -> Result<(), String> {
+        if !self.binary.as_ref().is_some_and(Binary::changed) {
+            return Ok(());
+        }
+        let stop = self.stop.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            stop.notify_one();
+        });
+        Err(MCP_NEW.into())
     }
 
     fn thread(&self, given: Option<String>) -> Result<ThreadName, String> {
@@ -497,7 +542,9 @@ pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// closes or a signal stops it (R204, R205).
 pub async fn serve(api: Api, me: SessionUri) -> Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
-    let tools = Tools::new(api.clone(), me.clone()).in_local(local::dir());
+    let tools = Tools::new(api.clone(), me.clone())
+        .in_local(local::dir())
+        .with_binary(Binary::this());
     // Start even if the server is down: each tool call reports the error.
     if !tools.left()
         && let Err(e) = api.register(&me).await
@@ -518,6 +565,8 @@ pub async fn serve(api: Api, me: SessionUri) -> Result<()> {
         _ = term.recv() => Ok(()),
         _ = int.recv() => Ok(()),
         _ = hup.recv() => Ok(()),
+        // A new binary: no end call, so that the claims stay.
+        () = tools.stopped() => std::process::exit(0),
     };
     alive.abort();
     tools.end().await;
