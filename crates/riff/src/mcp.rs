@@ -62,9 +62,11 @@ pub struct PostArgs {
     to: Option<Vec<Selector>>,
     /// The message.
     body: String,
-    /// `message` (the default), or `status` for a status request. Each
-    /// session that a status request wakes sets its status with the
-    /// `status` tool.
+    /// `message` (the default), `status` for a status request, or `note`.
+    /// Each session that a status request wakes sets its status with the
+    /// `status` tool. A note wakes no session: the sessions that `to`
+    /// selects see it at their next `read`. Use it for a board, a
+    /// "started" or a "done".
     kind: Option<Kind>,
 }
 

@@ -92,7 +92,8 @@ pub fn wake_line(wake: &Wake) -> String {
     };
     let from = name(&wake.from);
     match wake.kind {
-        Kind::Message => format!(
+        // A note wakes no session, so a wake of a note does not come.
+        Kind::Message | Kind::Note => format!(
             "riff: {from} wrote to you in {place} (message {}). Use the riff read tool.",
             wake.seq
         ),
@@ -572,6 +573,12 @@ pub fn released(thread: &ThreadName, item: &str) -> String {
 ///     riff::text::message(&m, &thread),
 ///     "[2] mike@pangolin:riff#api (a6cf) to claim=issue-6 (not verified) asks for your status."
 /// );
+/// m.message.kind = Kind::Note;
+/// m.message.body = "done: issue-6 merged".into();
+/// assert_eq!(
+///     riff::text::message(&m, &thread),
+///     "[2] mike@pangolin:riff#api (a6cf) to claim=issue-6 (not verified) note: done: issue-6 merged"
+/// );
 /// m.message.to = vec!["repo=como-technologies/riff".parse()?];
 /// assert!(riff::text::message(&m, &thread).contains("(a6cf) to all (not verified)"));
 /// # Ok::<(), riff_core::name::NameError>(())
@@ -608,6 +615,7 @@ pub fn message(c: &Checked, thread: &ThreadName) -> String {
         (Kind::Message, _) => format!("{head}: {}", m.body),
         (Kind::Status, true) => format!("{head} asks for your status."),
         (Kind::Status, false) => format!("{head} asks for your status: {}", m.body),
+        (Kind::Note, _) => format!("{head} note: {}", m.body),
     }
 }
 
@@ -999,6 +1007,7 @@ where
         (Kind::Message, _) => safe(&m.body),
         (Kind::Status, true) => "asks for your status.".into(),
         (Kind::Status, false) => format!("asks for your status: {}", safe(&m.body)),
+        (Kind::Note, _) => format!("note: {}", safe(&m.body)),
     };
     let options = textwrap::Options::new(width.max(INDENT.len() + 20))
         .initial_indent(INDENT)

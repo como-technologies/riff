@@ -137,7 +137,7 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
     for text in [
         "A session never verifies its own work.",
-        "`[{\"repo\": \"OWNER/REPO\"}]`",
+        "`[{\"user\": \"USER\", \"repo\": \"OWNER/REPO\", \"lead\": true}]`",
         "No session merges and no session pushes to the default branch.",
         "Open a pull request for the branch.",
         "Turn on auto-merge with a squash at once, before any other push.",

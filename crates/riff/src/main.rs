@@ -58,9 +58,10 @@ enum Command {
         /// --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,
-        /// The kind of post: message, or status. A status request asks
-        /// each session that it wakes to set its status. `riff who` then
-        /// shows each status.
+        /// The kind of post: message, status or note. A status request
+        /// asks each session that it wakes to set its status. `riff who`
+        /// then shows each status. A note wakes no session: the sessions
+        /// that --to selects see it at their next read.
         #[arg(long, default_value = "message")]
         kind: Kind,
         /// The message. A status request needs none.
@@ -329,7 +330,7 @@ async fn main() -> Result<()> {
             kind,
             body,
         } => {
-            if kind.is_message() && body.is_empty() {
+            if kind.needs_body() && body.is_empty() {
                 anyhow::bail!("give the message. Only a post with --kind status needs none.");
             }
             let thread = thread_or_default(thread, &here)?;

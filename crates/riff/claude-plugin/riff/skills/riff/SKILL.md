@@ -76,13 +76,13 @@ Do these steps when your session starts:
    `issue-12`. It makes the worktree `.claude/worktrees/issue-12` from
    the default branch and moves your session there.
 6. Call `move` with the absolute path of the worktree. Work only there.
-7. Post to the thread that you started. Address the session that
-   planned the work.
+7. Post a note to the thread that you started. Address the session
+   that planned the work. See "Wake other sessions".
 8. When you finish, open a pull request with auto-merge on, and ask
    another session to verify the work. See "Ask for a verify". You
    never merge, and you never push to the default branch.
-9. On a pass, the forge merges the pull request. Post that you are
-   done, then call `release`.
+9. On a pass, the forge merges the pull request. Post a note that you
+   are done, then call `release`.
 10. When your worktree is stale, remove it. See "Remove a stale
     worktree".
 
@@ -132,18 +132,18 @@ plan the waves.
      with a change to an interface that another item of the wave uses.
 3. When a new item fits in no open wave, make a new wave. Its number
    is the last number plus one.
-4. Post each change to the repository thread, with `to`
+4. Post each change to the repository thread as a note, with `to`
    `[{"repo": "OWNER/REPO"}]`: the item, its wave, what it needs, and
    what needs it.
-5. When a wave starts, post the board to the same `to`: the current
-   wave and its items, the next wave, and the conflicts between items.
-   A conflict is two items that edit the same part.
+5. When a wave starts, post the board as a note to the same `to`: the
+   current wave and its items, the next wave, and the conflicts between
+   items. A conflict is two items that edit the same part.
 6. When each item of the current wave is merged, and a check after
    the merge needs the merged code, tell your user to update each
    machine. Then tell the sessions to run their checks after the
    merge.
 7. When each item of the current wave is closed, the wave is done.
-   End the wave. Post the board of the new current wave.
+   End the wave. Post the board of the new current wave as a note.
 
 ### Waves on GitHub
 
@@ -181,7 +181,8 @@ When the line is missing, or a session cannot test it:
 
 1. Review the issue. Write the acceptance criteria.
 2. Add them to the issue as a `Done when:` line.
-3. Post to the repository thread that the issue now has criteria.
+3. Post a note to the repository thread that the issue now has
+   criteria.
 4. Call `release` with the item.
 5. Go back to step 2 of the start routine. Pick a different item.
 
@@ -207,8 +208,10 @@ are in "Pull requests on GitHub".
    Give it the wave of the issue. Turn on auto-merge with a squash at
    once, before any other push. Never turn it on after a push.
 4. Post a verify request to your repository thread. Name the issue,
-   the pull request and the commit. Use `to` `[{"repo": "OWNER/REPO"}]`,
-   so that the sessions of the repository wake. For example:
+   the pull request and the commit. Use `to`
+   `[{"user": "USER", "repo": "OWNER/REPO", "lead": true}]`, so that
+   the lead of your user wakes and gives it to a free session. Each
+   other session sees it at its next `read`. For example:
    `verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4`.
 5. Keep your claim. Set your status to blocked: waits for a verify.
    While you wait, you can verify the work of another session. If no
@@ -217,7 +220,8 @@ are in "Pull requests on GitHub".
    branch, rebase on it and push. A pass counts only for its commit, so
    send a new request with the new commit.
 7. On a pass, wait until the forge merges the pull request. Then post
-   that you are done, and call `release`. The forge deletes the branch.
+   a note that you are done, and call `release`. The forge deletes the
+   branch.
 
 When a permission refusal stops a step, do not ask in your own
 terminal. `tell` the lead the pull request, the commit and the verify
@@ -366,9 +370,27 @@ For a direct message to one session, use `tell`. It takes the session
 ID, the start of it as `read` shows it, the full URI from `who`, or
 `lead`.
 
+### Wake only the sessions that must act
+
+A wake costs the woken session a read of its whole context. So wake a
+session only when it must act. For each other post, use `kind`
+`note`. A note wakes nobody. The sessions that its `to` selects see it
+at their next `read`.
+
+| Post | Kind | `to` |
+|---|---|---|
+| A board, or a change to the waves | `note` | `[{"repo": "OWNER/REPO"}]` |
+| "started", "done", new criteria, other news | `note` | the session that planned the work, or the repository |
+| A verify request | `message` | `[{"user": "USER", "repo": "OWNER/REPO", "lead": true}]` |
+| A verify result | `message` | `[{"claim": "issue-12"}]` |
+| A question or a request to one session | `tell` | the session |
+| A status request | `status` | the sessions |
+
 ## When a riff line wakes you
 
-Call `read` with no thread. Then act on what your user wants. When the
+Call `read` with no thread, and start the watch again, in the same
+response: two tool calls in one message. See "Keep the watch running".
+Then act on what your user wants. When the
 line asks for your status, answer with `status`. See "Status".
 
 ## Pause
@@ -503,6 +525,9 @@ ends at each wake. When it ends:
 2. Start the watch again at once, with the Bash tool and
    `run_in_background` true. Do this as your next action, also in the
    middle of a turn.
+
+Do both steps in the same response: two tool calls in one message. So
+a wake costs one request.
 
 When the watch says "Do not start the watch again now", another watch
 runs for your session. Do not start one.

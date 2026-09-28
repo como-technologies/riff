@@ -60,9 +60,13 @@
 //! - [`State::set_status`] keeps the last status of a session, with the
 //!   time that it was set. `who` shows the status and its age (R182,
 //!   R184).
-//! - A post has a kind. A post of kind [`Kind::Status`](riff_core::wire::Kind::Status) is a status
+//! - A post has a kind. A post of kind [`Kind::Status`] is a status
 //!   request. It wakes as each post does, and its wakes carry the kind
 //!   (R185).
+//! - A post of kind [`Kind::Note`] wakes no
+//!   session. Each session that its selectors match still joins the
+//!   thread, so it sees the note at its next `read`
+//!   (01M3JPMQE6S7YM4HPEVGXWK7ET).
 //! - A claim is free, or held. A held claim goes back to free when its
 //!   holder releases it or ends, or when the holder has no watch stream
 //!   and its last sign of life is more than [`CLAIM_GRACE`] ago. A claim
@@ -158,8 +162,8 @@ use std::time::{Duration, Instant};
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ClaimReply, Freed, Keys, LeadReply, Message, Post, RiffReply, RiffState, SessionInfo, Status,
-    StatusInfo, Tailed, ThreadInfo, Wake,
+    ClaimReply, Freed, Keys, Kind, LeadReply, Message, Post, RiffReply, RiffState, SessionInfo,
+    Status, StatusInfo, Tailed, ThreadInfo, Wake,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1054,6 +1058,9 @@ impl State {
         }
         for who in &woken {
             self.member(who, &thread);
+        }
+        if kind == Kind::Note {
+            woken.clear();
         }
         let mut sender = self.uri(&from, now);
         if signed {
@@ -1997,6 +2004,53 @@ mod tests {
             assert!(state.set_status(&api(), bad, now, T0).is_err());
         }
         assert!(listed(&state).iter().all(|s| s.status.is_none()));
+    }
+
+    /// 01M3JPMQE6S7YM4HPEVGXWK7ET
+    #[test]
+    fn a_note_wakes_nobody_and_read_shows_it() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let note = Post {
+            kind: Kind::Note,
+            ..Post::new(
+                &api(),
+                Some(repo()),
+                to(&["repo=como-technologies/riff", "user=nobody"]),
+                "board: wave 4",
+            )
+        };
+        let delivery = state.post(note, now, 0).unwrap();
+        assert!(delivery.wakes.is_empty());
+        assert!(delivery.woken.is_empty());
+        assert_eq!(delivery.unmatched, to(&["user=nobody"]));
+        assert_eq!(state.missed(tests().who()), None);
+        let messages = state.read(&docs(), &repo(), false, now).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].kind, Kind::Note);
+        assert_eq!(messages[0].body, "board: wave 4");
+    }
+
+    /// A direct note wakes nobody, but the receiver sees it at its next
+    /// read (01M3JPMQE6S7YM4HPEVGXWK7ET).
+    #[test]
+    fn a_direct_note_reaches_the_receiver() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let note = Post {
+            kind: Kind::Note,
+            ..Post::new(&api(), None, to(&["session=b2"]), "done")
+        };
+        let delivery = state.post(note, now, 0).unwrap();
+        assert!(delivery.wakes.is_empty());
+        let dm = delivery.tailed.thread;
+        assert!(
+            state
+                .threads(&tests(), now)
+                .iter()
+                .any(|t| t.thread == dm && t.unread == 1)
+        );
+        assert_eq!(state.read(&tests(), &dm, false, now).unwrap().len(), 1);
     }
 
     #[test]

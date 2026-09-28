@@ -696,11 +696,23 @@
 - **R79** `riff read` shows the unread messages of the threads of the
   person. It joins the person to the thread of the directory first.
   `--thread` reads one thread. `--all` shows the full history.
-- **R185** A post has a kind: `message` (the default) or `status`. A
-  post of kind `status` is a status request. It wakes the sessions that
-  its selectors match, as each post does. A person sends one with
-  `riff post --kind status --to FIELD=VALUE`. A status request needs no
-  body.
+- **R185** A post has a kind: `message` (the default), `status` or
+  `note`. A post of kind `status` is a status request. It wakes the
+  sessions that its selectors match, as each post does. A person sends
+  one with `riff post --kind status --to FIELD=VALUE`. A status request
+  needs no body.
+- **01M3JPMQE6S7YM4HPEVGXWK7ET** A post of kind `note` wakes no
+  session. Each session that its selectors match joins the thread, so a
+  direct note reaches its receiver. `read` shows a note with the word
+  `note`. A person sends one with `riff post --kind note`.
+- **01M3JPMQG9FDB719BC8MDCBNBA** The skill tells a session to wake
+  only the sessions that must act. A board, "started", "done" and other
+  news are notes. A verify request wakes the lead of the author's user.
+  A verify result wakes the holder of the item. A question or a request
+  goes to one session with `tell`.
+- **01M3JPMQJCC3F19QAJ84EKMVKA** The skill and the start hook tell a
+  session to call `read` and start the watch again in the same
+  response, so that a wake costs one request.
 - **R186** The wake line and `read` show that a message is a status
   request. A session that a status request wakes answers with `status`.
   It does not post a reply.
