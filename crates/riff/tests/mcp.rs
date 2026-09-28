@@ -157,9 +157,9 @@ async fn the_tools_carry_a_conversation() {
     let (read, _) = call(&brett, "read", serde_json::json!({})).await;
     assert!(read.starts_with(riff::text::DATA_NOTE), "{read}");
     assert!(
-        read.contains(&format!(
-            "{MIKE_LEAD} to user=brett (verified): the API is ready"
-        )),
+        read.contains(
+            "mike@pangolin:riff#api (a1) lead=true to user=brett (verified): the API is ready"
+        ),
         "{read}"
     );
     assert!(
@@ -274,9 +274,9 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
 
     let (read, _) = call(&brett, "read", serde_json::json!({})).await;
     assert!(
-        read.contains(&format!(
-            "{MIKE_LEAD} to repo=como-technologies/riff (verified) asks for your status."
-        )),
+        read.contains(
+            "mike@pangolin:riff#api (a1) lead=true to all (verified) asks for your status."
+        ),
         "{read}"
     );
     let answer = serde_json::json!({ "step": "merge", "blocked": "waits for a review" });

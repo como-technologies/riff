@@ -511,10 +511,35 @@ impl Api {
                     Some(id) => Selector::session(id),
                     None => bail!("that URI has no session ID"),
                 },
-                Err(_) => Selector::session(session),
+                Err(_) => Selector::session(&self.session_id(me, session).await?),
             }
         };
         self.post(me, None, &[to], body, Kind::Message).await
+    }
+
+    /// The full ID of the session whose ID is `id`, or starts with it,
+    /// as `read` shows it (01M3JPK885GPD16FPK7D05R2RC). An ID that no
+    /// session in `who` has goes as it is: the server then says that
+    /// the session is gone. A start of more than one ID is an error.
+    async fn session_id(&self, me: &SessionUri, id: &str) -> Result<String> {
+        let ids: Vec<String> = self
+            .who(me, false)
+            .await?
+            .into_iter()
+            .filter_map(|s| s.uri.who().session().map(str::to_owned))
+            .filter(|s| s.starts_with(id))
+            .collect();
+        if ids.iter().any(|s| s == id) {
+            return Ok(id.to_owned());
+        }
+        match ids.as_slice() {
+            [] => Ok(id.to_owned()),
+            [one] => Ok(one.clone()),
+            _ => bail!(
+                "{id} is the start of more than one session ID: {}. Give more of it.",
+                ids.join(", ")
+            ),
+        }
     }
 
     /// The unread messages (or all of them) of one thread. With no

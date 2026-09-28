@@ -919,7 +919,8 @@ impl State {
         Ok(())
     }
 
-    /// The threads that `me` joined, with its unread counts.
+    /// The threads that `me` joined, with its unread counts. A count
+    /// leaves out the own posts of `me` (01M3JPK82PN4F706MCHDH771MW).
     pub fn threads(&mut self, me: &SessionUri, now: Instant) -> Vec<ThreadInfo> {
         let who = self.arrive(me, now);
         let who = &who;
@@ -931,7 +932,11 @@ impl State {
                 ThreadInfo {
                     thread: thread.clone(),
                     members: t.members.iter().map(|m| self.uri(m, now)).collect(),
-                    unread: t.messages.iter().filter(|m| m.message.seq > read).count(),
+                    unread: t
+                        .messages
+                        .iter()
+                        .filter(|m| m.message.seq > read && m.message.from.who() != who)
+                        .count(),
                 }
             })
             .collect()
@@ -1087,6 +1092,8 @@ impl State {
     }
 
     /// Returns unread messages (or all of them) and marks them as read.
+    /// The unread messages leave out the own posts of `me`; `all` gives
+    /// them (01M3JPK82PN4F706MCHDH771MW).
     pub fn read(
         &mut self,
         me: &SessionUri,
@@ -1106,7 +1113,7 @@ impl State {
         let messages: Vec<Message> = t
             .messages
             .iter()
-            .filter(|m| m.message.seq > from)
+            .filter(|m| all || (m.message.seq > from && m.message.from.who() != &who))
             .map(|m| m.message.clone())
             .collect();
         if let Some(last) = t.messages.last() {

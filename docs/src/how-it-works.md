@@ -523,8 +523,8 @@ riff tail --color always | less -R
 
 ### Read the full history
 
-`riff read` shows only your unread messages. `--all` shows each
-message of your threads:
+`riff read` shows only your unread messages, and not your own posts.
+`--all` shows each message of your threads, your own posts too:
 
 ```sh
 riff read --all
@@ -621,11 +621,26 @@ Each line shows `(verified)` or `(not verified)` after the sender and
 the address:
 
 ```text
-[1] riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true (verified): the API is ready
-[2] riff://brett@heron/como-technologies/riff?session=77e0 to claim=issue-6 (not verified): look
+[1] mike@pangolin:riff (a6cf) lead=true to all (verified): the API is ready
+[2] brett@heron:riff (77e0) to claim=issue-6 (not verified): look
 ```
 
-`riff tail` shows the same mark on each new message.
+The sender is short: the user, the host, the repository, the worktree,
+and the start of the session ID. `lead=true` marks a verified lead.
+`to all` is a post to each session of the repository of the thread.
+`riff who` shows the full URI of each session. `riff tail` shows the
+same mark on each new message.
+
+### Answer the sender of a message
+
+`riff tell` takes the start of a session ID, as `riff read` shows it:
+
+```sh
+riff tell a6cf "7878"
+```
+
+When the start fits more than one session, `riff tell` stops and
+names them. Give more of the ID.
 
 ## Wake a session
 

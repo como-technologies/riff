@@ -8,6 +8,7 @@ use chrono::{DateTime, NaiveDate, TimeZone};
 
 use crate::plugin::{Connected, Statusline};
 use riff_core::name::{SessionUri, ThreadName};
+use riff_core::selector::Selector;
 
 use crate::api::{Checked, Inbox};
 use riff_core::wire::{
@@ -533,15 +534,19 @@ pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")
 }
 
-/// One message. The sender's full URI lets an agent reply to it. A
-/// status request says so. The line says whether the reader verified
-/// the sender (R199). The sender of a message that is not verified
-/// never shows as the lead (R200).
+/// One message of `thread`. The sender is short: its [`name`], and
+/// `lead=true` for a lead (01M3JPK85FT5CCQPF3WDCXSMDF). The start of its
+/// session ID lets an agent reply with `tell`. `who` gives the full
+/// URI. A post to each session of the repository of the thread shows
+/// `to all`. A status request says so. The line says whether the
+/// reader verified the sender (R199). The sender of a message that is
+/// not verified never shows as the lead (R200).
 ///
 /// ```
 /// use riff::api::Checked;
 /// use riff_core::wire::{Kind, Message};
 ///
+/// let thread = "como-technologies/riff".parse()?;
 /// let message = Message {
 ///     seq: 2,
 ///     from: "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true#api".parse()?,
@@ -553,37 +558,52 @@ pub fn released(thread: &ThreadName, item: &str) -> String {
 /// };
 /// let mut m = Checked { message, verified: true };
 /// assert_eq!(
-///     riff::text::message(&m),
-///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true#api to claim=issue-6 (verified): ready"
+///     riff::text::message(&m, &thread),
+///     "[2] mike@pangolin:riff#api (a6cf) lead=true to claim=issue-6 (verified): ready"
 /// );
 /// m.verified = false;
 /// assert_eq!(
-///     riff::text::message(&m),
-///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf#api to claim=issue-6 (not verified): ready"
+///     riff::text::message(&m, &thread),
+///     "[2] mike@pangolin:riff#api (a6cf) to claim=issue-6 (not verified): ready"
 /// );
 /// m.message.kind = Kind::Status;
 /// m.message.body = String::new();
 /// assert_eq!(
-///     riff::text::message(&m),
-///     "[2] riff://mike@pangolin/como-technologies/riff?session=a6cf#api to claim=issue-6 \
-///      (not verified) asks for your status."
+///     riff::text::message(&m, &thread),
+///     "[2] mike@pangolin:riff#api (a6cf) to claim=issue-6 (not verified) asks for your status."
 /// );
+/// m.message.to = vec!["repo=como-technologies/riff".parse()?];
+/// assert!(riff::text::message(&m, &thread).contains("(a6cf) to all (not verified)"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn message(c: &Checked) -> String {
+pub fn message(c: &Checked, thread: &ThreadName) -> String {
     let m = &c.message;
-    let to: Vec<String> = m.to.iter().map(|s| format!("{s}")).collect();
+    let all = Selector {
+        repo: Some(thread.to_string()),
+        ..Selector::default()
+    };
+    let to: Vec<String> =
+        m.to.iter()
+            .map(|s| {
+                if *s == all {
+                    "all".to_owned()
+                } else {
+                    s.to_string()
+                }
+            })
+            .collect();
     let to = if to.is_empty() {
         String::new()
     } else {
         format!(" to {}", to.join(" or "))
     };
-    let (from, mark) = if c.verified {
-        (m.from.clone(), "verified")
+    let (lead, mark) = if c.verified {
+        (m.from.lead(), "verified")
     } else {
-        (m.from.clone().with_lead(false), "not verified")
+        (false, "not verified")
     };
-    let head = format!("[{}] {from}{to} ({mark})", m.seq);
+    let lead = if lead { " lead=true" } else { "" };
+    let head = format!("[{}] {}{lead}{to} ({mark})", m.seq, name(&m.from));
     match (m.kind, m.body.is_empty()) {
         (Kind::Message, _) => format!("{head}: {}", m.body),
         (Kind::Status, true) => format!("{head} asks for your status."),
@@ -617,7 +637,7 @@ pub fn message(c: &Checked) -> String {
 /// assert_eq!(
 ///     riff::text::inbox(&[inbox], &me),
 ///     format!(
-///         "{}\n\ncomo-technologies/riff\n[1] riff://mike@pangolin (verified): hello\n",
+///         "{}\n\ncomo-technologies/riff\n[1] mike@pangolin (verified): hello\n",
 ///         riff::text::DATA_NOTE
 ///     )
 /// );
@@ -631,7 +651,7 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     for t in list {
         let _ = writeln!(out, "{}", label(&t.thread, &t.members, me));
         for m in &t.messages {
-            let _ = writeln!(out, "{}", message(m));
+            let _ = writeln!(out, "{}", message(m, &t.thread));
         }
     }
     out

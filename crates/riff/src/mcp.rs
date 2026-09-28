@@ -93,8 +93,9 @@ pub struct ReadArgs {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct TellArgs {
-    /// The session: its session ID, its full riff:// URI from `who`, or
-    /// `lead` for the lead of your user in your repository.
+    /// The session: its session ID or the start of it, as `read` shows
+    /// it, its full riff:// URI from `who`, or `lead` for the lead of
+    /// your user in your repository.
     session: String,
     /// The message.
     body: String,
