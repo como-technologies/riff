@@ -20,7 +20,8 @@
 //! - Each call records the session as seen at `now`. A call from a
 //!   session that the server does not know makes it, in the place from
 //!   its URI. Only [`State::register`] changes the place of a known
-//!   session (R55, R64).
+//!   session (R55, R64). A person has no session ID, so each call of a
+//!   person gives it the place of that call (01M3MWW8KYJ3ZV91X22RBSAF33).
 //! - A session keeps the user of its first call. [`State::check_user`]
 //!   refuses its session ID under another user (R159).
 //! - A session joins the thread of its repository when the server makes
@@ -1289,11 +1290,16 @@ impl State {
     }
 
     /// Records that a session called. A new session starts in the place
-    /// from its URI and joins the thread of its repository.
+    /// from its URI and joins the thread of its repository. A person has
+    /// one entry for all its hosts, so it takes the place of each call
+    /// (01M3MWW8KYJ3ZV91X22RBSAF33).
     fn arrive(&mut self, me: &SessionUri, now: Instant) -> Who {
         let who = me.who().clone();
         self.changed.insert(Object::Sessions);
         if let Some(session) = self.sessions.get_mut(&who) {
+            if who.session().is_none() {
+                session.place = me.place().clone();
+            }
             session.last_seen = now;
             session.seen_before_load = None;
             session.live(now);
@@ -2529,6 +2535,22 @@ mod tests {
         assert!(error.contains("only an agent session"), "{error}");
         let error = state.lead(&notes, now).unwrap_err();
         assert!(error.contains("git repository"), "{error}");
+    }
+
+    #[test]
+    fn a_person_takes_the_place_of_each_call_and_a_session_does_not() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.register(&uri("riff://mike@b"), now);
+        let person_on_a = uri("riff://mike@a/como-technologies/riff");
+        post(&mut state, &person_on_a, "x", &["user=brett"], "hi");
+        let host =
+            |state: &State, me: &SessionUri| state.uri(me.who(), now).place().host().to_owned();
+        assert_eq!(host(&state, &person_on_a), "a");
+
+        let elsewhere = api().moved(Place::host_only("b").unwrap());
+        post(&mut state, &elsewhere, "x", &["user=brett"], "hi");
+        assert_eq!(host(&state, &api()), api().place().host());
     }
 
     #[test]

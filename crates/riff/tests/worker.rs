@@ -128,6 +128,42 @@ async fn a_worker_that_exits_tells_the_lead() {
     );
 }
 
+/// mike has sessions and a person command on host `b`. A worker on host
+/// `a` stops: its message comes from `mike@a`
+/// (01M3MWW8KYJ3ZV91X22RBSAF33).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_stopped_message_names_the_host_of_the_worker() {
+    let api = start_server().await;
+    let lead: SessionUri = "riff://mike@b/como-technologies/riff?session=lead1"
+        .parse()
+        .unwrap();
+    api.register(&lead).await.unwrap();
+    let person_on_b: SessionUri = "riff://mike@b".parse().unwrap();
+    api.register(&person_on_b).await.unwrap();
+    let dir = repo();
+    let claude = fake_claude(dir.path(), "exit 1");
+    let out = riff(&api, dir.path(), "w1")
+        .env("RIFF_HOST", "a")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+
+    let inbox = api.inbox(&lead, None, false).await.unwrap();
+    let stopped: Vec<_> = inbox
+        .iter()
+        .flat_map(|t| &t.messages)
+        .filter(|m| m.message.body.starts_with("worker stopped"))
+        .collect();
+    assert_eq!(stopped.len(), 1, "{stopped:?}");
+    assert_eq!(
+        stopped[0].message.from.short(),
+        "mike@a:riff",
+        "{stopped:?}"
+    );
+}
+
 /// The worker gets `RIFF_WORKER=1`.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_wrapper_marks_claude_as_a_worker() {

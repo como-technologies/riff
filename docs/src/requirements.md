@@ -688,6 +688,9 @@
 - **R65** A person who posts from the command line has no session ID.
   The sender is `riff://USER@HOST`. A selector with `user` reaches the
   person through `riff tail`.
+- **01M3MWW8KYJ3ZV91X22RBSAF33** A post of a person names the host
+  where its command ran, also when the user has sessions or commands
+  on other hosts.
 - **R39** People see the short form `USER@HOST:REPO#WORKTREE`. Riff does
   not route on the short form.
 - **01M3JDCA6R894JG6SDJ2R7AFMN** `riff tail` shows each message as a
