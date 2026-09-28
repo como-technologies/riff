@@ -458,6 +458,11 @@ pub const WORKER_STARTS_NO_WORKER: &str =
 pub const NOT_THE_LEAD_STARTS_NO_WORKER: &str = "riff: only the lead of your user starts \
 workers. This session is not the lead, so riff workers start started nothing.";
 
+/// The refusal of `riff workers start` in an agent session when riff
+/// cannot ask riff-server for the lead (01M3JPQT79FE47518Z8DFFQYYG).
+pub const LEAD_UNKNOWN_STARTS_NO_WORKER: &str = "riff: cannot check that this session is the \
+lead, so riff workers start started nothing. Check the riff with riff whoami.";
+
 /// The refusal of `riff workers start` when `run` workers fill the
 /// `limit` (01M3JPQT57PJCRBQYJNDVESS04).
 ///

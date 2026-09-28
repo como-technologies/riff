@@ -500,9 +500,7 @@ async fn start_refusal(server: &str) -> Option<String> {
     match lead.await {
         Ok(true) => None,
         Ok(false) => Some(text::NOT_THE_LEAD_STARTS_NO_WORKER.into()),
-        Err(e) => Some(format!(
-            "riff: cannot check that this session is the lead, so it starts no worker: {e:#}"
-        )),
+        Err(_) => Some(text::LEAD_UNKNOWN_STARTS_NO_WORKER.into()),
     }
 }
 
