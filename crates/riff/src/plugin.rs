@@ -708,6 +708,24 @@ mod tests {
         }
     }
 
+    /// R194, R215: the `Merged in` mark is a comment on the issue, not a
+    /// note, so that it does not mix with the post kind.
+    #[test]
+    fn the_skill_calls_the_merged_in_mark_a_comment() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "or when it has a comment `Merged in #PR (COMMIT)`",
+            "add a comment to the issue: `Merged in #PR (COMMIT)`",
+            "The comment tells the other sessions that the item is merged",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+        for sentence in flat.split(". ").filter(|s| s.contains("Merged in")) {
+            assert!(!sentence.contains("note"), "a note in {sentence:?}");
+        }
+    }
+
     /// 01M3JPMQG9FDB719BC8MDCBNBA, 01M3JPMQJCC3F19QAJ84EKMVKA.
     #[test]
     fn the_skill_wakes_only_the_sessions_that_must_act() {

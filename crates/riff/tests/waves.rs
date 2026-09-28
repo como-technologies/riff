@@ -116,6 +116,7 @@ fn the_skill_the_requirements_and_the_page_agree() {
         "has no waves, each open item is in the current wave.",
         "`Needs:` line",
         "An item is merged when it is closed, or when it has",
+        "comment `Merged in #PR (COMMIT)`",
         "closed when it is merged and each check after the merge passed.",
         "A wave is done when each of its items is closed.",
         "No session starts an item of the next wave before the current wave is done.",

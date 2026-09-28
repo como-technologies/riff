@@ -88,7 +88,7 @@
   not stop a pass. The verifier names it in the result. The pull
   request links the issue so that the merge leaves it open, and the
   issue stays open until that check passes. After the merge, the author
-  adds a note to the issue: `Merged in #PR (COMMIT)`, and the check
+  adds a comment to the issue: `Merged in #PR (COMMIT)`, and the check
   that is left.
 - **R202** The verify worktree is
   `MAIN/.claude/worktrees/verify-ITEM-ID`, detached at the commit.
@@ -169,7 +169,7 @@
   waves, each open item is in the current wave. An item that the lead
   keeps out of the waves is not free work.
 - **R215** An item names the items that it needs in a `Needs:` line.
-  An item is merged when it is closed, or when it has the note
+  An item is merged when it is closed, or when it has the comment
   `Merged in #PR (COMMIT)` (R194). An item is closed when it is merged and
   each check after the merge passed.
 - **R216** A wave is done when each of its items is closed. The order
