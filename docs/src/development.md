@@ -103,11 +103,15 @@ push it again.
 No session and no person pushes to `main`. Each change goes in by a
 pull request. GitHub merges it with a squash when the checks `Gate`,
 `Hygiene` and `riff/verify` pass. The ruleset on `main` makes this so.
-Only the repository admin role can bypass it, for a fix.
+It has no bypass, also not for an admin.
 
-The project settings of Claude Code (`.claude/settings.json`) deny a
-push to `main` and `gh pr merge --admin` in each session. Each session
-uses your GitHub account, so GitHub alone cannot stop a session.
+The project settings of Claude Code (`.claude/settings.json`) also
+deny a push to `main` and `gh pr merge --admin` in each session.
+
+Each session uses your GitHub account. So the author of a pull request
+can set `riff/verify` on its own commit. The skill forbids it, but
+nothing stops it until the sessions have their own GitHub identity
+(#97).
 
 ### Set up the repository
 
@@ -126,15 +130,33 @@ gh api repos/como-technologies/riff --jq '{allow_auto_merge, allow_squash_merge,
 gh api repos/como-technologies/riff/rulesets
 ```
 
+### Push an urgent fix to main
+
+Do this in your own terminal, never in a session. Turn the ruleset
+off, push, and turn it on again at once:
+
+```sh
+ID=$(gh api repos/como-technologies/riff/rulesets --jq '.[] | select(.name == "main") | .id')
+gh api -X PUT repos/como-technologies/riff/rulesets/$ID -f enforcement=disabled
+git push origin main
+just github
+```
+
+`just github` sets the ruleset `main` again, with `enforcement`
+active.
+
 ### Turn on auto-merge
 
 Open the pull request as in
 [Check a pull request on GitHub](#check-a-pull-request-on-github).
-Then turn on auto-merge:
+Then turn on auto-merge at once, before any other push:
 
 ```sh
 gh pr merge --auto --squash
 ```
+
+Do not run it again after a push. The pull request keeps auto-merge
+on.
 
 The pull request waits for `riff/verify`. To wait for the merge:
 
