@@ -194,7 +194,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
              '{}' workers run 'claude' '--settings' \
-             '{{\"remoteControlAtStartup\":false}}' 'Join the riff.'",
+             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false}}' 'Join the riff.'",
             env!("CARGO_BIN_EXE_riff")
         )
     };
@@ -220,13 +220,43 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
         ]
     );
     // A worker has no Remote Control (01M3JD394YFA3TQRE3E72ZER4Z), also
-    // when the user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9).
+    // when the user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), and
+    // no recap (01M3MN0D429T4Q80DYBE9S9XR7).
     assert!(!log.contains("remote-control"), "{log}");
     assert_eq!(
-        log.matches(r#"'--settings' '{"remoteControlAtStartup":false}'"#)
-            .count(),
+        log.matches(
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false}'"#
+        )
+        .count(),
         3,
         "{log}"
+    );
+}
+
+/// A worker gets its settings on the command line. The user settings
+/// file of the person does not change (01M3MN0D429T4Q80DYBE9S9XR7).
+#[test]
+fn workers_start_leaves_the_user_settings_file() {
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(1);
+    let root = tempfile::tempdir().unwrap();
+    let (_, wt) = repository(root.path());
+    let home = tempfile::tempdir().unwrap();
+    let settings = home.path().join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let text = r#"{"remoteControlAtStartup":true,"awaySummaryEnabled":true}"#;
+    std::fs::write(&settings, text).unwrap();
+    let out = m
+        .riff(&wt, &["start", "1"], true)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), text);
+    assert!(
+        m.log().contains(r#""awaySummaryEnabled":false"#),
+        "{}",
+        m.log()
     );
 }
 

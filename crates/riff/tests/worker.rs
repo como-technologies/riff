@@ -149,7 +149,8 @@ async fn the_wrapper_marks_claude_as_a_worker() {
 }
 
 /// The wrapper gives `claude` each argument as it is, also the flag
-/// settings that turn off Remote Control (01M3JV0ZNGKDFMRR9ACT0480V9).
+/// settings that turn off Remote Control (01M3JV0ZNGKDFMRR9ACT0480V9)
+/// and the recap (01M3MN0D429T4Q80DYBE9S9XR7).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_wrapper_gives_claude_the_flag_settings() {
     let api = start_server().await;
@@ -163,14 +164,14 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     let out = riff(&api, dir.path(), "w1")
         .args(["workers", "run"])
         .arg(&claude)
-        .args(["--settings", riff::terminal::NO_REMOTE_CONTROL])
+        .args(["--settings", riff::terminal::WORKER_SETTINGS])
         .arg(riff::terminal::JOIN)
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(
         std::fs::read_to_string(seen).unwrap(),
-        "--settings\n{\"remoteControlAtStartup\":false}\nJoin the riff.\n"
+        "--settings\n{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false}\nJoin the riff.\n"
     );
 }
 
