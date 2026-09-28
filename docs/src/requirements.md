@@ -968,6 +968,18 @@
 - **01M3JYX8QSEZDB5RZJ3Y57DR4Y** `riff-server` keeps a passed owner
   role in its state. It stays after a restart with a bucket, also when
   `--owner` names the old owner.
+- **01M3MN14ZCTRVD3T455P6TFK1B** After `riff-server` makes a change of
+  the members, `riff invite`, `riff remove`, `riff admin add`,
+  `riff admin remove` and `riff owner` post a note of the change to the
+  thread of each repository of the riff. The note names the user that
+  made the change, the email and the change. It wakes no session. The
+  client signs it. A repository of the riff is the repository of a
+  session in `riff who --all`.
+- **01M3MN1537Z0K3BRK6H2BZKZT0** A note of a change of the members
+  holds no secret and no token. When the post of the note fails, the
+  command still prints the change, and prints the error of the post.
+- **01M3MN157X8N9QKER1AJEPEJVX** `riff members` lists each person
+  once, with the highest role: owner, then admin, then member.
 - **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
   loopback address until it has an owner, so the owner signs in from
   the machine of the server. `riff-server` refuses another address at

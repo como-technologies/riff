@@ -139,8 +139,11 @@ impl Machine {
         self.use_keyring();
         let sessions = session.who(me, false).await.unwrap();
         let shown = text::who(&sessions, me);
+        // A person that posted, for example the note of an invite, is
+        // in the list too. Count only the agent sessions.
         let mut hosts: Vec<String> = sessions
             .iter()
+            .filter(|s| s.uri.who().session().is_some())
             .map(|s| s.uri.place().host().to_owned())
             .collect();
         hosts.sort();
@@ -192,12 +195,15 @@ async fn a_session_of_each_machine_sees_the_others_in_riff_who() {
         "{refused:#}"
     );
     first.use_keyring();
-    Api::new(&server)
+    let invited = Api::new(&server)
         .signed_in(None)
         .unwrap()
-        .invite("bob@example.org")
+        .invite(&uri("riff://ada@pangolin"), "bob@example.org")
         .await
         .unwrap();
+    // The invite posts a note to the thread of the repository of ada.
+    let posted = invited.news.unwrap();
+    assert_eq!(posted[0].thread.to_string(), "como-technologies/riff");
     second.join(&server).await.unwrap();
     let bob = uri("riff://bob@thelio/como-technologies/riff?session=b2");
     let bob_session = second.start(&server, &bob).await;

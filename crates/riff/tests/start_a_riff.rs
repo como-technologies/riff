@@ -163,8 +163,9 @@ fn a_person_updates_riff_with_riff_update() {
 }
 
 /// "Start a Team Riff" (01M3MEFG6F102T1H8DFJ38EJ4A): the owner uses the
-/// riff, signs in first, then invites each person. Each `riff` command
-/// is real. The server part of the page runs in
+/// riff, signs in first, then invites each person, and sees each change
+/// of the members with `riff tail` (01M3MN14ZCTRVD3T455P6TFK1B). Each
+/// `riff` command is real. The server part of the page runs in
 /// `crates/riff-server/tests/start_a_team_riff.rs`.
 #[test]
 fn the_owner_of_a_team_riff_signs_in_then_invites() {
@@ -177,8 +178,15 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
         .into_iter()
         .filter(|c| c.starts_with("riff "))
         .collect();
-    assert_eq!(riff, ["riff login", "riff invite EMAIL"]);
+    assert_eq!(riff, ["riff login", "riff invite EMAIL", "riff tail"]);
     each_is_real(&riff);
+    // The example note of the page is the note that riff posts.
+    let invited = riff_core::wire::Invited {
+        email: "bob@gmail.com".into(),
+        address: "URL".into(),
+    };
+    let note = riff::text::invited_news("ada", &invited);
+    assert!(page("start-a-team-riff.md").contains(&note), "{note}");
 }
 
 #[test]

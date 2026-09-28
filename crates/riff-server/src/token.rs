@@ -456,6 +456,39 @@ impl Tokens {
         self.admins.iter().map(String::as_str)
     }
 
+    /// Each person once, with the highest role: the owner, the admins
+    /// and the members, each sorted (01M3MN157X8N9QKER1AJEPEJVX).
+    /// `admins` are the admin emails of the settings (R210).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k", Instant::now()).unwrap();
+    /// tokens.add_admin("bob@gmail.com").unwrap();
+    /// tokens.invite("carol@gmail.com").unwrap();
+    /// tokens.pass_owner("carol@gmail.com", &[]).unwrap();
+    /// let (owner, admins, members) = tokens.roles(&[" Dan@X.io".into()]);
+    /// assert_eq!(owner.as_deref(), Some("carol@gmail.com"));
+    /// assert_eq!(admins, ["ada@gmail.com", "bob@gmail.com", "dan@x.io"]);
+    /// assert!(members.is_empty());
+    /// ```
+    pub fn roles(&self, admins: &[String]) -> (Option<String>, Vec<String>, Vec<String>) {
+        let owner = self.owner.clone();
+        let mut all: BTreeSet<String> = self.admins.clone();
+        all.extend(admins.iter().map(|a| a.trim().to_lowercase()));
+        let not_owner = |email: &String| Some(email) != owner.as_ref();
+        let members = self
+            .members
+            .iter()
+            .filter(|m| not_owner(m) && !all.contains(*m))
+            .cloned()
+            .collect();
+        let admins = all.into_iter().filter(not_owner).collect();
+        (owner, admins, members)
+    }
+
     /// Makes a person an admin, by verified email
     /// (01M3JY7T109BR860EQBSKEFDHY). The person is also a member, so
     /// stays a member after [`Tokens::remove_admin`]. Returns the email
