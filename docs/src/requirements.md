@@ -1074,6 +1074,9 @@
   with the flag settings `{"remoteControlAtStartup":false}`. So a
   worker has no Remote Control, also when the user settings turn on
   `remoteControlAtStartup`.
+- **01M3MN0D429T4Q80DYBE9S9XR7** `riff workers start` runs each worker
+  with the flag settings `{"awaySummaryEnabled":false}` too. So a worker
+  shows no recap of Claude Code. The user settings file does not change.
 - **01M3JD3973J7A9BG8G9EP9TVDP** Outside tmux, `riff workers start`
   says that it needs tmux, starts nothing and exits with status 1.
 - **01M3JD399ABBWE3DJT5BVXAFH5** tmux is one terminal backend. Its
