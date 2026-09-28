@@ -60,7 +60,7 @@ Do these steps when your session starts:
    when you hold no claim. Take work only from the
    current wave. Never take an item whose needs are open. When the
    current wave has no free item, verify the work of another session,
-   run your checks after the merge, or wait. Pick the item that you
+   run your checks after the release, or wait. Pick the item that you
    think is best, for example by its value, by what it unblocks, or by
    low conflict with the claims of other sessions. The order of the
    items in a wave does not matter. Do not wait for a plan or for
@@ -110,12 +110,12 @@ time.
   nothing.
 - An item is merged when it is closed, or when it has a comment
   `Merged in #PR (COMMIT)`.
-- An item is closed when it is merged and each check after the merge
+- An item is closed when it is merged and each check after the release
   passed.
 - A wave is done when each of its items is closed. The order in a
   wave: merge each item, stop the workers, deploy the shared server,
   update each machine, start the sessions again, run the checks after
-  the merge, close each item. A riff with no shared server of its own
+  the release, close each item. A riff with no shared server of its own
   code skips the deploy. In the riff repository, the update is an
   update of riff, so that new sessions start with the new plugin. Then
   the lead ends the wave.
@@ -154,7 +154,7 @@ plan the waves.
    and deploy the shared server (see "Waves on GitHub"). A push to
    the default branch does not deploy it. Then tell your user to
    update each machine. Start the sessions again, and tell them to run
-   their checks after the merge.
+   their checks after the release.
 7. When each item of the current wave is closed, the wave is done.
    End the wave. Post the board of the new current wave as a note.
 
@@ -244,12 +244,18 @@ When a permission refusal stops a step, do not ask in your own
 terminal. `tell` the lead the pull request, the commit and the verify
 result (see "Questions for your user").
 
-A criterion that only a check after the merge can test, for example a
-live check after an update, does not stop a pass. The verifier names
-it in the result. Link the issue so that the merge leaves it open. After
-the merge, add a comment to the issue: `Merged in #PR (COMMIT)`, and
-the check that is left. The comment tells the other sessions that the
-item is merged (see "Waves").
+A live check of new code, for example a new plugin command, hook or
+skill text, runs in a dev session: `just dev` in the worktree. It needs
+no release and no update of the machine. Never run `riff update`,
+`cargo install` of riff, `just install` or `riff connect` in a
+worktree.
+
+A criterion that only the shared riff can test is a check after the
+release. It does not stop a pass. The verifier names it in the result.
+Link the issue so that the merge leaves it open. After the merge, add a
+comment to the issue: `Merged in #PR (COMMIT)`, and the check that is
+left. The comment tells the other sessions that the item is merged (see
+"Waves").
 
 ### Verify the work of another session
 
@@ -295,7 +301,7 @@ one forge.
   success. A new commit needs a new verify.
 - The body of a pull request has one line `Closes #N` (the last pull
   request of the issue) or `Refs #N` (each other one, and one with a
-  check after the merge left). It ends with the trailers `Issue: #N`
+  check after the release left). It ends with the trailers `Issue: #N`
   and `Milestone: M`, where M is the milestone of the issue. Do not end
   the title with `(#N)`.
 

@@ -117,7 +117,7 @@ fn the_skill_the_requirements_and_the_page_agree() {
         "`Needs:` line",
         "An item is merged when it is closed, or when it has",
         "comment `Merged in #PR (COMMIT)`",
-        "closed when it is merged and each check after the merge passed.",
+        "closed when it is merged and each check after the release passed.",
         "A wave is done when each of its items is closed.",
         "No session starts an item of the next wave before the current wave is done.",
         "`Merged in #PR (COMMIT)`",
@@ -128,7 +128,7 @@ fn the_skill_the_requirements_and_the_page_agree() {
         "has the leads of more than one person, the people agree on one lead to plan",
         "wave is a milestone named `Wave N`. A name can follow, for example `Wave 5: Cloud`.",
         "A work item is an issue in the milestone.",
-        "merge each item, stop the workers, deploy the shared server, update each machine, start the sessions again, run the checks after the merge, close each item.",
+        "merge each item, stop the workers, deploy the shared server, update each machine, start the sessions again, run the checks after the release, close each item.",
         "A riff with no shared server of its own code skips the deploy.",
     ] {
         for (name, doc) in [
@@ -141,6 +141,44 @@ fn the_skill_the_requirements_and_the_page_agree() {
     }
 }
 
+/// A check that only the shared riff can test waits for the release
+/// of the wave (R194, 01M3MRDEXSMFT0STXF2HAR2QZ6). A live check of new
+/// code runs in a dev session. No text says "after the merge" for a
+/// check.
+#[test]
+fn a_check_of_the_shared_riff_waits_for_the_release() {
+    let skill = flat(&skill());
+    let requirements = flat(&read("docs/src/requirements.md"));
+    let verify = flat(&read("docs/src/how-it-works.md"));
+    let development = flat(&read("docs/src/development.md"));
+    let page = flat(&read("docs/src/waves.md"));
+    for (name, doc) in [
+        ("SKILL.md", &skill),
+        ("requirements.md", &requirements),
+        ("how-it-works.md", &verify),
+        ("development.md", &development),
+    ] {
+        assert!(
+            doc.contains("only the shared riff can test is a check after the release"),
+            "{name}"
+        );
+    }
+    for (name, doc) in [
+        ("SKILL.md", &skill),
+        ("requirements.md", &requirements),
+        ("how-it-works.md", &verify),
+        ("development.md", &development),
+        ("waves.md", &page),
+    ] {
+        assert!(doc.contains("check after the release"), "{name}");
+        assert!(!doc.contains("check after the merge"), "{name}");
+        assert!(!doc.contains("checks after the merge"), "{name}");
+    }
+    for (name, doc) in [("SKILL.md", &skill), ("requirements.md", &requirements)] {
+        assert!(doc.contains("runs in a dev session"), "{name}");
+    }
+}
+
 #[test]
 fn a_session_takes_its_work_from_the_current_wave() {
     let requirements = flat(&read("docs/src/requirements.md"));
@@ -150,7 +188,7 @@ fn a_session_takes_its_work_from_the_current_wave() {
         "an open work item of the current wave (R214)",
         "It takes work only from the current wave (R216).",
         "It never picks an item whose needs are open (R215).",
-        "the session verifies, runs its checks after the merge, or waits.",
+        "the session verifies, runs its checks after the release, or waits.",
     ] {
         assert!(r166.contains(text), "R166 does not say {text:?}: {r166}");
     }

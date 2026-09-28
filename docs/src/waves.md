@@ -22,20 +22,20 @@ Needs: #51, #58
 
 An item is merged when it is closed, or when it has the comment
 `Merged in #PR (COMMIT)`. The author adds this comment when a check
-after the merge is left (see
+after the release is left (see
 [Verify finished work](how-it-works.md#verify-finished-work)).
 
 ## Pick an item
 
 A session takes a free item of the current wave, never of a later
 wave. When the current wave has no free item, the session verifies
-the work of others, runs its checks after the merge, or waits.
+the work of others, runs its checks after the release, or waits.
 
 ```mermaid
 flowchart TD
     S[session looks for work] --> C{"free item in<br/>the current wave?"}
     C -- yes --> T[claim it]
-    C -- no --> W["verify the work of others,<br/>run checks after the merge, or wait"]
+    C -- no --> W["verify the work of others,<br/>run checks after the release, or wait"]
 ```
 
 ## The life of a wave
@@ -48,7 +48,7 @@ flowchart LR
     S --> P2[the lead deploys the shared server]
     P2 --> U[each machine gets the merged code]
     U --> R[the sessions start again]
-    R --> K[checks after the merge]
+    R --> K[checks after the release]
     K --> X[each item closed]
     X --> D[the wave is done]
     D --> E[the lead ends the wave]
@@ -56,11 +56,11 @@ flowchart LR
 ```
 
 A wave is done when each of its items is closed. An item is closed
-when it is merged and each check after the merge passed. Some items
+when it is merged and each check after the release passed. Some items
 have a check that needs the merged code on each machine. The order in
 a wave: merge each item, stop the workers, deploy the shared server,
 update each machine, start the sessions again, run the checks after
-the merge, close each item. A riff with no shared server of its own
+the release, close each item. A riff with no shared server of its own
 code skips the deploy. In the riff repository, the update is
 [Update riff](start-a-riff.md#update-riff).
 

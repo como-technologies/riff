@@ -81,18 +81,30 @@ install:
 serve:
     cargo run -p riff-server
 
-# 01M3JY12HASECNN6SFQ880JT5H, 01M3K0QM89E2XM1NWSPT4KXSTC. The trap prints the restore step also on Ctrl-C.
-# Run this tree's debug builds: riff for Claude Code, riff-server in the foreground. It loads .env
+# 01M3JY12HASECNN6SFQ880JT5H, 01M3K0QM89E2XM1NWSPT4KXSTC, 01M3MRDESPG8VGMQ1F6KFJXBC5.
+# The installed riff and plugin stay the same. The trap stops the server also on Ctrl-C.
+# Test this tree without the shared riff: its riff-server on a free port, Claude Code with its plugin. It loads .env
 dev *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -f .env ]; then set -a; . ./.env; set +a; fi
     cargo build --workspace
-    mkdir -p ~/.cargo/bin
-    ln -sf "{{justfile_directory()}}/target/debug/riff" ~/.cargo/bin/riff
-    target/debug/riff connect claude
-    trap 'printf "\nRestore the release setup:\n  just install\n"' EXIT
-    target/debug/riff-server {{ARGS}}
+    tree="{{justfile_directory()}}"
+    listens() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+    port=7900
+    while listens "$port"; do port=$((port + 1)); done
+    export RIFF_LISTEN="127.0.0.1:$port" RIFF_SERVER="http://127.0.0.1:$port"
+    log="$tree/target/dev-server.log"
+    "$tree/target/debug/riff-server" {{ARGS}} > "$log" 2>&1 &
+    server=$!
+    trap 'kill "$server" 2>/dev/null || true' EXIT
+    until listens "$port"; do
+        if ! kill -0 "$server" 2>/dev/null; then cat "$log"; exit 1; fi
+        sleep 0.1
+    done
+    echo "The riff of this tree: $RIFF_SERVER. The log of its server: $log"
+    PATH="$tree/target/debug:$PATH" claude --plugin-dir "$tree/crates/riff/claude-plugin/riff" \
+        --settings '{"enabledPlugins":{"riff@riff":false}}'
 
 # The shared server on Cloud Run: just cloud RECIPE
 mod cloud 'deploy/cloud.just'

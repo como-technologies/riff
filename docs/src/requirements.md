@@ -50,7 +50,7 @@
   (R214) that no session holds. It takes work only from the current
   wave (R216). It never picks an item whose needs are open (R215).
   When the current wave has no free item, the session verifies,
-  runs its checks after the merge, or waits. It picks the
+  runs its checks after the release, or waits. It picks the
   item that it thinks is best. It does not wait for a plan or for
   permission. The order of the items in a wave does not matter. A
   scope from the user of the session wins. A scope message from
@@ -96,12 +96,18 @@
   the author pushes a fix or a rebase and sends a new request with the
   new commit. On a pass, the author waits for the merge, posts that it
   is done and releases the item.
-- **R194** A criterion that only a check after the merge can test does
-  not stop a pass. The verifier names it in the result. The pull
+- **R194** A criterion that only the shared riff can test is a check
+  after the release. It does not stop a pass. The verifier names it in
+  the result. The pull
   request links the issue so that the merge leaves it open, and the
   issue stays open until that check passes. After the merge, the author
   adds a comment to the issue: `Merged in #PR (COMMIT)`, and the check
   that is left.
+- **01M3MRDEXSMFT0STXF2HAR2QZ6** A live check of new code, for example
+  a new plugin command, hook or skill text, runs in a dev session
+  (`just dev`) before the verify. It needs no release and no update of
+  the machine. A check after the release runs after the release of the
+  wave.
 - **01M3K0FZ5M08Z4YPSVKFADCAKC** Only a session that holds no claim
   takes a verify request. A session that holds an item, also one that
   waits for its own verify, does not verify. The lead gives a verify
@@ -193,11 +199,11 @@
 - **R215** An item names the items that it needs in a `Needs:` line. An
   item is merged when it is closed, or when it has the comment
   `Merged in #PR (COMMIT)` (R194). An item is closed when it is merged
-  and each check after the merge passed.
+  and each check after the release passed.
 - **R216** A wave is done when each of its items is closed. The order in
   a wave: merge each item, stop the workers, deploy the shared server,
   update each machine, start the sessions again, run the checks after
-  the merge, close each item. A riff with no shared server of its own
+  the release, close each item. A riff with no shared server of its own
   code skips the deploy. Then the lead ends the wave. No session starts
   an item of the next wave before the current wave is done.
 - **R217** The lead plans the waves. When a repository has the leads
@@ -218,7 +224,7 @@
 - **R221** When each item of the current wave is merged, the lead
   stops the workers, deploys the shared server, tells its user to
   update each machine, and
-  tells the sessions to run their checks after the merge. When each
+  tells the sessions to run their checks after the release. When each
   item is closed, the lead ends the wave.
 - **R222** The skill, the requirements and the book name the concept
   of waves first. Each keeps the form of a forge in one part of its
@@ -294,7 +300,7 @@
   `gh pr merge --auto --squash` at once, before any other push. No
   session runs `gh pr merge` after a push. The last pull request of an
   issue has `Closes #N`. Each other one, and one with a check after the
-  merge left, has `Refs #N`.
+  release left, has `Refs #N`.
 - **01M3JFEXPXRTXYHCV0WSKEK07M** The verifier puts its result on the
   pull request as a comment that names the commit. It sets the commit
   status `riff/verify` on that commit: `success` on a pass, `failure`
@@ -351,11 +357,22 @@
   it on Cloud Run. It keeps no settings: it reads them only from its
   options and the environment at each start.
 - **01M3JY12HASECNN6SFQ880JT5H** `just dev [ARGS]` builds the
-  workspace in debug. It links `~/.cargo/bin/riff` to the debug `riff`
-  of its tree, and runs `riff connect claude` with it. Then it runs the
-  debug `riff-server` with `ARGS` in the foreground. When the server
-  ends, also on Ctrl-C, it prints the step that restores the release
-  setup: `just install`.
+  workspace in debug. It runs the debug `riff-server` of its tree with
+  `ARGS` on the first free local port from 7900, with its log in
+  `target/dev-server.log`. Then it runs Claude Code with the plugin of
+  its tree (`--plugin-dir`), the installed plugin off, the debug
+  `riff` first on `PATH`, and `RIFF_SERVER` set to that server. When
+  Claude Code ends, also on Ctrl-C, it stops the server.
+- **01M3MRDESPG8VGMQ1F6KFJXBC5** Each machine has two tracks. The
+  installed `riff`, `riff-server` and plugin are a release. Only
+  `riff update` changes them, and the sessions riff with them. The
+  code under test runs from its worktree, against a `riff-server` of
+  the same worktree on a free local port. It never talks to the shared
+  riff. `just dev` changes nothing that is installed.
+- **01M3MRDEVR5VPPV6B1BDDVYSBG** A worker never runs `riff update`,
+  `cargo install` of riff, `just install` or `riff connect`. The tests
+  run the binaries of the worktree with a home of their own, so the
+  installed binaries stay the same.
 - **01M3K0QM89E2XM1NWSPT4KXSTC** `just dev` loads `.env` at the root of
   its tree, when the file exists, into the environment of `riff` and
   `riff-server`, for example `RIFF_OIDC_CLIENT_ID` and

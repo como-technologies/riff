@@ -123,7 +123,8 @@ async fn riff(server: &str, dir: &Path, args: &[&str]) -> Output {
 
 /// Step 3 of "Just this machine": at the riff of this machine, with no
 /// sign-in, `riff connect claude` installs the plugin and signs in to
-/// nothing. Then `riff who` works with no sign-in.
+/// nothing. Then `riff who` works with no sign-in. The installed
+/// `riff` of the home stays the same (01M3MRDEVR5VPPV6B1BDDVYSBG).
 #[tokio::test]
 async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
     assert_eq!(commands()[2], "riff connect claude");
@@ -132,6 +133,9 @@ async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
     tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
     let claude = fake_claude(dir.path());
+    let installed = dir.path().join("home/.cargo/bin/riff");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    fs::write(&installed, "#!/bin/sh\necho riff 0.1.0 release\n").unwrap();
 
     let connect = riff(
         &server,
@@ -152,6 +156,11 @@ async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
         "{}",
         String::from_utf8_lossy(&who.stderr)
     );
+    assert_eq!(
+        fs::read_to_string(&installed).unwrap(),
+        "#!/bin/sh\necho riff 0.1.0 release\n"
+    );
+    assert!(!installed.is_symlink());
 }
 
 /// "Update riff" of "Start a Riff" is one command.
