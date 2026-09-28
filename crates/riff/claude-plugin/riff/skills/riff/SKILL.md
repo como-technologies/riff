@@ -512,17 +512,20 @@ In tmux, you can start worker sessions on your machine with
 `riff workers start N`. Each worker joins the riff and follows the
 start routine.
 
-Keep a worker on each free item. Workers end with `riff workers done`
-when they find no work, so free work can wait with no worker. Check
-each time a riff line wakes you, and each time you free an item: a
-need merges, your user decides a scope, or a new item joins the
-current wave.
+Keep a worker on each free item. A worker with no work waits idle, so
+give it work before you start a new one. Check each time a riff line
+wakes you, and each time you free an item: a need merges, your user
+decides a scope, or a new item joins the current wave.
 
 1. Count the free work: the free items of the current wave and the
    free verify requests.
 2. Run `riff workers`. Count the workers, and the free workers: the
-   workers with no claim. `riff workers limit` shows the limit.
-3. When the free work is more than the free workers, and the workers
+   workers with no claim. A free worker waits idle, with the status
+   `idle: waits for work`. `riff workers limit` shows the limit.
+3. Give free work to a free worker first: `tell` it
+   `request: claim ITEM`. The request wakes it. Give two workers two
+   different items.
+4. When the free work is more than the free workers, and the workers
    are fewer than the limit, start more workers. Do not wait for the
    word of your user. N is the free work minus the free workers:
 
@@ -534,11 +537,6 @@ current wave.
    that run.
 
 - Start at most as many workers as there are free items.
-- Give free work to an idle worker first. An idle worker holds no
-  claim and has the status `idle: waits for work`. When an item or a
-  verify request is free, `tell` an idle worker
-  `request: claim ITEM`. Start a new worker only when no worker is
-  idle.
 - A worker never ends itself. End workers with `riff workers stop`
   when you decide, for example when the waves have no more work.
 - Never change the limit of workers (`riff workers limit`). Only your

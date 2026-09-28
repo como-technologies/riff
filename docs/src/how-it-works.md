@@ -1232,13 +1232,12 @@ riff workers start 1 --claude ~/.local/bin/claude
 
 #### The lead keeps a worker on each free item
 
-A worker ends when it finds no work. So a new item, a need that
-merges or a verify request can wait with no worker. Your lead checks
-each time a riff line wakes it, and each time it frees an item. It
-counts the free items of the current wave and the free verify
-requests. When they are more than the free workers (workers with no
-claim), and fewer workers run than the limit, it starts the
-difference. It does not wait for your word:
+Your lead checks each time a riff line wakes it, and each time it
+frees an item. It counts the free items of the current wave and the
+free verify requests. It gives each one to a free worker first: a
+worker with no claim, which waits idle. When free work is left, and
+fewer workers run than the limit, it starts the difference. It does
+not wait for your word:
 
 ```sh
 riff workers start 2
@@ -1359,9 +1358,9 @@ riff workers
   status 2m ago: idle: waits for work
 ```
 
-When an item or a verify request is free, your lead gives it to an
-idle worker with a request, before it starts a new worker. The request
-wakes the worker, and it claims the item. A worker that finished an
+A request of your lead wakes it, and it claims the item (see
+[The lead keeps a worker on each free item](#the-lead-keeps-a-worker-on-each-free-item)).
+A worker that finished an
 item runs `riff workers next` first (see
 [A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
 waits idle only when its start routine then finds no work. A worker

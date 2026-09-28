@@ -713,7 +713,7 @@ mod tests {
     }
 
     /// 01M3K0AXRNA0F2920E9QCSDFQZ, 01M3K0AXPFSWNG7YPVXE65W464: the lead
-    /// gives free work to an idle worker first, and ends workers.
+    /// gives free work to a free worker first, and ends workers.
     #[test]
     fn the_skill_tells_the_lead_to_give_work_to_an_idle_worker() {
         let skill = text("riff/skills/riff/SKILL.md");
@@ -721,9 +721,8 @@ mod tests {
         let part = &part[..part.find("### When you are a worker").unwrap()];
         let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
         for word in [
-            "Give free work to an idle worker first.",
-            "`tell` an idle worker `request: claim ITEM`.",
-            "Start a new worker only when no worker is idle.",
+            "A free worker waits idle, with the status `idle: waits for work`.",
+            "Give free work to a free worker first: `tell` it `request: claim ITEM`. The request wakes it.",
             "A worker never ends itself. End workers with `riff workers stop` when you decide",
         ] {
             assert!(flat.contains(word), "the skill does not say {word:?}");
