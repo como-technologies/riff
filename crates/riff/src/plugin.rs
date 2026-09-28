@@ -530,7 +530,8 @@ mod tests {
             "git worktree list | grep issue-12",
             "`git reset --hard origin/worktree-issue-12`",
             "call `EnterWorktree` with its path",
-            "Start again when the earlier work is wrong or too old",
+            "Start again when the earlier work is wrong or too old. First delete the pushed branch of the earlier work",
+            "git push origin --delete worktree-issue-12",
             "whether you go on or start again, and why",
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");

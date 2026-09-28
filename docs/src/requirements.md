@@ -488,6 +488,9 @@
   branch, or a worktree on its machine with no live session. It goes on
   from that work, or starts again. Its start post says which, and
   why.
+- **01M3JY13Y75S9S0SMK5XQ529AD** When a session starts an item again, it
+  deletes the pushed branch of the earlier work first
+  (`git push origin --delete worktree-ITEM`). Its start post says so.
 - **R35** A session has a URI:
   `riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE`.
   It shows who the session is, where it works and what it works on.

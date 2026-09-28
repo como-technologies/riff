@@ -583,7 +583,7 @@ start work on an item, look for that work. Use your item in place of
 `issue-12`:
 
 ```sh
-git fetch -q origin
+git fetch -q --prune origin
 git branch -r --list '*issue-12*'
 git worktree list | grep issue-12
 ```
@@ -594,10 +594,17 @@ git worktree list | grep issue-12
   default branch.
 - A worktree on your machine that no live session uses (see `who`):
   call `EnterWorktree` with its path in step 5, not a new name.
-- Start again when the earlier work is wrong or too old.
+- Start again when the earlier work is wrong or too old. First delete
+  the pushed branch of the earlier work, so that its commits do not mix
+  with the new work:
+
+  ```sh
+  git push origin --delete worktree-issue-12
+  ```
 
 Say in your start post what you found, and whether you go on or start
-again, and why.
+again, and why. When you start again, say that you deleted the old
+branch.
 
 ## Claims
 

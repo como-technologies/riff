@@ -173,17 +173,28 @@ async fn an_end_and_a_resume_keep_the_lead() {
     assert!(!shown(&api, "w1").await.lead());
 }
 
-/// The first `sh` block of "Pick up dropped work" in the skill, for
-/// the item `item`.
-fn find_steps(item: &str) -> String {
+/// The `sh` block number `n` (from 0) of "Pick up dropped work" in the
+/// skill, for the item `item`.
+fn dropped_work_block(n: usize, item: &str) -> String {
     let skill = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
     )
     .unwrap();
     let part = &skill[skill.find("## Pick up dropped work").unwrap()..];
-    let block = &part[part.find("```sh").unwrap() + "```sh".len()..];
+    let part = &part[..part.find("\n## ").unwrap()];
+    let block = part.split("```sh").nth(n + 1).unwrap();
     let block = &block[..block.find("```").unwrap()];
     block.replace("issue-12", item)
+}
+
+/// The steps that find the work of an earlier session.
+fn find_steps(item: &str) -> String {
+    dropped_work_block(0, item)
+}
+
+/// The step that deletes the pushed branch before a new start.
+fn start_again_step(item: &str) -> String {
+    dropped_work_block(1, item)
 }
 
 #[test]
@@ -212,16 +223,28 @@ fn the_skill_finds_the_pushed_branch_of_an_earlier_session() {
         &["clone", "-q", origin.to_str().unwrap(), "second"],
     );
 
-    let found = |item: &str| {
+    let run = |steps: String| {
         let out = alone(
             std::process::Command::new("sh")
-                .args(["-c", &find_steps(item)])
+                .args(["-c", &steps])
                 .current_dir(&second),
         )
         .output()
         .unwrap();
         String::from_utf8(out.stdout).unwrap()
     };
-    assert!(found("issue-12").contains("origin/worktree-issue-12"));
-    assert!(!found("issue-7").contains("worktree-issue"));
+    assert!(run(find_steps("issue-12")).contains("origin/worktree-issue-12"));
+    assert!(!run(find_steps("issue-7")).contains("worktree-issue"));
+
+    // A new start deletes the old branch, so the next session finds
+    // no earlier work.
+    run(start_again_step("issue-12"));
+    assert!(
+        !git(
+            tmp.path(),
+            &["ls-remote", "--heads", origin.to_str().unwrap()]
+        )
+        .contains("worktree-issue-12")
+    );
+    assert!(!run(find_steps("issue-12")).contains("worktree-issue-12"));
 }
