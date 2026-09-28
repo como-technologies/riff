@@ -35,6 +35,7 @@ p256 = "0.14.0"
 sha2 = "0.11.0"
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
 open = "5.4.4"
+toml_edit = "0.25.15"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 

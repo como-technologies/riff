@@ -1172,6 +1172,20 @@ When `riff mcp` of the lead starts, it adds a pane with `riff tail` of the
 repository thread beside the lead. It adds the pane once: a restart, a
 `/clear` or a resume of the lead does not add another one.
 
+### Set the limit of workers
+
+No worker starts until you set a limit. It is the most workers that
+run on this machine at one time. Only you set it: the lead never
+changes it.
+
+```sh
+riff workers limit 3
+```
+
+`riff workers limit` with no number shows the limit. It is in
+`~/.config/riff/config.toml` (`$XDG_CONFIG_HOME/riff/config.toml`),
+key `workers.limit`.
+
 ### Start workers
 
 Ask your lead to start workers, or run the command yourself in the
@@ -1186,6 +1200,11 @@ worker. Each pane runs `claude "Join the riff."` in the main worktree,
 with no Remote Control. Each worker joins the riff and finds its own
 work. A second `riff workers start` adds panes to the same window.
 Outside tmux, the command says that it needs tmux and starts nothing.
+
+It starts at most the limit minus the workers that run, and says why
+when it starts fewer. A worker never starts workers. In Claude Code,
+only your lead can start them. The lead starts at most one worker for
+each free item of the wave.
 
 To start a different `claude`, give its path:
 
@@ -1203,3 +1222,31 @@ tmux select-window -t riff-workers
 
 In tmux, `Ctrl-b o` goes to the next pane, and `Ctrl-b q` shows the
 number of each pane.
+
+### List the workers
+
+Show each worker of this machine, with its pane, its session ID, its
+claims and its status:
+
+```sh
+riff workers
+```
+
+```text
+%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  claims: issue-12
+  status 1m ago: tests of issue-12
+```
+
+### Stop the workers
+
+End each worker of this machine, or one worker by its pane:
+
+```sh
+riff workers stop
+riff workers stop %3
+```
+
+It closes the pane of each worker. The session leaves `riff who`, and
+its claims are free at once. Another session can take its item from
+its pushed branch. At the end of a wave, the lead stops the workers
+before the update, and starts them again after it.

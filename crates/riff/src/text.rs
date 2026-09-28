@@ -343,10 +343,10 @@ a tmux session, or start each worker by hand: open a terminal in the repository 
 /// assert!(riff::text::workers_started(1, "w", "/r".as_ref()).starts_with("Started 1 worker in"));
 /// ```
 pub fn workers_started(count: u16, window: &str, dir: &std::path::Path) -> String {
-    let workers = if count == 1 { "worker" } else { "workers" };
     format!(
-        "Started {count} {workers} in {}, in the tmux window {window}. \
+        "Started {} in {}, in the tmux window {window}. \
          To see them: tmux select-window -t {window}",
+        workers_count(usize::from(count)),
         dir.display()
     )
 }
@@ -433,6 +433,156 @@ pub fn members(reply: &MembersReply) -> String {
         list(&reply.admins),
         list(&reply.members),
         list(&reply.allowed_domains)
+    )
+}
+
+fn workers_count(n: usize) -> String {
+    if n == 1 {
+        "1 worker".into()
+    } else {
+        format!("{n} workers")
+    }
+}
+
+/// The refusal of `riff workers start` when the limit of the machine is
+/// 0 (01M3JPQT35BMR7XMAMMFSCDC2B).
+pub const NO_WORKER_LIMIT: &str = "riff: the limit of workers on this machine is 0, so riff \
+workers start started nothing. Your user sets the limit, for example: riff workers limit 2";
+
+/// The refusal of `riff workers start` in a worker
+/// (01M3JPQT79FE47518Z8DFFQYYG).
+pub const WORKER_STARTS_NO_WORKER: &str =
+    "riff: a worker never starts workers. riff workers start started nothing.";
+
+/// The refusal of `riff workers start` in an agent session that is not
+/// the lead (01M3JPQT79FE47518Z8DFFQYYG).
+pub const NOT_THE_LEAD_STARTS_NO_WORKER: &str = "riff: only the lead of your user starts \
+workers. This session is not the lead, so riff workers start started nothing.";
+
+/// The refusal of `riff workers start` in an agent session when riff
+/// cannot ask riff-server for the lead (01M3JPQT79FE47518Z8DFFQYYG).
+pub const LEAD_UNKNOWN_STARTS_NO_WORKER: &str = "riff: cannot check that this session is the \
+lead, so riff workers start started nothing. Check the riff with riff whoami.";
+
+/// The refusal of `riff workers start` when `run` workers fill the
+/// `limit` (01M3JPQT57PJCRBQYJNDVESS04).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::workers_full(2, 2),
+///     "riff: 2 workers run, and the limit of this machine is 2. riff workers start started \
+///      nothing. riff workers stop ends a worker."
+/// );
+/// ```
+pub fn workers_full(limit: u16, run: usize) -> String {
+    format!(
+        "riff: {} run, and the limit of this machine is {limit}. riff workers start started \
+         nothing. riff workers stop ends a worker.",
+        workers_count(run)
+    )
+}
+
+/// Why `riff workers start` started `left` fewer workers than asked
+/// (01M3JPQT57PJCRBQYJNDVESS04).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::workers_limited(1, 2, 0),
+///     "The limit of this machine is 2, and 0 workers ran before, so 1 worker did not start."
+/// );
+/// ```
+pub fn workers_limited(left: u16, limit: u16, run: usize) -> String {
+    format!(
+        "The limit of this machine is {limit}, and {} ran before, so {} did not start.",
+        workers_count(run),
+        workers_count(usize::from(left))
+    )
+}
+
+/// The answer to `riff workers limit` (01M3JPQT35BMR7XMAMMFSCDC2B).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::workers_limit(2, "/h/.config/riff/config.toml".as_ref()),
+///     "The limit of workers on this machine is 2 (/h/.config/riff/config.toml)."
+/// );
+/// ```
+pub fn workers_limit(limit: u16, path: &std::path::Path) -> String {
+    format!(
+        "The limit of workers on this machine is {limit} ({}).",
+        path.display()
+    )
+}
+
+/// The answer to `riff workers`: a line for each worker pane, with the
+/// short session ID, and a second line with its claims and its status
+/// in `sessions`. A worker that is not in `sessions` shows `not in riff
+/// who` (01M3JPQTBDGT54WN7FZP9CD6B5).
+///
+/// ```
+/// use riff::terminal::WorkerPane;
+/// use riff_core::wire::SessionInfo;
+///
+/// let panes = [
+///     WorkerPane { pane: "%3".into(), session: "a6cf2205-1".into() },
+///     WorkerPane { pane: "%4".into(), session: "77e0aaaa-2".into() },
+/// ];
+/// let info = SessionInfo {
+///     uri: "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-1&claim=issue-12#issue-12".parse()?,
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+/// };
+/// let out = riff::text::workers(&panes, &[info]);
+/// assert!(out.contains("%3  a6cf2205  a6cf2205-1  live  claims: issue-12"), "{out}");
+/// assert!(out.contains("%4  77e0aaaa  77e0aaaa-2  not in riff who"), "{out}");
+/// assert_eq!(riff::text::workers(&[], &[]), "No worker runs on this machine.\n");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn workers(panes: &[crate::terminal::WorkerPane], sessions: &[SessionInfo]) -> String {
+    if panes.is_empty() {
+        return "No worker runs on this machine.\n".into();
+    }
+    let mut out = String::new();
+    for w in panes {
+        let short: String = w.session.chars().take(8).collect();
+        let info = sessions
+            .iter()
+            .find(|s| s.uri.who().session() == Some(w.session.as_str()));
+        let Some(info) = info else {
+            let _ = writeln!(out, "{}  {short}  {}  not in riff who", w.pane, w.session);
+            continue;
+        };
+        let state = if info.live {
+            "live".into()
+        } else {
+            format!("idle {}", ago(info.idle_secs))
+        };
+        let claims = match info.uri.claims() {
+            [] => "no claims".into(),
+            claims => format!("claims: {}", claims.join(", ")),
+        };
+        let _ = writeln!(out, "{}  {short}  {}  {state}  {claims}", w.pane, w.session);
+        if let Some(status) = &info.status {
+            let _ = writeln!(out, "  {}", status_line(status));
+        }
+    }
+    out
+}
+
+/// The answer to `riff workers stop` (01M3JPQTDFW3C7QBSZZ2M831MH).
+///
+/// ```
+/// assert_eq!(riff::text::workers_stopped(0), "No worker runs on this machine.");
+/// assert_eq!(riff::text::workers_stopped(2), "Stopped 2 workers. They left riff who, and their claims are free.");
+/// ```
+pub fn workers_stopped(n: usize) -> String {
+    if n == 0 {
+        return "No worker runs on this machine.".into();
+    }
+    format!(
+        "Stopped {}. They left riff who, and their claims are free.",
+        workers_count(n)
     )
 }
 

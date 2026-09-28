@@ -16,6 +16,7 @@ anstream.workspace = true
 anstyle.workspace = true
 chrono.workspace = true
 textwrap.workspace = true
+toml_edit.workspace = true
 base64.workspace = true
 clap.workspace = true
 futures.workspace = true

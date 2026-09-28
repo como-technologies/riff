@@ -1,6 +1,8 @@
 //! The lead and its workers in tmux (01M3JD390F49HZSKEJ3VACX0ZA to
-//! 01M3JD39BASN1GNJTZXXKBCNZ9). A fake `tmux` on `PATH` writes each call
-//! to a log, and keeps the marks of the panes and windows in files.
+//! 01M3JD39BASN1GNJTZXXKBCNZ9), and the workers of a machine
+//! (01M3JPQT35BMR7XMAMMFSCDC2B to 01M3JPQTDFW3C7QBSZZ2M831MH). A fake
+//! `tmux` on `PATH` writes each call to a log, and keeps the marks of
+//! the panes and windows in files.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -8,23 +10,33 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use riff::api::Api;
+use riff::identity;
 use riff::terminal::{self, Program, Tmux};
 use riff_core::name::SessionUri;
+use riff_core::wire::{RiffState, Status};
 
+/// `list-panes -a` lists the worker panes with their session marks, from
+/// the file `workers`. `kill-pane` removes a pane from it.
 const FAKE_TMUX: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
+n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
 case "$1" in
-  list-panes) cat "$dir/panes" 2>/dev/null ;;
+  list-panes)
+    if [ "$2" = "-a" ]; then cat "$dir/workers" 2>/dev/null; else cat "$dir/panes" 2>/dev/null; fi ;;
   list-windows) cat "$dir/windows" 2>/dev/null ;;
   display-message) echo "@0" ;;
-  new-window) echo "@7" ;;
-  split-window) echo "%$(grep -c '^split-window' "$dir/log")" ;;
+  new-window) echo "@7 %$n" ;;
+  split-window) echo "%$n" ;;
   set-option)
-    case "$2" in
-      -p) echo "$6" >> "$dir/panes" ;;
-      -w) echo "$4 $6" >> "$dir/windows" ;;
+    case "$2 $5" in
+      "-p @riff-session") echo "$4 $6" >> "$dir/workers" ;;
+      "-p @riff") echo "$6" >> "$dir/panes" ;;
+      "-w @riff") echo "$4 $6" >> "$dir/windows" ;;
     esac ;;
+  kill-pane)
+    grep -v "^$3 " "$dir/workers" > "$dir/workers.new"
+    mv "$dir/workers.new" "$dir/workers" ;;
 esac
 exit 0
 "#;
@@ -67,58 +79,140 @@ fn repository(root: &Path) -> (PathBuf, PathBuf) {
     )
 }
 
-/// `riff workers start` in `dir`, with the fake `tmux` first on `PATH`.
-fn workers(fake: &Path, dir: &Path, args: &[&str], in_tmux: bool) -> std::process::Output {
-    let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
-    cmd.args(["workers", "start"])
-        .args(args)
-        .current_dir(dir)
-        .env("PATH", path)
-        .env("RIFF_SERVER", "http://riff.test:7878");
-    if in_tmux {
-        cmd.env("TMUX", "/tmp/tmux-1000/default,1,0")
-            .env("TMUX_PANE", "%0");
-    } else {
-        cmd.env_remove("TMUX").env_remove("TMUX_PANE");
+/// A machine for `riff workers`: the fake `tmux` first on `PATH`, its
+/// own settings directory, and a riff-server URL. It is a plain
+/// terminal: no session ID and no worker mark.
+struct Machine {
+    fake: tempfile::TempDir,
+    config: tempfile::TempDir,
+    run: tempfile::TempDir,
+    server: String,
+}
+
+impl Machine {
+    fn new(server: &str) -> Self {
+        Machine {
+            fake: fake_tmux(),
+            config: tempfile::tempdir().unwrap(),
+            run: tempfile::tempdir().unwrap(),
+            server: server.into(),
+        }
     }
-    cmd.output().unwrap()
+
+    fn log(&self) -> String {
+        log(self.fake.path())
+    }
+
+    /// `riff workers ARGS` in `dir`. `in_tmux` sets the variables of a
+    /// tmux pane.
+    fn riff(&self, dir: &Path, args: &[&str], in_tmux: bool) -> Command {
+        let path = format!(
+            "{}:{}",
+            self.fake.path().display(),
+            std::env::var("PATH").unwrap()
+        );
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+        cmd.arg("workers")
+            .args(args)
+            .current_dir(dir)
+            .env("PATH", path)
+            .env("XDG_CONFIG_HOME", self.config.path())
+            .env("XDG_RUNTIME_DIR", self.run.path())
+            .env("RIFF_SERVER", &self.server)
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "pangolin")
+            .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+            .env_remove("RIFF_SESSION")
+            .env_remove("CLAUDE_CODE_SESSION_ID")
+            .env_remove("RIFF_WORKER");
+        if in_tmux {
+            cmd.env("TMUX", "/tmp/tmux-1000/default,1,0")
+                .env("TMUX_PANE", "%0");
+        } else {
+            cmd.env_remove("TMUX").env_remove("TMUX_PANE");
+        }
+        cmd
+    }
+
+    /// `riff workers start ARGS` in tmux.
+    fn start(&self, dir: &Path, args: &[&str]) -> std::process::Output {
+        let mut all = vec!["start"];
+        all.extend(args);
+        self.riff(dir, &all, true).output().unwrap()
+    }
+
+    /// `riff workers limit N`.
+    fn limit(&self, limit: u16) {
+        let out = self
+            .riff(Path::new("/"), &["limit", &limit.to_string()], false)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    }
+}
+
+fn stdout(out: &std::process::Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn stderr(out: &std::process::Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// The session ID in each `set-option -p -t PANE @riff-session ID`.
+fn marked_sessions(log: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|l| l.strip_prefix("set-option -p -t "))
+        .filter_map(|l| l.split_once(" @riff-session "))
+        .map(|(_, id)| id.to_owned())
+        .collect()
 }
 
 #[test]
 fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
-    let fake = fake_tmux();
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(3);
     let root = tempfile::tempdir().unwrap();
     let (main, wt) = repository(root.path());
-    let out = workers(fake.path(), &wt, &["3"], true);
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    let out = m.start(&wt, &["3"]);
     assert!(out.status.success(), "{out:?}");
     assert!(
-        stdout.contains("Started 3 workers in")
-            && stdout.contains("tmux select-window -t riff-workers"),
-        "{stdout}"
+        stdout(&out).contains("Started 3 workers in")
+            && stdout(&out).contains("tmux select-window -t riff-workers"),
+        "{out:?}"
     );
 
-    let log = log(fake.path());
-    let calls: Vec<&str> = log.lines().collect();
+    // Each worker has its own riff session ID, in RIFF_SESSION and in
+    // the mark of its pane (01M3JPQT9BA7JVMZPV68FY4MQ6).
+    let log = m.log();
+    let ids = marked_sessions(&log);
+    assert_eq!(ids.len(), 3, "{log}");
+    assert!(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2]);
     let dir = main.display();
-    let pane = format!(
-        "-d -c {dir} -P -F #{{pane_id}} -e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 \
-         'claude' 'Join the riff.'"
-    );
+    let env = |id: &str| {
+        format!(
+            "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
+             'claude' 'Join the riff.'"
+        )
+    };
+    let pane = |id: &str| format!("-d -c {dir} -P -F #{{pane_id}} {}", env(id));
     assert_eq!(
-        calls,
+        log.lines().collect::<Vec<_>>(),
         [
+            "list-panes -a -F #{pane_id} #{@riff-session}".to_owned(),
             "list-windows -t %0 -F #{window_id} #{@riff}".to_owned(),
             "display-message -p -t %0 #{window_id}".to_owned(),
             format!(
-                "new-window -a -t @0 -n riff-workers -d -c {dir} -P -F #{{window_id}} \
-                 -e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 'claude' 'Join the riff.'"
+                "new-window -a -t @0 -n riff-workers -d -c {dir} -P -F #{{window_id}} #{{pane_id}} {}",
+                env(&ids[0])
             ),
             "set-option -w -t @7 @riff workers".to_owned(),
-            format!("split-window -t @7 {pane}"),
+            format!("set-option -p -t %1 @riff-session {}", ids[0]),
+            format!("split-window -t @7 {}", pane(&ids[1])),
+            format!("set-option -p -t %2 @riff-session {}", ids[1]),
             "select-layout -t @7 tiled".to_owned(),
-            format!("split-window -t @7 {pane}"),
+            format!("split-window -t @7 {}", pane(&ids[2])),
+            format!("set-option -p -t %3 @riff-session {}", ids[2]),
             "select-layout -t @7 tiled".to_owned(),
         ]
     );
@@ -128,13 +222,14 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
 
 #[test]
 fn a_second_start_adds_panes_to_the_same_window() {
-    let fake = fake_tmux();
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(3);
     let root = tempfile::tempdir().unwrap();
     let (main, _) = repository(root.path());
-    assert!(workers(fake.path(), &main, &["1"], true).status.success());
-    let out = workers(fake.path(), &main, &["2", "--claude", "/opt/claude"], true);
+    assert!(m.start(&main, &["1"]).status.success());
+    let out = m.start(&main, &["2", "--claude", "/opt/claude"]);
     assert!(out.status.success(), "{out:?}");
-    let log = log(fake.path());
+    let log = m.log();
     assert_eq!(log.matches("new-window").count(), 1, "{log}");
     assert_eq!(log.matches("split-window -t @7").count(), 2, "{log}");
     assert!(log.contains("'/opt/claude' 'Join the riff.'"), "{log}");
@@ -142,25 +237,234 @@ fn a_second_start_adds_panes_to_the_same_window() {
 
 #[test]
 fn outside_tmux_workers_start_starts_nothing() {
-    let fake = fake_tmux();
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(3);
     let root = tempfile::tempdir().unwrap();
     let (main, _) = repository(root.path());
-    let out = workers(fake.path(), &main, &["3"], false);
+    let out = m.riff(&main, &["start", "3"], false).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("needs tmux") && stderr.contains("started nothing"),
-        "{stderr}"
+        stderr(&out).contains("needs tmux") && stderr(&out).contains("started nothing"),
+        "{out:?}"
     );
-    assert_eq!(log(fake.path()), "");
+    assert_eq!(m.log(), "");
 }
 
 #[test]
 fn workers_start_needs_a_count_of_one_or_more() {
-    let fake = fake_tmux();
-    let out = workers(fake.path(), Path::new("/"), &["0"], true);
+    let m = Machine::new("http://riff.test:7878");
+    let out = m.start(Path::new("/"), &["0"]);
     assert!(!out.status.success());
-    assert_eq!(log(fake.path()), "");
+    assert_eq!(m.log(), "");
+}
+
+/// On a new machine, the limit is 0: no worker starts
+/// (01M3JPQT35BMR7XMAMMFSCDC2B).
+#[test]
+fn a_new_machine_starts_no_worker() {
+    let m = Machine::new("http://riff.test:7878");
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+    let out = m.start(&main, &["2"]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = stderr(&out);
+    assert!(
+        err.contains("the limit of workers on this machine is 0"),
+        "{err}"
+    );
+    assert!(err.contains("riff workers limit"), "{err}");
+    assert_eq!(m.log(), "");
+    let out = m.riff(&main, &["limit"], false).output().unwrap();
+    assert!(stdout(&out).contains("is 0 ("), "{out:?}");
+}
+
+/// The limit stops the third worker, then each more
+/// (01M3JPQT57PJCRBQYJNDVESS04).
+#[test]
+fn the_limit_stops_the_workers_past_it() {
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(2);
+    let config = std::fs::read_to_string(m.config.path().join("riff/config.toml")).unwrap();
+    assert_eq!(config, "[workers]\nlimit = 2\n");
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+
+    let out = m.start(&main, &["3"]);
+    assert!(out.status.success(), "{out:?}");
+    let out = stdout(&out);
+    assert!(out.contains("Started 2 workers in"), "{out}");
+    assert!(
+        out.contains(
+            "The limit of this machine is 2, and 0 workers ran before, so 1 worker did not start."
+        ),
+        "{out}"
+    );
+    assert_eq!(marked_sessions(&m.log()).len(), 2);
+
+    let out = m.start(&main, &["1"]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(stderr(&out).contains("2 workers run"), "{out:?}");
+    assert_eq!(marked_sessions(&m.log()).len(), 2);
+}
+
+/// A worker never starts workers (01M3JPQT79FE47518Z8DFFQYYG).
+#[test]
+fn a_worker_starts_no_worker() {
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(2);
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+    let out = m
+        .riff(&main, &["start", "1"], true)
+        .env("RIFF_WORKER", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("a worker never starts workers"),
+        "{out:?}"
+    );
+    assert_eq!(m.log(), "");
+}
+
+/// The session `id` of mike on pangolin, at the place of `dir`.
+fn session_in(dir: &Path, id: &str) -> SessionUri {
+    let place = identity::place_in(dir, "pangolin").unwrap();
+    SessionUri::new(riff_core::name::Who::new("mike", Some(id)).unwrap(), place)
+}
+
+/// Only the lead starts workers from an agent session
+/// (01M3JPQT79FE47518Z8DFFQYYG).
+#[tokio::test(flavor = "multi_thread")]
+async fn only_the_lead_session_starts_workers() {
+    let api = start_server().await;
+    let m = Machine::new(api.base());
+    m.limit(2);
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+    let lead = session_in(&main, "a1");
+    let other = session_in(&main, "a2");
+    api.register(&lead).await.unwrap();
+    api.register(&other).await.unwrap();
+
+    let start_as = |id: &str| {
+        m.riff(&main, &["start", "1"], true)
+            .env("RIFF_SESSION", id)
+            .output()
+            .unwrap()
+    };
+    let out = start_as("a2");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains("only the lead of your user starts workers"),
+        "{out:?}"
+    );
+    assert_eq!(marked_sessions(&m.log()).len(), 0);
+
+    let out = start_as("a1");
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(marked_sessions(&m.log()).len(), 1);
+}
+
+/// Two workers that run on the server: each is registered, holds a
+/// claim and has a status. Their panes are in the fake tmux.
+async fn two_workers(api: &Api, m: &Machine, dir: &Path) -> Vec<SessionUri> {
+    let thread = "como-technologies/riff".parse().unwrap();
+    let mut workers = Vec::new();
+    let mut panes = String::new();
+    for (pane, id, item) in [("%3", "w1", "issue-12"), ("%4", "w2", "issue-13")] {
+        let me = session_in(dir, id);
+        api.register(&me).await.unwrap();
+        if workers.is_empty() {
+            api.set_riff(&me, RiffState::Running).await.unwrap();
+        }
+        api.claim(&me, &thread, item).await.unwrap();
+        let status = Status {
+            step: format!("tests of {item}"),
+            blocked: None,
+        };
+        api.status(&me, &status).await.unwrap();
+        panes.push_str(&format!("{pane} {id}\n"));
+        workers.push(me);
+    }
+    std::fs::write(m.fake.path().join("workers"), panes).unwrap();
+    workers
+}
+
+/// `riff workers` lists each worker with its pane, session ID, claim
+/// and status (01M3JPQTBDGT54WN7FZP9CD6B5).
+#[tokio::test(flavor = "multi_thread")]
+async fn workers_lists_each_worker() {
+    let api = start_server().await;
+    let m = Machine::new(api.base());
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+    two_workers(&api, &m, &main).await;
+
+    let out = m.riff(&main, &[], false).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let out = stdout(&out);
+    assert!(out.contains("%3  w1  w1  idle"), "{out}");
+    assert!(out.contains("claims: issue-12"), "{out}");
+    assert!(out.contains("status "), "{out}");
+    assert!(out.contains(": tests of issue-12"), "{out}");
+    assert!(out.contains("%4  w2  w2  idle"), "{out}");
+    assert!(out.contains("claims: issue-13"), "{out}");
+
+    std::fs::remove_file(m.fake.path().join("workers")).unwrap();
+    let out = m.riff(&main, &[], false).output().unwrap();
+    assert_eq!(stdout(&out), "No worker runs on this machine.\n");
+}
+
+/// `riff workers stop` ends each worker: within 10 seconds, no worker is
+/// in `riff who`, and their claims are free (01M3JPQTDFW3C7QBSZZ2M831MH).
+#[tokio::test(flavor = "multi_thread")]
+async fn workers_stop_ends_each_worker() {
+    let api = start_server().await;
+    let m = Machine::new(api.base());
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+    let workers = two_workers(&api, &m, &main).await;
+    let person = session_in(&main, "p1");
+    api.register(&person).await.unwrap();
+
+    // One pane first.
+    let out = m.riff(&main, &["stop", "%3"], false).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout(&out).contains("Stopped 1 worker."), "{out:?}");
+    let out = m.riff(&main, &["stop", "%3"], false).output().unwrap();
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        stderr(&out).contains("no worker runs in the pane %3"),
+        "{out:?}"
+    );
+
+    let out = m.riff(&main, &["stop"], false).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout(&out).contains("Stopped 1 worker."), "{out:?}");
+    let log = m.log();
+    assert!(
+        log.contains("kill-pane -t %3\n") && log.contains("kill-pane -t %4\n"),
+        "{log}"
+    );
+
+    let start = Instant::now();
+    loop {
+        let who = api.who(&person, false).await.unwrap();
+        let gone = workers
+            .iter()
+            .all(|w| !who.iter().any(|s| s.uri.who() == w.who()));
+        if gone {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "{who:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let thread = "como-technologies/riff".parse().unwrap();
+    for item in ["issue-12", "issue-13"] {
+        let reply = api.claim(&person, &thread, item).await.unwrap();
+        assert!(reply.granted, "{item} is held by {}", reply.holder);
+    }
 }
 
 async fn start_server() -> Api {
@@ -283,6 +587,10 @@ fn the_book_has_a_how_to_for_each_step() {
             "### Take over a worker",
             "tmux select-window -t riff-workers",
         ),
+        ("### Set the limit of workers", "riff workers limit 3"),
+        ("### List the workers", "riff workers\n"),
+        ("### Stop the workers", "riff workers stop\n"),
+        ("### Stop the workers", "riff workers stop %3"),
     ] {
         let how = &part[part.find(heading).unwrap()..];
         let next = how[4..].find("\n### ").map_or(how.len(), |n| n + 4);
@@ -300,4 +608,12 @@ fn the_book_has_a_how_to_for_each_step() {
         help.contains("--claude <CLAUDE>") && help.contains("<COUNT>"),
         "{help}"
     );
+    let help = Command::new(env!("CARGO_BIN_EXE_riff"))
+        .args(["workers", "--help"])
+        .output()
+        .unwrap();
+    let help = String::from_utf8_lossy(&help.stdout);
+    for command in ["start", "limit", "stop"] {
+        assert!(help.contains(&format!("  {command} ")), "{help}");
+    }
 }
