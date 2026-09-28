@@ -57,27 +57,56 @@ fn deploy_with_url(url: &str) -> tempfile::TempDir {
     copy
 }
 
-/// Runs a script from the directory `scripts`. See [`run`].
+/// Runs a script from the directory `scripts`. See [`run`]. The deploy
+/// gets the owner `owner@example.com`.
 fn run_in(scripts: &Path, script: &str, args: &[&str], found: &[&str]) -> String {
+    let out = command(scripts, script, args, found, Some("owner@example.com"));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.log
+}
+
+/// The result of a script: its exit status, its stderr and the calls.
+struct Ran {
+    status: std::process::ExitStatus,
+    stderr: Vec<u8>,
+    log: String,
+}
+
+/// Runs a script with a fake `gcloud`, and with `RIFF_OWNER` set to
+/// `owner` or not set.
+fn command(
+    scripts: &Path,
+    script: &str,
+    args: &[&str],
+    found: &[&str],
+    owner: Option<&str>,
+) -> Ran {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("calls");
     let found_file = dir.path().join("found");
     fs::write(&found_file, found.join("\n") + "\n").unwrap();
     let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake");
     let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
-    let out = Command::new(scripts.join(script))
+    let mut command = Command::new(scripts.join(script));
+    command
         .args(args)
         .env("PATH", path)
         .env("FAKE_GCLOUD_LOG", &log)
         .env("FAKE_GCLOUD_FOUND", &found_file)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    fs::read_to_string(log).unwrap()
+        .env_remove("RIFF_OWNER");
+    if let Some(owner) = owner {
+        command.env("RIFF_OWNER", owner);
+    }
+    let out = command.output().unwrap();
+    Ran {
+        status: out.status,
+        stderr: out.stderr,
+        log: fs::read_to_string(log).unwrap_or_default(),
+    }
 }
 
 /// Each resource that `cloud-setup.sh` makes, as its describe call.
@@ -178,11 +207,23 @@ fn deploy_runs_one_instance_with_sign_in() {
         "--concurrency 1000 --timeout 3600",
         "RIFF_PUBLIC_URL=https://riff-server-816917641970.us-central1.run.app,",
         "RIFF_REQUIRE_SIGN_IN=true,",
-        "RIFF_BUCKET=como-riff-state",
+        "RIFF_BUCKET=como-riff-state,",
+        "RIFF_OWNER=owner@example.com",
         "--set-secrets RIFF_OIDC_CLIENT_SECRET=riff-oidc-client-secret:latest",
     ] {
         assert!(deploy.contains(flag), "{flag} is not in: {deploy}");
     }
+}
+
+/// The cloud riff needs an owner (01M3JN3ASSV9SA0QZKXXJ0RTEV). With
+/// no `RIFF_OWNER`, the deploy stops before it calls gcloud.
+#[test]
+fn deploy_stops_with_no_owner() {
+    let out = command(&deploy(), "deploy.sh", &[], &[], None);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("gh variable set RIFF_OWNER"), "{stderr}");
+    assert!(!out.log.contains("run deploy"), "{}", out.log);
 }
 
 #[test]
@@ -301,6 +342,7 @@ fn ci_deploys_after_the_gate_with_no_key() {
         "google-github-actions/auth@",
         "workload_identity_provider:",
         "deploy/deploy.sh --image \"$IMAGE\"",
+        "RIFF_OWNER: ${{ vars.RIFF_OWNER }}",
     ] {
         assert!(job.contains(part), "{part} is not in the deploy job");
     }

@@ -28,6 +28,14 @@ if [ -z "$RIFF_OIDC_CLIENT_ID" ]; then
     echo "deploy/cloud.env has no client ID. Run: just cloud oauth-client" >&2
     exit 1
 fi
+# The owner of the cloud riff (01M3JN3ASSV9SA0QZKXXJ0RTEV). The
+# repository is public, so the email is a GitHub Actions variable.
+if [ -z "${RIFF_OWNER:-}" ]; then
+    echo "RIFF_OWNER is not set: the cloud riff needs an owner. Run once:" >&2
+    echo "  gh variable set RIFF_OWNER --body YOUR_EMAIL" >&2
+    echo "For a deploy from your machine: export RIFF_OWNER=YOUR_EMAIL" >&2
+    exit 1
+fi
 
 # One instance, with its CPU on also between calls. 1000 calls at a
 # time, each for up to 60 minutes. riff checks each token itself, so
@@ -36,7 +44,7 @@ gcloud run deploy "$CLOUD_SERVICE" "${from[@]}" --quiet "${where[@]}" \
     --service-account "$(account "$CLOUD_RUN_ACCOUNT")" \
     --port 8080 --min-instances 1 --max-instances 1 --no-cpu-throttling \
     --concurrency 1000 --timeout 3600 --no-invoker-iam-check \
-    --set-env-vars "RIFF_PUBLIC_URL=$CLOUD_URL,RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID=$RIFF_OIDC_CLIENT_ID,RIFF_BUCKET=$CLOUD_BUCKET" \
+    --set-env-vars "RIFF_PUBLIC_URL=$CLOUD_URL,RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID=$RIFF_OIDC_CLIENT_ID,RIFF_BUCKET=$CLOUD_BUCKET,RIFF_OWNER=$RIFF_OWNER" \
     --set-secrets "RIFF_OIDC_CLIENT_SECRET=$CLOUD_SECRET:latest"
 
 if [ -n "$image" ] || [ "$CLOUD_URL" != "https://$CLOUD_DOMAIN" ]; then

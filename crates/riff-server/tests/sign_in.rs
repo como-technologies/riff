@@ -5,64 +5,13 @@ mod common;
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use axum::routing::get;
-use axum::{Json, Router};
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use riff_core::dpop::Key;
 use riff_core::wire::{
-    Discovery, ID_TOKEN_TYPE, SignInConfig, TOKEN_EXCHANGE, TokenError, TokenReply, TokenRequest,
+    ID_TOKEN_TYPE, SignInConfig, TOKEN_EXCHANGE, TokenError, TokenReply, TokenRequest,
 };
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
-use serde_json::{Value, json};
-
-const KEY: &str = include_str!("../testdata/test-only-rsa-key.pem");
-const JWKS: &str = include_str!("../testdata/test-only-jwks.json");
-
-/// A provider with only the two documents that the server fetches.
-async fn fake_provider() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let issuer = format!("http://{}", listener.local_addr().unwrap());
-    let discovery = Discovery {
-        issuer: issuer.clone(),
-        authorization_endpoint: format!("{issuer}/authorize"),
-        token_endpoint: format!("{issuer}/token"),
-        jwks_uri: format!("{issuer}/jwks"),
-    };
-    let jwks: Value = serde_json::from_str(JWKS).unwrap();
-    let router = Router::new()
-        .route(
-            "/.well-known/openid-configuration",
-            get(move || async move { Json(discovery) }),
-        )
-        .route("/jwks", get(move || async move { Json(jwks) }));
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    issuer
-}
-
-fn id_token(issuer: &str, email: &str, domain: &str) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("test".into());
-    let claims = json!({
-        "iss": issuer,
-        "aud": "riff-client",
-        "exp": now + 3600,
-        "email": email,
-        "email_verified": true,
-        "hd": domain,
-    });
-    encode(
-        &header,
-        &claims,
-        &EncodingKey::from_rsa_pem(KEY.as_bytes()).unwrap(),
-    )
-    .unwrap()
-}
 
 /// A token exchange with a proof from `key`, or with no proof.
 async fn exchange_with(server: &str, token: &str, key: Option<&Key>) -> reqwest::Response {
@@ -89,7 +38,7 @@ async fn exchange(server: &str, token: &str) -> reqwest::Response {
 }
 
 async fn start() -> (Service, String, String) {
-    let issuer = fake_provider().await;
+    let issuer = common::fake_provider().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server = format!("http://{}", listener.local_addr().unwrap());
     let service = Service::new(Config {
@@ -128,7 +77,7 @@ async fn an_id_token_gives_riff_tokens_for_its_user() {
     let key = Key::generate();
     let reply = exchange_with(
         &server,
-        &id_token(&issuer, "Ada@comotechnologies.io", DEFAULT_DOMAIN),
+        &common::id_token(&issuer, "Ada@comotechnologies.io", Some(DEFAULT_DOMAIN)),
         Some(&key),
     )
     .await;
@@ -147,7 +96,7 @@ async fn an_id_token_gives_riff_tokens_for_its_user() {
 #[tokio::test]
 async fn an_exchange_without_a_proof_is_refused() {
     let (_, server, issuer) = start().await;
-    let token = id_token(&issuer, "ada@comotechnologies.io", DEFAULT_DOMAIN);
+    let token = common::id_token(&issuer, "ada@comotechnologies.io", Some(DEFAULT_DOMAIN));
     let reply = exchange_with(&server, &token, None).await;
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
@@ -157,10 +106,10 @@ async fn an_exchange_without_a_proof_is_refused() {
 #[tokio::test]
 async fn a_bad_id_token_is_refused() {
     let (_, server, _) = start().await;
-    let other = id_token(
+    let other = common::id_token(
         "https://other.test",
         "ada@comotechnologies.io",
-        DEFAULT_DOMAIN,
+        Some(DEFAULT_DOMAIN),
     );
     let reply = exchange(&server, &other).await;
     assert_eq!(reply.status(), 400);
@@ -190,14 +139,14 @@ async fn a_server_without_a_provider_has_no_sign_in() {
 #[tokio::test]
 async fn a_second_email_does_not_get_the_user_of_the_first() {
     let (service, server, issuer) = start().await;
-    let first = id_token(&issuer, "O'Brien@comotechnologies.io", DEFAULT_DOMAIN);
+    let first = common::id_token(&issuer, "O'Brien@comotechnologies.io", Some(DEFAULT_DOMAIN));
     let reply = exchange(&server, &first).await;
     assert_eq!(reply.status(), 200);
     let pair: TokenReply = reply.json().await.unwrap();
     assert_eq!(pair.user, "o-brien");
 
     // The other account gives the same USER. The server refuses it.
-    let second = id_token(&issuer, "o-brien@comotechnologies.io", DEFAULT_DOMAIN);
+    let second = common::id_token(&issuer, "o-brien@comotechnologies.io", Some(DEFAULT_DOMAIN));
     let reply = exchange(&server, &second).await;
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
@@ -215,7 +164,7 @@ async fn a_second_email_does_not_get_the_user_of_the_first() {
 /// of them (R209).
 #[tokio::test]
 async fn two_domains_do_not_share_a_user() {
-    let issuer = fake_provider().await;
+    let issuer = common::fake_provider().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server = format!("http://{}", listener.local_addr().unwrap());
     let service = Service::new(Config {
@@ -230,13 +179,13 @@ async fn two_domains_do_not_share_a_user() {
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
-    let first = id_token(&issuer, "alice@comotechnologies.io", DEFAULT_DOMAIN);
+    let first = common::id_token(&issuer, "alice@comotechnologies.io", Some(DEFAULT_DOMAIN));
     let reply = exchange(&server, &first).await;
     assert_eq!(reply.status(), 200);
     let pair: TokenReply = reply.json().await.unwrap();
     assert_eq!(pair.user, "alice");
 
-    let second = id_token(&issuer, "alice@other.test", "other.test");
+    let second = common::id_token(&issuer, "alice@other.test", Some("other.test"));
     let reply = exchange(&server, &second).await;
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
@@ -247,13 +196,23 @@ async fn two_domains_do_not_share_a_user() {
     );
 }
 
+/// An account from another domain, with no invite, is refused once
+/// the riff has an owner (R15).
 #[tokio::test]
 async fn an_account_from_another_domain_is_refused() {
     let (service, server, issuer) = start().await;
-    let reply = exchange(&server, &id_token(&issuer, "ada@gmail.com", "gmail.com")).await;
+    let owner = common::id_token(&issuer, "owner@comotechnologies.io", Some(DEFAULT_DOMAIN));
+    assert_eq!(exchange(&server, &owner).await.status(), 200);
+    let reply = exchange(
+        &server,
+        &common::id_token(&issuer, "ada@gmail.com", Some("gmail.com")),
+    )
+    .await;
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
-    assert_eq!(error.error, "invalid_grant");
+    assert_eq!(error.error, "access_denied");
+    let why = error.error_description.unwrap();
+    assert!(why.contains("riff invite ada@gmail.com"), "{why}");
     // No sign-in started.
     assert_eq!(service.tokens().revoke_user("ada"), 0);
 }

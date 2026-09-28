@@ -747,17 +747,46 @@
   address, unless it gets `--insecure` (`RIFF_INSECURE`). With
   `--insecure` on such an address, it warns at start: each machine that
   can reach it can read, post and answer as any person. `install` does
-  the same check. A riff that requires sign-in listens on any address.
+  the same check. A riff with sign-in listens on any address once it
+  has an owner (01M3JN3AQMHZHT6JP3P6GM9PWZ).
 - **01M3JCE51T84JZKJ0NR89TPDNY** `riff-server` never terminates TLS. A
   proxy or the platform in front of it does, for example Cloud Run.
 
 ## Sign-in and tokens
 
 - **R14** The first sign-in provider is Google.
-- **R15** `riff-server` accepts only accounts from its allowed domains. The
-  allowed domains are a setting. The default is `comotechnologies.io`.
+- **R15** `riff-server` accepts the accounts of its allowed domains, and
+  the people of 01M3JN3AFA2SAX0CEC1Y6E4NM5. The allowed domains are a
+  setting. The default is `comotechnologies.io`.
 - **R94** The domain of an account is the `hd` claim of its ID token.
-  An account without `hd` is refused.
+  An account without `hd` is in no allowed domain.
+- **01M3JN3AD44CC98AGMVP43F56G** The first person who signs in to a
+  riff with sign-in is its owner. On a riff with admins (R210), only an
+  admin becomes the owner. The owner is an admin. A riff that has an
+  owner keeps it.
+- **01M3JN3AFA2SAX0CEC1Y6E4NM5** These people can sign in to a riff
+  with sign-in: the owner, the admins, the members, and the accounts of
+  the allowed domains (R15). A member is named by verified email. A
+  member needs no allowed domain and no `hd`. On a riff with no owner
+  and no admin, the first person signs in. The refusal of a person
+  tells them to ask the owner for `riff invite EMAIL`.
+- **01M3JN3AHMK532XMRDASD4XD5D** `riff invite EMAIL` adds a member.
+  `riff remove EMAIL` removes a member and ends each sign-in of that
+  person (R20). Only the owner or an admin can do either. The owner
+  cannot be removed. `riff members` shows the owner, the admins, the
+  members and the allowed domains to each person who signed in.
+- **01M3JN3ANE676DT5WQ2NTG47DK** `riff-server` keeps the owner and the
+  members with the tokens in its state. They stay after a restart with
+  a bucket.
+- **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
+  loopback address until it has an owner, so the owner signs in from
+  the machine of the server. `riff-server` refuses another address at
+  start, also with `--insecure`. It checks again after it loads its
+  bucket. `install` counts `RIFF_OWNER` or a bucket as an owner.
+- **01M3JN3ASSV9SA0QZKXXJ0RTEV** `--owner EMAIL` (`RIFF_OWNER`) names
+  the owner of a riff that has none. The cloud deploy passes it from
+  the GitHub Actions variable `RIFF_OWNER`. The deploy stops with an
+  error when the variable is missing.
 - **R16** `riff-server` issues its own tokens. It accepts sign-in from each
   OpenID Connect provider in its settings.
 - **R17** An access token expires in 10 minutes or less. A refresh token

@@ -54,10 +54,11 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Alive, Claim, ClaimReply, End, Freed, Keys, Kind, Lead, LeadReply, Membership, Message, Post,
-    Posted, Read, ReadReply, Register, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo,
-    SetStatus, SignInConfig, Start, Started, Status, Tailed, ThreadInfo, Threads, ThreadsReply,
-    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Alive, Claim, ClaimReply, End, Freed, Invite, Invited, Keys, Kind, Lead, LeadReply, Members,
+    MembersReply, Membership, Message, Post, Posted, Read, ReadReply, Register, Remove, Removed,
+    Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetStatus, SignInConfig, Start,
+    Started, Status, Tailed, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply,
+    TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -631,16 +632,47 @@ impl Api {
     /// Ends each sign-in of `user`, or of the caller when `user` is
     /// `None` (R20). It needs [`Api::signed_in`].
     pub async fn revoke(&self, user: Option<&str>) -> Result<Revoked> {
-        if self.auth.is_none() {
-            if matches!(self.has_sign_in().await, Ok(false)) {
-                bail!(text::nobody_signs_in(&self.base));
-            }
-            bail!("no sign-in for {}: run riff login", self.base);
-        }
+        self.need_sign_in().await?;
         let request = Revoke {
             user: user.map(str::to_owned),
         };
         self.call("revoke", &request).await
+    }
+
+    /// Adds a member of the riff, by verified email. Only an admin can.
+    pub async fn invite(&self, email: &str) -> Result<Invited> {
+        self.need_sign_in().await?;
+        let request = Invite {
+            email: email.to_owned(),
+        };
+        self.call("invite", &request).await
+    }
+
+    /// Removes a member of the riff and ends each sign-in of that person.
+    /// Only an admin can.
+    pub async fn remove(&self, email: &str) -> Result<Removed> {
+        self.need_sign_in().await?;
+        let request = Remove {
+            email: email.to_owned(),
+        };
+        self.call("remove", &request).await
+    }
+
+    /// Who may join the riff.
+    pub async fn members(&self) -> Result<MembersReply> {
+        self.need_sign_in().await?;
+        self.call("members", &Members {}).await
+    }
+
+    /// Fails with what to do when this device has no sign-in.
+    async fn need_sign_in(&self) -> Result<()> {
+        if self.auth.is_some() {
+            return Ok(());
+        }
+        if matches!(self.has_sign_in().await, Ok(false)) {
+            bail!(text::nobody_signs_in(&self.base));
+        }
+        bail!("no sign-in for {}: run riff login", self.base);
     }
 
     async fn call<Req: Serialize, Rep: DeserializeOwned>(

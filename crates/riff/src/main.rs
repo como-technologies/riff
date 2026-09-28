@@ -154,6 +154,22 @@ enum Command {
         #[arg(long, requires = "all")]
         user: Option<String>,
     },
+    /// Let a person join this riff: add their verified email to the
+    /// members. They need no allowed domain. Only the owner or an admin
+    /// can.
+    Invite {
+        /// The email that the person signs in with.
+        email: String,
+    },
+    /// Remove a member of this riff, and end each sign-in of that
+    /// person. Only the owner or an admin can. The owner stays.
+    Remove {
+        /// The email of the person.
+        email: String,
+    },
+    /// List who may join this riff: the owner, the admins, the members
+    /// and the allowed domains.
+    Members,
     /// Print the status line of a Claude Code session: its short session
     /// ID, its claims, and `lead` or `blocked`. Claude Code runs it with
     /// the session on stdin. It always exits with status 0.
@@ -272,6 +288,20 @@ async fn main() -> Result<()> {
             println!("{}", text::revoked(&done));
             return Ok(());
         }
+        Command::Invite { email } => {
+            let done = api.signed_in(None)?.invite(email).await?;
+            println!("{}", text::invited(&done));
+            return Ok(());
+        }
+        Command::Remove { email } => {
+            let done = api.signed_in(None)?.remove(email).await?;
+            println!("{}", text::removed(&done));
+            return Ok(());
+        }
+        Command::Members => {
+            println!("{}", text::members(&api.signed_in(None)?.members().await?));
+            return Ok(());
+        }
         _ => {}
     }
     let here = identity::place(&std::env::current_dir()?)?;
@@ -364,7 +394,10 @@ async fn main() -> Result<()> {
         | Command::Connect { .. }
         | Command::Workers { .. }
         | Command::Login
-        | Command::Logout { .. } => unreachable!("handled before the identity"),
+        | Command::Logout { .. }
+        | Command::Invite { .. }
+        | Command::Remove { .. }
+        | Command::Members => unreachable!("handled before the identity"),
     }
     Ok(())
 }
