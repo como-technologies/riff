@@ -26,6 +26,7 @@
 //! |---|---|---|
 //! | `mcp-PID` | `riff mcp`. PID is its parent: the agent tool. | The session ID. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
+//! | `next-ID` | `riff workers next` of a worker. The Stop hook takes it (see [`crate::next`]). | The tmux pane of the worker. |
 //!
 //! Each writer holds a lock on its file while it runs. The system ends
 //! the lock when the process ends, also after a crash. A file with no

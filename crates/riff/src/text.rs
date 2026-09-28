@@ -586,6 +586,38 @@ pub fn workers_stopped(n: usize) -> String {
     )
 }
 
+/// The refusal of `riff workers next` outside a worker
+/// (01M3JQCCX22R4R4MN7XZPTS391).
+pub const ONLY_A_WORKER_NEXT: &str =
+    "riff: only a worker asks for a fresh context. riff workers next did nothing.";
+
+/// The refusal of `riff workers next` in the lead
+/// (01M3JQCCX22R4R4MN7XZPTS391).
+pub const THE_LEAD_KEEPS_ITS_CONTEXT: &str = "riff: this session is the lead. Your user works \
+in it, so riff never clears it. riff workers next did nothing.";
+
+/// The answer to `riff workers next` (01M3JQCCX22R4R4MN7XZPTS391).
+pub const NEXT_ASKED: &str = "End your turn now, with no more tool calls. Then riff clears your \
+context, and tells you to join the riff. You keep your riff session ID and your watch.";
+
+/// The refusal of `riff workers next` while the worker holds `claims`
+/// (01M3JQCCX22R4R4MN7XZPTS391).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::next_holds_claims(&["issue-12".into()]),
+///     "riff: you still hold issue-12. Finish the item first: merged, released, and its \
+///      worktree removed. riff workers next did nothing."
+/// );
+/// ```
+pub fn next_holds_claims(claims: &[String]) -> String {
+    format!(
+        "riff: you still hold {}. Finish the item first: merged, released, and its worktree \
+         removed. riff workers next did nothing.",
+        claims.join(", ")
+    )
+}
+
 /// The answer to `riff logout --all`.
 ///
 /// ```

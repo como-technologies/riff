@@ -24,7 +24,7 @@
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
-//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. |
+//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). |
 //!
 //! ```
 //! let dir = tempfile::tempdir()?;
@@ -378,6 +378,16 @@ mod tests {
         assert_eq!(end[0]["hooks"][0]["command"], "riff hook session-end");
     }
 
+    /// 01M3JQCCZ5M9VY3RGXWJYJN9Q9.
+    #[test]
+    fn the_stop_hook_is_riff_hook_stop() {
+        let hooks = json("riff/hooks/hooks.json");
+        let stop = &hooks["hooks"]["Stop"];
+        assert_eq!(stop.as_array().unwrap().len(), 1);
+        assert_eq!(stop[0]["hooks"][0]["type"], "command");
+        assert_eq!(stop[0]["hooks"][0]["command"], "riff hook stop");
+    }
+
     #[test]
     fn an_empty_data_home_uses_home() {
         let dir = dir_from(Some("".into()), Some("/h".into())).unwrap();
@@ -627,6 +637,22 @@ mod tests {
             "`tell` the lead the pull request, the commit and the verify result",
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
+    /// 01M3JQCD5BS2ZSGZSD3CTWGPB8: a worker asks for a fresh context.
+    #[test]
+    fn the_skill_tells_a_worker_to_ask_for_a_fresh_context() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let routine = &skill[skill.find("## Start routine").unwrap()..];
+        let routine = &routine[..routine.find("\n## ").unwrap()];
+        let flat = routine.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "In a worker (`RIFF_WORKER=1`), when you hold no claims, run `riff workers next`",
+            "then end your turn with no more tool calls.",
+            "The lead never runs it.",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
         }
     }
 

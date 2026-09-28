@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
-use riff::{hook, identity, local, login, mcp, plugin, settings, terminal, text};
+use riff::{hook, identity, local, login, mcp, next, plugin, settings, terminal, text};
 use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -218,6 +218,10 @@ enum Workers {
         /// The new limit. Leave it out to show the limit.
         limit: Option<u16>,
     },
+    /// In a worker whose item is merged and released: ask for a fresh
+    /// context. When the turn ends, riff gives the pane `/clear` and the
+    /// start prompt, and the worker claims its next item
+    Next,
     /// End each worker of this machine, or only the worker in PANE. Each
     /// worker leaves `riff who` and frees its claims at once
     Stop {
@@ -236,6 +240,10 @@ enum HookEvent {
     /// session ended, unless the reason is clear. It always exits with
     /// status 0.
     SessionEnd,
+    /// Read the Stop input on stdin. When the worker asked for its next
+    /// item with `riff workers next`, give its pane `/clear` and the start
+    /// prompt. It always exits with status 0.
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -263,6 +271,13 @@ async fn main() -> Result<()> {
     } = cli.command
     {
         session_end(&cli.server).await;
+        return Ok(());
+    }
+    if let Command::Hook {
+        event: HookEvent::Stop,
+    } = cli.command
+    {
+        stop_hook();
         return Ok(());
     }
     if let Command::Statusline = cli.command {
@@ -436,6 +451,7 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
             Ok(())
         }
         Some(Workers::Stop { pane }) => stop_workers(pane.as_deref(), server).await,
+        Some(Workers::Next) => next_item(server).await,
     }
 }
 
@@ -502,6 +518,56 @@ async fn start_refusal(server: &str) -> Option<String> {
         Ok(true) => None,
         Ok(false) => Some(text::NOT_THE_LEAD_STARTS_NO_WORKER.into()),
         Err(_) => Some(text::LEAD_UNKNOWN_STARTS_NO_WORKER.into()),
+    }
+}
+
+/// Asks for a fresh context after the turn (01M3JQCCX22R4R4MN7XZPTS391):
+/// only in a worker that is not the lead and holds no claims.
+async fn next_item(server: &str) -> Result<()> {
+    if !std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
+        eprintln!("{}", text::ONLY_A_WORKER_NEXT);
+        std::process::exit(1);
+    }
+    let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
+    let Some(pane) = pane else {
+        anyhow::bail!("riff workers next needs the tmux pane of the worker (TMUX_PANE)");
+    };
+    let id = identity::session_id()
+        .ok_or_else(|| anyhow::anyhow!("riff workers next needs the session ID of the worker"))?;
+    let here = identity::place(&std::env::current_dir()?)?;
+    let api = Api::new(server);
+    let me = identity::agent(&here, &id, api.base())?;
+    let sessions = api.signed_in(Some(&id))?.who(&me, false).await?;
+    let Some(info) = sessions.iter().find(|s| s.uri.who() == me.who()) else {
+        anyhow::bail!("this worker is not in riff who");
+    };
+    if info.uri.lead() {
+        eprintln!("{}", text::THE_LEAD_KEEPS_ITS_CONTEXT);
+        std::process::exit(1);
+    }
+    if !info.uri.claims().is_empty() {
+        eprintln!("{}", text::next_holds_claims(info.uri.claims()));
+        std::process::exit(1);
+    }
+    let dir = local::dir().ok_or_else(|| anyhow::anyhow!("no local directory for riff"))?;
+    next::mark(&dir, &id, &pane)?;
+    println!("{}", text::NEXT_ASKED);
+    Ok(())
+}
+
+/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It never fails.
+fn stop_hook() {
+    let mut stdin = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin);
+    let input: next::StopInput = serde_json::from_str(&stdin).unwrap_or_default();
+    let Some(id) = identity::agent_session(input.session_id) else {
+        return;
+    };
+    let Some(pane) = local::dir().and_then(|dir| next::take(&dir, &id)) else {
+        return;
+    };
+    if let Err(e) = next::spawn(&next::ClaudeCode, &pane) {
+        eprintln!("riff: cannot give the worker a fresh context: {e:#}");
     }
 }
 

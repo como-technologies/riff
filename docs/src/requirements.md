@@ -966,6 +966,23 @@
   the machine, and `riff workers stop PANE` ends one. It closes the
   pane, then sends the end call of the session. The session leaves
   `riff who`, and its claims are free at once.
+- **01M3JQCCX22R4R4MN7XZPTS391** `riff workers next` asks for a fresh
+  context. It works only in a worker (`RIFF_WORKER=1`) in tmux that is
+  not the lead and holds no claims. It writes the file `next-ID` with
+  the pane of the worker, and tells the agent to end its turn.
+- **01M3JQCCZ5M9VY3RGXWJYJN9Q9** The plugin has a Stop hook,
+  `riff hook stop`. When the file `next-ID` of the session exists, the
+  hook takes it. A detached process then types `/clear` and the start
+  prompt into the pane. The hook returns at once, and always exits
+  with status 0.
+- **01M3JQCD16CNWN5FCQBRKHXYMP** After the fresh context, the worker
+  keeps its riff session ID, its lead and its watch. It follows the
+  start routine and claims its next item with no person.
+- **01M3JQCD373XZWNSSQYBE561TM** The keys that clear the context and
+  start the next item are in one adapter for each agent tool.
+- **01M3JQCD5BS2ZSGZSD3CTWGPB8** The skill tells a worker: when its item
+  is merged, its claim released and its worktree removed, run
+  `riff workers next`, then end the turn. The lead never runs it.
 - **01M3JPQTFJXQ514DSJ6G7B0KJB** The skill tells the lead: start at most
   as many workers as there are free items; never change the limit; at
   the end of a wave, stop the workers before the update and start them
