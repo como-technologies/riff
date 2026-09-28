@@ -849,6 +849,12 @@
   the owner made with the owner and the members. They stay after a
   restart with a bucket. The admins of R210 add to them. `riff members`
   shows both.
+- **01M3JYX8NPZASQY6031R35H39P** `riff owner EMAIL` passes the owner
+  role to a member or an admin. Only the owner can. A riff has one
+  owner at a time. The old owner stays an admin.
+- **01M3JYX8QSEZDB5RZJ3Y57DR4Y** `riff-server` keeps a passed owner
+  role in its state. It stays after a restart with a bucket, also when
+  `--owner` names the old owner.
 - **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
   loopback address until it has an owner, so the owner signs in from
   the machine of the server. `riff-server` refuses another address at

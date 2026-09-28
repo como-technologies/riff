@@ -33,7 +33,8 @@
 //!   named by verified email (R210).
 //! - `POST /v1/invite`, `/v1/remove` and `/v1/members` change and show
 //!   who may join the riff. `POST /v1/admin` lets the owner make a
-//!   person an admin, or an admin a member again. See "Owner and
+//!   person an admin, or an admin a member again. `POST /v1/owner`
+//!   lets the owner pass the owner role. See "Owner and
 //!   members" in [`token`].
 //! - Each route with a `me` acts only as the [`auth::SignedIn`] caller
 //!   of its token: the same user and the same session ID, or 403
@@ -129,10 +130,10 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, AdminSet, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Invite, Invited,
-    Keys, Lead, LeadReply, Members, MembersReply, Membership, Post, Posted, Read, ReadReply,
-    Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffReply, ServerMetadata,
-    SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, Threads,
-    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Keys, Lead, LeadReply, Members, MembersReply, Membership, OwnerPassed, PassOwner, Post, Posted,
+    Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffReply,
+    ServerMetadata, SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed,
+    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -683,6 +684,7 @@ impl Service {
             .route("/v1/remove", post(remove))
             .route("/v1/members", post(members))
             .route("/v1/admin", post(admin))
+            .route("/v1/owner", post(owner))
             .route_layer(guard());
         routes
             .merge(revoke)
@@ -1060,6 +1062,35 @@ async fn admin(
         email,
         admin: r.admin,
     }))
+}
+
+/// Passes the owner role to a member or an admin. Only the owner can.
+async fn owner(
+    AxumState(s): AxumState<Shared>,
+    Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
+    Json(r): Json<PassOwner>,
+) -> Reply<OwnerPassed> {
+    if !s.tokens().is_owner(caller.user()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "{} is not the owner; only the owner passes the owner role",
+                caller.user()
+            ),
+        ));
+    }
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let (owner, admin) = {
+        let mut tokens = s.tokens_change();
+        let admin = tokens.owner().unwrap_or_default().to_owned();
+        let owner = tokens
+            .pass_owner(&r.email, &s.config.admins)
+            .map_err(bad_request)?;
+        (owner, admin)
+    };
+    saved(&s, mark).await?;
+    tracing::info!(%caller, %owner, "owner passed");
+    Ok(Json(OwnerPassed { owner, admin }))
 }
 
 /// Shows who may join the riff.

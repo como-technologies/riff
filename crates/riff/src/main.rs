@@ -178,6 +178,13 @@ enum Command {
         #[command(subcommand)]
         command: Admin,
     },
+    /// Pass the owner role to a member or an admin. You stay an admin.
+    /// Only the owner can.
+    Owner {
+        /// The email of the new owner. The person must be a member or an
+        /// admin.
+        email: String,
+    },
     /// Print the status line of a Claude Code session: its short session
     /// ID, its claims, and `lead` or `blocked`. Claude Code runs it with
     /// the session on stdin. It always exits with status 0.
@@ -376,6 +383,11 @@ async fn main() -> Result<()> {
             println!("{}", text::admin_set(&done));
             return Ok(());
         }
+        Command::Owner { email } => {
+            let done = api.signed_in(None)?.pass_owner(email).await?;
+            println!("{}", text::owner_passed(&done));
+            return Ok(());
+        }
         _ => {}
     }
     let here = identity::place(&std::env::current_dir()?)?;
@@ -472,7 +484,8 @@ async fn main() -> Result<()> {
         | Command::Invite { .. }
         | Command::Remove { .. }
         | Command::Members
-        | Command::Admin { .. } => unreachable!("handled before the identity"),
+        | Command::Admin { .. }
+        | Command::Owner { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }
