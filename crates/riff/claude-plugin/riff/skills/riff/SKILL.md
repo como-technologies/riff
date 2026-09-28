@@ -73,9 +73,10 @@ Do these steps when your session starts:
    If the line is missing, or a session cannot test it, do not start
    work. Do the steps in "Write acceptance criteria". Then look for the
    work of an earlier session on the item. See "Pick up dropped work".
-5. Call the `EnterWorktree` tool with the item as the name, for example
-   `issue-12`. It makes the worktree `.claude/worktrees/issue-12` from
-   the default branch and moves your session there.
+5. Make the worktree from a fresh base. See "Keep good git hygiene".
+   Call the `EnterWorktree` tool with the item as the name, for example
+   `issue-12`. It makes the worktree `.claude/worktrees/issue-12` and
+   moves your session there.
 6. Call `move` with the absolute path of the worktree. Work only there.
 7. Post a note to the thread that you started. Address the session
    that planned the work. See "Wake other sessions".
@@ -84,8 +85,8 @@ Do these steps when your session starts:
    never merge, and you never push to the default branch.
 9. On a pass, the forge merges the pull request. Post a note that you
    are done, then call `release`.
-10. When your worktree is stale, remove it. See "Remove a stale
-    worktree".
+10. After the merge, remove your worktree and its branch. See "Remove
+    a stale worktree".
 11. In a worker (`RIFF_WORKER=1`), when you hold no claims, run
     `riff workers next`, then end your turn with no more tool calls.
     riff clears your context and tells you to join the riff, so you
@@ -146,7 +147,9 @@ plan the waves.
    what needs it.
 5. When a wave starts, post the board as a note to the same `to`: the
    current wave and its items, the next wave, and the conflicts between
-   items. A conflict is two items that edit the same part.
+   items. A conflict is two items that edit the same part. Also list
+   each worktree and each local branch that no live session owns (see
+   "Keep good git hygiene"). Your user decides about them.
 6. When each item of the current wave is merged, stop the workers,
    and deploy the shared server (see "Waves on GitHub"). A push to
    the default branch does not deploy it. Then tell your user to
@@ -212,9 +215,10 @@ are in "Pull requests on GitHub".
 
 ### Ask for a verify
 
-1. Commit your work. The checks of your repository pass.
+1. Commit your work. Rebase it on a fresh default branch (see "Keep
+   good git hygiene"). The checks of your repository pass.
 2. Push your branch, so that a session on another machine can fetch
-   it: `git push -u origin HEAD`.
+   it: `git push --force-with-lease -u origin HEAD`.
 3. Open a pull request for the branch. Link the issue in its body.
    Give it the wave of the issue. Turn on auto-merge with a squash at
    once, before any other push. Never turn it on after a push.
@@ -229,8 +233,8 @@ are in "Pull requests on GitHub".
 5. Keep your claim. Set your status to blocked: waits for a verify.
    While you wait, do not verify the work of another session. If no
    session takes the request, wait.
-6. On a fail, fix the work and push it. On a conflict with the default
-   branch, rebase on it and push. A pass counts only for its commit, so
+6. On a fail, fix the work, rebase it on a fresh default branch, and
+   push it. On a conflict with the default branch, rebase and push. A pass counts only for its commit, so
    send a new request with the new commit.
 7. On a pass, wait until the forge merges the pull request. Then post
    a note that you are done, and call `release`. The forge deletes the
@@ -326,7 +330,8 @@ A worktree is stale when all of these are true:
   `gh pr view BRANCH --json state,headRefOid` shows `MERGED` and that
   commit.
 - `git status --porcelain` in the worktree shows nothing.
-- Its issue is closed.
+- Its issue is merged: closed, or with the comment `Merged in #PR
+  (COMMIT)`.
 
 To remove your stale worktree:
 
@@ -345,12 +350,80 @@ To remove your stale worktree:
    merge leaves the branch out of the default branch, so
    `git branch -d` refuses it. The `update-ref` deletes the branch only
    while it points at HEADREF. Do not force.
+4. Prune, and check that nothing of the item is left. Run the
+   commands of "Clean up after a merge" in "Keep good git hygiene".
 
 If a step fails, leave the worktree and post its name to the thread.
 
 Remove only your own worktrees. Never remove a worktree of another
 live session. Post a worktree with no owner to the thread. Your user
 decides.
+
+## Keep good git hygiene
+
+Each worker starts in the main clone, and each new worktree branches
+from a base. An old base gives old files and merge conflicts. riff
+fast-forwards the main clone to `origin` in `riff workers start` and
+`riff workers next`. When the main clone has local changes or is not
+on the default branch, riff changes nothing, and `riff workers next`
+tells the lead why. The steps below keep each worktree fresh. The
+examples use `main` for the default branch and `issue-12` for the
+item.
+
+### Start from a fresh base
+
+Before `EnterWorktree`, fetch:
+
+```sh
+git fetch -q --prune origin
+```
+
+In the new worktree, before any change, put the branch on the fresh
+default branch. The worktree holds no work yet, so no work is lost:
+
+```sh
+git reset -q --hard origin/main
+```
+
+Then go on from the work of an earlier session, if any (see "Pick up
+dropped work").
+
+### Rebase before each push
+
+Before each push and before each verify request, rebase on a fresh
+default branch. Check that the diff holds only your files:
+
+```sh
+git fetch -q origin
+git rebase origin/main
+git diff --stat origin/main...HEAD
+```
+
+Never squash with `git reset --soft` onto the default branch. The
+forge squashes at the merge.
+
+### Clean up after a merge
+
+After you remove the worktree (see "Remove a stale worktree"), prune
+from the main worktree. Then check that nothing of the item is left:
+
+```sh
+git -C MAIN fetch -q --prune origin
+git -C MAIN worktree prune
+git -C MAIN worktree list | grep issue-12
+git -C MAIN branch --list '*issue-12*'
+```
+
+The last two commands show nothing. If one shows the item, post it to
+the thread.
+
+The lead lists each worktree and each local branch that no live
+session owns on the board. To find them, compare with `who`:
+
+```sh
+git worktree list
+git branch --list 'worktree-*'
+```
 
 ## Threads
 

@@ -11,7 +11,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    hook, identity, lifecycle, local, login, mcp, next, plugin, settings, terminal, text, worker,
+    hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, settings, terminal, text,
+    worker,
 };
 use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -642,6 +643,9 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     let dir = std::env::current_dir()?;
     let main = identity::main_worktree(&dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
+    if let Some(line) = hygiene::fast_forward(&main).line() {
+        println!("{line}");
+    }
     let base = Api::new(server).base().to_owned();
     let riff = std::env::current_exe()?;
     let programs: Vec<Program> = (0..start)
@@ -697,7 +701,8 @@ async fn next_item(server: &str) -> Result<()> {
     let here = identity::place(&std::env::current_dir()?)?;
     let api = Api::new(server);
     let me = identity::agent(&here, &id, api.base())?;
-    let sessions = api.signed_in(Some(&id))?.who(&me, false).await?;
+    let signed = api.signed_in(Some(&id))?;
+    let sessions = signed.who(&me, false).await?;
     let Some(info) = sessions.iter().find(|s| s.uri.who() == me.who()) else {
         anyhow::bail!("this worker is not in riff who");
     };
@@ -708,6 +713,15 @@ async fn next_item(server: &str) -> Result<()> {
     if !info.uri.claims().is_empty() {
         eprintln!("{}", text::next_holds_claims(info.uri.claims()));
         std::process::exit(1);
+    }
+    let fresh = hygiene::fast_forward(&std::env::current_dir()?);
+    if let Some(line) = fresh.line() {
+        println!("{line}");
+        if fresh.tells_the_lead()
+            && let Err(e) = signed.tell(&me, riff::api::LEAD, &line).await
+        {
+            eprintln!("riff: cannot tell the lead: {e:#}");
+        }
     }
     let dir = local::dir().ok_or_else(|| anyhow::anyhow!("no local directory for riff"))?;
     next::mark(&dir, &id, &pane)?;

@@ -57,6 +57,7 @@
 pub mod api;
 pub mod device;
 pub mod hook;
+pub mod hygiene;
 pub mod identity;
 pub mod leave;
 pub mod lifecycle;

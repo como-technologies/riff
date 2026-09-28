@@ -211,6 +211,73 @@ fn connect_writes_the_skill_with_the_waves() {
     }
 }
 
+/// A fresh base, a rebase before each push, and a clean-up after the
+/// merge, each with copyable commands (01M3MNP39172Y463WGQAW125KW,
+/// 01M3MNP3B8YJ699432D4PSFWDB).
+#[test]
+fn connect_writes_the_skill_with_git_hygiene() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    connect(&bin, tmp.path(), tmp.path()).success();
+    let skill = tmp
+        .path()
+        .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
+    let skill = std::fs::read_to_string(skill).unwrap();
+    let pos = |text: &str| {
+        skill
+            .find(text)
+            .unwrap_or_else(|| panic!("no {text:?} in {skill}"))
+    };
+
+    // The start routine and the verify steps point at the section.
+    let step = pos("5. Make the worktree from a fresh base.");
+    let enter = pos("Call the `EnterWorktree` tool with the item as the name");
+    assert!(step < enter);
+    pos("Rebase it on a fresh default branch");
+    pos("10. After the merge, remove your worktree and its branch.");
+
+    let section = pos("## Keep good git hygiene");
+    let fresh = pos("### Start from a fresh base");
+    let rebase = pos("### Rebase before each push");
+    let clean = pos("### Clean up after a merge");
+    let threads = pos("## Threads");
+    assert!(section < fresh && fresh < rebase && rebase < clean && clean < threads);
+    for (from, to, blocks) in [
+        (
+            fresh,
+            rebase,
+            &[
+                "```sh\ngit fetch -q --prune origin\n```",
+                "```sh\ngit reset -q --hard origin/main\n```",
+            ][..],
+        ),
+        (
+            rebase,
+            clean,
+            &[
+                "```sh\ngit fetch -q origin\ngit rebase origin/main\ngit diff --stat origin/main...HEAD\n```",
+            ][..],
+        ),
+        (
+            clean,
+            threads,
+            &[
+                "```sh\ngit -C MAIN fetch -q --prune origin\ngit -C MAIN worktree prune\n\
+                 git -C MAIN worktree list | grep issue-12\ngit -C MAIN branch --list '*issue-12*'\n```",
+                "```sh\ngit worktree list\ngit branch --list 'worktree-*'\n```",
+            ][..],
+        ),
+    ] {
+        for block in blocks {
+            assert!(
+                skill[from..to].contains(block),
+                "no {block:?} in {}",
+                &skill[from..to]
+            );
+        }
+    }
+}
+
 #[test]
 fn connect_says_when_it_removed_the_old_entry() {
     let tmp = tempfile::tempdir().unwrap();
