@@ -57,6 +57,7 @@ pub mod identity;
 pub mod local;
 pub mod login;
 pub mod mcp;
+pub mod next;
 pub mod plugin;
 pub mod secrets;
 pub mod settings;

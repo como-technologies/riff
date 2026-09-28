@@ -591,6 +591,7 @@ fn the_book_has_a_how_to_for_each_step() {
         ("### List the workers", "riff workers\n"),
         ("### Stop the workers", "riff workers stop\n"),
         ("### Stop the workers", "riff workers stop %3"),
+        ("### A worker goes to its next item", "riff workers next"),
     ] {
         let how = &part[part.find(heading).unwrap()..];
         let next = how[4..].find("\n### ").map_or(how.len(), |n| n + 4);
@@ -613,7 +614,7 @@ fn the_book_has_a_how_to_for_each_step() {
         .output()
         .unwrap();
     let help = String::from_utf8_lossy(&help.stdout);
-    for command in ["start", "limit", "stop"] {
+    for command in ["start", "limit", "next", "stop"] {
         assert!(help.contains(&format!("  {command} ")), "{help}");
     }
 }

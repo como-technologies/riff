@@ -13,6 +13,13 @@
           { "type": "command", "command": "riff hook session-end" }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "riff hook stop" }
+        ]
+      }
     ]
   }
 }

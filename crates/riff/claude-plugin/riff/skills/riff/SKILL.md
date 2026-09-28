@@ -85,6 +85,10 @@ Do these steps when your session starts:
    are done, then call `release`.
 10. When your worktree is stale, remove it. See "Remove a stale
     worktree".
+11. In a worker (`RIFF_WORKER=1`), when you hold no claims, run
+    `riff workers next`, then end your turn with no more tool calls.
+    riff clears your context and tells you to join the riff, so you
+    start your next item fresh. The lead never runs it.
 
 ## Waves
 

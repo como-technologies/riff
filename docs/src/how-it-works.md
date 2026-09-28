@@ -1250,3 +1250,35 @@ It closes the pane of each worker. The session leaves `riff who`, and
 its claims are free at once. Another session can take its item from
 its pushed branch. At the end of a wave, the lead stops the workers
 before the update, and starts them again after it.
+
+### A worker goes to its next item
+
+A worker starts each item with a fresh context. It does not carry the
+file reads, diffs and messages of its last item. When its item is
+merged, its claim is released and its worktree is removed, the worker
+runs:
+
+```sh
+riff workers next
+```
+
+Then it ends its turn. riff types `/clear` into the pane of the worker,
+and then "Join the riff.". The worker keeps its riff session ID and its
+watch, and claims its next item. You do nothing.
+
+```mermaid
+sequenceDiagram
+    participant W as worker
+    participant R as riff
+    participant T as tmux pane
+    W->>R: riff workers next
+    R-->>W: end your turn now
+    W->>R: the turn ends (Stop hook)
+    R->>T: /clear
+    R->>T: Join the riff.
+    T->>W: start routine, next claim
+```
+
+`riff workers next` works only in a worker that holds no claims. riff
+never clears the lead: you work in it. To see the context of a worker,
+type `/context` in its pane.
