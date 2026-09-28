@@ -185,6 +185,11 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
 /// A worker with no work runs `riff workers done`. It tells the lead,
 /// then ends: it leaves `riff who` within 10 seconds, and its wrapper
 /// exits.
+///
+/// The fake `claude` runs `done` in the background and `exec`s the
+/// sleep, so the SIGTERM of the wrapper always stops the sleep itself.
+/// A sleep that outlives its shell keeps the output pipes open, and
+/// `output()` waits for it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_worker_with_no_work_tells_the_lead_and_ends() {
     let api = start_server().await;
@@ -193,8 +198,8 @@ async fn a_worker_with_no_work_tells_the_lead_and_ends() {
     let claude = fake_claude(
         dir.path(),
         "\"$RIFF_BIN\" status 'looking for work' >/dev/null\n\
-         \"$RIFF_BIN\" workers done\n\
-         sleep 30",
+         \"$RIFF_BIN\" workers done &\n\
+         exec sleep 30",
     );
     let begin = Instant::now();
     let out = riff(&api, dir.path(), "w2")
@@ -228,7 +233,7 @@ async fn a_hangup_stops_the_worker_with_no_message() {
     let api = start_server().await;
     let lead = lead(&api).await;
     let dir = repo();
-    let claude = fake_claude(dir.path(), "sleep 30");
+    let claude = fake_claude(dir.path(), "exec sleep 30");
     let mut child = riff(&api, dir.path(), "w3")
         .args(["workers", "run"])
         .arg(&claude)
