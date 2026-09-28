@@ -2,10 +2,9 @@
 
 #![allow(dead_code)]
 
+use isolated::Isolated;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use assert_cmd::Command;
 
 /// The directory of the book pages.
 pub fn dir() -> PathBuf {
@@ -58,8 +57,8 @@ pub fn riff_commands_of(name: &str) -> Vec<String> {
 /// Checks that each `riff` command in `commands` runs with `--help`.
 pub fn each_is_real(commands: &[String]) {
     for command in commands {
-        Command::cargo_bin("riff")
-            .unwrap()
+        Isolated::shared()
+            .assert_riff()
             .args(command.split_whitespace().skip(1))
             .arg("--help")
             .assert()

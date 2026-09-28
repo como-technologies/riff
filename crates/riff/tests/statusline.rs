@@ -2,10 +2,9 @@
 //! Claude Code session on stdin (01M3JDWA0WZWKF3JT3NYA2FV5Z). It never
 //! fails.
 
+use isolated::Isolated;
 use std::path::Path;
 use std::process::Command as Git;
-
-use assert_cmd::Command;
 
 const ID: &str = "a6cf2205-d54a-4c1e-9b1f-2e3d4c5b6a7f";
 
@@ -52,7 +51,7 @@ async fn riff(
     stdin: &str,
     args: &[&str],
 ) -> (String, i32) {
-    let mut cmd = Command::cargo_bin("riff").unwrap();
+    let mut cmd = Isolated::shared().assert_riff();
     cmd.args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
@@ -60,7 +59,7 @@ async fn riff(
         .env("RIFF_HOST", "pangolin")
         .env_remove("RIFF_SESSION")
         .env_remove("CLAUDE_CODE_SESSION_ID")
-        .env("XDG_RUNTIME_DIR", dir)
+        .env("RIFF_HOME", dir)
         .write_stdin(stdin);
     if let Some(id) = session {
         cmd.env("RIFF_SESSION", id);

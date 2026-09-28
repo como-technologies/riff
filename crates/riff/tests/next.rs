@@ -2,6 +2,7 @@
 //! (01M3JQCCX22R4R4MN7XZPTS391 to 01M3JQCD16CNWN5FCQBRKHXYMP). A fake
 //! `tmux` on `PATH` writes each call to a log.
 
+use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -54,11 +55,11 @@ impl Worker {
             self.fake.path().display(),
             std::env::var("PATH").unwrap()
         );
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+        let mut cmd = Isolated::shared().riff();
         cmd.args(args)
             .current_dir(self.repo.path())
             .env("PATH", path)
-            .env("XDG_RUNTIME_DIR", self.run.path())
+            .env("RIFF_HOME", self.run.path())
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")
@@ -137,7 +138,7 @@ async fn a_finished_worker_gets_clear_and_the_start_prompt() {
         String::from_utf8_lossy(&out.stdout).contains("End your turn now"),
         "{out:?}"
     );
-    assert!(w.run.path().join("riff/next-w1").exists() || find_mark(w.run.path()));
+    assert!(w.run.path().join("state/next-w1").exists() || find_mark(w.run.path()));
     assert_eq!(w.log(), "", "nothing types before the turn ends");
 
     // The hook returns at once; the keys come after it.

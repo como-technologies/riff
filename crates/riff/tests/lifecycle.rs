@@ -3,6 +3,7 @@
 //! (01M3K0Q892KWM76R9DJC1P37JA). The update runs a fake `cargo`, a fake
 //! `riff` and a fake `riff-server` that log their arguments.
 
+use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
@@ -52,7 +53,7 @@ async fn real() -> String {
 }
 
 fn riff(args: &[&str]) -> Command {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.args(args).env_remove("RIFF_SERVER");
     cmd
 }
@@ -193,6 +194,7 @@ async fn server_shows_a_riff_that_answers_also_with_a_slow_keyring() {
     let url = fake(Build::this()).await;
     let mut cmd = riff(&["server"]);
     cmd.env("RIFF_SERVER", &url)
+        .env_remove("RIFF_HOME")
         .env("DBUS_SESSION_BUS_ADDRESS", slow_bus(dir.path()));
     let stdout = text(&run(cmd).await.stdout);
     assert!(

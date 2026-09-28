@@ -6,9 +6,10 @@
 
 mod common;
 
+use isolated::Isolated;
 use std::fs;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::Duration;
 
 use riff_core::dpop::Key;
@@ -64,7 +65,8 @@ async fn start(command: &str, issuer: &str, listen: &str, url: &str, owner: &str
             other => other.to_owned(),
         })
         .collect();
-    let child = Command::new(assert_cmd::cargo::cargo_bin("riff-server"))
+    let child = Isolated::shared()
+        .riff_server()
         .args(args)
         .env_clear()
         .env("RIFF_OIDC_CLIENT_ID", "riff-client")
@@ -162,8 +164,8 @@ fn the_page_has_no_secret_and_no_path_for_developers() {
 #[test]
 fn each_riff_server_command_of_the_page_is_real() {
     for command in commands().iter().filter(|c| c.starts_with("riff-server ")) {
-        assert_cmd::Command::cargo_bin("riff-server")
-            .unwrap()
+        Isolated::shared()
+            .assert_riff_server()
             .args(command.split_whitespace().skip(1))
             .arg("--help")
             .assert()

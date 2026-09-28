@@ -6,6 +6,7 @@
 
 mod common;
 
+use isolated::Isolated;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
@@ -25,12 +26,7 @@ impl Drop for Server {
 /// `riff-server` with these arguments and no settings from the
 /// environment.
 fn server(args: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff-server"));
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("RIFF_") {
-            cmd.env_remove(name);
-        }
-    }
+    let mut cmd = Isolated::shared().riff_server();
     cmd.args(args).env("NO_COLOR", "1");
     cmd
 }

@@ -3,6 +3,7 @@
 //! (R132). `riff watch --once` exits after one wake (R170). A fake
 //! server ends each stream after one event.
 
+use isolated::Isolated;
 use std::convert::Infallible;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -120,7 +121,7 @@ async fn start_fake() -> (String, Shared) {
 }
 
 fn riff(server: &str, dir: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
@@ -129,7 +130,7 @@ fn riff(server: &str, dir: &Path, args: &[&str]) -> Command {
         .env("RIFF_SESSION", "b2")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         // Keep the watch lock away from other test runs (R169).
-        .env("XDG_RUNTIME_DIR", dir);
+        .env("RIFF_HOME", dir);
     cmd
 }
 

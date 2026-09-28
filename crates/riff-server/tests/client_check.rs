@@ -2,10 +2,10 @@
 //! and stops when the provider refuses it (R146). A fake provider
 //! knows one client, `riff-client` with the secret `right`.
 
+use isolated::Isolated;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use assert_cmd::Command;
 use axum::extract::Form;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -96,7 +96,7 @@ async fn a_busy_provider_does_not_refuse_the_client() {
 #[tokio::test]
 async fn the_server_stops_when_the_provider_refuses_the_client() {
     let issuer = fake_provider("/token").await;
-    let mut cmd = Command::cargo_bin("riff-server").unwrap();
+    let mut cmd = Isolated::shared().assert_riff_server();
     cmd.args(["--listen", "127.0.0.1:0", "--issuer", &issuer])
         .args(["--client-id", "riff-client", "--client-secret", "wrong"])
         .env_remove("RIFF_OIDC_CLIENT_SECRET")

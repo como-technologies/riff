@@ -90,7 +90,7 @@ fn dev(args: &[&str], server: &str, env: Option<&str>) -> Dev {
     fake(
         &debug.join("riff"),
         &log,
-        "echo \"riff at $RIFF_SERVER\" >> log",
+        "echo \"riff at $RIFF_SERVER\" >> log\necho \"$RIFF_HOME\" > riff-home",
     );
     fake(&debug.join("riff-server"), &log, server);
     let path = format!(
@@ -191,6 +191,22 @@ fn dev_leaves_the_installed_riff() {
     );
     assert!(!dev.log.contains("connect"), "{}", dev.log);
     assert!(!dev.log.contains("install"), "{}", dev.log);
+}
+
+/// `just dev` gives riff a home of its own in the tree
+/// (01M3MY2KWKBJCQ0BCNC6533RBW), so riff keeps its settings, local files
+/// and secrets there, not in `~/.config/riff` or the OS keyring
+/// (01M3MY2KSV73WS8D902YCH2PRX).
+#[test]
+fn dev_gives_riff_a_home_in_the_tree() {
+    let dev = dev(&[], LISTENS, None);
+    assert!(dev.out.status.success(), "{:?}", dev.out);
+    let home = std::fs::read_to_string(dev.tree.path().join("riff-home")).unwrap();
+    let tree = dev.tree.path().canonicalize().unwrap();
+    assert_eq!(
+        home.trim(),
+        tree.join("target/dev-home").display().to_string()
+    );
 }
 
 #[test]

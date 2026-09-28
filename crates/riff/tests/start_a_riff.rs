@@ -8,10 +8,11 @@
 
 mod book;
 
+use isolated::Isolated;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use book::{commands_of, commands_of_part, each_is_real, page};
 
@@ -105,13 +106,13 @@ fn fake_claude(dir: &Path) -> std::path::PathBuf {
 /// the riff. The Claude Code settings go to `dir`, never to the real
 /// home.
 async fn riff(server: &str, dir: &Path, args: &[&str]) -> Output {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
         .env("RIFF_USER", "ada")
         .env("XDG_DATA_HOME", dir)
-        .env("XDG_RUNTIME_DIR", dir)
+        .env("RIFF_HOME", dir)
         .env("HOME", dir.join("home"))
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("RIFF_SESSION")

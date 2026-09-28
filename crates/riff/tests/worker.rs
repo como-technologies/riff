@@ -3,6 +3,7 @@
 //! 01M3K0AXMCVRST7HYH4DM8B3AN, 01M3K0AXRNA0F2920E9QCSDFQZ). A fake
 //! `claude` runs in place of Claude Code.
 
+use isolated::Isolated;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -63,15 +64,15 @@ fn fake_claude(dir: &Path, script: &str) -> PathBuf {
 /// `riff` in `dir` as mike on pangolin, in the worker pane `%5` of the
 /// worker session `session`.
 fn riff(api: &Api, dir: &Path, session: &str) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.current_dir(dir)
         .env("RIFF_SERVER", api.base())
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SESSION", session)
-        .env("RIFF_BIN", env!("CARGO_BIN_EXE_riff"))
+        .env("RIFF_BIN", Isolated::shared().riff_path())
         .env("TMUX_PANE", "%5")
-        .env("XDG_RUNTIME_DIR", dir)
+        .env("RIFF_HOME", dir)
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("RIFF_WORKER");
     cmd

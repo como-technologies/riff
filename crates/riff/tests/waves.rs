@@ -3,10 +3,9 @@
 //! forge that hold a wave (R222). `riff/CLAUDE.md` has no wave rule:
 //! the skill teaches it.
 
+use isolated::Isolated;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use assert_cmd::Command;
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -250,8 +249,8 @@ fn each_riff_command_of_the_page_is_real() {
     assert_eq!(riff, [r#"riff tell lead "New item: issue-70""#]);
     for command in riff {
         let words: Vec<&str> = command.split_whitespace().collect();
-        Command::cargo_bin("riff")
-            .unwrap()
+        Isolated::shared()
+            .assert_riff()
             .args(&words[1..2])
             .arg("--help")
             .assert()

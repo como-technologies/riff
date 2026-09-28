@@ -5,6 +5,7 @@
 //! compaction keeps the claims. The skill finds the pushed branch of an
 //! earlier session (01M3JEE1W32CMQP8CP2HJ829E7).
 
+use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -12,7 +13,6 @@ use riff::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::RiffState;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 async fn start_server() -> Api {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -75,10 +75,11 @@ fn session(id: &str) -> SessionUri {
 /// Runs the start hook of Claude Code for the session `id` in `dir`.
 /// Returns its context.
 async fn start_hook(api: &Api, dir: &Path, id: &str, source: &str) -> String {
-    let mut hook = Command::new(env!("CARGO_BIN_EXE_riff"))
+    let mut hook = Isolated::shared()
+        .tokio_riff()
         .args(["hook", "session-start"])
         .current_dir(dir)
-        .env("XDG_RUNTIME_DIR", dir)
+        .env("RIFF_HOME", dir)
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SERVER", api.base())

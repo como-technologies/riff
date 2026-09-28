@@ -2,7 +2,8 @@
 //!
 //! They are in `$XDG_CONFIG_HOME/riff/config.toml`, or
 //! `~/.config/riff/config.toml` without `XDG_CONFIG_HOME`
-//! (01M3JPQT13ANVA7DNJDVNJ0S8P). A change keeps each other key and each
+//! (01M3JPQT13ANVA7DNJDVNJ0S8P). With `RIFF_HOME`, they are in
+//! `$RIFF_HOME/config.toml` (see [`home`](crate::home)). A change keeps each other key and each
 //! comment of the file.
 //!
 //! ```toml
@@ -39,8 +40,12 @@ pub fn path_from(
     Some(dir.join("riff").join("config.toml"))
 }
 
-/// The settings file of this process.
+/// The settings file of this process: `$RIFF_HOME/config.toml`, else
+/// [`path_from`].
 pub fn path() -> Result<PathBuf> {
+    if let Some(home) = crate::home::dir() {
+        return Ok(home.join("config.toml"));
+    }
     path_from(
         std::env::var_os("XDG_CONFIG_HOME"),
         std::env::var_os("HOME"),

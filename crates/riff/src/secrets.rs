@@ -22,6 +22,12 @@
 //! Each keyring error is an error, also when riff cannot open the
 //! keyring. [`has_keyring`] tells the caller which case it is.
 //!
+//! With `RIFF_HOME`, riff keeps each secret in a file of
+//! `$RIFF_HOME/secrets` and never opens the OS keyring
+//! (01M3MY2KSV73WS8D902YCH2PRX). Only the tests and `just dev` set it.
+//! The file name is the name of the secret in hex. Only the owner can
+//! read the files.
+//!
 //! # Example
 //!
 //! ```
@@ -37,6 +43,8 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result, anyhow};
 use keyring_core::{Entry, Error};
 
@@ -45,6 +53,9 @@ pub const SERVICE: &str = "riff";
 
 /// Returns the secret with this name, or `None` if there is none.
 pub fn get(name: &str) -> Result<Option<String>> {
+    if let Some(dir) = files() {
+        return file_get(&dir, name);
+    }
     match entry(name)?.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(Error::NoEntry) => Ok(None),
@@ -54,6 +65,9 @@ pub fn get(name: &str) -> Result<Option<String>> {
 
 /// Keeps a secret with this name. It replaces an older value.
 pub fn set(name: &str, value: &str) -> Result<()> {
+    if let Some(dir) = files() {
+        return file_set(&dir, name, value);
+    }
     entry(name)?
         .set_password(value)
         .map_err(|e| fail("write", name, e))
@@ -61,16 +75,93 @@ pub fn set(name: &str, value: &str) -> Result<()> {
 
 /// Removes the secret with this name. A missing secret is not an error.
 pub fn delete(name: &str) -> Result<()> {
+    if let Some(dir) = files() {
+        return file_delete(&dir, name);
+    }
     match entry(name)?.delete_credential() {
         Ok(()) | Err(Error::NoEntry) => Ok(()),
         Err(e) => Err(fail("delete", name, e)),
     }
 }
 
-/// True when a keyring store is set, or riff can open the keyring of
-/// the OS.
+/// True when riff keeps secrets in files, a keyring store is set, or
+/// riff can open the keyring of the OS.
 pub fn has_keyring() -> bool {
-    keyring_core::get_default_store().is_some() || keyring::Entry::store_status().is_ok()
+    files().is_some()
+        || keyring_core::get_default_store().is_some()
+        || keyring::Entry::store_status().is_ok()
+}
+
+/// The directory of the secret files: `$RIFF_HOME/secrets`, or `None`
+/// without `RIFF_HOME`.
+fn files() -> Option<PathBuf> {
+    crate::home::dir().map(|home| home.join("secrets"))
+}
+
+/// The file of the secret `name` in `dir`.
+///
+/// ```
+/// # use std::path::Path;
+/// let file = riff::secrets::file_of(Path::new("/s"), "access http://a");
+/// assert_eq!(file, Path::new("/s/61636365737320687474703a2f2f61"));
+/// ```
+pub fn file_of(dir: &Path, name: &str) -> PathBuf {
+    dir.join(name.bytes().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// Returns the secret `name` from the files in `dir`.
+///
+/// ```
+/// use riff::secrets::{file_get, file_set, file_delete};
+///
+/// let dir = tempfile::tempdir()?;
+/// let dir = dir.path().join("secrets");
+/// assert_eq!(file_get(&dir, "k")?, None);
+/// file_set(&dir, "k", "v-1")?;
+/// file_set(&dir, "k", "v-2")?;
+/// assert_eq!(file_get(&dir, "k")?.as_deref(), Some("v-2"));
+/// file_delete(&dir, "k")?;
+/// file_delete(&dir, "k")?;
+/// assert_eq!(file_get(&dir, "k")?, None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn file_get(dir: &Path, name: &str) -> Result<Option<String>> {
+    let file = file_of(dir, name);
+    match std::fs::read_to_string(&file) {
+        Ok(value) => Ok(Some(value)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(file_fail("read", name, &file, e)),
+    }
+}
+
+/// Keeps the secret `name` in a file of `dir`. It replaces an older
+/// value. Only the owner can read the file.
+pub fn file_set(dir: &Path, name: &str, value: &str) -> Result<()> {
+    let file = file_of(dir, name);
+    let fail = |e| file_fail("write", name, &file, e);
+    std::fs::create_dir_all(dir).map_err(fail)?;
+    let mut new = tempfile::NamedTempFile::new_in(dir).map_err(fail)?;
+    std::io::Write::write_all(&mut new, value.as_bytes()).map_err(fail)?;
+    new.persist(&file).map_err(|e| fail(e.error))?;
+    Ok(())
+}
+
+/// Removes the secret `name` from the files in `dir`. A missing secret
+/// is not an error.
+pub fn file_delete(dir: &Path, name: &str) -> Result<()> {
+    let file = file_of(dir, name);
+    match std::fs::remove_file(&file) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(file_fail("delete", name, &file, e)),
+    }
+}
+
+fn file_fail(what: &str, name: &str, file: &Path, e: std::io::Error) -> anyhow::Error {
+    anyhow::Error::new(e).context(format!(
+        "riff cannot {what} the secret \"{name}\" in {}",
+        file.display()
+    ))
 }
 
 fn entry(name: &str) -> Result<Entry> {

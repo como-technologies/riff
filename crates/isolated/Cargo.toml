@@ -1,0 +1,15 @@
+[package]
+name = "isolated"
+description = "The one test environment of each run of riff and riff-server in a test: it never touches the riff of the machine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+assert_cmd.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

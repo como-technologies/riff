@@ -3,6 +3,7 @@
 //! hook sends it for each reason but `clear` (R168). A keep-alive is
 //! not a call (R204).
 
+use isolated::Isolated;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -25,10 +26,10 @@ async fn start_server() -> Api {
 /// A riff command for mike on pangolin, with its own local directory
 /// and no keyring.
 fn riff(api: &Api, run: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+    let mut cmd = Isolated::shared().tokio_riff();
     cmd.args(args)
         .current_dir(run)
-        .env("XDG_RUNTIME_DIR", run)
+        .env("RIFF_HOME", run)
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SERVER", api.base())

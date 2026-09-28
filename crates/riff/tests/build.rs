@@ -17,6 +17,7 @@ use axum::response::Response;
 use axum::response::sse::{Event, Sse};
 use axum::routing::get;
 use futures::Stream;
+use isolated::Isolated;
 use riff_core::build::{Build, HEADER, VERSION, WIRE};
 use riff_core::wire::{Kind, Message, Tailed};
 
@@ -122,7 +123,7 @@ async fn streams(other_wire: Arc<AtomicBool>) -> String {
 }
 
 fn riff_at(binary: &Path, server: &str, dir: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new(binary);
+    let mut cmd = Isolated::shared().command(binary);
     cmd.args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
@@ -130,12 +131,12 @@ fn riff_at(binary: &Path, server: &str, dir: &Path, args: &[&str]) -> Command {
         .env("RIFF_HOST", "heron")
         .env("RIFF_SESSION", "b2")
         .env_remove("CLAUDE_CODE_SESSION_ID")
-        .env("XDG_RUNTIME_DIR", dir);
+        .env("RIFF_HOME", dir);
     cmd
 }
 
 fn riff(server: &str, dir: &Path, args: &[&str]) -> Command {
-    riff_at(&assert_cmd::cargo::cargo_bin("riff"), server, dir, args)
+    riff_at(&Isolated::shared().riff_path(), server, dir, args)
 }
 
 /// Runs `cmd` away from the runtime of the fake server.
@@ -341,7 +342,7 @@ async fn tail_and_watch_run_the_new_binary() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("riff");
-        std::fs::copy(assert_cmd::cargo::cargo_bin("riff"), &binary).unwrap();
+        std::fs::copy(Isolated::shared().riff_path(), &binary).unwrap();
         let (mut child, _, err) = spawn(riff_at(&binary, &url, dir.path(), args), dir.path());
         tokio::time::sleep(Duration::from_secs(2)).await;
         assert!(

@@ -1,9 +1,9 @@
-use assert_cmd::Command;
+use isolated::Isolated;
 
 #[test]
 fn version_names_the_binary() {
-    Command::cargo_bin("riff-server")
-        .unwrap()
+    Isolated::shared()
+        .assert_riff_server()
         .arg("--version")
         .assert()
         .success()

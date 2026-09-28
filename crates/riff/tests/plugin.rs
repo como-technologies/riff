@@ -1,6 +1,7 @@
 //! The written plugin passes the Claude Code validator, and `riff connect
 //! claude` installs it.
 
+use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -54,8 +55,8 @@ fn fake_claude(dir: &Path, remove_status: u8) -> PathBuf {
 /// `riff connect claude` with the fake `bin`. The Claude Code settings
 /// are in `data/home/.claude`, never in the real home.
 fn connect(bin: &Path, data: &Path, cwd: &Path) -> assert_cmd::assert::Assert {
-    assert_cmd::Command::cargo_bin("riff")
-        .unwrap()
+    Isolated::shared()
+        .assert_riff()
         .args(["connect", "claude", "--claude"])
         .arg(bin)
         .env("RIFF_SERVER", NO_SERVER)
@@ -395,8 +396,8 @@ fn claude_installs_the_plugin_and_drops_the_old_entry() {
     };
     claude(&["mcp", "add", "--scope", "user", "riff", "--", "riff", "mcp"]);
     for _ in 0..2 {
-        assert_cmd::Command::cargo_bin("riff")
-            .unwrap()
+        Isolated::shared()
+            .assert_riff()
             .args(["connect", "claude"])
             .env("RIFF_SERVER", NO_SERVER)
             .env("XDG_DATA_HOME", tmp.path())

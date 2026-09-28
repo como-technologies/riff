@@ -46,7 +46,8 @@
 //! keyring, through [`secrets`]. Each request with a token carries a
 //! proof from the device key of the machine (see [`device`]). `riff
 //! mcp` and `riff watch` each hold a session token in memory; it acts
-//! only as their session (see [`api`]).
+//! only as their session (see [`api`]). The tests and `just dev` give
+//! riff a home of its own, with its secrets in files (see [`home`]).
 //!
 //! ## Messages are advice
 //!
@@ -57,6 +58,7 @@
 pub mod api;
 pub mod binary;
 pub mod device;
+pub mod home;
 pub mod hook;
 pub mod hygiene;
 pub mod identity;
