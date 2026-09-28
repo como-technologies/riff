@@ -57,6 +57,39 @@ const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b2#tests"
 const MIKE_LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=a1&lead=true#api";
 const BRETT_LEAD: &str = "riff://brett@heron/como-technologies/riff?session=b2&lead=true#tests";
 
+/// "Parts" in `how-it-works.md` names each tool of `riff mcp`, and no
+/// other tool.
+#[tokio::test]
+async fn the_book_lists_each_tool() {
+    let api = start_server().await;
+    let mike = connect(&api, MIKE).await;
+    let mut tools: Vec<_> = mike
+        .list_all_tools()
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    tools.sort();
+    let book = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let flat = book.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (_, rest) = flat
+        .split_once("**`riff mcp`** gives your session its tools:")
+        .unwrap();
+    let (list, _) = rest.split_once('.').unwrap();
+    let mut listed: Vec<_> = list
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    listed.sort();
+    assert_eq!(listed, tools);
+}
+
 #[tokio::test]
 async fn the_tools_carry_a_conversation() {
     let api = start_server().await;

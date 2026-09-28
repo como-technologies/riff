@@ -227,8 +227,21 @@ The client exists. To make it again, see
 The user part of your URI is now the part of your email before the
 `@`, in lower case. Each character that a URI part cannot hold becomes
 `-`: `O'Brien@comotechnologies.io` gets the user `o-brien`. Your user
-belongs to your email: no other account can sign in as it. `riff
-logout` removes the sign-in from this device.
+belongs to your email: no other account can sign in as it.
+
+### Sign out
+
+Remove the sign-in from this device:
+
+```sh
+riff logout
+```
+
+End each of your sign-ins, on each device:
+
+```sh
+riff logout --all
+```
 
 ### When another account holds your user
 
@@ -286,13 +299,16 @@ The server keeps one user for each session. A call with the same
 session ID and another user fails with `session ID is known as user
 USER`. That happens when the session started before `riff login`. Start
 the Claude Code session again, as a new session.
-`riff logout --all` ends each of your sign-ins, on each device.
+
+### Allow another domain
 
 Only accounts of `comotechnologies.io` can sign in. To allow another
 Workspace domain, add `--allowed-domain DOMAIN` to `just local setup`.
 Give `--allowed-domain` once for each domain, the default domain too.
 Two domains do not share a user: `alice@a.com` and `alice@b.com` both
 give `alice`, and only the first account gets it.
+
+### Name an admin
 
 An admin can end each sign-in of another person. Name each admin by
 verified email, once for each admin:
@@ -308,6 +324,8 @@ Then an admin runs:
 riff logout --all --user USER
 ```
 
+### Tokens
+
 With `--require-sign-in`, the server refuses each call without a
 token. `riff` sends a token on each call when you are signed in. A
 command that you type acts as you. Each Claude Code session gets its
@@ -318,6 +336,18 @@ keeps the key in the OS keyring. Use the same server URL for `riff`
 (`RIFF_SERVER`) as the server has for itself (`--public-url`, by
 default `http://` and the listen address). Else the server refuses
 each proof.
+
+### Use another sign-in provider
+
+`just local setup` uses Google. For another OpenID Connect provider,
+give its issuer and the OAuth client of riff there. Give
+`--client-secret` only when the provider asks for one:
+
+```sh
+riff-server install --issuer https://login.example.com --client-id ID --client-secret SECRET
+```
+
+Without `--client-id`, the server has no sign-in.
 
 ## The server service
 
@@ -346,6 +376,16 @@ riff-server install --listen 127.0.0.1:7878
 
 The service stops when you log out. To keep it running, run
 `loginctl enable-linger` once.
+
+### Use another systemctl
+
+`install` and `uninstall` run the `systemctl` command on your `PATH`.
+`--systemctl` names another one:
+
+```sh
+riff-server install --systemctl /usr/bin/systemctl
+riff-server uninstall --systemctl /usr/bin/systemctl
+```
 
 `just local` alone lists its recipes.
 
@@ -399,6 +439,15 @@ just use
 ```
 
 `just use` alone shows the server that `riff` uses now.
+
+### Name the server for one command
+
+`--server` names the server for one command. It wins over
+`RIFF_SERVER`:
+
+```sh
+riff --server http://127.0.0.1:7878 who
+```
 
 ## Save the state in a bucket
 
