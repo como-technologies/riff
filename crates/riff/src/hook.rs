@@ -73,6 +73,17 @@
 //! session, the context has no URI, and the hook still exits with
 //! status 0.
 //!
+//! # A clone that is behind
+//!
+//! A clone that was not pulled starts its sessions with an old
+//! `CLAUDE.md` and old project settings. So the hook runs `git fetch`
+//! for at most [`FETCH_WAIT`], at the same time as it reads the state
+//! of the riff. When the default branch is behind `origin`, the context
+//! says so (01M3JN21T9C5GX6VX8N032JYWE). The hook does not pull. With
+//! no remote, a remote that cannot be reached, or a slow fetch, the
+//! context has no such line (01M3JN21WDXWTHDKXKQ80ZPYPK). See
+//! [`behind`].
+//!
 //! ```
 //! use riff::hook::{Source, StartInput};
 //!
@@ -86,6 +97,9 @@
 //! ```
 
 use std::fmt::Write;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
 
 use riff_core::build::Mismatch;
 use riff_core::name::SessionUri;
@@ -93,7 +107,107 @@ use riff_core::wire::{Freed, RiffState};
 use serde::Deserialize;
 
 /// The longest wait of the start hook for the state of the riff.
-pub const STATE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+pub const STATE_WAIT: Duration = Duration::from_secs(3);
+
+/// The longest wait of the start hook for `git fetch`
+/// (01M3JN21T9C5GX6VX8N032JYWE).
+pub const FETCH_WAIT: Duration = Duration::from_secs(2);
+
+/// The default branch of a clone that is behind `origin`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Behind {
+    /// The main worktree of the clone, where the user pulls.
+    pub main: PathBuf,
+    /// The default branch, for example `main`.
+    pub branch: String,
+    /// How many commits of `origin` the branch does not have.
+    pub commits: u64,
+}
+
+impl Behind {
+    /// The line of the start context.
+    ///
+    /// ```
+    /// use riff::hook::Behind;
+    ///
+    /// let behind = Behind { main: "/src/riff".into(), branch: "main".into(), commits: 1 };
+    /// let line = behind.line();
+    /// assert!(line.contains("1 commit behind origin/main"));
+    /// assert!(line.contains("git -C /src/riff pull --ff-only"));
+    /// assert!(line.contains("Do not pull yourself"));
+    /// ```
+    pub fn line(&self) -> String {
+        let s = if self.commits == 1 { "" } else { "s" };
+        format!(
+            "- This clone is {} commit{s} behind origin/{}. So your CLAUDE.md and project \
+             settings can be old. Ask your user to pull, through the lead when you are not the \
+             lead: `git -C {} pull --ff-only`. Do not pull yourself.\n",
+            self.commits,
+            self.branch,
+            self.main.display(),
+        )
+    }
+}
+
+/// Fetches `origin` in the clone of `dir` for at most `wait`, and tells
+/// whether its default branch is behind (01M3JN21T9C5GX6VX8N032JYWE).
+/// It is `None` when the branch is up to date, and when `dir` is not in
+/// git, has no `origin`, or the fetch fails or takes longer than `wait`
+/// (01M3JN21WDXWTHDKXKQ80ZPYPK).
+///
+/// The default branch is the one that `origin/HEAD` names, as `git
+/// clone` sets it.
+pub async fn behind(dir: &Path, wait: Duration) -> Option<Behind> {
+    let head = git(
+        dir,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .await?;
+    let branch = head.strip_prefix("origin/")?.to_owned();
+    let mut fetch = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["fetch", "--quiet", "origin"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    let fetched = tokio::time::timeout(wait, fetch.wait()).await.ok()?.ok()?;
+    if !fetched.success() {
+        return None;
+    }
+    let range = format!("refs/heads/{branch}..refs/remotes/{head}");
+    let commits = git(dir, &["rev-list", "--count", &range])
+        .await?
+        .parse()
+        .ok()
+        .filter(|&n| n > 0)?;
+    let list = git(dir, &["worktree", "list", "--porcelain"]).await?;
+    let main = list.lines().next()?.strip_prefix("worktree ")?.into();
+    Some(Behind {
+        main,
+        branch,
+        commits,
+    })
+}
+
+async fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
 
 /// The part of the SessionEnd hook input that riff uses.
 ///
@@ -472,6 +586,32 @@ mod tests {
         }
         let input: EndInput = serde_json::from_str("{}").unwrap();
         assert!(input.ends_the_session());
+    }
+
+    #[test]
+    fn the_behind_line_counts_the_commits() {
+        let behind = |commits| Behind {
+            main: "/src/riff".into(),
+            branch: "trunk".into(),
+            commits,
+        };
+        assert!(
+            behind(1)
+                .line()
+                .contains("is 1 commit behind origin/trunk.")
+        );
+        assert!(
+            behind(3)
+                .line()
+                .contains("is 3 commits behind origin/trunk.")
+        );
+        assert!(behind(3).line().contains("through the lead"));
+    }
+
+    #[tokio::test]
+    async fn a_directory_outside_git_is_not_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(behind(dir.path(), FETCH_WAIT).await, None);
     }
 
     #[test]

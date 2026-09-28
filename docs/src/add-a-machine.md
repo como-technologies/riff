@@ -110,10 +110,18 @@ Update both machines to the same riff at the same time.
    riff connect claude
    ```
 
-3. The new start of the riff forgets its sessions. Start your Claude
+3. On both machines, pull each clone of the project. A clone that
+   is behind starts its sessions with an old `CLAUDE.md` and old
+   project settings. Run this in the main worktree of each clone:
+
+   ```sh
+   git pull --ff-only
+   ```
+
+4. The new start of the riff forgets its sessions. Start your Claude
    Code sessions again, on both machines.
 
-4. The new riff is paused. When you want the sessions to work, resume
+5. The new riff is paused. When you want the sessions to work, resume
    it on either machine:
 
    ```sh

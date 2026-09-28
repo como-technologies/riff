@@ -137,6 +137,17 @@
   the task ends, also in the middle of a turn.
 - **R69** The start hook never stops a session start. It exits with
   status 0, also when riff cannot find the session.
+- **01M3JN21T9C5GX6VX8N032JYWE** The start hook runs `git fetch
+  origin` for at most 2 seconds, at the same time as it reads the
+  state of the riff. When the default branch of the clone is behind
+  `origin`, the context says by how many commits. It tells the session
+  to ask its user to pull, through the lead, and names the main
+  worktree. The hook does not pull.
+- **01M3JN21WDXWTHDKXKQ80ZPYPK** With no remote, a remote that cannot
+  be reached, or a fetch that takes longer than its limit, the context
+  has no such line. The hook still exits with status 0 (R69).
+- **01M3JN21YJSP7HM1JPS1TCFM9W** The update of each machine pulls each
+  clone of the project with `git pull --ff-only`.
 - **R74** `riff connect claude` writes the plugin to
   `$XDG_DATA_HOME/riff/claude-plugin`. Without `XDG_DATA_HOME`, it uses
   `~/.local/share/riff/claude-plugin`.
