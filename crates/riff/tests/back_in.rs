@@ -2,39 +2,123 @@
 //! running session goes on after `riff login`, and `riff login` works
 //! with a server of another version.
 //!
-//! The keyring is a directory of files ([`riff::test_keyring`]), so that
-//! the `riff` processes of a test share it with the test.
+//! Each `riff` runs in one [`Isolated`] environment. Its secrets are
+//! files in `RIFF_HOME`, and this test process keeps its own secrets in
+//! the same files ([`SecretFiles`]), so that they share the sign-in.
 
 #![cfg(debug_assertions)]
 
 mod common;
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use common::{CLIENT, FakeProvider, browser};
 use futures::future::BoxFuture;
+use isolated::Isolated;
+use keyring_core::api::{CredentialApi, CredentialPersistence, CredentialStoreApi};
 use riff::api::Api;
 use riff::login::{self, SignIn};
-use riff::test_keyring::{self, FileStore};
+use riff::secrets;
 use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 use riff_server::store::{Loaded, Memory, Store, StoreError, TOKENS, Version};
 
-/// The keyring of this test process and of each `riff` that it runs.
-fn keyring() -> &'static Path {
-    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let dir = tempfile::tempdir().unwrap();
-        keyring_core::set_default_store(Arc::new(FileStore::new(dir.path())));
-        dir
-    })
-    .path()
+/// The environment of each `riff` of this test. The secrets of this
+/// test process go to its secret files too.
+fn env() -> &'static Isolated {
+    static STORE: Once = Once::new();
+    let env = Isolated::shared();
+    STORE.call_once(|| {
+        let dir = env.riff_home().join("secrets");
+        keyring_core::set_default_store(Arc::new(SecretFiles(dir)));
+    });
+    env
+}
+
+/// A keyring for this test process: the secret files of `riff` in a
+/// `RIFF_HOME` (see [`secrets::file_get`]).
+#[derive(Debug)]
+struct SecretFiles(PathBuf);
+
+impl CredentialStoreApi for SecretFiles {
+    fn vendor(&self) -> String {
+        "riff secret files".into()
+    }
+
+    fn id(&self) -> String {
+        self.0.display().to_string()
+    }
+
+    fn build(
+        &self,
+        _service: &str,
+        name: &str,
+        _modifiers: Option<&HashMap<&str, &str>>,
+    ) -> keyring_core::Result<keyring_core::Entry> {
+        Ok(keyring_core::Entry::new_with_credential(Arc::new(
+            SecretFile {
+                dir: self.0.clone(),
+                name: name.into(),
+            },
+        )))
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn persistence(&self) -> CredentialPersistence {
+        CredentialPersistence::UntilDelete
+    }
+}
+
+/// One secret of [`SecretFiles`].
+#[derive(Debug)]
+struct SecretFile {
+    dir: PathBuf,
+    name: String,
+}
+
+fn failure(e: anyhow::Error) -> keyring_core::Error {
+    keyring_core::Error::PlatformFailure(e.into())
+}
+
+impl CredentialApi for SecretFile {
+    fn set_secret(&self, secret: &[u8]) -> keyring_core::Result<()> {
+        let value = std::str::from_utf8(secret).map_err(|e| failure(e.into()))?;
+        secrets::file_set(&self.dir, &self.name, value).map_err(failure)
+    }
+
+    fn get_secret(&self) -> keyring_core::Result<Vec<u8>> {
+        match secrets::file_get(&self.dir, &self.name).map_err(failure)? {
+            Some(value) => Ok(value.into_bytes()),
+            None => Err(keyring_core::Error::NoEntry),
+        }
+    }
+
+    fn delete_credential(&self) -> keyring_core::Result<()> {
+        secrets::file_delete(&self.dir, &self.name).map_err(failure)
+    }
+
+    fn get_credential(&self) -> keyring_core::Result<Option<Arc<keyring_core::api::Credential>>> {
+        self.get_secret().map(|_| None)
+    }
+
+    fn get_specifiers(&self) -> Option<(String, String)> {
+        Some((secrets::SERVICE.into(), self.name.clone()))
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// A store whose save of the tokens fails each `every` times, as a
@@ -84,7 +168,7 @@ async fn other_version() -> (Service, String) {
 
 /// [`server`], and with `version`, each reply names that version.
 async fn server_as(busy: bool, version: Option<axum::http::HeaderValue>) -> (Service, String) {
-    keyring();
+    env();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let issuer = FakeProvider::start("Ada@comotechnologies.io", Some(DEFAULT_DOMAIN))
@@ -127,15 +211,13 @@ async fn server_as(busy: bool, version: Option<axum::http::HeaderValue>) -> (Ser
 
 /// `riff` with `args`, as the session `session` of Ada, in `dir`.
 fn riff(url: &str, dir: &Path, session: &str, args: &[&str]) -> Command {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("riff"));
+    let mut cmd = env().riff();
     cmd.args(args)
         .current_dir(dir)
-        .env(test_keyring::VAR, keyring())
         .env("RIFF_SERVER", url)
         .env("RIFF_USER", "ada")
         .env("RIFF_HOST", "heron")
         .env("RIFF_SESSION", session)
-        .env_remove("CLAUDE_CODE_SESSION_ID")
         .env("XDG_RUNTIME_DIR", dir);
     cmd
 }
@@ -362,9 +444,6 @@ fn the_book_says_how_to_get_back_in() {
     ] {
         assert!(part.contains(text), "{text:?} is not in the how-to");
     }
-    let help = Command::new(assert_cmd::cargo::cargo_bin("riff"))
-        .arg("--help")
-        .output()
-        .unwrap();
+    let help = Isolated::new().riff().arg("--help").output().unwrap();
     assert!(text(&help.stdout).contains("  login "));
 }
