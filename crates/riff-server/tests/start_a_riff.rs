@@ -19,7 +19,7 @@ fn server_commands(name: &str) -> Vec<String> {
     for line in page.lines().map(str::trim) {
         if line.starts_with("```") {
             in_sh = !in_sh && line == "```sh";
-        } else if in_sh && line.starts_with("riff-server ") {
+        } else if in_sh && (line == "riff-server" || line.starts_with("riff-server ")) {
             commands.push(line.to_owned());
         }
     }
@@ -27,23 +27,19 @@ fn server_commands(name: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_page_starts_the_server_as_a_service() {
-    assert_eq!(server_commands("start-a-riff.md"), ["riff-server install"]);
+fn the_page_runs_the_server_in_a_terminal() {
+    // 01M3K0QM5HY852J4E5M2YQDYEM
+    assert_eq!(server_commands("start-a-riff.md"), ["riff-server"]);
 }
 
 #[test]
 fn the_first_machine_lets_its_riff_take_connections_from_the_network() {
     // The first machine has sign-in, with the OAuth client of the
     // person in the environment, and an owner (01M3JZN229S3YA3BR6GN5H3MTY,
-    // 01M3JN3AQMHZHT6JP3P6GM9PWZ). Its update keeps the settings
-    // (01M3JCE5477135XSD740DG7KFT).
-    assert_eq!(
-        server_commands("add-a-machine.md"),
-        [
-            "riff-server install --listen 0.0.0.0:7878 --owner EMAIL",
-            "riff-server install"
-        ]
-    );
+    // 01M3JN3AQMHZHT6JP3P6GM9PWZ). riff-server keeps no settings, so
+    // its update gives them again (01M3K0QM5HY852J4E5M2YQDYEM).
+    let start = "riff-server --listen 0.0.0.0:7878 --owner EMAIL";
+    assert_eq!(server_commands("add-a-machine.md"), [start, start]);
 }
 
 #[test]

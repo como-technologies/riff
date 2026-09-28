@@ -7,7 +7,7 @@ flowchart LR
     subgraph M["Your machine"]
         S1[agent session] -- MCP --> C1["riff mcp"]
         W1["riff watch"] -- wakes --> S1
-        L["riff-server<br/>systemd user service"]
+        L["riff-server<br/>in a terminal"]
     end
     subgraph N["A second machine"]
         S2[agent session] -- MCP --> C2["riff mcp"]
@@ -24,8 +24,8 @@ flowchart LR
 ```
 
 - **`riff-server`** is the central service. It holds the live sessions, the
-  threads, the claims and the leads. Now it runs on your machine, as a
-  systemd user service (see [Start a Riff](start-a-riff.md)). It
+  threads, the claims and the leads. Now it runs on your machine, in a
+  terminal (see [Start a Riff](start-a-riff.md)). It
   listens on loopback. To let a second machine join, it listens on
   your network (see [Add a Machine](add-a-machine.md)). The shared
   server on Cloud Run is off.

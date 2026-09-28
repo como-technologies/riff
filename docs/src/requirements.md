@@ -333,28 +333,21 @@
 
 - **R118** `riff-server` with no command runs in the foreground, in a
   terminal.
-- **R119** `riff-server install` installs a systemd user service and
-  starts it. The unit runs the binary that ran `install`. It restarts
-  the server after a crash and starts it at login. The settings of
-  `install` go in a file next to the unit, with mode 0600.
-- **R120** `riff-server install` again writes the unit and the
-  settings again, and restarts the service.
-- **01M3JCE5477135XSD740DG7KFT** `riff-server install` keeps each old
-  setting that it does not get again. A setting that it gets, as an
-  option or as a `RIFF_*` variable, replaces the old one. So a plain
-  `riff-server install` keeps `--listen` and `--insecure`.
-- **R121** `riff-server uninstall` stops and disables the service, and
-  removes the unit and the settings.
-- **R122** When `systemctl --user` does not work, `install` and
-  `uninstall` fail and change nothing.
+- **01M3K0QM5HY852J4E5M2YQDYEM** `riff-server` has no subcommand and
+  installs no service. A person runs it in a terminal. The cloud runs
+  it on Cloud Run. It keeps no settings: it reads them only from its
+  options and the environment at each start.
 - **01M3JY12HASECNN6SFQ880JT5H** `just dev [ARGS]` builds the
   workspace in debug. It links `~/.cargo/bin/riff` to the debug `riff`
-  of its tree, and runs `riff connect claude` with it. It stops the
-  service `riff-server` if the service runs. Then it runs the debug
-  `riff-server` with `ARGS` in the foreground. When the server ends,
-  also on Ctrl-C, it prints the steps that restore the release setup:
-  `just install` and `systemctl --user start riff-server`. It does not
-  start the service again.
+  of its tree, and runs `riff connect claude` with it. Then it runs the
+  debug `riff-server` with `ARGS` in the foreground. When the server
+  ends, also on Ctrl-C, it prints the step that restores the release
+  setup: `just install`.
+- **01M3K0QM89E2XM1NWSPT4KXSTC** `just dev` loads `.env` at the root of
+  its tree, when the file exists, into the environment of `riff` and
+  `riff-server`, for example `RIFF_OIDC_CLIENT_ID` and
+  `RIFF_OIDC_CLIENT_SECRET`. Only `just dev` loads it. Git ignores
+  `.env`.
 - **R33** `riff-server` rejects a token that it does not know. A lost token
   record means the person signs in again.
 
@@ -820,8 +813,7 @@
   only on a loopback address. `riff-server` refuses to start on another
   address, unless it gets `--insecure` (`RIFF_INSECURE`). With
   `--insecure` on such an address, it warns at start: each machine that
-  can reach it can read, post and answer as any person. `install` does
-  the same check. A riff with sign-in listens on any address once it
+  can reach it can read, post and answer as any person. A riff with sign-in listens on any address once it
   has an owner (01M3JN3AQMHZHT6JP3P6GM9PWZ).
 - **01M3JZN1VEF73EPFE2FJY36EY4** When `riff-server` refuses an address
   that is not loopback because it has no sign-in, its error names
@@ -886,7 +878,8 @@
   loopback address until it has an owner, so the owner signs in from
   the machine of the server. `riff-server` refuses another address at
   start, also with `--insecure`. It checks again after it loads its
-  bucket. `install` counts `RIFF_OWNER` or a bucket as an owner.
+  bucket. Before the load, it counts `RIFF_OWNER` or a bucket as an
+  owner.
 - **01M3JN3ASSV9SA0QZKXXJ0RTEV** `--owner EMAIL` (`RIFF_OWNER`) names
   the owner of a riff that has none. The cloud deploy passes it from
   the GitHub Actions variable `RIFF_OWNER`. The deploy stops with an

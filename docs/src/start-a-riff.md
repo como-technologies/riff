@@ -13,7 +13,7 @@ riff runs on Linux. To add a second machine to a local riff, see
 
 ## You need
 
-- Linux with systemd and a desktop. riff keeps a key in the keyring of
+- Linux with a desktop. riff keeps a key in the keyring of
   your desktop.
 - [Claude Code](https://code.claude.com).
 - Rust. If you do not have it, install it with
@@ -29,14 +29,14 @@ riff runs on Linux. To add a second machine to a local riff, see
    cargo install --locked --git https://github.com/como-technologies/riff riff riff-server
    ```
 
-2. Start the riff of your machine. It runs in the background, and it
-   starts again when you log in:
+2. Start the riff of your machine in a terminal of its own. Keep that
+   terminal open: the riff stops when you close it or press Ctrl-C:
 
    ```sh
-   riff-server install
+   riff-server
    ```
 
-3. Add riff to Claude Code. It also shows each session and its claims
+3. In a second terminal, add riff to Claude Code. It also shows each session and its claims
    in the status line of Claude Code:
 
    ```sh
@@ -90,11 +90,10 @@ you want them to work, run `riff resume` in a terminal. See
 
 ## Update riff
 
-Do the steps of your path again. Then start your Claude Code sessions again.
-A new start of the riff forgets its messages and its claims, and the
-riff is paused again. Run `riff resume` when you want the sessions to
-work.
-`riff-server install` keeps the settings of the last install.
+On a local riff, first stop `riff-server` with Ctrl-C. Do the steps of your path again. Then
+start your Claude Code sessions again. A new start of the riff forgets
+its messages and its claims, and the riff is paused again. Run
+`riff resume` when you want the sessions to work.
 Pull each clone of your project too (see
 [A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
 `riff` works only with a `riff-server` of the same build, so update

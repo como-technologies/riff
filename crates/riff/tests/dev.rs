@@ -1,7 +1,8 @@
-//! `just dev` runs the debug builds of a tree (01M3JY12HASECNN6SFQ880JT5H).
-//! The test copies the `dev` recipe into a justfile of its own, in a
-//! tree with a fake `target/debug`. Fakes of `cargo`, `systemctl`,
-//! `riff` and `riff-server` write each call to a log.
+//! `just dev` runs the debug builds of a tree (01M3JY12HASECNN6SFQ880JT5H)
+//! with the settings of `.env` (01M3K0QM89E2XM1NWSPT4KXSTC). The test
+//! copies the `dev` recipe into a justfile of its own, in a tree with a
+//! fake `target/debug`. Fakes of `cargo`, `riff` and `riff-server` write
+//! each call to a log.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -36,15 +37,18 @@ fn fake(path: &Path, log: &Path, tail: &str) {
 }
 
 /// Run `just dev ARGS` in a fake tree. `server` is the tail of the fake
-/// `riff-server`. Returns the output, the log, and the fake home.
-fn dev(args: &[&str], server: &str, systemctl: &str) -> (Output, String, tempfile::TempDir) {
+/// `riff-server`, and `env` the `.env` of the tree, if any. Returns the
+/// output, the log, and the fake home.
+fn dev(args: &[&str], server: &str, env: Option<&str>) -> (Output, String, tempfile::TempDir) {
     let tree = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let log = tree.path().join("log");
     std::fs::write(tree.path().join("justfile"), recipe()).unwrap();
+    if let Some(env) = env {
+        std::fs::write(tree.path().join(".env"), env).unwrap();
+    }
     let bin = tree.path().join("bin");
     fake(&bin.join("cargo"), &log, "");
-    fake(&bin.join("systemctl"), &log, systemctl);
     let debug = tree.path().join("target/debug");
     fake(&debug.join("riff"), &log, "");
     fake(&debug.join("riff-server"), &log, server);
@@ -55,23 +59,22 @@ fn dev(args: &[&str], server: &str, systemctl: &str) -> (Output, String, tempfil
         .current_dir(tree.path())
         .env("PATH", path)
         .env("HOME", home.path())
+        .env_remove("RIFF_OIDC_CLIENT_ID")
         .output()
         .expect("just runs");
     let log = std::fs::read_to_string(&log).unwrap_or_default();
     (out, log, home)
 }
 
-const RESTORE: &str =
-    "Restore the release setup:\n  just install\n  systemctl --user start riff-server\n";
+const RESTORE: &str = "Restore the release setup:\n  just install\n";
 
 #[test]
-fn dev_builds_links_stops_the_service_connects_and_runs_the_server() {
-    let (out, log, home) = dev(&["--listen", "127.0.0.1:7979"], "", "");
+fn dev_builds_links_connects_and_runs_the_server() {
+    let (out, log, home) = dev(&["--listen", "127.0.0.1:7979"], "", None);
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         log,
         "cargo build --workspace\n\
-         systemctl --user stop riff-server\n\
          riff connect claude\n\
          riff-server --listen 127.0.0.1:7979\n",
     );
@@ -80,20 +83,39 @@ fn dev_builds_links_stops_the_service_connects_and_runs_the_server() {
     assert!(link.is_absolute(), "{}", link.display());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.ends_with(RESTORE), "{stdout}");
-    assert!(!log.contains("start"), "{log}");
 }
 
 #[test]
-fn dev_goes_on_when_there_is_no_service() {
-    let (out, log, _home) = dev(&[], "", "exit 5");
+fn dev_gives_the_settings_of_env_to_the_server() {
+    let server = r#"echo "client $RIFF_OIDC_CLIENT_ID" >> log"#;
+    let env = "RIFF_OIDC_CLIENT_ID=my-app\nRIFF_OIDC_CLIENT_SECRET=my-secret\n";
+    let (out, log, _home) = dev(&[], server, Some(env));
     assert!(out.status.success(), "{out:?}");
-    assert!(log.ends_with("riff-server \n"), "{log}");
+    assert!(log.ends_with("riff-server \nclient my-app\n"), "{log}");
+}
+
+#[test]
+fn dev_runs_with_no_env() {
+    let server = r#"echo "client ${RIFF_OIDC_CLIENT_ID:-none}" >> log"#;
+    let (out, log, _home) = dev(&[], server, None);
+    assert!(out.status.success(), "{out:?}");
+    assert!(log.ends_with("client none\n"), "{log}");
 }
 
 #[test]
 fn dev_prints_the_restore_steps_when_the_server_fails() {
-    let (out, _log, _home) = dev(&[], "exit 3", "");
+    let (out, _log, _home) = dev(&[], "exit 3", None);
     assert!(!out.status.success(), "{out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.ends_with(RESTORE), "{stdout}");
+}
+
+#[test]
+fn git_ignores_env() {
+    let status = Command::new("git")
+        .args(["check-ignore", "-q", ".env"])
+        .current_dir(repo())
+        .status()
+        .expect("git runs");
+    assert!(status.success(), "git does not ignore .env");
 }
