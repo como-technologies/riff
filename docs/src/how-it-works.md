@@ -7,21 +7,31 @@ flowchart LR
     subgraph M["Your machine"]
         S1[agent session] -- MCP --> C1["riff mcp"]
         W1["riff watch"] -- wakes --> S1
+        L["riff-server<br/>systemd user service"]
     end
-    subgraph G["Google Cloud"]
+    subgraph N["A second machine"]
+        S2[agent session] -- MCP --> C2["riff mcp"]
+    end
+    subgraph G["Google Cloud, off for now"]
         E["riff-server<br/>Cloud Run, one instance"]
         B[("Cloud Storage<br/>state")]
     end
-    C1 -- HTTPS --> E
-    E -- HTTPS --> W1
+    C1 -- "HTTP, loopback" --> L
+    L -- wakes --> W1
+    C2 -- "HTTP, your network" --> L
+    C1 -. HTTPS .-> E
     E -- save and load --> B
 ```
 
 - **`riff-server`** is the central service. It holds the live sessions, the
-  threads, the claims and the leads.
+  threads, the claims and the leads. Now it runs on your machine, as a
+  systemd user service (see [Start a Riff](start-a-riff.md)). It
+  listens on loopback. To let a second machine join, it listens on
+  your network (see [Add a Machine](add-a-machine.md)). The shared
+  server on Cloud Run is off.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
-  `threads`, `join`, `leave`, `post`, `read`, `tell`, `claim`,
-  `release`, `lead` and `move`.
+  `threads`, `join`, `leave`, `post`, `status`, `tell`, `read`,
+  `claim`, `release`, `lead`, `pause`, `resume` and `move`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 - **The start hook** runs `riff hook session-start` when a session
@@ -46,6 +56,15 @@ flowchart LR
 
 Claude Code loads the plugin from that directory. After you update
 `riff`, run `riff connect claude` again.
+
+### Use another claude command
+
+`riff connect claude` runs the `claude` command on your `PATH`.
+`--claude` names another one:
+
+```sh
+riff connect claude --claude ~/.local/bin/claude
+```
 
 ## Builds
 
@@ -177,7 +196,8 @@ riff who --all
 
 A session that runs sends a sign of life to `riff-server` each minute,
 also while it waits for its user. When the session ends, it tells the
-server. It leaves `who` at once, and its claims are free at once.
+server. It leaves `who` at once. Its claims are free at once, and its
+lead does not count while it is gone.
 
 ```mermaid
 sequenceDiagram
@@ -189,21 +209,22 @@ sequenceDiagram
     end
     A->>M: /exit
     M->>S: end
-    Note over S: gone: not in who, claims free
+    Note over S: gone: not in who, claims free, lead does not count
 ```
 
 - `idle` does not change with a keep-alive. It is the time since the
   last call.
 - A session that stops with no end, for example after `kill -9` or a
-  network fault, is gone after 3 minutes. Its claims end 5 minutes
-  after its last sign of life.
+  network fault, is gone after 3 minutes. Its claims and its lead end
+  together, 5 minutes after its last sign of life.
 - A gone session gets no messages. A `tell` to it fails.
 - When a gone session calls again, it comes back with the same ID and
   threads. After a stop with no end, it also gets back each claim that
   no other session took. After an end, it has no claims.
 - `/clear` does not end the session.
-- The lead stays the lead after an end, a resume and `/clear`, unless
-  another session became the lead meanwhile.
+- A lead that comes back after an end or a resume is the lead again,
+  unless another session became the lead meanwhile. `/clear` keeps the
+  lead.
 
 ### A new start is blank
 
@@ -469,6 +490,29 @@ riff tail > thread.log
 riff tail --color always | less -R
 ```
 
+### Read the full history
+
+`riff read` shows only your unread messages. `--all` shows each
+message of your threads:
+
+```sh
+riff read --all
+```
+
+### Use another thread
+
+The default thread is the thread of your repository. `-t`
+(`--thread`) names another thread for `post`, `claim`, `release` and
+`read`. `riff tail` takes the thread as its argument:
+
+```sh
+riff post -t como-technologies/docs "the book builds again"
+riff claim -t como-technologies/docs issue-4
+riff release -t como-technologies/docs issue-4
+riff read -t como-technologies/docs
+riff tail como-technologies/docs
+```
+
 ## A signed message
 
 Each message carries a signature from the device key of its sender.
@@ -513,9 +557,9 @@ network. So its reader counts each message as verified.
 
 ```mermaid
 flowchart LR
-    R[riff-server] --> P{Has a sign-in provider?}
-    P -- no --> V[it trusts its network: each message is verified]
-    P -- yes --> S{Valid signature from a live sign-in of the sender?}
+    R[riff-server] --> P{No sign-in provider and no --require-sign-in?}
+    P -- yes --> V[it trusts its network: each message is verified]
+    P -- no --> S{Valid signature from a live sign-in of the sender?}
     S -- yes --> V2[verified]
     S -- no --> N[not verified]
 ```
@@ -598,8 +642,20 @@ sequenceDiagram
     A->>E: release issue-12
 ```
 
-A person claims with `riff claim issue-12` and releases with
-`riff release issue-12`. While the riff is paused, each claim fails.
+While the riff is paused, each claim fails.
+
+### Claim an item by hand
+
+A person can claim and release in a terminal too. `riff claim` exits
+with status 1 when another session holds the item:
+
+```sh
+riff claim issue-12
+riff release issue-12
+```
+
+`-t` (`--thread`) names another thread. See
+[Use another thread](#use-another-thread).
 
 ## Pause the riff
 
@@ -755,7 +811,7 @@ flowchart TB
 - The first session of the person in the repository becomes the lead.
   The person does nothing. A later session does not become the lead.
 - The URI of the lead has `lead=true`. `riff who` shows it.
-- A lead that stops for more than 5 minutes, or works in another
+- A lead that ends, stops for more than 5 minutes, or works in another
   repository, is not the lead until it comes back. A lead that leaves
   the thread is not the lead any more. With no lead, each session asks
   its own user.
