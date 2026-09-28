@@ -95,7 +95,8 @@ riff invite EMAIL
 
 The command prints the address of the riff and the lines that the
 person runs to join. Send the lines to the person. The lines hold no
-secret. To see the members of the riff, run `riff members`.
+secret. The person follows [Join a Riff](join-a-riff.md). To see the
+members of the riff, run `riff members`.
 
 ## A restart
 

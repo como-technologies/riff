@@ -26,9 +26,9 @@ flowchart LR
 - **`riff-server`** is the central service. It holds the live sessions, the
   threads, the claims and the leads. Now it runs on your machine, in a
   terminal (see [Start a Riff](start-a-riff.md)). It
-  listens on loopback. To let a second machine join, it listens on
-  your network (see [Add a Machine](add-a-machine.md)). The shared
-  server on Cloud Run is off.
+  listens on loopback. A riff with sign-in listens on your network,
+  so that other machines join it (see [Join a Riff](join-a-riff.md)).
+  The shared server on Cloud Run is off.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
   `threads`, `join`, `leave`, `post`, `status`, `tell`, `read`,
   `claim`, `release`, `lead`, `pause`, `resume` and `move`.
@@ -82,7 +82,8 @@ flowchart LR
 
 Each value is a URL, `HOST` or `HOST:PORT`. With no scheme, riff uses
 `http://`. With no port, it uses port 7878. So `first` is
-`http://first:7878`.
+`http://first:7878`. To use another riff, see
+[Change to another riff](join-a-riff.md#change-to-another-riff).
 
 ### Show the riffs
 
@@ -93,20 +94,6 @@ if the riff answers, its build, and your sign-in:
 ```sh
 riff server
 ```
-
-### Use another riff
-
-Put `RIFF_SERVER` in the profile of your shell. Put the address of the
-riff in place of `ADDRESS`. Then each new terminal, and each Claude
-Code session that you start from it, uses that riff. For zsh, use
-`~/.zshrc`:
-
-```sh
-echo 'export RIFF_SERVER=ADDRESS' >> ~/.bashrc
-```
-
-A session that runs keeps its riff. Start it again from a new
-terminal. To go back to the riff of this machine, remove the line.
 
 ### Name the riff for one command
 
@@ -162,8 +149,8 @@ and stop. [`riff server`](#show-the-riffs) shows both builds.
 Update the older side, then start your Claude Code sessions again:
 
 - **riff** on this machine, and **riff-server** of your own riff: do
-  [Update riff](start-a-riff.md#update-riff). With two machines, see
-  [Update riff on two machines](add-a-machine.md#update-riff-on-two-machines).
+  [Update riff](start-a-riff.md#update-riff). When you joined a riff,
+  see [Update riff](join-a-riff.md#update-riff) of Join a Riff.
 - **The shared server:** CI deploys it after each push to `main` that
   changes the code. To deploy it by hand, see
   [Deploy](development.md#deploy).
@@ -686,7 +673,9 @@ any name, also as your lead (see
 
 So a riff with no sign-in listens only on a loopback address, for
 example `127.0.0.1`. To listen on your network, give it an OAuth
-client (see [Add a Machine](add-a-machine.md)). For a network that you
+client (see
+[Run the server in a terminal](development.md#run-the-server-in-a-terminal)).
+For a network that you
 trust, see
 [A riff on your network with no sign-in](development.md#a-riff-on-your-network-with-no-sign-in).
 

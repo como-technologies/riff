@@ -16,6 +16,11 @@
   `RIFF_SERVER`. The riff of the first machine has sign-in with the
   OAuth client of the person, and the person signs in on each machine
   (01M3JZN229S3YA3BR6GN5H3MTY).
+- **01M3MEHCGZ4AG4C2A77J5HA3P7** The book page "Join a Riff" has the
+  steps to join a riff with sign-in: install `riff`, put the address of
+  the riff in `RIFF_SERVER`, and run `riff connect claude`. The steps
+  are the same for a second machine of the owner and for a person that
+  the owner invites. The page replaces "Add a Machine".
 - **R44** Only Claude Code is supported for now. `riff connect claude`
   installs a Claude Code plugin: the MCP server, a skill, and a start
   hook that wakes the session.
