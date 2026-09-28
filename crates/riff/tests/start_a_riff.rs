@@ -136,25 +136,34 @@ fn a_second_machine_installs_riff_names_the_first_and_connects() {
             "riff login",
             "riff connect claude",
             "riff who",
-            "riff connect claude",
-            "riff connect claude",
+            "riff update",
+            "riff login",
+            "riff update",
             "riff resume"
         ]
     );
     each_is_real(&riff);
 }
 
+/// Each machine updates with `riff update` (01M3K0Q892KWM76R9DJC1P37JA),
+/// never with a `cargo install` of its own.
 #[test]
-fn the_update_on_two_machines_does_the_install_of_each_machine_again() {
-    let page = commands_of("add-a-machine.md");
-    let installs: Vec<&String> = page
-        .iter()
-        .filter(|c| c.starts_with("cargo install "))
-        .collect();
-    // The second machine, then the update of the first and the second.
-    assert_eq!(installs.len(), 3, "{page:?}");
-    assert_eq!(installs[1], &commands()[0]);
-    assert_eq!(installs[2], installs[0]);
+fn the_update_on_two_machines_runs_riff_update_on_each_machine() {
+    let update = commands_of_part("add-a-machine.md", "Update riff on two machines");
+    let updates = update.iter().filter(|c| *c == "riff update").count();
+    assert_eq!(updates, 2, "{update:?}");
+    assert!(
+        !update.iter().any(|c| c.starts_with("cargo install ")),
+        "{update:?}"
+    );
+}
+
+/// "Update riff" of "Start a Riff" is one command.
+#[test]
+fn a_person_updates_riff_with_riff_update() {
+    let update = commands_of_part("start-a-riff.md", "Update riff");
+    assert_eq!(update, ["riff update"]);
+    each_is_real(&update);
 }
 
 #[test]

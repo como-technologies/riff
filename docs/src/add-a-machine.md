@@ -95,28 +95,29 @@ of your first machine.
 
 Update both machines to the same riff at the same time.
 
-1. On the first machine, stop `riff-server` with Ctrl-C. Install
-   riff, and start its riff again with the settings of step 1 of
+1. On the first machine, stop `riff-server` with Ctrl-C. Update riff:
+   it installs the new `riff` and `riff-server`, and updates the
+   plugin. Then start its riff again with the settings of step 1 of
    [On the first machine](#on-the-first-machine):
 
    ```sh
-   cargo install --locked --git https://github.com/como-technologies/riff riff riff-server
+   riff update
    export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET
    riff-server --listen 0.0.0.0:7878 --owner EMAIL
    ```
 
-   The new riff forgets each sign-in. In a second terminal, add riff
-   to Claude Code. It signs you in again:
+   The new riff forgets each sign-in. In a second terminal, sign in
+   again:
 
    ```sh
-   riff connect claude
+   riff login
    ```
 
-2. On the second machine, do steps 1 and 3 again:
+2. On the second machine, update riff. The plugin update signs you in
+   to the new riff:
 
    ```sh
-   cargo install --locked --git https://github.com/como-technologies/riff riff
-   riff connect claude
+   riff update
    ```
 
 3. On both machines, pull each clone of the project. A clone that

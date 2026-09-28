@@ -90,15 +90,24 @@ you want them to work, run `riff resume` in a terminal. See
 
 ## Update riff
 
-On a local riff, first stop `riff-server` with Ctrl-C. Do the steps of your path again. Then
-start your Claude Code sessions again. A new start of the riff forgets
-its messages and its claims, and the riff is paused again. Run
+Update riff on your machine. It installs the new `riff` and
+`riff-server` with `cargo`, and updates the plugin in Claude Code:
+
+```sh
+riff update
+```
+
+When your riff runs the old build, it tells you to start
+`riff-server` again. Press Ctrl-C in its terminal, then do step 2 of
+"Start a local riff" again. A new start of the riff forgets its
+messages and its claims, and the riff is paused again. Run
 `riff resume` when you want the sessions to work.
-Pull each clone of your project too (see
+
+Then start your Claude Code sessions again. Pull each clone of your
+project too (see
 [A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
-`riff` works only with a `riff-server` of the same build, so update
-both (see [Builds](how-it-works.md#builds)). With a
-second machine, see
+`riff` works only with a `riff-server` of the same build (see
+[Builds](how-it-works.md#builds)). With a second machine, see
 [Update riff on two machines](add-a-machine.md#update-riff-on-two-machines).
 
 To learn more, read [How It Works](how-it-works.md).

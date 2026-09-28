@@ -1347,9 +1347,7 @@ pub fn server_view(view: &crate::lifecycle::View) -> String {
     let why = match view.source {
         Source::Flag => "--server names it.",
         Source::Env => "RIFF_SERVER names it.",
-        Source::Default => {
-            "the riff of this machine. RIFF_SERVER or --server names another riff."
-        }
+        Source::Default => "the riff of this machine. RIFF_SERVER or --server names another riff.",
     };
     let mut out = format!(
         "riff {}\nriff uses {}: {why}\n{}",
@@ -1373,9 +1371,9 @@ fn seen_line(label: &str, seen: &crate::lifecycle::Seen) -> String {
     let build = match &probe.build {
         None => "names no build: an old riff-server".to_owned(),
         Some(b) if b.matches(&riff_core::build::Build::this()) => "the same build".to_owned(),
-        Some(b) => format!(
-            "another build, {b}. See \"When the builds do not match\" in How It Works"
-        ),
+        Some(b) => {
+            format!("another build, {b}. See \"When the builds do not match\" in How It Works")
+        }
     };
     let sign_in = match (probe.sign_in, seen.signed_in) {
         (None, _) => "",

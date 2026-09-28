@@ -561,29 +561,6 @@ In a second terminal, sign in:
 riff login
 ```
 
-### Point riff at a server
-
-`riff` uses the local server when `RIFF_SERVER` is not set. `just use`
-prints the shell line for a server. Run it with `eval` in each shell
-where you run `riff` or start Claude Code:
-
-```sh
-eval "$(just use cloud)"
-eval "$(just use local)"
-just use
-```
-
-`just use` alone shows the server that `riff` uses now.
-
-### Name the server for one command
-
-`--server` names the server for one command. It wins over
-`RIFF_SERVER`:
-
-```sh
-riff --server http://127.0.0.1:7878 who
-```
-
 ## Save the state in a bucket
 
 Without a bucket, `riff-server` keeps its state only in memory. A
@@ -817,12 +794,13 @@ serves riff at `riff.comotechnologies.io`. Do this once:
 
 ### Check the shared server
 
-The first command shows if CI deploys, and the state of the service.
-The next ones point `riff` at the shared server and sign in:
+The first command shows if CI deploys, and the state of the service,
+with its URL. The next ones point `riff` at the shared server for this
+shell, and sign in. Put the URL in place of `URL`:
 
 ```sh
 just cloud status
-eval "$(just use cloud)"
+export RIFF_SERVER=URL
 riff login
 riff who
 ```

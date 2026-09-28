@@ -10,7 +10,9 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
-use riff::{hook, identity, lifecycle, local, login, mcp, next, plugin, settings, terminal, text, worker};
+use riff::{
+    hook, identity, lifecycle, local, login, mcp, next, plugin, settings, terminal, text, worker,
+};
 use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;

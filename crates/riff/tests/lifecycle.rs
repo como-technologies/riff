@@ -126,13 +126,22 @@ async fn server_names_another_build_and_a_riff_that_does_not_answer() {
         stdout.contains(&format!("{url}: answers, another build, {}.", other())),
         "{stdout}"
     );
-    let stdout = text(&run(riff(&["--server", "127.0.0.1:9", "server"])).await.stdout);
-    assert!(stdout.contains("http://127.0.0.1:9: no answer."), "{stdout}");
+    let stdout = text(
+        &run(riff(&["--server", "127.0.0.1:9", "server"]))
+            .await
+            .stdout,
+    );
+    assert!(
+        stdout.contains("http://127.0.0.1:9: no answer."),
+        "{stdout}"
+    );
 }
 
 #[test]
 fn a_server_that_is_not_a_url_or_host_and_port_is_refused() {
-    let out = riff(&["--server", "first:port", "server"]).output().unwrap();
+    let out = riff(&["--server", "first:port", "server"])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     assert!(text(&out.stderr).contains("port is not a port"));
 }
