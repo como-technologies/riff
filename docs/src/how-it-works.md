@@ -651,11 +651,11 @@ names them. Give more of the ID.
 
 ## Wake a session
 
-A Claude Code session runs the watch as a background task of its Bash
-tool. The task does not expire like a Monitor task. It ends at the first wake, and its
-end wakes the session. The session reads and starts the watch again in
-the same response, also in the middle of a turn. So a wake costs one
-request.
+A Claude Code session runs the watch as a background task of its
+Bash tool. The task does not expire like a Monitor task. It ends at
+the first wake, and its end wakes the session. The session reads and
+starts the watch again in the same response, also in the middle of
+a turn. So a wake costs one request.
 
 ```mermaid
 sequenceDiagram
