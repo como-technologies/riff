@@ -573,8 +573,13 @@ mod tests {
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }
+        // The removal never forces. A push after a rebase has a lease
+        // (01M3MNP39172Y463WGQAW125KW).
+        let start = skill.find("## Remove a stale worktree").unwrap();
+        let end = skill.find("## Keep good git hygiene").unwrap();
+        assert!(!skill[start..end].contains("--force"));
         assert!(!skill.contains("branch -D"));
-        assert!(!skill.contains("--force"));
+        assert!(!skill.replace("--force-with-lease", "").contains("--force"));
     }
 
     /// 01M3K0FZ5M08Z4YPSVKFADCAKC: only a session with no claim verifies.

@@ -1157,6 +1157,24 @@
 - **01M3JQCD5BS2ZSGZSD3CTWGPB8** The skill tells a worker: when its item
   is merged, its claim released and its worktree removed, run
   `riff workers next`, then end the turn. The lead never runs it.
+- **01M3MNP34M5PAZW9VWAYVGNSV2** `riff workers start`, and
+  `riff workers next` before the fresh context, fast-forward the
+  default branch of the main clone to `origin` first (`git fetch` and
+  `git merge --ff-only`). They say what they did.
+- **01M3MNP36TZYN3PE00AZJTJSER** When the main clone is not on the
+  default branch, has local changes to tracked files, or has commits
+  that `origin` does not have, `riff workers start` and
+  `riff workers next` change nothing and say why. `riff workers next`
+  also tells the lead why. A failed step never stops the command.
+- **01M3MNP39172Y463WGQAW125KW** The skill tells a session: fetch before
+  it makes a worktree, and put the new worktree on the fresh
+  `origin` default branch before any change. Rebase on a fresh
+  `origin` default branch before each push and each verify request.
+- **01M3MNP3B8YJ699432D4PSFWDB** The skill tells a session: after the
+  merge, remove the worktree and its local branch, prune
+  (`git fetch --prune`, `git worktree prune`), and check that nothing
+  of the item is left. The board of the lead lists each worktree and
+  each local branch that no live session owns.
 - **01M3JPQTFJXQ514DSJ6G7B0KJB** The skill tells the lead: start at most
   as many workers as there are free items; never change the limit; at
   the end of a wave, stop the workers before the deploy and the update,

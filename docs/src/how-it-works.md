@@ -1448,6 +1448,45 @@ sequenceDiagram
 never clears the lead: you work in it. To see the context of a worker,
 type `/context` in its pane.
 
+### Workers keep good git hygiene
+
+Workers start in the main clone, and each new worktree branches from
+it. So `riff workers start`, and `riff workers next` before the fresh
+context, fast-forward the main clone to `origin` first. You do not
+pull by hand.
+
+```mermaid
+flowchart TD
+    A[riff workers start / next] --> B{main clone on main, no local changes?}
+    B -- yes --> C[git fetch --prune, git merge --ff-only]
+    C --> D["the main clone moved 2 commits forward to origin/main."]
+    B -- no --> E["the main clone stays as it is: WHY"]
+    E --> F[riff workers next tells the lead]
+```
+
+When the main clone is on another branch, has local changes, or has
+commits that `origin` does not have, riff changes nothing and says
+why. A worker also tells the lead. With no `origin`, riff says
+nothing.
+
+Each worker also fetches before it makes a worktree, rebases on a
+fresh `origin/main` before each push and each verify request, and
+after the merge removes its worktree and its branch and prunes. The
+board of the lead lists each worktree and each branch that no live
+session owns.
+
+#### Let riff fast-forward the main clone
+
+When riff says that the main clone stays as it is, look at it. Put the
+main clone back on the default branch with no local changes, then
+start the workers again:
+
+```sh
+git -C ~/src/riff status
+git -C ~/src/riff switch main
+riff workers start 1
+```
+
 ### How a worker ends
 
 Each worker pane runs `claude` through `riff workers run`. The wrapper
