@@ -1314,7 +1314,8 @@ riff workers done
 ```
 
 It tells the lead that the worker has no work, leaves `riff who` at
-once, and closes the pane of the worker. Outside a worker, it refuses.
+once, and closes the pane of the worker. Outside a worker, and in a
+worker that holds a claim, it refuses and does nothing.
 A worker that finished an item runs `riff workers next` first (see
 [A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
 runs `riff workers done` only when its start routine then finds no

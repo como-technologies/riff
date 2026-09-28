@@ -994,8 +994,9 @@
   `claude` again. On SIGTERM or SIGHUP, it stops `claude` and sends no
   message.
 - **01M3JQC8CN72WAVPE3189216C8** `riff workers done` works only in a
-  worker. It tells the lead that the worker has no work, sends the end
-  call of the session, and stops the wrapper, so the pane closes.
+  worker that holds no claim. It tells the lead that the worker has no
+  work, sends the end call of the session, and stops the wrapper, so
+  the pane closes. With a claim, it refuses and does nothing.
 - **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
   start context of such a session says that it is a worker.
 - **01M3JQC8GVFWC47NTN4NKE730P** A worker with no claim, and no free

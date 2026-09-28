@@ -155,6 +155,14 @@ pub async fn done(api: &Api, me: &riff_core::name::SessionUri) -> Result<()> {
     else {
         bail!("this session is not a worker: {WRAPPER_PID} is not set");
     };
+    // A worker that holds a claim, for example while it waits for a
+    // verify, does not end (01M3JQC8GVFWC47NTN4NKE730P).
+    let sessions = api.who(me, false).await?;
+    if let Some(info) = sessions.iter().find(|s| s.uri.who() == me.who())
+        && !info.uri.claims().is_empty()
+    {
+        bail!(crate::text::done_holds_claims(info.uri.claims()));
+    }
     let pane = std::env::var("TMUX_PANE").ok();
     api.tell(
         me,

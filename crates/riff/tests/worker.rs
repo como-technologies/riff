@@ -223,6 +223,48 @@ async fn a_hangup_stops_the_worker_with_no_message() {
     assert_eq!(lead_reads(&api, &lead).await, "No unread messages.");
 }
 
+/// A worker that holds a claim, for example while it waits for a
+/// verify, does not end: `riff workers done` refuses and does nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_holds_a_claim_does_not_end() {
+    let api = start_server().await;
+    let lead = lead(&api).await;
+    api.set_riff(&lead, riff_core::wire::RiffState::Running)
+        .await
+        .unwrap();
+    lead_reads(&api, &lead).await;
+    let dir = repo();
+    let d = dir.path().display();
+    let claude = fake_claude(
+        dir.path(),
+        &format!(
+            "\"$RIFF_BIN\" claim issue-12 >/dev/null\n\
+             \"$RIFF_BIN\" workers done 2> '{d}/done.err'\n\
+             echo $? > '{d}/done.code'"
+        ),
+    );
+    let out = riff(&api, dir.path(), "w6")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let code = std::fs::read_to_string(dir.path().join("done.code")).unwrap();
+    assert_ne!(code.trim(), "0");
+    let err = std::fs::read_to_string(dir.path().join("done.err")).unwrap();
+    assert!(err.contains("you still hold issue-12"), "{err}");
+
+    // No done message, and the worker is still in `riff who` with its claim.
+    let read = lead_reads(&api, &lead).await;
+    assert!(!read.contains("worker done"), "{read}");
+    let who = api.who(&lead, false).await.unwrap();
+    let w6 = who
+        .iter()
+        .find(|s| s.uri.who().session() == Some("w6"))
+        .expect("w6 stays in riff who");
+    assert_eq!(w6.uri.claims(), ["issue-12"]);
+}
+
 /// `riff workers done` outside a worker refuses and ends nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn done_outside_a_worker_refuses() {
