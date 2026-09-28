@@ -1,5 +1,7 @@
 /target
 /docs/book
+# The settings of `just dev`, for example the OAuth client.
+/.env
 # Installed by `just init` and by CI (`mdbook-gruvbox install docs`).
 /docs/gruvbox
 .claude/settings.local.json

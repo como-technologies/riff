@@ -62,8 +62,6 @@
 //!   Each grant needs a DPoP proof; the first pair binds the sign-in to
 //!   its key.
 //!
-//! - `riff-server install` runs the server as a systemd user service.
-//!   See [`service`].
 //! - A riff with no sign-in listens only on a loopback address, unless
 //!   it gets `--insecure`. See [`listen`].
 //!
@@ -106,7 +104,6 @@ pub mod gcs;
 pub mod lease;
 pub mod listen;
 pub mod oidc;
-pub mod service;
 pub mod state;
 pub mod store;
 pub mod token;

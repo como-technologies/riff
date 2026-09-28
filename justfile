@@ -81,21 +81,18 @@ install:
 serve:
     cargo run -p riff-server
 
-# 01M3JY12HASECNN6SFQ880JT5H. The trap prints the restore steps also on Ctrl-C.
-# Run this tree's debug builds: riff for Claude Code, riff-server in the foreground
+# 01M3JY12HASECNN6SFQ880JT5H, 01M3K0QM89E2XM1NWSPT4KXSTC. The trap prints the restore step also on Ctrl-C.
+# Run this tree's debug builds: riff for Claude Code, riff-server in the foreground. It loads .env
 dev *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -f .env ]; then set -a; . ./.env; set +a; fi
     cargo build --workspace
     mkdir -p ~/.cargo/bin
     ln -sf "{{justfile_directory()}}/target/debug/riff" ~/.cargo/bin/riff
-    systemctl --user stop riff-server 2>/dev/null || true
     target/debug/riff connect claude
-    trap 'printf "\nRestore the release setup:\n  just install\n  systemctl --user start riff-server\n"' EXIT
+    trap 'printf "\nRestore the release setup:\n  just install\n"' EXIT
     target/debug/riff-server {{ARGS}}
-
-# riff-server on this machine: just local RECIPE
-mod local 'deploy/local.just'
 
 # The shared server on Cloud Run: just cloud RECIPE
 mod cloud 'deploy/cloud.just'

@@ -13,23 +13,23 @@ Keep its client ID and its client secret. Do not commit them.
 
 ## On the first machine
 
-1. Let the riff of your first machine take connections from your
-   network, with sign-in. Put your client ID in place of `ID`, your
-   client secret in place of `SECRET`, and the email of your Google
-   account in place of `EMAIL`:
+1. Stop the riff of your first machine with Ctrl-C. Start it again,
+   so that it takes connections from your network, with sign-in. Put
+   your client ID in place of `ID`, your client secret in place of
+   `SECRET`, and the email of your Google account in place of `EMAIL`:
 
    ```sh
    export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET
-   riff-server install --listen 0.0.0.0:7878 --owner EMAIL
+   riff-server --listen 0.0.0.0:7878 --owner EMAIL
    ```
 
-   `riff-server install` keeps the settings in a file that only you
-   can read. A riff with sign-in listens on your network only when it
-   has an owner. `--owner` names you as the owner.
+   `riff-server` keeps no settings. Give them again at each start. A
+   riff with sign-in listens on your network only when it has an
+   owner. `--owner` names you as the owner.
 
-2. This command starts the riff again. The riff then forgets its
-   messages, its claims and its sessions. Sign in on the first
-   machine. Your browser opens:
+2. The new start of the riff forgets its messages, its claims and its
+   sessions. In a second terminal, sign in on the first machine. Your
+   browser opens:
 
    ```sh
    riff login
@@ -95,14 +95,20 @@ of your first machine.
 
 Update both machines to the same riff at the same time.
 
-1. On the first machine, install riff, start its riff again, and add
-   riff to Claude Code. `riff-server install` keeps the OAuth client,
-   `--listen` and `--owner` from the last install. The new riff forgets
-   each sign-in, so `riff connect claude` signs you in again:
+1. On the first machine, stop `riff-server` with Ctrl-C. Install
+   riff, and start its riff again with the settings of step 1 of
+   [On the first machine](#on-the-first-machine):
 
    ```sh
    cargo install --locked --git https://github.com/como-technologies/riff riff riff-server
-   riff-server install
+   export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET
+   riff-server --listen 0.0.0.0:7878 --owner EMAIL
+   ```
+
+   The new riff forgets each sign-in. In a second terminal, add riff
+   to Claude Code. It signs you in again:
+
+   ```sh
    riff connect claude
    ```
 

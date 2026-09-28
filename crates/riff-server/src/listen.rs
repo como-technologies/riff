@@ -32,10 +32,9 @@
 //!     I -- yes --> W[warn, then listen]
 //! ```
 //!
-//! `riff-server` and `riff-server install` both run [`check()`], so an
-//! install never writes a service that cannot start. The owner is in
-//! the state, so `riff-server` checks again after it loads its bucket.
-//! Before that, and in `install`, a bucket counts as an owner.
+//! `riff-server` runs [`check()`] at start. The owner is in the state,
+//! so `riff-server` checks again after it loads its bucket. Before that,
+//! a bucket counts as an owner.
 
 use std::net::SocketAddr;
 

@@ -193,26 +193,30 @@ The client exists. To make it again, see
    gcloud auth login
    ```
 
-3. Install the server service again, with the OAuth client:
+3. Put the OAuth client in `.env` at the root of your clone. The
+   client ID comes from `deploy/cloud.env`, the client secret from
+   Secret Manager. Git ignores `.env`:
 
    ```sh
-   just local setup
+   . deploy/cloud.env
+   secret=$(gcloud secrets versions access latest --secret "$CLOUD_SECRET" --project "$CLOUD_PROJECT")
+   printf 'RIFF_OIDC_CLIENT_ID=%s\nRIFF_OIDC_CLIENT_SECRET=%s\n' "$RIFF_OIDC_CLIENT_ID" "$secret" > .env
+   chmod 600 .env
    ```
 
-   `just local setup` runs `riff-server install` with the client ID from
-   `deploy/cloud.env` and the client secret from Secret Manager. It
-   gives its own options to `riff-server install`, for example
-   `just local setup --admin EMAIL`.
-
-4. Check the server log:
+4. Stop the `riff-server` of [Start a Riff](start-a-riff.md) with
+   Ctrl-C. Start it again with the settings of `.env`. See
+   [Run the server in a terminal](#run-the-server-in-a-terminal):
 
    ```sh
-   just local log -n 5
+   set -a; . ./.env; set +a
+   riff-server
    ```
 
-   The last start must show `sign-in with https://accounts.google.com`
-   and `the provider knows the OAuth client`. If it shows `nobody can
-   sign in`, the service has no client: do step 3 again. If it shows
+   The server log in the terminal must show `sign-in with
+   https://accounts.google.com` and `the provider knows the OAuth
+   client`. If it shows `nobody can sign in`, the server has no client:
+   do step 3 again. If it shows
    `riff-server stops`, Google refused the client. The line says why.
 
 5. Sign in. Your browser opens. Pick your Como account:
@@ -305,7 +309,7 @@ the Claude Code session again, as a new session.
 The accounts of `comotechnologies.io` can sign in, and the owner and
 the members (see [Owner and members](#owner-and-members)). To allow
 another Workspace domain, add `--allowed-domain DOMAIN` to
-`just local setup`.
+`riff-server`.
 Give `--allowed-domain` once for each domain, the default domain too.
 Two domains do not share a user: `alice@a.com` and `alice@b.com` both
 give `alice`, and only the first account gets it.
@@ -317,7 +321,7 @@ remove members. The owner is an admin. Name each other admin by
 verified email, once for each admin:
 
 ```sh
-just local setup --admin alice@comotechnologies.io
+riff-server --admin alice@comotechnologies.io
 ```
 
 A name that is not an email names nobody: the log says so at start.
@@ -341,12 +345,12 @@ each proof.
 
 ### Use another sign-in provider
 
-`just local setup` uses Google. For another OpenID Connect provider,
+The default provider is Google. For another OpenID Connect provider,
 give its issuer and the OAuth client of riff there. Give
 `--client-secret` only when the provider asks for one:
 
 ```sh
-riff-server install --issuer https://login.example.com --client-id ID --client-secret SECRET
+riff-server --issuer https://login.example.com --client-id ID --client-secret SECRET
 ```
 
 Without `--client-id`, the server has no sign-in.
@@ -374,7 +378,8 @@ it listen on your network, name the owner in the settings.
 
 ### Become the owner
 
-On the machine of the server, after `just local setup`, sign in first:
+On the machine of the server, after you start the server with sign-in,
+sign in first:
 
 ```sh
 riff login
@@ -386,7 +391,7 @@ A server that must listen on the network at once needs an owner. Name
 it by verified email:
 
 ```sh
-just local setup --owner alice@example.com --listen 0.0.0.0:7878
+riff-server --owner alice@example.com --listen 0.0.0.0:7878
 ```
 
 A riff that has an owner keeps it. `--owner` does not change it.
@@ -454,23 +459,36 @@ It shows the owner, the admins, the members and the allowed domains:
 riff members
 ```
 
-## The server service
+## Run the server in a terminal
 
-`riff-server install` writes its settings, as options or as `RIFF_*`
-variables, to `~/.config/systemd/user/riff-server.env`, with mode
-0600. Then it enables and starts the service. `just local setup` does
-the same, with the OAuth client.
+`riff-server` runs in the foreground, in a terminal. Its log goes to
+that terminal. It keeps no settings: at each start, it reads them from
+its options and from the environment. `riff-server --help` lists each
+option and its `RIFF_*` variable. To run it with sign-in, give it your
+OAuth client in the environment:
 
-- Each install keeps the old settings that it does not get again. A
-  setting that it gets replaces the old one. So a plain
-  `riff-server install` keeps the OAuth client, `--listen` and
-  `--insecure`.
+```sh
+export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET
+riff-server
+```
+
+Stop it with Ctrl-C. With a bucket, it saves the state first.
+
 - With no OAuth client, an address that is not loopback needs
-  `--insecure`. Else `install` fails and changes nothing.
+  `--insecure`. Else the server does not start.
 - With sign-in, an address that is not loopback needs an owner:
-  `--owner EMAIL`, or a bucket that holds one. `install` with a bucket
-  does not check it. The server checks it at start.
-- `riff-server uninstall` stops the service and removes its files.
+  `--owner EMAIL`, or a bucket that holds one.
+
+### Keep the settings in .env
+
+Put the settings in `.env` at the root of your clone, one `NAME=VALUE`
+on each line. Git ignores `.env`. Load it into the shell, then start
+the server:
+
+```sh
+set -a; . ./.env; set +a
+riff-server
+```
 
 ### A riff on your network with no sign-in
 
@@ -479,7 +497,7 @@ network that you trust, `--insecure` lets it listen on your network
 with no sign-in:
 
 ```sh
-riff-server install --listen 0.0.0.0:7878 --insecure
+riff-server --listen 0.0.0.0:7878 --insecure
 ```
 
 Then each machine that can reach the riff can read and send its
@@ -488,65 +506,14 @@ verified. It warns at start. See
 [A riff with no sign-in](how-it-works.md#a-riff-with-no-sign-in). A
 riff with sign-in is safer: see [Add a Machine](add-a-machine.md).
 
-### Remove a setting of the service
-
-An install cannot remove an old setting. Uninstall, then install with
-the settings that you want:
-
-```sh
-riff-server uninstall
-riff-server install --listen 127.0.0.1:7878
-```
-
-The service stops when you log out. To keep it running, run
-`loginctl enable-linger` once.
-
-### Use another systemctl
-
-`install` and `uninstall` run the `systemctl` command on your `PATH`.
-`--systemctl` names another one:
-
-```sh
-riff-server install --systemctl /usr/bin/systemctl
-riff-server uninstall --systemctl /usr/bin/systemctl
-```
-
-`just local` alone lists its recipes.
-
-### Check the local server
-
-It shows the state of the service, if the server answers, and the
-version of the binary:
-
-```sh
-just local status
-```
-
-### Start and stop the local server
-
-```sh
-just local stop
-just local start
-just local restart
-```
-
-### See the local log
-
-Add `-f` to follow the log:
-
-```sh
-just local log
-just local log -f
-```
-
 ### Update the local server
 
-Build the new binaries, install the service again, and update the
-plugin:
+Build the new binaries. Stop `riff-server` with Ctrl-C and start it
+again with your settings. Then update the plugin:
 
 ```sh
 just install
-just local setup
+riff-server
 riff connect claude
 ```
 
@@ -554,9 +521,8 @@ riff connect claude
 
 `just dev` runs the debug builds of your tree with Claude Code. It
 builds the workspace, points `~/.cargo/bin/riff` at the debug `riff`,
-stops the `riff-server` service, and updates the plugin. So
-`riff connect claude` does not sign in at the service. Then it runs
-the debug `riff-server` in the foreground, on loopback:
+and updates the plugin. Then it runs the debug `riff-server` in the
+foreground, on loopback. Stop your other `riff-server` first:
 
 ```sh
 just dev
@@ -570,12 +536,29 @@ Options after `dev` go to `riff-server`. Stop the server with Ctrl-C.
   last.
 - `just install` replaces the link with the release binary.
 
-When the server ends, `just dev` prints the steps that restore the
-release setup. It does not start the service again:
+When the server ends, `just dev` prints the step that restores the
+release setup:
 
 ```sh
 just install
-systemctl --user start riff-server
+```
+
+### Test a debug build with sign-in
+
+`just dev` loads `.env` at the root of its tree, when the file exists.
+So a debug server gets the OAuth client of `.env` (see
+[Keep the settings in .env](#keep-the-settings-in-env)), and requires
+sign-in. Only `just dev` loads `.env`: `just ci` does not.
+
+```sh
+printf 'RIFF_OIDC_CLIENT_ID=%s\nRIFF_OIDC_CLIENT_SECRET=%s\n' ID SECRET > .env
+just dev
+```
+
+In a second terminal, sign in:
+
+```sh
+riff login
 ```
 
 ### Point riff at a server
@@ -694,11 +677,11 @@ Cloud project, with these changes:
 - Step 7: copy the client ID and the client secret to a safe place.
   Do not run `just cloud oauth-client`. Commit neither.
 
-Then give both to `riff-server`, for example for the local service:
+Then give both to `riff-server` in the environment:
 
 ```sh
 export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET
-riff-server install
+riff-server
 ```
 
 With an OAuth client, the riff requires sign-in. On an address that
