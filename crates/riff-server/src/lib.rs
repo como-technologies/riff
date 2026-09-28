@@ -685,9 +685,11 @@ impl Service {
             .route_layer(guard());
         routes
             .merge(revoke)
+            .route_layer(middleware::from_fn(check_build))
+            // `riff login` and a refresh work with each version
+            // (01M3MX4V43SF2XFCZWANHD19WV).
             .route(auth::TOKEN_PATH, post(token))
             .route("/v1/sign-in", get(sign_in_config))
-            .route_layer(middleware::from_fn(check_build))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
@@ -1141,7 +1143,8 @@ async fn require_token(
 /// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T). A `riff`
 /// of the line of this server, or of the line before, goes on
 /// (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). The OAuth
-/// metadata stays open to each client.
+/// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
+/// (01M3MX4V43SF2XFCZWANHD19WV).
 async fn check_build(request: Request, next: Next) -> Response {
     let this = Build::this();
     let riff = Build::from_header(request.headers().get(build::HEADER).map(|v| v.as_bytes()));

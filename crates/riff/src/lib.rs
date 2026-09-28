@@ -44,7 +44,8 @@
 //!
 //! `riff` keeps the person tokens and the device key only in the OS
 //! keyring, through [`secrets`]. Each request with a token carries a
-//! proof from the device key of the machine (see [`device`]). `riff
+//! proof from the device key of the machine (see [`device`]). A debug
+//! build can keep them in files for tests (see `test_keyring`). `riff
 //! mcp` and `riff watch` each hold a session token in memory; it acts
 //! only as their session (see [`api`]). The tests and `just dev` give
 //! riff a home of its own, with its secrets in files (see [`home`]).
@@ -73,5 +74,7 @@ pub mod secrets;
 pub mod settings;
 pub mod style;
 pub mod terminal;
+#[cfg(debug_assertions)]
+pub mod test_keyring;
 pub mod text;
 pub mod worker;

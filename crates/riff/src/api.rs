@@ -16,6 +16,16 @@
 //! client needs it. After that, the client refreshes it with its own
 //! refresh token. When the refresh fails, it does a new exchange.
 //!
+//! When the server replies 401 to a call with a token, the client drops
+//! that token, gets a new one, and sends the call once more
+//! (01M3MX4VCEBTY0DN4JMF624WYE). So a session goes on when the server
+//! lost its token, and after `riff login` on the machine
+//! (01M3MX4VM8CK1GAGJAM2P29NWH).
+//!
+//! The token and sign-in calls take a server of each version: `riff
+//! login` and a refresh work also when the versions do not match
+//! (01M3MX4V43SF2XFCZWANHD19WV).
+//!
 //! Before its first token, a signed-in client checks the riff ID of its
 //! sign-in against the riff ID of the server, once
 //! ([`Api::check_riff`], 01M3JNVBRS35B3CD67367JF7SJ). Another ID, or
@@ -289,7 +299,7 @@ impl Api {
     pub async fn sign_in_config(&self) -> Result<SignInConfig> {
         let response = self
             .anonymous()
-            .send(reqwest::Method::GET, "/v1/sign-in", |r| r)
+            .send_with(reqwest::Method::GET, "/v1/sign-in", |r| r, Check::None)
             .await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             bail!("riff-server at {} has no sign-in provider", self.base);
@@ -302,7 +312,7 @@ impl Api {
     pub async fn has_sign_in(&self) -> Result<bool> {
         let response = self
             .anonymous()
-            .send(reqwest::Method::GET, "/v1/sign-in", |r| r)
+            .send_with(reqwest::Method::GET, "/v1/sign-in", |r| r, Check::None)
             .await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(false);
@@ -344,27 +354,36 @@ impl Api {
     }
 
     /// Calls the token endpoint with a proof from the device key `key`
-    /// (R18). See [`TokenRequest`] for the grants.
+    /// (R18). See [`TokenRequest`] for the grants. A refusal of the
+    /// server is a [`TokenRefused`].
     pub async fn token(&self, request: &TokenRequest, key: &Key) -> Result<TokenReply> {
         let url = format!("{}/v1/token", self.base);
         let response = self
             .anonymous()
-            .send(reqwest::Method::POST, "/v1/token", |r| {
-                r.header("dpop", key.proof("POST", &url, None, now()))
-                    .form(request)
-            })
+            .send_with(
+                reqwest::Method::POST,
+                "/v1/token",
+                |r| {
+                    r.header("dpop", key.proof("POST", &url, None, now()))
+                        .form(request)
+                },
+                Check::None,
+            )
             .await?;
         if response.status().is_success() {
             return Ok(response.json().await?);
         }
-        let error = response.json::<TokenError>().await.map_or_else(
-            |_| "no reason".to_owned(),
-            |e| match e.error_description {
-                Some(why) => format!("{}: {why}", e.error),
-                None => e.error,
+        let refused = response.json::<TokenError>().await.map_or_else(
+            |_| TokenRefused {
+                error: "no reason".into(),
+                description: None,
+            },
+            |e| TokenRefused {
+                error: e.error,
+                description: e.error_description,
             },
         );
-        bail!("riff-server refused the token request: {error}")
+        Err(refused.into())
     }
 
     /// A client that sends a token on each request, when this device
@@ -450,49 +469,90 @@ impl Api {
         Ok(access_token)
     }
 
+    /// Drops `token` when it is the token that the caller holds, so that
+    /// the next request gets a new one (01M3MX4VCEBTY0DN4JMF624WYE).
+    async fn forget(&self, auth: &Auth, token: &str) -> Result<()> {
+        if auth.session.is_none() {
+            return login::forget(&self.base, token).await;
+        }
+        if let Some(pair) = auth.pair.lock().await.as_mut()
+            && pair.access_token == token
+        {
+            pair.expires_at = 0;
+        }
+        Ok(())
+    }
+
     /// A request to one path, with a token and a proof when the client
-    /// is signed in. The proof names the URL without the query.
+    /// is signed in, and the token. The proof names the URL without the
+    /// query.
     async fn request(
         &self,
         method: reqwest::Method,
         path: &str,
-    ) -> Result<reqwest::RequestBuilder> {
+    ) -> Result<(reqwest::RequestBuilder, Option<String>)> {
         let url = format!("{}{path}", self.base);
         let request = self
             .http
             .request(method.clone(), &url)
             .header(build::HEADER, build::VERSION);
         let Some(auth) = &self.auth else {
-            return Ok(request);
+            return Ok((request, None));
         };
         let token = match self.access_token(auth).await {
             Ok(token) => token,
             Err(error) => return Err(self.no_token(error).await),
         };
         let proof = auth.key.proof(method.as_str(), &url, Some(&token), now());
-        Ok(request
+        let request = request
             .header("authorization", format!("DPoP {token}"))
-            .header("dpop", proof))
+            .header("dpop", proof);
+        Ok((request, Some(token)))
     }
 
-    /// Sends a request to one path. `body` adds the rest to the request.
-    /// While the server replies 503, it waits and sends a new request,
-    /// with a new proof (R132). See [`busy_waits`].
+    /// Sends a request to one path, and checks the build of the reply.
+    /// See [`Api::send_with`].
     async fn send(
         &self,
         method: reqwest::Method,
         path: &str,
         body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
+        self.send_with(method, path, body, Check::Build).await
+    }
+
+    /// Sends a request to one path. `body` adds the rest to the request.
+    /// While the server replies 503, it waits and sends a new request,
+    /// with a new proof (R132). See [`busy_waits`]. After a 401 to a
+    /// token, it sends the request once more with a new token
+    /// (01M3MX4VCEBTY0DN4JMF624WYE).
+    async fn send_with(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+        check: Check,
+    ) -> Result<reqwest::Response> {
         let mut waits = busy_waits();
+        let mut again = true;
         loop {
             // A box: a request may need a token, and a token is a request.
-            let request = Box::pin(self.request(method.clone(), path)).await?;
+            let (request, token) = Box::pin(self.request(method.clone(), path)).await?;
             let response = body(request)
                 .send()
                 .await
                 .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
-            check_build(&response)?;
+            if check == Check::Build {
+                check_build(&response)?;
+            }
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                && again
+                && let (Some(auth), Some(token)) = (&self.auth, token)
+            {
+                again = false;
+                self.forget(auth, &token).await?;
+                continue;
+            }
             match waits.next() {
                 Some(wait) if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
                     tokio::time::sleep(wait).await;
@@ -937,6 +997,50 @@ impl Api {
         }))
     }
 }
+
+/// Whether [`Api::send_with`] checks the build of the reply.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Check {
+    /// [`check_build`].
+    Build,
+    /// No check: a call that each version takes
+    /// (01M3MX4V43SF2XFCZWANHD19WV).
+    None,
+}
+
+/// `riff-server` refused a token request, with an OAuth error.
+///
+/// ```
+/// let refused = riff::api::TokenRefused { error: "invalid_grant".into(), description: None };
+/// assert_eq!(refused.to_string(), "riff-server refused the token request: invalid_grant");
+/// assert!(refused.ended());
+/// ```
+#[derive(Debug)]
+pub struct TokenRefused {
+    /// The OAuth error code.
+    pub error: String,
+    pub description: Option<String>,
+}
+
+impl TokenRefused {
+    /// True when the server does not take the grant: the sign-in ended,
+    /// or the server does not know the token.
+    pub fn ended(&self) -> bool {
+        self.error == "invalid_grant"
+    }
+}
+
+impl std::fmt::Display for TokenRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "riff-server refused the token request: {}", self.error)?;
+        match &self.description {
+            Some(why) => write!(f, ": {why}"),
+            None => Ok(()),
+        }
+    }
+}
+
+impl std::error::Error for TokenRefused {}
 
 /// The build of the last `riff-server` that this process talked to.
 static SERVER_BUILD: std::sync::Mutex<Option<Build>> = std::sync::Mutex::new(None);

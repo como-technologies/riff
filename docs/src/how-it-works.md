@@ -291,6 +291,44 @@ Each agent session then gets its own short-lived token from `riff`.
 The token acts only as that session. `riff` keeps it in memory, not
 in the keyring.
 
+A refresh token works once. A refresh token that comes back after the
+next refresh ends the sign-in: somebody copied it. A lost reply is not
+a copy. When the pair of the last refresh is still unused, the reply
+did not come back, for example after a 503. `riff-server` then gives a
+new pair, and the sign-in stays.
+
+```mermaid
+flowchart TD
+    R[refresh token R1 comes back] --> U{R1 used before?}
+    U -- no --> N[new pair P2]
+    U -- yes --> L{P2 of the last use unused?}
+    L -- yes --> G[end P2, give a new pair: the reply was lost]
+    L -- no --> E[end the sign-in]
+```
+
+### Get back into the riff
+
+`riff watch`, `riff tail` and each tool of `riff mcp` show the error
+of a lost sign-in. Find it in this table, and do the step.
+
+| Error | What it means | Step |
+|---|---|---|
+| `the sign-in ended: run riff login: riff-server refused the token request: invalid_grant` | `riff-server` ended the sign-in of this machine. | Run `riff login`. |
+| `no sign-in for URL: run riff login` | This machine has no sign-in at the riff. | Run `riff login`. |
+| `This riff is new. Run riff login.` | The riff restarted with no bucket. | Run `riff login`, then start your sessions again. See [A restart](#after-a-restart-with-no-bucket-run-riff-login). |
+| `this riff (…) and its riff-server (…) do not match` | The versions do not match. | See [When the wire does not match](#when-the-wire-does-not-match). |
+
+Sign in again on the machine:
+
+```sh
+riff login
+```
+
+`riff login` works also when the versions do not match. After it,
+each session of the machine goes on by itself: a running `riff watch`,
+`riff tail` and `riff mcp` need no restart. A watch says once that the
+sign-in ended, and tries again every 5 seconds.
+
 ## A session URI
 
 ```text
