@@ -153,7 +153,7 @@ impl Key {
 }
 
 /// A public P-256 key as a JWK.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Jwk {
     pub kty: String,
     pub crv: String,

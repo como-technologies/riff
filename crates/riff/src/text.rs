@@ -8,6 +8,7 @@ use std::process::ExitStatus;
 use chrono::{DateTime, NaiveDate, TimeZone};
 
 use crate::plugin::{Connected, Statusline};
+use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 
@@ -294,18 +295,29 @@ pub fn riff_state(state: RiffState) -> String {
     }
 }
 
-/// The build of `riff`, after a call that its `riff-server` answered:
-/// so both have this build (01M3JEE7WT04BKX377VW5GDSPY).
+/// The builds of `riff` and of `server`, its `riff-server`, after a call
+/// that the server answered: so the wire matches
+/// (01M3JEE7WT04BKX377VW5GDSPY). `None` is the build of `riff`.
 ///
 /// ```
-/// let line = riff::text::build_line();
+/// use riff_core::build::Build;
+///
+/// let line = riff::text::build_line(None);
 /// assert!(line.starts_with("riff and riff-server have the build 0.1.0 "), "{line}");
+/// let other = Build { commit: "0000deadbeef".into(), ..Build::this() };
+/// let line = riff::text::build_line(Some(&other));
+/// assert!(line.starts_with("riff has the build 0.1.0 "), "{line}");
+/// assert!(line.contains("; riff-server has the build 0.1.0 0000deadbeef "), "{line}");
+/// assert!(line.ends_with(". The wire matches."), "{line}");
 /// ```
-pub fn build_line() -> String {
-    format!(
-        "riff and riff-server have the build {}.",
-        riff_core::build::VERSION
-    )
+pub fn build_line(server: Option<&Build>) -> String {
+    let this = Build::this();
+    match server {
+        Some(server) if !server.matches(&this) => format!(
+            "riff has the build {this}; riff-server has the build {server}. The wire matches."
+        ),
+        _ => format!("riff and riff-server have the build {this}."),
+    }
 }
 
 /// The message that wakes the sessions after a pause or a resume
@@ -1276,7 +1288,11 @@ pub fn who_view(state: RiffState, sessions: &[SessionInfo], me: &SessionUri) -> 
             styled(WARNING.bold(), "paused")
         ),
     };
-    let _ = writeln!(out, "\n{}", styled(DIM, &build_line()));
+    let _ = writeln!(
+        out,
+        "\n{}",
+        styled(DIM, &build_line(crate::api::server_build().as_ref()))
+    );
     if sessions.is_empty() {
         out.push_str("Nobody is in the riff.\n");
     }
@@ -1625,9 +1641,14 @@ fn seen_line(label: &str, seen: &crate::lifecycle::Seen) -> String {
     };
     let build = match &probe.build {
         None => "names no build: an old riff-server".to_owned(),
-        Some(b) if b.matches(&riff_core::build::Build::this()) => "the same build".to_owned(),
+        Some(b) if b.matches(&Build::this()) => "the same build".to_owned(),
+        Some(b) if b.talks_with(&Build::this()) => {
+            format!("another build, {b}; the wire matches. Run riff update when you can")
+        }
         Some(b) => {
-            format!("another build, {b}. See \"When the builds do not match\" in How It Works")
+            format!(
+                "another wire version, {b}. See \"When the wire does not match\" in How It Works"
+            )
         }
     };
     let sign_in = match (probe.sign_in, seen.signed_in) {

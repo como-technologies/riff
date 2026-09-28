@@ -83,7 +83,7 @@ use crate::wire::Kind;
 pub const TYP: &str = "riff-message";
 
 /// What the signature of a message covers (R196).
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, schemars::JsonSchema)]
 pub struct Content<'a> {
     /// The user and the session ID of the sender.
     pub from: &'a Who,

@@ -92,6 +92,7 @@
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::dpop::Key;
@@ -102,7 +103,7 @@ use crate::signed::Content;
 /// `POST /v1/register`: a session says that it exists and where it
 /// works. A session registers when it starts and when it moves. It
 /// joins the thread of its repository.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Register {
     pub me: SessionUri,
 }
@@ -113,21 +114,21 @@ pub const ALIVE_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// `POST /v1/alive`: a keep-alive. It shows that the session still runs,
 /// but it is not a call: the idle time in `who` stays (R204).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Alive {
     pub me: SessionUri,
 }
 
 /// `POST /v1/end`: the session ended (R205). It leaves `who`, and its
 /// claims are free at once.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct End {
     pub me: SessionUri,
 }
 
 /// `POST /v1/who`: lists the known sessions. The call counts as a call
 /// of `me`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WhoRequest {
     pub me: SessionUri,
     /// True lists gone sessions too.
@@ -135,12 +136,12 @@ pub struct WhoRequest {
     pub all: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WhoReply {
     pub sessions: Vec<SessionInfo>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SessionInfo {
     /// The URI now: the place and the claims are current.
     pub uri: SessionUri,
@@ -160,7 +161,7 @@ pub const STATUS_CHARS: usize = 200;
 
 /// What a session does now: its current step, and a reason when it is
 /// blocked.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Status {
     pub step: String,
     /// Why the session cannot go on. `None` when it is not blocked.
@@ -211,7 +212,7 @@ impl Status {
 }
 
 /// A [`Status`] in the reply to `who`, with its age.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct StatusInfo {
     #[serde(flatten)]
     pub status: Status,
@@ -221,24 +222,24 @@ pub struct StatusInfo {
 
 /// `POST /v1/status`: sets the status of `me`. It replaces the old
 /// status.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SetStatus {
     pub me: SessionUri,
     pub status: Status,
 }
 
 /// `POST /v1/threads`: lists the threads of `me`, with unread counts.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Threads {
     pub me: SessionUri,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ThreadsReply {
     pub threads: Vec<ThreadInfo>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ThreadInfo {
     pub thread: ThreadName,
     pub members: Vec<SessionUri>,
@@ -246,7 +247,7 @@ pub struct ThreadInfo {
 }
 
 /// `POST /v1/join` and `POST /v1/leave`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Membership {
     pub me: SessionUri,
     pub thread: ThreadName,
@@ -274,7 +275,7 @@ pub struct Membership {
 /// assert_eq!(content.verify(post.sig.as_ref().unwrap()).unwrap(), key.thumbprint());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Post {
     pub me: SessionUri,
     #[serde(default)]
@@ -340,9 +341,7 @@ impl Post {
 /// assert!("other".parse::<Kind>().is_err());
 /// assert!(Kind::Note.needs_body() && !Kind::Status.needs_body());
 /// ```
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// A message to read.
@@ -382,7 +381,7 @@ impl std::str::FromStr for Kind {
 }
 
 /// The reply to `post`. It tells the sender who woke.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Posted {
     pub thread: ThreadName,
     pub seq: u64,
@@ -396,7 +395,7 @@ pub struct Posted {
 
 /// `POST /v1/read`: returns the messages that `me` has not read, or
 /// all of them when `all` is true. It marks them as read.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Read {
     pub me: SessionUri,
     pub thread: ThreadName,
@@ -404,7 +403,7 @@ pub struct Read {
     pub all: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadReply {
     pub messages: Vec<Message>,
     /// The keys of the user of each sender, to verify the messages.
@@ -420,7 +419,7 @@ pub struct ReadReply {
 /// none (R201).
 pub type Keys = BTreeMap<String, Vec<String>>;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Message {
     pub seq: u64,
     /// The URI of the sender when it posted.
@@ -516,14 +515,14 @@ impl Message {
 }
 
 /// `POST /v1/claim` and `POST /v1/release`: a lease on one work item.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Claim {
     pub me: SessionUri,
     pub thread: ThreadName,
     pub item: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ClaimReply {
     pub granted: bool,
     pub holder: SessionUri,
@@ -531,12 +530,12 @@ pub struct ClaimReply {
 
 /// `POST /v1/lead`: makes `me` the lead of its user in its repository.
 /// It replaces the old lead.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Lead {
     pub me: SessionUri,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LeadReply {
     /// The URI of `me` now, with `lead=true`.
     pub lead: SessionUri,
@@ -548,12 +547,12 @@ pub struct LeadReply {
 /// `POST /v1/start`: a new start of the session: a new agent process,
 /// a resume or a `/clear` (01M3JEE1QQCFS5TMZW5N2DAD2D). Its claims are free
 /// at once. It keeps its ID, its threads and its lead.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Start {
     pub me: SessionUri,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Started {
     /// Each claim that the start freed.
     #[serde(default)]
@@ -561,7 +560,7 @@ pub struct Started {
 }
 
 /// A claim that a new start freed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Freed {
     pub thread: ThreadName,
     pub item: String,
@@ -570,14 +569,14 @@ pub struct Freed {
 /// `POST /v1/riff`: reads the state of the riff. With a `state`, it
 /// sets it. Only a person (a `me` with no session ID) or a lead can set
 /// it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Riff {
     pub me: SessionUri,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<RiffState>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RiffReply {
     /// The state now.
     pub state: RiffState,
@@ -595,7 +594,7 @@ pub struct RiffReply {
 /// assert_eq!(serde_json::to_string(&RiffState::Running).unwrap(), r#""running""#);
 /// assert_eq!(RiffState::Running.to_string(), "running");
 /// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum RiffState {
     /// The sessions stop at their next step and wait. Nobody claims.
@@ -616,7 +615,7 @@ impl std::fmt::Display for RiffState {
 
 /// An event on `GET /v1/watch?uri=…`: a message addressed to the
 /// session.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Wake {
     pub thread: ThreadName,
     pub seq: u64,
@@ -626,7 +625,7 @@ pub struct Wake {
 }
 
 /// An event on `GET /v1/tail?thread=…`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Tailed {
     pub thread: ThreadName,
     pub message: Message,
@@ -657,7 +656,7 @@ pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_tok
 /// | `refresh_token` | `refresh_token` |
 /// | [`TOKEN_EXCHANGE`] | `subject_token` (an ID token), `subject_token_type` = [`ID_TOKEN_TYPE`] |
 /// | [`TOKEN_EXCHANGE`] | `subject_token` (a person access token), `subject_token_type` = [`ACCESS_TOKEN_TYPE`], `session` |
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TokenRequest {
     pub grant_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -678,7 +677,7 @@ pub struct TokenRequest {
 /// A new pair of riff tokens. Send `access_token` with the `DPoP`
 /// scheme and a proof from the device key. Use `refresh_token` once, to
 /// get the next pair.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenReply {
     pub access_token: String,
     /// Always `DPoP`.
@@ -692,7 +691,7 @@ pub struct TokenReply {
 
 /// `GET /v1/sign-in`: the OpenID Connect provider that `riff login`
 /// signs in with.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignInConfig {
     /// The issuer. Its discovery document is at
     /// `<issuer>/.well-known/openid-configuration`.
@@ -709,7 +708,7 @@ pub struct SignInConfig {
 
 /// The fields that riff uses from the discovery document of an OpenID
 /// Connect provider.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Discovery {
     pub issuer: String,
     pub authorization_endpoint: String,
@@ -737,7 +736,7 @@ impl Discovery {
 }
 
 /// `POST /v1/revoke`: ends each sign-in of a person.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Revoke {
     /// The person. Leave it out for the caller. Only an admin names
     /// another person.
@@ -746,7 +745,7 @@ pub struct Revoke {
 }
 
 /// The reply to [`Revoke`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Revoked {
     pub user: String,
     /// The number of sign-ins that ended.
@@ -754,13 +753,13 @@ pub struct Revoked {
 }
 
 /// `POST /v1/invite`: adds a member, by verified email.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Invite {
     pub email: String,
 }
 
 /// The reply to [`Invite`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Invited {
     /// The email of the member, in lower case.
     pub email: String,
@@ -771,13 +770,13 @@ pub struct Invited {
 
 /// `POST /v1/remove`: removes a member and ends each sign-in of that
 /// person.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Remove {
     pub email: String,
 }
 
 /// The reply to [`Remove`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Removed {
     /// The email, in lower case.
     pub email: String,
@@ -797,7 +796,7 @@ pub struct Removed {
 ///     r#"{"email":"bob@gmail.com","admin":true}"#
 /// );
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SetAdmin {
     pub email: String,
     /// True makes the person an admin. False makes an admin a member
@@ -806,7 +805,7 @@ pub struct SetAdmin {
 }
 
 /// The reply to [`SetAdmin`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AdminSet {
     /// The email, in lower case.
     pub email: String,
@@ -823,13 +822,13 @@ pub struct AdminSet {
 /// let pass = PassOwner { email: "bob@gmail.com".into() };
 /// assert_eq!(serde_json::to_string(&pass).unwrap(), r#"{"email":"bob@gmail.com"}"#);
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PassOwner {
     pub email: String,
 }
 
 /// The reply to [`PassOwner`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OwnerPassed {
     /// The email of the new owner, in lower case.
     pub owner: String,
@@ -838,7 +837,7 @@ pub struct OwnerPassed {
 }
 
 /// `POST /v1/members`: shows who may join the riff.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Members {}
 
 /// The reply to [`Members`].
@@ -851,7 +850,7 @@ pub struct Members {}
 /// ).unwrap();
 /// assert_eq!(reply.owner.as_deref(), Some("ada@gmail.com"));
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MembersReply {
     /// The email of the owner. `None` before the first sign-in.
     pub owner: Option<String>,
@@ -866,7 +865,7 @@ pub struct MembersReply {
 }
 
 /// An OAuth error reply, for example `{"error":"invalid_grant"}`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenError {
     pub error: String,
     /// What a person must read, for a refusal that only they can fix,
@@ -876,7 +875,7 @@ pub struct TokenError {
 }
 
 /// The protected resource metadata of `riff-server` (RFC 9728).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ResourceMetadata {
     /// The public URL of the server. Tokens are only for it.
     pub resource: String,
@@ -891,7 +890,7 @@ pub struct ResourceMetadata {
 }
 
 /// The authorization server metadata of `riff-server` (RFC 8414).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ServerMetadata {
     pub issuer: String,
     pub token_endpoint: String,
