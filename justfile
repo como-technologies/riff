@@ -97,17 +97,6 @@ dev *ARGS:
 # The shared server on Cloud Run: just cloud RECIPE
 mod cloud 'deploy/cloud.just'
 
-# Print the shell line that points riff at a server: local or cloud. Run: eval "$(just use cloud)"
-use TARGET="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "{{TARGET}}" in
-        local) echo "unset RIFF_SERVER" ;;
-        cloud) . deploy/cloud.env; echo "export RIFF_SERVER=$CLOUD_URL" ;;
-        "") echo "# riff uses ${RIFF_SERVER:-http://127.0.0.1:7878}" ;;
-        *) echo "Use: just use local, or just use cloud" >&2; exit 1 ;;
-    esac
-
 # Set up the GitHub repository for pull requests: auto-merge, squash only, the ruleset on main
 github REPO="como-technologies/riff":
     deploy/github.sh {{REPO}}

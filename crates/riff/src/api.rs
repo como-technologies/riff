@@ -81,6 +81,46 @@ use crate::{device, login, secrets, text};
 /// ```
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
+/// The port of a server that `--server` or `RIFF_SERVER` names with no
+/// port (01M3K0Q80BCZQD7DNQQ333ZN09).
+pub const DEFAULT_PORT: u16 = 7878;
+
+/// The URL of the server that `--server` or `RIFF_SERVER` names: a URL,
+/// `HOST` or `HOST:PORT` (01M3K0Q80BCZQD7DNQQ333ZN09). With no scheme,
+/// it adds `http://`, and [`DEFAULT_PORT`] when there is no port. A URL
+/// stays as it is, with no `/` at the end.
+///
+/// ```
+/// use riff::api::server_url;
+///
+/// assert_eq!(server_url("first").unwrap(), "http://first:7878");
+/// assert_eq!(server_url("first:9000").unwrap(), "http://first:9000");
+/// assert_eq!(server_url("[::1]").unwrap(), "http://[::1]:7878");
+/// assert_eq!(server_url("[::1]:9000").unwrap(), "http://[::1]:9000");
+/// assert_eq!(server_url("https://riff.example.com/").unwrap(), "https://riff.example.com");
+/// assert_eq!(server_url(riff::api::DEFAULT_SERVER).unwrap(), riff::api::DEFAULT_SERVER);
+/// assert!(server_url("").is_err());
+/// assert!(server_url("first:port").is_err());
+/// ```
+pub fn server_url(value: &str) -> Result<String, String> {
+    let value = value.trim().trim_end_matches('/');
+    if value.contains("://") {
+        return Ok(value.to_owned());
+    }
+    let (host, port) = match value.rsplit_once(':') {
+        Some((host, port)) if !port.ends_with(']') => (host, Some(port)),
+        _ => (value, None),
+    };
+    if host.is_empty() {
+        return Err("name a server: a URL, HOST or HOST:PORT".into());
+    }
+    match port {
+        None => Ok(format!("http://{host}:{DEFAULT_PORT}")),
+        Some(port) if port.parse::<u16>().is_ok() => Ok(format!("http://{host}:{port}")),
+        Some(port) => Err(format!("{port} is not a port")),
+    }
+}
+
 /// The word that [`Api::tell`] takes in place of a session: the lead of
 /// your user in your repository (R179).
 pub const LEAD: &str = "lead";
@@ -173,6 +213,17 @@ where
     })
 }
 
+/// What a server that answers tells about itself: see [`Api::probe`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Probe {
+    /// The build of the server. `None` for an old server that names no
+    /// build.
+    pub build: Option<Build>,
+    /// True when the riff has sign-in, false when it trusts its network.
+    /// `None` when the server did not say, for example to another build.
+    pub sign_in: Option<bool>,
+}
+
 /// A connection to one `riff-server`. Cheap to clone.
 ///
 /// With [`Api::signed_in`], each request carries an access token with
@@ -240,6 +291,27 @@ impl Api {
         }
         response.error_for_status()?;
         Ok(true)
+    }
+
+    /// What the server tells about itself, with no token and no check
+    /// of its build, within `wait`: for `riff server` and `riff update`
+    /// (01M3K0Q854K18DGXJKQ427W586). An error when it does not answer.
+    pub async fn probe(&self, wait: Duration) -> Result<Probe> {
+        let response = self
+            .http
+            .get(format!("{}/v1/sign-in", self.base))
+            .header(build::HEADER, build::VERSION)
+            .timeout(wait)
+            .send()
+            .await
+            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+        let build = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
+        let sign_in = match response.status() {
+            reqwest::StatusCode::NOT_FOUND => Some(false),
+            s if s.is_success() => Some(true),
+            _ => None,
+        };
+        Ok(Probe { build, sign_in })
     }
 
     /// `error` when the server has sign-in, or when riff cannot ask it.

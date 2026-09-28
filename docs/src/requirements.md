@@ -415,6 +415,29 @@
 - **R133** `riff` uses `http://127.0.0.1:7878`, the server on the same
   machine, when no server is set. `--server` or `RIFF_SERVER` names
   another server, for example the shared server (R5).
+- **01M3K0Q7X3FEKWZK0B3854C4RV** `riff` finds its server only in
+  `--server` or `RIFF_SERVER`. It keeps no chosen server in a file. A
+  person sets `RIFF_SERVER` in the profile of the shell, so each new
+  session uses it.
+- **01M3K0Q80BCZQD7DNQQ333ZN09** `--server` and `RIFF_SERVER` take a
+  URL, `HOST` or `HOST:PORT`. With no scheme, `riff` uses `http://`,
+  and port 7878 when there is no port.
+- **01M3K0Q854K18DGXJKQ427W586** `riff server` shows the server that
+  `riff` uses, and where that choice comes from: `--server`,
+  `RIFF_SERVER` or the default. For that server and for the server of
+  the same machine, it shows if the server answers, its build, and the
+  sign-in.
+- **01M3K0Q892KWM76R9DJC1P37JA** `riff update` updates riff on a
+  machine: it installs `riff` and `riff-server` from the repository
+  with `cargo`, then updates the plugin with `riff connect claude`.
+  When the server on the same machine runs another build than the new
+  `riff-server`, it tells the person to start `riff-server` again. It
+  does not restart it. That server is the server of `riff` when it is
+  on the same machine, else `http://127.0.0.1:7878`.
+- **01M3K0Q8C9NK4NY6TJWRMJS7ZQ** The shared server of Como turns on,
+  turns off, deploys and shows its state and log with the recipes of
+  `just cloud`, through `gcloud` and `gh`. They are for the
+  maintainers. `riff` has no command for them.
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
   it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
 - **R134** `riff-server` runs as its own service account. The account

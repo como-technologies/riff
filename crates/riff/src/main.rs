@@ -5,11 +5,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::TimeZone;
-use clap::{Parser, Subcommand};
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
-use riff::api::{Api, DEFAULT_SERVER, follow};
+use riff::api::{self, Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
-use riff::{hook, identity, local, login, mcp, next, plugin, settings, terminal, text, worker};
+use riff::{
+    hook, identity, lifecycle, local, login, mcp, next, plugin, settings, terminal, text, worker,
+};
 use riff_core::build::Mismatch;
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -25,8 +28,11 @@ const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 #[derive(Parser)]
 #[command(version = riff_core::build::VERSION, about)]
 struct Cli {
-    /// The riff-server URL.
-    #[arg(long, global = true, env = "RIFF_SERVER", default_value = DEFAULT_SERVER)]
+    /// The riff-server: a URL, HOST or HOST:PORT. With no scheme, riff
+    /// uses http, and port 7878 when there is no port. The default is
+    /// the riff of this machine.
+    #[arg(long, global = true, env = "RIFF_SERVER", default_value = DEFAULT_SERVER,
+          value_parser = api::server_url)]
     server: String,
 
     #[command(subcommand)]
@@ -201,6 +207,23 @@ enum Command {
         #[command(subcommand)]
         tool: Tool,
     },
+    /// Show the riff that riff uses, and where that choice comes from:
+    /// --server, RIFF_SERVER, or the riff of this machine. For that riff
+    /// and the riff of this machine: whether it answers, its build, and
+    /// sign-in.
+    Server,
+    /// Update riff on this machine: install the newest riff and
+    /// riff-server with cargo, then update the plugin with `riff connect
+    /// claude`. When the riff of this machine runs the old build, it
+    /// tells you to start riff-server again.
+    Update {
+        /// The cargo command.
+        #[arg(long, default_value = "cargo")]
+        cargo: std::path::PathBuf,
+        /// The claude command.
+        #[arg(long, default_value = "claude")]
+        claude: std::path::PathBuf,
+    },
     /// Start, list and stop the worker sessions of this machine. They
     /// need tmux. With no subcommand, it lists each worker: its pane,
     /// its session ID, its claims and its status
@@ -296,7 +319,22 @@ enum Tool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches)?;
+    if let Command::Server = cli.command {
+        let source = match matches.value_source("server") {
+            Some(ValueSource::CommandLine) => lifecycle::Source::Flag,
+            Some(ValueSource::EnvVariable) => lifecycle::Source::Env,
+            _ => lifecycle::Source::Default,
+        };
+        let view = lifecycle::view(&cli.server, source).await;
+        println!("{}", text::server_view(&view));
+        return Ok(());
+    }
+    if let Command::Update { cargo, claude } = &cli.command {
+        println!("{}", lifecycle::update(cargo, claude, &cli.server).await?);
+        return Ok(());
+    }
     if let Command::Hook {
         event: HookEvent::SessionStart,
     } = cli.command
@@ -477,6 +515,8 @@ async fn main() -> Result<()> {
         Command::Hook { .. }
         | Command::Statusline
         | Command::Connect { .. }
+        | Command::Server
+        | Command::Update { .. }
         | Command::Workers { .. }
         | Command::Login
         | Command::Logout { .. }

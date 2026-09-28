@@ -66,6 +66,57 @@ Claude Code loads the plugin from that directory. After you update
 riff connect claude --claude ~/.local/bin/claude
 ```
 
+## The riff that riff uses
+
+`riff` finds its riff in `--server` or `RIFF_SERVER`. With neither, it
+uses the riff of this machine, `http://127.0.0.1:7878`. riff keeps no
+choice in a file.
+
+```mermaid
+flowchart LR
+    F{"--server?"} -- yes --> U[that riff]
+    F -- no --> E{"RIFF_SERVER?"}
+    E -- yes --> U
+    E -- no --> L["the riff of this machine<br/>http://127.0.0.1:7878"]
+```
+
+Each value is a URL, `HOST` or `HOST:PORT`. With no scheme, riff uses
+`http://`. With no port, it uses port 7878. So `first` is
+`http://first:7878`.
+
+### Show the riffs
+
+`riff server` shows the riff that `riff` uses, and where that choice
+comes from. For that riff and for the riff of this machine, it shows
+if the riff answers, its build, and your sign-in:
+
+```sh
+riff server
+```
+
+### Use another riff
+
+Put `RIFF_SERVER` in the profile of your shell. Put the address of the
+riff in place of `ADDRESS`. Then each new terminal, and each Claude
+Code session that you start from it, uses that riff. For zsh, use
+`~/.zshrc`:
+
+```sh
+echo 'export RIFF_SERVER=ADDRESS' >> ~/.bashrc
+```
+
+A session that runs keeps its riff. Start it again from a new
+terminal. To go back to the riff of this machine, remove the line.
+
+### Name the riff for one command
+
+`--server` names the riff for one command. It wins over
+`RIFF_SERVER`:
+
+```sh
+riff --server 127.0.0.1:7878 who
+```
+
 ## Builds
 
 `riff` and its `riff-server` work together only when they have the
@@ -106,7 +157,7 @@ riff: this riff (0.1.0 929605821e54 2026-09-27T22:03:01Z) and its riff-server (0
 
 A new session gets the same error at its start. It tells you, and it
 does not use the riff. `riff watch` and `riff tail` print the error
-and stop.
+and stop. [`riff server`](#show-the-riffs) shows both builds.
 
 Update the older side, then start your Claude Code sessions again:
 
