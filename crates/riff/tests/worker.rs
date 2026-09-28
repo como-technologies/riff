@@ -194,7 +194,8 @@ async fn a_request_of_the_lead_wakes_an_idle_worker() {
         .spawn()
         .unwrap();
 
-    // The idle worker is live in `riff who`, with its status.
+    // The idle worker is live in `riff who`, with its status. The limit
+    // only stops a hang: a slow machine still passes.
     let begin = Instant::now();
     let idle = loop {
         let who = api.who(&lead, false).await.unwrap();
@@ -204,7 +205,7 @@ async fn a_request_of_the_lead_wakes_an_idle_worker() {
         {
             break w2;
         }
-        assert!(begin.elapsed() < Duration::from_secs(10), "no live w2");
+        assert!(begin.elapsed() < Duration::from_secs(60), "no live w2");
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
     assert_eq!(idle.status.unwrap().status.step, riff::worker::IDLE);
