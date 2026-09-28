@@ -439,42 +439,53 @@ fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> 
 
 /// The SessionStart hook output. It has no URI when riff cannot find the
 /// session, and no riff state when it cannot read it in
-/// [`hook::STATE_WAIT`], but it always has the context (R69).
+/// [`hook::STATE_WAIT`], but it always has the context (R69). It has a
+/// line when the clone is behind `origin` ([`hook::behind`]).
 async fn session_start(server: &str) -> String {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
     let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
     let id = identity::agent_session(input.session_id);
     let api = Api::new(server);
-    let uri = id.as_deref().and_then(|id| {
-        let here = identity::place(&std::env::current_dir().ok()?).ok()?;
+    let cwd = std::env::current_dir().ok();
+    let uri = id.as_deref().zip(cwd.as_deref()).and_then(|(id, cwd)| {
+        let here = identity::place(cwd).ok()?;
         identity::agent(&here, id, api.base()).ok()
     });
-    let (uri, riff, freed, mismatch) = match uri {
-        Some(uri) => {
-            let facts = start_facts(api, &uri, input.source.is_new_start());
-            match tokio::time::timeout(hook::STATE_WAIT, facts).await {
-                Ok(Ok((lead, riff, freed))) => (Some(uri.with_lead(lead)), Some(riff), freed, None),
-                Ok(Err(e)) => (Some(uri), None, Vec::new(), e.downcast::<Mismatch>().ok()),
-                Err(_) => (Some(uri), None, Vec::new(), None),
+    let facts = async {
+        match uri {
+            Some(uri) => {
+                let facts = start_facts(api, &uri, input.source.is_new_start());
+                match tokio::time::timeout(hook::STATE_WAIT, facts).await {
+                    Ok(Ok((lead, riff, freed))) => {
+                        (Some(uri.with_lead(lead)), Some(riff), freed, None)
+                    }
+                    Ok(Err(e)) => (Some(uri), None, Vec::new(), e.downcast::<Mismatch>().ok()),
+                    Err(_) => (Some(uri), None, Vec::new(), None),
+                }
             }
+            None => (None, None, Vec::new(), None),
         }
-        None => (None, None, Vec::new(), None),
     };
+    let behind = async {
+        match &cwd {
+            Some(cwd) => hook::behind(cwd, hook::FETCH_WAIT).await,
+            None => None,
+        }
+    };
+    let ((uri, riff, freed, mismatch), behind) = tokio::join!(facts, behind);
     let watching = id
         .as_deref()
         .zip(local::dir())
         .is_some_and(|(id, dir)| local::watching(&dir, id));
-    if let Some(mismatch) = mismatch {
-        return hook::start_output(&hook::mismatch_context(uri.as_ref(), &mismatch));
+    let mut context = match mismatch {
+        Some(mismatch) => hook::mismatch_context(uri.as_ref(), &mismatch),
+        None => hook::start_context(uri.as_ref(), input.source, watching, riff, &freed),
+    };
+    if let Some(behind) = behind {
+        context.push_str(&behind.line());
     }
-    hook::start_output(&hook::start_context(
-        uri.as_ref(),
-        input.source,
-        watching,
-        riff,
-        &freed,
-    ))
+    hook::start_output(&context)
 }
 
 /// Whether the server names `me` as the lead, the state of the riff

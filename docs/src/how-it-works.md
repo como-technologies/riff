@@ -98,6 +98,37 @@ Update the older side, then start your Claude Code sessions again:
   changes the code. To deploy it by hand, see
   [Deploy](development.md#deploy).
 
+## A clone that is behind
+
+A session reads `CLAUDE.md` and the project settings from its clone.
+When the clone was not pulled, the session uses old rules. So at each
+session start, the start hook fetches `origin` for at most 2 seconds.
+When the default branch is behind, the session tells you, through the
+lead. The hook does not pull.
+
+```mermaid
+sequenceDiagram
+    participant H as start hook
+    participant O as origin
+    participant S as session
+    H->>O: git fetch (2 seconds at most)
+    O-->>H: main has 3 new commits
+    H-->>S: "This clone is 3 commits behind origin/main ..."
+    S->>S: tells you, through the lead
+```
+
+With no remote, a remote that cannot be reached, or a slow fetch, the
+session gets no line. The session start does not stop.
+
+### Pull a clone that is behind
+
+Run this in the main worktree of the clone. The line of the session
+names the path. Then start your Claude Code sessions again:
+
+```sh
+git pull --ff-only
+```
+
 ## Sign-in
 
 ```mermaid
