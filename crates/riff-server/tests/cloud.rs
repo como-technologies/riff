@@ -360,19 +360,19 @@ fn ci_parts() -> (String, String) {
 }
 
 /// 01M3MMZQ3KTF5Z3GXNR7DRQ65Z: a push to main never deploys. Only a
-/// run by hand with the input `deploy` does (R160).
+/// run by hand with the input `tag` does (R160).
 #[test]
 fn only_a_run_by_hand_deploys() {
     let (on, job) = ci_parts();
     assert!(on.contains("\n  workflow_dispatch:\n"), "{on}");
-    assert!(on.contains("\n      deploy:\n"), "{on}");
-    assert!(on.contains("type: boolean"), "{on}");
+    assert!(on.contains("\n      tag:\n"), "{on}");
+    assert!(on.contains("type: string"), "{on}");
     let when = job.lines().find(|l| l.trim().starts_with("if:")).unwrap();
     assert!(
         when.contains("github.event_name == 'workflow_dispatch'"),
         "{when}"
     );
-    assert!(when.contains("inputs.deploy"), "{when}");
+    assert!(when.contains("inputs.tag != ''"), "{when}");
     assert!(!when.contains("'push'"), "{when}");
     assert!(!job.contains("github.event.before"), "{job}");
 }
@@ -387,10 +387,139 @@ fn the_book_deploys_at_the_end_of_a_wave() {
     let part = &part[..part[4..].find("\n### ").unwrap()];
     assert!(part.contains("```sh\n"), "{part}");
     assert!(
-        part.contains("gh workflow run CI --ref main -f deploy=true"),
+        part.contains("gh workflow run CI --ref main -f tag=v0.2.0"),
         "{part}"
     );
-    assert!(part.contains("riff workers stop"), "{part}");
+    assert!(part.contains("riff workers start"), "{part}");
+}
+
+/// The book how-to makes a release: bump, merge, tag, with the real
+/// commands (01M3MRMASMP59PKHAV92XSV7XE).
+#[test]
+fn the_book_makes_a_release() {
+    let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
+    let part = &page[page.find("### Make a release\n").unwrap()..];
+    let part = &part[..part[4..].find("\n### ").unwrap()];
+    for text in [
+        "An admin makes the release",
+        "riff workers stop\n",
+        "sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml\n",
+        "cargo update --workspace\n",
+        "git tag v0.2.0 origin/main\n",
+        "git push origin v0.2.0\n",
+        "`Release check`",
+    ] {
+        assert!(part.contains(text), "{text:?} is not in: {part}");
+    }
+    let root = tempfile::tempdir().unwrap();
+    fs::copy(
+        deploy().join("../Cargo.toml"),
+        root.path().join("Cargo.toml"),
+    )
+    .unwrap();
+    let bump = Command::new("sh")
+        .arg("-c")
+        .arg("sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml")
+        .current_dir(root.path())
+        .status()
+        .unwrap();
+    assert!(bump.success());
+    let bumped = fs::read_to_string(root.path().join("Cargo.toml")).unwrap();
+    assert!(bumped.contains("\nversion = \"0.2.0\"\n"), "{bumped}");
+    assert!(bumped.contains("tokio = { version = \"1."), "{bumped}");
+}
+
+/// Runs `deploy/release-check.sh` with `args`.
+fn release_check(args: &[&str]) -> std::process::Output {
+    Command::new(deploy().join("release-check.sh"))
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// A checkout whose crates have the version `crates` in Cargo.toml and
+/// `locked` in Cargo.lock.
+fn checkout(crates: &str, locked: &str) -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("Cargo.toml"),
+        format!("[workspace.package]\nedition = \"2024\"\nversion = \"{crates}\"\n"),
+    )
+    .unwrap();
+    let lock: String = ["riff", "riff-core", "riff-server"]
+        .iter()
+        .map(|name| format!("[[package]]\nname = \"{name}\"\nversion = \"{locked}\"\n\n"))
+        .collect();
+    fs::write(root.path().join("Cargo.lock"), lock).unwrap();
+    root
+}
+
+/// 01M3MRMAY3P1K151RGAP9K6GSH: the deploy checks out the release tag of
+/// its input and checks it before it builds. So it refuses an input
+/// that is not a tag vX.Y.Z.
+#[test]
+fn the_deploy_takes_only_a_release_tag() {
+    let (_, job) = ci_parts();
+    let checkout = job.find("ref: refs/tags/${{ inputs.tag }}").unwrap();
+    let check = job.find("run: deploy/release-check.sh \"$TAG\"").unwrap();
+    let build = job.find("docker/build-push-action@").unwrap();
+    assert!(checkout < check && check < build, "{job}");
+    assert!(job.contains("TAG: ${{ inputs.tag }}"), "{job}");
+    assert!(job.contains("riff-server:$TAG"), "{job}");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = root.to_str().unwrap();
+    for bad in ["", "main", "v0.2", "0.2.0", "v0.2.0-rc1", "refs/heads/main"] {
+        let out = release_check(&[bad, root]);
+        assert!(!out.status.success(), "{bad} passed");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!("\"{bad}\" is not a release tag. Give vX.Y.Z")),
+            "{stderr}"
+        );
+    }
+    let this = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let out = release_check(&[&this, root]);
+    assert!(out.status.success(), "{out:?}");
+}
+
+/// 01M3MRMASMP59PKHAV92XSV7XE: CI checks each pushed tag v*. The check
+/// fails a tag whose version is not the version of the crates.
+#[test]
+fn the_tag_check_fails_a_tag_of_another_version() {
+    let text = fs::read_to_string(deploy().join("../.github/workflows/ci.yml")).unwrap();
+    let (on, jobs) = text.split_once("\njobs:\n").unwrap();
+    assert!(on.contains("tags: [\"v*\"]"), "{on}");
+    let job = jobs
+        .split_once("\n  release:\n")
+        .unwrap()
+        .1
+        .split_once("\n  deploy:\n")
+        .unwrap()
+        .0;
+    assert!(job.contains("if: github.ref_type == 'tag'"), "{job}");
+    assert!(
+        job.contains("run: deploy/release-check.sh \"$GITHUB_REF_NAME\""),
+        "{job}"
+    );
+
+    let root = checkout("0.2.0", "0.2.0");
+    let path = root.path().to_str().unwrap();
+    assert!(release_check(&["v0.2.0", path]).status.success());
+    let out = release_check(&["v0.3.0", path]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("the tag v0.3.0 is not the version of the crates in Cargo.toml: 0.2.0."),
+        "{out:?}"
+    );
+    let root = checkout("0.2.0", "0.1.0");
+    let out = release_check(&["v0.2.0", root.path().to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("the tag v0.2.0 is not the version of riff in Cargo.lock: 0.1.0."),
+        "{out:?}"
+    );
 }
 
 #[test]

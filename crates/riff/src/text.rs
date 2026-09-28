@@ -1596,9 +1596,14 @@ where
 /// };
 /// let view = View { source: Source::Default, used: local.clone(), local: None };
 /// let text = riff::text::server_view(&view);
-/// assert!(text.starts_with(&format!("riff {}\n", riff_core::build::VERSION)), "{text}");
+/// let release = format!("v{}", env!("CARGO_PKG_VERSION"));
+/// let first = format!("riff {}: the release {release}.\n", riff_core::build::VERSION);
+/// assert!(text.starts_with(&first), "{text}");
 /// assert!(text.contains("riff uses http://127.0.0.1:7878: the riff of this machine"), "{text}");
-/// assert!(text.contains("answers, the same build. It has no sign-in"), "{text}");
+/// assert!(
+///     text.contains(&format!("answers, the same build. It runs the release {release}. It has no sign-in")),
+///     "{text}"
+/// );
 ///
 /// let shared = Seen {
 ///     url: "https://riff.example.com".into(),
@@ -1621,8 +1626,9 @@ pub fn server_view(view: &crate::lifecycle::View) -> String {
         Source::Default => "the riff of this machine. RIFF_SERVER or --server names another riff.",
     };
     let mut out = format!(
-        "riff {}\nriff uses {}: {why}\n{}",
+        "riff {}: the release {}.\nriff uses {}: {why}\n{}",
         riff_core::build::VERSION,
+        crate::lifecycle::release_tag(env!("CARGO_PKG_VERSION")),
         view.used.url,
         seen_line(&view.used.url, &view.used)
     );
@@ -1651,13 +1657,19 @@ fn seen_line(label: &str, seen: &crate::lifecycle::Seen) -> String {
             )
         }
     };
+    let release = probe.build.as_ref().map_or(String::new(), |b| {
+        format!(
+            " It runs the release {}.",
+            crate::lifecycle::release_tag(&b.version)
+        )
+    });
     let sign_in = match (probe.sign_in, seen.signed_in) {
         (None, _) => "",
         (Some(false), _) => " It has no sign-in: it trusts its network.",
         (Some(true), true) => " It has sign-in, and you are signed in.",
         (Some(true), false) => " It has sign-in. You are not signed in: run riff login.",
     };
-    format!("{label}: answers, {build}.{sign_in}")
+    format!("{label}: answers, {build}.{release}{sign_in}")
 }
 
 /// The last words of `riff update` (01M3K0Q892KWM76R9DJC1P37JA). `old` is

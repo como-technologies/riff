@@ -11,11 +11,27 @@
 #   request with 0 approvals and the checks Gate, Hygiene and
 #   riff/verify. No force push, no deletion. No actor can bypass it
 #   (01M3JN4QQCM0GXK9BCGXVS2YC7).
+# - The ruleset `releases` on the tags `v*`: only the repository admin
+#   role creates, moves or deletes a release tag
+#   (01M3MRMB0AJVPD952AQYD7X1RN).
 set -euo pipefail
 
 REPO="${1:-como-technologies/riff}"
 GH="${GH:-gh}"
-NAME=main
+
+# Makes the ruleset NAME from the JSON on stdin, or updates it.
+ruleset() {
+    local name=$1 json id
+    json=$(cat)
+    id=$("$GH" api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$name\") | .id")
+    if [ -n "$id" ]; then
+        echo "$json" | "$GH" api -X PUT "repos/$REPO/rulesets/$id" --input - >/dev/null
+        echo "Updated the ruleset $name ($id) of $REPO."
+    else
+        echo "$json" | "$GH" api -X POST "repos/$REPO/rulesets" --input - >/dev/null
+        echo "Made the ruleset $name of $REPO."
+    fi
+}
 
 "$GH" api -X PATCH "repos/$REPO" \
     -F allow_auto_merge=true \
@@ -26,7 +42,7 @@ NAME=main
     -f squash_merge_commit_message=PR_BODY \
     -F delete_branch_on_merge=true >/dev/null
 
-RULESET=$(cat <<'JSON'
+ruleset main <<'JSON'
 {
   "name": "main",
   "target": "branch",
@@ -61,14 +77,22 @@ RULESET=$(cat <<'JSON'
   ]
 }
 JSON
-)
 
-ID=$("$GH" api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$NAME\") | .id")
-if [ -n "$ID" ]; then
-    echo "$RULESET" | "$GH" api -X PUT "repos/$REPO/rulesets/$ID" --input - >/dev/null
-    echo "Updated the ruleset $NAME ($ID) of $REPO."
-else
-    echo "$RULESET" | "$GH" api -X POST "repos/$REPO/rulesets" --input - >/dev/null
-    echo "Made the ruleset $NAME of $REPO."
-fi
-echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify."
+# RepositoryRole 5 is the admin role.
+ruleset releases <<'JSON'
+{
+  "name": "releases",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+  ],
+  "rules": [
+    { "type": "creation" },
+    { "type": "update" },
+    { "type": "deletion" }
+  ]
+}
+JSON
+echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify, release tags only by an admin."

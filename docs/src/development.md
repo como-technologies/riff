@@ -123,8 +123,10 @@ safe to run again:
 just github
 ```
 
-It turns on auto-merge and squash merge only, and makes or updates the
-ruleset `main`. To see the result:
+It turns on auto-merge and squash merge only, and makes or updates two
+rulesets: `main`, and `releases` on the tags `v*`. With `releases`,
+only the repository admin role can create, move or delete a release
+tag. To see the result:
 
 ```sh
 gh api repos/como-technologies/riff --jq '{allow_auto_merge, allow_squash_merge, allow_merge_commit, allow_rebase_merge, squash_merge_commit_title, squash_merge_commit_message, delete_branch_on_merge}'
@@ -760,36 +762,80 @@ email 30 days before.
 Do [Set up the cloud project](#set-up-the-cloud-project) and
 [Make the OAuth client](#make-the-oauth-client) first.
 
-CI deploys riff only when the lead asks for it, at the end of a wave,
-and only when the repository variable `CLOUD_DEPLOY` is `true`. A push
-to `main` does not deploy. A `riff` refuses a server of another build
-(see [Builds](how-it-works.md#builds)), so a deploy in the middle of a
-wave would stop each session. For now, the variable is not set, and
-no shared server runs. The job signs in to Google Cloud from GitHub
-with no key.
+CI deploys only a release, and only when an admin asks for it, at the
+end of a wave. The repository variable `CLOUD_DEPLOY` must be `true`.
+A push to `main` does not deploy. A `riff` refuses a server of another
+build (see [Builds](how-it-works.md#builds)), so a deploy in the
+middle of a wave would stop each session. For now, the variable is not
+set, and no shared server runs. The job signs in to Google Cloud from
+GitHub with no key.
+
+A release is a git tag `vX.Y.Z`. X.Y.Z is the version of the crates in
+`Cargo.toml`. Each wave gets a new minor version: `0.2.0`, `0.3.0`,
+and so on. A fix that cannot wait for the end of a wave gets a new
+patch version, for example `0.2.1`. Only an admin of the repository
+can push a release tag: the ruleset `releases` makes this so (see
+[Set up the repository](#set-up-the-repository)). `riff update`
+installs the release that the shared server runs, so the tag and the
+deploy make a release current.
 
 ```mermaid
 flowchart LR
     M[each item of the wave merged] --> S[stop the workers]
-    S --> D["gh workflow run CI<br/>-f deploy=true"]
-    D --> U[update each machine]
+    S --> V[make a release:<br/>bump, merge, tag]
+    V --> D["gh workflow run CI<br/>-f tag=vX.Y.Z"]
+    D --> U[riff update on each machine]
     U --> R[start the sessions again]
+```
+
+### Make a release
+
+An admin makes the release when each item of the wave is merged. Stop
+the workers first. Set the new version in `Cargo.toml`, and update
+`Cargo.lock`. This example makes `v0.2.0`:
+
+```sh
+riff workers stop
+git switch -c release-v0.2.0 origin/main
+sed -i 's/^version = ".*"/version = "0.2.0"/' Cargo.toml
+cargo update --workspace
+git commit -am "Release v0.2.0"
+git push -u origin HEAD
+```
+
+Open a pull request for the branch, and get it verified and merged as
+each other change. Then tag the merge commit, and push the tag:
+
+```sh
+git fetch origin
+git tag v0.2.0 origin/main
+git push origin v0.2.0
+```
+
+CI runs the job `Release check` for the tag. It fails when the tag is
+not the version of the crates. Watch it:
+
+```sh
+gh run list --workflow CI --event push --limit 1
+gh run watch
 ```
 
 ### Deploy the shared server at the end of a wave
 
-When each item of the wave is merged, stop the workers. Then run the
-CI workflow on `main` with the input `deploy`. The gate runs first.
-Then the job builds the image and deploys it:
+Deploy the release. Run the CI workflow on `main` with the input `tag`.
+The gate runs first. Then the job checks out the tag, checks it,
+builds the image and deploys it. It refuses an input that is not a
+release tag:
 
 ```sh
-riff workers stop
-gh workflow run CI --ref main -f deploy=true
+gh workflow run CI --ref main -f tag=v0.2.0
 ```
 
 Then update each machine (see
 [Update riff](start-a-riff.md#update-riff)), and start the sessions
-again. Check that `riff` and the shared server have the same build:
+again. Start the workers again after the update with
+`riff workers start`. Check that `riff` and the shared server run the
+same release:
 
 ```sh
 riff server

@@ -73,7 +73,14 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_and_the_local_rif
     let out = run(cmd).await;
     assert!(out.status.success());
     let lines: Vec<String> = text(&out.stdout).lines().map(str::to_owned).collect();
-    assert_eq!(lines[0], format!("riff {}", riff_core::build::VERSION));
+    assert_eq!(
+        lines[0],
+        format!(
+            "riff {}: the release {}.",
+            riff_core::build::VERSION,
+            release()
+        )
+    );
     assert_eq!(
         lines[1],
         format!("riff uses http://{addr}: RIFF_SERVER names it.")
@@ -81,7 +88,9 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_and_the_local_rif
     assert_eq!(
         lines[2],
         format!(
-            "http://{addr}: answers, the same build. It has no sign-in: it trusts its network."
+            "http://{addr}: answers, the same build. It runs the release {}. \
+             It has no sign-in: it trusts its network.",
+            release()
         )
     );
     assert!(
@@ -184,6 +193,19 @@ fn log(bin: &Path, name: &str) -> String {
     std::fs::read_to_string(bin.join(format!("{name}.log"))).unwrap_or_default()
 }
 
+/// The release tag of this build.
+fn release() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// The line of the fake `cargo` for an install of the release `tag`.
+fn install(tag: &str) -> String {
+    format!(
+        "install --locked --git {} --tag {tag} riff riff-server\n",
+        env!("CARGO_PKG_REPOSITORY")
+    )
+}
+
 /// `riff update` with the fake commands of `bin` first in PATH, a fake
 /// `cargo` that exits with `cargo_status`, and `server`.
 fn update(bin: &Path, cargo_status: u8, server: &str) -> Command {
@@ -207,13 +229,7 @@ async fn update_installs_both_binaries_then_updates_the_plugin() {
     let addr = real().await;
     let out = run(update(bin.path(), 0, &addr)).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(
-        log(bin.path(), "cargo"),
-        format!(
-            "install --locked --git {} riff riff-server\n",
-            env!("CARGO_PKG_REPOSITORY")
-        )
-    );
+    assert_eq!(log(bin.path(), "cargo"), install(&release()));
     assert_eq!(
         log(bin.path(), "riff"),
         "connect claude --claude /opt/claude\n"
@@ -245,7 +261,9 @@ async fn update_tells_to_restart_a_local_riff_of_the_old_build() {
 #[tokio::test]
 async fn update_looks_at_the_riff_of_this_machine_when_riff_uses_another() {
     let bin = tempfile::tempdir().unwrap();
-    let out = run(update(bin.path(), 0, "http://first:7878")).await;
+    let mut cmd = update(bin.path(), 0, "http://first:7878");
+    cmd.args(["--tag", &release()]);
+    let out = run(cmd).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     let stdout = text(&out.stdout);
     assert!(!stdout.contains("first"), "{stdout}");
@@ -255,7 +273,9 @@ async fn update_looks_at_the_riff_of_this_machine_when_riff_uses_another() {
 #[tokio::test]
 async fn update_stops_when_the_install_fails() {
     let bin = tempfile::tempdir().unwrap();
-    let out = run(update(bin.path(), 101, "http://127.0.0.1:9")).await;
+    let mut cmd = update(bin.path(), 101, "http://127.0.0.1:9");
+    cmd.args(["--tag", &release()]);
+    let out = run(cmd).await;
     assert!(!out.status.success());
     assert!(text(&out.stderr).contains("cargo install failed"));
     assert_eq!(log(bin.path(), "riff"), "");
@@ -305,4 +325,105 @@ async fn server_takes_a_bare_ipv6_address_and_one_with_brackets() {
         );
         assert!(!stdout.contains("The riff of this machine,"), "{stdout}");
     }
+}
+
+/// 01M3MRMAVVKJ5WS8GWCJHWH0R4: with no `--tag`, `riff update` installs
+/// the release that the riff runs, also when the repository has a newer
+/// tag. riff asks only the riff: a fake `git` that names a newer tag
+/// never runs.
+#[tokio::test]
+async fn update_installs_the_release_of_the_server_not_a_newer_tag() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_command(bin.path(), "git", "0000 refs/tags/v0.4.0", 0);
+    let url = fake(Build {
+        version: "0.3.0".into(),
+        ..Build::this()
+    })
+    .await;
+    let out = run(update(bin.path(), 0, &url)).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(log(bin.path(), "cargo"), install("v0.3.0"));
+    assert_eq!(log(bin.path(), "git"), "");
+}
+
+/// `riff update --tag` installs that release, and asks no riff.
+#[tokio::test]
+async fn update_with_a_tag_installs_that_tag() {
+    let bin = tempfile::tempdir().unwrap();
+    let mut cmd = update(bin.path(), 0, "http://127.0.0.1:9");
+    cmd.args(["--tag", "v0.1.1"]);
+    let out = run(cmd).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(log(bin.path(), "cargo"), install("v0.1.1"));
+}
+
+#[tokio::test]
+async fn update_refuses_a_tag_that_is_not_a_release() {
+    let bin = tempfile::tempdir().unwrap();
+    let mut cmd = update(bin.path(), 0, "http://127.0.0.1:9");
+    cmd.args(["--tag", "main"]);
+    let out = run(cmd).await;
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains("main is not a release tag. Give vX.Y.Z"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(log(bin.path(), "cargo"), "");
+}
+
+/// With no `--tag` and a riff that does not answer, `riff update`
+/// installs nothing and names the flag.
+#[tokio::test]
+async fn update_with_no_riff_and_no_tag_names_the_flag() {
+    let bin = tempfile::tempdir().unwrap();
+    let out = run(update(bin.path(), 0, "http://127.0.0.1:9")).await;
+    assert!(!out.status.success());
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("cannot find the release of the riff at http://127.0.0.1:9"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("riff update --tag vX.Y.Z"), "{stderr}");
+    assert_eq!(log(bin.path(), "cargo"), "");
+}
+
+/// 01M3MRMAVVKJ5WS8GWCJHWH0R4: when riff uses the riff of this machine,
+/// `riff update` installs the newest release tag of the repository. It
+/// compares the numbers, and skips a tag that is not a release.
+#[tokio::test]
+async fn update_with_the_riff_of_this_machine_installs_the_newest_release() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_command(
+        bin.path(),
+        "git",
+        "a1\trefs/tags/v0.9.3\nb2\trefs/tags/v0.10.0\nc3\trefs/tags/v1.0.0-rc1",
+        0,
+    );
+    let out = run(update(bin.path(), 0, "http://127.0.0.1:7878")).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        log(bin.path(), "git"),
+        format!(
+            "ls-remote --tags --refs {} v*\n",
+            env!("CARGO_PKG_REPOSITORY")
+        )
+    );
+    assert_eq!(log(bin.path(), "cargo"), install("v0.10.0"));
+}
+
+/// With no release tag in the repository, `riff update` installs
+/// nothing and names the flag.
+#[tokio::test]
+async fn update_with_no_release_tag_names_the_flag() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_command(bin.path(), "git", "", 0);
+    let out = run(update(bin.path(), 0, "http://localhost:7878")).await;
+    assert!(!out.status.success());
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("has no release tag. Name one: riff update --tag vX.Y.Z"),
+        "{stderr}"
+    );
+    assert_eq!(log(bin.path(), "cargo"), "");
 }
