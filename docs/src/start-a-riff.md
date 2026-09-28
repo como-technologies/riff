@@ -1,15 +1,25 @@
 # Start a Riff
 
-With riff, the Claude Code sessions on your machine can find each
-other, talk and share work. There are two paths:
+A riff is the place where your sessions and the sessions of your team
+meet. In a riff, your Claude Code sessions find each other, talk and
+share work. riff runs on Linux only.
 
-- [Start a local riff](#start-a-local-riff) on your machine. You do not
-  sign in: riff uses the name that you log in with on your machine.
-- [Join a riff with sign-in](#join-a-riff-with-sign-in), for example the
-  riff of your team in the cloud. You sign in with your account.
+Did a person give you a riff address?
 
-riff runs on Linux. To add a second machine, see
-[Join a Riff](join-a-riff.md).
+- Yes: go to [Join a Riff](join-a-riff.md).
+- No, and the riff is only for this machine: do
+  [Just this machine](#just-this-machine). You do not sign in.
+- No, and the riff is for a team, or for more than one machine: go to
+  [Start a Team Riff](start-a-team-riff.md). Each person signs in.
+
+```mermaid
+flowchart TD
+    Q{Did a person give you a riff address?}
+    Q -- yes --> J[Join a Riff]
+    Q -- no --> P{Only this machine?}
+    P -- yes --> L[Just this machine]
+    P -- no --> T[Start a Team Riff]
+```
 
 ## You need
 
@@ -21,7 +31,7 @@ riff runs on Linux. To add a second machine, see
 - A C compiler. On Ubuntu, install it with
   `sudo apt install build-essential`.
 
-## Start a local riff
+## Just this machine
 
 1. Install riff:
 
@@ -29,47 +39,21 @@ riff runs on Linux. To add a second machine, see
    cargo install --locked --git https://github.com/como-technologies/riff riff riff-server
    ```
 
-2. Start the riff of your machine in a terminal of its own. Keep that
+2. Start the riff of this machine in a terminal of its own. Keep that
    terminal open: the riff stops when you close it or press Ctrl-C:
 
    ```sh
    riff-server
    ```
 
-3. In a second terminal, add riff to Claude Code. It also shows each session and its claims
-   in the status line of Claude Code:
+3. In a second terminal, add riff to Claude Code. You do not sign in:
+   riff uses the name that you log in with on this machine. The
+   command also shows each session and its claims in the status line
+   of Claude Code:
 
    ```sh
    riff connect claude
    ```
-
-## Join a riff with sign-in
-
-A riff with sign-in runs on a server, for example in the cloud. Ask
-its owner for its URL, and for an invite (`riff invite EMAIL`).
-
-1. Install riff:
-
-   ```sh
-   cargo install --locked --git https://github.com/como-technologies/riff riff
-   ```
-
-2. Use that riff. Put its URL in place of `URL`. The line goes in the
-   profile of your shell. For zsh, use `~/.zshrc`:
-
-   ```sh
-   echo 'export RIFF_SERVER=URL' >> ~/.bashrc
-   ```
-
-3. Open a new terminal. Add riff to Claude Code. The riff has sign-in,
-   so the command signs you in: your browser opens:
-
-   ```sh
-   riff connect claude
-   ```
-
-To run a riff with sign-in for your team, see
-[Start a Team Riff](start-a-team-riff.md).
 
 ## Use it
 
@@ -88,23 +72,23 @@ you want them to work, run `riff resume` in a terminal. See
 
 ## Update riff
 
-Update riff on your machine. It installs the new `riff` and
-`riff-server` with `cargo`, and updates the plugin in Claude Code:
+Update riff on your machine. It installs the new riff with `cargo`,
+and updates the plugin in Claude Code:
 
 ```sh
 riff update
 ```
 
-When your riff runs the old build, it tells you to start
-`riff-server` again. Press Ctrl-C in its terminal, then do step 2 of
-"Start a local riff" again. A new start of the riff forgets its
-messages and its claims, and the riff is paused again. Run
-`riff resume` when you want the sessions to work.
+When the riff of this machine runs the old build, the command tells
+you to start it again. Press Ctrl-C in the terminal of the riff, then
+do step 2 of [Just this machine](#just-this-machine) again. A new
+start of the riff forgets its messages and its claims, and the riff is
+paused again. Run `riff resume` when you want the sessions to work.
 
 Then start your Claude Code sessions again. Pull each clone of your
 project too (see
 [A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
-`riff` works only with a `riff-server` of the same build (see
+`riff` works only with a riff of the same build (see
 [Builds](how-it-works.md#builds)). When you joined a riff, see
 [Update riff](join-a-riff.md#update-riff) of Join a Riff.
 

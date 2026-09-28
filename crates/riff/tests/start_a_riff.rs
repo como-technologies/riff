@@ -1,31 +1,68 @@
-//! "Start a Riff", the first page of the book for a person: a local riff
-//! with at most three commands (R4), each one real, and no sign-in. A
-//! riff with sign-in: `riff connect claude` signs in
-//! (01M3JZN1ZZED3FXQEFNJ4KVCN5). No book page names the Cloud Run URL
-//! (R5). The `riff-server` commands of the pages are checked in
+//! "Start a Riff", the first page of the book for a person. It asks one
+//! question first (01M3MN2R92DA7QPP80G1AENX4M). Its path "Just this
+//! machine" has at most three commands (R4), each one real, and no
+//! sign-in. No book page names the Cloud Run URL (R5). The
+//! `riff-server` command of the path runs in
 //! `crates/riff-server/tests/start_a_riff.rs`. "Join a Riff" is checked
 //! in `join_a_riff.rs`.
 
 mod book;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::process::{Command, Output};
 
 use book::{commands_of, commands_of_part, each_is_real, page};
 
-/// The commands of "Start a local riff".
+const PAGE: &str = "start-a-riff.md";
+
+/// The commands of "Just this machine".
 fn commands() -> Vec<String> {
-    commands_of_part("start-a-riff.md", "Start a local riff")
+    commands_of_part(PAGE, "Just this machine")
+}
+
+/// The text of the page before its first `##` part.
+fn introduction() -> String {
+    let page = page(PAGE);
+    page[..page.find("\n## ").unwrap()].to_owned()
 }
 
 #[test]
-fn a_person_joins_a_riff_with_sign_in_with_riff_connect_claude() {
-    let commands = commands_of_part("start-a-riff.md", "Join a riff with sign-in");
-    assert_eq!(commands.len(), 3, "{commands:?}");
+fn the_introduction_says_what_a_riff_is_and_that_riff_runs_on_linux_only() {
+    let introduction = introduction().replace('\n', " ");
     assert!(
-        commands[1].contains("export RIFF_SERVER=URL"),
-        "{commands:?}"
+        introduction.contains(
+            "A riff is the place where your sessions and the sessions of your team meet."
+        ),
+        "{introduction}"
     );
-    assert_eq!(commands[2], "riff connect claude");
+    assert!(introduction.contains("Linux only"), "{introduction}");
+}
+
+/// The question comes before the paths. Each answer links its page.
+#[test]
+fn the_page_asks_one_question_first() {
+    let introduction = introduction();
+    let question = introduction
+        .find("Did a person give you a riff address?")
+        .expect("the question");
+    let answers = &introduction[question..];
+    for link in [
+        "(join-a-riff.md)",
+        "(#just-this-machine)",
+        "(start-a-team-riff.md)",
+    ] {
+        assert!(answers.contains(link), "{link}: {answers}");
+    }
+}
+
+#[test]
+fn the_page_names_no_insecure_no_systemd_and_no_install_subcommand() {
+    let text = page(PAGE);
+    for word in ["--insecure", "systemd", "riff-server install"] {
+        assert!(!text.contains(word), "{PAGE} names {word}");
+    }
 }
 
 #[test]
@@ -55,10 +92,72 @@ fn each_riff_command_of_the_page_is_real_and_none_signs_in() {
     each_is_real(&riff);
 }
 
+/// A fake `claude` command in `dir`. It fails `mcp remove`, as `claude`
+/// does when there is no old entry.
+fn fake_claude(dir: &Path) -> std::path::PathBuf {
+    let path = dir.join("claude");
+    fs::write(&path, "#!/bin/sh\n[ \"$1\" = mcp ] && exit 1\nexit 0\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// Runs `riff ARGS` for the riff at `server`, away from the runtime of
+/// the riff. The Claude Code settings go to `dir`, never to the real
+/// home.
+async fn riff(server: &str, dir: &Path, args: &[&str]) -> Output {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("riff"));
+    cmd.args(args)
+        .current_dir(dir)
+        .env("RIFF_SERVER", server)
+        .env("RIFF_USER", "ada")
+        .env("XDG_DATA_HOME", dir)
+        .env("XDG_RUNTIME_DIR", dir)
+        .env("HOME", dir.join("home"))
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap()
+}
+
+/// Step 3 of "Just this machine": at the riff of this machine, with no
+/// sign-in, `riff connect claude` installs the plugin and signs in to
+/// nothing. Then `riff who` works with no sign-in.
+#[tokio::test]
+async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
+    assert_eq!(commands()[2], "riff connect claude");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    let claude = fake_claude(dir.path());
+
+    let connect = riff(
+        &server,
+        dir.path(),
+        &["connect", "claude", "--claude", claude.to_str().unwrap()],
+    )
+    .await;
+    let stdout = String::from_utf8_lossy(&connect.stdout);
+    let stderr = String::from_utf8_lossy(&connect.stderr);
+    assert!(connect.status.success(), "{stdout}{stderr}");
+    assert!(stdout.starts_with("Installed the riff plugin"), "{stdout}");
+    assert!(!stdout.contains("sign"), "{stdout}");
+    assert_eq!(stderr, "");
+
+    let who = riff(&server, dir.path(), &["who"]).await;
+    assert!(
+        who.status.success(),
+        "{}",
+        String::from_utf8_lossy(&who.stderr)
+    );
+}
+
 /// "Update riff" of "Start a Riff" is one command.
 #[test]
 fn a_person_updates_riff_with_riff_update() {
-    let update = commands_of_part("start-a-riff.md", "Update riff");
+    let update = commands_of_part(PAGE, "Update riff");
     assert_eq!(update, ["riff update"]);
     each_is_real(&update);
 }
@@ -80,12 +179,6 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
         .collect();
     assert_eq!(riff, ["riff login", "riff invite EMAIL"]);
     each_is_real(&riff);
-}
-
-/// "Start a Riff" links the path for a team.
-#[test]
-fn start_a_riff_links_start_a_team_riff() {
-    assert!(page("start-a-riff.md").contains("(start-a-team-riff.md)"));
 }
 
 #[test]

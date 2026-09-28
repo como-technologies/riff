@@ -729,7 +729,7 @@ sequenceDiagram
 
 ### A riff with no sign-in
 
-The local riff of [Start a Riff](start-a-riff.md#start-a-local-riff)
+The riff of [Just this machine](start-a-riff.md#just-this-machine)
 has no sign-in. It trusts its network. So its reader counts each message as verified.
 
 ```mermaid

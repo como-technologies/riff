@@ -10,6 +10,11 @@
   Infrastructure is always Google.
 - **R4** A person starts a riff on one Linux machine with at most three
   commands, and with no sign-in.
+- **01M3MN2R92DA7QPP80G1AENX4M** The book page "Start a Riff" starts
+  with one question: did a person give you a riff address? Yes leads to
+  "Join a Riff". No leads to one of two paths: "Just this machine",
+  with no sign-in, or "Start a Team Riff". The page names no
+  `--insecure`, no systemd and no `riff-server install`.
 - **R203** A person adds a second machine to the riff of a first machine
   on a network that they trust. The riff of the first machine takes
   connections from the network. The second machine names that riff with
