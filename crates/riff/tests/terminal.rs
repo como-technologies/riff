@@ -594,6 +594,10 @@ fn the_book_has_a_how_to_for_each_step() {
         ("### Start workers", "riff workers start 3"),
         ("### Start workers", "riff workers start 1 --claude "),
         (
+            "#### The lead keeps a worker on each free item",
+            "riff workers start 2",
+        ),
+        (
             "### Take over a worker",
             "tmux select-window -t riff-workers",
         ),
