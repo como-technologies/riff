@@ -508,7 +508,10 @@ mod tests {
             "issue is closed",
             "`ExitWorktree`",
             "`discard_changes`",
-            "git update-ref -d refs/heads/BRANCH HEADREF",
+            "If you made the worktree with `EnterWorktree` in this context",
+            "git -C MAIN worktree remove PATH",
+            "git -C MAIN update-ref -d refs/heads/BRANCH HEADREF",
+            "you made it before `riff workers next` or `/clear`.",
             "Do not force",
             "Never remove a worktree of another live session",
         ] {
@@ -516,6 +519,23 @@ mod tests {
         }
         assert!(!skill.contains("branch -D"));
         assert!(!skill.contains("--force"));
+    }
+
+    /// 01M3K0FZ5M08Z4YPSVKFADCAKC: only a session with no claim verifies.
+    #[test]
+    fn only_a_session_with_no_claim_verifies() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "Take a verify request only when you hold no claim.",
+            "While you wait, do not verify the work of another session.",
+            "A verify request is free work for a session that holds no claim.",
+            "A session that holds a claim, also one that waits for its own verify, does not verify",
+            "Give a verify request only to a session with no claim. When no such session is free, start a worker for it",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+        assert!(!flat.contains("you can verify the work of another session"));
     }
 
     #[test]

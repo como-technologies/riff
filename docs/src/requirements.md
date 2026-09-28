@@ -79,8 +79,8 @@
 - **R193** The author never merges and never pushes to the default
   branch (01M3JFEXJG2D651PWA30DNRGWF). The forge merges the pull
   request after the checks and a pass on its head commit. When no
-  session takes the request, the author waits. It can verify the work
-  of others while it waits. On a fail or a conflict, the author pushes a
+  session takes the request, the author keeps its claim and waits. It
+  does not verify while it waits (01M3K0FZ5M08Z4YPSVKFADCAKC). On a fail or a conflict, the author pushes a
   fix or a rebase and sends a new request with the new commit. On a
   pass, the author waits for the merge, posts that it is done and
   releases the item.
@@ -90,14 +90,24 @@
   issue stays open until that check passes. After the merge, the author
   adds a comment to the issue: `Merged in #PR (COMMIT)`, and the check
   that is left.
-- **R202** The verify worktree is
-  `MAIN/.claude/worktrees/verify-ITEM-ID`, detached at the commit.
-  MAIN is the main worktree. ID is the first 4 characters of the
-  session ID of the verifier. The verifier makes it with
-  `git worktree add --detach` and enters it by path, from the main
-  worktree or from a worktree of its own. After the verify, it goes
-  back to where it came from, then runs `git worktree remove` with no
-  force.
+- **01M3K0FZ5M08Z4YPSVKFADCAKC** Only a session that holds no claim
+  takes a verify request. A session that holds an item, also one that
+  waits for its own verify, does not verify. The lead gives a verify
+  request to a session with no claim. When none is free, the lead
+  starts a worker for it.
+- **01M3K0FZ7X1NCPHXFN6WA4T3ES** The verifier makes its verify worktree
+  with the `EnterWorktree` tool and the name `verify-ITEM-ID`. ID is
+  the first 4 characters of the session ID of the verifier. In the
+  worktree, it fetches the branch and checks out the commit, detached.
+  It never runs `git worktree add` by hand and never uses `cd`. After
+  the verify, it removes the worktree with the `ExitWorktree` tool,
+  action `remove`.
+- **01M3K0FZA21H0PPSDANFMMY47C** A session removes a stale worktree
+  with the `ExitWorktree` tool only when it made the worktree with
+  `EnterWorktree` in its current context. In each other case, for
+  example after `riff workers next` or `/clear`, it runs
+  `git -C MAIN worktree remove` and deletes the branch with
+  `git -C MAIN update-ref -d` (R165).
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, waves (R213), the verify flow (R188), selectors,
   direct messages, threads, claims, `move`, the restart of the watch
