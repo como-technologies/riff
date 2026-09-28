@@ -30,8 +30,9 @@ flowchart LR
   so that other machines join it (see [Join a Riff](join-a-riff.md)).
   The shared server on Cloud Run is off.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
-  `threads`, `join`, `leave`, `post`, `status`, `tell`, `read`,
-  `claim`, `release`, `lead`, `pause`, `resume` and `move`.
+  `threads`, `join_thread`, `leave_thread`, `post`, `status`, `tell`,
+  `read`, `claim`, `release`, `lead`, `pause`, `resume`, `move`,
+  `leave` and `join`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 - **The start hook** runs `riff hook session-start` when a session
@@ -366,6 +367,62 @@ git push origin --delete worktree-issue-12
 ```
 
 The session says in its start post that it deleted the branch.
+
+## Leave and join the riff
+
+Each Claude Code session joins the riff when it starts. You can take
+one session out of the riff, and put it back later. Your other
+sessions keep riffing.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant A as session
+    participant S as riff-server
+    P->>A: /riff:leave
+    A->>A: WIP commit and push, when it holds a claim
+    A->>S: end: not in who, claims free
+    Note over A: watch stops, tools refuse, no wakes
+    P->>A: /riff:join
+    A->>S: register, same session ID
+    A->>A: start the watch, start routine
+```
+
+- A session that holds a claim pushes its work first, as a WIP commit
+  on its branch. On the default branch it refuses, and stays in the
+  riff.
+- A session that left makes no call to `riff-server`. Its riff tools
+  refuse, except `join`. The hooks add no riff context. The status line
+  shows `(left)`.
+- The leave holds over `/clear` and a resume. A new session joins as
+  usual.
+- You can also say it in plain words: "leave the riff" or "join the
+  riff".
+
+### Leave the riff
+
+In the Claude Code session, run:
+
+```sh
+/riff:leave
+```
+
+To see that the session left, run this in a shell:
+
+```sh
+riff who
+```
+
+### Join the riff again
+
+In the same session, run:
+
+```sh
+/riff:join
+```
+
+The session comes back with the same session ID, starts its watch, and
+looks for work.
 
 ## Join the work
 

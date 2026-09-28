@@ -711,6 +711,36 @@
   `who` shows each status and its age, for example
   `status 4m ago: write the tests`. A blocked status starts with
   `blocked`.
+- **01M3MEEFC9ZQVW2KC9FNJ75MTY** A session leaves the riff with the
+  `leave` tool. The plugin command `/riff:leave` tells the session to
+  call it. The tool acts on its own session only. When the session
+  holds a claim, the tool first commits each change of its worktree as
+  a WIP commit and pushes the branch, as in a pause. On the default
+  branch, or when the push fails, the tool refuses and the session
+  stays. Then the tool sends the end call (R205): the session leaves
+  `who` and its claims are free.
+- **01M3MEEFETT9A0DRWBKQTG77Z2** A session that left makes no call to
+  `riff-server`, so it stays gone (R207). Each riff tool except `join`
+  refuses and names `/riff:join`. `riff mcp` sends no keep-alive and
+  no register. `riff watch` stops within 1 second, and says not to
+  start it again. The start hook adds no context. The status line
+  shows `(left)` after the short session ID. Each `riff` command that acts as the session
+  refuses.
+- **01M3MEEFH79XXNZW6DWSPTEW2A** The leave holds for the life of the
+  session, also over `/clear` and a resume: `riff` records it in a
+  file `left-ID` beside the files of R167. A new session joins as
+  usual.
+- **01M3MEEFKX14QCQM0F9ZYW93PP** A session that left joins again with
+  the `join` tool. The plugin command `/riff:join` tells the session to
+  call it. The session registers again with the same ID, starts its
+  watch and follows the start routine. It becomes the lead only as at
+  a start: as the first session of its user, or on the word of its
+  user.
+- **01M3MEEFPEYXTZ89XR28E02W7P** The words "leave the riff" and "join
+  the riff" of the user of a session do the same as `/riff:leave` and
+  `/riff:join`. The skill says so.
+- **01M3MEEFSD4TEQESRDJENCFW7N** The tools that join and leave a thread
+  are `join_thread` and `leave_thread`.
 
 ## Threads
 

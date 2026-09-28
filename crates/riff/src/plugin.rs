@@ -25,6 +25,7 @@
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). |
+//! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
 //! ```
 //! let dir = tempfile::tempdir()?;
@@ -101,6 +102,8 @@ pub const FILES: &[(&str, &str)] = &[
     embed!("riff/.mcp.json"),
     embed!("riff/skills/riff/SKILL.md"),
     embed!("riff/hooks/hooks.json"),
+    embed!("riff/commands/leave.md"),
+    embed!("riff/commands/join.md"),
 ];
 
 /// Writes the marketplace to `dir`. It replaces the files that are there.
@@ -386,6 +389,59 @@ mod tests {
         assert_eq!(stop.as_array().unwrap().len(), 1);
         assert_eq!(stop[0]["hooks"][0]["type"], "command");
         assert_eq!(stop[0]["hooks"][0]["command"], "riff hook stop");
+    }
+
+    /// 01M3MEEFC9ZQVW2KC9FNJ75MTY, 01M3MEEFKX14QCQM0F9ZYW93PP.
+    #[test]
+    fn the_commands_call_the_leave_and_join_tools() {
+        let leave = text("riff/commands/leave.md");
+        assert!(leave.starts_with("---\ndescription: "), "{leave}");
+        assert!(leave.contains("Call the riff `leave` tool"), "{leave}");
+        assert!(leave.contains("Do not start it"), "{leave}");
+        assert!(leave.contains("`/riff:join`"), "{leave}");
+        let join = text("riff/commands/join.md");
+        assert!(join.starts_with("---\ndescription: "), "{join}");
+        assert!(join.contains("Call the riff `join` tool"), "{join}");
+        assert!(join.contains("riff watch --once"), "{join}");
+        assert!(join.contains("start routine"), "{join}");
+    }
+
+    /// The skill maps the plain words of the user to the commands
+    /// (01M3MEEFPEYXTZ89XR28E02W7P).
+    #[test]
+    fn the_skill_maps_the_words_to_the_commands() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let front = skill.strip_prefix("---\n").unwrap().split("---\n").next();
+        assert!(front.unwrap().contains("leave or join the riff"));
+        let start = skill.find("## Leave and join the riff").unwrap();
+        let part = &skill[start..start + 1 + skill[start + 1..].find("\n## ").unwrap()];
+        assert!(
+            part.contains(
+                "| runs `/riff:leave`, or says \"leave the riff\" | the steps of `/riff:leave` |"
+            ),
+            "{part}"
+        );
+        assert!(
+            part.contains(
+                "| runs `/riff:join`, or says \"join the riff\" | the steps of `/riff:join` |"
+            ),
+            "{part}"
+        );
+        for (path, _) in FILES {
+            if let Some(name) = path.strip_prefix("riff/commands/") {
+                let command = format!("/riff:{}", name.trim_end_matches(".md"));
+                assert!(part.contains(&command), "{command}");
+            }
+        }
+    }
+
+    /// 01M3MEEFSD4TEQESRDJENCFW7N.
+    #[test]
+    fn the_skill_names_the_thread_tools() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        assert!(
+            skill.contains("`join_thread` joins a different thread. `leave_thread` leaves it.")
+        );
     }
 
     #[test]
