@@ -174,6 +174,16 @@
 - **01M3JN21WDXWTHDKXKQ80ZPYPK** With no remote, a remote that cannot
   be reached, or a fetch that takes longer than its limit, the context
   has no such line. The hook still exits with status 0 (R69).
+- **01M3MYQ299XKJE9X9FHWZ7JFM4** At a new start in a linked worktree
+  where another live session works, the start context names that
+  session and the main worktree. It tells the session not to follow
+  the start routine, to claim nothing, to change no file there, and to
+  ask its user, through the lead, to start it again in the main
+  worktree.
+- **01M3MYQ2BFKS3KJ8DWNWDJKWB9** At a new start in a linked worktree
+  where no other live session works, the start context names the
+  worktree and the main worktree, and points to "Pick up dropped
+  work". In the main worktree, the context has no worktree line.
 - **01M3JN21YJSP7HM1JPS1TCFM9W** The update of each machine pulls each
   clone of the project with `git pull --ff-only`.
 - **R74** `riff connect claude` writes the plugin to

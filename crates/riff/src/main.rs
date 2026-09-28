@@ -866,7 +866,8 @@ fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> 
 /// The SessionStart hook output. It has no URI when riff cannot find the
 /// session, and no riff state when it cannot read it in
 /// [`hook::STATE_WAIT`], but it always has the context (R69). It has a
-/// line when the clone is behind `origin` ([`hook::behind`]).
+/// line when the clone is behind `origin` ([`hook::behind`]), and a line
+/// at a new start in a linked worktree ([`hook::Linked`]).
 async fn session_start(server: &str) -> String {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -887,14 +888,24 @@ async fn session_start(server: &str) -> String {
             Some(uri) => {
                 let facts = start_facts(api, &uri, input.source.is_new_start());
                 match tokio::time::timeout(hook::STATE_WAIT, facts).await {
-                    Ok(Ok((lead, riff, freed))) => {
-                        (Some(uri.with_lead(lead)), Some(riff), freed, None)
-                    }
-                    Ok(Err(e)) => (Some(uri), None, Vec::new(), e.downcast::<Mismatch>().ok()),
-                    Err(_) => (Some(uri), None, Vec::new(), None),
+                    Ok(Ok((lead, riff, freed, others))) => (
+                        Some(uri.with_lead(lead)),
+                        Some(riff),
+                        freed,
+                        Some(others),
+                        None,
+                    ),
+                    Ok(Err(e)) => (
+                        Some(uri),
+                        None,
+                        Vec::new(),
+                        None,
+                        e.downcast::<Mismatch>().ok(),
+                    ),
+                    Err(_) => (Some(uri), None, Vec::new(), None, None),
                 }
             }
-            None => (None, None, Vec::new(), None),
+            None => (None, None, Vec::new(), None, None),
         }
     };
     let behind = async {
@@ -903,17 +914,28 @@ async fn session_start(server: &str) -> String {
             None => None,
         }
     };
-    let ((uri, riff, freed, mismatch), behind) = tokio::join!(facts, behind);
+    let linked = async {
+        match &cwd {
+            Some(cwd) if input.source.is_new_start() => hook::linked(cwd).await,
+            _ => None,
+        }
+    };
+    let ((uri, riff, freed, others, mismatch), behind, linked) =
+        tokio::join!(facts, behind, linked);
     let watching = id
         .as_deref()
         .zip(local::dir())
         .is_some_and(|(id, dir)| local::watching(&dir, id));
+    let mismatch_free = mismatch.is_none();
     let mut context = match mismatch {
         Some(mismatch) => hook::mismatch_context(uri.as_ref(), &mismatch),
         None => hook::start_context(uri.as_ref(), input.source, watching, riff, &freed),
     };
     if let Some(behind) = behind {
         context.push_str(&behind.line());
+    }
+    if let Some(linked) = linked.filter(|_| mismatch_free) {
+        context.push_str(&linked.line(others.as_deref()));
     }
     if worker::is_worker() {
         context.push_str(hook::WORKER_LINE);
@@ -922,13 +944,14 @@ async fn session_start(server: &str) -> String {
 }
 
 /// Whether the server names `me` as the lead, the state of the riff
-/// (01M3JCG48QPCNNTKW34FTR0AMR), and the claims that a new start freed
-/// (01M3JEE1QQCFS5TMZW5N2DAD2D).
+/// (01M3JCG48QPCNNTKW34FTR0AMR), the claims that a new start freed
+/// (01M3JEE1QQCFS5TMZW5N2DAD2D), and the other live sessions in the
+/// place of `me` ([`hook::others_here`]).
 async fn start_facts(
     api: Api,
     me: &SessionUri,
     new_start: bool,
-) -> Result<(bool, RiffState, Vec<Freed>)> {
+) -> Result<(bool, RiffState, Vec<Freed>, Vec<SessionUri>)> {
     let api = api.signed_in(me.who().session())?;
     let freed = if new_start {
         api.start(me).await?
@@ -936,12 +959,9 @@ async fn start_facts(
         Vec::new()
     };
     let riff = api.riff(me).await?;
-    let lead = api
-        .who(me, false)
-        .await?
-        .iter()
-        .any(|s| s.uri.who() == me.who() && s.uri.lead());
-    Ok((lead, riff, freed))
+    let who = api.who(me, false).await?;
+    let lead = who.iter().any(|s| s.uri.who() == me.who() && s.uri.lead());
+    Ok((lead, riff, freed, hook::others_here(me, &who)))
 }
 
 /// The status line of the Claude Code session on stdin

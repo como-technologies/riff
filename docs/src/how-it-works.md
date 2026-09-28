@@ -1397,6 +1397,25 @@ thread, so that the directory does not matter:
 riff tail como-technologies/riff
 ```
 
+### Start each session in the main clone
+
+Start each session in the main clone of the repository, never in a
+worktree of a session. tmux opens a new pane in the directory of the
+current pane. When that pane is in a worktree of a session, the new
+session starts in that worktree. It can change the work of the other
+session.
+
+Open a new pane in the main clone, then start the session:
+
+```sh
+tmux split-window -c ~/src/como-technologies/riff
+```
+
+When a session starts in a worktree where another live session works,
+its start context names that session and the main clone. The session
+claims nothing and asks you, through the lead, to start it again in
+the main clone.
+
 ### Set the limit of workers
 
 No worker starts until you set a limit. It is the most workers that
