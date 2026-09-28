@@ -18,15 +18,32 @@
 //! one line (01M3K0Q854K18DGXJKQ427W586). See [`crate::text::server_view`].
 //!
 //! `riff update` does the update of a machine in one command
-//! (01M3K0Q892KWM76R9DJC1P37JA):
+//! (01M3K0Q892KWM76R9DJC1P37JA). It installs a release: the git tag
+//! `vX.Y.Z` of the crate version X.Y.Z (01M3MRMASMP59PKHAV92XSV7XE), not
+//! the head of `main`. With no `--tag`, it installs the release that the
+//! riff of `riff` runs, from the version of its build. So a newer tag
+//! that nobody deployed yet does not break a machine. When `riff` uses
+//! the riff of this machine, it installs the newest release tag, and
+//! the person starts that riff again (01M3MRMAVVKJ5WS8GWCJHWH0R4):
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant U as riff update
+//!     participant G as git ls-remote
+//!     participant F as the riff of riff
 //!     participant C as cargo
 //!     participant R as the new riff
 //!     participant S as riff-server of this machine
-//!     U->>C: install --locked --git REPOSITORY riff riff-server
+//!     alt --tag vX.Y.Z
+//!         Note over U: that release
+//!     else riff uses the riff of this machine
+//!         U->>G: the tags v*
+//!         G-->>U: the newest release vX.Y.Z
+//!     else riff uses another riff
+//!         U->>F: probe
+//!         F-->>U: its build, with the version X.Y.Z
+//!     end
+//!     U->>C: install --locked --git REPOSITORY --tag vX.Y.Z riff riff-server
 //!     U->>R: connect claude
 //!     U->>S: probe
 //!     alt it answers with another build than the new riff-server
@@ -113,24 +130,132 @@ pub async fn view(server: &str, local: &str, source: Source) -> View {
     }
 }
 
-/// The arguments of `cargo` that install the newest riff and
-/// riff-server from the repository: the same command as in "Start a
-/// Riff".
+/// The arguments of `cargo` that install riff and riff-server of the
+/// release `tag` from the repository.
 ///
 /// ```
-/// let args = riff::lifecycle::install_args();
+/// let args = riff::lifecycle::install_args("v0.2.0");
 /// assert_eq!(args[..3], ["install", "--locked", "--git"]);
-/// assert_eq!(args[4..], ["riff", "riff-server"]);
+/// assert_eq!(args[4..], ["--tag", "v0.2.0", "riff", "riff-server"]);
 /// ```
-pub fn install_args() -> [&'static str; 6] {
+pub fn install_args(tag: &str) -> [&str; 8] {
     [
         "install",
         "--locked",
         "--git",
         env!("CARGO_PKG_REPOSITORY"),
+        "--tag",
+        tag,
         env!("CARGO_PKG_NAME"),
         "riff-server",
     ]
+}
+
+/// The release tag of the crate version `version`
+/// (01M3MRMASMP59PKHAV92XSV7XE).
+///
+/// ```
+/// assert_eq!(riff::lifecycle::release_tag("0.2.0"), "v0.2.0");
+/// ```
+pub fn release_tag(version: &str) -> String {
+    format!("v{version}")
+}
+
+/// `tag` when it is a release tag `vX.Y.Z`, for `riff update --tag`.
+///
+/// ```
+/// use riff::lifecycle::parse_tag;
+///
+/// assert_eq!(parse_tag("v0.2.0").unwrap(), "v0.2.0");
+/// assert_eq!(parse_tag("v10.0.12").unwrap(), "v10.0.12");
+/// for bad in ["main", "0.2.0", "v0.2", "v0.2.0-rc1", "v0..1"] {
+///     assert!(parse_tag(bad).is_err(), "{bad}");
+/// }
+/// ```
+pub fn parse_tag(tag: &str) -> Result<String, String> {
+    let parts: Vec<&str> = tag
+        .strip_prefix('v')
+        .unwrap_or_default()
+        .split('.')
+        .collect();
+    let number = |p: &&str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    if parts.len() == 3 && parts.iter().all(number) {
+        Ok(tag.to_owned())
+    } else {
+        Err(format!(
+            "{tag} is not a release tag. Give vX.Y.Z, for example v0.2.0"
+        ))
+    }
+}
+
+/// The newest release tag in `ls_remote`, the output of
+/// `git ls-remote --tags --refs`. It skips each tag that is not a
+/// release tag, and compares the numbers, not the text.
+///
+/// ```
+/// use riff::lifecycle::newest_tag;
+///
+/// let out = "a1\trefs/tags/v0.9.3\nb2\trefs/tags/v0.10.0\nc3\trefs/tags/v1.0.0-rc1\n";
+/// assert_eq!(newest_tag(out).as_deref(), Some("v0.10.0"));
+/// assert_eq!(newest_tag(""), None);
+/// ```
+pub fn newest_tag(ls_remote: &str) -> Option<String> {
+    ls_remote
+        .lines()
+        .filter_map(|line| line.split_once("refs/tags/").map(|(_, tag)| tag.trim()))
+        .filter_map(|tag| parse_tag(tag).ok())
+        .max_by_key(|tag| {
+            tag[1..]
+                .split('.')
+                .map(|n| n.parse::<u64>().unwrap_or_default())
+                .collect::<Vec<_>>()
+        })
+}
+
+/// The newest release tag of the repository, from `git ls-remote`
+/// (01M3MRMAVVKJ5WS8GWCJHWH0R4).
+pub fn newest_release() -> Result<String> {
+    let out = Command::new("git")
+        .args([
+            "ls-remote",
+            "--tags",
+            "--refs",
+            env!("CARGO_PKG_REPOSITORY"),
+            "v*",
+        ])
+        .output()
+        .context("cannot run git ls-remote")?;
+    if !out.status.success() {
+        bail!(
+            "git ls-remote failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    newest_tag(&String::from_utf8_lossy(&out.stdout)).with_context(|| {
+        format!(
+            "{} has no release tag. Name one: riff update --tag vX.Y.Z",
+            env!("CARGO_PKG_REPOSITORY")
+        )
+    })
+}
+
+/// The release that the riff at `server` runs: the release tag of the
+/// version of its build (01M3MRMAVVKJ5WS8GWCJHWH0R4). An error when it
+/// does not answer, or names no build.
+pub async fn server_release(server: &str) -> Result<String> {
+    let probe = Api::new(server).probe(PROBE_WAIT).await.with_context(|| {
+        format!(
+            "cannot find the release of the riff at {server}. \
+                 Name one: riff update --tag vX.Y.Z"
+        )
+    })?;
+    match probe.build {
+        Some(build) => Ok(release_tag(&build.version)),
+        None => bail!(
+            "the riff at {server} names no build, so riff cannot find its release. \
+             Name one: riff update --tag vX.Y.Z"
+        ),
+    }
 }
 
 /// True when `url` names this machine: a riff that the person can
@@ -215,12 +340,29 @@ pub fn version_build(line: &str) -> Option<Build> {
 }
 
 /// Updates riff on this machine (01M3K0Q892KWM76R9DJC1P37JA): installs
-/// the new binaries with `cargo`, updates the plugin with the new
-/// `riff connect claude --claude CLAUDE`, and then looks for an old
-/// riff with [`old_riff`]. It returns the last words for the person.
-/// `riff` passes [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
-pub async fn update(cargo: &Path, claude: &Path, server: &str, local: &str) -> Result<String> {
-    run(Command::new(cargo).args(install_args()), "cargo install")?;
+/// the binaries of a release with `cargo`: `tag`, else the newest
+/// release ([`newest_release`]) when `server` is `local`, the riff of
+/// this machine, else the release that `server` runs
+/// ([`server_release`]). Then it updates the plugin with the new
+/// `riff connect claude --claude CLAUDE`, and looks for an old riff with
+/// [`old_riff`]. It returns the last words for the person. `riff` passes
+/// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
+pub async fn update(
+    cargo: &Path,
+    claude: &Path,
+    tag: Option<&str>,
+    server: &str,
+    local: &str,
+) -> Result<String> {
+    let tag = match tag {
+        Some(tag) => tag.to_owned(),
+        None if same_riff(server, local) => newest_release()?,
+        None => server_release(server).await?,
+    };
+    run(
+        Command::new(cargo).args(install_args(&tag)),
+        "cargo install",
+    )?;
     run(
         Command::new("riff")
             .args(["connect", "claude", "--claude"])

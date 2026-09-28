@@ -3,20 +3,23 @@ name: CI
 on:
   push:
     branches: [main]
+    # A release tag: the job Release check checks its version
+    # (01M3MRMASMP59PKHAV92XSV7XE).
+    tags: ["v*"]
   pull_request:
     branches: [main]
   schedule:
     # Weekly advisory sweep (Mondays 06:00 UTC). New RUSTSEC advisories
     # arrive without a code change, so the audit job runs on a schedule.
     - cron: "0 6 * * 1"
-  # The lead deploys the shared server at the end of a wave
-  # (01M3MMZQ3KTF5Z3GXNR7DRQ65Z): gh workflow run CI --ref main -f deploy=true
+  # An admin deploys a release to the shared server at the end of a wave
+  # (01M3MMZQ3KTF5Z3GXNR7DRQ65Z): gh workflow run CI --ref main -f tag=v0.2.0
   workflow_dispatch:
     inputs:
-      deploy:
-        description: Deploy the shared server after the gate
-        type: boolean
-        default: false
+      tag:
+        description: The release tag vX.Y.Z to deploy to the shared server after the gate
+        type: string
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,7 +32,7 @@ jobs:
   gate:
     # The whole local gate in one job: fmt, clippy, tests and the book.
     name: Gate
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -46,16 +49,29 @@ jobs:
       - name: CI gate
         run: just ci
 
+  release:
+    # A pushed tag v* fails when its version is not the version of the
+    # crates (01M3MRMASMP59PKHAV92XSV7XE).
+    name: Release check
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check the release tag
+        run: deploy/release-check.sh "$GITHUB_REF_NAME"
+
   deploy:
-    # A run of this workflow by hand, with the input deploy, builds the
-    # image and deploys it to Cloud Run, when the repository variable
-    # CLOUD_DEPLOY is true (R160). A push to main never deploys
-    # (01M3MMZQ3KTF5Z3GXNR7DRQ65Z). The job signs in to Google Cloud
-    # with the OIDC token of GitHub; no key exists (R161). One deploy
-    # runs at a time; a newer run waits for it.
+    # A run of this workflow by hand on main, with the input tag, builds
+    # the image of that release and deploys it to Cloud Run, when the
+    # repository variable CLOUD_DEPLOY is true (R160). It deploys only a
+    # release tag vX.Y.Z (01M3MRMAY3P1K151RGAP9K6GSH). A push to main
+    # never deploys (01M3MMZQ3KTF5Z3GXNR7DRQ65Z). The job signs in to
+    # Google Cloud with the OIDC token of GitHub; no key exists (R161).
+    # One deploy runs at a time; a newer run waits for it.
     name: Deploy
     needs: gate
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main' && vars.CLOUD_DEPLOY == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.ref == 'refs/heads/main' && vars.CLOUD_DEPLOY == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -63,16 +79,22 @@ jobs:
     concurrency:
       group: deploy
       cancel-in-progress: false
+    env:
+      TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
+
+      - name: Check the release tag
+        run: deploy/release-check.sh "$TAG"
 
       - name: Read the cloud settings
         run: |
           grep -E '^[A-Z_]+=' deploy/cloud.env >> "$GITHUB_ENV"
           . deploy/cloud.env
-          echo "IMAGE=$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "IMAGE=$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$TAG" >> "$GITHUB_ENV"
           deploy/build-id.sh >> "$GITHUB_ENV"
 
       - uses: google-github-actions/auth@v3

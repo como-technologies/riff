@@ -128,8 +128,8 @@ fn the_skill_the_requirements_and_the_page_agree() {
         "has the leads of more than one person, the people agree on one lead to plan",
         "wave is a milestone named `Wave N`. A name can follow, for example `Wave 5: Cloud`.",
         "A work item is an issue in the milestone.",
-        "merge each item, stop the workers, deploy the shared server, update each machine, start the sessions again, run the checks after the release, close each item.",
-        "A riff with no shared server of its own code skips the deploy.",
+        "merge each item, stop the workers, make a release, deploy the release to the shared server, update each machine, start the sessions again, run the checks after the release, close each item.",
+        "A riff with no shared server of its own code skips the release and the deploy.",
     ] {
         for (name, doc) in [
             ("SKILL.md", &skill),

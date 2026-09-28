@@ -113,12 +113,13 @@ time.
 - An item is closed when it is merged and each check after the release
   passed.
 - A wave is done when each of its items is closed. The order in a
-  wave: merge each item, stop the workers, deploy the shared server,
-  update each machine, start the sessions again, run the checks after
-  the release, close each item. A riff with no shared server of its own
-  code skips the deploy. In the riff repository, the update is an
-  update of riff, so that new sessions start with the new plugin. Then
-  the lead ends the wave.
+  wave: merge each item, stop the workers, make a release, deploy the
+  release to the shared server, update each machine, start the
+  sessions again, run the checks after the release, close each item. A
+  riff with no shared server of its own code skips the release and
+  the deploy. In the riff repository, the update is an update of riff,
+  so that new sessions start with the new plugin. Then the lead ends
+  the wave.
 - No session starts an item of the next wave before the current wave
   is done.
 - A person or a session can add a work item at any time, with no
@@ -150,9 +151,10 @@ plan the waves.
    items. A conflict is two items that edit the same part. Also list
    each worktree and each local branch that no live session owns (see
    "Keep good git hygiene"). Your user decides about them.
-6. When each item of the current wave is merged, stop the workers,
-   and deploy the shared server (see "Waves on GitHub"). A push to
-   the default branch does not deploy it. Then tell your user to
+6. When each item of the current wave is merged, stop the workers.
+   Ask an admin to make a release and deploy it to the shared server
+   (see "Waves on GitHub"). A push to the default branch does not
+   deploy it. Then tell your user to
    update each machine. Start the sessions again, and tell them to run
    their checks after the release.
 7. When each item of the current wave is closed, the wave is done.
@@ -182,7 +184,8 @@ This is the only part of the skill that is special to one forge.
 | Move an item to the backlog | `gh issue edit 12 --milestone Backlog` |
 | See the items in the backlog | `gh issue list --milestone Backlog` |
 | End a wave | `gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed` |
-| Deploy the shared server (riff repository) | `gh workflow run CI --ref main -f deploy=true` |
+| Make a release (riff repository, an admin) | "Make a release" in `development.md` of the book |
+| Deploy a release to the shared server (riff repository, an admin) | `gh workflow run CI --ref main -f tag=vX.Y.Z` |
 
 ## Write acceptance criteria
 

@@ -186,11 +186,39 @@ Update the older side:
 - **riff** on this machine, and **riff-server** of your own riff: do
   [Update riff](start-a-riff.md#update-riff). When you joined a riff,
   see [Update riff](join-a-riff.md#update-riff) of Join a Riff.
-- **The shared server:** the lead deploys it at the end of each wave.
-  A push to `main` does not deploy it. See
+- **The shared server:** an admin deploys a release at the end of
+  each wave. A push to `main` does not deploy it. See
   [Deploy the shared server at the end of a wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
 
 Then start your Claude Code sessions again.
+
+### Releases
+
+`riff update` installs a release, not the newest commit of `main`. A
+release is a git tag `vX.Y.Z` of the repository (see
+[Make a release](development.md#make-a-release)). It picks the release
+this way:
+
+```mermaid
+flowchart TD
+    U[riff update] --> T{"--tag vX.Y.Z?"}
+    T -- yes --> I[install that release]
+    T -- no --> L{"riff uses the riff<br/>of this machine?"}
+    L -- yes --> N[install the newest release tag]
+    L -- no --> S[install the release that the riff runs]
+```
+
+So a new tag does not break your machine before the shared server
+runs it. `riff server` shows the release of `riff` and of each riff.
+
+### Install one release
+
+To install one release, for example the release of another riff, name
+its tag:
+
+```sh
+riff update --tag v0.2.0
+```
 
 ## A clone that is behind
 

@@ -81,7 +81,8 @@ machine, not the riff that you joined.
 
 `riff` works only with a riff of the same build (see
 [Builds](how-it-works.md#builds)). When the owner updates the riff,
-update riff on your machine:
+update riff on your machine. It installs the release that the riff
+runs (see [Releases](how-it-works.md#releases)):
 
 ```sh
 riff update

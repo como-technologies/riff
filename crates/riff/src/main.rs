@@ -222,11 +222,17 @@ enum Command {
     /// and the riff of this machine: whether it answers, its build, and
     /// sign-in.
     Server,
-    /// Update riff on this machine: install the newest riff and
-    /// riff-server with cargo, then update the plugin with `riff connect
-    /// claude`. When the riff of this machine runs the old build, it
-    /// tells you to start riff-server again.
+    /// Update riff on this machine: install riff and riff-server of a
+    /// release with cargo, then update the plugin with `riff connect
+    /// claude`. It installs the release that the riff runs, or the newest
+    /// release when riff uses the riff of this machine. When the riff of
+    /// this machine runs the old build, it tells you to start riff-server
+    /// again.
     Update {
+        /// Install this release, for example v0.2.0, not the release
+        /// that the riff runs.
+        #[arg(long, value_parser = lifecycle::parse_tag)]
+        tag: Option<String>,
         /// The cargo command.
         #[arg(long, default_value = "cargo")]
         cargo: std::path::PathBuf,
@@ -341,10 +347,10 @@ async fn main() -> Result<()> {
         println!("{}", text::server_view(&view));
         return Ok(());
     }
-    if let Command::Update { cargo, claude } = &cli.command {
+    if let Command::Update { tag, cargo, claude } = &cli.command {
         println!(
             "{}",
-            lifecycle::update(cargo, claude, &cli.server, DEFAULT_SERVER).await?
+            lifecycle::update(cargo, claude, tag.as_deref(), &cli.server, DEFAULT_SERVER).await?
         );
         return Ok(());
     }

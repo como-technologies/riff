@@ -72,8 +72,9 @@ you want them to work, run `riff resume` in a terminal. See
 
 ## Update riff
 
-Update riff on your machine. It installs the new riff with `cargo`,
-and updates the plugin in Claude Code:
+Update riff on your machine. It installs the newest release of riff
+with `cargo`, and updates the plugin in Claude Code (see
+[Releases](how-it-works.md#releases)):
 
 ```sh
 riff update
