@@ -173,3 +173,31 @@ fn the_book_shows_real_tail_commands() {
             .success();
     }
 }
+
+/// How It Works says that only the lead gets the `riff tail` pane, and
+/// shows how to watch the riff on another machine with a real command
+/// (01M3JD390F49HZSKEJ3VACX0ZA).
+#[test]
+fn the_book_shows_how_to_watch_the_riff_on_another_machine() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    assert!(page.contains("Only the lead gets the `riff tail` pane."));
+    let start = page
+        .find("\n### Watch the riff on another machine\n")
+        .expect("the how-to has its own heading");
+    let part = &page[start + 1..];
+    let part = &part[..part[4..].find("\n#").map_or(part.len(), |end| end + 4)];
+    assert!(
+        part.contains("```sh\nriff tail como-technologies/riff\n```"),
+        "{part}"
+    );
+    let help = assert_cmd::Command::cargo_bin("riff")
+        .unwrap()
+        .args(["tail", "como-technologies/riff", "--help"])
+        .assert()
+        .success();
+    let help = String::from_utf8_lossy(&help.get_output().stdout).into_owned();
+    assert!(help.contains("[THREAD]"), "{help}");
+}
