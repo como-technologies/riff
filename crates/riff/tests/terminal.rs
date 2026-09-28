@@ -4,6 +4,7 @@
 //! `tmux` on `PATH` writes each call to a log, and keeps the marks of
 //! the panes and windows in files.
 
+use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -84,7 +85,6 @@ fn repository(root: &Path) -> (PathBuf, PathBuf) {
 /// terminal: no session ID and no worker mark.
 struct Machine {
     fake: tempfile::TempDir,
-    config: tempfile::TempDir,
     run: tempfile::TempDir,
     server: String,
 }
@@ -93,7 +93,6 @@ impl Machine {
     fn new(server: &str) -> Self {
         Machine {
             fake: fake_tmux(),
-            config: tempfile::tempdir().unwrap(),
             run: tempfile::tempdir().unwrap(),
             server: server.into(),
         }
@@ -111,13 +110,12 @@ impl Machine {
             self.fake.path().display(),
             std::env::var("PATH").unwrap()
         );
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+        let mut cmd = Isolated::shared().riff();
         cmd.arg("workers")
             .args(args)
             .current_dir(dir)
             .env("PATH", path)
-            .env("XDG_CONFIG_HOME", self.config.path())
-            .env("XDG_RUNTIME_DIR", self.run.path())
+            .env("RIFF_HOME", self.run.path())
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")
@@ -195,7 +193,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
              '{}' workers run 'claude' '--settings' \
              '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false}}' 'Join the riff.'",
-            env!("CARGO_BIN_EXE_riff")
+            Isolated::shared().riff_path().display()
         )
     };
     let pane = |id: &str| format!("-d -c {dir} -P -F #{{pane_id}} {}", env(id));
@@ -324,7 +322,7 @@ fn a_new_machine_starts_no_worker() {
 fn the_limit_stops_the_workers_past_it() {
     let m = Machine::new("http://riff.test:7878");
     m.limit(2);
-    let config = std::fs::read_to_string(m.config.path().join("riff/config.toml")).unwrap();
+    let config = std::fs::read_to_string(m.run.path().join("config.toml")).unwrap();
     assert_eq!(config, "[workers]\nlimit = 2\n");
     let root = tempfile::tempdir().unwrap();
     let (main, _) = repository(root.path());
@@ -578,13 +576,14 @@ async fn riff_mcp_of_the_lead_adds_the_tail_pane_in_tmux() {
         fake.path().display(),
         std::env::var("PATH").unwrap()
     );
-    let mut mcp = tokio::process::Command::new(env!("CARGO_BIN_EXE_riff"))
+    let mut mcp = Isolated::shared()
+        .tokio_riff()
         .arg("mcp")
         .current_dir(&main)
         .env("PATH", path)
         .env("TMUX", "/tmp/tmux-1000/default,1,0")
         .env("TMUX_PANE", "%0")
-        .env("XDG_RUNTIME_DIR", run.path())
+        .env("RIFF_HOME", run.path())
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SESSION", "a1")
@@ -645,7 +644,8 @@ fn the_book_has_a_how_to_for_each_step() {
             "{heading} has no {command:?}"
         );
     }
-    let help = Command::new(env!("CARGO_BIN_EXE_riff"))
+    let help = Isolated::shared()
+        .riff()
         .args(["workers", "start", "--help"])
         .output()
         .unwrap();
@@ -654,7 +654,8 @@ fn the_book_has_a_how_to_for_each_step() {
         help.contains("--claude <CLAUDE>") && help.contains("<COUNT>"),
         "{help}"
     );
-    let help = Command::new(env!("CARGO_BIN_EXE_riff"))
+    let help = Isolated::shared()
+        .riff()
         .args(["workers", "--help"])
         .output()
         .unwrap();

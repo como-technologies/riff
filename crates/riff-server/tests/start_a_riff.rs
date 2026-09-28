@@ -6,12 +6,12 @@
 
 mod common;
 
+use isolated::Isolated;
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Stdio};
 use std::time::Duration;
 
-use assert_cmd::Command;
 use riff_core::wire::WhoReply;
 use serde_json::json;
 
@@ -44,8 +44,8 @@ fn the_page_runs_the_server_in_a_terminal() {
 #[test]
 fn each_riff_server_command_of_the_page_is_real() {
     for command in server_commands(PAGE) {
-        Command::cargo_bin("riff-server")
-            .unwrap()
+        Isolated::shared()
+            .assert_riff_server()
             .args(command.split_whitespace().skip(1))
             .arg("--help")
             .assert()
@@ -75,7 +75,8 @@ async fn step_2_runs_the_riff_of_this_machine_in_a_terminal() {
     let listen = listener.local_addr().unwrap().to_string();
     drop(listener);
     let terminal = tempfile::NamedTempFile::new().unwrap();
-    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin("riff-server"))
+    let child = Isolated::shared()
+        .riff_server()
         .args(command.split_whitespace().skip(1))
         .env_clear()
         .env("RIFF_LISTEN", &listen)

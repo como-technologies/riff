@@ -3,6 +3,7 @@
 //! changes, they change nothing and say why; `riff workers next` also
 //! tells the lead (01M3MNP36TZYN3PE00AZJTJSER).
 
+use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -92,7 +93,6 @@ impl Clone {
 /// runtime directories.
 struct Machine {
     fake: tempfile::TempDir,
-    config: tempfile::TempDir,
     run: tempfile::TempDir,
     server: String,
 }
@@ -105,7 +105,6 @@ impl Machine {
         std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
         Machine {
             fake,
-            config: tempfile::tempdir().unwrap(),
             run: tempfile::tempdir().unwrap(),
             server: server.into(),
         }
@@ -118,14 +117,13 @@ impl Machine {
             self.fake.path().display(),
             std::env::var("PATH").unwrap()
         );
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+        let mut cmd = Isolated::shared().riff();
         alone(&mut cmd)
             .arg("workers")
             .args(args)
             .current_dir(dir)
             .env("PATH", path)
-            .env("XDG_CONFIG_HOME", self.config.path())
-            .env("XDG_RUNTIME_DIR", self.run.path())
+            .env("RIFF_HOME", self.run.path())
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")

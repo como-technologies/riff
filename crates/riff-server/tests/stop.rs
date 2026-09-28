@@ -1,17 +1,13 @@
 //! `riff-server` saves and exits on SIGTERM (R129).
 
+use isolated::Isolated;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[test]
 fn sigterm_stops_the_server_with_success() {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff-server"));
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("RIFF_") {
-            cmd.env_remove(name);
-        }
-    }
+    let mut cmd = Isolated::shared().riff_server();
     let mut server = cmd
         .args(["--listen", "127.0.0.1:0"])
         .env("NO_COLOR", "1")

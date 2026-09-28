@@ -1,11 +1,12 @@
 use assert_cmd::Command;
+use isolated::Isolated;
 
 /// The start hook, away from the local files and the riff-server of
 /// this machine (R167). No server listens on port 9.
 fn hook(run: &tempfile::TempDir) -> Command {
-    let mut cmd = Command::cargo_bin("riff").unwrap();
+    let mut cmd = Isolated::shared().assert_riff();
     cmd.args(["hook", "session-start"])
-        .env("XDG_RUNTIME_DIR", run.path())
+        .env("RIFF_HOME", run.path())
         .env("RIFF_SERVER", "http://127.0.0.1:9")
         .env_remove("RIFF_SESSION");
     cmd
@@ -13,8 +14,8 @@ fn hook(run: &tempfile::TempDir) -> Command {
 
 #[test]
 fn version_names_the_binary() {
-    Command::cargo_bin("riff")
-        .unwrap()
+    Isolated::shared()
+        .assert_riff()
         .arg("--version")
         .assert()
         .success()
@@ -76,8 +77,8 @@ fn session_start_hook_never_fails() {
 
 #[test]
 fn login_says_when_it_cannot_reach_the_server() {
-    let stderr = Command::cargo_bin("riff")
-        .unwrap()
+    let stderr = Isolated::shared()
+        .assert_riff()
         .args(["login", "--server", "http://127.0.0.1:9"])
         .assert()
         .failure()
@@ -90,8 +91,8 @@ fn login_says_when_it_cannot_reach_the_server() {
 
 #[test]
 fn the_default_server_is_the_local_server() {
-    let out = Command::cargo_bin("riff")
-        .unwrap()
+    let out = Isolated::shared()
+        .assert_riff()
         .args(["login", "--help"])
         .env_remove("RIFF_SERVER")
         .assert()

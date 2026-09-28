@@ -3,6 +3,7 @@
 //! cannot be reached, it adds no line, exits 0, and ends within its
 //! time limit (01M3JN21WDXWTHDKXKQ80ZPYPK).
 
+use isolated::Isolated;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -48,10 +49,10 @@ fn push_one(root: &Path) {
 /// The context of the start hook in `dir`, and how long the hook ran.
 fn context(dir: &Path, env: &[(&str, &str)]) -> (String, Duration) {
     let run = tempfile::tempdir().unwrap();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.args(["hook", "session-start"])
         .current_dir(dir)
-        .env("XDG_RUNTIME_DIR", run.path())
+        .env("RIFF_HOME", run.path())
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SERVER", "http://127.0.0.1:9")

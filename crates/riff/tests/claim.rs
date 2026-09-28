@@ -2,10 +2,9 @@
 //! `riff lead` and `riff status` from the command line, against a real
 //! server.
 
+use isolated::Isolated;
 use std::path::Path;
 use std::process::Command as Git;
-
-use assert_cmd::Command;
 
 async fn start_server() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -67,7 +66,7 @@ async fn run(
     session: Option<&str>,
     args: &[&str],
 ) -> (String, i32) {
-    let mut cmd = Command::cargo_bin("riff").unwrap();
+    let mut cmd = Isolated::shared().assert_riff();
     cmd.args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
@@ -75,7 +74,7 @@ async fn run(
         .env("RIFF_HOST", "pangolin")
         .env_remove("RIFF_SESSION")
         .env_remove("CLAUDE_CODE_SESSION_ID")
-        .env("XDG_RUNTIME_DIR", dir);
+        .env("RIFF_HOME", dir);
     if let Some(id) = session {
         cmd.env("RIFF_SESSION", id);
     }
@@ -211,7 +210,7 @@ async fn post_wakes_the_holder_of_a_claim() {
 async fn watch_needs_a_session_id() {
     let server = start_server().await;
     let dir = repo();
-    let mut cmd = Command::cargo_bin("riff").unwrap();
+    let mut cmd = Isolated::shared().assert_riff();
     cmd.arg("watch")
         .current_dir(dir.path())
         .env("RIFF_SERVER", server)

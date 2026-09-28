@@ -66,10 +66,14 @@ pub const MAX_DEPTH: usize = 8;
 #[derive(Debug)]
 pub struct Held(File);
 
-/// The directory of the files: `$XDG_RUNTIME_DIR/riff`, else
+/// The directory of the files: `$RIFF_HOME/state` (see
+/// [`home`](crate::home)), else `$XDG_RUNTIME_DIR/riff`, else
 /// `$XDG_STATE_HOME/riff`, else `$HOME/.local/state/riff`. `None`
 /// without `HOME`.
 pub fn dir() -> Option<PathBuf> {
+    if let Some(home) = crate::home::dir() {
+        return Some(home.join("state"));
+    }
     dir_from(
         std::env::var_os("XDG_RUNTIME_DIR"),
         std::env::var_os("XDG_STATE_HOME"),

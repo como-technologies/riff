@@ -4,9 +4,10 @@
 //! change the terminal (01M3JDCAB7K6QA58HDTN9BR1AH). A fake server gives
 //! one message on each stream.
 
+use isolated::Isolated;
 use std::convert::Infallible;
 use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use axum::response::sse::{Event, Sse};
@@ -69,7 +70,7 @@ async fn start_fake() -> String {
 /// The stdout of `riff tail ARGS` through a pipe, for one second.
 async fn tail_output(server: &str, args: &[&str], envs: &[(&str, &str)]) -> String {
     let dir = tempfile::tempdir().unwrap();
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.arg("tail")
         .arg("como-technologies/riff")
         .args(args)
@@ -81,7 +82,7 @@ async fn tail_output(server: &str, args: &[&str], envs: &[(&str, &str)]) -> Stri
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR_FORCE")
         .env_remove("CLAUDE_CODE_SESSION_ID")
-        .env("XDG_RUNTIME_DIR", dir.path())
+        .env("RIFF_HOME", dir.path())
         .envs(envs.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -165,8 +166,8 @@ fn the_book_shows_real_tail_commands() {
         "{commands:?}"
     );
     for command in commands {
-        assert_cmd::Command::cargo_bin("riff")
-            .unwrap()
+        Isolated::shared()
+            .assert_riff()
             .args(command.split_whitespace().skip(1))
             .arg("--help")
             .assert()
@@ -193,8 +194,8 @@ fn the_book_shows_how_to_watch_the_riff_on_another_machine() {
         part.contains("```sh\nriff tail como-technologies/riff\n```"),
         "{part}"
     );
-    let help = assert_cmd::Command::cargo_bin("riff")
-        .unwrap()
+    let help = Isolated::shared()
+        .assert_riff()
         .args(["tail", "como-technologies/riff", "--help"])
         .assert()
         .success();

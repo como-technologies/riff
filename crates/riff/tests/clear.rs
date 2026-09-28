@@ -5,6 +5,7 @@
 //! riff process. `CLAUDE_CODE_SESSION_ID` is `old` for `riff mcp`, and
 //! `new` for each process that starts after `/clear`.
 
+use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -13,9 +14,9 @@ use riff::local;
 
 /// A riff command with its own local directory, and no server.
 fn riff(run: &Path, session: &str, args: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.args(args)
-        .env("XDG_RUNTIME_DIR", run)
+        .env("RIFF_HOME", run)
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SERVER", "http://127.0.0.1:9")
@@ -68,7 +69,7 @@ fn stop(mut child: Child) {
 }
 
 fn files(run: &Path) -> PathBuf {
-    run.join("riff")
+    run.join("state")
 }
 
 #[test]

@@ -384,6 +384,25 @@
   `cargo install` of riff, `just install` or `riff connect`. The tests
   run the binaries of the worktree with a home of their own, so the
   installed binaries stay the same.
+- **01M3MY2KWKBJCQ0BCNC6533RBW** A test run and `just dev` never touch
+  the riff of the machine: its sign-in, keyring entries, device key,
+  settings, local files, the riff of the machine on 127.0.0.1:7878, or
+  the shared server. Each integration test runs `riff` and
+  `riff-server` only through the helper crate `isolated`. It removes
+  each `RIFF_` and `CLAUDE_` variable, `TMUX` and `TMUX_PANE`. It sets
+  `RIFF_SERVER` to `http://127.0.0.1:9`, where nothing listens, unless
+  the test names its own server. It sets `RIFF_HOME`, `HOME`, the XDG
+  dirs and `TMPDIR` to a temp dir of the test, a D-Bus address that
+  does not exist, and git with no config of the machine. A test fails
+  each test file that names a binary of riff without the helper.
+  `just test` and `just ci` run with the same `RIFF_SERVER` and a D-Bus
+  that fails each call. `riff server` and `riff update` still ask the
+  riff of the machine for its build, by design. `just dev` sets
+  `RIFF_HOME` to `target/dev-home` of its tree.
+- **01M3MY2KSV73WS8D902YCH2PRX** With `RIFF_HOME=DIR`, `riff` keeps its
+  settings in `DIR/config.toml`, its local files in `DIR/state`, and
+  each secret in a file of `DIR/secrets` that only the owner can read.
+  It never opens the OS keyring. Only the tests and `just dev` set it.
 - **01M3K0QM89E2XM1NWSPT4KXSTC** `just dev` loads `.env` at the root of
   its tree, when the file exists, into the environment of `riff` and
   `riff-server`, for example `RIFF_OIDC_CLIENT_ID` and
@@ -1129,7 +1148,8 @@
   There are no admins by default.
 - **R111** Admin emails, user names and the named person compare
   trimmed and in lower case.
-- **R21** A client keeps tokens and keys only in the OS keyring.
+- **R21** A client keeps tokens and keys only in the OS keyring. The
+  one exception is `RIFF_HOME` (01M3MY2KSV73WS8D902YCH2PRX).
 - **R82** `riff` keeps each secret under the keyring service `riff`.
   On Linux, it needs a Secret Service, for example GNOME Keyring or
   KWallet.

@@ -2,7 +2,7 @@
 //! `riff`; it does not fall back to `USER`. The server refuses a known
 //! session ID under a new user.
 
-use std::process::Command;
+use isolated::Isolated;
 use std::sync::Once;
 
 use keyring_core::{Entry, Error, mock};
@@ -68,9 +68,11 @@ fn a_keyring_error_stops_the_user_lookup() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_command_stops_when_it_cannot_open_the_keyring() {
-    let out = Command::new(assert_cmd::cargo::cargo_bin("riff"))
+    let out = Isolated::shared()
+        .riff()
         .arg("whoami")
         .env_remove("RIFF_USER")
+        .env_remove("RIFF_HOME")
         .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
         .env("RIFF_SERVER", "http://127.0.0.1:9")
         .output()
@@ -83,9 +85,11 @@ fn a_command_stops_when_it_cannot_open_the_keyring() {
 #[cfg(target_os = "linux")]
 #[test]
 fn riff_user_stands_in_when_it_cannot_open_the_keyring() {
-    let out = Command::new(assert_cmd::cargo::cargo_bin("riff"))
+    let out = Isolated::shared()
+        .riff()
         .arg("whoami")
         .env("RIFF_USER", "brett")
+        .env_remove("RIFF_HOME")
         .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
         .env("RIFF_SERVER", "http://127.0.0.1:9")
         .output()

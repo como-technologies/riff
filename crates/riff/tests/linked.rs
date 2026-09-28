@@ -4,6 +4,7 @@
 //! main worktree (01M3MYQ299XKJE9X9FHWZ7JFM4). Else it names the worktree
 //! and "Pick up dropped work" (01M3MYQ2BFKS3KJ8DWNWDJKWB9).
 
+use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -11,7 +12,6 @@ use riff::api::Api;
 use riff_core::name::SessionUri;
 use riff_core::wire::RiffState;
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 async fn start_server() -> Api {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -78,10 +78,11 @@ fn session(id: &str, worktree: &str) -> SessionUri {
 /// Runs the start hook of Claude Code for a new session `id` in `dir`.
 /// Returns its context.
 async fn start_hook(api: &Api, run: &Path, dir: &Path, id: &str) -> String {
-    let mut hook = Command::new(env!("CARGO_BIN_EXE_riff"))
+    let mut hook = Isolated::shared()
+        .tokio_riff()
         .args(["hook", "session-start"])
         .current_dir(dir)
-        .env("XDG_RUNTIME_DIR", run)
+        .env("RIFF_HOME", run)
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SERVER", api.base())

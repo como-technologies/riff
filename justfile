@@ -45,9 +45,10 @@ lint:
 build:
     cargo build --workspace
 
-# Run all tests
+# 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
+# Run all tests, with a RIFF_SERVER where nothing listens and a D-Bus that fails each call
 test *ARGS:
-    cargo test --workspace {{ARGS}}
+    env RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test --workspace {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:
@@ -83,6 +84,8 @@ serve:
 
 # 01M3JY12HASECNN6SFQ880JT5H, 01M3K0QM89E2XM1NWSPT4KXSTC, 01M3MRDESPG8VGMQ1F6KFJXBC5.
 # The installed riff and plugin stay the same. The trap stops the server also on Ctrl-C.
+# RIFF_HOME keeps the settings, local files and secrets of the tree in target/dev-home
+# (01M3MY2KWKBJCQ0BCNC6533RBW), never in the riff of the machine.
 # Test this tree without the shared riff: its riff-server on a free port, Claude Code with its plugin. It loads .env
 dev *ARGS:
     #!/usr/bin/env bash
@@ -94,6 +97,7 @@ dev *ARGS:
     port=7900
     while listens "$port"; do port=$((port + 1)); done
     export RIFF_LISTEN="127.0.0.1:$port" RIFF_SERVER="http://127.0.0.1:$port"
+    export RIFF_HOME="$tree/target/dev-home"
     log="$tree/target/dev-server.log"
     "$tree/target/debug/riff-server" {{ARGS}} > "$log" 2>&1 &
     server=$!

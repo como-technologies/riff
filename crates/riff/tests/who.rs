@@ -2,6 +2,7 @@
 //! (01M3MEW73CDSJDSKX32XW80WZH), and its `--color`
 //! (01M3MEW75WC7Y4M1BKQ7SXRPNR), against a real server.
 
+use isolated::Isolated;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -46,12 +47,12 @@ fn repo() -> tempfile::TempDir {
 /// `riff ARGS` in `dir` through a pipe, as the agent session `session`
 /// of mike, or as the person brett.
 fn riff(server: &str, dir: &Path, session: Option<&str>, args: &[&str]) -> Command {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("riff"));
+    let mut cmd = Isolated::shared().riff();
     cmd.args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
         .env("RIFF_HOST", "pangolin")
-        .env("XDG_RUNTIME_DIR", dir)
+        .env("RIFF_HOME", dir)
         .env_remove("RIFF_SESSION")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("NO_COLOR")
@@ -194,8 +195,8 @@ fn the_book_shows_real_who_commands() {
         "{commands:?}"
     );
     for command in commands {
-        assert_cmd::Command::cargo_bin("riff")
-            .unwrap()
+        Isolated::shared()
+            .assert_riff()
             .args(command.split_whitespace().skip(1))
             .arg("--help")
             .assert()
