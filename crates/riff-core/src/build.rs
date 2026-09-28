@@ -15,11 +15,9 @@
 //! its major, and its minor while the major is 0: `0.4.1` is on the
 //! line `0.4`, `1.2.0` on the line `1`. A change to a wire type, to the
 //! API or to the header starts a new line (01M3MX1E3R5WESVHA8RZXFQR1J).
-//! The test `tests/wire.rs` keeps the JSON schema of the wire types of
-//! the last release in `wire.json`, and fails when the schema changes
-//! and the line stays the same. Most merges change no wire type, so the
-//! builds differ and the line matches: `riff` goes on, and tells the
-//! person once to update ([`other_build`]).
+//! Most merges change no wire type, so the builds differ and the line
+//! matches: `riff` goes on, and tells the person once to update
+//! ([`other_build`]).
 //!
 //! `riff-server` also takes a `riff` of the line before its own
 //! (01M3MX1E1EY1M7JGNCN6FCEVQK), so a person has one release to update

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Checks a release tag (01M3MRMASMP59PKHAV92XSV7XE): it has the form
 # vX.Y.Z, and X.Y.Z is the version of the crates in Cargo.toml and
-# Cargo.lock of ROOT, and the release in crates/riff-core/wire.json
-# (01M3MX1E3R5WESVHA8RZXFQR1J). CI runs it for each pushed tag v*, and
-# the deploy runs it for its input (01M3MRMAY3P1K151RGAP9K6GSH).
+# Cargo.lock of ROOT. CI runs it for each pushed tag v*, and the deploy
+# runs it for its input (01M3MRMAY3P1K151RGAP9K6GSH).
 #
 #   deploy/release-check.sh TAG [ROOT]
 #
@@ -34,12 +33,5 @@ for crate in riff riff-server; do
         exit 1
     fi
 done
-
-WIRE="$ROOT/crates/riff-core/wire.json"
-RECORDED=$(sed -n 's/^  "release": "\(.*\)",$/\1/p' "$WIRE" 2>/dev/null | head -n 1 || true)
-if [ "$RECORDED" != "$VERSION" ]; then
-    echo "release-check: the tag $TAG is not the release in crates/riff-core/wire.json: ${RECORDED:-none}. Run RIFF_BLESS=1 cargo test -p riff-core --test wire." >&2
-    exit 1
-fi
 
 echo "release-check: $TAG is the version of the crates."

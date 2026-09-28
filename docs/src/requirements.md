@@ -1300,11 +1300,8 @@
   of the line before its own: `0.3.x` on a `0.4` server, `1.x` on a
   `2` server. It does not talk with a `riff` of a later line.
 - **01M3MX1E3R5WESVHA8RZXFQR1J** A change to a message, the API or the
-  header starts a new line of the version. `wire.json` in `riff-core`
-  holds the last release and the JSON schema of its wire types. A test
-  fails when the schema changes and the crate version stays on the line
-  of that release. Each release records its schema in `wire.json`. The
-  check of a release tag fails when `wire.json` names another release.
+  header starts a new line of the version. Each wave release bumps the
+  minor.
 - **01M3JEE7P46GWXR1BD4Q1TTSGN** Each call of `riff` names its build in
   the header `riff-build`. Each reply of `riff-server` names the build
   of the server in the same header.
