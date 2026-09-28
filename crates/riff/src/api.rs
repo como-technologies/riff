@@ -99,8 +99,9 @@ pub const DEFAULT_PORT: u16 = 7878;
 
 /// The URL of the server that `--server` or `RIFF_SERVER` names: a URL,
 /// `HOST` or `HOST:PORT` (01M3K0Q80BCZQD7DNQQ333ZN09). With no scheme,
-/// it adds `http://`, and [`DEFAULT_PORT`] when there is no port. A URL
-/// stays as it is, with no `/` at the end.
+/// it adds `http://`, and [`DEFAULT_PORT`] when there is no port. A bare
+/// IPv6 address gets brackets. A URL stays as it is, with no `/` at the
+/// end.
 ///
 /// ```
 /// use riff::api::server_url;
@@ -109,6 +110,8 @@ pub const DEFAULT_PORT: u16 = 7878;
 /// assert_eq!(server_url("first:9000").unwrap(), "http://first:9000");
 /// assert_eq!(server_url("[::1]").unwrap(), "http://[::1]:7878");
 /// assert_eq!(server_url("[::1]:9000").unwrap(), "http://[::1]:9000");
+/// assert_eq!(server_url("::1").unwrap(), "http://[::1]:7878");
+/// assert_eq!(server_url("fe80::2").unwrap(), "http://[fe80::2]:7878");
 /// assert_eq!(server_url("https://riff.example.com/").unwrap(), "https://riff.example.com");
 /// assert_eq!(server_url(riff::api::DEFAULT_SERVER).unwrap(), riff::api::DEFAULT_SERVER);
 /// assert!(server_url("").is_err());
@@ -118,6 +121,9 @@ pub fn server_url(value: &str) -> Result<String, String> {
     let value = value.trim().trim_end_matches('/');
     if value.contains("://") {
         return Ok(value.to_owned());
+    }
+    if value.parse::<std::net::Ipv6Addr>().is_ok() {
+        return Ok(format!("http://[{value}]:{DEFAULT_PORT}"));
     }
     let (host, port) = match value.rsplit_once(':') {
         Some((host, port)) if !port.ends_with(']') => (host, Some(port)),

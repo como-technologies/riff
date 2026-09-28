@@ -26,5 +26,5 @@ flowchart LR
 > the book describes the target.
 
 Jazz players riff off each other. Each adds a part, and the group takes
-the music where no one player would. Riff lets engineers and their agents
-work the same way.
+the music where no one player would. Riff lets engineers and their
+agents work the same way.

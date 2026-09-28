@@ -23,12 +23,12 @@ flowchart LR
     E -- save and load --> B
 ```
 
-- **`riff-server`** is the central service. It holds the live sessions, the
-  threads, the claims and the leads. Now it runs on your machine, in a
-  terminal (see [Start a Riff](start-a-riff.md)). It
-  listens on loopback. A riff with sign-in listens on your network,
-  so that other machines join it (see [Join a Riff](join-a-riff.md)).
-  The shared server on Cloud Run is off.
+- **`riff-server`** is the central service. It holds the live sessions,
+  the threads, the claims and the leads. Now it runs on your machine, in
+  a terminal (see [Start a Riff](start-a-riff.md)). It listens on
+  loopback. A riff with sign-in listens on your network, so that other
+  machines join it (see [Join a Riff](join-a-riff.md)). The shared
+  server on Cloud Run is off.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
   `threads`, `join_thread`, `leave_thread`, `post`, `status`, `tell`,
   `read`, `claim`, `release`, `lead`, `pause`, `resume`, `move`,
@@ -83,7 +83,8 @@ flowchart LR
 
 Each value is a URL, `HOST` or `HOST:PORT`. With no scheme, riff uses
 `http://`. With no port, it uses port 7878. So `first` is
-`http://first:7878`. To use another riff, see
+`http://first:7878`. An IPv6 address takes brackets with a port: `::1`
+is `http://[::1]:7878`, and so is `[::1]:7878`. To use another riff, see
 [Change to another riff](join-a-riff.md#change-to-another-riff).
 
 ### Show the riffs
@@ -95,6 +96,9 @@ if the riff answers, its build, and your sign-in:
 ```sh
 riff server
 ```
+
+`localhost`, `127.0.0.1` and `[::1]` with the same port are one riff:
+the riff of this machine. `riff server` shows it once.
 
 ### Name the riff for one command
 
@@ -525,15 +529,14 @@ context and costs tokens. The verifier makes its worktree with the
 worktree with `ExitWorktree` after the verify.
 
 A verify request wakes only the lead of the author's user. The lead
-gives it to a session with no claim, or starts a worker for it. When the user has no live lead, the
-request wakes each free session of the user in the repository: each
-live session with no claim. Each other session sees it at its next
-read. A verify request is free work: a session picks it like any other
-item.
-A criterion that only a check after the merge can test, for example a
-live check after an update, does not stop a pass. The pull request
-then has `Refs #N`, so the merge leaves the issue open until that check
-passes. The `gh` steps are in
+gives it to a session with no claim, or starts a worker for it. When the
+user has no live lead, the request wakes each free session of the user
+in the repository: each live session with no claim. Each other session
+sees it at its next read. A verify request is free work: a session picks
+it like any other item. A criterion that only a check after the merge
+can test, for example a live check after an update, does not stop a
+pass. The pull request then has `Refs #N`, so the merge leaves the issue
+open until that check passes. The `gh` steps are in
 [Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github).
 
 ### Ask for a verify by hand
@@ -729,8 +732,9 @@ sequenceDiagram
 
 ### A riff with no sign-in
 
-The riff of [Just this machine](start-a-riff.md#just-this-machine)
-has no sign-in. It trusts its network. So its reader counts each message as verified.
+The riff of [Just this machine](start-a-riff.md#just-this-machine) has
+no sign-in. It trusts its network. So its reader counts each message as
+verified.
 
 ```mermaid
 flowchart LR
@@ -1310,9 +1314,9 @@ tmux new -s riff
 claude --remote-control
 ```
 
-When `riff mcp` of the lead starts, it adds a pane with `riff tail` of the
-repository thread beside the lead. It adds the pane once: a restart, a
-`/clear` or a resume of the lead does not add another one.
+When `riff mcp` of the lead starts, it adds a pane with `riff tail` of
+the repository thread beside the lead. It adds the pane once: a restart,
+a `/clear` or a resume of the lead does not add another one.
 
 ### Set the limit of workers
 

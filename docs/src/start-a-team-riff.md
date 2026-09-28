@@ -19,8 +19,8 @@ flowchart LR
 
 - A Linux host with an address that your team reaches, for example
   `riff.example.com`.
-- A TLS proxy on that host, for example [Caddy](https://caddyserver.com).
-  `riff-server` has no TLS.
+- A TLS proxy on that host, for example
+  [Caddy](https://caddyserver.com). `riff-server` has no TLS.
 - Rust and a C compiler on the host. See
   [Start a Riff](start-a-riff.md#you-need).
 

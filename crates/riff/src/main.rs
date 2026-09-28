@@ -336,12 +336,15 @@ async fn main() -> Result<()> {
             Some(ValueSource::EnvVariable) => lifecycle::Source::Env,
             _ => lifecycle::Source::Default,
         };
-        let view = lifecycle::view(&cli.server, source).await;
+        let view = lifecycle::view(&cli.server, DEFAULT_SERVER, source).await;
         println!("{}", text::server_view(&view));
         return Ok(());
     }
     if let Command::Update { cargo, claude } = &cli.command {
-        println!("{}", lifecycle::update(cargo, claude, &cli.server).await?);
+        println!(
+            "{}",
+            lifecycle::update(cargo, claude, &cli.server, DEFAULT_SERVER).await?
+        );
         return Ok(());
     }
     if let Command::Hook {

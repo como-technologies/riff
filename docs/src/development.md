@@ -1,6 +1,7 @@
 # Development
 
-Install [Rust](https://rustup.rs) and [just](https://just.systems). Then:
+Install [Rust](https://rustup.rs) and [just](https://just.systems).
+Then:
 
 ```sh
 just init   # once: installs the book and audit tools
@@ -34,9 +35,9 @@ just rid
 ```
 
 It prints a new ID of 26 digits and capital letters. Write the new
-requirement as `- **ID** text`, with that ID. Cite it by the same ID
-in code, tests and commits. Two people who add requirements at the same time never get
-the same ID. So nobody has to agree on a number first.
+requirement as `- **ID** text`, with that ID. Cite it by the same ID in
+code, tests and commits. Two people who add requirements at the same
+time never get the same ID. So nobody has to agree on a number first.
 
 The old IDs `R1` to `R232` stay. Never give a new requirement the next
 `R` number, and never renumber a requirement.
@@ -333,9 +334,10 @@ riff logout --all --user USER
 
 ### Tokens
 
-With an OAuth client, the server refuses each call without a token. `riff` sends a token on each call when you are signed in. A
-command that you type acts as you. Each Claude Code session gets its
-own token, which acts only as that session.
+With an OAuth client, the server refuses each call without a token.
+`riff` sends a token on each call when you are signed in. A command that
+you type acts as you. Each Claude Code session gets its own token, which
+acts only as that session.
 
 Each token works only with the device key of this machine. `riff`
 keeps the key in the OS keyring. Use the same server URL for `riff`
@@ -588,10 +590,10 @@ seconds.
 ### Start again with an empty state
 
 `riff-server` does not migrate saved state of an old format. When it
-cannot read an object of the bucket, it stops at start. Cloud Run
-starts it again and again, and each call gets 503. The log shows
-`riff-server stops: cannot read the saved object`, with the name of
-the object and the reason (see [See the shared log](#see-the-shared-log)).
+cannot read an object of the bucket, it stops at start. Cloud Run starts
+it again and again, and each call gets 503. The log shows
+`riff-server stops: cannot read the saved object`, with the name of the
+object and the reason (see [See the shared log](#see-the-shared-log)).
 
 Remove the old state, and start again with an empty bucket. Stop the
 shared server first, so that no server saves the old state again:
@@ -699,7 +701,8 @@ riff signs in with one Google OAuth client. Google has no API to make
 it, so you make it by hand, in the console. The console can use
 slightly different words.
 
-1. Open [Google Auth Platform](https://console.cloud.google.com/auth/overview?project=como-riff)
+1. Open
+   [Google Auth Platform](https://console.cloud.google.com/auth/overview?project=como-riff)
    and click **Get started**.
 2. App information: the app name is `riff`. The support email is a
    group of the team, or your own address.
@@ -764,9 +767,9 @@ riff workers stop
 gh workflow run CI --ref main -f deploy=true
 ```
 
-Then update each machine (see [Update riff](start-a-riff.md#update-riff)),
-and start the sessions again. Check that `riff` and the shared server
-have the same build:
+Then update each machine (see
+[Update riff](start-a-riff.md#update-riff)), and start the sessions
+again. Check that `riff` and the shared server have the same build:
 
 ```sh
 riff server
@@ -842,9 +845,10 @@ serves riff at `riff.comotechnologies.io`. Do this once:
    **Domain** property `comotechnologies.io`, and verify it.
 2. At the DNS host of `comotechnologies.io`, add a CNAME record: name
    `riff`, value `ghs.googlehosted.com`.
-3. In `deploy/cloud.env`, set `CLOUD_URL=https://riff.comotechnologies.io`.
-4. Run `just cloud deploy`. It maps the domain to the service once. Google
-   then makes the certificate. That can take some hours.
+3. In `deploy/cloud.env`, set
+   `CLOUD_URL=https://riff.comotechnologies.io`.
+4. Run `just cloud deploy`. It maps the domain to the service once.
+   Google then makes the certificate. That can take some hours.
 
 ### Check the shared server
 
