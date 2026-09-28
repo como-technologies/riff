@@ -54,6 +54,7 @@
 //!     access_token: "a-1".into(),
 //!     refresh_token: "r-1".into(),
 //!     expires_at: 0,
+//!     riff_id: None,
 //! };
 //! login::store(server, &sign_in)?;
 //! assert_eq!(login::user(server)?.as_deref(), Some("mike"));
@@ -95,6 +96,10 @@ pub struct SignIn {
     pub refresh_token: String,
     /// When the access token expires, in seconds since 1970.
     pub expires_at: u64,
+    /// The ID of the riff of the sign-in (01M3JNVBRS35B3CD67367JF7SJ).
+    /// `None` for a sign-in from before the riff ID: it counts as old.
+    #[serde(default)]
+    pub riff_id: Option<String>,
 }
 
 /// The keyring name of the sign-in at `server`.
@@ -188,6 +193,7 @@ pub async fn login(api: &Api, open: impl FnOnce(&str)) -> Result<SignIn> {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
+        riff_id: Some(config.riff_id),
     };
     store(api.base(), &sign_in)?;
     Ok(sign_in)
@@ -223,6 +229,7 @@ pub async fn access_token(api: &Api) -> Result<String> {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
+        riff_id: sign_in.riff_id,
     };
     store(api.base(), &fresh)?;
     Ok(fresh.access_token)

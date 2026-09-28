@@ -76,19 +76,6 @@ before you added the line. Such a session looks for a riff at
 `127.0.0.1:7878` on the second machine, and it does not find the riff
 of your first machine.
 
-## When riff says the riff has no sign-in
-
-A command can stop with `has no sign-in, but this machine has an old
-sign-in`. The second machine signed in to that riff before. Remove the
-old sign-in, then start your Claude Code sessions again:
-
-```sh
-riff logout
-```
-
-See [When riff says the riff has no
-sign-in](development.md#when-riff-says-the-riff-has-no-sign-in).
-
 ## Update riff on two machines
 
 Update both machines to the same riff at the same time.

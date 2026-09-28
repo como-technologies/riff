@@ -267,3 +267,127 @@ async fn a_server_without_a_provider_says_so() {
         .unwrap_err();
     assert!(error.to_string().contains("no sign-in provider"), "{error}");
 }
+
+/// A server with sign-in at a fixed URL, whose riff a test can replace:
+/// a new riff at the same URL, or a restart.
+struct Front {
+    url: String,
+    issuer: String,
+    current: Arc<Mutex<Router>>,
+}
+
+impl Front {
+    async fn start() -> (Front, Api) {
+        mock_keyring();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let current = Arc::new(Mutex::new(Router::new()));
+        let serve = current.clone();
+        let router = Router::new().fallback(move |request: axum::extract::Request| {
+            let router = serve.lock().unwrap().clone();
+            async move { tower::ServiceExt::oneshot(router, request).await }
+        });
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let front = Front {
+            url: url.clone(),
+            issuer: fake_provider().await,
+            current,
+        };
+        (front, Api::new(&url))
+    }
+
+    fn config(&self) -> Config {
+        let mut config = Config {
+            provider: Some(Provider {
+                issuer: self.issuer.clone(),
+                client_id: CLIENT.into(),
+                client_secret: None,
+                allowed_domains: vec![DEFAULT_DOMAIN.into()],
+            }),
+            ..Config::new(&self.url)
+        };
+        config.lease.wait = std::time::Duration::from_millis(10);
+        config
+    }
+
+    /// Serves `service` from now on.
+    fn serve(&self, service: &Service) {
+        *self.current.lock().unwrap() = service.router();
+    }
+}
+
+fn ada() -> riff_core::name::SessionUri {
+    "riff://ada@pangolin/como-technologies/riff"
+        .parse()
+        .unwrap()
+}
+
+/// After a new riff at the same URL, the next command removes the old
+/// sign-in and says to run `riff login`, with no other error. The
+/// command after it runs with no sign-in (01M3JNVBRS35B3CD67367JF7SJ).
+#[tokio::test]
+async fn a_new_riff_at_the_same_url_asks_for_riff_login() {
+    let (front, api) = Front::start().await;
+    let old = Service::new(front.config());
+    front.serve(&old);
+    let sign_in = login::login(&api, browser).await.unwrap();
+    assert_eq!(sign_in.riff_id.as_deref(), Some(old.tokens().riff_id()));
+    let person = api.clone().signed_in(None).unwrap();
+    person.who(&ada(), false).await.unwrap();
+
+    let new = Service::new(front.config());
+    assert_ne!(new.tokens().riff_id(), old.tokens().riff_id());
+    front.serve(&new);
+    let person = api.clone().signed_in(None).unwrap();
+    let error = person.who(&ada(), false).await.unwrap_err();
+    assert_eq!(format!("{error:#}"), riff::text::new_riff(api.base()));
+    assert_eq!(login::stored(api.base()).unwrap(), None);
+
+    // The next command has no sign-in, and no error about it.
+    let next = api.clone().signed_in(None).unwrap();
+    next.who(&ada(), false).await.unwrap();
+}
+
+/// A restart on the same store keeps the riff ID, and the sign-in stays.
+#[tokio::test]
+async fn a_restart_on_the_same_store_keeps_the_sign_in() {
+    let (front, api) = Front::start().await;
+    let store = riff_server::store::Memory::default();
+    let old = Service::load(front.config(), Arc::new(store.clone()))
+        .await
+        .unwrap();
+    front.serve(&old);
+    let sign_in = login::login(&api, browser).await.unwrap();
+    old.save().await.unwrap();
+
+    let new = Service::load(front.config(), Arc::new(store))
+        .await
+        .unwrap();
+    assert_eq!(new.tokens().riff_id(), old.tokens().riff_id());
+    front.serve(&new);
+    let person = api.clone().signed_in(None).unwrap();
+    person.who(&ada(), false).await.unwrap();
+    let kept = login::stored(api.base()).unwrap().unwrap();
+    assert_eq!(kept.riff_id, sign_in.riff_id);
+}
+
+/// A sign-in from before the riff ID counts as old: the next command
+/// asks for `riff login` once.
+#[tokio::test]
+async fn a_sign_in_from_before_the_riff_id_is_old() {
+    let (front, api) = Front::start().await;
+    let service = Service::new(front.config());
+    front.serve(&service);
+    let sign_in = login::login(&api, browser).await.unwrap();
+    let old = SignIn {
+        riff_id: None,
+        ..sign_in
+    };
+    login::store(api.base(), &old).unwrap();
+
+    let person = api.clone().signed_in(None).unwrap();
+    let error = person.who(&ada(), false).await.unwrap_err();
+    assert_eq!(format!("{error:#}"), riff::text::new_riff(api.base()));
+    let next = api.clone().signed_in(None).unwrap();
+    next.who(&ada(), false).await.unwrap();
+}

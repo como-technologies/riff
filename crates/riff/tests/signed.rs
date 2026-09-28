@@ -61,6 +61,7 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
         expires_at: u64::MAX,
+        riff_id: None,
     };
     login::store(api.base(), &sign_in).unwrap();
     (service, api)

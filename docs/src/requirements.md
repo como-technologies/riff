@@ -495,7 +495,19 @@
   `riff logout`, while this machine keeps a sign-in for that riff. When
   that sign-in is gone, it says to start the agent session again, or
   to run the command again. `riff` keeps the old sign-in until the
-  person runs `riff logout`.
+  person runs `riff logout`. At a riff with sign-in, the riff ID finds
+  an old sign-in (01M3JNVBRS35B3CD67367JF7SJ).
+- **01M3JNVBPMZ1K9WX7Q7DP6Y0DH** Each riff with sign-in has a riff ID.
+  `riff-server` makes a random one with a new state, saves it with the
+  tokens, and gives it in `GET /v1/sign-in`. A restart on the same
+  bucket keeps it. A server with no bucket gets a new riff ID at each
+  start.
+- **01M3JNVBRS35B3CD67367JF7SJ** `riff` keeps the riff ID with each
+  sign-in. Before its first token in a process, `riff` compares it with
+  the riff ID of the server. When they differ, or the sign-in has none,
+  `riff` removes the sign-in, and the command stops with "This riff is
+  new. Run riff login." The next command runs with no sign-in. When
+  `riff` cannot ask the server, it goes on.
 - **R227** No error tells a person to run `riff login` at a riff with
   no sign-in.
 - **R159** A session keeps the user of its first call. The server

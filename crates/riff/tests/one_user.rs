@@ -35,6 +35,7 @@ fn broken_sign_in(server: &str) {
         access_token: "a-1".into(),
         refresh_token: "r-1".into(),
         expires_at: 0,
+        riff_id: None,
     };
     login::store(server, &sign_in).unwrap();
     let entry = Entry::new(secrets::SERVICE, &login::secret_name(server)).unwrap();

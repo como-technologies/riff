@@ -1026,6 +1026,26 @@ a restart forgets each thread, session, claim and lead. The riff is
 paused again. Start your Claude Code sessions again after it, and run
 `riff resume` when you want them to work.
 
+### After a restart with no bucket, run riff login
+
+A riff with sign-in and no bucket is a new riff after each restart. It
+also forgets each sign-in. Each riff has a riff ID, and `riff` keeps
+it with your sign-in. At a new riff, the next `riff` command removes
+the old sign-in of your machine and stops with:
+
+```text
+This riff is new. Run riff login.
+```
+
+Sign in again, then start your Claude Code sessions again:
+
+```sh
+riff login
+```
+
+The command after it runs with no sign-in, so it gives no other error.
+A restart with a bucket keeps the riff ID, and your sign-in stays.
+
 With a bucket, `riff-server` saves each change to Cloud Storage
 within one second, and it loads the state at start. On SIGTERM,
 it saves each unsaved change, then exits. A restart loses the open
