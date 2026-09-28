@@ -172,14 +172,14 @@ async fn a_token_change_that_is_not_saved_gets_503() {
     assert_eq!(error(unknown).await, (400, "invalid_grant".into()));
 }
 
-/// A store whose first save of the tokens fails.
-#[derive(Default)]
-struct FailsOnce {
+/// A store whose saves of the tokens fail while `failing` is true.
+#[derive(Clone, Default)]
+struct Failing {
     store: Memory,
-    failed: std::sync::atomic::AtomicBool,
+    failing: Arc<std::sync::atomic::AtomicBool>,
 }
 
-impl riff_server::store::Store for FailsOnce {
+impl riff_server::store::Store for Failing {
     fn load<'a>(
         &'a self,
         name: &'a str,
@@ -200,7 +200,7 @@ impl riff_server::store::Store for FailsOnce {
         bytes: Vec<u8>,
         known: Option<Version>,
     ) -> futures::future::BoxFuture<'a, Result<Version, StoreError>> {
-        if name == TOKENS && !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if name == TOKENS && self.failing.load(std::sync::atomic::Ordering::SeqCst) {
             return Box::pin(async { Err(StoreError::Failed("the disk is busy".into())) });
         }
         self.store.save(name, bytes, known)
@@ -212,7 +212,8 @@ impl riff_server::store::Store for FailsOnce {
 /// (01M3MX4TG7PNNETZ986DQS10JJ).
 #[tokio::test]
 async fn a_refresh_again_after_a_503_keeps_the_sign_in() {
-    let (service, url) = common::start_on(Arc::new(FailsOnce::default())).await;
+    let store = Failing::default();
+    let (service, url) = common::start_on(Arc::new(store.clone())).await;
     let key = Key::generate();
     let jkt = key.thumbprint();
     let first = service
@@ -223,8 +224,11 @@ async fn a_refresh_again_after_a_503_keeps_the_sign_in() {
         "grant_type=refresh_token&refresh_token={}",
         first.refresh_token
     );
+    let busy = |on: bool| store.failing.store(on, std::sync::atomic::Ordering::SeqCst);
+    busy(true);
     let lost = common::refresh(&url, &key, &form).await;
     assert_eq!(error(lost).await, (503, "temporarily_unavailable".into()));
+    busy(false);
     let reply = common::refresh(&url, &key, &form).await;
     assert_eq!(reply.status(), 200);
     let second: TokenReply = reply.json().await.unwrap();
