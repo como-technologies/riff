@@ -147,6 +147,24 @@ pub async fn logout_all(api: &Api, user: Option<&str>) -> Result<Revoked> {
     Ok(done)
 }
 
+/// Signs in at the server of `api` when the server has sign-in and this
+/// device has no sign-in there (01M3JZN1ZZED3FXQEFNJ4KVCN5). A sign-in of
+/// a riff that is gone does not count: it is removed first
+/// (01M3JNVBRS35B3CD67367JF7SJ). Returns the new sign-in, or `None` when
+/// the riff has no sign-in or this device has one. `riff connect claude`
+/// runs it.
+pub async fn ensure(api: &Api, open: impl FnOnce(&str)) -> Result<Option<SignIn>> {
+    if !api.has_sign_in().await? {
+        return Ok(None);
+    }
+    // An error here says that the old sign-in is gone: sign in again.
+    let _ = api.check_riff().await;
+    if stored(api.base())?.is_some() {
+        return Ok(None);
+    }
+    login(api, open).await.map(Some)
+}
+
 /// Signs in at the server of `api`. `open` shows the authorize URL to
 /// the person, for example in the browser. Keeps the sign-in and
 /// returns it.

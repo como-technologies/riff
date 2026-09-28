@@ -819,6 +819,25 @@ pub fn nobody_signs_in(server: &str) -> String {
     format!("riff-server at {server} has no sign-in. Nobody is signed in to it.")
 }
 
+/// The warning of `riff connect claude` when it cannot check the sign-in
+/// or the sign-in fails. The plugin is installed.
+///
+/// ```
+/// let error = anyhow::anyhow!("cannot reach riff-server");
+/// assert_eq!(
+///     riff::text::connect_no_sign_in("http://127.0.0.1:7878", &error),
+///     "the plugin is installed, but riff cannot check the sign-in at \
+///      http://127.0.0.1:7878: cannot reach riff-server. When the riff runs, \
+///      run riff connect claude again."
+/// );
+/// ```
+pub fn connect_no_sign_in(server: &str, error: &anyhow::Error) -> String {
+    format!(
+        "the plugin is installed, but riff cannot check the sign-in at {server}: {error:#}. \
+         When the riff runs, run riff connect claude again."
+    )
+}
+
 /// The answer to a release.
 pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")

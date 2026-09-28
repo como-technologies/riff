@@ -1,7 +1,8 @@
 //! `riff-server` with no sign-in trusts its network (R211). It marks
 //! each `read` reply as trusted, also when it listens on the network.
 //! It listens on the network only with `--insecure`
-//! (01M3JCE4ZD4DZCQ21FA69RT52D).
+//! (01M3JCE4ZD4DZCQ21FA69RT52D). With OIDC settings, it requires
+//! sign-in.
 
 mod common;
 
@@ -37,7 +38,12 @@ fn server(args: &[&str]) -> Command {
 /// Starts `riff-server` with these arguments. Returns the server, the
 /// port that it listens on, and the log up to that line.
 fn serve(args: &[&str]) -> (Server, u16, String) {
-    let mut child = server(args).stdout(Stdio::piped()).spawn().unwrap();
+    serve_cmd(server(args))
+}
+
+/// Starts this `riff-server` command. See [`serve`].
+fn serve_cmd(mut cmd: Command) -> (Server, u16, String) {
+    let mut child = cmd.stdout(Stdio::piped()).spawn().unwrap();
     let stdout = child.stdout.take().unwrap();
     let server = Server(child);
     let mut lines = BufReader::new(stdout).lines().map_while(Result::ok);
@@ -114,6 +120,44 @@ fn with_no_sign_in_a_network_address_needs_insecure() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--insecure"), "{stderr}");
     assert!(stderr.contains("0.0.0.0:0"), "{stderr}");
+    // It names the settings of sign-in (01M3JZN1VEF73EPFE2FJY36EY4).
+    assert!(stderr.contains("RIFF_OIDC_CLIENT_ID"), "{stderr}");
+    assert!(stderr.contains("RIFF_OIDC_CLIENT_SECRET"), "{stderr}");
+}
+
+/// With both OIDC settings in the environment, the server starts and
+/// requires sign-in (01M3JZN1XQVVNVD0MJVM8J91HC). The issuer does not
+/// answer, so the test calls no provider; the server serves (R153).
+#[tokio::test]
+async fn oidc_settings_in_the_environment_require_sign_in() {
+    let mut cmd = server(&["--listen", "127.0.0.1:0"]);
+    cmd.env("RIFF_OIDC_ISSUER", "http://127.0.0.1:1")
+        .env("RIFF_OIDC_CLIENT_ID", "my-app")
+        .env("RIFF_OIDC_CLIENT_SECRET", "my-secret");
+    let (_server, port, _) = serve_cmd(cmd);
+    let url = format!("http://127.0.0.1:{port}/v1");
+    let http = common::client();
+    let config: serde_json::Value = http
+        .get(format!("{url}/sign-in"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config["client_id"], "my-app");
+    let register = Register {
+        me: "riff://mike@pangolin".parse().unwrap(),
+    };
+    let reply = http
+        .post(format!("{url}/register"))
+        .json(&register)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 401);
 }
 
 #[test]

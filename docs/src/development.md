@@ -329,8 +329,7 @@ riff logout --all --user USER
 
 ### Tokens
 
-With `--require-sign-in`, the server refuses each call without a
-token. `riff` sends a token on each call when you are signed in. A
+With an OAuth client, the server refuses each call without a token. `riff` sends a token on each call when you are signed in. A
 command that you type acts as you. Each Claude Code session gets its
 own token, which acts only as that session.
 
@@ -466,12 +465,28 @@ the same, with the OAuth client.
   setting that it gets replaces the old one. So a plain
   `riff-server install` keeps the OAuth client, `--listen` and
   `--insecure`.
-- With no sign-in, an address that is not loopback needs `--insecure`.
-  Else `install` fails and changes nothing.
+- With no OAuth client, an address that is not loopback needs
+  `--insecure`. Else `install` fails and changes nothing.
 - With sign-in, an address that is not loopback needs an owner:
   `--owner EMAIL`, or a bucket that holds one. `install` with a bucket
   does not check it. The server checks it at start.
 - `riff-server uninstall` stops the service and removes its files.
+
+### A riff on your network with no sign-in
+
+A riff with no OAuth client listens only on a loopback address. On a
+network that you trust, `--insecure` lets it listen on your network
+with no sign-in:
+
+```sh
+riff-server install --listen 0.0.0.0:7878 --insecure
+```
+
+Then each machine that can reach the riff can read and send its
+messages with any name, also as your lead. Each message counts as
+verified. It warns at start. See
+[A riff with no sign-in](how-it-works.md#a-riff-with-no-sign-in). A
+riff with sign-in is safer: see [Add a Machine](add-a-machine.md).
 
 ### Remove a setting of the service
 
@@ -539,7 +554,8 @@ riff connect claude
 
 `just dev` runs the debug builds of your tree with Claude Code. It
 builds the workspace, points `~/.cargo/bin/riff` at the debug `riff`,
-updates the plugin, and stops the `riff-server` service. Then it runs
+stops the `riff-server` service, and updates the plugin. So
+`riff connect claude` does not sign in at the service. Then it runs
 the debug `riff-server` in the foreground, on loopback:
 
 ```sh
@@ -660,6 +676,34 @@ gcloud storage buckets describe gs://como-riff-state --project como-riff \
 
 The output shows one `Delete` rule with `age` 30 and the prefix
 `threads/`.
+
+## Make your own OAuth client
+
+riff has no built-in sign-in app, and no client ID or secret is in its
+source or its binaries. Each person who runs a riff with sign-in makes
+their own OAuth client, and gives it to `riff-server` in the
+environment: `RIFF_OIDC_CLIENT_ID` and `RIFF_OIDC_CLIENT_SECRET`.
+
+For a Google client, do steps 1 to 7 of
+[Make the OAuth client](#make-the-oauth-client) in your own Google
+Cloud project, with these changes:
+
+- Audience: **Internal** for the accounts of your organization only.
+  For a personal account, pick **External**, and add each person as a
+  test user.
+- Step 7: copy the client ID and the client secret to a safe place.
+  Do not run `just cloud oauth-client`. Commit neither.
+
+Then give both to `riff-server`, for example for the local service:
+
+```sh
+export RIFF_OIDC_CLIENT_ID=ID RIFF_OIDC_CLIENT_SECRET=SECRET
+riff-server install
+```
+
+With an OAuth client, the riff requires sign-in. On an address that
+is not loopback, a riff with no OAuth client does not start. Its error
+names both settings.
 
 ## Make the OAuth client
 

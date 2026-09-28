@@ -607,9 +607,8 @@ sequenceDiagram
 
 ### A riff with no sign-in
 
-The riff of [Start a Riff](start-a-riff.md) and
-[Add a Machine](add-a-machine.md) has no sign-in. It trusts its
-network. So its reader counts each message as verified.
+The local riff of [Start a Riff](start-a-riff.md#start-a-local-riff)
+has no sign-in. It trusts its network. So its reader counts each message as verified.
 
 ```mermaid
 flowchart LR
@@ -626,9 +625,10 @@ any name, also as your lead (see
 [When a message of the lead counts](#when-a-message-of-the-lead-counts)).
 
 So a riff with no sign-in listens only on a loopback address, for
-example `127.0.0.1`. To listen on your network, it needs `--insecure`
-(`RIFF_INSECURE`), and then it warns at start. A riff that requires
-sign-in listens on any address with no flag.
+example `127.0.0.1`. To listen on your network, give it an OAuth
+client (see [Add a Machine](add-a-machine.md)). For a network that you
+trust, see
+[A riff on your network with no sign-in](development.md#a-riff-on-your-network-with-no-sign-in).
 
 `riff-server` has no TLS. On a network, the traffic is plain HTTP. For
 TLS, put a proxy in front of it, or run it on a platform that gives

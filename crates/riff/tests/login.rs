@@ -228,6 +228,27 @@ async fn a_call_with_an_ended_sign_in_says_to_run_riff_login() {
     assert!(format!("{error:#}").contains("run riff login"), "{error:#}");
 }
 
+/// `riff connect claude` signs in only at a riff with sign-in, and only
+/// when this machine has no sign-in there (01M3JZN1ZZED3FXQEFNJ4KVCN5).
+#[tokio::test]
+async fn ensure_signs_in_only_when_needed() {
+    let (_, api) = start().await;
+    let first = login::ensure(&api, browser).await.unwrap();
+    assert_eq!(first.map(|s| s.user).as_deref(), Some("ada"));
+    let again = login::ensure(&api, |_| panic!("no browser")).await.unwrap();
+    assert_eq!(again, None);
+
+    // A riff with no sign-in needs none.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let open = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let router = Service::default().router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let none = login::ensure(&open, |_| panic!("no browser"))
+        .await
+        .unwrap();
+    assert_eq!(none, None);
+}
+
 #[tokio::test]
 async fn logout_all_with_no_sign_in_at_a_riff_with_sign_in_says_riff_login() {
     let (_, api) = start().await;
@@ -346,6 +367,20 @@ async fn a_new_riff_at_the_same_url_asks_for_riff_login() {
     // The next command has no sign-in, and no error about it.
     let next = api.clone().signed_in(None).unwrap();
     next.who(&ada(), false).await.unwrap();
+}
+
+/// After a new riff at the same URL, `riff connect claude` signs in
+/// again: the old sign-in does not count.
+#[tokio::test]
+async fn ensure_signs_in_again_at_a_new_riff() {
+    let (front, api) = Front::start().await;
+    let old = Service::new(front.config());
+    front.serve(&old);
+    login::ensure(&api, browser).await.unwrap().unwrap();
+    let new = Service::new(front.config());
+    front.serve(&new);
+    let again = login::ensure(&api, browser).await.unwrap().unwrap();
+    assert_eq!(again.riff_id.as_deref(), Some(new.tokens().riff_id()));
 }
 
 /// A restart on the same store keeps the riff ID, and the sign-in stays.

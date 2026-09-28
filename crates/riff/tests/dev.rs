@@ -65,14 +65,14 @@ const RESTORE: &str =
     "Restore the release setup:\n  just install\n  systemctl --user start riff-server\n";
 
 #[test]
-fn dev_builds_links_connects_stops_the_service_and_runs_the_server() {
+fn dev_builds_links_stops_the_service_connects_and_runs_the_server() {
     let (out, log, home) = dev(&["--listen", "127.0.0.1:7979"], "", "");
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         log,
         "cargo build --workspace\n\
-         riff connect claude\n\
          systemctl --user stop riff-server\n\
+         riff connect claude\n\
          riff-server --listen 127.0.0.1:7979\n",
     );
     let link = std::fs::read_link(home.path().join(".cargo/bin/riff")).unwrap();

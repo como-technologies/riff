@@ -71,8 +71,9 @@ struct Cli {
     )]
     issuer: String,
 
-    /// The OAuth client ID of riff at the issuer. Without it, the server
-    /// has no sign-in.
+    /// The OAuth client ID of your own OIDC app at the issuer. With it,
+    /// each call needs sign-in. Without it, the server has no sign-in.
+    /// riff has no built-in client.
     #[arg(long, env = "RIFF_OIDC_CLIENT_ID", global = true)]
     client_id: Option<String>,
 
@@ -301,7 +302,8 @@ async fn run() -> std::io::Result<()> {
         .public_url
         .unwrap_or_else(|| format!("http://{}", listener.local_addr().unwrap_or(cli.listen)));
     let mut config = Config::new(&public_url);
-    config.require_sign_in = cli.require_sign_in;
+    // A riff with a provider requires sign-in (01M3JZN1XQVVNVD0MJVM8J91HC).
+    config.require_sign_in = cli.require_sign_in || cli.client_id.is_some();
     config.admins = cli.admins;
     config.owner = cli.owner;
     for admin in &config.admins {
