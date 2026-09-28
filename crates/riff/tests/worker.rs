@@ -232,7 +232,7 @@ async fn a_hangup_stops_the_worker_with_no_message() {
     let api = start_server().await;
     let lead = lead(&api).await;
     let dir = repo();
-    let claude = fake_claude(dir.path(), "sleep 30");
+    let claude = fake_claude(dir.path(), "exec sleep 30");
     let mut child = riff(&api, dir.path(), "w3")
         .args(["workers", "run"])
         .arg(&claude)
