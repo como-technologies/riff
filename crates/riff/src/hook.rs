@@ -87,6 +87,21 @@
 //! context has no such line (01M3JN21WDXWTHDKXKQ80ZPYPK). See
 //! [`behind`].
 //!
+//! # A session in a linked worktree
+//!
+//! tmux opens a new pane in the directory of the current pane. So a
+//! session can start in the worktree of another session. At a new
+//! start in a linked worktree, the hook looks for the other live
+//! sessions in the same place, in the `who` of the server ([`Linked`]):
+//!
+//! | Other live session there | The context |
+//! |---|---|
+//! | yes | Names it and the main worktree. Stop, claim nothing, change no file, ask to start again in the main worktree (01M3MYQ299XKJE9X9FHWZ7JFM4). |
+//! | no | Names the worktree, and points to "Pick up dropped work" (01M3MYQ2BFKS3KJ8DWNWDJKWB9). |
+//! | not known | Names the worktree, and asks for a look at `who`. |
+//!
+//! In the main worktree, the context has no such line.
+//!
 //! ```
 //! use riff::hook::{Source, StartInput};
 //!
@@ -106,7 +121,7 @@ use std::time::Duration;
 
 use riff_core::build::Mismatch;
 use riff_core::name::SessionUri;
-use riff_core::wire::{Freed, RiffState};
+use riff_core::wire::{Freed, RiffState, SessionInfo};
 use serde::Deserialize;
 
 /// The longest wait of the start hook for the state of the riff.
@@ -195,6 +210,108 @@ pub async fn behind(dir: &Path, wait: Duration) -> Option<Behind> {
         branch,
         commits,
     })
+}
+
+/// A session that starts in a linked worktree, not in the main worktree
+/// of its clone (01M3MYQ299XKJE9X9FHWZ7JFM4, 01M3MYQ2BFKS3KJ8DWNWDJKWB9).
+/// tmux opens a new pane in the directory of the current pane, so a
+/// session can start in the worktree of another session.
+///
+/// ```
+/// use riff::hook::Linked;
+///
+/// let linked = Linked { path: "/src/riff/.claude/worktrees/issue-12".into(), main: "/src/riff".into() };
+/// let other = "riff://mike@pangolin/como-technologies/riff?session=b4b9#issue-12".parse()?;
+/// let line = linked.line(Some(&[other]));
+/// assert!(line.contains("session=b4b9"));
+/// assert!(line.contains("start this session again in the main worktree /src/riff"));
+/// let line = linked.line(Some(&[]));
+/// assert!(line.contains("Pick up dropped work"));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Linked {
+    /// The linked worktree where the session starts.
+    pub path: PathBuf,
+    /// The main worktree of the clone.
+    pub main: PathBuf,
+}
+
+impl Linked {
+    /// The line of the start context. `others` are the other live
+    /// sessions in this worktree, or `None` when the hook could not
+    /// read them.
+    pub fn line(&self, others: Option<&[SessionUri]>) -> String {
+        let (path, main) = (self.path.display(), self.main.display());
+        let again = format!(
+            "Call the riff tell tool with the session `lead`: ask your user to start this \
+             session again in the main worktree {main}."
+        );
+        match others {
+            Some([]) => format!(
+                "- You started in the linked worktree {path}, not in the main worktree {main}. \
+                 No live session works here. It can hold dropped work: see \"Pick up dropped \
+                 work\" in the riff skill.\n"
+            ),
+            Some(others) => {
+                let names: Vec<String> = others.iter().map(ToString::to_string).collect();
+                format!(
+                    "- Stop: you started in the worktree {path} of another live session: {}. \
+                     Do not follow the start routine. Claim nothing, change no file here, and \
+                     run no git command that writes. {again} Then wait.\n",
+                    names.join(", ")
+                )
+            }
+            None => format!(
+                "- You started in the linked worktree {path}, not in the main worktree {main}. \
+                 Call the riff who tool. When another session works here, claim nothing, \
+                 change no file here, and {}\n",
+                again.replacen("Call", "call", 1)
+            ),
+        }
+    }
+}
+
+/// The linked worktree of `dir`, or `None` when `dir` is in the main
+/// worktree or not in git.
+pub async fn linked(dir: &Path) -> Option<Linked> {
+    let abs = ["rev-parse", "--path-format=absolute"];
+    let git_dir = git(dir, &[abs[0], abs[1], "--git-dir"]).await?;
+    let common = git(dir, &[abs[0], abs[1], "--git-common-dir"]).await?;
+    if git_dir == common {
+        return None;
+    }
+    let path = git(dir, &["rev-parse", "--show-toplevel"]).await?.into();
+    let list = git(dir, &["worktree", "list", "--porcelain"]).await?;
+    let main = list.lines().next()?.strip_prefix("worktree ")?.into();
+    Some(Linked { path, main })
+}
+
+/// The other live sessions that work in the place of `me`.
+///
+/// ```
+/// use riff::hook::others_here;
+/// use riff_core::wire::SessionInfo;
+///
+/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None };
+/// let me: riff_core::name::SessionUri = "riff://mike@pangolin/o/r?session=a1#issue-12".parse()?;
+/// let who = [
+///     info("riff://mike@pangolin/o/r?session=a1#issue-12", true),
+///     info("riff://mike@pangolin/o/r?session=b2&claim=issue-12#issue-12", true),
+///     info("riff://mike@pangolin/o/r?session=c3#issue-12", false),
+///     info("riff://mike@pangolin/o/r?session=d4#issue-13", true),
+///     info("riff://mike@thelio/o/r?session=e5#issue-12", true),
+/// ];
+/// let others = others_here(&me, &who);
+/// assert_eq!(others.len(), 1);
+/// assert_eq!(others[0].who().session(), Some("b2"));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn others_here(me: &SessionUri, who: &[SessionInfo]) -> Vec<SessionUri> {
+    who.iter()
+        .filter(|s| s.live && s.uri.who() != me.who() && s.uri.place() == me.place())
+        .map(|s| s.uri.clone())
+        .collect()
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Option<String> {
