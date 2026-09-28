@@ -757,6 +757,19 @@ pub fn signed_in(user: &str, server: &str) -> String {
     format!("You signed in to {server} as {user}.")
 }
 
+/// The line of `riff connect claude` after it signed in. It names no
+/// user: `riff whoami` shows it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::connect_signed_in("http://127.0.0.1:7878"),
+///     "You signed in to http://127.0.0.1:7878. riff whoami shows your user."
+/// );
+/// ```
+pub fn connect_signed_in(server: &str) -> String {
+    format!("You signed in to {server}. riff whoami shows your user.")
+}
+
 /// The answer to `riff logout`. `had` is false when there was no
 /// sign-in.
 ///

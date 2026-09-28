@@ -336,7 +336,7 @@ async fn main() -> Result<()> {
         let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
         println!("{}", text::connected(&connected));
         match login::ensure(&Api::new(&cli.server), open_browser).await {
-            Ok(Some(sign_in)) => println!("{}", text::signed_in(&sign_in.user, &cli.server)),
+            Ok(Some(_)) => println!("{}", text::connect_signed_in(&cli.server)),
             Ok(None) => {}
             Err(e) => anstream::eprintln!("riff: {}", text::connect_no_sign_in(&cli.server, &e)),
         }
