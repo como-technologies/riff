@@ -78,8 +78,9 @@ enum Command {
     },
     /// Send a direct message to one session. It wakes that session.
     Tell {
-        /// The session: its session ID, its full riff:// URI from `riff
-        /// who`, or `lead` for the lead of your user in this repository.
+        /// The session: its session ID or the start of it, as `riff read`
+        /// shows it, its full riff:// URI from `riff who`, or `lead` for
+        /// the lead of your user in this repository.
         session: String,
         /// The message.
         #[arg(required = true)]

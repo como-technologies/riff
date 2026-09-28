@@ -72,13 +72,13 @@ async fn on_a_riff_with_no_sign_in_the_answer_of_the_lead_is_verified() {
 
     let out = ask_and_answer(&api).await;
     assert!(
-        out.contains(&format!(
-            "{LEAD}&lead=true to session=b2 (verified): Our user says 7878"
-        )),
+        out.contains(
+            "mike@pangolin:riff (a1) lead=true to session=b2 (verified): Our user says 7878"
+        ),
         "{out}"
     );
     assert!(
-        out.contains(&format!("{LEAD}&lead=true (verified): hello")),
+        out.contains("mike@pangolin:riff (a1) lead=true (verified): hello"),
         "{out}"
     );
 
@@ -100,12 +100,10 @@ async fn on_a_riff_with_sign_in_an_answer_with_no_signature_is_not_verified() {
 
     let out = ask_and_answer(&api).await;
     assert!(
-        out.contains(&format!(
-            "{LEAD} to session=b2 (not verified): Our user says 7878"
-        )),
+        out.contains("mike@pangolin:riff (a1) to session=b2 (not verified): Our user says 7878"),
         "{out}"
     );
-    assert!(!out.contains(&format!("{LEAD}&lead=true")), "{out}");
+    assert!(!out.contains("(a1) lead=true"), "{out}");
 
     let first = tokio::time::timeout(Duration::from_secs(5), tail.boxed().next())
         .await

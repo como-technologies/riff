@@ -218,7 +218,7 @@ async fn a_server_without_sign_in_keeps_no_signature() {
     assert_eq!(reply.status(), 200);
     let reply: ReadReply = client
         .post(format!("{base}/v1/read"))
-        .json(&serde_json::json!({ "me": A, "thread": REPO }))
+        .json(&serde_json::json!({ "me": A, "thread": REPO, "all": true }))
         .send()
         .await
         .unwrap()

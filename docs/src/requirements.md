@@ -681,6 +681,17 @@
 - **R186** The wake line and `read` show that a message is a status
   request. A session that a status request wakes answers with `status`.
   It does not post a reply.
+- **01M3JPK82PN4F706MCHDH771MW** `read` does not give a session its own
+  posts, and the unread counts of `threads` leave them out. `read` with
+  `all` gives them.
+- **01M3JPK85FT5CCQPF3WDCXSMDF** Each message in `read` shows a short
+  sender: `USER@HOST:REPO#WORKTREE`, the first 8 characters of its
+  session ID, and `lead=true` for a verified lead. A post to each session of
+  the repository of its thread shows `to all`. `who` gives the full
+  URI.
+- **01M3JPK885GPD16FPK7D05R2RC** `tell` takes a session ID, the start
+  of a session ID as `read` shows it, a full URI, or `lead`. A start
+  that fits more than one session in `who` is an error.
 - **R187** The skill tells a session to set its status when it claims,
   when it changes step, when it is blocked, and when it releases.
 

@@ -240,7 +240,7 @@ async fn read_shows_unread_messages_of_the_repository_thread() {
     assert_eq!(
         out,
         format!(
-            "{note}\n\ncomo-technologies/riff\n[1] riff://mike@pangolin (verified): the API is ready\n"
+            "{note}\n\ncomo-technologies/riff\n[1] mike@pangolin (verified): the API is ready\n"
         )
     );
     assert_eq!(code, 0);
@@ -250,7 +250,7 @@ async fn read_shows_unread_messages_of_the_repository_thread() {
 
     let (out, _) = riff(&server, dir, "brett", &["read", "--all"]).await;
     assert!(
-        out.contains("[1] riff://mike@pangolin (verified): the API is ready"),
+        out.contains("[1] mike@pangolin (verified): the API is ready"),
         "{out}"
     );
 }
@@ -270,7 +270,7 @@ async fn read_takes_a_named_thread() {
     .await;
     let (out, code) = riff(&server, dir, "brett", &["read", "--thread", "api-v2"]).await;
     assert!(
-        out.ends_with("api-v2\n[1] riff://mike@pangolin (verified): v2 plan\n"),
+        out.ends_with("api-v2\n[1] mike@pangolin (verified): v2 plan\n"),
         "{out}"
     );
     assert_eq!(code, 0);
@@ -311,8 +311,8 @@ async fn tell_sends_a_direct_message_to_a_session() {
     assert!(
         out.ends_with(
             "direct with mike@pangolin\n\
-             [1] riff://mike@pangolin to session=b2 (verified): are you there?\n\
-             [2] riff://mike@pangolin to session=b2 (verified): and now?\n"
+             [1] mike@pangolin to session=b2 (verified): are you there?\n\
+             [2] mike@pangolin to session=b2 (verified): and now?\n"
         ),
         "{out}"
     );
@@ -383,9 +383,7 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
 
     let (out, _) = agent(&server, dir, "mike", "a1", &["read"]).await;
     assert!(
-        out.ends_with(
-            "[1] riff://mike@pangolin to repo=como-technologies/riff (verified) asks for your status.\n"
-        ),
+        out.ends_with("[1] mike@pangolin to all (verified) asks for your status.\n"),
         "{out}"
     );
     let (out, code) = agent(

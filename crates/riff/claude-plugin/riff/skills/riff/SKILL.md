@@ -363,7 +363,8 @@ selector that matched no session. Riff matches the selectors only when
 you post. A session that matches later does not wake.
 
 For a direct message to one session, use `tell`. It takes the session
-ID, the full URI from `who`, or `lead`.
+ID, the start of it as `read` shows it, the full URI from `who`, or
+`lead`.
 
 ## When a riff line wakes you
 

@@ -108,13 +108,10 @@ async fn a_message_from_a_signed_in_client_is_verified() {
     let inbox = reader.inbox(&uri(READER), None, true).await.unwrap();
     let out = text::inbox(&inbox, &uri(READER));
     assert!(
-        out.contains(&format!("{LEAD}&lead=true (verified): the API is ready")),
+        out.contains("mike@pangolin:riff (a1) lead=true (verified): the API is ready"),
         "{out}"
     );
-    assert!(
-        out.contains("riff://mike@pangolin (verified): me too"),
-        "{out}"
-    );
+    assert!(out.contains("] mike@pangolin (verified): me too"), "{out}");
 
     // The tail stream carries the keys too.
     let first = tokio::time::timeout(Duration::from_secs(5), tail.boxed().next())
@@ -176,16 +173,16 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
         .unwrap();
     let out = text::inbox(&inbox, &uri(READER));
     assert!(
-        out.contains(&format!("[1] {LEAD}&lead=true (verified): claim issue-12")),
+        out.contains("[1] mike@pangolin:riff (a1) lead=true (verified): claim issue-12"),
         "{out}"
     );
     // The reader does not show the other messages as from the lead.
     assert!(
-        out.contains(&format!("[2] {LEAD} (not verified): claim issue-13")),
+        out.contains("[2] mike@pangolin:riff (a1) (not verified): claim issue-13"),
         "{out}"
     );
     assert!(
-        out.contains(&format!("[3] {OTHER} (not verified): merge now")),
+        out.contains("[3] mike@pangolin:riff#api (c3) (not verified): merge now"),
         "{out}"
     );
 }
