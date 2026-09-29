@@ -291,9 +291,44 @@ pub struct SessionInfo {
     #[serde(default)]
     pub claims_secs: u64,
     /// The state of the session, that the server derives
-    /// (01M3QB6CJ1XCQG5B1BVR8AF3B4).
-    #[serde(default)]
-    pub state: SessionState,
+    /// (01M3QB6CJ1XCQG5B1BVR8AF3B4). An older server sends none: see
+    /// [`SessionInfo::fill_state`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<SessionState>,
+}
+
+impl SessionInfo {
+    /// Sets the state from the other facts of the session when the
+    /// server sent none, as an older server does. `riff` is the state of
+    /// the riff. A state from the server stays.
+    ///
+    /// ```
+    /// use riff_core::wire::{RiffState, SessionInfo, SessionState};
+    ///
+    /// // A who reply of an older server: no state.
+    /// let json = r#"{"uri":"riff://mike@thelio/o/r?session=w1&claim=issue-12","live":true}"#;
+    /// let mut s: SessionInfo = serde_json::from_str(json).unwrap();
+    /// assert_eq!(s.state, None);
+    /// s.fill_state(RiffState::Running);
+    /// assert_eq!(s.state, Some(SessionState::Busy));
+    /// s.fill_state(RiffState::Paused);
+    /// assert_eq!(s.state, Some(SessionState::Busy), "a state stays");
+    /// ```
+    pub fn fill_state(&mut self, riff: RiffState) {
+        if self.state.is_some() {
+            return;
+        }
+        let blocked = self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
+        self.state = Some(SessionState::of(
+            self.live,
+            riff == RiffState::Paused,
+            blocked,
+            !self.uri.claims().is_empty(),
+        ));
+    }
 }
 
 /// The state of a session. The server derives it; no session reports it

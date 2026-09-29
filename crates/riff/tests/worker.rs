@@ -252,7 +252,7 @@ async fn a_request_of_the_lead_wakes_an_idle_worker() {
     assert!(idle.uri.claims().is_empty(), "{idle:?}");
     assert_eq!(
         idle.state,
-        riff_core::wire::SessionState::Paused,
+        Some(riff_core::wire::SessionState::Paused),
         "{idle:?}"
     );
 

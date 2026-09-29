@@ -1349,7 +1349,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     worker,
 ///     stopping: false,
 ///     claims_secs: 0,
-///     state: riff_core::wire::SessionState::Idle,
+///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
 /// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
@@ -1394,7 +1394,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
-///         state: SessionState::Busy,
+///         state: Some(SessionState::Busy),
 ///     },
 ///     SessionInfo {
 ///         uri: brett,
@@ -1404,7 +1404,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: true,
 ///         stopping: false,
 ///         claims_secs: 60,
-///         state: SessionState::Idle,
+///         state: Some(SessionState::Idle),
 ///     },
 /// ];
 /// // The owner is a person: the sessions of brett get no tag `owner`.
@@ -1430,7 +1430,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
             ""
         };
         let tags: String = tags(s, owner).iter().map(|t| format!(" {t}")).collect();
-        let state = s.state.word();
+        let state = crate::state::of(s).word();
         let _ = writeln!(out, "{} {state}{you}{tags}  {}", name(&s.uri), s.uri);
         for (line, _) in crate::state::detail(s, &|_| None) {
             let _ = writeln!(out, "  {line}");
@@ -1458,7 +1458,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     worker: false,
 ///     stopping: false,
 ///     claims_secs: 0,
-///     state: riff_core::wire::SessionState::Idle,
+///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);

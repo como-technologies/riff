@@ -888,7 +888,7 @@ impl State {
                     claims_secs: now
                         .saturating_duration_since(session.claims_changed)
                         .as_secs(),
-                    state,
+                    state: Some(state),
                 }
             })
             .collect()
@@ -3372,7 +3372,7 @@ mod tests {
         let now = Instant::now();
         let mut state = setup(now);
         let t = |secs| now + Duration::from_secs(secs);
-        let of = |state: &State, secs| info(state, &docs(), t(secs)).state;
+        let of = |state: &State, secs| info(state, &docs(), t(secs)).state.unwrap();
         assert_eq!(of(&state, 0), SessionState::Offline, "no watch");
         state.watch_started(&docs(), t(1));
         assert_eq!(of(&state, 1), SessionState::Idle);

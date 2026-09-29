@@ -987,6 +987,8 @@
   `blocked` in the status line.
 - **01M3QB6CJ1XCQG5B1BVR8AF3B4** `riff-server` derives the state of
   each session and gives it in `who`. No session reports its state.
+  When a `who` reply has no state, riff derives it the same way from
+  the other facts of the reply.
   The first state that matches wins: `offline` (no open watch stream),
   `paused` (the riff is paused), `blocked` (a current blocked status),
   `busy` (a claim), `idle` (each other session). `riff top`, `riff

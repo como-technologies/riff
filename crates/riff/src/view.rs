@@ -335,7 +335,7 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
-///         state: SessionState::Busy,
+///         state: Some(SessionState::Busy),
 ///     },
 ///     SessionInfo {
 ///         uri: brett,
@@ -345,7 +345,7 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
-///         state: SessionState::Blocked,
+///         state: Some(SessionState::Blocked),
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
@@ -441,7 +441,8 @@ pub fn who(
 
 /// The word of the state of `s`, in its color.
 fn state_cell(s: &SessionInfo) -> String {
-    styled(crate::state::style(s.state), s.state.word())
+    let state = crate::state::of(s);
+    styled(crate::state::style(state), state.word())
 }
 
 /// The DETAIL cell of `s`: each line of the [`crate::state::detail`]
@@ -462,7 +463,7 @@ fn state_cell(s: &SessionInfo) -> String {
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 300,
-///     state: SessionState::Busy,
+///     state: Some(SessionState::Busy),
 /// };
 /// let plain = anstream::adapter::strip_str(&riff::view::detail_cell(&s)).to_string();
 /// assert_eq!(plain, "working on #12  2h ago: tests");
@@ -531,7 +532,7 @@ pub fn host_heading(
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 0,
-///     state: SessionState::Busy,
+///     state: Some(SessionState::Busy),
 /// };
 /// let out = riff::view::workers(&panes, &[info.clone()], false);
 /// let plain = anstream::adapter::strip_str(&out).to_string();

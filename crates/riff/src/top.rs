@@ -363,7 +363,7 @@ impl Top<'_> {
     ///     worker,
     ///     stopping: false,
     ///     claims_secs: 600,
-    ///     state,
+    ///     state: Some(state),
     /// };
     /// let sessions = [
     ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "plan", None, false, SessionState::Idle),
@@ -576,7 +576,7 @@ impl Top<'_> {
             vec![
                 (short(s), session_style(&s.uri)),
                 (tags.join(" "), MUTED),
-                (s.state.word().to_owned(), state::style(s.state)),
+                (state::of(s).word().to_owned(), state::style(state::of(s))),
             ],
         );
         let title = |n| self.issues?.titles.get(&n).cloned();
@@ -606,7 +606,7 @@ fn branch(last: bool) -> &'static str {
 
 /// True when the state of `s` is `blocked`.
 fn blocked(s: &SessionInfo) -> bool {
-    s.state == SessionState::Blocked
+    state::of(s) == SessionState::Blocked
 }
 
 /// The short session ID of `riff who`.

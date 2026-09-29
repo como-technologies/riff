@@ -1618,7 +1618,9 @@ show it. The first state that matches wins:
 | `busy` | green | the session holds a claim | `working on #7`, or `reviewing #7` for a verify claim, then the step |
 | `idle` | dim | each other session | `ready for work for 6m`, then a current step |
 
-The time of `idle` counts from the last release of the session.
+The time of `idle` counts from the last release of the session. An
+older `riff-server` sends no state. Then riff derives the state from
+the other facts that the server sends.
 
 ```mermaid
 flowchart TD

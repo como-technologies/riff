@@ -29,7 +29,7 @@
 //!     C -- no --> I[idle]
 //! ```
 
-use riff_core::wire::{SessionInfo, SessionState, StatusInfo};
+use riff_core::wire::{RiffState, SessionInfo, SessionState, StatusInfo};
 
 use crate::style::{DIM, ERROR, GOOD, MUTED, WARNING};
 use crate::text::{ago, safe};
@@ -44,6 +44,21 @@ pub fn style(state: SessionState) -> anstyle::Style {
         SessionState::Busy => GOOD,
         SessionState::Idle => DIM,
     }
+}
+
+/// Fills the state of each session that has none, from its other facts
+/// and the state `riff` of the riff: an older server sends no state
+/// ([`SessionInfo::fill_state`]).
+pub fn fill(sessions: &mut [SessionInfo], riff: RiffState) {
+    for s in sessions {
+        s.fill_state(riff);
+    }
+}
+
+/// The state of `s`. riff fills the state before it shows a session
+/// ([`SessionInfo::fill_state`]); a session with none is `offline`.
+pub fn of(s: &SessionInfo) -> SessionState {
+    s.state.unwrap_or_default()
 }
 
 /// The status of `s` when it is current: not stale.
@@ -77,24 +92,24 @@ fn current(s: &SessionInfo) -> Option<&StatusInfo> {
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 300,
-///     state: SessionState::Busy,
+///     state: Some(SessionState::Busy),
 /// };
 /// assert_eq!(plain(&s), ["working on #12 Show the wave", "reviewing #9", "2m ago: tests"]);
-/// s.state = SessionState::Paused;
+/// s.state = Some(SessionState::Paused);
 /// assert_eq!(plain(&s), ["working on #12 Show the wave", "reviewing #9", "stopped at: tests"]);
 /// s.status = Some(step("merge", Some("I need a review"), false));
-/// s.state = SessionState::Blocked;
+/// s.state = Some(SessionState::Blocked);
 /// assert_eq!(
 ///     plain(&s),
 ///     ["I need a review (step: merge, 2m ago)", "working on #12 Show the wave", "reviewing #9"]
 /// );
 /// s.uri = "riff://mike@thelio/o/r?session=w1".parse()?;
 /// s.status = Some(step("tests", None, true));
-/// s.state = SessionState::Idle;
+/// s.state = Some(SessionState::Idle);
 /// assert_eq!(plain(&s), ["ready for work for 5m"]);
 /// s.status = Some(step("plan the wave", None, false));
 /// assert_eq!(plain(&s), ["ready for work for 5m", "2m ago: plan the wave"]);
-/// s.state = SessionState::Offline;
+/// s.state = Some(SessionState::Offline);
 /// assert_eq!(plain(&s), ["seen 2h ago"]);
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -119,7 +134,7 @@ pub fn detail(
         }
     };
     let mut lines = Vec::new();
-    match s.state {
+    match of(s) {
         SessionState::Offline => lines.push((format!("seen {} ago", ago(s.idle_secs)), MUTED)),
         SessionState::Paused => {
             lines.extend(claims());

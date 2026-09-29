@@ -914,7 +914,8 @@ async fn main() -> Result<()> {
         }
         Command::Who { all, long } => {
             let state = api.riff(&me).await?;
-            let who = api.roster(&me, all).await?;
+            let mut who = api.roster(&me, all).await?;
+            riff::state::fill(&mut who.sessions, state);
             anstream::print!("{}", view::who(state, &who.owner, &who.sessions, &me, long));
         }
         Command::Pause => pause(&api, &me, RiffState::Paused).await?,
@@ -1344,7 +1345,11 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
         let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
         let me = identity::me(&here, api.base())?;
-        api.signed_in(me.who().session())?.who(&me, false).await
+        let api = api.signed_in(me.who().session())?;
+        let riff = api.riff(&me).await?;
+        let mut sessions = api.who(&me, false).await?;
+        riff::state::fill(&mut sessions, riff);
+        Ok::<_, anyhow::Error>(sessions)
     };
     // With no worker here, a riff that does not answer only hides the
     // hosts.
@@ -1866,7 +1871,8 @@ async fn draw_top(
     let clear = !once && std::io::stdout().is_terminal();
     loop {
         let state = api.riff(me).await?;
-        let who = api.roster(me, false).await?;
+        let mut who = api.roster(me, false).await?;
+        riff::state::fill(&mut who.sessions, state);
         let server = riff::api::server_build();
         let top = riff::top::Top {
             state,
