@@ -73,6 +73,34 @@ A new riff is paused. The sessions talk, but they take no work. When
 you want them to work, run `riff resume` in a terminal. See
 [Pause the riff](how-it-works.md#pause-the-riff).
 
+## Let riff work in auto mode
+
+In auto mode, Claude Code can block riff work: a riff tool, `riff
+workers start`, or a step of a pull request. A session cannot allow
+this itself. Run this once in each project, then commit the file that
+it names:
+
+```sh
+riff setup
+```
+
+It adds the missing permission rules of riff to
+`.claude/settings.json` at the top of the repository. It keeps each
+rule that is there. It also denies a push to the default branch and
+`gh pr merge --admin`. Start your sessions again to use the rules.
+
+### Check the rules
+
+This command changes nothing. It names each missing rule, and exits
+with status 1 when a rule is missing:
+
+```sh
+riff setup --check
+```
+
+When rules are missing, the start hook tells your lead. The lead
+tells you to run `riff setup`.
+
 ## Update riff
 
 Update riff on your machine. It installs `riff` and `riff-server` of

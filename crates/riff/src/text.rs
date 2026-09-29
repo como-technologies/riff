@@ -7,6 +7,7 @@ use std::process::ExitStatus;
 
 use chrono::{DateTime, NaiveDate, TimeZone};
 
+use crate::permissions::Rules;
 use crate::plugin::{Connected, Statusline};
 use crate::pr::{Reported, Verdict};
 use riff_core::build::Build;
@@ -423,6 +424,74 @@ pub fn connected(done: &Connected) -> String {
         "{old}Installed the riff plugin from {}. Start a new Claude Code session to use it.\
          {statusline}",
         done.dir.display()
+    )
+}
+
+/// One line for each rule of `rules`: `allow RULE` or `deny RULE`.
+fn rule_lines(rules: &Rules) -> String {
+    let allow = rules.allow.iter().map(|r| format!("\n  allow {r}"));
+    let deny = rules.deny.iter().map(|r| format!("\n  deny  {r}"));
+    allow.chain(deny).collect()
+}
+
+/// The answer to `riff setup` (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+///
+/// ```
+/// use riff::permissions::Rules;
+/// use riff::text::setup_added;
+///
+/// let rules = Rules { allow: vec!["Bash(riff *)".into()], deny: vec!["D".into()] };
+/// assert_eq!(
+///     setup_added("/r/.claude/settings.json".as_ref(), &rules),
+///     "Added 2 riff permission rules to /r/.claude/settings.json:\n  allow Bash(riff *)\n  \
+///      deny  D\nCommit the file, so that each clone and each worktree has the rules. Start \
+///      Claude Code again to use them."
+/// );
+/// assert_eq!(
+///     setup_added("/s.json".as_ref(), &Rules::default()),
+///     "Each riff permission rule is there. riff changed nothing."
+/// );
+/// ```
+pub fn setup_added(path: &std::path::Path, added: &Rules) -> String {
+    if added.is_empty() {
+        return "Each riff permission rule is there. riff changed nothing.".into();
+    }
+    let n = added.len();
+    let s = if n == 1 { "" } else { "s" };
+    format!(
+        "Added {n} riff permission rule{s} to {}:{}\nCommit the file, so that each clone and \
+         each worktree has the rules. Start Claude Code again to use them.",
+        path.display(),
+        rule_lines(added)
+    )
+}
+
+/// The answer to `riff setup --check` (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+///
+/// ```
+/// use riff::permissions::Rules;
+/// use riff::text::setup_check;
+///
+/// let left = Rules { allow: vec!["mcp__riff".into()], deny: vec![] };
+/// assert_eq!(
+///     setup_check("/r/.claude/settings.json".as_ref(), &left),
+///     "1 riff permission rule is missing:\n  allow mcp__riff\nTo add it to \
+///      /r/.claude/settings.json, run: riff setup"
+/// );
+/// assert_eq!(setup_check("/s".as_ref(), &Rules::default()), "Each riff permission rule is there.");
+/// ```
+pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
+    if left.is_empty() {
+        return "Each riff permission rule is there.".into();
+    }
+    let (count, it) = match left.len() {
+        1 => ("1 riff permission rule is".to_owned(), "it"),
+        n => (format!("{n} riff permission rules are"), "them"),
+    };
+    format!(
+        "{count} missing:{}\nTo add {it} to {}, run: riff setup",
+        rule_lines(left),
+        path.display()
     )
 }
 

@@ -11,8 +11,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    auto_update, binary, help, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin,
-    pr, settings, terminal, text, worker,
+    auto_update, binary, help, hook, hygiene, identity, lifecycle, local, login, mcp, next,
+    permissions, plugin, pr, settings, terminal, text, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -310,6 +310,20 @@ enum Command {
     Connect {
         #[command(subcommand)]
         tool: Tool,
+    },
+    /// Add the Claude Code permission rules of riff to this project
+    ///
+    /// It adds each missing rule to .claude/settings.json at the top of
+    /// the repository: allow each riff tool, each riff command and the
+    /// pull request steps; deny a push to the default branch and
+    /// `gh pr merge --admin`. It keeps each rule and key that is there.
+    /// A rule in the user or the local settings counts as there. Commit
+    /// the file, so that each clone and each worktree has the rules.
+    Setup {
+        /// Change nothing. Name each missing rule, and exit with status 1
+        /// when a rule is missing.
+        #[arg(long)]
+        check: bool,
     },
     /// Show the riff that riff uses
     ///
@@ -697,6 +711,9 @@ async fn main() -> Result<()> {
         ask_auto_update();
         return Ok(());
     }
+    if let Command::Setup { check } = cli.command {
+        return setup(check);
+    }
     if let Command::Workers { command } = &cli.command {
         return workers(command.as_ref(), &cli.server).await;
     }
@@ -954,6 +971,7 @@ async fn main() -> Result<()> {
         Command::Hook { .. }
         | Command::Statusline
         | Command::Connect { .. }
+        | Command::Setup { .. }
         | Command::Server { .. }
         | Command::Update { .. }
         | Command::Workers { .. }
@@ -1381,6 +1399,19 @@ async fn session_start(server: &str) -> String {
     if worker::is_worker() {
         context.push_str(hook::WORKER_LINE);
     }
+    if let Some(cwd) = cwd
+        .as_deref()
+        .filter(|_| uri.as_ref().is_some_and(SessionUri::lead))
+    {
+        let project = permissions::Project::of(cwd);
+        let user = plugin::settings_from(
+            std::env::var_os("CLAUDE_CONFIG_DIR"),
+            std::env::var_os("HOME"),
+        );
+        if let Some(line) = hook::rules_line(&project.missing(user.as_deref()), &project.top) {
+            context.push_str(&line);
+        }
+    }
     hook::start_output(&context)
 }
 
@@ -1403,6 +1434,28 @@ async fn start_facts(
     let who = api.who(me, false).await?;
     let lead = who.iter().any(|s| s.uri.who() == me.who() && s.uri.lead());
     Ok((lead, riff, freed, hook::others_here(me, &who)))
+}
+
+/// `riff setup`: adds the missing permission rules of riff to the
+/// project settings, or with `check`, names them
+/// (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+fn setup(check: bool) -> Result<()> {
+    let project = permissions::Project::of(&identity::working_dir()?);
+    let user = plugin::settings_from(
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+        std::env::var_os("HOME"),
+    );
+    let left = project.missing(user.as_deref());
+    if check {
+        println!("{}", text::setup_check(&project.settings(), &left));
+        if !left.is_empty() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    let added = permissions::add(&project.settings(), &left)?;
+    println!("{}", text::setup_added(&project.settings(), &added));
+    Ok(())
 }
 
 /// The status line of the Claude Code session on stdin

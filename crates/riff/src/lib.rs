@@ -75,6 +75,7 @@ pub mod local;
 pub mod login;
 pub mod mcp;
 pub mod next;
+pub mod permissions;
 pub mod plugin;
 pub mod pr;
 pub mod relay;
