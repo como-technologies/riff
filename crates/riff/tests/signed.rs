@@ -187,3 +187,27 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
         "{out}"
     );
 }
+
+/// A call does not wait for a token that another future of its task
+/// gets and that the task no longer polls. It is the shape of `riff
+/// workers host`: its tick wins the `select!` while its watch gets the
+/// first token, and then it sets its status (01M3ND6R8YXN1KTRTRAV5A7F14).
+#[tokio::test]
+async fn a_call_does_not_wait_on_the_token_of_a_watch_that_its_task_does_not_poll() {
+    let (_service, api) = start_on(Arc::new(Memory::default())).await;
+    let me = uri(OTHER);
+    let client = api.clone().signed_in(me.who().session()).unwrap();
+    let mut wakes = Box::pin(riff::api::follow(
+        || client.watch(&me),
+        Duration::from_secs(5),
+    ));
+    tokio::select! {
+        biased;
+        _ = wakes.next() => panic!("a wake before the watch has a token"),
+        () = std::future::ready(()) => {}
+    }
+    let who = tokio::time::timeout(Duration::from_secs(5), client.who(&me, false))
+        .await
+        .expect("the call waits on the token of the watch");
+    assert!(who.is_ok(), "{who:?}");
+}

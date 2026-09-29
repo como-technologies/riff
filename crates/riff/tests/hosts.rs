@@ -684,3 +684,86 @@ async fn the_host_reads_no_input() {
     let info = std::fs::read_to_string(fdinfo).unwrap();
     assert!(info.starts_with("pos:\t0\n"), "{info}");
 }
+
+static MOCK_KEYRING: std::sync::Once = std::sync::Once::new();
+
+/// The sign-in of a pair from the server.
+fn signed(pair: riff_core::wire::TokenReply) -> riff::login::SignIn {
+    riff::login::SignIn {
+        user: pair.user,
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+        expires_at: u64::MAX,
+        riff_id: None,
+    }
+}
+
+/// Signs in mike at `service` with a new device key, and keeps both in
+/// `dir`, the secret files of a `RIFF_HOME`.
+fn sign_in_files(service: &riff_server::Service, url: &str, dir: &Path) {
+    let key = riff_core::dpop::Key::generate();
+    riff::secrets::file_set(dir, &riff::device::secret_name(url), &key.to_secret()).unwrap();
+    let pair = service
+        .tokens()
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
+        .unwrap();
+    let json = serde_json::to_string(&signed(pair)).unwrap();
+    riff::secrets::file_set(dir, &riff::login::secret_name(url), &json).unwrap();
+}
+
+/// A host against a server with sign-in shows in `riff who`, answers a
+/// start request of the lead, and stops on Ctrl-C with its session
+/// ended (01M3ND6R8YXN1KTRTRAV5A7F14). Before, its status waited for the
+/// token of its watch, and it never showed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_works_against_a_server_with_sign_in() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let service = riff_server::Service::new(riff_server::auth::Config {
+        require_sign_in: true,
+        ..riff_server::auth::Config::new(&url)
+    });
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    // The lead runs in this process, with its sign-in in the mock store.
+    MOCK_KEYRING.call_once(|| {
+        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+    });
+    let person = Api::new(&url);
+    let jkt = riff::device::key(&url).unwrap().thumbprint();
+    let pair = service
+        .tokens()
+        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
+        .unwrap();
+    riff::login::store(&url, &signed(pair)).unwrap();
+
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    let api = person.signed_in(Some("l1")).unwrap();
+    api.register(&lead).await.unwrap();
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+
+    let b = Machine::new("b", &url);
+    sign_in_files(&service, &url, &b.home.path().join("secrets"));
+    b.limit(2);
+    let mut host = b.host(&main);
+    let host_id = host_session(&api, &lead, "b").await;
+
+    api.tell(&lead, &host_id, "workers start 1").await.unwrap();
+    reads(&api, &lead, "b: started 1 worker").await;
+    assert_eq!(b.workers().len(), 1, "{}", b.log());
+
+    let took = host.stop("INT");
+    assert!(took < Duration::from_secs(2), "took {took:?}");
+    assert!(
+        !b.host_output().contains("did not end in time"),
+        "{}",
+        b.host_output()
+    );
+}
