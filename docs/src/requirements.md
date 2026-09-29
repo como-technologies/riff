@@ -58,6 +58,11 @@
 - **R172** Each issue has acceptance criteria: a `Done when:` line.
   Each criterion names what to run or look at, and what the result
   must be. The criteria follow ASD-STE100.
+- **01M3PRHM97CJ16FZD9ZK48ERAD** A session writes all prose in
+  ASD-STE100: each message, status, issue, pull request, commit,
+  release note, doc and answer to its user. This is rule 1 of the
+  skill. The level line of a release uses plain words that a person
+  understands.
 - **R173** After a session claims an issue, it reads the issue. When the
   `Done when:` line is missing or cannot be tested, the session does
   not start work. It writes the criteria, adds them to the issue, posts
