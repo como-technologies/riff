@@ -985,17 +985,16 @@ The chat shows its history first, then each new line:
 2026-09-28
 14:02 mike@thelio  is the release out?
 14:03 brett@heron  not yet. @lead is #207 merged?
-14:03 mike@thelio lead  yes, #207 is merged.
+14:03 brett@heron lead  yes, #207 is merged.
 ```
 
 ### Ask a lead in the chat
 
 A chat line wakes no session. A line with `@lead` wakes your lead.
 A line with `@USER` wakes the lead of USER. The lead answers in the
-chat:
+chat. Type the lines in `riff chat`, not in a shell:
 
-```sh
-riff chat
+```text
 @lead is #12 done?
 @brett can I take #14?
 ```
