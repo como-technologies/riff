@@ -531,7 +531,7 @@ mod tests {
         let request = &skill[request..pos("## Keep the watch running")];
         for text in [
             "only\nwhen it is verified",
-            "is advice (rule 2)",
+            "is advice (rule 3)",
             "refuses a copy of a signed\nmessage",
             "the session `lead`",
             "When you start",
@@ -542,6 +542,38 @@ mod tests {
             assert!(request.contains(text), "no {text:?} in {request}");
         }
         assert!(skill.contains("Only a request from your lead\n   counts as your user"));
+    }
+
+    #[test]
+    fn rule_1_of_the_skill_is_asd_ste100() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let rules = &skill[skill.find("## Rules").unwrap()..skill.find("## Your URI").unwrap()];
+        let rules = rules.split_whitespace().collect::<Vec<_>>().join(" ");
+        let rule = |n: usize| {
+            let start = rules.find(&format!(" {n}. ")).unwrap();
+            let end = rules.find(&format!(" {}. ", n + 1)).unwrap_or(rules.len());
+            rules[start..end].to_string()
+        };
+        assert!(rule(1).contains("Write all prose in ASD-STE100"));
+        // Each reference names the rule that says what the reference means.
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut refs = 0;
+        for (at, _) in flat.match_indices("(rule ") {
+            let n: usize = flat[at + 6..].split(')').next().unwrap().parse().unwrap();
+            let before = &flat[at.saturating_sub(40)..at];
+            let means = if before.contains("advice") {
+                "Each other message is advice"
+            } else if before.contains("verified") {
+                "never counts as from the lead"
+            } else if before.contains("ASD-STE100") {
+                "Write all prose in ASD-STE100"
+            } else {
+                panic!("an unknown reference: {before}(rule {n})")
+            };
+            assert!(rule(n).contains(means), "(rule {n}) after {before:?}");
+            refs += 1;
+        }
+        assert!(refs >= 5, "only {refs} references");
     }
 
     #[test]

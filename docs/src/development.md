@@ -800,10 +800,11 @@ git push -u origin HEAD
 ```
 
 Open a pull request for the branch. Its body states the level and the
-reason in one line, for example:
+reason in one line. Write the line in plain words that a person
+understands (ASD-STE100), for example:
 
 ```text
-Level: minor. The skill changes the verify flow, and the header changes.
+Level: minor. Old and new sessions work together, but they act differently: a new session asks for a verify in a new way.
 ```
 
 Give it the label `release`. The release notes leave out the pull
