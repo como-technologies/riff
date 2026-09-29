@@ -449,6 +449,10 @@ async fn the_update_of_a_process_in_a_removed_directory_runs_in_a_directory_that
     .await;
     let update_log = std::fs::read_to_string(riff::local::update_log(&machine.state()));
     assert!(done, "no message to the lead. update.log: {update_log:?}");
+    // The first try works: no failure for the removed directory.
+    let messages = machine.lead_messages("lead").await;
+    assert!(!messages.contains("cannot update itself"), "{messages}");
+    assert_eq!(messages.matches("updated itself").count(), 1, "{messages}");
     assert_eq!(log(machine.bin.path(), "cargo"), install(&newer_tag()));
     let home = machine.env.home().canonicalize().unwrap();
     assert_eq!(cargo_dir(machine.bin.path()), home.display().to_string());
