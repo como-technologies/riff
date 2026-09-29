@@ -210,7 +210,7 @@ pub fn start(
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
     let fresh = hygiene::fast_forward(&main).line();
     let base = Api::new(server).base().to_owned();
-    let riff = std::env::current_exe()?;
+    let riff = crate::binary::this_on_disk()?;
     let mcp = worker_mcp::prepare(&main, &riff)?;
     let programs: Vec<Program> = (0..start)
         .map(|_| {

@@ -167,7 +167,7 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
         .append(true)
         .open(&path)
         .with_context(|| format!("cannot open {}", path.display()))?;
-    let exe = std::env::current_exe().context("cannot find the riff binary")?;
+    let exe = crate::binary::this_on_disk().context("cannot find the riff binary")?;
     let mut command = Command::new(exe);
     if let Some(place) = here() {
         command.args([identity::PLACE_ARG, &identity::place_text(&place)]);

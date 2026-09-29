@@ -23,6 +23,8 @@
 //! parent of it that exists, where each process that it starts works.
 //!
 //! `riff top` follows an update the same way (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+//! `riff workers host` does it between two requests of the lead, and
+//! gives the new process its session (01M3Q55KJ8BKMPE9RADB63X8SP).
 //! `riff chat` and `riff mcp`
 //! do too, but only at a moment with no work in flight, and they give
 //! the new process their state in a hidden option (see [`with_last`]):
@@ -139,6 +141,32 @@ impl Binary {
         }
         command.args(args).exec()
     }
+}
+
+/// The path of the `riff` binary on disk, for a process that this one
+/// starts. After `cargo install` put a new binary in place, Linux names
+/// the binary of a process that still runs `PATH (deleted)`. That path
+/// does not exist, so this gives `PATH`: the new binary
+/// (01M3Q55KMQSSJVQEN86XFB8PSG).
+///
+/// ```
+/// use std::path::{Path, PathBuf};
+/// use riff::binary::on_disk;
+///
+/// let bin = Path::new("/home/mike/.cargo/bin/riff");
+/// assert_eq!(on_disk(PathBuf::from("/home/mike/.cargo/bin/riff (deleted)")), bin);
+/// assert_eq!(on_disk(bin.to_owned()), bin);
+/// ```
+pub fn on_disk(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|p| p.strip_suffix(" (deleted)")) {
+        Some(path) => PathBuf::from(path),
+        None => path,
+    }
+}
+
+/// [`on_disk`] for the binary of this process.
+pub fn this_on_disk() -> std::io::Result<PathBuf> {
+    std::env::current_exe().map(on_disk)
 }
 
 /// `args` with [`identity::PLACE_ARG`] and `place` first. It drops the

@@ -53,6 +53,18 @@
 //! host of the same user and repository on the machine refuses to start
 //! (01M3NBV44GKAX6WS391PN6R72W). It reads no input, and its children get
 //! no input from it (01M3NBV46R0VB0JQNQ1ERG16J6).
+//!
+//! # A new binary
+//!
+//! When a new `riff` is on disk, the host runs it in its place, as
+//! `riff watch` does ([`crate::binary`], 01M3Q55KJ8BKMPE9RADB63X8SP). It
+//! does so only between two requests, never while it starts or stops
+//! workers. It gives the new process its session in the hidden option
+//! `--session`, so the lead sees the same host. The workers go on: the
+//! new host finds them by the marks of their panes. The lock of the host
+//! is on a file with close-on-exec, so the new process takes it again.
+//! Each worker pane runs the `riff` on disk, never the path of a binary
+//! that a new one replaced (01M3Q55KMQSSJVQEN86XFB8PSG).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -66,6 +78,7 @@ use riff_core::name::SessionUri;
 use riff_core::wire::{SessionInfo, Status};
 
 use crate::api::{Api, Checked, Reconnect, follow};
+use crate::binary::{Follow, with_last};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
 use crate::{identity, local, settings, text, worker};
 
@@ -294,9 +307,15 @@ struct Host {
     server: String,
 }
 
+/// The hidden option that gives a new binary the session of the host.
+pub const SESSION_ARG: &str = "--session";
+
 /// Runs `riff workers host` in `dir` until Ctrl-C, SIGTERM or SIGHUP
-/// (01M3N7AK8TVYV8S0WR3RP0TN8X).
-pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
+/// (01M3N7AK8TVYV8S0WR3RP0TN8X). It takes the session `resume` of the
+/// host that ran it after an update, else a new one. On a new binary it
+/// runs it between two requests (01M3Q55KJ8BKMPE9RADB63X8SP).
+pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>) -> Result<()> {
+    let binary = Follow::this();
     let session = Arc::new(OnceLock::new());
     stop_on_signal(session.clone())?;
     let Some(tmux) = Tmux::from_env() else {
@@ -311,7 +330,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
     };
     let place = identity::place(&main)?;
     let api = Api::new(server);
-    let id = terminal::new_session_id();
+    let id = resume.map_or_else(terminal::new_session_id, str::to_owned);
     let me = identity::agent(&place, &id, api.base())?;
     let _lock = match local::dir() {
         Some(dir) => {
@@ -336,8 +355,16 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
     let mut wakes = Box::pin(follow(|| host.api.watch(&host.me), RETRY));
     let mut refresh = tokio::time::interval(REFRESH);
     let mut link = Reconnect::default();
+    let mut update = std::pin::pin!(binary.new_one());
+    let mut following = true;
     loop {
         tokio::select! {
+            () = &mut update, if following => {
+                binary.run(with_last(std::env::args_os().skip(1), SESSION_ARG, &id));
+                // Only an error comes back. The host goes on with this binary.
+                following = false;
+                continue;
+            }
             wake = wakes.next() => {
                 let Some(wake) = wake else { return Ok(()) };
                 if let Some(line) = link.line(&wake) {

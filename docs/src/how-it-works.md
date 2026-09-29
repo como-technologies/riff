@@ -222,8 +222,9 @@ Update riff on this machine when you can:
 riff update
 ```
 
-`riff watch`, `riff tail`, `riff top`, `riff chat` and the riff tools
-of each session (`riff mcp`) see the new `riff` on disk, and run it.
+`riff watch`, `riff tail`, `riff top`, `riff chat`, `riff workers
+host` and the riff tools of each session (`riff mcp`) see the new
+`riff` on disk, and run it.
 They go on with no restart, in the same repository and worktree. This
 is also true when you removed their worktree. You do not run `/mcp`.
 
@@ -231,6 +232,8 @@ is also true when you removed their worktree. You do not run `/mcp`.
   again. Text that you typed but did not send is lost.
 - The riff tools of a session run the new `riff` when no tool call
   runs. The session keeps its tools and its claims.
+- `riff workers host` runs the new `riff` between two requests of the
+  lead. It keeps its session, and its workers go on.
 
 ### When riff cannot read its directory
 
@@ -2119,7 +2122,9 @@ machine for a repository. A second one refuses to start and names the
 process of the first.
 
 `Ctrl-C` stops the host in under 2 seconds, in each state. Its
-workers keep running. The host reads no keys, so tmux keys work in its
+workers keep running. After `riff update`, the host runs the new
+`riff` by itself (see "When the builds differ"). You do not start it
+again. The host reads no keys, so tmux keys work in its
 pane. When the keyring of the machine does not answer in 10 seconds,
 for example because it is locked, the host stops with an error that
 says so. Unlock the keyring and start the host again.
