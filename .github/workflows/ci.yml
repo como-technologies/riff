@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     # A release tag: the job Release check checks its version
-    # (01M3N73AW2J3TVSZWFJ88A91PG).
+    # (01M3N73AW2J3TVSZWFJ88A91PG), then the job Deploy deploys it
+    # (01M3NJAZ6BYH7TWKDYTVEK78PG).
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -12,8 +13,8 @@ on:
     # Weekly advisory sweep (Mondays 06:00 UTC). New RUSTSEC advisories
     # arrive without a code change, so the audit job runs on a schedule.
     - cron: "0 6 * * 1"
-  # An admin deploys a release to the shared server at the end of a wave
-  # (01M3MMZQ3KTF5Z3GXNR7DRQ65Z): gh workflow run CI --ref main -f tag=v0.2.0
+  # An admin deploys a release again, or an older one for a rollback
+  # (01M3NJAZ8HSE87H0GZ8SNGWN31): gh workflow run CI --ref main -f tag=v0.2.0
   workflow_dispatch:
     inputs:
       tag:
@@ -62,16 +63,23 @@ jobs:
         run: deploy/release-check.sh "$GITHUB_REF_NAME"
 
   deploy:
-    # A run of this workflow by hand on main, with the input tag, builds
+    # A push of a release tag, after its Release check, or a run of this
+    # workflow by hand on main with the input tag, after the gate, builds
     # the image of that release and deploys it to Cloud Run, when the
-    # repository variable CLOUD_DEPLOY is true (R160). It deploys only a
-    # release tag vX.Y.Z (01M3MRMAY3P1K151RGAP9K6GSH). A push to main
-    # never deploys (01M3MMZQ3KTF5Z3GXNR7DRQ65Z). The job signs in to
-    # Google Cloud with the OIDC token of GitHub; no key exists (R161).
+    # repository variable CLOUD_DEPLOY is true (01M3NJAZ6BYH7TWKDYTVEK78PG).
+    # It deploys only a release tag vX.Y.Z (01M3MRMAY3P1K151RGAP9K6GSH).
+    # A push to main never deploys (01M3NJAZ8HSE87H0GZ8SNGWN31). On a
+    # tag push the gate is skipped, and on a run by hand the Release
+    # check is, so the if: names the result of each need and does not
+    # skip on a skipped need. The job signs in to Google Cloud with the
+    # OIDC token of GitHub; no key exists (01M3NJAZAQ3AKMAM0EGM7R3S89).
     # One deploy runs at a time; a newer run waits for it.
     name: Deploy
-    needs: gate
-    if: github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.ref == 'refs/heads/main' && vars.CLOUD_DEPLOY == 'true'
+    needs: [gate, release]
+    if: >-
+      !cancelled() && vars.CLOUD_DEPLOY == 'true' && (
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.release.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.ref == 'refs/heads/main' && needs.gate.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,11 +88,11 @@ jobs:
       group: deploy
       cancel-in-progress: false
     env:
-      TAG: ${{ inputs.tag }}
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: refs/tags/${{ env.TAG }}
           fetch-depth: 0
 
       - name: Check the release tag

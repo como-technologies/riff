@@ -547,14 +547,19 @@
   certificates. It runs as a user that is not root.
 - **R151** Cloud Build builds the image as its own service account.
   That account can only build and store images.
-- **R160** CI deploys `riff-server` when the repository variable
-  `CLOUD_DEPLOY` is `true` and a person runs the CI workflow on `main`
-  with the input `tag`. Then CI builds the image of that release,
-  pushes it to the image repository of the project, and deploys it,
-  after the gate passes.
-- **01M3MMZQ3KTF5Z3GXNR7DRQ65Z** A push to `main` never deploys the
-  shared server. An admin deploys a release at the end of a wave
-  (R216).
+- **R160** Replaced by 01M3NJAZ6BYH7TWKDYTVEK78PG.
+- **01M3NJAZ6BYH7TWKDYTVEK78PG** CI deploys `riff-server` when the
+  repository variable `CLOUD_DEPLOY` is `true`, in two cases: a push of
+  a release tag `vX.Y.Z`, after the job `Release check` of the tag
+  passes; or a person runs the CI workflow on `main` with the input
+  `tag`, after the gate passes. CI builds the image of that release,
+  pushes it to the image repository of the project, and deploys it.
+  One deploy runs at a time.
+- **01M3MMZQ3KTF5Z3GXNR7DRQ65Z** Replaced by 01M3NJAZ8HSE87H0GZ8SNGWN31.
+- **01M3NJAZ8HSE87H0GZ8SNGWN31** A push to `main` never deploys the
+  shared server. A tag that is not `vX.Y.Z` never deploys. The release
+  tag at the end of a wave deploys the release (R216). A run by hand
+  is for a redeploy or a rollback to an older release.
 - **01M3MRMASMP59PKHAV92XSV7XE** Replaced by
   01M3N73AW2J3TVSZWFJ88A91PG.
 - **01M3N73AW2J3TVSZWFJ88A91PG** A release is a git tag `vX.Y.Z`. X.Y.Z
@@ -585,10 +590,11 @@
   rest: each pull request merged since the last release, except the
   pull requests with the label `release`. The GitHub releases are the
   changelog. The repository has no changelog file.
-- **R161** CI signs in to Google Cloud with the OIDC token of GitHub.
-  No key exists. Only the `main` branch of the repository can sign in.
-  The deploy account can push images, deploy the service, and run it
-  as `riff-server`.
+- **R161** Replaced by 01M3NJAZAQ3AKMAM0EGM7R3S89.
+- **01M3NJAZAQ3AKMAM0EGM7R3S89** CI signs in to Google Cloud with the
+  OIDC token of GitHub. No key exists. Only the `main` branch and the
+  tags `v*` of the repository can sign in. The deploy account can push
+  images, deploy the service, and run it as `riff-server`.
 - **R152** Cloud Run lets each caller in. `riff-server` checks each
   token itself (R5).
 - **R143** The Google Cloud project `como-riff` holds each cloud

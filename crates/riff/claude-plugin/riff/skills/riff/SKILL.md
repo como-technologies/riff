@@ -152,9 +152,9 @@ plan the waves.
    each worktree and each local branch that no live session owns (see
    "Keep good git hygiene"). Your user decides about them.
 6. When each item of the current wave is merged, stop the workers.
-   Ask an admin to make a release and deploy it to the shared server
-   (see "Waves on GitHub"). A push to the default branch does not
-   deploy it. Then tell your user to
+   Ask an admin to make a release (see "Waves on GitHub"). Its tag
+   deploys it to the shared server. A push to the default branch does
+   not deploy it. Then tell your user to
    update each machine. Start the sessions again, and tell them to run
    their checks after the release.
 7. When each item of the current wave is closed, the wave is done.
@@ -185,7 +185,7 @@ This is the only part of the skill that is special to one forge.
 | See the items in the backlog | `gh issue list --milestone Backlog` |
 | End a wave | `gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed` |
 | Make a release (riff repository, an admin) | "Make a release" in `development.md` of the book |
-| Deploy a release to the shared server (riff repository, an admin) | `gh workflow run CI --ref main -f tag=vX.Y.Z` |
+| Deploy a release again, or roll back (riff repository, an admin) | `gh workflow run CI --ref main -f tag=vX.Y.Z` |
 
 ## Write acceptance criteria
 
