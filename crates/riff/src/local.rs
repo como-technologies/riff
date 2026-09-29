@@ -333,6 +333,23 @@ fn left_file(dir: &Path, session: &str) -> PathBuf {
     dir.join(format!("left-{}", riff_core::name::sanitize(session)))
 }
 
+/// Takes the lock of the compact of the lead in `repo` (`OWNER/REPO`),
+/// so that only one check acts at a time (01M3Q88G1K7N2EMPBA07X069A7).
+/// `None` when another check holds it.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// let held = riff::local::compact_lock(run.path(), "o/r")?;
+/// assert!(held.is_some());
+/// assert!(riff::local::compact_lock(run.path(), "o/r")?.is_none());
+/// drop(held);
+/// assert!(riff::local::compact_lock(run.path(), "o/r")?.is_some());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn compact_lock(dir: &Path, repo: &str) -> io::Result<Option<Held>> {
+    lock(&dir.join(format!("compact-{}.lock", repo.replace('/', "-"))))
+}
+
 /// Opens `path` and takes its lock. `None` when another open file holds
 /// the lock.
 fn lock(path: &Path) -> io::Result<Option<Held>> {

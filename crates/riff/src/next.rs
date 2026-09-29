@@ -60,6 +60,13 @@ pub trait Agent {
     fn clear(&self) -> &str;
     /// The prompt that starts the next item.
     fn start_prompt(&self) -> &str;
+    /// The input that compacts the context with `instructions`
+    /// (01M3Q88G98MKH364WEQGT4ZE7A).
+    fn compact(&self, instructions: &str) -> String;
+    /// True when the input line on `screen` is empty, so that riff can
+    /// type (01M3Q88GEB9NK5P6DNFJG4618Q). False when riff cannot find
+    /// the input line.
+    fn input_empty(&self, screen: &str) -> bool;
 }
 
 /// Claude Code: `/clear` keeps the riff session (R168), and the start
@@ -74,6 +81,51 @@ impl Agent for ClaudeCode {
     fn start_prompt(&self) -> &str {
         crate::terminal::JOIN
     }
+
+    /// ```
+    /// use riff::next::{Agent, ClaudeCode};
+    /// assert_eq!(ClaudeCode.compact("Keep the plan."), "/compact Keep the plan.");
+    /// ```
+    fn compact(&self, instructions: &str) -> String {
+        format!("/compact {instructions}")
+    }
+
+    /// The input box of Claude Code is the prompt mark `❯` (or `>`)
+    /// after a rule line, up to the next rule line.
+    ///
+    /// ```
+    /// use riff::next::{Agent, ClaudeCode};
+    /// let screen = |input: &str| format!("Done.\n\n────────\n{input}\n────────\n  riff l1\n");
+    /// assert!(ClaudeCode.input_empty(&screen("❯\u{a0}")));
+    /// assert!(ClaudeCode.input_empty(&screen("> ")));
+    /// assert!(!ClaudeCode.input_empty(&screen("❯ fix the te")));
+    /// assert!(!ClaudeCode.input_empty(&screen("❯ \n  second line")));
+    /// assert!(ClaudeCode.input_empty("╭────╮\n│ >  │\n╰────╯"));
+    /// assert!(!ClaudeCode.input_empty("no input box here"));
+    /// ```
+    fn input_empty(&self, screen: &str) -> bool {
+        let rule = |l: &str| l.trim_start().starts_with(['─', '╭', '╰']);
+        let lines: Vec<&str> = screen.lines().collect();
+        let Some(at) = (1..lines.len()).rev().find(|&i| {
+            rule(lines[i - 1])
+                && lines[i]
+                    .trim_start_matches(|c: char| c == '│' || c.is_whitespace())
+                    .starts_with(['❯', '>'])
+        }) else {
+            return false;
+        };
+        let text = |l: &str| {
+            l.trim_matches(|c: char| c == '│' || c.is_whitespace())
+                .to_owned()
+        };
+        let first = text(lines[at]);
+        let first = first.trim_start_matches(['❯', '>']).trim();
+        first.is_empty()
+            && lines[at + 1..]
+                .iter()
+                .take_while(|l| !rule(l))
+                .all(|l| text(l).is_empty())
+    }
 }
 
 /// The part of the Stop hook input that riff uses.
@@ -81,6 +133,8 @@ impl Agent for ClaudeCode {
 pub struct StopInput {
     /// The session ID of the agent tool.
     pub session_id: Option<String>,
+    /// The transcript of the session.
+    pub transcript_path: Option<std::path::PathBuf>,
 }
 
 /// The file that asks for a fresh context for `session`.

@@ -136,6 +136,38 @@ pub fn auto_update(on: bool, path: &Path) -> String {
     setting("update.auto", &on.to_string(), path, hint)
 }
 
+/// `riff lead compact` (01M3Q88GBSRJRP4VGVDV3EJZ4R).
+///
+/// ```
+/// let on = riff::view::lead_compact(true, 60, "/h/config.toml".as_ref());
+/// let plain = anstream::adapter::strip_str(&on).to_string();
+/// assert_eq!(
+///     plain,
+///     "lead.compact  true  (/h/config.toml)\n\
+///      lead.quiet  60  (/h/config.toml)\n\
+///      At the end of a wave, riff compacts the lead after 60 seconds with no input. \
+///      Turn it off with: riff lead compact off"
+/// );
+/// let off = riff::view::lead_compact(false, 60, "/h/config.toml".as_ref());
+/// assert!(off.contains("Turn it on with: riff lead compact on"), "{off}");
+/// ```
+pub fn lead_compact(on: bool, quiet: u64, path: &Path) -> String {
+    let hint = if on {
+        format!(
+            "At the end of a wave, riff compacts the lead after {quiet} seconds with no input. \
+             Turn it off with: riff lead compact off"
+        )
+    } else {
+        "riff does not compact the lead. Turn it on with: riff lead compact on".to_owned()
+    };
+    let file = format!("({})", path.display());
+    format!(
+        "lead.compact  {on}  {}\n{}",
+        styled(DIM, &file),
+        setting("lead.quiet", &quiet.to_string(), path, &hint)
+    )
+}
+
 /// `riff workers limit` (01M3JPQT35BMR7XMAMMFSCDC2B).
 pub fn workers_limit(limit: u16, path: &Path) -> String {
     setting(

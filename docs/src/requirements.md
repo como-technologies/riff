@@ -1552,6 +1552,37 @@
 - **01M3JQCD5BS2ZSGZSD3CTWGPB8** The skill tells a worker: when its item
   is merged, its claim released and its worktree removed, run
   `riff workers next`, then end the turn. The lead never runs it.
+- **01M3Q88G1K7N2EMPBA07X069A7** riff compacts the lead at the end of
+  a wave, once for each wave. The Stop hook of each session that is not
+  a worker starts a detached check and returns at once. The check does
+  nothing when the session is not the lead. Only one check acts at a
+  time: it holds a lock from the load of the record of the wave to its
+  save. A check that cannot take the lock does nothing.
+- **01M3Q88G45ERD0XJNYNB5C1RVN** riff compacts the lead only when all
+  of these are true: the riff is paused; the last done wave has no open
+  item, and its release is out (its release item is closed, its release
+  pull request is merged, and the CI run of its tag passed); no session
+  in the repository holds a claim and no pull request of a wave is
+  open; the turn of the lead ended and it has no unread message; no
+  input came to the lead for the quiet time and its input line is
+  empty; the last message of the lead does not end with a question; and
+  riff did not compact the lead for this wave already.
+- **01M3Q88G6PM8KM5PR875PZXTRZ** Before it compacts, riff tells the
+  lead, as its person, to post a handoff note to the repository thread,
+  with a body that starts with `handoff: Wave N`. riff compacts only
+  after the lead posted that note.
+- **01M3Q88G98MKH364WEQGT4ZE7A** In tmux, riff types `/compact` with
+  instructions into the pane of the lead. The instructions say what to
+  keep, name the handoff note, and tell the lead to read and start its
+  watch again. With no tmux, riff tells the lead to ask its user to run
+  `/compact`.
+- **01M3Q88GBSRJRP4VGVDV3EJZ4R** `riff lead compact` shows and sets the
+  compact of the lead on this machine: on or off (`lead.compact`, on by
+  default), and the quiet time in seconds (`lead.quiet`, default 60).
+- **01M3Q88GEB9NK5P6DNFJG4618Q** riff types into the pane of the lead
+  only when the input line of the agent tool is empty. When riff cannot
+  find the input line, it types nothing. The check of the input line is
+  in the adapter of the agent tool.
 - **01M3MNP34M5PAZW9VWAYVGNSV2** `riff workers start`, and
   `riff workers next` before the fresh context, fast-forward the
   default branch of the main clone to `origin` first (`git fetch` and

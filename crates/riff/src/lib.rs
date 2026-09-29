@@ -62,6 +62,7 @@ pub mod api;
 pub mod auto_update;
 pub mod binary;
 pub mod chat;
+pub mod compact;
 pub mod device;
 pub mod help;
 pub mod home;

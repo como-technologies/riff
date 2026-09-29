@@ -253,6 +253,12 @@ pub trait Terminal {
 
     /// Ends the program in `pane` and closes the pane.
     fn kill(&self, pane: &str) -> Result<()>;
+
+    /// The text that `pane` shows now, with no colors.
+    fn screen(&self, pane: &str) -> Result<String>;
+
+    /// Types `text` into `pane`, then Enter.
+    fn type_line(&self, pane: &str, text: &str) -> Result<()>;
 }
 
 /// The tmux backend.
@@ -430,6 +436,15 @@ impl Terminal for Tmux {
 
     fn kill(&self, pane: &str) -> Result<()> {
         self.run(&["kill-pane", "-t", pane]).map(|_| ())
+    }
+
+    fn screen(&self, pane: &str) -> Result<String> {
+        self.run(&["capture-pane", "-p", "-t", pane])
+    }
+
+    fn type_line(&self, pane: &str, text: &str) -> Result<()> {
+        self.run(&["send-keys", "-t", pane, "-l", text])?;
+        self.run(&["send-keys", "-t", pane, "Enter"]).map(|_| ())
     }
 }
 

@@ -185,7 +185,10 @@ enum Command {
     /// your user send their questions to the lead. It replaces the old
     /// lead. Run it in the agent session, for example `! riff lead` in
     /// Claude Code.
-    Lead,
+    Lead {
+        #[command(subcommand)]
+        command: Option<LeadCommand>,
+    },
     /// Pause the riff
     ///
     /// Each session stops at its next step and waits. Nobody claims work.
@@ -588,6 +591,25 @@ enum Workers {
 }
 
 #[derive(Subcommand)]
+enum LeadCommand {
+    /// Show or set how riff compacts the lead at the end of a wave
+    ///
+    /// When the riff is paused, the wave and its release are done, and
+    /// the lead and its person are idle, riff asks the lead for a handoff
+    /// note, then types /compact into its tmux pane. It is on by default.
+    /// It is in $XDG_CONFIG_HOME/riff/config.toml, keys lead.compact and
+    /// lead.quiet.
+    Compact {
+        /// Turn it on or off. Leave it out to show the setting.
+        switch: Option<Switch>,
+        /// The seconds with no input in the pane of the lead before riff
+        /// compacts it. The default is 60.
+        #[arg(long)]
+        quiet: Option<u64>,
+    },
+}
+
+#[derive(Subcommand)]
 enum WorkersMcp {
     /// Give each new worker an MCP server
     ///
@@ -625,6 +647,22 @@ enum HookEvent {
     /// next item with `riff workers next`, it gives its pane `/clear` and
     /// the start prompt. It always exits with status 0.
     Stop,
+    /// Check whether riff compacts the lead now
+    ///
+    /// The Stop hook starts it, detached, in each session that is not a
+    /// worker.
+    #[command(hide = true)]
+    Compact {
+        /// The session ID of the agent tool.
+        #[arg(long)]
+        session: String,
+        /// The transcript of the session.
+        #[arg(long)]
+        transcript: Option<std::path::PathBuf>,
+        /// The tmux pane of the session.
+        #[arg(long)]
+        pane: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -706,6 +744,40 @@ async fn main() -> Result<()> {
     } = cli.command
     {
         stop_hook();
+        return Ok(());
+    }
+    if let Command::Hook {
+        event:
+            HookEvent::Compact {
+                session,
+                transcript,
+                pane,
+            },
+    } = cli.command
+    {
+        let check = riff::compact::Check {
+            session,
+            transcript,
+            pane,
+        };
+        if let Err(e) = riff::compact::run(&check, &server).await {
+            eprintln!("riff: cannot check the compact of the lead: {e:#}");
+        }
+        return Ok(());
+    }
+    if let Command::Lead {
+        command: Some(LeadCommand::Compact { switch, quiet }),
+    } = &cli.command
+    {
+        let path = settings::path()?;
+        if let Some(switch) = switch {
+            settings::set_lead_compact(&path, matches!(switch, Switch::On))?;
+        }
+        if let Some(quiet) = quiet {
+            settings::set_lead_quiet(&path, *quiet)?;
+        }
+        let (on, quiet) = (settings::lead_compact(&path)?, settings::lead_quiet(&path)?);
+        anstream::println!("{}", view::lead_compact(on, quiet, &path));
         return Ok(());
     }
     if let Command::Statusline = cli.command {
@@ -895,7 +967,7 @@ async fn main() -> Result<()> {
             api.release(&me, &thread, &item).await?;
             println!("{}", text::released(&thread, &item));
         }
-        Command::Lead => println!("{}", text::led(&api.lead(&me).await?)),
+        Command::Lead { command: None } => println!("{}", text::led(&api.lead(&me).await?)),
         Command::Pr {
             command:
                 Pr::Open {
@@ -980,6 +1052,9 @@ async fn main() -> Result<()> {
         | Command::Server
         | Command::Update { .. }
         | Command::Workers { .. }
+        | Command::Lead {
+            command: Some(LeadCommand::Compact { .. }),
+        }
         | Command::Pr {
             command: Pr::Wait { .. },
         }
@@ -1211,7 +1286,9 @@ async fn next_item(server: &str) -> Result<()> {
     Ok(())
 }
 
-/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It never fails.
+/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). In a session that is not
+/// a worker, it starts the check of the compact of the lead
+/// (01M3Q88G1K7N2EMPBA07X069A7). It never fails.
 fn stop_hook() {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -1219,12 +1296,44 @@ fn stop_hook() {
     let Some(id) = identity::agent_session(input.session_id) else {
         return;
     };
+    if !riff::worker::is_worker() {
+        if let Err(e) = start_compact_check(&id, input.transcript_path.as_deref()) {
+            eprintln!("riff: cannot check the compact of the lead: {e:#}");
+        }
+        return;
+    }
     let Some(pane) = local::dir().and_then(|dir| next::take(&dir, &id)) else {
         return;
     };
     if let Err(e) = next::spawn(&next::ClaudeCode, &pane) {
         eprintln!("riff: cannot give the worker a fresh context: {e:#}");
     }
+}
+
+/// Starts `riff hook compact` for the session `id`, detached, so that
+/// the Stop hook returns at once (01M3Q88G1K7N2EMPBA07X069A7). It starts
+/// nothing when `lead.compact` is off, or the session left the riff.
+fn start_compact_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    if !settings::lead_compact(&settings::path()?)? || local::left_here(id) {
+        return Ok(());
+    }
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.args(["hook", "compact", "--session", id]);
+    if let Some(transcript) = transcript {
+        cmd.arg("--transcript").arg(transcript);
+    }
+    if std::env::var_os("TMUX").is_some_and(|t| !t.is_empty())
+        && let Ok(pane) = std::env::var("TMUX_PANE")
+    {
+        cmd.args(["--pane", &pane]);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    Ok(())
 }
 
 /// Lists the workers of this machine, with their claims and status in
