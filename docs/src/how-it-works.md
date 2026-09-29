@@ -176,9 +176,8 @@ riff update
 ```
 
 `riff watch` and `riff tail` see the new `riff` on disk, and run it.
-They go on with no restart. When their directory is gone, for example
-a worktree that you removed, the new `riff` runs in the nearest parent
-directory that exists.
+They go on with no restart, in the same repository and worktree. This
+is also true when you removed their worktree.
 
 ### When riff cannot read its directory
 

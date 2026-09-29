@@ -1564,10 +1564,11 @@
   once, try again every 5 seconds, and go on when the versions can
   talk. When a new `riff` binary is on disk, they run it in their
   place with the same arguments.
-- **01M3NJGD45GF7Y4CZWQ7GRDHZN** When the working directory of
-  `riff watch` or `riff tail` is gone at an update, the new binary runs
-  in the nearest parent directory that exists. The process says so on
-  stderr.
+- **01M3NJGD45GF7Y4CZWQ7GRDHZN** After an update, the new binary of
+  `riff watch` and `riff tail` keeps the host, repository and worktree
+  of the old one. It does not read them from its directory. When the
+  working directory is gone, the new binary runs in the nearest parent
+  directory that exists, and the process says so on stderr.
 - **01M3NJGD6H8DNVHHHG80F9YFCE** When `riff` cannot read its working
   directory, the error names the directory from `PWD`, and tells the
   person to change to a directory that exists.

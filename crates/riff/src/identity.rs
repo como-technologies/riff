@@ -11,6 +11,10 @@
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
 //! | worktree | The directory name of a linked worktree. The main worktree has none. |
 //!
+//! After an update, a long run gives its place to its new binary in
+//! [`PLACE_VAR`]. The new binary takes host, owner/repo and worktree
+//! from there, not from the rules above (see [`here`]).
+//!
 //! Outside git, the repository part is `-` and the worktree part is the
 //! directory name. Each part goes through
 //! [`riff_core::name::sanitize`].
@@ -169,6 +173,77 @@ pub fn session(place: &Place, server: &str) -> Result<SessionUri> {
         );
     }
     Ok(me)
+}
+
+/// The variable that gives a new binary the place of the process that
+/// ran it after an update (01M3NJGD45GF7Y4CZWQ7GRDHZN). Only riff sets
+/// it.
+pub const PLACE_VAR: &str = "RIFF_PLACE";
+
+/// The place of this process: from [`PLACE_VAR`], else from the working
+/// directory. So a long run keeps its repository and worktree over an
+/// update, also when its directory is gone.
+pub fn here() -> Result<Place> {
+    match std::env::var(PLACE_VAR) {
+        Ok(text) if !text.is_empty() => {
+            place_from_text(&text).with_context(|| format!("{PLACE_VAR} is not a place: {text}"))
+        }
+        _ => place(&working_dir()?),
+    }
+}
+
+/// `place` as the text of [`PLACE_VAR`]: `HOST/OWNER/REPO#WORKTREE`, or
+/// `HOST/-` outside git. [`place_from_text`] reads it back.
+///
+/// ```
+/// use riff::identity::{place_from_text, place_text};
+/// use riff_core::name::{Place, Repo};
+///
+/// let repo = Repo::Git { owner: "acme".into(), name: "alpha".into() };
+/// for place in [
+///     Place::new("thelio", repo.clone(), Some("issue-12"))?,
+///     Place::new("thelio", repo, None)?,
+///     Place::new("thelio", Repo::None, Some("scratch"))?,
+///     Place::host_only("thelio")?,
+/// ] {
+///     let text = place_text(&place);
+///     assert_eq!(place_from_text(&text)?, place, "{text}");
+/// }
+/// assert_eq!(place_text(&place_from_text("thelio/acme/alpha#issue-12")?), "thelio/acme/alpha#issue-12");
+/// assert!(place_from_text("thelio").is_err());
+/// assert!(place_from_text("thelio/acme").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn place_text(place: &Place) -> String {
+    let worktree = place
+        .worktree()
+        .map(|w| format!("#{w}"))
+        .unwrap_or_default();
+    format!("{}/{}{worktree}", place.host(), place.repo_text())
+}
+
+/// The place in the text of [`place_text`].
+pub fn place_from_text(text: &str) -> Result<Place> {
+    let (rest, worktree) = match text.split_once('#') {
+        Some((rest, worktree)) => (rest, Some(worktree)),
+        None => (text, None),
+    };
+    let Some((host, repo)) = rest.split_once('/') else {
+        bail!("no repository part");
+    };
+    let repo = match repo {
+        "-" => Repo::None,
+        repo => {
+            let Some((owner, name)) = repo.split_once('/') else {
+                bail!("the repository is not OWNER/REPO");
+            };
+            Repo::Git {
+                owner: owner.into(),
+                name: name.into(),
+            }
+        }
+    };
+    Ok(Place::new(host, repo, worktree)?)
 }
 
 /// The working directory of this process. When riff cannot read it, for

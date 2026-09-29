@@ -669,7 +669,7 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
-    let here = identity::place(&identity::working_dir()?)?;
+    let here = identity::here()?;
     let me = identity::me(&here, api.base())?;
     // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
     // `riff mcp` still runs: its `join` tool brings the session back.
@@ -811,7 +811,7 @@ async fn main() -> Result<()> {
             println!("{}", text::posted(&posted));
         }
         Command::Tail { thread, color } => {
-            tail(&api, &thread_or_default(thread, &here)?, color).await
+            tail(&api, &thread_or_default(thread, &here)?, &here, color).await
         }
         Command::Top { once, color } => {
             use_color(color);
@@ -1426,11 +1426,11 @@ fn use_color(color: ColorWhen) {
 /// Each message is a [`text::block`]. The status lines go to stderr
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). On a new binary, it runs it
 /// (01M3MNVTC248YYJJQKFD9H1WY9).
-async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
+async fn tail(api: &Api, thread: &ThreadName, here: &Place, color: ColorWhen) {
     use_color(color);
     tokio::select! {
         () = tail_each(api, thread) => {}
-        () = binary::follow_update() => {}
+        () = binary::follow_update(here) => {}
     }
 }
 
@@ -1552,7 +1552,7 @@ async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     tokio::select! {
         () = print_each(stream, text::wake_line, once) => {}
         () = left => println!("{}", text::WATCH_LEFT),
-        () = binary::follow_update() => {}
+        () = binary::follow_update(me.place()) => {}
     }
 }
 
