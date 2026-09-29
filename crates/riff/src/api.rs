@@ -431,6 +431,25 @@ impl Api {
         Ok(())
     }
 
+    /// A live access token for the caller, from a task of its own
+    /// (01M3ND6R8YXN1KTRTRAV5A7F14). [`Api::access_token`] holds the
+    /// lock of the pair, and the first check of the riff, across its
+    /// requests. A caller can stop polling its future, for example a
+    /// `select!` that runs another branch, and the other branch can then
+    /// wait for the same lock. The runtime polls the task, so the lock
+    /// is always given back, and one refresh still runs at a time.
+    ///
+    /// The return type says `Send`: `access_token` comes back here
+    /// through `session_token`, so the compiler cannot infer it.
+    fn token_in_task(
+        &self,
+        auth: &Arc<Auth>,
+    ) -> impl Future<Output = Result<String>> + Send + 'static {
+        let (api, auth) = (self.clone(), auth.clone());
+        let task = tokio::spawn(async move { api.access_token(&auth).await });
+        async move { task.await.context("the task of the access token failed")? }
+    }
+
     /// A live access token for the caller.
     async fn access_token(&self, auth: &Auth) -> Result<String> {
         auth.riff_checked
@@ -500,7 +519,7 @@ impl Api {
         let Some(auth) = &self.auth else {
             return Ok((request, None));
         };
-        let token = match self.access_token(auth).await {
+        let token = match self.token_in_task(auth).await {
             Ok(token) => token,
             Err(error) => return Err(self.no_token(error).await),
         };

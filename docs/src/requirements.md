@@ -1218,6 +1218,9 @@
   the call once more. When the server refuses the person token in a
   swap for a session token, `riff` refreshes the person token once and
   asks again.
+- **01M3ND6R8YXN1KTRTRAV5A7F14** `riff` gets each access token in a task
+  of its own. One refresh runs at a time, and a call that waits for a
+  token never waits on a call that its own task does not poll.
 - **01M3MX4VM8CK1GAGJAM2P29NWH** When the sign-in of the machine ended,
   `riff watch` and `riff tail` say so once and try again (R148). Each
   tool of `riff mcp` says so in its result. After `riff login` on the
