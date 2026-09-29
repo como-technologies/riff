@@ -767,6 +767,23 @@
   `The riff has no owner.`. A riff with no sign-in shows no owner line.
   Each session of the owner gets the tag `owner`, before `lead`, muted.
   The MCP `who` tool shows the same, plain.
+- **01M3NB54P1RBHTA5TKXP8BMY3K** `riff top` shows a live table of the
+  sessions of `riff who`, and draws it again in place every 3 seconds
+  and after each message of the repository thread, until Ctrl-C.
+  `riff top --once` prints one table and exits. The header has the
+  state, the owner, the build line, and the current wave: each open
+  item with the short ID of each session that claims it, or `free`.
+  Each row has the user, host and short session ID, the tags `owner`,
+  `lead` and `worker`, `live` or the idle time, each claim with the
+  title of its issue, and the status with its age. A blocked status is
+  red, with its reason. Blocked rows come first, then by user and host.
+  The titles and the wave come from `gh issue list`, kept for one
+  minute. With no `gh`, the rows still print. A session is a worker
+  when a worker pane of the machine or the status of a workers host
+  names it. `--color` works as in `riff who`.
+- **01M3NB589WMPRSAR43BSG9SP41** `riff top` makes only read calls: the
+  `riff` and `who` calls of `riff who`, and the stream of `riff tail`.
+  It posts nothing and wakes no session.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
   line of a Claude Code session: `riff`, the short session ID of
   `riff who`, `lead`, each claim, and `blocked`. It is the

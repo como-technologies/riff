@@ -1597,7 +1597,7 @@ pub fn status_set(status: &riff_core::wire::Status) -> String {
 
 /// A time in seconds, short, in its largest whole unit: `12s`, `2m`,
 /// `3h` or `5d`.
-fn ago(secs: u64) -> String {
+pub(crate) fn ago(secs: u64) -> String {
     match secs {
         0..60 => format!("{secs}s"),
         60..3600 => format!("{}m", secs / 60),

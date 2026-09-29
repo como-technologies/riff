@@ -132,6 +132,18 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
         color: ColorWhen,
     },
+    /// Show a live table of each session: its tags, its item and its
+    /// status. It draws the table again in place until Ctrl-C. It posts
+    /// nothing and wakes no session.
+    Top {
+        /// Print the table once and exit.
+        #[arg(long)]
+        once: bool,
+        /// When to use color. `auto` uses color only when stdout is a
+        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
+    },
     /// Claim a work item so that no other session does the same work.
     /// Exits with status 1 when another session holds it.
     Claim {
@@ -662,6 +674,10 @@ async fn main() -> Result<()> {
         Command::Lead => println!("{}", text::led(&api.lead(&me).await?)),
         Command::Tail { thread, color } => {
             tail(&api, &thread_or_default(thread, &here)?, color).await
+        }
+        Command::Top { once, color } => {
+            use_color(color);
+            top(&api, &me, here.default_thread(), once).await?
         }
         Command::Watch { once } => {
             let me = identity::session(&here, api.base())?;
@@ -1290,6 +1306,65 @@ async fn tail_each(api: &Api, thread: &ThreadName) {
         }
     }
     anstream::eprintln!("{error}riff: the stream of {thread} ended.{error:#}");
+}
+
+/// Draws [`riff::top::Top`] once, or again every
+/// [`riff::top::REFRESH`] and after each message of `thread` until
+/// stopped (01M3NB54P1RBHTA5TKXP8BMY3K). It makes only read calls
+/// (01M3NB589WMPRSAR43BSG9SP41).
+async fn top(api: &Api, me: &SessionUri, thread: Option<ThreadName>, once: bool) -> Result<()> {
+    use std::io::{IsTerminal, Write};
+    use std::time::Instant;
+    let fetch = |thread: Option<ThreadName>| {
+        tokio::task::spawn_blocking(move || {
+            thread.and_then(|t| riff::top::Issues::from_gh(&t.to_string()))
+        })
+    };
+    let mut issues = fetch(thread.clone()).await?;
+    let mut fetched = Instant::now();
+    let mut messages = thread
+        .as_ref()
+        .map(|t| Box::pin(follow(|| api.tail(t), RETRY)));
+    let clear = !once && std::io::stdout().is_terminal();
+    loop {
+        let state = api.riff(me).await?;
+        let who = api.roster(me, false).await?;
+        let panes = Tmux::machine().worker_panes().unwrap_or_default();
+        let server = riff::api::server_build();
+        let top = riff::top::Top {
+            state,
+            owner: &who.owner,
+            server: server.as_ref(),
+            sessions: &who.sessions,
+            issues: issues.as_ref(),
+            workers: &riff::top::workers(&panes, &who.sessions),
+        };
+        if clear {
+            // Home and erase: the table draws again in place.
+            print!("\x1b[H\x1b[2J");
+            std::io::stdout().flush()?;
+        }
+        anstream::print!("{}", top.view());
+        if once {
+            return Ok(());
+        }
+        let message = async {
+            match messages.as_mut() {
+                Some(stream) => {
+                    stream.next().await;
+                }
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            () = tokio::time::sleep(riff::top::REFRESH) => {}
+            () = message => {}
+        }
+        if fetched.elapsed() >= riff::top::ISSUES_TTL {
+            issues = fetch(thread.clone()).await?;
+            fetched = Instant::now();
+        }
+    }
 }
 
 /// Runs until stopped, or with `once` until the first wake (R170). It
