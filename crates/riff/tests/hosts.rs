@@ -2,7 +2,8 @@
 //! to 01M3N7AKFPX3ZGQARSG2V64GBD). Two machines, `a` and `b`, each with
 //! a fake `tmux` on `PATH` that writes each call to a log and keeps the
 //! worker panes in a file. The lead runs on `a`; `riff workers host`
-//! runs on `b`.
+//! runs on `b`. A line in the file `slow` of a fake `tmux` is a pattern:
+//! a call that matches it sleeps for 30 seconds.
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
@@ -20,6 +21,9 @@ use riff_core::wire::{RiffState, Status};
 const FAKE_TMUX: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
+if [ -f "$dir/slow" ]; then
+  case "$*" in $(cat "$dir/slow")) sleep 30 ;; esac
+fi
 n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
 case "$1" in
   list-panes)
@@ -117,18 +121,59 @@ impl Machine {
     /// Starts `riff workers host` in `dir`. It stops when the value
     /// drops.
     fn host(&self, dir: &Path) -> Running {
-        let child = self
-            .riff(dir, &["host", "--claude", "true"], None)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+        self.host_with(self.riff(dir, &["host", "--claude", "true"], None))
+    }
+
+    /// Starts `cmd`, a `riff workers host`. Its input is the file
+    /// `host.in` with a line of keys; its output goes to `host.out` and
+    /// `host.err` of the fake dir.
+    fn host_with(&self, mut cmd: Command) -> Running {
+        let file = |name: &str| self.fake.path().join(name);
+        std::fs::write(file("host.in"), "keys of the person\n").unwrap();
+        let child = cmd
+            .stdin(std::fs::File::open(file("host.in")).unwrap())
+            .stdout(std::fs::File::create(file("host.out")).unwrap())
+            .stderr(std::fs::File::create(file("host.err")).unwrap())
             .spawn()
             .unwrap();
         Running(child)
+    }
+
+    /// The output of the host so far: stdout, then stderr.
+    fn host_output(&self) -> String {
+        let read =
+            |name: &str| std::fs::read_to_string(self.fake.path().join(name)).unwrap_or_default();
+        read("host.out") + &read("host.err")
+    }
+
+    /// Makes each later call of the fake `tmux` that matches `pattern`
+    /// sleep for 30 seconds.
+    fn slow(&self, pattern: &str) {
+        std::fs::write(self.fake.path().join("slow"), pattern).unwrap();
     }
 }
 
 /// A process that is killed on drop.
 struct Running(Child);
+
+impl Running {
+    /// Sends `signal` to the process, and returns the time until it ends.
+    fn stop(&mut self, signal: &str) -> Duration {
+        let start = Instant::now();
+        let kill = Command::new("kill")
+            .args([&format!("-{signal}"), &self.0.id().to_string()])
+            .status()
+            .unwrap();
+        assert!(kill.success());
+        loop {
+            if self.0.try_wait().unwrap().is_some() {
+                return start.elapsed();
+            }
+            assert!(start.elapsed() < WAIT, "the host did not stop on {signal}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
 
 impl Drop for Running {
     fn drop(&mut self) {
@@ -232,7 +277,9 @@ struct Riff {
     main: PathBuf,
     lead: SessionUri,
     _root: tempfile::TempDir,
-    _host: Running,
+    host: Running,
+    /// The session ID of the host.
+    host_id: String,
 }
 
 async fn riff() -> Riff {
@@ -246,7 +293,7 @@ async fn riff() -> Riff {
     let b = Machine::new("b", api.base());
     b.limit(3);
     let host = b.host(&main);
-    host_session(&api, &lead, "b").await;
+    let host_id = host_session(&api, &lead, "b").await;
     Riff {
         api,
         a,
@@ -254,7 +301,8 @@ async fn riff() -> Riff {
         main,
         lead,
         _root: root,
-        _host: host,
+        host,
+        host_id,
     }
 }
 
@@ -447,4 +495,192 @@ async fn a_host_needs_tmux_and_a_limit() {
         String::from_utf8_lossy(&out.stderr).contains("needs tmux"),
         "{out:?}"
     );
+}
+
+/// Sends `signal` to the host of `r`: it ends in under 2 seconds, and
+/// its session leaves `riff who` (01M3NBV405PVYHKTMQ5VN87FYN).
+async fn stops_on(r: &mut Riff, signal: &str, state: &str) {
+    let took = r.host.stop(signal);
+    assert!(
+        took < Duration::from_secs(2),
+        "{state}: {signal} took {took:?}"
+    );
+    let who = r.api.who(&r.lead, false).await.unwrap();
+    assert!(
+        !who.iter()
+            .any(|s| s.uri.who().session() == Some(r.host_id.as_str())),
+        "{state}: the session of the host is still in riff who"
+    );
+    assert!(
+        r.b.host_output().contains("riff workers host stopped."),
+        "{state}: {}",
+        r.b.host_output()
+    );
+}
+
+/// Waits until the fake `tmux` of `m` logs a call that contains `call`,
+/// after its first `before` calls.
+async fn calls(m: &Machine, call: &str, before: usize) {
+    until(call, || async {
+        m.log()
+            .lines()
+            .skip(before)
+            .any(|l| l.contains(call))
+            .then_some(())
+    })
+    .await;
+}
+
+/// Ctrl-C stops a host that waits for a wake, that answers a request (a
+/// slow `tmux new-window`), and that sets its status (a slow `tmux
+/// list-panes -a`) (01M3NBV405PVYHKTMQ5VN87FYN).
+#[tokio::test(flavor = "multi_thread")]
+async fn ctrl_c_stops_the_host_in_each_state() {
+    let mut r = riff().await;
+    stops_on(&mut r, "INT", "waiting for a wake").await;
+
+    let mut r = riff().await;
+    r.b.slow("*-window*");
+    let before = r.b.log().lines().count();
+    r.api
+        .tell(&r.lead, &r.host_id, "workers start 1")
+        .await
+        .unwrap();
+    calls(&r.b, "-window", before).await;
+    stops_on(&mut r, "INT", "answering a request").await;
+
+    let mut r = riff().await;
+    r.b.slow("list-panes -a*");
+    let before = r.b.log().lines().count();
+    r.api.tell(&r.lead, &r.host_id, "hello").await.unwrap();
+    calls(&r.b, "list-panes -a", before).await;
+    stops_on(&mut r, "INT", "setting its status").await;
+}
+
+/// SIGTERM and SIGHUP stop a host the same way as Ctrl-C
+/// (01M3NBV405PVYHKTMQ5VN87FYN).
+#[tokio::test(flavor = "multi_thread")]
+async fn sigterm_and_sighup_stop_the_host() {
+    let mut r = riff().await;
+    stops_on(&mut r, "TERM", "waiting for a wake").await;
+    let mut r = riff().await;
+    stops_on(&mut r, "HUP", "waiting for a wake").await;
+}
+
+/// Ctrl-C stops a host that tries again after an error: its server does
+/// not answer (01M3NBV405PVYHKTMQ5VN87FYN).
+#[tokio::test(flavor = "multi_thread")]
+async fn ctrl_c_stops_a_host_that_tries_again() {
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead = format!("http://{}", free.local_addr().unwrap());
+    drop(free);
+    let b = Machine::new("b", &dead);
+    b.limit(1);
+    let mut host = b.host(&main);
+    until("the host tries again", || async {
+        b.host_output().contains("Trying again").then_some(())
+    })
+    .await;
+    let took = host.stop("INT");
+    assert!(took < Duration::from_secs(2), "took {took:?}");
+}
+
+/// Ctrl-C stops a host at start, while the OS keyring does not answer
+/// (01M3NBV405PVYHKTMQ5VN87FYN, 01M3NBTZDT67WD9ZX0RHDVCW9T).
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn ctrl_c_stops_a_host_whose_keyring_does_not_answer() {
+    let api = start_server().await;
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let b = Machine::new("b", api.base());
+    let home = b.home.path();
+    // A bus that takes each connection and never answers.
+    let bus = home.join("bus");
+    let _deaf = std::os::unix::net::UnixListener::bind(&bus).unwrap();
+    std::fs::create_dir_all(home.join("config/riff")).unwrap();
+    std::fs::write(
+        home.join("config/riff/config.toml"),
+        "[workers]\nlimit = 1\n",
+    )
+    .unwrap();
+    let mut cmd = b.riff(&main, &["host", "--claude", "true"], None);
+    cmd.env_remove("RIFF_HOME")
+        .env("XDG_CONFIG_HOME", home.join("config"))
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env("XDG_RUNTIME_DIR", home.join("run"))
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={}", bus.display()),
+        );
+    let mut host = b.host_with(cmd);
+    until("the start line", || async {
+        b.host_output().contains("Ctrl-C stops it.").then_some(())
+    })
+    .await;
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(host.0.try_wait().unwrap().is_none(), "{}", b.host_output());
+    let took = host.stop("INT");
+    assert!(took < Duration::from_secs(2), "took {took:?}");
+}
+
+/// The first line of the host names the host, its limit, the lead that
+/// it serves and the repository (01M3NBV4294DS3WZFEKR7M3PNF).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_start_line_names_the_host_the_limit_the_lead_and_the_repository() {
+    let r = riff().await;
+    let place = identity::place_in(&r.main, "b").unwrap();
+    let output = r.b.host_output();
+    assert_eq!(
+        output.lines().next(),
+        Some(
+            format!(
+                "riff workers host: b offers 3 workers to the lead of mike in {}. \
+                 Ctrl-C stops it.",
+                place.repo_text()
+            )
+            .as_str()
+        ),
+        "{output}"
+    );
+}
+
+/// A second host of the same user and repository on the machine refuses
+/// to start, and names the first (01M3NBV44GKAX6WS391PN6R72W).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_host_refuses_to_start() {
+    let r = riff().await;
+    let out =
+        r.b.riff(&r.main, &["host", "--claude", "true"], None)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    let first = format!(
+        "runs on b already: process {}, session {}.",
+        r.host.0.id(),
+        r.host_id
+    );
+    assert!(err.contains(&first), "{err}");
+    assert!(!r.b.log().contains("window"), "{}", r.b.log());
+}
+
+/// The host reads no input: the offset of its input file stays at 0
+/// after it answers a request and starts a worker with `tmux`
+/// (01M3NBV46R0VB0JQNQ1ERG16J6).
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_host_reads_no_input() {
+    let r = riff().await;
+    r.api
+        .tell(&r.lead, &r.host_id, "workers start 1")
+        .await
+        .unwrap();
+    reads(&r.api, &r.lead, "b: started 1 worker").await;
+    let fdinfo = format!("/proc/{}/fdinfo/0", r.host.0.id());
+    let info = std::fs::read_to_string(fdinfo).unwrap();
+    assert!(info.starts_with("pos:\t0\n"), "{info}");
 }

@@ -1933,18 +1933,35 @@ before the deploy and the update, and starts them again after them.
 
 Your lead runs on one machine. Another machine of yours can run
 workers for it too. On that machine, set its limit, then start the
-workers host in a tmux pane in the main clone, and leave it running:
+workers host in a tmux pane. Run it in the main clone of the
+repository of your lead, for example `~/src/riff`, not in your home
+directory. Leave it running:
 
 ```sh
 riff workers limit 2
 riff workers host
 ```
 
+At once, it prints one line: the host, its limit, the lead that it
+serves and the repository. Check that the repository is the one of
+your lead:
+
+```text
+riff workers host: pangolin offers 2 workers to the lead of mike in como-technologies/riff. Ctrl-C stops it.
+```
+
 The host is a riff session with the status `workers host: limit 2,
 no workers`. It starts and stops workers only when the lead of your
 user asks, at most its own limit. It refuses each other request, and
-each request that is not verified. `Ctrl-C` stops the host. Its
-workers keep running.
+each request that is not verified. One host of your user runs on a
+machine for a repository. A second one refuses to start and names the
+process of the first.
+
+`Ctrl-C` stops the host in under 2 seconds, in each state. Its
+workers keep running. The host reads no keys, so tmux keys work in its
+pane. When the keyring of the machine does not answer in 10 seconds,
+for example because it is locked, the host stops with an error that
+says so. Unlock the keyring and start the host again.
 
 ```mermaid
 sequenceDiagram

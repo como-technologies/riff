@@ -1291,6 +1291,10 @@
 - **R82** `riff` keeps each secret under the keyring service `riff`.
   On Linux, it needs a Secret Service, for example GNOME Keyring or
   KWallet.
+- **01M3NBTZDT67WD9ZX0RHDVCW9T** `riff` waits at most 10 seconds for
+  one call to the OS keyring. A keyring that does not answer in that
+  time is an error that says so. It never blocks the process or its
+  Ctrl-C.
 - **R22** `riff-server` follows the MCP authorization spec, revision
   2026-07-28.
 - **R83** `riff-server` has no authorization endpoint for now. Its
@@ -1457,6 +1461,18 @@
 - **01M3N7AKHXGYQ58G61BEHS89WG** The skill tells the lead: count the
   free workers and the room of each host. Start workers where there is
   room: on each host first, on the machine of the lead last.
+- **01M3NBV405PVYHKTMQ5VN87FYN** Ctrl-C, SIGTERM and SIGHUP stop
+  `riff workers host` in under 2 seconds in each state: at start,
+  waiting for a wake, answering a request, setting its status, and
+  retrying after an error. It ends its session first.
+- **01M3NBV4294DS3WZFEKR7M3PNF** At start, `riff workers host` prints
+  one line: the host, its limit, the lead that it serves and the
+  repository.
+- **01M3NBV44GKAX6WS391PN6R72W** One workers host of a user runs on a
+  machine for a repository. A second one refuses to start, and names
+  the process and the session of the first.
+- **01M3NBV46R0VB0JQNQ1ERG16J6** `riff workers host` reads no input
+  and leaves the mode of the terminal as it is.
 
 ## Builds
 

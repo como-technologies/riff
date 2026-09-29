@@ -31,8 +31,10 @@
 //! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
 //! | `update-tried` | The same update. | The release tag that it tried last. |
 //! | `update.log` | The same update. | Its output. |
+//! | `host-USER-REPO` | `riff workers host` of USER in REPO (see [`crate::host`]). | Its PID and its session ID. |
 //!
-//! The writers of `mcp-PID`, `watch-ID` and `update.lock` hold a lock on
+//! The writers of `mcp-PID`, `watch-ID`, `update.lock` and
+//! `host-USER-REPO` hold a lock on
 //! the file while they run. The system ends
 //! the lock when the process ends, also after a crash. A file with no
 //! lock is stale, and riff ignores it. So a PID that the system gives
@@ -187,6 +189,43 @@ pub fn update(dir: &Path) -> io::Result<Option<Held>> {
 /// True while an update of riff holds the update lock.
 pub fn updating(dir: &Path) -> bool {
     File::open(dir.join("update.lock")).is_ok_and(|file| locked(&file))
+}
+
+/// Takes the lock of the workers host of `user` in `repo` on this
+/// machine, and writes `pid` and `session` in it
+/// (01M3NBV44GKAX6WS391PN6R72W). `Err` when another host holds it,
+/// with the PID and the session of that host.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// let first = riff::local::host(run.path(), "mike", "como/riff", 42, "h1")?.expect("free");
+/// assert_eq!(
+///     riff::local::host(run.path(), "mike", "como/riff", 43, "h2")?.unwrap_err(),
+///     "42 h1"
+/// );
+/// assert!(riff::local::host(run.path(), "brett", "como/riff", 43, "h2")?.is_ok());
+/// drop(first);
+/// assert!(riff::local::host(run.path(), "mike", "como/riff", 43, "h2")?.is_ok());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn host(
+    dir: &Path,
+    user: &str,
+    repo: &str,
+    pid: u32,
+    session: &str,
+) -> io::Result<Result<Held, String>> {
+    let path = dir.join(format!(
+        "host-{}-{}",
+        riff_core::name::sanitize(user),
+        riff_core::name::sanitize(repo)
+    ));
+    let Some(Held(mut file)) = lock(&path)? else {
+        return Ok(Err(std::fs::read_to_string(&path)?.trim().to_owned()));
+    };
+    file.set_len(0)?;
+    write!(file, "{pid} {session}")?;
+    Ok(Ok(Held(file)))
 }
 
 /// The release tag that the last update of riff by itself tried.
