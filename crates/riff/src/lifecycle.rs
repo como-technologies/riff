@@ -15,7 +15,7 @@
 //!
 //! `riff server` asks the riff that `riff` uses and the riff of this
 //! machine about themselves, with [`Api::probe`]
-//! (01M3K0Q854K18DGXJKQ427W586). It shows a short table, one fact on a
+//! (01M3Q5VE74608N5H2M73RB6Y2Z). It shows a short table, one fact on a
 //! line, and the action last (01M3NTEMQAY1Z10H1GX2K6PEAH). See
 //! [`crate::text::server_view`].
 //!

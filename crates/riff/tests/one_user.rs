@@ -95,7 +95,7 @@ fn riff_user_stands_in_when_it_cannot_open_the_keyring() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("brett@"));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("session  brett@"));
 }
 
 #[tokio::test]

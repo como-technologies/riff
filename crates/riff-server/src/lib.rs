@@ -1362,7 +1362,7 @@ async fn admin(
 }
 
 /// Refuses a caller who is not the owner, with 403. On a riff with no
-/// owner, the text names `riff owner --take` (01M3N7K48XQ8XSP7R0HD535ZX3).
+/// owner, the text names `riff owner --take` (01M3Q63NNC6SC03BFCG80M7B4D).
 fn owner_only(s: &Server, caller: &Who, what: &str) -> Result<(), (StatusCode, String)> {
     let tokens = s.tokens();
     if tokens.owner().is_none() {

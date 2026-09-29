@@ -1,6 +1,6 @@
 //! `riff who` for people, with the styles of `riff tail`
-//! (01M3MEW73CDSJDSKX32XW80WZH), and its `--color`
-//! (01M3MEW75WC7Y4M1BKQ7SXRPNR), against a real server.
+//! (01M3Q63MVZ74WPNBA3QJYQGHFG), and its `--color`
+//! (01M3Q5VE2D244XDZRYXM8DNSRS), against a real server.
 
 use isolated::Isolated;
 use std::io::Read;
@@ -137,7 +137,7 @@ async fn a_pipe_gets_no_color_unless_asked() {
 
     let auto = output(riff(&server, dir, None, &["who"])).await;
     assert!(
-        auto.contains("mike@pangolin:riff (a1)  idle 0s  lead  riff://"),
+        auto.contains("\nmike@pangolin:riff (a1)  idle 0s  lead\n"),
         "{auto}"
     );
     assert!(!auto.contains('\x1b'), "{auto:?}");
@@ -167,10 +167,7 @@ async fn a_blocked_status_is_red() {
     let who = output(riff(&server, dir, None, &["who", "--color", "always"])).await;
     let red = style::ERROR;
     let line = "blocked 0s ago: waits for a review (step: merge)";
-    assert!(
-        who.contains(&format!("       {red}{line}{red:#}\n")),
-        "{who:?}"
-    );
+    assert!(who.contains(&format!("  {red}{line}{red:#}\n")), "{who:?}");
 }
 
 /// Each `riff who` command in the `sh` blocks of How It Works is real,

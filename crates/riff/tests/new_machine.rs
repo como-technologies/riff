@@ -119,7 +119,7 @@ async fn a_new_machine_is_asked_once_in_a_terminal() {
         .await
         .unwrap();
     assert_eq!(shown.matches(question).count(), 1, "{shown}");
-    assert!(shown.contains("update.auto = false"), "{shown}");
+    assert!(shown.contains("update.auto  false  "), "{shown}");
     assert!(has_key(&machine.settings()), "{shown}");
     assert!(!update_auto(&machine.settings()).unwrap());
 

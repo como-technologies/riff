@@ -87,5 +87,6 @@ pub mod style;
 pub mod terminal;
 pub mod text;
 pub mod top;
+pub mod view;
 pub mod worker;
 pub mod worker_mcp;

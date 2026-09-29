@@ -365,27 +365,32 @@ async fn the_lead_starts_workers_on_another_host() {
     let listed = until("riff workers lists host b", || async {
         let out = r.a.riff(&r.main, &[], Some("l1")).output().unwrap();
         let out = stdout(&out);
-        out.contains("Host b: limit 3, 2 workers run.")
-            .then_some(out)
+        out.contains("\nb  limit 3  runs 2").then_some(out)
     })
     .await;
     assert!(
-        listed.contains("\nNo worker runs on this machine.\n"),
+        listed
+            .lines()
+            .next()
+            .unwrap()
+            .contains("  limit 0  runs 0  cpu "),
         "{listed}"
     );
     // Each machine shows its numbers and its score
     // (01M3Q5QE4SQ8VYN2PSF42KB3QJ).
-    let first = listed.lines().next().unwrap();
-    assert!(first.starts_with("This machine: limit 0. cpu "), "{listed}");
-    assert!(first.contains(", score "), "{listed}");
-    let host = listed.lines().find(|l| l.starts_with("Host b:")).unwrap();
     assert!(
-        host.contains(". cpu ") && host.contains(", score "),
+        listed.lines().next().unwrap().contains("  score "),
+        "{listed}"
+    );
+    let host = listed.lines().find(|l| l.starts_with("b  ")).unwrap();
+    assert!(
+        host.contains("  cpu ") && host.contains("  score "),
         "{listed}"
     );
     for (pane, id) in &workers {
+        let row = listed.lines().find(|l| l.starts_with(pane.as_str()));
         assert!(
-            listed.contains(&format!("{pane}  {}  {id}", &id[..8])),
+            row.unwrap().contains(&format!("  {}  ", &id[..8])),
             "{listed}"
         );
     }

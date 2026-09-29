@@ -402,7 +402,7 @@ impl Api {
 
     /// What the server tells about itself, with no token and no check
     /// of its build, within `wait`: for `riff server` and `riff update`
-    /// (01M3K0Q854K18DGXJKQ427W586). An error when it does not answer.
+    /// (01M3Q5VE74608N5H2M73RB6Y2Z). An error when it does not answer.
     pub async fn probe(&self, wait: Duration) -> Result<Probe> {
         let response = self
             .http
@@ -715,7 +715,7 @@ impl Api {
     }
 
     /// Lists the sessions and names the owner of the riff
-    /// (01M3N754NY5JX4P0SN8R4ZYFG9). `all` lists gone sessions too.
+    /// (01M3Q63NK0AHM25MB258B0K8XP). `all` lists gone sessions too.
     pub async fn roster(&self, me: &SessionUri, all: bool) -> Result<WhoReply> {
         let request = WhoRequest {
             me: me.clone(),

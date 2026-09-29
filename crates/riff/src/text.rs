@@ -1,6 +1,7 @@
 //! Plain-text output for people and agents. [`block`] is the styled
-//! form of a message for people, for `riff tail`, and [`who_view`] the
-//! styled form of `riff who`. Their styles are in [`crate::style`].
+//! form of a message for people, for `riff tail`. The views of the
+//! other commands for people are in [`crate::view`]. Their styles are
+//! in [`crate::style`].
 
 use std::fmt::Write;
 use std::process::ExitStatus;
@@ -17,9 +18,8 @@ use riff_core::selector::Selector;
 use crate::api::{Checked, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
-    AdminSet, ClaimReply, Invited, Kind, LeadReply, MembersReply, OwnerAsked, OwnerDenied,
-    OwnerPassed, Posted, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo,
-    StatusInfo, ThreadInfo, Wake,
+    AdminSet, ClaimReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, Posted,
+    Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -807,52 +807,8 @@ pub fn members_news(news: &anyhow::Result<Vec<Posted>>) -> String {
     }
 }
 
-/// The answer to `riff members`.
-///
-/// ```
-/// use riff_core::wire::MembersReply;
-///
-/// let reply = MembersReply {
-///     owner: Some("ada@gmail.com".into()),
-///     admins: vec![],
-///     members: vec!["bob@gmail.com".into()],
-///     allowed_domains: vec!["x.io".into()],
-/// };
-/// assert_eq!(
-///     riff::text::members(&reply),
-///     "owner: ada@gmail.com\nadmins: none\nmembers: bob@gmail.com\nallowed domains: x.io"
-/// );
-///
-/// // A riff with no owner says so (01M3N7K48XQ8XSP7R0HD535ZX3).
-/// let none = MembersReply { owner: None, ..reply };
-/// assert!(riff::text::members(&none).starts_with("owner: none\n"));
-/// assert!(riff::text::members(&none).ends_with(
-///     "\nThe riff has no owner. An admin takes the owner role with: riff owner --take"
-/// ));
-/// ```
-pub fn members(reply: &MembersReply) -> String {
-    let list = |items: &[String]| {
-        if items.is_empty() {
-            "none".to_owned()
-        } else {
-            items.join(", ")
-        }
-    };
-    let list = format!(
-        "owner: {}\nadmins: {}\nmembers: {}\nallowed domains: {}",
-        reply.owner.as_deref().unwrap_or("none"),
-        list(&reply.admins),
-        list(&reply.members),
-        list(&reply.allowed_domains)
-    );
-    match reply.owner {
-        Some(_) => list,
-        None => format!("{list}\n{NO_OWNER}"),
-    }
-}
-
 /// The line of `riff members` for a riff with no owner
-/// (01M3N7K48XQ8XSP7R0HD535ZX3).
+/// (01M3Q63NNC6SC03BFCG80M7B4D).
 pub const NO_OWNER: &str =
     "The riff has no owner. An admin takes the owner role with: riff owner --take";
 
@@ -919,59 +875,6 @@ pub fn workers_limited(left: u16, limit: u16, run: usize) -> String {
     )
 }
 
-/// The answer to `riff workers interval` (01M3Q5QE9H42FQKEDC5G9GKCWD).
-///
-/// ```
-/// let path = std::path::Path::new("/h/.config/riff/config.toml");
-/// assert_eq!(
-///     riff::text::workers_interval(10, path),
-///     "The lead starts at most one worker each 10 seconds (/h/.config/riff/config.toml)."
-/// );
-/// assert_eq!(
-///     riff::text::workers_interval(0, path),
-///     "The lead starts no worker by itself (/h/.config/riff/config.toml)."
-/// );
-/// ```
-pub fn workers_interval(seconds: u16, path: &std::path::Path) -> String {
-    let what = match seconds {
-        0 => "starts no worker by itself".to_owned(),
-        1 => "starts at most one worker each second".to_owned(),
-        n => format!("starts at most one worker each {n} seconds"),
-    };
-    format!("The lead {what} ({}).", path.display())
-}
-
-/// The answer to `riff workers limit` (01M3JPQT35BMR7XMAMMFSCDC2B).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::workers_limit(2, "/h/.config/riff/config.toml".as_ref()),
-///     "The limit of workers on this machine is 2 (/h/.config/riff/config.toml)."
-/// );
-/// ```
-pub fn workers_limit(limit: u16, path: &std::path::Path) -> String {
-    format!(
-        "The limit of workers on this machine is {limit} ({}).",
-        path.display()
-    )
-}
-
-/// The answer to `riff workers mcp` (01M3NB5R6X5AV79DQNKKJBH5J8).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::workers_mcp(&["riff".into(), "github".into()], "/h/.config/riff/config.toml".as_ref()),
-///     "Each new worker on this machine loads these MCP servers: riff, github (/h/.config/riff/config.toml)."
-/// );
-/// ```
-pub fn workers_mcp(names: &[String], path: &std::path::Path) -> String {
-    format!(
-        "Each new worker on this machine loads these MCP servers: {} ({}).",
-        names.join(", "),
-        path.display()
-    )
-}
-
 /// The line of `riff mcp` when the server asks its idle worker to stop
 /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
 pub const IDLE_STOP: &str =
@@ -1033,66 +936,6 @@ pub fn worker_mcp_missing(name: &str) -> String {
         "riff: no MCP server {name} in your Claude Code config, so the workers start without it. \
 `claude mcp list` shows the names."
     )
-}
-
-/// The answer to `riff workers`: a line for each worker pane, with the
-/// short session ID, and its claims or `no claims` with its idle time
-/// (01M3Q555KC1RKNEC4ZA9HQYJG2), and a second line with its status in
-/// `sessions`. A worker that is not in `sessions` shows `not in riff
-/// who` (01M3JPQTBDGT54WN7FZP9CD6B5).
-///
-/// ```
-/// use riff::terminal::WorkerPane;
-/// use riff_core::wire::SessionInfo;
-///
-/// let panes = [
-///     WorkerPane { pane: "%3".into(), session: "a6cf2205-1".into() },
-///     WorkerPane { pane: "%4".into(), session: "77e0aaaa-2".into() },
-/// ];
-/// let info = SessionInfo {
-///     uri: "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-1&claim=issue-12#issue-12".parse()?,
-///     live: true,
-///     idle_secs: 0,
-///     status: None,
-///     worker: false,
-///     stopping: false,
-///     claims_secs: 0,
-/// };
-/// let out = riff::text::workers(&panes, &[info]);
-/// assert!(out.contains("%3  a6cf2205  a6cf2205-1  live  claims: issue-12"), "{out}");
-/// assert!(out.contains("%4  77e0aaaa  77e0aaaa-2  not in riff who"), "{out}");
-/// assert_eq!(riff::text::workers(&[], &[]), "No worker runs on this machine.\n");
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn workers(panes: &[crate::terminal::WorkerPane], sessions: &[SessionInfo]) -> String {
-    if panes.is_empty() {
-        return "No worker runs on this machine.\n".into();
-    }
-    let mut out = String::new();
-    for w in panes {
-        let short: String = w.session.chars().take(8).collect();
-        let info = sessions
-            .iter()
-            .find(|s| s.uri.who().session() == Some(w.session.as_str()));
-        let Some(info) = info else {
-            let _ = writeln!(out, "{}  {short}  {}  not in riff who", w.pane, w.session);
-            continue;
-        };
-        let state = if info.live {
-            "live".into()
-        } else {
-            format!("idle {}", ago(info.idle_secs))
-        };
-        let claims = match info.uri.claims() {
-            [] => format!("no claims, idle {}", ago(info.claims_secs)),
-            claims => format!("claims: {}", claims.join(", ")),
-        };
-        let _ = writeln!(out, "{}  {short}  {}  {state}  {claims}", w.pane, w.session);
-        if let Some(status) = &info.status {
-            let _ = writeln!(out, "  {}", status_line(status));
-        }
-    }
-    out
 }
 
 /// The answer to `riff workers stop` (01M3JPQTDFW3C7QBSZZ2M831MH).
@@ -1468,7 +1311,7 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     out
 }
 
-/// The owner line of `who` (01M3N754NY5JX4P0SN8R4ZYFG9), or `None` for
+/// The owner line of `who` (01M3Q63NK0AHM25MB258B0K8XP), or `None` for
 /// a riff with no sign-in.
 ///
 /// ```
@@ -1492,7 +1335,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 
 /// The tags of a row of `riff who`: the role of a session, `lead` or
 /// `worker` (01M3NT4M159EHN5W8JRTQ417N4), or `owner` on the row of the
-/// owner as a person, with no session (01M3N754NY5JX4P0SN8R4ZYFG9).
+/// owner as a person, with no session (01M3Q63NK0AHM25MB258B0K8XP).
 ///
 /// ```
 /// use riff::text::tags;
@@ -1614,144 +1457,6 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
         }
         if let Some(status) = &s.status {
             let _ = writeln!(out, "  {}", status_line(status));
-        }
-    }
-    out
-}
-
-/// `riff who` for people (01M3MEW73CDSJDSKX32XW80WZH), with the styles
-/// of `riff tail`. It has ANSI styles: print it through `anstream`,
-/// which removes them when the output has no color. The `who` MCP tool
-/// uses the plain [`who`].
-///
-/// - The header: the state of the riff, `running` in bold green or
-///   `paused` in bold yellow, the [`owner_line`], and the dim build
-///   line.
-/// - One line for each session: its [`name`] in the color of the
-///   session ([`style::session`](crate::style::session)), `live` in
-///   green or a dim `idle` time, `(you)` in bold, the [`tags`] and
-///   each claim muted, and the dim URI.
-/// - Under the session, with the indent of the body in `riff tail`: the
-///   [`idle_worker`] time, then the status. The age is
-///   dim. A blocked status is red. A stale status is dim, and says so
-///   (01M3Q555KC1RKNEC4ZA9HQYJG2).
-///
-/// Each text from the server is [`safe`].
-///
-/// ```
-/// use riff_core::wire::{RiffOwner, RiffState, SessionInfo, Status, StatusInfo};
-///
-/// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
-///     .parse()?;
-/// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
-/// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
-/// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0 },
-///     SessionInfo {
-///         uri: brett,
-///         live: false,
-///         idle_secs: 150,
-///         status: Some(StatusInfo { status: blocked, age_secs: 60, stale: false }),
-///         worker: false,
-///         stopping: false,
-///         claims_secs: 0,
-///     },
-/// ];
-/// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
-/// let text = riff::text::who_view(RiffState::Running, &owner, &list, &list[0].uri);
-/// let plain = anstream::adapter::strip_str(&text).to_string();
-/// let lines: Vec<&str> = plain.lines().collect();
-/// assert_eq!(lines[0], "The riff is running.");
-/// assert_eq!(lines[1], "The owner is mike (mike@x.io).");
-/// assert!(lines[2].starts_with("riff and riff-server have the build"));
-/// assert_eq!(
-///     lines[3],
-///     "mike@pangolin:riff#issue-6 (a6cf)  live  (you)  lead issue-6  \
-///      riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
-/// );
-/// assert_eq!(lines[4], "brett@heron:riff (77e0)  idle 2m  riff://brett@heron/como-technologies/riff?session=77e0");
-/// assert_eq!(lines[5], "       blocked 1m ago: waits for a review (step: merge)");
-///
-/// // A riff with no sign-in shows no owner line.
-/// let text = riff::text::who_view(RiffState::Running, &RiffOwner::NoSignIn, &list, &list[0].uri);
-/// let plain = anstream::adapter::strip_str(&text).to_string();
-/// assert!(plain.lines().nth(1).unwrap().starts_with("riff and riff-server have the build"));
-/// assert!(!plain.contains("owner"));
-/// let red = riff::style::ERROR;
-/// assert!(text.contains(&format!("{red}blocked 1m ago: waits for a review (step: merge){red:#}")));
-///
-/// // A stale status says so, and is not red.
-/// let mut list = list;
-/// list[1].status.as_mut().unwrap().stale = true;
-/// let text = riff::text::who_view(RiffState::Running, &owner, &list, &list[0].uri);
-/// let plain = anstream::adapter::strip_str(&text).to_string();
-/// let lines: Vec<&str> = plain.lines().collect();
-/// assert_eq!(lines[5], "       blocked 1m ago (stale): waits for a review (step: merge)");
-/// assert!(!text.contains(&format!("{red}blocked")), "a stale block is not red");
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn who_view(
-    state: RiffState,
-    owner: &RiffOwner,
-    sessions: &[SessionInfo],
-    me: &SessionUri,
-) -> String {
-    let mut out = match state {
-        RiffState::Running => format!("The riff is {}.", styled(GOOD.bold(), "running")),
-        RiffState::Paused => format!(
-            "The riff is {}. Nobody claims work. Your user or the lead resumes it with \
-             `riff resume`.",
-            styled(WARNING.bold(), "paused")
-        ),
-    };
-    if let Some(line) = owner_line(owner) {
-        let _ = write!(out, "\n{line}");
-    }
-    let _ = writeln!(
-        out,
-        "\n{}",
-        styled(DIM, &build_line(crate::api::server_build().as_ref()))
-    );
-    if sessions.is_empty() {
-        out.push_str("Nobody is in the riff.\n");
-    }
-    for s in sessions {
-        let _ = write!(
-            out,
-            "{}  ",
-            styled(crate::style::session(&s.uri), &safe(&name(&s.uri)))
-        );
-        if s.live {
-            out.push_str(&styled(GOOD, "live"));
-        } else {
-            out.push_str(&styled(DIM, &format!("idle {}", ago(s.idle_secs))));
-        }
-        if s.uri.who() == me.who() {
-            let _ = write!(out, "  {}", styled(BOLD, "(you)"));
-        }
-        let mut marks: Vec<String> = tags(s, owner).into_iter().map(String::from).collect();
-        marks.extend(s.uri.claims().iter().map(|c| safe(c)));
-        if !marks.is_empty() {
-            let _ = write!(out, "  {}", styled(MUTED, &marks.join(" ")));
-        }
-        let _ = writeln!(out, "  {}", styled(DIM, &safe(&s.uri.to_string())));
-        if let Some(idle) = idle_worker(s) {
-            let _ = writeln!(out, "{INDENT}{idle}");
-        }
-        if let Some(info) = &s.status {
-            let age = ago(info.age_secs);
-            let step = safe(&info.status.step);
-            let line = match (&info.status.blocked, info.stale) {
-                (_, true) => styled(DIM, &safe(&status_line(info))),
-                (None, false) => {
-                    format!("status {}: {step}", styled(DIM, &format!("{age} ago")))
-                }
-                (Some(reason), false) => styled(
-                    ERROR,
-                    &format!("blocked {age} ago: {} (step: {step})", safe(reason)),
-                ),
-            };
-            let _ = writeln!(out, "{INDENT}{line}");
         }
     }
     out
@@ -2039,7 +1744,7 @@ where
     out
 }
 
-/// What `riff server` shows (01M3K0Q854K18DGXJKQ427W586): a short
+/// What `riff server` shows (01M3Q5VE74608N5H2M73RB6Y2Z): a short
 /// table, one fact on a line (01M3NTEMQAY1Z10H1GX2K6PEAH). First the
 /// build of `riff`, then the riff that it uses and where that choice
 /// comes from, with its release and sign-in. The riff of this machine
@@ -2129,7 +1834,7 @@ fn row(label: &str, value: &str) -> String {
 
 /// The release of `build`, with its commit and date short in brackets,
 /// for example `v0.6.0  (75209ac, 2026-09-29)`.
-fn build_facts(build: &Build) -> String {
+pub(crate) fn build_facts(build: &Build) -> String {
     let commit: String = build.commit.chars().take(7).collect();
     let date: String = build.time.chars().take(10).collect();
     format!(
@@ -2409,73 +2114,6 @@ pub fn no_host(host: &str) -> String {
 /// The refusal of `--host` in a process that is not an agent session.
 pub const HOST_NEEDS_THE_LEAD: &str = "riff: only the lead session asks a workers host. Run it \
 in the lead, or run riff workers start on that machine.";
-
-/// The line of this machine in `riff workers`: its limit, its numbers
-/// and its score (01M3Q5QE4SQ8VYN2PSF42KB3QJ).
-///
-/// ```
-/// use riff::machine::Machine;
-///
-/// let m = Machine { cores: 32, mhz: 3000, mem_gb: 128, load: 2.0 };
-/// assert_eq!(
-///     riff::text::this_machine(4, &m),
-///     "This machine: limit 4. cpu 32x3000MHz, mem 128GB, load 2.00, score 32.0.",
-/// );
-/// ```
-pub fn this_machine(limit: u16, machine: &crate::machine::Machine) -> String {
-    format!(
-        "This machine: limit {limit}. {machine}, score {:.1}.",
-        machine.score()
-    )
-}
-
-/// The heading of one host in `riff workers` (01M3N7AKFPX3ZGQARSG2V64GBD),
-/// with the numbers and the score of its machine
-/// (01M3Q5QE4SQ8VYN2PSF42KB3QJ).
-///
-/// ```
-/// use riff::host::HostStatus;
-/// use riff::machine::Machine;
-///
-/// let status = HostStatus { limit: 3, machine: None, workers: vec![("%3".into(), "1a2b".into())] };
-/// assert_eq!(riff::text::host_heading("pangolin", &status), "Host pangolin: limit 3, 1 worker runs.");
-/// let machine = Some(Machine { cores: 16, mhz: 4500, mem_gb: 32, load: 1.5 });
-/// assert_eq!(
-///     riff::text::host_heading("pangolin", &HostStatus { machine, ..status }),
-///     "Host pangolin: limit 3, 1 worker runs. cpu 16x4500MHz, mem 32GB, load 1.50, score 24.0.",
-/// );
-/// ```
-pub fn host_heading(host: &str, status: &crate::host::HostStatus) -> String {
-    let runs = match status.workers.len() {
-        1 => "1 worker runs".to_owned(),
-        n => format!("{n} workers run"),
-    };
-    let machine = status
-        .machine
-        .map(|m| format!(" {m}, score {:.1}.", m.score()))
-        .unwrap_or_default();
-    format!("Host {host}: limit {}, {runs}.{machine}", status.limit)
-}
-
-/// The setting of the update of riff by itself, for `riff update --auto`
-/// (01M3N7JJC5WQBJ7SJZSZNBAVVR).
-///
-/// ```
-/// let on = riff::text::auto_update(true);
-/// assert!(on.starts_with("update.auto = true: "), "{on}");
-/// assert!(riff::text::auto_update(false).contains("riff update --auto on"));
-/// ```
-pub fn auto_update(on: bool) -> String {
-    if on {
-        "update.auto = true: riff on this machine installs each new release of its riff by \
-         itself. Turn it off with riff update --auto off."
-            .into()
-    } else {
-        "update.auto = false: riff on this machine tells you to run riff update. Turn on the \
-         update by itself with riff update --auto on."
-            .into()
-    }
-}
 
 /// The note of a `riff` process that starts the update of riff by
 /// itself (01M3N7JJEKZMN1E5NJQRK2QYVB).

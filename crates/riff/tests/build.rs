@@ -234,8 +234,13 @@ async fn the_same_build_works_and_who_and_whoami_show_it() {
     for args in [&["whoami"][..], &["who"]] {
         let out = run(riff(&url, dir.path(), args)).await;
         assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
-        let line = format!("riff and riff-server have the build {VERSION}.");
+        let line = format!("  v{}  (", env!("CARGO_PKG_VERSION"));
         assert!(text(&out.stdout).contains(&line), "{}", text(&out.stdout));
+        assert!(
+            !text(&out.stdout).contains("riff-server"),
+            "{}",
+            text(&out.stdout)
+        );
         assert!(!text(&out.stderr).contains("Run riff update"));
     }
 }
@@ -254,10 +259,13 @@ async fn works_and_notes_once(theirs: Build, note: &str) {
         1,
         "{stderr}"
     );
-    let line = format!(
-        "riff has the build {VERSION}; riff-server has the build {theirs}. The versions can talk."
-    );
+    let commit: String = theirs.commit.chars().take(7).collect();
+    let line = format!("\nriff-server  v{}  ({commit}, ", theirs.version);
     assert!(stdout.contains(&line), "{stdout}");
+    assert!(
+        stdout.contains("  another build; the versions can talk\n"),
+        "{stdout}"
+    );
 }
 
 /// 01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E8M9TKBN90P4DYKH3H8: the same

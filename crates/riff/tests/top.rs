@@ -221,9 +221,10 @@ async fn a_worker_of_another_host_shows_worker() {
             .to_owned()
     };
     assert!(line("b2").starts_with("mike@thelio:riff (b2)"), "{who}");
-    assert!(line("b2").contains("  worker issue-12  riff://"), "{who}");
+    assert!(line("b2").contains("  worker  "), "{who}");
+    assert!(line("b2").contains("  issue-12"), "{who}");
     assert!(!line("c3").contains("worker"), "{who}");
-    assert!(line("a1").contains("  lead  riff://"), "{who}");
+    assert!(line("a1").contains("  you lead"), "{who}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

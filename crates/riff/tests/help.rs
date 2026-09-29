@@ -140,7 +140,7 @@ fn the_help_shows_no_value_of_an_environment_variable() {
         .output()
         .unwrap();
     let help = String::from_utf8(out.stdout).unwrap();
-    assert!(help.contains("RIFF_SERVER]"), "{help}");
+    assert!(help.contains("RIFF_SERVER"), "{help}");
     assert!(!help.contains("secret.example"), "{help}");
 }
 
@@ -162,7 +162,7 @@ fn the_book_shows_how_to_find_a_command() {
 
 #[test]
 fn the_server_help_is_short_and_riff_help_server_has_the_long_text() {
-    let short = "--server <SERVER>  The riff-server (default: the riff of this machine)";
+    let short = "--server <SERVER>  The riff-server (default: RIFF_SERVER, else";
     for args in [&["--help"][..], &["who", "-h"], &["workers", "start", "-h"]] {
         let help = riff(args);
         assert!(help.contains(short), "riff {args:?}: {help}");
