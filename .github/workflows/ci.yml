@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     # A release tag: the job Release check checks its version
-    # (01M3MRMASMP59PKHAV92XSV7XE).
+    # (01M3N73AW2J3TVSZWFJ88A91PG).
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -51,7 +51,7 @@ jobs:
 
   release:
     # A pushed tag v* fails when its version is not the version of the
-    # crates (01M3MRMASMP59PKHAV92XSV7XE).
+    # crates (01M3N73AW2J3TVSZWFJ88A91PG).
     name: Release check
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest

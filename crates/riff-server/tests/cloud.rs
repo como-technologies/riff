@@ -394,7 +394,9 @@ fn the_book_deploys_at_the_end_of_a_wave() {
 }
 
 /// The book how-to makes a release: bump, merge, tag, with the real
-/// commands (01M3MRMASMP59PKHAV92XSV7XE).
+/// commands (01M3N73AW2J3TVSZWFJ88A91PG). The pull request states the
+/// level and the reason, and the notes list what each person runs
+/// (01M3N73EGY4NQDQQP8Y185E9VZ).
 #[test]
 fn the_book_makes_a_release() {
     let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
@@ -402,6 +404,12 @@ fn the_book_makes_a_release() {
     let part = &part[..part[4..].find("\n### ").unwrap()];
     for text in [
         "An admin makes the release",
+        "(how-it-works.md#the-test-for-each-release)",
+        "states the level and the\nreason in one line",
+        "```text\nLevel: minor.",
+        "the commands that each person\nruns",
+        "`riff update --tag v0.2.0`",
+        "gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md\n",
         "riff workers stop\n",
         "sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml\n",
         "sed -i 's/\"version\": \".*\"/\"version\": \"0.2.0\"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json\n",
@@ -498,7 +506,7 @@ fn the_deploy_takes_only_a_release_tag() {
     assert!(out.status.success(), "{out:?}");
 }
 
-/// 01M3MRMASMP59PKHAV92XSV7XE: CI checks each pushed tag v*. The check
+/// 01M3N73AW2J3TVSZWFJ88A91PG: CI checks each pushed tag v*. The check
 /// fails a tag whose version is not the version of the crates.
 #[test]
 fn the_tag_check_fails_a_tag_of_another_version() {

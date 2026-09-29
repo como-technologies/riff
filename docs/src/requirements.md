@@ -531,12 +531,13 @@
 - **01M3MMZQ3KTF5Z3GXNR7DRQ65Z** A push to `main` never deploys the
   shared server. An admin deploys a release at the end of a wave
   (R216).
-- **01M3MRMASMP59PKHAV92XSV7XE** A release is a git tag `vX.Y.Z`. X.Y.Z
-  is the version of the crates in `Cargo.toml` and `Cargo.lock`. Each
-  wave gets a new minor version `0.MINOR.0`. A fix that cannot wait
-  for the end of a wave gets a new patch version `0.MINOR.PATCH`. CI
-  fails a pushed tag `v*` whose version is not the version of the
-  crates.
+- **01M3MRMASMP59PKHAV92XSV7XE** Replaced by
+  01M3N73AW2J3TVSZWFJ88A91PG.
+- **01M3N73AW2J3TVSZWFJ88A91PG** A release is a git tag `vX.Y.Z`. X.Y.Z
+  is the version of the crates in `Cargo.toml` and `Cargo.lock`. The
+  rules 01M3N73E5JWFTYZ90JX5AVFGEP to 01M3N73EEQ4HPCPPAGCAHH3S6B pick
+  the level of the release. CI fails a pushed tag `v*` whose version
+  is not the version of the crates.
 - **01M3MRMAVVKJ5WS8GWCJHWH0R4** `riff update` installs a release, not
   the head of `main`. With `--tag vX.Y.Z`, it installs that release.
   With no `--tag`, it installs the release that the server of `riff`
@@ -1327,9 +1328,44 @@
 - **01M3MX1E1EY1M7JGNCN6FCEVQK** `riff-server` also talks with a `riff`
   of the line before its own: `0.3.x` on a `0.4` server, `1.x` on a
   `2` server. It does not talk with a `riff` of a later line.
-- **01M3MX1E3R5WESVHA8RZXFQR1J** A change to a message, the API or the
-  header starts a new line of the version. Each wave release bumps the
-  minor.
+- **01M3MX1E3R5WESVHA8RZXFQR1J** Replaced by
+  01M3N73E5JWFTYZ90JX5AVFGEP to 01M3N73EEQ4HPCPPAGCAHH3S6B.
+- **01M3N73E5JWFTYZ90JX5AVFGEP** While the major is 0, the minor has
+  the role of the major.
+- **01M3N73E7YTHFX2J2KXT7017QX** A patch release (`0.3.0` to `0.3.1`)
+  changes nothing that another machine or session can notice: a fix
+  that restores the intended behavior, the docs, an output format, the
+  tests, or words of the skill or of a requirement that make a rule
+  clearer with no change in behavior.
+- **01M3N73EAAD1G88TG7SNFWE4P1** A minor release (`0.3.x` to `0.4.0`)
+  has a change that another machine or session can notice:
+  - the wire: a route or a field that a client needs, a removed one,
+    or a new meaning;
+  - the saved state of `riff-server`;
+  - the plugin contract: the hook input, and the names and arguments
+    of the riff tools;
+  - the behavior: a change of the skill or of a requirement that
+    changes what a session does, for example the pull request flow,
+    the verify, the claims, the waves or the pause.
+
+  A wire change stays additive for one minor, so that `riff-server`
+  serves the minor before its own (01M3MX1E1EY1M7JGNCN6FCEVQK). Riff
+  does not bridge a difference in behavior: the version note tells the
+  older session to update.
+- **01M3N73ECKSDSH6820AKW9J8F7** The major release `1.0.0` promises
+  that the wire and the behavior stay stable. After it, a major
+  breaks, a minor adds and a patch fixes. A change of behavior that
+  can break a pipeline or a policy is a major.
+- **01M3N73EEQ4HPCPPAGCAHH3S6B** The test for each release: can a
+  session on the old version and a session on the new version, in the
+  same riff, act differently or fail to understand each other? Yes: a
+  minor, and a major after 1.0. No: a patch. A wave release is a patch
+  unless the wave has a minor change.
+- **01M3N73EGY4NQDQQP8Y185E9VZ** The pull request of a release states
+  the level and the reason in one line. The release notes list the
+  commands that each person runs, for example
+  `riff update --tag vX.Y.Z` when the old `riff` cannot read the new
+  server.
 - **01M3JEE7P46GWXR1BD4Q1TTSGN** Each call of `riff` names its build in
   the header `riff-build`. Each reply of `riff-server` names the build
   of the server in the same header.

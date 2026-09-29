@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks a release tag (01M3MRMASMP59PKHAV92XSV7XE): it has the form
+# Checks a release tag (01M3N73AW2J3TVSZWFJ88A91PG): it has the form
 # vX.Y.Z, and X.Y.Z is the version of the crates in Cargo.toml and
 # Cargo.lock of ROOT. CI runs it for each pushed tag v*, and the deploy
 # runs it for its input (01M3MRMAY3P1K151RGAP9K6GSH).

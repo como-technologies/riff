@@ -783,9 +783,8 @@ set, and no shared server runs. The job signs in to Google Cloud from
 GitHub with no key.
 
 A release is a git tag `vX.Y.Z`. X.Y.Z is the version of the crates in
-`Cargo.toml`. Each wave gets a new minor version: `0.2.0`, `0.3.0`,
-and so on. A fix that cannot wait for the end of a wave gets a new
-patch version, for example `0.2.1`. Only an admin of the repository
+`Cargo.toml`. [Versions](how-it-works.md#versions) tells you the
+level: a patch, a minor or a major. Only an admin of the repository
 can push a release tag: the ruleset `releases` makes this so (see
 [Set up the repository](#set-up-the-repository)). `riff update`
 installs the release that the shared server runs, so the tag and the
@@ -804,10 +803,10 @@ flowchart LR
 
 An admin makes the release when each item of the wave is merged. Stop
 the workers first. Set the new version in `Cargo.toml` and in the
-`plugin.json` of the plugin, and update `Cargo.lock`. Each wave
-release bumps the minor, so that a change to a message, the API or the
-header starts a new line (see [Builds](how-it-works.md#builds)). When
-`main` already has the new minor, keep it. This example makes
+`plugin.json` of the plugin, and update `Cargo.lock`. Pick the level
+with
+[The test for each release](how-it-works.md#the-test-for-each-release).
+When `main` already has the new version, keep it. This example makes
 `v0.2.0`:
 
 ```sh
@@ -820,13 +819,28 @@ git commit -am "Release v0.2.0"
 git push -u origin HEAD
 ```
 
-Open a pull request for the branch, and get it verified and merged as
-each other change. Then tag the merge commit, and push the tag:
+Open a pull request for the branch. Its body states the level and the
+reason in one line, for example:
+
+```text
+Level: minor. The skill changes the verify flow, and the header changes.
+```
+
+Get it verified and merged as each other change. Then tag the merge
+commit, and push the tag:
 
 ```sh
 git fetch origin
 git tag v0.2.0 origin/main
 git push origin v0.2.0
+```
+
+Write the release notes. They list the commands that each person
+runs, for example `riff update --tag v0.2.0` when the old `riff`
+cannot read the new server. Publish them on the tag:
+
+```sh
+gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md
 ```
 
 CI runs the job `Release check` for the tag. It fails when the tag is

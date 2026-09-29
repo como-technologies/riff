@@ -13,8 +13,9 @@
 //! The crate version is a semantic version, and it says what a build
 //! can talk to (01M3MX1DYY6AVDW946NR0B9T2C). The line of a version is
 //! its major, and its minor while the major is 0: `0.4.1` is on the
-//! line `0.4`, `1.2.0` on the line `1`. A change to a wire type, to the
-//! API or to the header starts a new line (01M3MX1E3R5WESVHA8RZXFQR1J).
+//! line `0.4`, `1.2.0` on the line `1`. A change that another machine
+//! or session can notice, for example to a wire type, to the API or to
+//! the header, starts a new line (01M3N73EAAD1G88TG7SNFWE4P1).
 //! Most merges change no wire type, so the builds differ and the line
 //! matches: `riff` goes on, and tells the person once to update
 //! ([`other_build`]).

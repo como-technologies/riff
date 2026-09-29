@@ -26,7 +26,7 @@
 //!
 //! `riff update` does the update of a machine in one command
 //! (01M3K0Q892KWM76R9DJC1P37JA). It installs a release: the git tag
-//! `vX.Y.Z` of the crate version X.Y.Z (01M3MRMASMP59PKHAV92XSV7XE), not
+//! `vX.Y.Z` of the crate version X.Y.Z (01M3N73AW2J3TVSZWFJ88A91PG), not
 //! the head of `main`. With no `--tag`, it installs the release that the
 //! riff of `riff` runs, from the version of its build. So a newer tag
 //! that nobody deployed yet does not break a machine. When `riff` uses
@@ -186,7 +186,7 @@ pub fn install_args(tag: &str) -> [&str; 8] {
 }
 
 /// The release tag of the crate version `version`
-/// (01M3MRMASMP59PKHAV92XSV7XE).
+/// (01M3N73AW2J3TVSZWFJ88A91PG).
 ///
 /// ```
 /// assert_eq!(riff::lifecycle::release_tag("0.2.0"), "v0.2.0");
