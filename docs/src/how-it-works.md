@@ -2316,8 +2316,9 @@ sequenceDiagram
     M->>S: end: the session leaves riff who
 ```
 
-A worker that claims work before its next keep-alive goes on. Your
-lead gets a note for each worker that the server stops:
+A worker that the lead wakes, or that claims work, before its next
+keep-alive goes on. Your lead gets a note for each worker that the
+server stops:
 
 ```text
 workers: the server stops the idle worker 2a880834 on pangolin. It made no call for 75 seconds. At most 1 idle worker stays on each host.
