@@ -47,7 +47,7 @@
 //! the worker. So a crashed worker does not come back in `riff who`.
 
 use std::os::unix::process::ExitStatusExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
 
@@ -55,7 +55,8 @@ use anyhow::{Context, Result};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::Api;
-use crate::identity;
+use crate::terminal::{self, Program, Terminal, WorkerPane};
+use crate::{hygiene, identity, settings, text};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -103,8 +104,8 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .with_context(|| format!("cannot start {}", claude.display()))?;
     let status = tokio::select! {
         status = child.wait() => status?,
-        _ = term.recv() => return stop(&mut child).await,
-        _ = hup.recv() => return stop(&mut child).await,
+        _ = term.recv() => return stop_child(&mut child).await,
+        _ = hup.recv() => return stop_child(&mut child).await,
     };
     // A signal to the wrapper can come just after claude ended from the
     // same stop.
@@ -128,7 +129,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].
-async fn stop(child: &mut tokio::process::Child) -> Result<i32> {
+async fn stop_child(child: &mut tokio::process::Child) -> Result<i32> {
     if let Some(pid) = child.id() {
         let _ = std::process::Command::new("kill")
             .args(["-TERM", &pid.to_string()])
@@ -165,4 +166,87 @@ pub fn exit_words(status: &ExitStatus) -> String {
         (None, Some(signal)) => format!("signal {signal}"),
         (None, None) => "an unknown exit".into(),
     }
+}
+
+/// The workers that one start opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Started {
+    /// The pane and the session of each new worker.
+    pub panes: Vec<WorkerPane>,
+    /// The tmux window of the workers.
+    pub window: String,
+    /// The main worktree where each worker starts.
+    pub main: PathBuf,
+    /// The line of the fast-forward of the main clone, if any.
+    pub fresh: Option<String>,
+    /// The workers that the limit kept from a start, and why.
+    pub limited: Option<String>,
+}
+
+/// Starts at most `count` workers in `tmux`, in the main worktree of
+/// `dir` (01M3JD392Q5ANX0FPZ51W7B0E3): at most the limit of the machine
+/// minus the workers that run (01M3JPQT57PJCRBQYJNDVESS04). The inner
+/// error is the refusal to show when it started nothing. The caller
+/// checks who may start workers.
+pub fn start(
+    tmux: &dyn Terminal,
+    count: u16,
+    claude: &Path,
+    server: &str,
+    dir: &Path,
+) -> Result<std::result::Result<Started, String>> {
+    let limit = settings::workers_limit(&settings::path()?)?;
+    if limit == 0 {
+        return Ok(Err(text::NO_WORKER_LIMIT.into()));
+    }
+    let run = tmux.worker_panes()?.len();
+    let start = terminal::room(count, limit, run);
+    if start == 0 {
+        return Ok(Err(text::workers_full(limit, run)));
+    }
+    let main = identity::main_worktree(dir)
+        .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
+    let fresh = hygiene::fast_forward(&main).line();
+    let base = Api::new(server).base().to_owned();
+    let riff = std::env::current_exe()?;
+    let programs: Vec<Program> = (0..start)
+        .map(|_| Program::worker(&riff, claude, &main, &base, &terminal::new_session_id()))
+        .collect();
+    let (window, panes) = tmux.workers(&programs)?;
+    Ok(Ok(Started {
+        panes,
+        window,
+        main,
+        fresh,
+        limited: (start < count).then(|| text::workers_limited(count - start, limit, run)),
+    }))
+}
+
+/// Ends each worker of `tmux`, or the one in `pane`: it kills the pane,
+/// then sends the end call of the session (01M3JPQTDFW3C7QBSZZ2M831MH).
+/// Returns the number of stopped workers.
+pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Result<usize> {
+    let mut panes = tmux.worker_panes()?;
+    if let Some(pane) = pane {
+        panes.retain(|w| w.pane == pane);
+        if panes.is_empty() {
+            anyhow::bail!("no worker runs in the pane {pane}. `riff workers` lists them");
+        }
+    }
+    let here = identity::place(&std::env::current_dir()?)?;
+    let api = Api::new(server);
+    for worker in &panes {
+        tmux.kill(&worker.pane)?;
+        let ended = async {
+            let me = identity::agent(&here, &worker.session, api.base())?;
+            api.clone().signed_in(Some(&worker.session))?.end(&me).await
+        };
+        if let Err(e) = ended.await {
+            eprintln!(
+                "riff: stopped the pane {}, but the end call of its session failed: {e:#}",
+                worker.pane
+            );
+        }
+    }
+    Ok(panes.len())
 }

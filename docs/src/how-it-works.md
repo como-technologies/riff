@@ -1603,8 +1603,10 @@ not wait for your word:
 riff workers start 2
 ```
 
-The lead starts at most one worker for each free item. The limit
-still caps it: set the limit to 0 to stop new workers.
+The lead starts at most one worker for each free item. It starts them
+on each host with room first, and on its own machine last (see
+[Offer workers from another machine](#offer-workers-from-another-machine)).
+The limit still caps it: set the limit to 0 to stop new workers.
 
 ### Take over a worker
 
@@ -1644,6 +1646,52 @@ It closes the pane of each worker. The session leaves `riff who`, and
 its claims are free at once. Another session can take its item from
 its pushed branch. At the end of a wave, the lead stops the workers
 before the deploy and the update, and starts them again after them.
+
+### Offer workers from another machine
+
+Your lead runs on one machine. Another machine of yours can run
+workers for it too. On that machine, set its limit, then start the
+workers host in a tmux pane in the main clone, and leave it running:
+
+```sh
+riff workers limit 2
+riff workers host
+```
+
+The host is a riff session with the status `workers host: limit 2,
+no workers`. It starts and stops workers only when the lead of your
+user asks, at most its own limit. It refuses each other request, and
+each request that is not verified. `Ctrl-C` stops the host. Its
+workers keep running.
+
+```mermaid
+sequenceDiagram
+    participant L as lead on thelio
+    participant S as riff-server
+    participant H as riff workers host on pangolin
+    L->>S: riff workers start 2 --host pangolin
+    S->>H: direct message: workers start 2
+    H->>H: 2 worker panes in its tmux
+    H->>S: reply to the lead: panes and sessions
+```
+
+The lead starts and stops workers on that machine by its host name:
+
+```sh
+riff workers start 2 --host pangolin
+riff workers stop --host pangolin
+```
+
+The reply of the host comes to the lead as a direct message.
+`riff workers` in the lead lists each host after the workers of its
+own machine:
+
+```text
+No worker runs on this machine.
+Host pangolin: limit 2, 1 worker runs.
+%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims
+  status 1m ago: idle: waits for work
+```
 
 ### A worker goes to its next item
 

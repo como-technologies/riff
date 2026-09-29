@@ -35,7 +35,8 @@
 //!     T->>T: window riff-workers, 3 panes: claude "Join the riff."
 //! ```
 //!
-//! No message starts a process. Only a local command starts workers.
+//! No message starts a process, except a request of the lead to a
+//! workers host on another machine of its user ([`crate::host`]).
 //!
 //! A worker starts with no Remote Control, so the Claude app lists only
 //! the lead (01M3JD394YFA3TQRE3E72ZER4Z). The flag settings
@@ -228,8 +229,9 @@ pub trait Terminal {
 
     /// Adds one pane for each program to the window of the workers. It
     /// opens the window first when it is missing. It marks each pane
-    /// with the session of its program. Returns the name of the window.
-    fn workers(&self, programs: &[Program]) -> Result<String>;
+    /// with the session of its program. Returns the name of the window,
+    /// and each new pane with the session of its program.
+    fn workers(&self, programs: &[Program]) -> Result<(String, Vec<WorkerPane>)>;
 
     /// The worker panes of this machine: each pane with a
     /// [`SESSION_MARK`], in each session of the terminal.
@@ -342,7 +344,8 @@ impl Terminal for Tmux {
         Ok(true)
     }
 
-    fn workers(&self, programs: &[Program]) -> Result<String> {
+    fn workers(&self, programs: &[Program]) -> Result<(String, Vec<WorkerPane>)> {
+        let mut opened = Vec::new();
         let windows = self.run(&[
             "list-windows",
             "-t",
@@ -370,15 +373,24 @@ impl Terminal for Tmux {
                     self.run(&["set-option", "-w", "-t", id, "@riff", WORKERS])?;
                     self.mark(pane, program)?;
                     window = Some(id.to_owned());
+                    opened.push((pane.to_owned(), program));
                 }
                 Some(id) => {
                     let pane = self.open(&["split-window", "-t", id], "#{pane_id}", program)?;
                     self.mark(&pane, program)?;
                     self.run(&["select-layout", "-t", id, "tiled"])?;
+                    opened.push((pane, program));
                 }
             }
         }
-        Ok(WORKERS_WINDOW.to_owned())
+        let panes = opened
+            .into_iter()
+            .filter_map(|(pane, program)| {
+                let session = program.session.clone()?;
+                Some(WorkerPane { pane, session })
+            })
+            .collect();
+        Ok((WORKERS_WINDOW.to_owned(), panes))
     }
 
     fn worker_panes(&self) -> Result<Vec<WorkerPane>> {

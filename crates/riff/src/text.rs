@@ -1764,6 +1764,161 @@ pub fn newest_instead(server: &str, tag: &str) -> String {
          so riff installs the newest release, {tag}."
     )
 }
+
+/// The refusal of `riff workers host` outside tmux
+/// (01M3N7AK8TVYV8S0WR3RP0TN8X).
+pub const HOST_NEEDS_TMUX: &str = "riff workers host needs tmux: it starts the workers in its \
+tmux session. Run it in a tmux pane in the main clone.";
+
+/// The refusal of `riff workers host` with a limit of 0.
+pub const HOST_NEEDS_A_LIMIT: &str = "the limit of workers on this machine is 0, so this machine \
+offers no workers. Set a limit first, for example: riff workers limit 2";
+
+/// The last line of `riff workers host` after Ctrl-C.
+pub const HOST_STOPPED: &str =
+    "riff workers host stopped. Its workers still run. riff workers stop ends them.";
+
+/// The first line of `riff workers host`.
+///
+/// ```
+/// let me = "riff://mike@pangolin/como-technologies/riff?session=h1".parse()?;
+/// assert_eq!(
+///     riff::text::host_serves(&me),
+///     "pangolin offers workers to the lead of mike in como-technologies/riff, as the \
+///      session h1. Leave it running. Ctrl-C stops it."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn host_serves(me: &SessionUri) -> String {
+    format!(
+        "{} offers workers to the lead of {} in {}, as the session {}. Leave it running. \
+         Ctrl-C stops it.",
+        me.place().host(),
+        me.who().user(),
+        me.place().repo_text(),
+        me.who().session().unwrap_or("?")
+    )
+}
+
+/// The reply of a host to a start (01M3N7AKB3KXS2XYK0309C4M18): the
+/// pane and the session of each new worker.
+///
+/// ```
+/// use riff::terminal::WorkerPane;
+/// use riff::worker::Started;
+///
+/// let started = Started {
+///     panes: vec![WorkerPane { pane: "%3".into(), session: "s1".into() }],
+///     window: "riff-workers".into(),
+///     main: "/src/riff".into(),
+///     fresh: None,
+///     limited: Some("The limit of this machine is 1.".into()),
+/// };
+/// assert_eq!(
+///     riff::text::host_started("pangolin", &started),
+///     "pangolin: started 1 worker in /src/riff: %3 s1. The limit of this machine is 1."
+/// );
+/// ```
+pub fn host_started(host: &str, started: &crate::worker::Started) -> String {
+    let panes: Vec<String> = started
+        .panes
+        .iter()
+        .map(|w| format!("{} {}", w.pane, w.session))
+        .collect();
+    let mut line = format!(
+        "{host}: started {} in {}: {}.",
+        workers_count(started.panes.len()),
+        started.main.display(),
+        panes.join(", ")
+    );
+    if let Some(limited) = &started.limited {
+        line.push(' ');
+        line.push_str(limited);
+    }
+    line
+}
+
+/// The refusal of a host to a request that is not verified
+/// (01M3N7AKDE7DEA6NXS9ZMECRMH).
+///
+/// ```
+/// use riff::host::Request;
+/// assert_eq!(
+///     riff::text::host_refused_not_verified(&Request::Stop),
+///     "refused: \"workers stop\" is not verified. A host acts only on a verified request."
+/// );
+/// ```
+pub fn host_refused_not_verified(request: &crate::host::Request) -> String {
+    format!("refused: \"{request}\" is not verified. A host acts only on a verified request.")
+}
+
+/// The refusal of a host to a request that is not from the lead of its
+/// user in its repository (01M3N7AKDE7DEA6NXS9ZMECRMH).
+///
+/// ```
+/// use riff::host::Request;
+/// let me = "riff://mike@pangolin/como-technologies/riff?session=h1".parse()?;
+/// assert_eq!(
+///     riff::text::host_refused_not_the_lead(&Request::Start(2), &me),
+///     "refused: \"workers start 2\" is not from the lead of mike in como-technologies/riff. \
+///      Only that lead starts and stops workers on pangolin."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn host_refused_not_the_lead(request: &crate::host::Request, me: &SessionUri) -> String {
+    format!(
+        "refused: \"{request}\" is not from the lead of {} in {}. Only that lead starts and \
+         stops workers on {}.",
+        me.who().user(),
+        me.place().repo_text(),
+        me.place().host()
+    )
+}
+
+/// The answer to `riff workers start N --host HOST` and
+/// `riff workers stop --host HOST` (01M3N7AKB3KXS2XYK0309C4M18).
+///
+/// ```
+/// use riff::host::Request;
+/// assert_eq!(
+///     riff::text::host_asked("pangolin", &Request::Start(2)),
+///     "Asked the workers host on pangolin: workers start 2. Its reply comes as a direct message."
+/// );
+/// ```
+pub fn host_asked(host: &str, request: &crate::host::Request) -> String {
+    format!("Asked the workers host on {host}: {request}. Its reply comes as a direct message.")
+}
+
+/// The error when no workers host of the user runs on `host`.
+///
+/// ```
+/// assert!(riff::text::no_host("pangolin").contains("riff workers host"));
+/// ```
+pub fn no_host(host: &str) -> String {
+    format!(
+        "riff: no workers host of your user runs on {host}. On {host}, run riff workers host \
+         in a tmux pane in the main clone."
+    )
+}
+
+/// The refusal of `--host` in a process that is not an agent session.
+pub const HOST_NEEDS_THE_LEAD: &str = "riff: only the lead session asks a workers host. Run it \
+in the lead, or run riff workers start on that machine.";
+
+/// The heading of one host in `riff workers` (01M3N7AKFPX3ZGQARSG2V64GBD).
+///
+/// ```
+/// let status = riff::host::HostStatus { limit: 3, workers: vec![("%3".into(), "1a2b".into())] };
+/// assert_eq!(riff::text::host_heading("pangolin", &status), "Host pangolin: limit 3, 1 worker runs.");
+/// ```
+pub fn host_heading(host: &str, status: &crate::host::HostStatus) -> String {
+    let runs = match status.workers.len() {
+        1 => "1 worker runs".to_owned(),
+        n => format!("{n} workers run"),
+    };
+    format!("Host {host}: limit {}, {runs}.", status.limit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
