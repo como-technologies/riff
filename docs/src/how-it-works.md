@@ -581,16 +581,27 @@ riff who
 The first line shows the state of the riff. The second line names the
 owner of the riff, or says `The riff has no owner.`. A riff with no
 sign-in has no owner line. Each other line shows a session: its name,
-its state, `(you)`, `owner`, `lead` and its claims, and its URI.
-`owner` marks each session of the owner:
+its state, `(you)`, its tags and its claims, and its URI:
 
 ```text
 The riff is running.
 The owner is mike (mike@comotechnologies.io).
 riff and riff-server have the build 0.1.0 ...
-mike@pangolin:riff#issue-6 (a6cf)  live  (you)  owner lead issue-6  riff://mike@pangolin/...
+mike@pangolin:riff#issue-6 (a6cf)  live  (you)  lead issue-6  riff://mike@pangolin/...
+mike@thelio:riff#issue-7 (5b1e)  live  worker issue-7  riff://mike@thelio/...
 brett@heron:riff (77e0)  idle 2m  riff://brett@heron/...
 ```
+
+A tag shows the role of a session:
+
+- `lead`: the lead of its user in the repository (see
+  [The lead](#the-lead)).
+- `worker`: a worker that `riff workers start` started. The worker
+  tells the server, so each machine shows the same tag.
+
+The owner is a person, not a session. So no session has the tag
+`owner`. Only a line with no session, a person on the command line of
+the owner, has it.
 
 `live` means the session has an open watch. `idle 2m` means its last
 call was 2 minutes ago. A session with a status has a second line. See
@@ -621,9 +632,9 @@ riff who --all
 
 ## See what each session does
 
-`riff top` shows a live table of each session. It draws the table
-again every 3 seconds, and after each message of the thread. Ctrl-C
-stops it:
+`riff top` shows a live table of each person and each session. It
+draws the table again every 3 seconds, and after each message of the
+thread. Ctrl-C stops it:
 
 ```sh
 riff top
@@ -631,18 +642,32 @@ riff top
 
 The header shows the state of the riff, the owner, the builds, and the
 current wave. The wave line names each open item of the wave, with the
-short ID of each session that claims it, or `free`. Each row shows a
-session:
+short ID of each session that claims it, or `free`. Under the header, a
+tree shows each person, the hosts of the person, and the sessions on
+each host:
 
-- Who: the user, the host and the short session ID.
-- The tags `owner`, `lead` and `worker`.
-- `live`, or the idle time.
-- Each claim, with the title of its issue.
-- The status and its age. A blocked status is red, with the reason.
+```text
+WHO             TAGS    IDLE          ITEM                   STATUS
+ann             admin   last seen 1h
+mike            owner   live
+├─ pangolin
+│  └─ 5b1e2a90  worker  live          issue-7 Fix the help   2m tests
+└─ thelio
+   ├─ 3a3f8d5d          idle 4m       -                      blocked 1m: waits for a review (step: merge)
+   └─ 4e54d4e5  lead    live          -                      5m lead: the wave is on
+```
 
-A blocked session comes first. The other rows are in the order of
-user and host. The titles and the wave come from `gh`. With no `gh`,
-the table shows no titles and no wave line.
+- A person row: the user in a bold color, the tag `owner` or `admin`,
+  and `live` or `last seen` with the time. Each member of the riff has
+  a row, also when away.
+- A session row: the short session ID, the tag `lead` or `worker`,
+  `live` or the idle time, each claim with the title of its issue, and
+  the status with its age. A blocked status is red, with the reason.
+
+The tags mean the same as in [`riff who`](#see-who-is-in-the-riff).
+People are in the order of user, and hosts in the order of name. On a
+host, a blocked session comes first. The titles and the wave come from
+`gh`. With no `gh`, the table shows no titles and no wave line.
 
 `riff top` only reads. It posts nothing and wakes no session.
 

@@ -60,16 +60,32 @@ pub const ERROR: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))
 /// ```
 pub fn session(uri: &SessionUri) -> Style {
     match uri.who().session() {
-        Some(id) => {
-            // FNV-1a: the same on each machine and each run.
-            let hash = id.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-            });
-            let color = SESSION_COLORS[(hash % SESSION_COLORS.len() as u64) as usize];
-            BOLD.fg_color(Some(Color::Ansi(color)))
-        }
+        Some(id) => hashed(id),
         None => BOLD.underline(),
     }
+}
+
+/// The style of a person in `riff top`: bold, with a color from a hash
+/// of the USER (01M3NT4M5D36KTZ5XZMDP6QFQT).
+///
+/// ```
+/// use riff::style;
+///
+/// assert_eq!(style::person("mike"), style::person("mike"));
+/// assert!(style::person("mike").get_fg_color().is_some());
+/// ```
+pub fn person(user: &str) -> Style {
+    hashed(user)
+}
+
+/// Bold, with a color from a hash of `key`.
+fn hashed(key: &str) -> Style {
+    // FNV-1a: the same on each machine and each run.
+    let hash = key.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    let color = SESSION_COLORS[(hash % SESSION_COLORS.len() as u64) as usize];
+    BOLD.fg_color(Some(Color::Ansi(color)))
 }
 
 /// `text` in `style`.

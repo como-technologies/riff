@@ -223,6 +223,9 @@ struct Session {
     /// True after an end call, until the session comes back.
     ended: bool,
     status: Option<SetStatus>,
+    /// True when the session registered as a worker
+    /// (01M3NT4M159EHN5W8JRTQ417N4).
+    worker: bool,
 }
 
 /// A status with the time that the session set it.
@@ -246,6 +249,7 @@ impl Session {
             alive_before_load: None,
             ended: false,
             status: None,
+            worker: false,
         }
     }
 
@@ -375,6 +379,8 @@ struct SavedSession {
     ended: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     status: Option<SetStatus>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    worker: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -486,6 +492,7 @@ impl State {
                 alive_before_load: Some(alive_ms),
                 ended: s.ended,
                 status: s.status,
+                worker: s.worker,
                 ..Session::new(s.uri.place().clone(), now)
             };
             state.sessions.insert(s.uri.who().clone(), session);
@@ -780,8 +787,65 @@ impl State {
                     status: s.status.clone(),
                     age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
                 }),
+                worker: session.worker,
             })
             .collect()
+    }
+
+    /// Records whether the session `who` is a worker. A register call
+    /// sets it (01M3NT4M159EHN5W8JRTQ417N4).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&w1, now);
+    /// state.worker(w1.who(), true);
+    /// assert!(state.who(now, 0, false)[0].worker);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn worker(&mut self, who: &Who, worker: bool) {
+        if let Some(session) = self.sessions.get_mut(who)
+            && session.worker != worker
+        {
+            session.worker = worker;
+            self.changed.insert(Object::Sessions);
+        }
+    }
+
+    /// Whether a session of `user` is live, and the seconds since the
+    /// last call of a session of `user`, gone sessions too. `None` when
+    /// the server knows no session of `user` (01M3NT4M3A4E3K5S2NM7MS6PQD).
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// let hour = now + Duration::from_secs(3600);
+    /// assert_eq!(state.seen("mike", hour, 3_600_000), Some((false, 3600)));
+    /// assert_eq!(state.seen("ann", hour, 3_600_000), None);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn seen(&self, user: &str, now: Instant, now_ms: u64) -> Option<(bool, u64)> {
+        self.sessions
+            .iter()
+            .filter(|(who, _)| who.user() == user)
+            .map(|(_, s)| {
+                (
+                    s.watchers > 0,
+                    now_ms.saturating_sub(s.seen_ms(now, now_ms)) / 1000,
+                )
+            })
+            .reduce(|(a_live, a_idle), (b_live, b_idle)| (a_live || b_live, a_idle.min(b_idle)))
     }
 
     /// The URI of a session now: its place, whether it is the lead, and
@@ -1453,6 +1517,7 @@ impl State {
                 alive_ms: s.alive_ms(now, now_ms),
                 ended: s.ended,
                 status: s.status.clone(),
+                worker: s.worker,
             })
             .collect();
         let cursors = self

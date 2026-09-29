@@ -11,7 +11,7 @@ use riff::login::{self, SignIn};
 use riff::text;
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Kind, TokenReply};
+use riff_core::wire::{Kind, PersonRole, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::Provider;
@@ -398,9 +398,17 @@ async fn a_failed_note_leaves_the_change() {
     );
 }
 
-/// `riff who` names the owner after the state line, and tags each
-/// session of the owner. After `riff owner`, it shows the new owner
-/// (01M3N754NY5JX4P0SN8R4ZYFG9).
+/// The USER and the role of each person in the reply to `who`.
+async fn people(api: &Api, me: &SessionUri) -> Vec<(String, PersonRole)> {
+    let who = api.roster(me, false).await.unwrap();
+    who.people.into_iter().map(|p| (p.user, p.role)).collect()
+}
+
+/// `riff who` names the owner after the state line. The owner is a
+/// person: no session gets the tag `owner`, and `who` gives each member
+/// with a role. After `riff owner`, it shows the new owner
+/// (01M3N754NY5JX4P0SN8R4ZYFG9, 01M3NT4M159EHN5W8JRTQ417N4,
+/// 01M3NT4M3A4E3K5S2NM7MS6PQD).
 #[tokio::test]
 async fn who_shows_the_owner() {
     let (service, api) = start_with(true).await;
@@ -416,7 +424,8 @@ async fn who_shows_the_owner() {
         "{shown}"
     );
     let line = line_of(&shown, "a1");
-    assert!(line.contains("(you)  owner lead  riff://"), "{shown}");
+    assert!(line.contains("(you)  lead  riff://"), "{shown}");
+    assert_eq!(people(&ada, &a1).await, [("ada".into(), PersonRole::Owner)]);
 
     ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
     ada.pass_owner(&person("ada"), "bob@gmail.com")
@@ -437,8 +446,19 @@ async fn who_shows_the_owner() {
     bob.register(&b1).await.unwrap();
     let shown = who(&bob, &b1).await;
     let line = line_of(&shown, "b1");
-    assert!(line.contains("(you)  owner lead  riff://"), "{shown}");
+    assert!(line.contains("(you)  lead  riff://"), "{shown}");
     assert!(!line_of(&shown, "a1").contains("owner"), "{shown}");
+    let who = bob.roster(&b1, false).await.unwrap();
+    let bob_row = who.people.iter().find(|p| p.user == "bob").unwrap();
+    assert_eq!(bob_row.role, PersonRole::Owner);
+    assert_eq!(bob_row.seen_secs, Some(0));
+    assert_eq!(
+        people(&bob, &b1).await,
+        [
+            ("ada".into(), PersonRole::Admin),
+            ("bob".into(), PersonRole::Owner)
+        ]
+    );
 }
 
 /// A riff with no sign-in shows no owner line, also when its store
@@ -521,7 +541,7 @@ async fn the_who_tool_shows_the_owner() {
         "{shown}"
     );
     let line = line_of(&shown, "a1");
-    assert!(line.contains(" (you) owner  riff://"), "{shown}");
+    assert!(line.contains(" (you) lead  riff://"), "{shown}");
     assert!(!shown.contains('\x1b'), "{shown:?}");
 }
 
@@ -539,5 +559,6 @@ fn the_book_shows_the_owner_in_who() {
         "{section}"
     );
     assert!(section.contains("The riff has no owner."), "{section}");
-    assert!(section.contains("(you)  owner lead issue-6"), "{section}");
+    assert!(section.contains("(you)  lead issue-6"), "{section}");
+    assert!(section.contains("  worker issue-7  "), "{section}");
 }
