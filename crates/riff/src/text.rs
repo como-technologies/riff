@@ -1887,25 +1887,48 @@ offers no workers. Set a limit first, for example: riff workers limit 2";
 pub const HOST_STOPPED: &str =
     "riff workers host stopped. Its workers still run. riff workers stop ends them.";
 
-/// The first line of `riff workers host`.
+/// The first line of `riff workers host` (01M3NBV4294DS3WZFEKR7M3PNF).
 ///
 /// ```
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=h1".parse()?;
 /// assert_eq!(
-///     riff::text::host_serves(&me),
-///     "pangolin offers workers to the lead of mike in como-technologies/riff, as the \
-///      session h1. Leave it running. Ctrl-C stops it."
+///     riff::text::host_serves(&me, 6),
+///     "riff workers host: pangolin offers 6 workers to the lead of mike in \
+///      como-technologies/riff. Ctrl-C stops it."
 /// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn host_serves(me: &SessionUri) -> String {
+pub fn host_serves(me: &SessionUri, limit: u16) -> String {
     format!(
-        "{} offers workers to the lead of {} in {}, as the session {}. Leave it running. \
-         Ctrl-C stops it.",
+        "riff workers host: {} offers {} to the lead of {} in {}. Ctrl-C stops it.",
         me.place().host(),
+        workers_count(usize::from(limit)),
         me.who().user(),
         me.place().repo_text(),
-        me.who().session().unwrap_or("?")
+    )
+}
+
+/// The refusal of a second `riff workers host` of the same user and
+/// repository on a machine (01M3NBV44GKAX6WS391PN6R72W). `first` is the
+/// PID and the session of the first host.
+///
+/// ```
+/// let me = "riff://mike@pangolin/como-technologies/riff?session=h2".parse()?;
+/// assert_eq!(
+///     riff::text::host_runs(&me, "4242 h1"),
+///     "a workers host of mike in como-technologies/riff runs on pangolin already: \
+///      process 4242, session h1. Use that one, or stop it with Ctrl-C in its pane."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn host_runs(me: &SessionUri, first: &str) -> String {
+    let (pid, session) = first.split_once(' ').unwrap_or((first, "?"));
+    format!(
+        "a workers host of {} in {} runs on {} already: process {pid}, session {session}. \
+         Use that one, or stop it with Ctrl-C in its pane.",
+        me.who().user(),
+        me.place().repo_text(),
+        me.place().host(),
     )
 }
 

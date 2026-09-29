@@ -22,6 +22,12 @@
 //! Each keyring error is an error, also when riff cannot open the
 //! keyring. [`has_keyring`] tells the caller which case it is.
 //!
+//! Each call to the OS keyring runs on a thread of its own, and riff
+//! waits at most [`KEYRING_WAIT`] for it (01M3NBTZDT67WD9ZX0RHDVCW9T).
+//! A keyring that does not answer, for example a Secret Service that
+//! waits for an unlock, is an error that says so. It never stops the
+//! process that asked, and never stops its Ctrl-C.
+//!
 //! With `RIFF_HOME`, riff keeps each secret in a file of
 //! `$RIFF_HOME/secrets` and never opens the OS keyring
 //! (01M3MY2KSV73WS8D902YCH2PRX). Only the tests and `just dev` set it.
@@ -44,6 +50,8 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use keyring_core::{Entry, Error};
@@ -51,16 +59,20 @@ use keyring_core::{Entry, Error};
 /// The keyring service of each riff secret (R82).
 pub const SERVICE: &str = "riff";
 
+/// The longest time that riff waits for one call to the OS keyring.
+pub const KEYRING_WAIT: Duration = Duration::from_secs(10);
+
 /// Returns the secret with this name, or `None` if there is none.
 pub fn get(name: &str) -> Result<Option<String>> {
     if let Some(dir) = files() {
         return file_get(&dir, name);
     }
-    match entry(name)?.get_password() {
+    let owned = name.to_owned();
+    in_time(KEYRING_WAIT, move || match entry(&owned)?.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(Error::NoEntry) => Ok(None),
-        Err(e) => Err(fail("read", name, e)),
-    }
+        Err(e) => Err(fail("read", &owned, e)),
+    })?
 }
 
 /// Keeps a secret with this name. It replaces an older value.
@@ -68,9 +80,12 @@ pub fn set(name: &str, value: &str) -> Result<()> {
     if let Some(dir) = files() {
         return file_set(&dir, name, value);
     }
-    entry(name)?
-        .set_password(value)
-        .map_err(|e| fail("write", name, e))
+    let (owned, value) = (name.to_owned(), value.to_owned());
+    in_time(KEYRING_WAIT, move || {
+        entry(&owned)?
+            .set_password(&value)
+            .map_err(|e| fail("write", &owned, e))
+    })?
 }
 
 /// Removes the secret with this name. A missing secret is not an error.
@@ -78,18 +93,52 @@ pub fn delete(name: &str) -> Result<()> {
     if let Some(dir) = files() {
         return file_delete(&dir, name);
     }
-    match entry(name)?.delete_credential() {
-        Ok(()) | Err(Error::NoEntry) => Ok(()),
-        Err(e) => Err(fail("delete", name, e)),
-    }
+    let owned = name.to_owned();
+    in_time(KEYRING_WAIT, move || {
+        match entry(&owned)?.delete_credential() {
+            Ok(()) | Err(Error::NoEntry) => Ok(()),
+            Err(e) => Err(fail("delete", &owned, e)),
+        }
+    })?
 }
 
 /// True when riff keeps secrets in files, a keyring store is set, or
-/// riff can open the keyring of the OS.
+/// riff can open the keyring of the OS. A keyring that does not answer
+/// counts as one, so that the next call says that it does not answer.
 pub fn has_keyring() -> bool {
     files().is_some()
         || keyring_core::get_default_store().is_some()
-        || keyring::Entry::store_status().is_ok()
+        || in_time(KEYRING_WAIT, || keyring::Entry::store_status().is_ok()).unwrap_or(true)
+}
+
+/// Runs `call` on a thread of its own, and waits at most `wait` for it.
+/// A call that takes longer is an error; its thread goes on alone.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::secrets::in_time;
+///
+/// assert_eq!(in_time(Duration::from_secs(5), || 7).unwrap(), 7);
+/// let slow = in_time(Duration::from_millis(10), || std::thread::sleep(Duration::from_secs(5)));
+/// assert!(format!("{:#}", slow.unwrap_err()).contains("the OS keyring does not answer"));
+/// ```
+pub fn in_time<T: Send + 'static>(
+    wait: Duration,
+    call: impl FnOnce() -> T + Send + 'static,
+) -> Result<T> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("keyring".into())
+        .spawn(move || {
+            let _ = tx.send(call());
+        })
+        .context("riff cannot start a thread for the OS keyring")?;
+    rx.recv_timeout(wait).map_err(|_| {
+        anyhow!(
+            "the OS keyring does not answer in {} seconds. Unlock it, or check its Secret Service",
+            wait.as_secs_f32()
+        )
+    })
 }
 
 /// The directory of the secret files: `$RIFF_HOME/secrets`, or `None`

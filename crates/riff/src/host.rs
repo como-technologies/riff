@@ -37,10 +37,27 @@
 //!
 //! `riff workers` of the lead lists each live host of its user with its
 //! workers (01M3N7AKFPX3ZGQARSG2V64GBD).
+//!
+//! # Start and stop
+//!
+//! The host takes Ctrl-C, SIGTERM and SIGHUP first, before any other
+//! step, in a task of its own (`stop_on_signal`). A step of the host
+//! can block its own task: a call to the OS keyring, or `tmux`. The
+//! signal task still runs, ends the session of the host, and ends the
+//! process (01M3NBV405PVYHKTMQ5VN87FYN). A keyring call waits at most
+//! [`crate::secrets::KEYRING_WAIT`].
+//!
+//! Then it prints one line with its host, its limit, the lead that it
+//! serves and the repository (01M3NBV4294DS3WZFEKR7M3PNF). It holds the
+//! lock `host-USER-REPO` of [`crate::local`] while it runs, so a second
+//! host of the same user and repository on the machine refuses to start
+//! (01M3NBV44GKAX6WS391PN6R72W). It reads no input, and its children get
+//! no input from it (01M3NBV46R0VB0JQNQ1ERG16J6).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -50,7 +67,7 @@ use riff_core::wire::{SessionInfo, Status};
 
 use crate::api::{Api, Checked, follow};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
-use crate::{identity, settings, text, worker};
+use crate::{identity, local, settings, text, worker};
 
 /// The start of the status of a host.
 pub const MARK: &str = "workers host";
@@ -61,6 +78,10 @@ pub const REFRESH: Duration = Duration::from_secs(30);
 
 /// The time between two tries to connect the watch of a host.
 const RETRY: Duration = Duration::from_secs(5);
+
+/// The longest time that a host waits for the end of its session after
+/// a signal.
+pub const END_WAIT: Duration = Duration::from_secs(1);
 
 /// What the status of a host tells: its limit, and the pane and short
 /// session ID of each worker.
@@ -273,13 +294,16 @@ struct Host {
     server: String,
 }
 
-/// Runs `riff workers host` in `dir` until Ctrl-C
+/// Runs `riff workers host` in `dir` until Ctrl-C, SIGTERM or SIGHUP
 /// (01M3N7AK8TVYV8S0WR3RP0TN8X).
 pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
+    let session = Arc::new(OnceLock::new());
+    stop_on_signal(session.clone())?;
     let Some(tmux) = Tmux::from_env() else {
         bail!(text::HOST_NEEDS_TMUX);
     };
-    if settings::workers_limit(&settings::path()?)? == 0 {
+    let limit = settings::workers_limit(&settings::path()?)?;
+    if limit == 0 {
         bail!(text::HOST_NEEDS_A_LIMIT);
     }
     let Some(main) = identity::main_worktree(dir) else {
@@ -289,6 +313,17 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
     let api = Api::new(server);
     let id = terminal::new_session_id();
     let me = identity::agent(&place, &id, api.base())?;
+    let _lock = match local::dir() {
+        Some(dir) => {
+            let user = me.who().user();
+            match local::host(&dir, user, &place.repo_text(), std::process::id(), &id)? {
+                Ok(held) => Some(held),
+                Err(first) => bail!(text::host_runs(&me, &first)),
+            }
+        }
+        None => None,
+    };
+    println!("{}", text::host_serves(&me, limit));
     let host = Host {
         api: api.signed_in(Some(&id))?,
         me,
@@ -297,7 +332,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
         main,
         server: server.to_owned(),
     };
-    println!("{}", text::host_serves(&host.me));
+    let _ = session.set((host.api.clone(), host.me.clone()));
     let mut wakes = Box::pin(follow(|| host.api.watch(&host.me), RETRY));
     let mut refresh = tokio::time::interval(REFRESH);
     loop {
@@ -308,16 +343,40 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
                 None => return Ok(()),
             },
             _ = refresh.tick() => {}
-            _ = tokio::signal::ctrl_c() => {
-                host.api.end(&host.me).await?;
-                println!("{}", text::HOST_STOPPED);
-                return Ok(());
-            }
         }
         if let Err(e) = host.set_status().await {
             eprintln!("riff: cannot set the status of the host: {e:#}");
         }
     }
+}
+
+/// On Ctrl-C, SIGTERM or SIGHUP: ends the session in `session`, when it
+/// is set, and ends the process (01M3NBV405PVYHKTMQ5VN87FYN). It runs in
+/// a task of its own, so a step that blocks the host does not hold it.
+/// It waits at most [`END_WAIT`] for the end of the session.
+fn stop_on_signal(session: Arc<OnceLock<(Api, SessionUri)>>) -> Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut int = signal(SignalKind::interrupt())?;
+    let mut term = signal(SignalKind::terminate())?;
+    let mut hup = signal(SignalKind::hangup())?;
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = int.recv() => {}
+            _ = term.recv() => {}
+            _ = hup.recv() => {}
+        }
+        if let Some((api, me)) = session.get().cloned() {
+            let end = tokio::spawn(async move { api.end(&me).await });
+            match tokio::time::timeout(END_WAIT, end).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(e))) => eprintln!("riff: cannot end the session of the host: {e:#}"),
+                _ => eprintln!("riff: the session of the host did not end in time"),
+            }
+        }
+        println!("{}", text::HOST_STOPPED);
+        std::process::exit(0);
+    });
+    Ok(())
 }
 
 impl Host {
