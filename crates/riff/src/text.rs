@@ -1014,8 +1014,9 @@ pub fn worker_mcp_missing(name: &str) -> String {
 }
 
 /// The answer to `riff workers`: a line for each worker pane, with the
-/// short session ID, and a second line with its claims and its status
-/// in `sessions`. A worker that is not in `sessions` shows `not in riff
+/// short session ID, and its claims or `no claims` with its idle time
+/// (01M3Q555KC1RKNEC4ZA9HQYJG2), and a second line with its status in
+/// `sessions`. A worker that is not in `sessions` shows `not in riff
 /// who` (01M3JPQTBDGT54WN7FZP9CD6B5).
 ///
 /// ```
@@ -1033,6 +1034,7 @@ pub fn worker_mcp_missing(name: &str) -> String {
 ///     status: None,
 ///     worker: false,
 ///     stopping: false,
+///     claims_secs: 0,
 /// };
 /// let out = riff::text::workers(&panes, &[info]);
 /// assert!(out.contains("%3  a6cf2205  a6cf2205-1  live  claims: issue-12"), "{out}");
@@ -1060,7 +1062,7 @@ pub fn workers(panes: &[crate::terminal::WorkerPane], sessions: &[SessionInfo]) 
             format!("idle {}", ago(info.idle_secs))
         };
         let claims = match info.uri.claims() {
-            [] => "no claims".into(),
+            [] => format!("no claims, idle {}", ago(info.claims_secs)),
             claims => format!("claims: {}", claims.join(", ")),
         };
         let _ = writeln!(out, "{}  {short}  {}  {state}  {claims}", w.pane, w.session);
@@ -1481,6 +1483,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     status: None,
 ///     worker,
 ///     stopping: false,
+///     claims_secs: 0,
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
 /// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
@@ -1503,9 +1506,37 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
     tags
 }
 
+/// `idle` with its time for a worker with no claim: a fact that the
+/// riff derives, so no worker sets a status for it
+/// (01M3Q555KC1RKNEC4ZA9HQYJG2). `None` for each other session.
+///
+/// ```
+/// use riff_core::wire::SessionInfo;
+///
+/// let info = |uri: &str, worker| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+///     worker,
+///     stopping: false,
+///     claims_secs: 300,
+/// };
+/// let free = info("riff://mike@thelio/o/r?session=w1", true);
+/// let busy = info("riff://mike@thelio/o/r?session=w2&claim=issue-12", true);
+/// let other = info("riff://mike@thelio/o/r?session=s3", false);
+/// assert_eq!(riff::text::idle_worker(&free).as_deref(), Some("idle 5m"));
+/// assert_eq!(riff::text::idle_worker(&busy), None);
+/// assert_eq!(riff::text::idle_worker(&other), None);
+/// ```
+pub fn idle_worker(s: &SessionInfo) -> Option<String> {
+    (s.worker && s.uri.claims().is_empty()).then(|| format!("idle {}", ago(s.claims_secs)))
+}
+
 /// One line for each session: its name, `live` or the time since its
-/// last call, `(you)`, its [`tags`], and its URI. A session with a
-/// status gets a second line with the status and its age (R184).
+/// last call, `(you)`, its [`tags`], and its URI. Under it come the
+/// [`idle_worker`] time, and the status with its age (R184). A stale
+/// status says so (01M3Q555KC1RKNEC4ZA9HQYJG2).
 ///
 /// ```
 /// use riff::text;
@@ -1515,14 +1546,15 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let status = Status { step: "write the tests".into(), blocked: None };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false },
+///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0 },
 ///     SessionInfo {
 ///         uri: brett,
 ///         live: false,
 ///         idle_secs: 150,
-///         status: Some(StatusInfo { status, age_secs: 240 }),
+///         status: Some(StatusInfo { status, age_secs: 240, stale: true }),
 ///         worker: true,
 ///         stopping: false,
+///         claims_secs: 60,
 ///     },
 /// ];
 /// // The owner is a person: the sessions of brett get no tag `owner`.
@@ -1531,7 +1563,10 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 /// assert!(out.contains("(a6cf) live (you)  riff://"), "{out}");
 /// assert!(out.contains("(77e0) idle 2m worker  riff://"), "{out}");
 /// assert!(!out.contains("owner"), "{out}");
-/// assert!(out.ends_with("\n  status 4m ago: write the tests\n"), "{out}");
+/// assert!(
+///     out.ends_with("\n  idle 1m\n  status 4m ago (stale): write the tests\n"),
+///     "{out}"
+/// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> String {
@@ -1540,7 +1575,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
     }
     let mut out = String::new();
     for s in sessions {
-        let state = if s.live {
+        let idle = if s.live {
             "live".into()
         } else {
             format!("idle {}", ago(s.idle_secs))
@@ -1551,7 +1586,10 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
             ""
         };
         let tags: String = tags(s, owner).iter().map(|t| format!(" {t}")).collect();
-        let _ = writeln!(out, "{} {state}{you}{tags}  {}", name(&s.uri), s.uri);
+        let _ = writeln!(out, "{} {idle}{you}{tags}  {}", name(&s.uri), s.uri);
+        if let Some(idle) = idle_worker(s) {
+            let _ = writeln!(out, "  {idle}");
+        }
         if let Some(status) = &s.status {
             let _ = writeln!(out, "  {}", status_line(status));
         }
@@ -1571,8 +1609,10 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///   session ([`style::session`](crate::style::session)), `live` in
 ///   green or a dim `idle` time, `(you)` in bold, the [`tags`] and
 ///   each claim muted, and the dim URI.
-/// - The status under the session, with the indent of the body in
-///   `riff tail`. The age is dim. A blocked status is red.
+/// - Under the session, with the indent of the body in `riff tail`: the
+///   [`idle_worker`] time, then the status. The age is
+///   dim. A blocked status is red. A stale status is dim, and says so
+///   (01M3Q555KC1RKNEC4ZA9HQYJG2).
 ///
 /// Each text from the server is [`safe`].
 ///
@@ -1584,14 +1624,15 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false },
+///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0 },
 ///     SessionInfo {
 ///         uri: brett,
 ///         live: false,
 ///         idle_secs: 150,
-///         status: Some(StatusInfo { status: blocked, age_secs: 60 }),
+///         status: Some(StatusInfo { status: blocked, age_secs: 60, stale: false }),
 ///         worker: false,
 ///         stopping: false,
+///         claims_secs: 0,
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
@@ -1616,6 +1657,15 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 /// assert!(!plain.contains("owner"));
 /// let red = riff::style::ERROR;
 /// assert!(text.contains(&format!("{red}blocked 1m ago: waits for a review (step: merge){red:#}")));
+///
+/// // A stale status says so, and is not red.
+/// let mut list = list;
+/// list[1].status.as_mut().unwrap().stale = true;
+/// let text = riff::text::who_view(RiffState::Running, &owner, &list, &list[0].uri);
+/// let plain = anstream::adapter::strip_str(&text).to_string();
+/// let lines: Vec<&str> = plain.lines().collect();
+/// assert_eq!(lines[5], "       blocked 1m ago (stale): waits for a review (step: merge)");
+/// assert!(!text.contains(&format!("{red}blocked")), "a stale block is not red");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn who_view(
@@ -1663,12 +1713,18 @@ pub fn who_view(
             let _ = write!(out, "  {}", styled(MUTED, &marks.join(" ")));
         }
         let _ = writeln!(out, "  {}", styled(DIM, &safe(&s.uri.to_string())));
+        if let Some(idle) = idle_worker(s) {
+            let _ = writeln!(out, "{INDENT}{idle}");
+        }
         if let Some(info) = &s.status {
             let age = ago(info.age_secs);
             let step = safe(&info.status.step);
-            let line = match &info.status.blocked {
-                None => format!("status {}: {step}", styled(DIM, &format!("{age} ago"))),
-                Some(reason) => styled(
+            let line = match (&info.status.blocked, info.stale) {
+                (_, true) => styled(DIM, &safe(&status_line(info))),
+                (None, false) => {
+                    format!("status {}: {step}", styled(DIM, &format!("{age} ago")))
+                }
+                (Some(reason), false) => styled(
                     ERROR,
                     &format!("blocked {age} ago: {} (step: {step})", safe(reason)),
                 ),
@@ -1697,17 +1753,22 @@ pub fn who_view(
 ///     status: None,
 ///     worker: false,
 ///     stopping: false,
+///     claims_secs: 0,
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);
 /// info.status = Some(StatusInfo {
 ///     status: Status { step: "merge".into(), blocked: Some("waits".into()) },
 ///     age_secs: 5,
+///     stale: false,
 /// });
 /// assert_eq!(
 ///     riff::text::statusline(id, Some(&info)),
 ///     "riff 2a880834 lead issue-78 blocked"
 /// );
+/// // A stale block is not the current state.
+/// info.status.as_mut().unwrap().stale = true;
+/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 lead issue-78");
 /// assert_eq!(riff::text::statusline(id, None), "riff 2a880834 (not in the riff)");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -1727,7 +1788,7 @@ pub fn statusline(id: &str, info: Option<&SessionInfo>) -> String {
     if info
         .status
         .as_ref()
-        .is_some_and(|s| s.status.blocked.is_some())
+        .is_some_and(|s| s.status.blocked.is_some() && !s.stale)
     {
         out.push_str(" blocked");
     }
@@ -1755,7 +1816,8 @@ pub fn update_tag(tag: &crate::auto_update::Tag) -> String {
 }
 
 /// A status with its age. A blocked status starts with `blocked` and
-/// names the step at the end.
+/// names the step at the end. A stale status says `(stale)` after its
+/// age (01M3Q555KC1RKNEC4ZA9HQYJG2).
 ///
 /// ```
 /// use riff_core::wire::{Status, StatusInfo};
@@ -1766,18 +1828,26 @@ pub fn update_tag(tag: &crate::auto_update::Tag) -> String {
 ///         blocked: Some("waits for a review".into()),
 ///     },
 ///     age_secs: 90,
+///     stale: false,
 /// };
 /// assert_eq!(
 ///     riff::text::status_line(&blocked),
 ///     "blocked 1m ago: waits for a review (step: merge)"
 /// );
+/// let old = StatusInfo {
+///     status: Status { step: "tests".into(), blocked: None },
+///     age_secs: 7200,
+///     stale: true,
+/// };
+/// assert_eq!(riff::text::status_line(&old), "status 2h ago (stale): tests");
 /// ```
 pub fn status_line(info: &StatusInfo) -> String {
     let age = ago(info.age_secs);
+    let stale = if info.stale { " (stale)" } else { "" };
     let step = &info.status.step;
     match &info.status.blocked {
-        None => format!("status {age} ago: {step}"),
-        Some(reason) => format!("blocked {age} ago: {reason} (step: {step})"),
+        None => format!("status {age} ago{stale}: {step}"),
+        Some(reason) => format!("blocked {age} ago{stale}: {reason} (step: {step})"),
     }
 }
 

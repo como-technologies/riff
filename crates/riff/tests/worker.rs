@@ -212,19 +212,19 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     );
 }
 
-/// A worker with no work sets its status idle and keeps its watch. It
-/// stays in `riff who`, and a request of the lead wakes it.
+/// A worker with no work keeps its watch, and sets no status. It stays
+/// in `riff who`, where riff shows it idle (01M3Q555KC1RKNEC4ZA9HQYJG2),
+/// and a request of the lead wakes it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_request_of_the_lead_wakes_an_idle_worker() {
     let api = start_server().await;
     let lead = lead(&api).await;
     let dir = repo();
-    let status = riff(&api, dir.path(), "w2")
-        .args(["status", riff::worker::IDLE])
-        .env("RIFF_WORKER", "1")
-        .output()
+    // `riff mcp` of a worker registers it as a worker.
+    let w2: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w2"
+        .parse()
         .unwrap();
-    assert!(status.status.success(), "{status:?}");
+    api.register_as(&w2, true).await.unwrap();
     let watch = riff(&api, dir.path(), "w2")
         .args(["watch", "--once"])
         .env("RIFF_WORKER", "1")
@@ -232,7 +232,7 @@ async fn a_request_of_the_lead_wakes_an_idle_worker() {
         .spawn()
         .unwrap();
 
-    // The idle worker is live in `riff who`, with its status. The limit
+    // The idle worker is live in `riff who`, and idle. The limit
     // only stops a hang: a slow machine still passes.
     let begin = Instant::now();
     let idle = loop {
@@ -246,7 +246,9 @@ async fn a_request_of_the_lead_wakes_an_idle_worker() {
         assert!(begin.elapsed() < Duration::from_secs(60), "no live w2");
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
-    assert_eq!(idle.status.unwrap().status.step, riff::worker::IDLE);
+    assert!(idle.status.is_none(), "{idle:?}");
+    let shown = riff::text::idle_worker(&idle);
+    assert!(shown.is_some_and(|s| s.starts_with("idle ")), "{idle:?}");
 
     api.tell(&lead, "w2", "request: claim issue-12")
         .await
@@ -428,7 +430,7 @@ async fn the_start_hook_tells_a_worker() {
     );
     assert!(!worker.contains("riff workers done"), "{worker}");
     assert!(
-        worker.contains("set your status `idle: waits for work`, keep your watch running"),
+        worker.contains("and you hold no claim, keep your watch running, and end your turn"),
         "{worker}"
     );
     assert!(

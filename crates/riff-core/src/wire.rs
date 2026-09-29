@@ -280,6 +280,12 @@ pub struct SessionInfo {
     /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stopping: bool,
+    /// The seconds since the claims of the session last changed: a
+    /// claim, a release, a new start, or the start of `riff-server`. A
+    /// worker with no claim is idle for this time
+    /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
+    #[serde(default)]
+    pub claims_secs: u64,
 }
 
 /// The most characters in the step or the reason of a [`Status`].
@@ -344,6 +350,12 @@ pub struct StatusInfo {
     pub status: Status,
     /// The seconds since the session set the status.
     pub age_secs: u64,
+    /// True when the session set the status before the last change of
+    /// its state: a claim or a release, a pause or a resume of the
+    /// riff, or a start of `riff-server` (01M3Q551YHYZBFV2NDS1QCYXCD).
+    /// A stale status is not the current state of the session.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// `POST /v1/status`: sets the status of `me`. It replaces the old

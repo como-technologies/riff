@@ -529,8 +529,7 @@ wake each session. While the riff is paused, a claim fails.
 1. Claim nothing.
 2. Call `tell` with the session `lead`. Say hello, and say that you
    wait for the resume.
-3. Set your status to `waiting: the riff is paused`.
-4. Wait. The resume wakes you. Then do the start routine from step 2.
+3. Wait. The resume wakes you. Then do the start routine from step 2.
 
 When you are the lead, tell your user that the riff is paused. Do not
 resume it until your user says so.
@@ -554,8 +553,7 @@ When a pause wakes you:
 3. Push nothing to the default branch. Between a verify pass and its
    merge, stop before the push. A verify stops with no result.
 4. Keep your claims, and keep the watch running.
-5. Set your status, for example `paused at: tests of issue-12`.
-6. Wait. Messages still flow: answer a status request with `status`,
+5. Wait. Messages still flow: answer a status request with `status`,
    and a question from the lead with `tell`.
 
 When the resume wakes you, go on from where you stopped. When your
@@ -661,8 +659,8 @@ decides a scope, or a new item joins the current wave.
 1. Count the free work: the free items of the current wave and the
    free verify requests.
 2. Run `riff workers`. Count the workers, and the free workers: the
-   workers with no claim. A free worker waits idle, with the status
-   `idle: waits for work`. `riff workers limit` shows the limit of
+   workers with no claim. `riff who` shows a free worker as `idle`,
+   with its time. `riff workers limit` shows the limit of
    your machine. `riff workers` also lists each host of your user on
    another machine (`Host pangolin: limit 2, 1 worker runs.`) with its
    workers.
@@ -725,10 +723,10 @@ The start hook tells a worker that it is one (`RIFF_WORKER=1`).
 - When you finish an item, run `riff workers next` (step 11 of the
   start routine). You start the next item with a fresh context.
 - When the start routine finds no free item and no free verify
-  request, and you hold no claim, you are idle. Set your status
-  `idle: waits for work`, keep the watch running, and end your turn.
-  Do not end this session. The lead gives you work with a request. The
-  server stops an idle worker when too many wait on its host.
+  request, and you hold no claim, you are idle. Keep the watch
+  running, and end your turn. Do not end this session. The lead gives
+  you work with a request. The server stops an idle worker when too
+  many wait on its host.
 - While you wait for a verify, keep your claim and wait.
 
 ## A request from your lead
@@ -813,10 +811,15 @@ status of each session with its age.
 
 Set your status at these times:
 
-- When you claim an item.
 - When you change step, for example from tests to docs.
 - When you are blocked, and again when you can go on.
-- When you release an item.
+
+riff shows the facts of your state by itself: `paused`, your claims,
+`idle` with its time for a worker with no claim, and the current wave
+for the lead. Do not set your status for them. A step that you set
+before the last change of your state is stale: a claim, a release, a
+pause, a resume, or a new start of `riff-server`. `who` shows it dim,
+with `stale`.
 
 A status request is a post of kind `status`. When one wakes you, call
 `read`, then answer with `status`. Do not post a reply.

@@ -670,10 +670,11 @@ WHO             TAGS    IDLE          ITEM                   STATUS
 ann             admin   last seen 1h
 mike            owner   live
 ├─ pangolin
-│  └─ 5b1e2a90  worker  live          issue-7 Fix the help   2m tests
+│  ├─ 5b1e2a90  worker  live          issue-7 Fix the help   2m tests
+│  └─ 9c0d1e2f  worker  live          -                      idle 6m  stale 20m: tests
 └─ thelio
    ├─ 3a3f8d5d          idle 4m       -                      blocked 1m: waits for a review (step: merge)
-   └─ 4e54d4e5  lead    live          -                      5m lead: the wave is on
+   └─ 4e54d4e5  lead    live          -                      Wave 3: #7 #9  5m plan the next wave
 ```
 
 - A person row: the user in a bold color, the tag `owner` or `admin`,
@@ -681,7 +682,11 @@ mike            owner   live
   a row, also when away.
 - A session row: the short session ID, the tag `lead` or `worker`,
   `live` or the idle time, each claim with the title of its issue, and
-  the status with its age. A blocked status is red, with the reason.
+  the status. The status starts with the facts that riff knows by
+  itself (see [What riff shows by itself](#what-riff-shows-by-itself)).
+  The lead row shows the current wave and its open items. Then comes
+  the step that the session set, with its age. A blocked step is red,
+  with the reason.
 
 The tags mean the same as in [`riff who`](#see-who-is-in-the-riff).
 People are in the order of user, and hosts in the order of name. On a
@@ -1471,7 +1476,7 @@ sequenceDiagram
     P->>E: riff pause
     E-->>W: wake: the riff is paused
     W->>W: finish the command, WIP commit, push the branch
-    W->>E: status "paused at: tests of issue-12"
+    W->>E: keep the claims, wait
     P->>E: riff resume
     E-->>W: wake: the riff is running again
     W->>W: go on from where it stopped
@@ -1510,9 +1515,8 @@ riff whoami
 ## A status
 
 Each session has a status: its current step, and a reason when it is
-blocked. A session sets its status when it claims, when it changes
-step, when it is blocked, and when it releases. `riff who` shows each
-status with its age:
+blocked. A session sets its status when it changes step, and when it
+is blocked. `riff who` shows each status with its age:
 
 ```text
 mike@pangolin:riff#issue-6 (a6cf)  live  issue-6  riff://mike@pangolin/...
@@ -1548,6 +1552,43 @@ list them:
 ```sh
 riff post --kind status --to repo=como-technologies/riff
 riff who
+```
+
+### What riff shows by itself
+
+riff knows some facts of each session, so no session sets a status for
+them. `riff who` and `riff top` show them before the step:
+
+- `paused`: the riff is paused. `riff who` shows it in its first line,
+  and `riff top` in each row.
+- The claims of the session.
+- `idle` with its time: a worker with no claim. The time counts from
+  its last release.
+- The current wave and its open items: on the lead row of `riff top`.
+
+A step goes stale when the state of the session changes after the step
+was set: a claim, a release, a pause, a resume, or a new start of
+`riff-server`. A stale step is dim, and says `stale`. It is not the
+current state. A stale block is not red, and does not come first.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Current: the session sets a step
+    Current --> Stale: a claim, a release, a pause, a resume, or a new start of riff-server
+    Stale --> Current: the session sets a step
+```
+
+To see the facts and the stale steps:
+
+```sh
+riff who
+riff top --once
+```
+
+```text
+mike@thelio:riff (9c0d)  live  worker  riff://mike@thelio/...
+       idle 6m
+       status 20m ago (stale): tests
 ```
 
 ### Set your status
@@ -2165,8 +2206,7 @@ own machine:
 ```text
 No worker runs on this machine.
 Host pangolin: limit 2, 1 worker runs.
-%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims
-  status 1m ago: idle: waits for work
+%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims, idle 1m
 ```
 
 ### A worker goes to its next item
@@ -2250,7 +2290,7 @@ tokens. Your lead decides.
 flowchart TD
     W[a worker] --> Q{what happens?}
     Q -- "claude exits on its own, for example a crash" --> C["the wrapper tells the lead:<br/>pane, session ID, exit code"]
-    Q -- "no claim and no free item" --> I["it waits idle:<br/>status idle: waits for work,<br/>its watch runs"]
+    Q -- "no claim and no free item" --> I["it waits idle:<br/>riff shows idle,<br/>its watch runs"]
     I -- "a request of the lead" --> N[it claims the item]
     I -- "idle too long, and another idle worker on its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
     Q -- "riff workers stop" --> S[the pane closes, no message]
@@ -2272,16 +2312,16 @@ lead or you end the other workers with `riff workers stop` (see
 ### A worker with no work waits idle
 
 A worker with no claim, and no free item or verify request, waits. It
-sets its status, keeps its watch running, and ends its turn. An idle
-session costs nothing. `riff workers` shows it:
+keeps its watch running, and ends its turn. An idle session costs
+nothing. riff shows it as idle, with the time since its last release.
+`riff workers` shows it:
 
 ```sh
 riff workers
 ```
 
 ```text
-%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims
-  status 2m ago: idle: waits for work
+%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims, idle 2m
 ```
 
 A request of your lead wakes it, and it claims the item (see

@@ -347,3 +347,89 @@ fn the_book_shows_real_top_commands() {
             .success();
     }
 }
+
+/// The STATUS cell of the session row `id`: the text after its ITEM
+/// cell `item`.
+fn status_of(top: &str, id: &str, item: &str) -> String {
+    let row = session_rows(top)
+        .into_iter()
+        .find(|r| r.contains(&format!("─ {id} ")))
+        .unwrap_or_else(|| panic!("{id}: {top}"));
+    let (_, status) = row
+        .split_once(&format!("  {item}  "))
+        .unwrap_or_else(|| panic!("{item} in {row}"));
+    status.trim_start().to_owned()
+}
+
+/// A pause is a change of the state of each session: `riff top` shows
+/// `paused` first, and the step from before the pause as stale
+/// (01M3Q551YHYZBFV2NDS1QCYXCD, 01M3Q555KC1RKNEC4ZA9HQYJG2).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pause_shows_paused_and_the_old_step_as_stale() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    three_sessions(&server, dir, bin.path()).await;
+    output(riff(&server, dir, Some("a1"), bin.path(), &["pause"])).await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    let b2 = status_of(&top, "b2", "issue-12 Show the wave");
+    assert!(b2.starts_with("paused  stale "), "{top}");
+    assert!(b2.ends_with(": tests"), "{top}");
+    let c3 = status_of(&top, "c3", "-");
+    assert!(c3.starts_with("paused  stale "), "{top}");
+    assert!(
+        c3.ends_with(": blocked: waits for a review (step: merge)"),
+        "{top}"
+    );
+    let rows = rows(&top);
+    assert!(
+        rows[2].starts_with("│  ├─ a1 "),
+        "a stale block does not come first: {top}"
+    );
+}
+
+/// A worker that releases its claim shows `idle` with its time, not its
+/// old step (01M3Q551WCMPQRCNJ8FXQEBFY4, 01M3Q555KC1RKNEC4ZA9HQYJG2).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_with_no_claim_shows_idle_not_its_old_step() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    three_sessions(&server, dir, bin.path()).await;
+    let release = ["release", "issue-12"];
+    output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    let b2 = status_of(&top, "b2", "-");
+    assert!(b2.starts_with("idle "), "{top}");
+    assert!(b2.contains("  stale "), "{top}");
+    assert!(b2.ends_with(": tests"), "{top}");
+    assert!(top.contains("\nWave 3: #12 free\n"), "{top}");
+}
+
+/// The lead row shows the current wave and its open items, with no
+/// status call (01M3Q555KC1RKNEC4ZA9HQYJG2).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_lead_row_shows_the_wave_with_no_status_call() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    three_sessions(&server, dir, bin.path()).await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert_eq!(status_of(&top, "a1", "-"), "Wave 3: #12", "{top}");
+    let who = ["who", "--color", "never"];
+    let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
+    let a1 = who.lines().skip_while(|l| !l.contains("(a1)")).nth(1);
+    assert!(
+        a1.is_none_or(|l| !l.contains("status")),
+        "a1 set no status: {who}"
+    );
+}

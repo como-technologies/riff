@@ -331,9 +331,9 @@ matches."
 
     #[tool(
         description = "Set your status: your current step, and `blocked` with a reason when you \
-cannot go on. `who` shows it with its age. Set it when you claim, when you change step, when you are \
-blocked, and when you release. When a status request wakes you, answer with this tool. Do not post a \
-reply."
+cannot go on. `who` shows it with its age. Set it when you change step and when you are blocked. riff \
+shows a pause, your claims and your idle time by itself, and marks an older step stale. When a status \
+request wakes you, answer with this tool. Do not post a reply."
     )]
     async fn status(&self, Parameters(a): Parameters<StatusArgs>) -> ToolResult {
         let status = Status {
