@@ -137,7 +137,7 @@ async fn a_pipe_gets_no_color_unless_asked() {
 
     let auto = output(riff(&server, dir, None, &["who"])).await;
     assert!(
-        auto.contains("\nmike@pangolin:riff (a1)  idle 0s  lead\n"),
+        auto.contains("\nmike@pangolin:riff (a1)  offline  lead  seen 0s ago\n"),
         "{auto}"
     );
     assert!(!auto.contains('\x1b'), "{auto:?}");
@@ -162,11 +162,19 @@ async fn a_blocked_status_is_red() {
     let dir = repo();
     let dir = dir.path();
     let blocked = ["status", "--blocked", "waits for a review", "merge"];
+    output(riff(&server, dir, Some("a1"), &["resume"])).await;
     output(riff(&server, dir, Some("a1"), &blocked)).await;
+    // A watch makes a1 live, so its state is blocked.
+    let a1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
+        .parse()
+        .unwrap();
+    let api = riff::api::Api::new(&server);
+    let _watch = api.watch(&a1).await.unwrap();
 
     let who = output(riff(&server, dir, None, &["who", "--color", "always"])).await;
     let red = style::ERROR;
-    let line = "blocked 0s ago: waits for a review (step: merge)";
+    assert!(who.contains(&format!("{red}blocked{red:#}")), "{who:?}");
+    let line = "waits for a review (step: merge, 0s ago)";
     assert!(who.contains(&format!("  {red}{line}{red:#}\n")), "{who:?}");
 }
 

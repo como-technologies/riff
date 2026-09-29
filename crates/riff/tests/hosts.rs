@@ -394,7 +394,8 @@ async fn the_lead_starts_workers_on_another_host() {
             "{listed}"
         );
     }
-    assert!(listed.contains("idle: waits for work"), "{listed}");
+    // The workers of b have no watch here: they are offline.
+    assert!(listed.contains("  offline  seen "), "{listed}");
 }
 
 /// A host refuses a start request that is not from the lead of its

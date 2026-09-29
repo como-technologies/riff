@@ -559,8 +559,8 @@ fn the_book_shows_the_owner_in_who() {
         "{section}"
     );
     assert!(section.contains("The owner is `none`"), "{section}");
-    assert!(section.contains("  you lead  issue-6\n"), "{section}");
-    assert!(section.contains("  worker    issue-7  "), "{section}");
+    assert!(section.contains("  you lead  working on #6\n"), "{section}");
+    assert!(section.contains("  worker    working on #7  "), "{section}");
 }
 
 /// `riff members` with no color.

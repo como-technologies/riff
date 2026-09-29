@@ -247,8 +247,14 @@ async fn a_request_of_the_lead_wakes_an_idle_worker() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
     assert!(idle.status.is_none(), "{idle:?}");
-    let shown = riff::text::idle_worker(&idle);
-    assert!(shown.is_some_and(|s| s.starts_with("idle ")), "{idle:?}");
+    // The riff of this test is paused, and paused wins over idle
+    // (01M3QB6CJ1XCQG5B1BVR8AF3B4).
+    assert!(idle.uri.claims().is_empty(), "{idle:?}");
+    assert_eq!(
+        idle.state,
+        Some(riff_core::wire::SessionState::Paused),
+        "{idle:?}"
+    );
 
     api.tell(&lead, "w2", "request: claim issue-12")
         .await

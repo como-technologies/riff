@@ -109,9 +109,25 @@ async fn output(mut cmd: Command) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+/// Opens a watch for the session `id` of mike on `host`, so that the
+/// session is live until the test ends.
+async fn live(server: &str, host: &str, id: &str) {
+    let uri: SessionUri = format!("riff://mike@{host}/como-technologies/riff?session={id}")
+        .parse()
+        .unwrap();
+    let api = Api::new(server);
+    let (open, opened) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let _watch = api.watch(&uri).await.unwrap();
+        open.send(()).unwrap();
+        std::future::pending::<()>().await;
+    });
+    opened.await.unwrap();
+}
+
 /// A lead `a1`, a worker `b2` with a claim and a status, and a blocked
-/// session `c3`, all of mike. `b2` registers as a worker on the host
-/// thelio. Each command runs on the host pangolin.
+/// session `c3`, all of mike and each live. `b2` registers as a worker
+/// on the host thelio. Each command runs on the host pangolin.
 async fn three_sessions(server: &str, dir: &Path, path: &Path) {
     for (id, args) in [("a1", &["read"][..]), ("a1", &["resume"][..])] {
         output(riff(server, dir, Some(id), path, args)).await;
@@ -130,22 +146,68 @@ async fn three_sessions(server: &str, dir: &Path, path: &Path) {
     ] {
         output(riff(server, dir, Some(id), path, args)).await;
     }
+    for (host, id) in [("pangolin", "a1"), ("thelio", "b2"), ("pangolin", "c3")] {
+        live(server, host, id).await;
+    }
 }
 
-/// The rows of the table, after the head.
+/// `line` with each time in seconds, for example `0s` or `12s`, as `Ns`:
+/// a slow machine can take a second more.
+fn secs(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let word_start = start == 0 || !chars[start - 1].is_alphanumeric();
+        let word_end = i + 1 >= chars.len() || !chars[i + 1].is_alphanumeric();
+        if i > start && word_start && chars.get(i) == Some(&'s') && word_end {
+            out.push_str("Ns");
+            i += 1;
+        } else if i > start {
+            out.extend(&chars[start..i]);
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The lines of the tree, after the header and the board, with each
+/// time in seconds as `Ns`.
 fn rows(top: &str) -> Vec<String> {
-    top.lines()
-        .skip_while(|l| !l.starts_with("WHO"))
-        .skip(1)
-        .map(str::to_owned)
+    top.rsplit("\n\n")
+        .next()
+        .unwrap()
+        .lines()
+        .map(secs)
         .collect()
 }
 
-/// The session rows of the table.
-fn session_rows(top: &str) -> Vec<String> {
-    rows(top)
+/// The lines of the session `id`: its first line, then the lines under
+/// it.
+fn session(top: &str, id: &str) -> Vec<String> {
+    let rows = rows(top);
+    let head = rows
+        .iter()
+        .position(|r| r.contains(&format!("─ {id}  ")))
+        .unwrap_or_else(|| panic!("{id}: {top}"));
+    let under = rows[head + 1..]
+        .iter()
+        .take_while(|r| !r.contains("─ ") && (r.starts_with(' ') || r.starts_with('│')));
+    std::iter::once(&rows[head]).chain(under).cloned().collect()
+}
+
+/// The detail lines of the session `id`, with no lead-in.
+fn detail(top: &str, id: &str) -> Vec<String> {
+    session(top, id)
         .into_iter()
-        .filter(|r| r.contains("─ ") && (r.contains(" live ") || r.contains(" idle ")))
+        .skip(1)
+        .map(|l| l.trim_start_matches([' ', '│']).to_owned())
         .collect()
 }
 
@@ -165,33 +227,25 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
         &["top", "--once"],
     ))
     .await;
-    assert!(top.starts_with("The riff is running.\n"), "{top}");
-    assert!(top.contains("\nWave 3: #12 b2\n"), "{top}");
+    assert!(top.starts_with("riff   running\n"), "{top}");
+    assert!(top.contains("\n\nWave 3\n  claimed: #12\n\n"), "{top}");
     let rows = rows(&top);
-    assert_eq!(rows.len(), 6, "{top}");
-    assert!(rows[0].starts_with("mike "), "{top}");
-    assert!(rows[0].contains(" last seen "), "{top}");
-    assert_eq!(rows[1], "├─ pangolin", "{top}");
-    assert!(rows[2].starts_with("│  ├─ c3 "), "{top}");
-    assert!(
-        rows[2].contains("blocked 0s: waits for a review (step: merge)"),
-        "{top}"
+    assert_eq!(
+        rows,
+        [
+            "mike  online",
+            "├─ pangolin",
+            "│  ├─ c3  blocked",
+            "│  │    waits for a review (step: merge, Ns ago)",
+            "│  └─ a1  lead  idle",
+            "│       ready for work for Ns",
+            "└─ thelio",
+            "   └─ b2  worker  busy",
+            "        working on #12 Show the wave",
+            "        Ns ago: tests",
+        ],
+        "a local pane is no worker; blocked comes first: {top}"
     );
-    assert!(
-        !rows[2].contains("worker"),
-        "a local pane is no worker: {top}"
-    );
-    assert!(rows[3].starts_with("│  └─ a1 "), "{top}");
-    assert!(rows[3].contains(" lead "), "{top}");
-    assert_eq!(rows[4], "└─ thelio", "{top}");
-    assert!(rows[5].starts_with("   └─ b2 "), "{top}");
-    assert!(rows[5].contains(" worker "), "{top}");
-    assert!(rows[5].contains("issue-12 Show the wave"), "{top}");
-    assert!(rows[5].ends_with("0s tests"), "{top}");
-    for row in session_rows(&top) {
-        assert!(row.contains(" idle ") || row.contains(" live "), "{top}");
-        assert!(!row.contains("owner"), "{top}");
-    }
 }
 
 /// A worker that registered on thelio shows `worker` in `riff top` and
@@ -206,11 +260,7 @@ async fn a_worker_of_another_host_shows_worker() {
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    let b2 = session_rows(&top)
-        .into_iter()
-        .find(|r| r.contains("─ b2 "))
-        .unwrap();
-    assert!(b2.contains(" worker "), "{top}");
+    assert!(session(&top, "b2")[0].contains("  worker  "), "{top}");
 
     let who = ["who", "--color", "never"];
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
@@ -222,7 +272,8 @@ async fn a_worker_of_another_host_shows_worker() {
     };
     assert!(line("b2").starts_with("mike@thelio:riff (b2)"), "{who}");
     assert!(line("b2").contains("  worker  "), "{who}");
-    assert!(line("b2").contains("  issue-12"), "{who}");
+    assert!(line("b2").contains("  busy  "), "{who}");
+    assert!(line("b2").contains("  working on #12  "), "{who}");
     assert!(!line("c3").contains("worker"), "{who}");
     assert!(line("a1").contains("  you lead"), "{who}");
 }
@@ -257,7 +308,15 @@ async fn top_never_prints_color_to_a_pipe() {
     let always = ["top", "--once", "--color", "always"];
     let always = output(riff(&server, dir, Some("a1"), bin.path(), &always)).await;
     let red = riff::style::ERROR;
-    assert!(always.contains(&format!("{red}blocked 0s")), "{always:?}");
+    assert!(
+        always.contains(&format!("{red}blocked{red:#}")),
+        "{always:?}"
+    );
+    let green = riff::style::GOOD;
+    assert!(
+        always.contains(&format!("{green}busy{green:#}")),
+        "{always:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -277,10 +336,11 @@ async fn with_no_gh_the_row_still_prints() {
     ))
     .await;
     assert!(!top.contains("Wave 3"), "{top}");
-    let rows = rows(&top);
-    assert_eq!(rows.len(), 6, "{top}");
-    assert!(rows[5].contains("issue-12  "), "{top}");
-    assert!(!rows[5].contains("Show the wave"), "{top}");
+    assert_eq!(
+        detail(&top, "b2"),
+        ["working on #12", "Ns ago: tests"],
+        "{top}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -349,24 +409,10 @@ fn the_book_shows_real_top_commands() {
     }
 }
 
-/// The STATUS cell of the session row `id`: the text after its ITEM
-/// cell `item`.
-fn status_of(top: &str, id: &str, item: &str) -> String {
-    let row = session_rows(top)
-        .into_iter()
-        .find(|r| r.contains(&format!("─ {id} ")))
-        .unwrap_or_else(|| panic!("{id}: {top}"));
-    let (_, status) = row
-        .split_once(&format!("  {item}  "))
-        .unwrap_or_else(|| panic!("{item} in {row}"));
-    status.trim_start().to_owned()
-}
-
-/// A pause is a change of the state of each session: `riff top` shows
-/// `paused` first, and the step from before the pause as stale
-/// (01M3Q551YHYZBFV2NDS1QCYXCD, 01M3Q555KC1RKNEC4ZA9HQYJG2).
+/// A pause makes each live session `paused`, with the step it stopped
+/// at. A stale block does not come first (01M3QB6CJ1XCQG5B1BVR8AF3B4).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_pause_shows_paused_and_the_old_step_as_stale() {
+async fn a_pause_shows_paused_and_the_step() {
     let (server, _) = start_server().await;
     let dir = repo();
     let dir = dir.path();
@@ -376,24 +422,24 @@ async fn a_pause_shows_paused_and_the_old_step_as_stale() {
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    let b2 = status_of(&top, "b2", "issue-12 Show the wave");
-    assert!(b2.starts_with("paused  stale "), "{top}");
-    assert!(b2.ends_with(": tests"), "{top}");
-    let c3 = status_of(&top, "c3", "-");
-    assert!(c3.starts_with("paused  stale "), "{top}");
-    assert!(
-        c3.ends_with(": blocked: waits for a review (step: merge)"),
+    for id in ["a1", "b2", "c3"] {
+        assert!(session(&top, id)[0].ends_with("  paused"), "{top}");
+    }
+    assert_eq!(
+        detail(&top, "b2"),
+        ["working on #12 Show the wave", "stopped at: tests"],
         "{top}"
     );
+    assert_eq!(detail(&top, "c3"), ["stopped at: merge"], "{top}");
     let rows = rows(&top);
     assert!(
-        rows[2].starts_with("│  ├─ a1 "),
+        rows[2].starts_with("│  ├─ a1  "),
         "a stale block does not come first: {top}"
     );
 }
 
-/// A worker that releases its claim shows `idle` with its time, not its
-/// old step (01M3Q551WCMPQRCNJ8FXQEBFY4, 01M3Q555KC1RKNEC4ZA9HQYJG2).
+/// A worker that releases its claim is `idle`, ready for work, with no
+/// old step (01M3Q551WCMPQRCNJ8FXQEBFY4, 01M3QB6CJ1XCQG5B1BVR8AF3B4).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_worker_with_no_claim_shows_idle_not_its_old_step() {
     let (server, _) = start_server().await;
@@ -406,17 +452,15 @@ async fn a_worker_with_no_claim_shows_idle_not_its_old_step() {
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    let b2 = status_of(&top, "b2", "-");
-    assert!(b2.starts_with("idle "), "{top}");
-    assert!(b2.contains("  stale "), "{top}");
-    assert!(b2.ends_with(": tests"), "{top}");
-    assert!(top.contains("\nWave 3: #12 free\n"), "{top}");
+    assert!(session(&top, "b2")[0].ends_with("  worker  idle"), "{top}");
+    assert_eq!(detail(&top, "b2"), ["ready for work for Ns"], "{top}");
+    assert!(top.contains("\nWave 3\n  free: #12\n"), "{top}");
 }
 
-/// The lead row shows the current wave and its open items, with no
-/// status call (01M3Q555KC1RKNEC4ZA9HQYJG2).
+/// A session with no claim and no status is `idle` in `riff top` and in
+/// `riff who`, with no status call (01M3QB6CJ1XCQG5B1BVR8AF3B4).
 #[tokio::test(flavor = "multi_thread")]
-async fn the_lead_row_shows_the_wave_with_no_status_call() {
+async fn a_session_with_no_status_is_idle() {
     let (server, _) = start_server().await;
     let dir = repo();
     let dir = dir.path();
@@ -425,12 +469,74 @@ async fn the_lead_row_shows_the_wave_with_no_status_call() {
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    assert_eq!(status_of(&top, "a1", "-"), "Wave 3: #12", "{top}");
+    assert_eq!(detail(&top, "a1"), ["ready for work for Ns"], "{top}");
     let who = ["who", "--color", "never"];
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
-    let a1 = who.lines().skip_while(|l| !l.contains("(a1)")).nth(1);
-    assert!(
-        a1.is_none_or(|l| !l.contains("status")),
-        "a1 set no status: {who}"
+    let a1 = who.lines().find(|l| l.contains("(a1)")).unwrap();
+    assert!(a1.contains("  idle  "), "{who}");
+    assert!(secs(a1).ends_with("  ready for work for Ns"), "{who}");
+}
+
+/// With 12 sessions, long titles and long statuses, `riff top --once`
+/// in a pipe fits in 80 columns: riff cuts each wider line with `…`
+/// (01M3QA8EZHX5B8C9CKF8Q3154X).
+#[tokio::test(flavor = "multi_thread")]
+async fn twelve_sessions_fit_in_80_columns() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    let long = "The owner check does not drop an owner that has a live session on another host";
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            r#"echo '[{{"number": 12, "title": "{long}", "milestone": {{"title": "Wave 3: A long name"}}}}, {{"number": 13, "title": "{long}", "milestone": {{"title": "Wave 3: A long name"}}}}]'"#
+        ),
     );
+    output(riff(&server, dir, Some("s00"), bin.path(), &["resume"])).await;
+    for n in 0..12 {
+        let id = format!("s{n:02}");
+        let uri: SessionUri = format!("riff://mike@thelio/como-technologies/riff?session={id}")
+            .parse()
+            .unwrap();
+        Api::new(&server)
+            .register_as(&uri, n % 2 == 0)
+            .await
+            .unwrap();
+        let claim = match n {
+            0 => Some("issue-12"),
+            3 => Some("verify-issue-12"),
+            6 => Some("issue-13"),
+            _ => None,
+        };
+        if let Some(claim) = claim {
+            output(riff(&server, dir, Some(&id), bin.path(), &["claim", claim])).await;
+        }
+        live(&server, "thelio", &id).await;
+        let status = [
+            "status",
+            "--blocked",
+            long,
+            "waits for a verify of the pull request",
+        ];
+        let step = ["status", long];
+        let args: &[&str] = if n % 4 == 0 { &status } else { &step };
+        output(riff(&server, dir, Some(&id), bin.path(), args)).await;
+    }
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("s00"), bin.path(), &top)).await;
+    for line in top.lines() {
+        assert!(line.chars().count() <= 80, "{line:?} in\n{top}");
+    }
+    assert!(top.lines().any(|l| l.ends_with('…')), "{top}");
+    assert!(top.contains("\n  claimed: #13\n  verify: #12\n"), "{top}");
+    assert!(
+        top.contains("│    working on #12 The owner check does not"),
+        "{top}"
+    );
+    for n in 0..12 {
+        assert!(!session(&top, &format!("s{n:02}")).is_empty(), "{top}");
+    }
 }

@@ -32,8 +32,8 @@ use riff_core::build::Build;
 use riff_core::name::SessionUri;
 use riff_core::wire::{MembersReply, RiffOwner, RiffState, SessionInfo};
 
-use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
-use crate::text::{self, ago, safe};
+use crate::style::{BOLD, DIM, ERROR, GOOD, WARNING, styled};
+use crate::text::{self, safe};
 
 /// `text` in `style`, or nothing when `text` is empty: so a line has no
 /// spaces at its end.
@@ -226,7 +226,7 @@ pub fn workers_mcp(names: &[String], path: &Path) -> String {
 /// The facts of the build: `riff` and, when the server of the last call
 /// runs another build, `riff-server` in yellow
 /// (01M3JEE7WT04BKX377VW5GDSPY).
-fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)> {
+pub(crate) fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)> {
     let this = Build::this();
     let mut rows = vec![("build", text::build_facts(&this))];
     if let Some(server) = server.filter(|s| !s.matches(&this)) {
@@ -241,7 +241,7 @@ fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)> {
 
 /// The fact of the state of the riff, and the action for a paused
 /// riff.
-fn state_fact(state: RiffState) -> ((&'static str, String), Option<String>) {
+pub(crate) fn state_fact(state: RiffState) -> ((&'static str, String), Option<String>) {
     match state {
         RiffState::Running => (("riff", styled(GOOD, "running")), None),
         RiffState::Paused => (
@@ -309,32 +309,43 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 ///   yellow), the owner ([`text::owner_line`]; none with no sign-in),
 ///   and the build.
 /// - The columns: SESSION (the [`text::name`] in the color of the
-///   session, as in `riff tail`), STATE (`live` in green or a dim
-///   `idle` time), ROLE (`you` in bold and the [`text::tags`]), CLAIMS
-///   (muted) and STATUS (the age dim; a blocked status red). With
-///   `long`, the column URI takes the place of SESSION and CLAIMS.
+///   session, as in `riff tail`), STATE (the word of the state that the
+///   server derives, in its color: see [`crate::state`]), ROLE (`you`
+///   in bold and the [`text::tags`]) and DETAIL (the
+///   [`crate::state::detail`]). With `long`, the column URI takes the
+///   place of SESSION.
 /// - The actions come last: resume a paused riff, and take the owner
 ///   role of a riff with no owner.
 ///
 /// Each text from the server is [`safe`].
 ///
 /// ```
-/// use riff_core::wire::{RiffOwner, RiffState, SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{RiffOwner, RiffState, SessionInfo, SessionState, Status, StatusInfo};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
 ///     .parse()?;
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0 },
+///     SessionInfo {
+///         uri: me,
+///         live: true,
+///         idle_secs: 0,
+///         status: None,
+///         worker: false,
+///         stopping: false,
+///         claims_secs: 0,
+///         state: Some(SessionState::Busy),
+///     },
 ///     SessionInfo {
 ///         uri: brett,
-///         live: false,
-///         idle_secs: 150,
+///         live: true,
+///         idle_secs: 0,
 ///         status: Some(StatusInfo { status: blocked, age_secs: 60, stale: false }),
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
+///         state: Some(SessionState::Blocked),
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
@@ -345,22 +356,21 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 /// assert_eq!(lines[1], "owner  mike (mike@x.io)");
 /// assert!(lines[2].starts_with("build  v"));
 /// assert_eq!(lines[3], "");
-/// assert_eq!(lines[4], "SESSION                            STATE    ROLE      CLAIMS   STATUS");
-/// assert_eq!(lines[5], "mike@pangolin:riff#issue-6 (a6cf)  live     you lead  issue-6");
+/// assert_eq!(lines[4], "SESSION                            STATE    ROLE      DETAIL");
+/// assert_eq!(lines[5], "mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6");
 /// assert_eq!(
 ///     lines[6],
-///     "brett@heron:riff (77e0)            idle 2m                     \
-///      blocked 1m ago: waits for a review (step: merge)"
+///     "brett@heron:riff (77e0)            blocked            waits for a review (step: merge, 1m ago)"
 /// );
 /// let red = riff::style::ERROR;
-/// assert!(text.contains(&format!("{red}blocked 1m ago: waits for a review (step: merge){red:#}")));
+/// assert!(text.contains(&format!("{red}blocked{red:#}")));
+/// assert!(text.contains(&format!("{red}waits for a review (step: merge, 1m ago){red:#}")));
 ///
-/// // --long shows the URI in place of the name and the claims.
+/// // --long shows the URI in place of the name.
 /// let long = riff::view::who(RiffState::Running, &owner, &list, &list[0].uri, true);
 /// let plain = anstream::adapter::strip_str(&long).to_string();
 /// assert!(plain.contains("\nURI "), "{plain}");
 /// assert!(plain.contains("\nriff://brett@heron/como-technologies/riff?session=77e0 "), "{plain}");
-/// assert!(!plain.contains("CLAIMS"), "{plain}");
 ///
 /// // A riff with no sign-in shows no owner.
 /// let text = riff::view::who(RiffState::Running, &RiffOwner::NoSignIn, &list, &list[0].uri, false);
@@ -399,11 +409,12 @@ pub fn who(
     if sessions.is_empty() {
         out.push_str("Nobody is in the riff.\n");
     } else {
-        let head: &[&str] = if long {
-            &["URI", "STATE", "ROLE", "STATUS"]
-        } else {
-            &["SESSION", "STATE", "ROLE", "CLAIMS", "STATUS"]
-        };
+        let head = [
+            if long { "URI" } else { "SESSION" },
+            "STATE",
+            "ROLE",
+            "DETAIL",
+        ];
         let rows: Vec<Vec<String>> = sessions
             .iter()
             .map(|s| {
@@ -412,25 +423,15 @@ pub fn who(
                     role.push(styled(BOLD, "you"));
                 }
                 role.extend(text::tags(s, owner).into_iter().map(String::from));
-                let mut row = if long {
-                    vec![styled(DIM, &safe(&s.uri.to_string()))]
+                let name = if long {
+                    styled(DIM, &safe(&s.uri.to_string()))
                 } else {
-                    vec![styled(
-                        crate::style::session(&s.uri),
-                        &safe(&text::name(&s.uri)),
-                    )]
+                    styled(crate::style::session(&s.uri), &safe(&text::name(&s.uri)))
                 };
-                row.push(state_cell(s));
-                row.push(role.join(" "));
-                if !long {
-                    let claims: Vec<String> = s.uri.claims().iter().map(|c| safe(c)).collect();
-                    row.push(paint(MUTED, &claims.join(" ")));
-                }
-                row.push(status_cell(s));
-                row
+                vec![name, state_cell(s), role.join(" "), detail_cell(s)]
             })
             .collect();
-        out.push_str(&table(head, &rows));
+        out.push_str(&table(&head, &rows));
     }
     for action in actions {
         let _ = writeln!(out, "{action}");
@@ -438,62 +439,42 @@ pub fn who(
     out
 }
 
-/// `live` in green, or the dim time since the last call.
+/// The word of the state of `s`, in its color.
 fn state_cell(s: &SessionInfo) -> String {
-    if s.live {
-        styled(GOOD, "live")
-    } else {
-        styled(DIM, &format!("idle {}", ago(s.idle_secs)))
-    }
+    let state = crate::state::of(s);
+    styled(crate::state::style(state), state.word())
 }
 
-/// The STATUS cell of `s`: the [`text::idle_worker`] time of a worker
-/// with no claim, then the status with its dim age. A blocked status is
-/// red. A stale status is dim and says `stale`, as in `riff top`
-/// (01M3Q555KC1RKNEC4ZA9HQYJG2).
+/// The DETAIL cell of `s`: each line of the [`crate::state::detail`]
+/// with its style, on one line.
 ///
 /// ```
-/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{SessionInfo, SessionState, Status, StatusInfo};
 ///
-/// let mut s = SessionInfo {
-///     uri: "riff://mike@thelio/o/r?session=w1".parse()?,
+/// let s = SessionInfo {
+///     uri: "riff://mike@thelio/o/r?session=w1&claim=issue-12".parse()?,
 ///     live: true,
 ///     idle_secs: 0,
 ///     status: Some(StatusInfo {
 ///         status: Status { step: "tests".into(), blocked: None },
 ///         age_secs: 7200,
-///         stale: true,
+///         stale: false,
 ///     }),
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 300,
+///     state: Some(SessionState::Busy),
 /// };
-/// let plain = |s: &SessionInfo| anstream::adapter::strip_str(&riff::view::status_cell(s)).to_string();
-/// assert_eq!(plain(&s), "idle 5m  stale 2h: tests");
-/// s.worker = false;
-/// s.status.as_mut().unwrap().stale = false;
-/// assert_eq!(plain(&s), "2h ago: tests");
+/// let plain = anstream::adapter::strip_str(&riff::view::detail_cell(&s)).to_string();
+/// assert_eq!(plain, "working on #12  2h ago: tests");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn status_cell(s: &SessionInfo) -> String {
-    let mut parts: Vec<String> = text::idle_worker(s).into_iter().collect();
-    if let Some(info) = &s.status {
-        let age = ago(info.age_secs);
-        let step = safe(&info.status.step);
-        parts.push(match (&info.status.blocked, info.stale) {
-            (None, false) => format!("{} {step}", styled(DIM, &format!("{age} ago:"))),
-            (Some(reason), false) => styled(
-                ERROR,
-                &format!("blocked {age} ago: {} (step: {step})", safe(reason)),
-            ),
-            (None, true) => styled(DIM, &format!("stale {age}: {step}")),
-            (Some(reason), true) => styled(
-                DIM,
-                &format!("stale {age}: blocked: {} (step: {step})", safe(reason)),
-            ),
-        });
-    }
-    parts.join("  ")
+pub fn detail_cell(s: &SessionInfo) -> String {
+    crate::state::detail(s, &|_| None)
+        .iter()
+        .map(|(line, style)| paint(*style, line))
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 /// The heading of the workers of one machine in `riff workers`
@@ -531,13 +512,13 @@ pub fn host_heading(
 
 /// The table of `riff workers` for the worker panes of one machine
 /// (01M3JPQTBDGT54WN7FZP9CD6B5): PANE, ID (8 characters; the full
-/// session ID with `long`), STATE, CLAIMS and STATUS from `sessions`. A
+/// session ID with `long`), STATE and DETAIL from `sessions`. A
 /// worker that is not in `sessions` has the state `not in riff who`.
 /// No pane gives no table.
 ///
 /// ```
 /// use riff::terminal::WorkerPane;
-/// use riff_core::wire::SessionInfo;
+/// use riff_core::wire::{SessionInfo, SessionState};
 ///
 /// let panes = [
 ///     WorkerPane { pane: "%3".into(), session: "a6cf2205-1".into() },
@@ -551,17 +532,18 @@ pub fn host_heading(
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     state: Some(SessionState::Busy),
 /// };
 /// let out = riff::view::workers(&panes, &[info.clone()], false);
 /// let plain = anstream::adapter::strip_str(&out).to_string();
 /// assert_eq!(
 ///     plain,
-///     "PANE  ID        STATE            CLAIMS    STATUS\n\
-///      %3    a6cf2205  live             issue-12\n\
+///     "PANE  ID        STATE            DETAIL\n\
+///      %3    a6cf2205  busy             working on #12\n\
 ///      %4    77e0aaaa  not in riff who\n"
 /// );
 /// let long = riff::view::workers(&panes, &[info], true);
-/// assert!(anstream::adapter::strip_str(&long).to_string().contains("\n%3    a6cf2205-1  live"));
+/// assert!(anstream::adapter::strip_str(&long).to_string().contains("\n%3    a6cf2205-1  busy"));
 /// assert_eq!(riff::view::workers(&[], &[], false), "");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -588,16 +570,14 @@ pub fn workers(
             match info {
                 None => row.push(styled(WARNING, "not in riff who")),
                 Some(info) => {
-                    let claims: Vec<String> = info.uri.claims().iter().map(|c| safe(c)).collect();
                     row.push(state_cell(info));
-                    row.push(paint(MUTED, &claims.join(" ")));
-                    row.push(status_cell(info));
+                    row.push(detail_cell(info));
                 }
             }
             row
         })
         .collect();
-    table(&["PANE", "ID", "STATE", "CLAIMS", "STATUS"], &rows)
+    table(&["PANE", "ID", "STATE", "DETAIL"], &rows)
 }
 
 /// `riff members`: the owner, the admins, the members and the allowed

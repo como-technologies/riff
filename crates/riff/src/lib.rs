@@ -84,6 +84,7 @@ pub mod relay;
 pub mod rollout;
 pub mod secrets;
 pub mod settings;
+pub mod state;
 pub mod style;
 pub mod terminal;
 pub mod text;

@@ -164,14 +164,13 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     assert_eq!(lines[0], "riff   paused", "{out}");
     assert_eq!(lines[2], "", "{out}");
     assert_eq!(
-        lines[3], "SESSION                        STATE    ROLE      CLAIMS  STATUS",
+        lines[3], "SESSION                        STATE    ROLE      DETAIL",
         "{out}"
     );
-    assert!(
-        lines[4].starts_with("mike@pangolin:riff (a6cf2205)  idle 0s  you lead          "),
+    assert_eq!(
+        lines[4], "mike@pangolin:riff (a6cf2205)  offline  you lead  seen 0s ago",
         "{out}"
     );
-    assert!(lines[4].ends_with(" ago: write the tests"), "{out}");
     assert!(!out.contains("riff://"), "{out}");
 
     let mut long = riff(&env, &server, dir, Some("a6cf2205-1"), &["who"]);
@@ -180,7 +179,7 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     let uri = format!("riff://mike@pangolin/{THREAD}?session=a6cf2205-1&lead=true");
     assert!(out.contains("\nURI  "), "{out}");
     assert!(
-        out.contains(&format!("\n{uri}  idle 0s  you lead  ")),
+        out.contains(&format!("\n{uri}  offline  you lead  seen ")),
         "{out}"
     );
     assert!(!out.contains("(a6cf2205)"), "{out}");

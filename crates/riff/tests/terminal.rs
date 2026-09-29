@@ -563,21 +563,21 @@ async fn workers_lists_each_worker() {
     let m = Machine::new(api.base());
     let root = tempfile::tempdir().unwrap();
     let (main, _) = repository(root.path());
-    two_workers(&api, &m, &main).await;
+    let workers = two_workers(&api, &m, &main).await;
+    // w1 is live, so the server gives its state (01M3QB6CJ1XCQG5B1BVR8AF3B4).
+    let _watch = api.watch(&workers[0]).await.unwrap();
 
     let out = m.riff(&main, &[], false).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     let out = stdout(&out);
+    assert!(out.contains("\nPANE  ID  STATE    DETAIL\n"), "{out}");
+    let row = |pane: &str| out.lines().find(|l| l.starts_with(pane)).unwrap();
     assert!(
-        out.contains("\nPANE  ID  STATE    CLAIMS    STATUS\n"),
+        row("%3  ").starts_with("%3    w1  busy     working on #12  "),
         "{out}"
     );
-    let row = |pane: &str| out.lines().find(|l| l.starts_with(pane)).unwrap();
-    assert!(row("%3  ").starts_with("%3    w1  idle "), "{out}");
-    assert!(row("%3  ").contains("  issue-12  "), "{out}");
     assert!(row("%3  ").ends_with(" ago: tests of issue-12"), "{out}");
-    assert!(row("%4  ").starts_with("%4    w2  idle "), "{out}");
-    assert!(row("%4  ").contains("  issue-13  "), "{out}");
+    assert!(row("%4  ").starts_with("%4    w2  offline  seen "), "{out}");
 
     std::fs::remove_file(m.fake.path().join("workers")).unwrap();
     let out = m.riff(&main, &[], false).output().unwrap();

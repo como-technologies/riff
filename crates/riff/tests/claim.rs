@@ -385,6 +385,9 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
         out.ends_with("[1] mike@pangolin to all (verified) asks for your status.\n"),
         "{out}"
     );
+    // A running riff, so that paused does not hide the steps.
+    let (_, code) = agent(&server, dir, "mike", "a1", &["resume"]).await;
+    assert_eq!(code, 0);
     let (out, code) = agent(
         &server,
         dir,
@@ -399,11 +402,23 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     let (_, code) = agent(&server, dir, "mike", "b2", &blocked).await;
     assert_eq!(code, 0);
 
+    // With a watch, each session is live, so who shows its state and
+    // its step (01M3QB6CJ1XCQG5B1BVR8AF3B4).
+    let api = riff::api::Api::new(&server);
+    let uri = |id: &str| -> riff_core::name::SessionUri {
+        format!("riff://mike@pangolin/como-technologies/riff?session={id}")
+            .parse()
+            .unwrap()
+    };
+    let (a1, b2) = (uri("a1"), uri("b2"));
+    let _a1 = api.watch(&a1).await.unwrap();
+    let _b2 = api.watch(&b2).await.unwrap();
     let (out, _) = riff(&server, dir, "mike", &["who"]).await;
     let row = |id: &str| out.lines().find(|l| l.contains(id)).unwrap();
     assert!(row("(a1)").ends_with("  0s ago: write the tests"), "{out}");
+    assert!(row("(b2)").contains("  blocked  "), "{out}");
     assert!(
-        row("(b2)").ends_with("  blocked 0s ago: waits for a review (step: merge)"),
+        row("(b2)").ends_with("  waits for a review (step: merge, 0s ago)"),
         "{out}"
     );
 

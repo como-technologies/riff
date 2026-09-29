@@ -12,7 +12,7 @@
 //! The titles of the issues and the current wave come from one
 //! `gh issue list` of the open issues ([`Issues`]). riff keeps them for
 //! [`ISSUES_TTL`]. With no `gh`, or when `gh` fails, the table has no
-//! titles and no wave line.
+//! titles and no board.
 //!
 //! The rows are a tree for each person: the person, each host, and each
 //! session on the host (01M3NT4M5D36KTZ5XZMDP6QFQT). A session gets only
@@ -37,20 +37,19 @@ use std::fmt::Write;
 use std::time::Duration;
 
 use riff_core::build::Build;
-use riff_core::wire::{Person, PersonRole, RiffOwner, RiffState, SessionInfo};
+use riff_core::wire::{Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState};
 use serde::Deserialize;
 
-use crate::style::{DIM, ERROR, GOOD, MUTED, WARNING, session as session_style, styled};
-use crate::text::{self, ago, safe};
+use crate::state;
+use crate::style::{BOLD, MUTED, session as session_style, styled};
+use crate::text::safe;
+use crate::view;
 
 /// The time between two draws of `riff top` with no message.
 pub const REFRESH: Duration = Duration::from_secs(3);
 
 /// How long `riff top` keeps the issues of `gh`.
 pub const ISSUES_TTL: Duration = Duration::from_secs(60);
-
-/// The longest issue title in a row, in characters.
-const TITLE_CHARS: usize = 40;
 
 /// The open issues of the repository: the title of each, and the
 /// current wave.
@@ -199,43 +198,117 @@ pub struct Top<'a> {
     /// The members of the riff from `who`, also when away.
     pub people: &'a [Person],
     pub issues: Option<&'a Issues>,
+    /// The width of the terminal in columns: no line is wider.
+    pub width: usize,
 }
 
-/// One cell: a plain lead-in, then its parts, each with its style.
-struct Cell {
+/// One line of the tree: a plain lead-in, then its parts, each with its
+/// style.
+struct Line {
     pre: String,
     parts: Vec<(String, anstyle::Style)>,
 }
 
-impl Cell {
-    fn new(text: impl Into<String>, style: anstyle::Style) -> Self {
-        Cell {
-            pre: String::new(),
-            parts: vec![(text.into(), style)],
+impl Line {
+    /// A line of `pre`, then each part that is not empty, with two
+    /// spaces between them.
+    fn new(pre: impl Into<String>, parts: Vec<(String, anstyle::Style)>) -> Self {
+        let mut joined = Vec::new();
+        for part in parts.into_iter().filter(|(text, _)| !text.is_empty()) {
+            if !joined.is_empty() {
+                joined.push(("  ".to_owned(), anstyle::Style::new()));
+            }
+            joined.push(part);
+        }
+        Line {
+            pre: pre.into(),
+            parts: joined,
         }
     }
 
-    fn empty() -> Self {
-        Cell::new("", anstyle::Style::new())
-    }
-
-    fn width(&self) -> usize {
-        self.pre.chars().count()
-            + self
-                .parts
-                .iter()
-                .map(|(text, _)| text.chars().count())
-                .sum::<usize>()
-    }
-
-    /// The parts with their styles. An empty part gets no style.
-    fn styled(&self) -> String {
-        self.parts
-            .iter()
-            .filter(|(text, _)| !text.is_empty())
-            .map(|(text, style)| styled(*style, text))
+    /// The line with its styles, cut to `width` columns with `…` at the
+    /// end when it is wider.
+    fn render(&self, width: usize) -> String {
+        let pieces = || {
+            std::iter::once((self.pre.as_str(), anstyle::Style::new())).chain(
+                self.parts
+                    .iter()
+                    .map(|(text, style)| (text.as_str(), *style)),
+            )
+        };
+        let full: usize = pieces().map(|(text, _)| display_width(text)).sum();
+        let mut kept: Vec<(String, anstyle::Style)> = Vec::new();
+        if full <= width {
+            kept.extend(pieces().map(|(text, style)| (text.to_owned(), style)));
+        } else {
+            // Keep one column for the `…`.
+            let mut left = width.saturating_sub(1);
+            for (text, style) in pieces() {
+                let (start, cut) = take_width(text, left);
+                left -= display_width(&start);
+                kept.push((start, style));
+                if cut {
+                    break;
+                }
+            }
+            // No spaces before the `…`.
+            while let Some((text, _)) = kept.last_mut() {
+                text.truncate(text.trim_end().len());
+                if !text.is_empty() {
+                    break;
+                }
+                kept.pop();
+            }
+            match kept.last_mut() {
+                Some((text, _)) => text.push('…'),
+                None => kept.push(("…".into(), anstyle::Style::new())),
+            }
+        }
+        kept.iter()
+            .map(|(text, style)| paint(*style, text))
             .collect()
     }
+}
+
+/// `line`, a line with styles, as it is when it fits in `width`
+/// columns. Else the line with no styles, cut with `…`.
+fn fit(line: &str, width: usize) -> String {
+    let plain = anstream::adapter::strip_str(line).to_string();
+    if display_width(&plain) <= width {
+        line.to_owned()
+    } else {
+        Line::new("", vec![(plain, anstyle::Style::new())]).render(width)
+    }
+}
+
+/// `text` in `style`, or nothing when `text` is empty.
+fn paint(style: anstyle::Style, text: &str) -> String {
+    if text.is_empty() {
+        String::new()
+    } else {
+        styled(style, text)
+    }
+}
+
+/// The columns of `text` on a terminal.
+fn display_width(text: &str) -> usize {
+    textwrap::core::display_width(text)
+}
+
+/// The start of `text` that fits in `cols` columns, and true when riff
+/// cut the text.
+fn take_width(text: &str, cols: usize) -> (String, bool) {
+    let mut kept = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = display_width(c.encode_utf8(&mut [0; 4]));
+        if used + w > cols {
+            return (kept, true);
+        }
+        used += w;
+        kept.push(c);
+    }
+    (kept, false)
 }
 
 /// One person of the tree: the role, and live or the time since the
@@ -247,22 +320,26 @@ struct PersonRow {
 }
 
 impl Top<'_> {
-    /// The header, then a tree for each person (01M3NT4M5D36KTZ5XZMDP6QFQT):
-    /// the person, each host of the person, and each session on the host.
+    /// The header, the board of the current wave, then a tree for each
+    /// person (01M3NT4M5D36KTZ5XZMDP6QFQT): the person, each host of the
+    /// person, and each session on the host. The tree grows down, not
+    /// across: no line is wider than [`Top::width`]. riff cuts a wider
+    /// line with `…` (01M3QA8EZHX5B8C9CKF8Q3154X). No line has a column
+    /// heading.
     ///
-    /// - A person row: the USER in bold color, the role tag `owner` or
-    ///   `admin`, and `live` or `last seen` with the time. Each member
-    ///   of `who` gets a row, also when away.
-    /// - A session row: the short session ID, the role tag `lead` or
-    ///   `worker`, `live` or the idle time, each claim with the title of
-    ///   its issue, and the status.
-    ///
-    /// The status starts with the facts that the riff derives
-    /// (01M3Q555KC1RKNEC4ZA9HQYJG2): `paused` while the riff is paused,
-    /// the [`text::idle_worker`] time, and for the lead the current wave
-    /// with its open items. The step that
-    /// the session set comes after them, with its age. A stale step is
-    /// dim and says `stale`: it is not the current state.
+    /// - The header: the facts `riff`, `owner` and `build`, as in
+    ///   `riff who`.
+    /// - The board: the current wave, then one line for each group of
+    ///   its open items: `free`, `claimed`, and `verify` for an item
+    ///   with a verify claim.
+    /// - A person line: the USER in bold color, the role tag `owner` or
+    ///   `admin`, and [`state::person`]. Each member of `who` gets a
+    ///   line, also when away.
+    /// - A session: the first line has the short session ID, the role
+    ///   tag `lead` or `worker`, and the state word that the server
+    ///   derives (01M3QB6CJ1XCQG5B1BVR8AF3B4). Under it comes one line
+    ///   for each fact of the [`state::detail`]. A session with no
+    ///   detail takes one line.
     ///
     /// People come by USER, and hosts by name. In each person, blocked
     /// sessions come first. It has ANSI styles: print it through
@@ -270,12 +347,14 @@ impl Top<'_> {
     ///
     /// ```
     /// use riff::top::{Issues, Top};
-    /// use riff_core::wire::{Person, PersonRole, RiffOwner, RiffState, SessionInfo, Status, StatusInfo};
+    /// use riff_core::wire::{
+    ///     Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState, Status, StatusInfo,
+    /// };
     ///
-    /// let info = |uri: &str, step: &str, blocked: Option<&str>, worker| SessionInfo {
+    /// let info = |uri: &str, step: &str, blocked: Option<&str>, worker, state| SessionInfo {
     ///     uri: uri.parse().unwrap(),
-    ///     live: true,
-    ///     idle_secs: 0,
+    ///     live: state != SessionState::Offline,
+    ///     idle_secs: 300,
     ///     status: Some(StatusInfo {
     ///         status: Status { step: step.into(), blocked: blocked.map(Into::into) },
     ///         age_secs: 120,
@@ -284,94 +363,109 @@ impl Top<'_> {
     ///     worker,
     ///     stopping: false,
     ///     claims_secs: 600,
+    ///     state: Some(state),
     /// };
     /// let sessions = [
-    ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "lead", None, false),
-    ///     info("riff://mike@thelio/o/r?session=bbbb2222&claim=issue-12", "tests", None, true),
-    ///     info("riff://mike@thelio/o/r?session=cccc3333", "merge", Some("waits"), false),
-    ///     info("riff://mike@pangolin/o/r?session=dddd4444", "docs", None, true),
+    ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "plan", None, false, SessionState::Idle),
+    ///     info("riff://mike@thelio/o/r?session=bbbb2222&claim=issue-12", "tests", None, true, SessionState::Busy),
+    ///     info("riff://mike@thelio/o/r?session=cccc3333", "merge", None, false, SessionState::Offline),
+    ///     info(
+    ///         "riff://mike@pangolin/o/r?session=dddd4444&claim=verify-issue-13",
+    ///         "docs",
+    ///         Some("waits for the lead"),
+    ///         true,
+    ///         SessionState::Blocked,
+    ///     ),
     /// ];
     /// let people = [
     ///     Person { user: "ann".into(), role: PersonRole::Admin, live: false, seen_secs: Some(3600) },
     ///     Person { user: "mike".into(), role: PersonRole::Owner, live: true, seen_secs: Some(0) },
     /// ];
     /// let issues = Issues::parse(
-    ///     r#"[{"number": 12, "title": "Show the wave", "milestone": {"title": "Wave 3"}}]"#,
+    ///     r#"[{"number": 12, "title": "Show the wave in the board of riff top", "milestone": {"title": "Wave 3"}},
+    ///         {"number": 13, "title": "Later", "milestone": {"title": "Wave 3"}},
+    ///         {"number": 14, "title": "Free", "milestone": {"title": "Wave 3"}}]"#,
     /// );
     /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
-    /// let top = Top {
+    /// let mut top = Top {
     ///     state: RiffState::Running,
     ///     owner: &owner,
     ///     server: None,
     ///     sessions: &sessions,
     ///     people: &people,
     ///     issues: issues.as_ref(),
+    ///     width: 80,
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
-    /// let rows: Vec<&str> = text.lines().skip_while(|l| !l.starts_with("WHO")).skip(1).collect();
-    /// assert!(text.contains("Wave 3: #12 bbbb2222\n"), "{text}");
-    /// let words = |row: &str| row.split_whitespace().collect::<Vec<_>>().join(" ");
-    /// assert_eq!(words(rows[0]), "ann admin last seen 1h", "{text}");
-    /// assert_eq!(words(rows[1]), "mike owner live", "{text}");
-    /// assert_eq!(rows[2], "├─ pangolin", "{text}");
-    /// assert!(rows[3].starts_with("│  └─ dddd4444  worker  live"), "{text}");
-    /// assert!(rows[3].ends_with("idle 10m  2m docs"), "{text}");
-    /// assert_eq!(rows[4], "└─ thelio", "{text}");
-    /// assert!(rows[5].starts_with("   ├─ cccc3333"), "{text}");
-    /// assert!(rows[5].contains("blocked 2m: waits (step: merge)"), "{text}");
-    /// assert!(rows[6].starts_with("   ├─ aaaa1111  lead "), "{text}");
-    /// assert!(rows[6].ends_with("Wave 3: #12  2m lead"), "{text}");
-    /// assert!(rows[7].starts_with("   └─ bbbb2222  worker"), "{text}");
-    /// assert!(rows[7].contains("issue-12 Show the wave  2m tests"), "{text}");
+    /// assert!(text.starts_with("riff   running\nowner  mike (m@x.io)\nbuild  "), "{text}");
+    /// assert!(text.contains("\n\nWave 3\n  free: #14\n  claimed: #12\n  verify: #13\n\n"), "{text}");
+    /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
+    /// assert_eq!(tree, [
+    ///     "ann  admin  offline  seen 1h ago",
+    ///     "mike  owner  online",
+    ///     "├─ pangolin",
+    ///     "│  └─ dddd4444  worker  blocked",
+    ///     "│       waits for the lead (step: docs, 2m ago)",
+    ///     "│       reviewing #13 Later",
+    ///     "└─ thelio",
+    ///     "   ├─ aaaa1111  lead  idle",
+    ///     "   │    ready for work for 10m",
+    ///     "   │    2m ago: plan",
+    ///     "   ├─ bbbb2222  worker  busy",
+    ///     "   │    working on #12 Show the wave in the board of riff top",
+    ///     "   │    2m ago: tests",
+    ///     "   └─ cccc3333  offline",
+    ///     "        seen 5m ago",
+    /// ], "{text}");
+    ///
+    /// // A narrow terminal cuts the wide line with `…`.
+    /// top.width = 40;
+    /// let text = anstream::adapter::strip_str(&top.view()).to_string();
+    /// assert!(text.contains("\n   │    working on #12 Show the wave in…\n"), "{text}");
+    /// assert!(text.lines().all(|l| l.chars().count() <= 40), "{text}");
     /// ```
     pub fn view(&self) -> String {
-        let mut out = text::riff_state(self.state);
-        if let Some(line) = text::owner_line(self.owner) {
-            let _ = write!(out, "\n{line}");
+        let (fact, paused) = view::state_fact(self.state);
+        let mut facts = vec![fact];
+        match self.owner {
+            RiffOwner::NoSignIn => {}
+            RiffOwner::Nobody => facts.push(("owner", "none".into())),
+            RiffOwner::Owner { user, email } => {
+                facts.push(("owner", format!("{} ({})", safe(user), safe(email))));
+            }
         }
-        let _ = writeln!(out, "\n{}", styled(DIM, &text::build_line(self.server)));
+        facts.extend(view::build_facts(self.server));
+        let mut out = String::new();
+        for line in view::facts(&facts).lines().chain(paused.as_deref()) {
+            let _ = writeln!(out, "{}", fit(line, self.width));
+        }
+        let mut lines = Vec::new();
         if let Some((wave, items)) = self.issues.and_then(|i| i.wave.as_ref()) {
-            let _ = writeln!(out, "{}: {}", safe(wave), self.holders(items));
+            lines.push(Line::new("", vec![]));
+            lines.push(Line::new("", vec![(safe(wave), BOLD)]));
+            lines.extend(self.board(items));
         }
-        let head = ["WHO", "TAGS", "IDLE", "ITEM", "STATUS"]
-            .map(|h| Cell::new(h, anstyle::Style::new().bold()));
-        let mut rows = vec![head];
+        lines.push(Line::new("", vec![]));
         for (user, person) in self.people() {
-            rows.push(person_row(&user, &person));
+            lines.push(person_line(&user, &person));
             let hosts = self.hosts(&user);
             for (h, (host, sessions)) in hosts.iter().enumerate() {
                 let last_host = h + 1 == hosts.len();
-                let mut row = [(); 5].map(|()| Cell::empty());
-                row[0] = Cell {
-                    pre: branch(last_host).into(),
-                    ..Cell::new(safe(host), anstyle::Style::new())
-                };
-                rows.push(row);
+                lines.push(Line::new(
+                    branch(last_host),
+                    vec![(safe(host), anstyle::Style::new())],
+                ));
+                let under = if last_host { "   " } else { "│  " };
                 for (i, s) in sessions.iter().enumerate() {
-                    let pre = format!(
-                        "{}{}",
-                        if last_host { "   " } else { "│  " },
-                        branch(i + 1 == sessions.len())
-                    );
-                    rows.push(self.row(pre, s));
+                    let last = i + 1 == sessions.len();
+                    let pre = format!("{under}{}", branch(last));
+                    let more = format!("{under}{}  ", if last { "   " } else { "│  " });
+                    lines.extend(self.session(pre, &more, s));
                 }
             }
         }
-        let columns = rows[0].len();
-        let widths: Vec<usize> = (0..columns)
-            .map(|c| rows.iter().map(|r| r[c].width()).max().unwrap_or(0))
-            .collect();
-        for row in &rows {
-            let mut line = String::new();
-            for (c, cell) in row.iter().enumerate() {
-                let pad = if c + 1 == columns {
-                    0
-                } else {
-                    widths[c] - cell.width() + 2
-                };
-                let _ = write!(line, "{}{}{}", cell.pre, cell.styled(), " ".repeat(pad));
-            }
-            let _ = writeln!(out, "{}", line.trim_end());
+        for line in &lines {
+            let _ = writeln!(out, "{}", line.render(self.width).trim_end());
         }
         out
     }
@@ -434,37 +528,42 @@ impl Top<'_> {
             .collect()
     }
 
-    /// Each item of the wave with the short IDs of the sessions that
-    /// claim it, or `free`.
-    fn holders(&self, items: &[u64]) -> String {
-        items
-            .iter()
-            .map(|n| {
-                let holders: Vec<String> = self
-                    .sessions
-                    .iter()
-                    .flat_map(|s| s.uri.claims().iter().map(move |c| (s, c)))
-                    .filter(|(_, c)| issue_of(c) == Some(*n))
-                    .map(|(s, c)| {
-                        let id = short(s);
-                        if c.starts_with("verify-") {
-                            format!("verify {id}")
-                        } else {
-                            id
-                        }
-                    })
-                    .collect();
-                if holders.is_empty() {
-                    format!("#{n} free")
-                } else {
-                    format!("#{n} {}", holders.join(" "))
-                }
+    /// The board of the wave: one line for each group of its open
+    /// items that is not empty. An item with a verify claim is in
+    /// `verify`, an item with another claim in `claimed`, each other
+    /// item in `free`.
+    fn board(&self, items: &[u64]) -> Vec<Line> {
+        let mut groups: [(&str, Vec<String>); 3] =
+            [("free", vec![]), ("claimed", vec![]), ("verify", vec![])];
+        for n in items {
+            let claims: Vec<&String> = self
+                .sessions
+                .iter()
+                .flat_map(|s| s.uri.claims().iter())
+                .filter(|c| issue_of(c) == Some(*n))
+                .collect();
+            let group = if claims.iter().any(|c| c.starts_with("verify-")) {
+                2
+            } else if claims.is_empty() {
+                0
+            } else {
+                1
+            };
+            groups[group].1.push(format!("#{n}"));
+        }
+        groups
+            .into_iter()
+            .filter(|(_, items)| !items.is_empty())
+            .map(|(name, items)| {
+                let line = format!("{name}: {}", items.join(" "));
+                Line::new("  ", vec![(line, anstyle::Style::new())])
             })
-            .collect::<Vec<_>>()
-            .join(", ")
+            .collect()
     }
 
-    fn row(&self, pre: String, s: &SessionInfo) -> [Cell; 5] {
+    /// The lines of the session `s`: the first line after `pre`, each
+    /// line of its detail after `more`.
+    fn session(&self, pre: String, more: &str, s: &SessionInfo) -> Vec<Line> {
         let mut tags = Vec::new();
         if s.uri.lead() {
             tags.push("lead");
@@ -472,101 +571,32 @@ impl Top<'_> {
         if s.worker {
             tags.push("worker");
         }
-        let idle = if s.live {
-            "live".to_owned()
-        } else {
-            format!("idle {}", ago(s.idle_secs))
-        };
-        let items: Vec<String> = s
-            .uri
-            .claims()
-            .iter()
-            .map(|c| {
-                let title = issue_of(c)
-                    .and_then(|n| self.issues?.titles.get(&n))
-                    .map(|t| format!(" {}", cut(&safe(t), TITLE_CHARS)));
-                format!("{}{}", safe(c), title.unwrap_or_default())
-            })
-            .collect();
-        let mut facts: Vec<(String, anstyle::Style)> = Vec::new();
-        if self.state == RiffState::Paused {
-            facts.push(("paused".into(), WARNING));
-        }
-        facts.extend(text::idle_worker(s).map(|idle| (idle, anstyle::Style::new())));
-        if s.uri.lead()
-            && let Some((wave, items)) = self.issues.and_then(|i| i.wave.as_ref())
-        {
-            let items: Vec<String> = items.iter().map(|n| format!("#{n}")).collect();
-            facts.push((
-                format!("{}: {}", safe(wave), items.join(" ")),
-                anstyle::Style::new(),
-            ));
-        }
-        let step = s.status.as_ref().map(|info| {
-            let (age, step) = (ago(info.age_secs), safe(&info.status.step));
-            match (&info.status.blocked, info.stale) {
-                (None, false) => (format!("{age} {step}"), anstyle::Style::new()),
-                (Some(why), false) => (
-                    format!("blocked {age}: {} (step: {step})", safe(why)),
-                    ERROR,
-                ),
-                (None, true) => (format!("stale {age}: {step}"), DIM),
-                (Some(why), true) => (
-                    format!("stale {age}: blocked: {} (step: {step})", safe(why)),
-                    DIM,
-                ),
-            }
-        });
-        let mut parts = Vec::new();
-        for (i, part) in facts.into_iter().chain(step).enumerate() {
-            if i > 0 {
-                parts.push(("  ".to_owned(), anstyle::Style::new()));
-            }
-            parts.push(part);
-        }
-        let status = if parts.is_empty() {
-            Cell::new("-", DIM)
-        } else {
-            Cell {
-                pre: String::new(),
-                parts,
-            }
-        };
-        [
-            Cell {
-                pre,
-                ..Cell::new(short(s), session_style(&s.uri))
-            },
-            Cell::new(tags.join(" "), MUTED),
-            Cell::new(idle, DIM),
-            Cell::new(
-                if items.is_empty() {
-                    "-".into()
-                } else {
-                    items.join("; ")
-                },
-                anstyle::Style::new(),
-            ),
-            status,
-        ]
+        let head = Line::new(
+            pre,
+            vec![
+                (short(s), session_style(&s.uri)),
+                (tags.join(" "), MUTED),
+                (state::of(s).word().to_owned(), state::style(state::of(s))),
+            ],
+        );
+        let title = |n| self.issues?.titles.get(&n).cloned();
+        std::iter::once(head)
+            .chain(
+                state::detail(s, &title)
+                    .into_iter()
+                    .map(|part| Line::new(more, vec![part])),
+            )
+            .collect()
     }
 }
 
-/// The row of a person: the USER, the role tag, and `live` or the time
-/// since the last call.
-fn person_row(user: &str, person: &PersonRow) -> [Cell; 5] {
-    let seen = match (person.live, person.seen_secs) {
-        (true, _) => Cell::new("live", GOOD),
-        (false, Some(secs)) => Cell::new(format!("last seen {}", ago(secs)), DIM),
-        (false, None) => Cell::new("away", DIM),
-    };
-    [
-        Cell::new(safe(user), crate::style::person(user)),
-        Cell::new(person.role.tag().unwrap_or_default(), MUTED),
-        seen,
-        Cell::empty(),
-        Cell::empty(),
-    ]
+/// The line of a person: the USER, the role tag, and
+/// [`state::person`].
+fn person_line(user: &str, person: &PersonRow) -> Line {
+    let role = person.role.tag().unwrap_or_default().to_owned();
+    let mut parts = vec![(safe(user), crate::style::person(user)), (role, MUTED)];
+    parts.extend(state::person(person.live, person.seen_secs));
+    Line::new("", parts)
 }
 
 /// The branch of a tree row: the last one closes the tree.
@@ -574,11 +604,9 @@ fn branch(last: bool) -> &'static str {
     if last { "└─ " } else { "├─ " }
 }
 
-/// True when the current status is blocked. A stale block is not.
+/// True when the state of `s` is `blocked`.
 fn blocked(s: &SessionInfo) -> bool {
-    s.status
-        .as_ref()
-        .is_some_and(|i| i.status.blocked.is_some() && !i.stale)
+    state::of(s) == SessionState::Blocked
 }
 
 /// The short session ID of `riff who`.
@@ -587,24 +615,51 @@ fn short(s: &SessionInfo) -> String {
     id.chars().take(8).collect()
 }
 
-/// `text` cut to `max` characters, with `…` at the end when it is cut.
-fn cut(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_owned();
-    }
-    let mut out: String = text.chars().take(max - 1).collect();
-    out.push('…');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{DIM, ERROR, GOOD};
+
+    fn plain(line: &Line, width: usize) -> String {
+        anstream::adapter::strip_str(&line.render(width)).to_string()
+    }
 
     #[test]
-    fn a_long_title_is_cut() {
-        assert_eq!(cut("abcdef", 4), "abc…");
-        assert_eq!(cut("abc", 4), "abc");
+    fn a_wide_line_is_cut_with_an_ellipsis() {
+        let line = Line::new("├─ ", vec![("abcdef".into(), ERROR), ("gh".into(), DIM)]);
+        assert_eq!(plain(&line, 80), "├─ abcdef  gh");
+        assert_eq!(plain(&line, 13), "├─ abcdef  gh");
+        assert_eq!(plain(&line, 12), "├─ abcdef…");
+        assert_eq!(plain(&line, 7), "├─ abc…");
+        assert_eq!(plain(&line, 2), "├…");
+    }
+
+    #[test]
+    fn a_wide_terminal_cuts_nothing() {
+        let status = "blocked 2m: waits for a verify of the pull request ".repeat(3);
+        let line = Line::new("   │    ", vec![(status.clone(), ERROR)]);
+        assert_eq!(plain(&line, 200), format!("   │    {status}"));
+        assert!(plain(&line, 80).ends_with('…'));
+    }
+
+    #[test]
+    fn a_cut_counts_wide_characters_as_two_columns() {
+        let line = Line::new("", vec![("日本語です".into(), anstyle::Style::new())]);
+        assert_eq!(plain(&line, 10), "日本語です");
+        assert_eq!(plain(&line, 6), "日本…");
+    }
+
+    #[test]
+    fn a_cut_keeps_the_style_of_the_cut_part() {
+        let line = Line::new("", vec![("abcdef".into(), ERROR)]);
+        assert_eq!(line.render(4), styled(ERROR, "abc…"));
+    }
+
+    #[test]
+    fn a_wide_fact_line_loses_its_styles_and_is_cut() {
+        let line = format!("riff   {}", styled(GOOD, "running"));
+        assert_eq!(fit(&line, 80), line);
+        assert_eq!(fit(&line, 10), "riff   ru…");
     }
 
     #[test]

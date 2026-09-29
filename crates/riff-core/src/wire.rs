@@ -290,6 +290,107 @@ pub struct SessionInfo {
     /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
     #[serde(default)]
     pub claims_secs: u64,
+    /// The state of the session, that the server derives
+    /// (01M3QB6CJ1XCQG5B1BVR8AF3B4). An older server sends none: see
+    /// [`SessionInfo::fill_state`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<SessionState>,
+}
+
+impl SessionInfo {
+    /// Sets the state from the other facts of the session when the
+    /// server sent none, as an older server does. `riff` is the state of
+    /// the riff. A state from the server stays.
+    ///
+    /// ```
+    /// use riff_core::wire::{RiffState, SessionInfo, SessionState};
+    ///
+    /// // A who reply of an older server: no state.
+    /// let json = r#"{"uri":"riff://mike@thelio/o/r?session=w1&claim=issue-12","live":true}"#;
+    /// let mut s: SessionInfo = serde_json::from_str(json).unwrap();
+    /// assert_eq!(s.state, None);
+    /// s.fill_state(RiffState::Running);
+    /// assert_eq!(s.state, Some(SessionState::Busy));
+    /// s.fill_state(RiffState::Paused);
+    /// assert_eq!(s.state, Some(SessionState::Busy), "a state stays");
+    /// ```
+    pub fn fill_state(&mut self, riff: RiffState) {
+        if self.state.is_some() {
+            return;
+        }
+        let blocked = self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
+        self.state = Some(SessionState::of(
+            self.live,
+            riff == RiffState::Paused,
+            blocked,
+            !self.uri.claims().is_empty(),
+        ));
+    }
+}
+
+/// The state of a session. The server derives it; no session reports it
+/// (01M3QB6CJ1XCQG5B1BVR8AF3B4). The first state that matches wins, in
+/// this order:
+///
+/// 1. `offline`: the session has no open watch stream.
+/// 2. `paused`: the riff is paused.
+/// 3. `blocked`: its current status, not a stale one, is blocked.
+/// 4. `busy`: it holds a claim.
+/// 5. `idle`: each other session.
+///
+/// ```
+/// use riff_core::wire::SessionState;
+///
+/// // live, paused, blocked, claims
+/// assert_eq!(SessionState::of(false, true, true, true), SessionState::Offline);
+/// assert_eq!(SessionState::of(true, true, true, true), SessionState::Paused);
+/// assert_eq!(SessionState::of(true, false, true, true), SessionState::Blocked);
+/// assert_eq!(SessionState::of(true, false, false, true), SessionState::Busy);
+/// assert_eq!(SessionState::of(true, false, false, false), SessionState::Idle);
+/// assert_eq!(serde_json::to_string(&SessionState::Busy).unwrap(), r#""busy""#);
+/// assert_eq!(SessionState::Blocked.word(), "blocked");
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionState {
+    #[default]
+    Offline,
+    Paused,
+    Blocked,
+    Busy,
+    Idle,
+}
+
+impl SessionState {
+    /// The state of a session from its facts: an open watch stream
+    /// (`live`), a paused riff, a current blocked status, and a claim.
+    pub fn of(live: bool, paused: bool, blocked: bool, claims: bool) -> Self {
+        if !live {
+            SessionState::Offline
+        } else if paused {
+            SessionState::Paused
+        } else if blocked {
+            SessionState::Blocked
+        } else if claims {
+            SessionState::Busy
+        } else {
+            SessionState::Idle
+        }
+    }
+
+    /// The word of the state, the same in each command.
+    pub fn word(self) -> &'static str {
+        match self {
+            SessionState::Offline => "offline",
+            SessionState::Paused => "paused",
+            SessionState::Blocked => "blocked",
+            SessionState::Busy => "busy",
+            SessionState::Idle => "idle",
+        }
+    }
 }
 
 /// The most characters in the step or the reason of a [`Status`].

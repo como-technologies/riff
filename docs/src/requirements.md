@@ -843,13 +843,12 @@
 - **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the
   riff, then a table with a row for each session. The facts are
   `riff` (`running` green, `paused` yellow), `owner` and `build`. The
-  columns are SESSION, STATE, ROLE, CLAIMS and STATUS. SESSION is the
-  name with the short session ID, bold, in the same color as in
-  `riff tail`. `live` is green and the idle time dim. ROLE has `you`
-  in bold and the tags. The claims are muted. The status has a dim
-  age; a blocked status is red. With `--long`, the column URI takes
-  the place of SESSION and CLAIMS. The styles come from one shared
-  module. The MCP `who` tool stays plain.
+  columns are SESSION, STATE, ROLE and DETAIL. SESSION is the name
+  with the short session ID, bold, in the same color as in `riff
+  tail`. STATE and DETAIL are the state of the session and its detail
+  (01M3QB6CJ1XCQG5B1BVR8AF3B4). ROLE has `you` in bold and the tags.
+  With `--long`, the column URI takes the place of SESSION. The styles
+  come from one shared module. The MCP `who` tool stays plain.
 - **01M3MEW75WC7Y4M1BKQ7SXRPNR** Replaced by 01M3Q5VE2D244XDZRYXM8DNSRS.
 - **01M3Q5VE2D244XDZRYXM8DNSRS** `--color <auto|always|never>` is an
   option of each `riff` command. `auto` uses color only when stdout is
@@ -874,25 +873,30 @@
   the seconds since the last call of a session of the person. A riff
   with no sign-in lists none.
 - **01M3NT4M5D36KTZ5XZMDP6QFQT** `riff top` shows a tree for each
-  person: the person row, each host of the person, and each session on
-  the host, with `├─` and `└─`. The person row has the USER in a bold
-  color, the tag `owner` or `admin`, and `live`, `last seen` with the
-  time, or `away`. Each member of `who` gets a row, also when away; with
-  no sign-in, each user of a session. People come by USER and hosts by
-  name. On a host, blocked sessions come first, then by session ID. A
-  person on the command line gets no session row.
+  person: the person line, each host of the person, and each session on
+  the host, with `├─` and `└─`. The person line has the USER in a bold
+  color, the tag `owner` or `admin`, and the state of the person
+  (01M3QB6CJ1XCQG5B1BVR8AF3B4). Each member of `who` gets a line, also
+  when away; with no sign-in, each user of a session. People come by
+  USER and hosts by name. On a host, blocked sessions come first, then
+  by session ID. A person on the command line gets no session line.
 - **01M3NB54P1RBHTA5TKXP8BMY3K** `riff top` shows a live table of the
   sessions of `riff who`, and draws it again in place every 3 seconds
   and after each message of the repository thread, until Ctrl-C.
   `riff top --once` prints one table and exits. The header has the
-  state, the owner, the build line, and the current wave: each open
-  item with the short ID of each session that claims it, or `free`.
-  Each session row has the short session ID, the tag of its role,
-  `live` or the idle time, each claim with the title of its issue, and
-  the status with its age. A blocked status is red, with its reason.
-  The titles and the wave come from `gh issue list`, kept for one
-  minute. With no `gh`, the rows still print. `--color` works as in
+  facts of `riff who`: the state, the owner and the build. The board of
+  the current wave follows: the wave, then one line for each group of
+  its open items, `free`, `claimed` and `verify`. The first line of a
+  session has the short session ID, the tag of its role, and its state.
+  Under it comes one line for each fact of the detail of the state
+  (01M3QB6CJ1XCQG5B1BVR8AF3B4). The titles and the wave come from
+  `gh issue list`, kept for one minute. With no `gh`, the rows still
+  print. `--color` works as in
   `riff who`.
+- **01M3QA8EZHX5B8C9CKF8Q3154X** `riff top` grows down, not across. No
+  line is wider than the terminal: the real width when riff knows it,
+  else 80 columns. riff cuts a wider line with `…`. A session with no
+  detail takes one line. No line has a column heading.
 - **01M3NB589WMPRSAR43BSG9SP41** `riff top` makes only read calls: the
   `riff` and `who` calls of `riff who`, and the stream of `riff tail`.
   It posts nothing and wakes no session.
@@ -968,8 +972,7 @@
 - **R184** `riff-server` keeps the last status of each session, with the
   time that the session set it. It saves the status with the session.
   `who` shows each status and its age, for example
-  `status 4m ago: write the tests`. A blocked status starts with
-  `blocked`.
+  `4m ago: write the tests`.
 - **01M3Q551WCMPQRCNJ8FXQEBFY4** `who` gives for each session the
   seconds since its claims last changed: a claim, a release, a new
   start of the session, or a start of `riff-server`. A worker with no
@@ -979,14 +982,27 @@
   session, a pause or a resume of the riff, or a start of
   `riff-server`. `who` marks a stale status. A claim that the session
   holds already, and a set of the riff to its state, are no change.
-- **01M3Q555KC1RKNEC4ZA9HQYJG2** `riff who`, the MCP `who` tool and
-  `riff top` show the facts that riff derives for a session before its
-  step: `idle` with its time for a worker with no claim. `riff top`
-  also shows `paused` in each session row while the riff is paused, and
-  the current wave and its open items on the lead row. A stale step is
-  dim and says `stale`. A stale block is not red, does not come first
-  in `riff top`, and is not `blocked` in the status line.
-  `riff workers` shows `no claims` with the idle time.
+- **01M3Q555KC1RKNEC4ZA9HQYJG2** A stale step is dim and says `stale`.
+  A stale block does not make a session `blocked`, and is not
+  `blocked` in the status line.
+- **01M3QB6CJ1XCQG5B1BVR8AF3B4** `riff-server` derives the state of
+  each session and gives it in `who`. No session reports its state.
+  When a `who` reply has no state, riff derives it the same way from
+  the other facts of the reply.
+  The first state that matches wins: `offline` (no open watch stream),
+  `paused` (the riff is paused), `blocked` (a current blocked status),
+  `busy` (a claim), `idle` (each other session). `riff top`, `riff
+  who`, the MCP `who` tool and `riff workers` show the word of the
+  state, then its detail: for `offline`, `seen 2h ago`; for `paused`,
+  the claims and `stopped at:` the step; for `blocked`, the reason and
+  the step, then the claims; for `busy`, `working on #N` or
+  `reviewing #N` (a verify claim) for each claim, then the step; for
+  `idle`, `ready for work for` the time since the last release, then a
+  current step. `riff top` adds the title of each issue. The colors:
+  `blocked` red, `busy` green, `idle` dim, `offline` grey, `paused`
+  yellow. A `blocked` session comes first in `riff top`. A person is
+  `online` when a session of the person is live, else `offline` with
+  `seen` and the time since the last call.
 - **01M3Q555NV8ZCQ8PVPBXQ7J82C** The skill, the start hook and the
   `status` tool do not tell a session to set its status for a fact
   that riff derives: a claim, a release, a pause, or an idle worker.
@@ -1530,7 +1546,8 @@
   that ID. A worker is a pane with that mark, in any tmux session of
   the machine.
 - **01M3JPQTBDGT54WN7FZP9CD6B5** `riff workers` lists each worker of the
-  machine: its pane, its session ID, its claims and its status.
+  machine: its pane, its session ID, its state and the detail of the
+  state (01M3QB6CJ1XCQG5B1BVR8AF3B4).
 - **01M3JPQTDFW3C7QBSZZ2M831MH** `riff workers stop` ends each worker of
   the machine, and `riff workers stop PANE` ends one. It closes the
   pane, then sends the end call of the session. The session leaves

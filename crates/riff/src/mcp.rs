@@ -235,7 +235,8 @@ Show the state of the riff: paused or running."
         let me = self.here()?;
         let all = a.all.unwrap_or(false);
         let state = self.api.riff(&me).await.map_err(err)?;
-        let who = self.api.roster(&me, all).await.map_err(err)?;
+        let mut who = self.api.roster(&me, all).await.map_err(err)?;
+        crate::state::fill(&mut who.sessions, state);
         let owner = text::owner_line(&who.owner)
             .map(|line| format!("{line}\n"))
             .unwrap_or_default();

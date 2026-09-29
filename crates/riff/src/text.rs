@@ -1349,6 +1349,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     worker,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
 /// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
@@ -1371,67 +1372,50 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
     tags
 }
 
-/// `idle` with its time for a worker with no claim: a fact that the
-/// riff derives, so no worker sets a status for it
-/// (01M3Q555KC1RKNEC4ZA9HQYJG2). `None` for each other session.
-///
-/// ```
-/// use riff_core::wire::SessionInfo;
-///
-/// let info = |uri: &str, worker| SessionInfo {
-///     uri: uri.parse().unwrap(),
-///     live: true,
-///     idle_secs: 0,
-///     status: None,
-///     worker,
-///     stopping: false,
-///     claims_secs: 300,
-/// };
-/// let free = info("riff://mike@thelio/o/r?session=w1", true);
-/// let busy = info("riff://mike@thelio/o/r?session=w2&claim=issue-12", true);
-/// let other = info("riff://mike@thelio/o/r?session=s3", false);
-/// assert_eq!(riff::text::idle_worker(&free).as_deref(), Some("idle 5m"));
-/// assert_eq!(riff::text::idle_worker(&busy), None);
-/// assert_eq!(riff::text::idle_worker(&other), None);
-/// ```
-pub fn idle_worker(s: &SessionInfo) -> Option<String> {
-    (s.worker && s.uri.claims().is_empty()).then(|| format!("idle {}", ago(s.claims_secs)))
-}
-
-/// One line for each session: its name, `live` or the time since its
-/// last call, `(you)`, its [`tags`], and its URI. Under it come the
-/// [`idle_worker`] time, and the status with its age (R184). A stale
-/// status says so (01M3Q555KC1RKNEC4ZA9HQYJG2).
+/// One line for each session: its name, the word of its state that the
+/// server derives (01M3QB6CJ1XCQG5B1BVR8AF3B4), `(you)`, its [`tags`],
+/// and its URI. Under it comes each line of the
+/// [`crate::state::detail`] of the state. The MCP `who` tool shows it,
+/// plain.
 ///
 /// ```
 /// use riff::text;
-/// use riff_core::wire::{RiffOwner, SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{RiffOwner, SessionInfo, SessionState, Status, StatusInfo};
 ///
-/// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6".parse()?;
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let status = Status { step: "write the tests".into(), blocked: None };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0 },
+///     SessionInfo {
+///         uri: me,
+///         live: true,
+///         idle_secs: 0,
+///         status: None,
+///         worker: false,
+///         stopping: false,
+///         claims_secs: 0,
+///         state: Some(SessionState::Busy),
+///     },
 ///     SessionInfo {
 ///         uri: brett,
-///         live: false,
-///         idle_secs: 150,
+///         live: true,
+///         idle_secs: 0,
 ///         status: Some(StatusInfo { status, age_secs: 240, stale: true }),
 ///         worker: true,
 ///         stopping: false,
 ///         claims_secs: 60,
+///         state: Some(SessionState::Idle),
 ///     },
 /// ];
 /// // The owner is a person: the sessions of brett get no tag `owner`.
 /// let owner = RiffOwner::Owner { user: "brett".into(), email: "brett@x.io".into() };
 /// let out = text::who(&list, &owner, &list[0].uri);
-/// assert!(out.contains("(a6cf) live (you)  riff://"), "{out}");
-/// assert!(out.contains("(77e0) idle 2m worker  riff://"), "{out}");
+/// assert!(out.contains("(a6cf) busy (you)  riff://"), "{out}");
+/// assert!(out.contains("\n  working on #6\n"), "{out}");
+/// assert!(out.contains("(77e0) idle worker  riff://"), "{out}");
 /// assert!(!out.contains("owner"), "{out}");
-/// assert!(
-///     out.ends_with("\n  idle 1m\n  status 4m ago (stale): write the tests\n"),
-///     "{out}"
-/// );
+/// assert!(out.ends_with("\n  ready for work for 1m\n"), "{out}");
+/// assert!(!out.contains('\x1b'), "{out:?}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> String {
@@ -1440,23 +1424,16 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
     }
     let mut out = String::new();
     for s in sessions {
-        let idle = if s.live {
-            "live".into()
-        } else {
-            format!("idle {}", ago(s.idle_secs))
-        };
         let you = if s.uri.who() == me.who() {
             " (you)"
         } else {
             ""
         };
         let tags: String = tags(s, owner).iter().map(|t| format!(" {t}")).collect();
-        let _ = writeln!(out, "{} {idle}{you}{tags}  {}", name(&s.uri), s.uri);
-        if let Some(idle) = idle_worker(s) {
-            let _ = writeln!(out, "  {idle}");
-        }
-        if let Some(status) = &s.status {
-            let _ = writeln!(out, "  {}", status_line(status));
+        let state = crate::state::of(s).word();
+        let _ = writeln!(out, "{} {state}{you}{tags}  {}", name(&s.uri), s.uri);
+        for (line, _) in crate::state::detail(s, &|_| None) {
+            let _ = writeln!(out, "  {line}");
         }
     }
     out
@@ -1481,6 +1458,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     worker: false,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);
