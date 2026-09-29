@@ -1,0 +1,7 @@
+# The generated notes of a GitHub release: the changelog of riff
+# (01M3NB3EWE2V9PCTMNTZAKEXMA). They list each pull request merged
+# since the last release, except the release pull requests.
+changelog:
+  exclude:
+    labels:
+      - release
