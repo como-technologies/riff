@@ -128,9 +128,10 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, AdminSet, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Invite, Invited,
     Keys, Lead, LeadReply, Members, MembersReply, Membership, OwnerPassed, PassOwner, Post, Posted,
-    Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffReply,
-    ServerMetadata, SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffOwner,
+    RiffReply, ServerMetadata, SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE,
+    Tailed, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
+    WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -764,10 +765,16 @@ async fn who(
     Json(r): Json<WhoRequest>,
 ) -> Reply<WhoReply> {
     let now = Instant::now();
+    let owner = if s.config.trusted() {
+        RiffOwner::NoSignIn
+    } else {
+        s.tokens().riff_owner()
+    };
     let mut state = acts_as(&s, caller, &r.me)?;
     state.called(&r.me, now);
     Ok(Json(WhoReply {
         sessions: state.who(now, now_ms(), r.all),
+        owner,
     }))
 }
 

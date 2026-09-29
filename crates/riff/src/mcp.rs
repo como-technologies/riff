@@ -223,12 +223,15 @@ Show the state of the riff: paused or running."
         let me = self.here()?;
         let all = a.all.unwrap_or(false);
         let state = self.api.riff(&me).await.map_err(err)?;
-        let sessions = self.api.who(&me, all).await.map_err(err)?;
+        let who = self.api.roster(&me, all).await.map_err(err)?;
+        let owner = text::owner_line(&who.owner)
+            .map(|line| format!("{line}\n"))
+            .unwrap_or_default();
         Ok(format!(
-            "{}\n{}\n{}",
+            "{}\n{owner}{}\n{}",
             text::riff_state(state),
             text::build_line(crate::api::server_build().as_ref()),
-            text::who(&sessions, &me)
+            text::who(&who.sessions, &who.owner, &me)
         ))
     }
 

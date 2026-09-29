@@ -1,6 +1,7 @@
 //! `riff invite`, `riff remove`, `riff members`, `riff admin` and `riff owner` against a real
-//! server (01M3JN3AHMK532XMRDASD4XD5D). The sign-in is in the mock
-//! store of `keyring-core`, so the tests run in process.
+//! server (01M3JN3AHMK532XMRDASD4XD5D), and the owner in `riff who`
+//! (01M3N754NY5JX4P0SN8R4ZYFG9). The sign-in is in the mock store of
+//! `keyring-core`, so the tests run in process.
 
 use std::sync::Once;
 use std::time::Instant;
@@ -13,6 +14,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Kind, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
+use riff_server::oidc::Provider;
 
 static MOCK_KEYRING: Once = Once::new();
 
@@ -22,15 +24,21 @@ async fn start() -> (Service, Api) {
 
 /// A server; with `require_sign_in`, each call needs a token.
 async fn start_with(require_sign_in: bool) -> (Service, Api) {
+    serve(|url| Config {
+        require_sign_in,
+        ..Config::new(url)
+    })
+    .await
+}
+
+/// A server with the config that `config` makes from its URL.
+async fn serve(config: impl FnOnce(&str) -> Config) -> (Service, Api) {
     MOCK_KEYRING.call_once(|| {
         keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let service = Service::new(Config {
-        require_sign_in,
-        ..Config::new(&url)
-    });
+    let service = Service::new(config(&url));
     let api = Api::new(&url);
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -58,6 +66,27 @@ fn sign_in(service: &Service, api: &Api, email: &str) -> TokenReply {
 /// The person `user` on this host: it posts the note of each change.
 fn person(user: &str) -> SessionUri {
     format!("riff://{user}@pangolin").parse().unwrap()
+}
+
+/// The agent session `id` of `user`.
+fn session(user: &str, id: &str) -> SessionUri {
+    format!("riff://{user}@pangolin/como-technologies/riff?session={id}")
+        .parse()
+        .unwrap()
+}
+
+/// What `riff who` prints to the session `me`, with no color.
+async fn who(api: &Api, me: &SessionUri) -> String {
+    let state = api.riff(me).await.unwrap();
+    let who = api.roster(me, false).await.unwrap();
+    let text = text::who_view(state, &who.owner, &who.sessions, me);
+    anstream::adapter::strip_str(&text).to_string()
+}
+
+/// The line of the session `id` in `shown`.
+fn line_of<'a>(shown: &'a str, id: &str) -> &'a str {
+    let name = format!("({id})");
+    shown.lines().find(|l| l.contains(&name)).unwrap()
 }
 
 fn repo() -> ThreadName {
@@ -367,4 +396,148 @@ async fn a_failed_note_leaves_the_change() {
         service.tokens().members().collect::<Vec<_>>(),
         ["bob@gmail.com"]
     );
+}
+
+/// `riff who` names the owner after the state line, and tags each
+/// session of the owner. After `riff owner`, it shows the new owner
+/// (01M3N754NY5JX4P0SN8R4ZYFG9).
+#[tokio::test]
+async fn who_shows_the_owner() {
+    let (service, api) = start_with(true).await;
+    sign_in(&service, &api, "ada@gmail.com");
+    let a1 = session("ada", "a1");
+    let ada = api.clone().signed_in(Some("a1")).unwrap();
+    ada.register(&a1).await.unwrap();
+
+    let shown = who(&ada, &a1).await;
+    assert_eq!(
+        shown.lines().nth(1),
+        Some("The owner is ada (ada@gmail.com)."),
+        "{shown}"
+    );
+    let line = line_of(&shown, "a1");
+    assert!(line.contains("(you)  owner lead  riff://"), "{shown}");
+
+    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
+    ada.pass_owner(&person("ada"), "bob@gmail.com")
+        .await
+        .unwrap();
+    let shown = who(&ada, &a1).await;
+    assert_eq!(
+        shown.lines().nth(1),
+        Some("The owner is bob (bob@gmail.com)."),
+        "{shown}"
+    );
+    let line = line_of(&shown, "a1");
+    assert!(line.contains("(you)  lead  riff://"), "{shown}");
+
+    sign_in(&service, &api, "bob@gmail.com");
+    let b1 = session("bob", "b1");
+    let bob = api.clone().signed_in(Some("b1")).unwrap();
+    bob.register(&b1).await.unwrap();
+    let shown = who(&bob, &b1).await;
+    let line = line_of(&shown, "b1");
+    assert!(line.contains("(you)  owner lead  riff://"), "{shown}");
+    assert!(!line_of(&shown, "a1").contains("owner"), "{shown}");
+}
+
+/// A riff with no sign-in shows no owner line, also when its store
+/// names an owner (01M3N754NY5JX4P0SN8R4ZYFG9).
+#[tokio::test]
+async fn who_on_a_riff_with_no_sign_in_shows_no_owner() {
+    let (service, api) = start().await;
+    service.tokens().name_owner("ada@gmail.com");
+    let a1 = session("ada", "a1");
+    api.register(&a1).await.unwrap();
+    let shown = who(&api, &a1).await;
+    let second = shown.lines().nth(1).unwrap();
+    assert!(
+        second.starts_with("riff and riff-server have the build"),
+        "{shown}"
+    );
+    assert!(!shown.contains("owner"), "{shown}");
+}
+
+/// A riff with sign-in and no owner says so (01M3N754NY5JX4P0SN8R4ZYFG9).
+#[tokio::test]
+async fn who_on_a_riff_with_no_owner_says_so() {
+    let (_, api) = serve(|url| Config {
+        provider: Some(Provider {
+            issuer: "https://accounts.example.com".into(),
+            client_id: "riff".into(),
+            client_secret: None,
+            allowed_domains: vec!["gmail.com".into()],
+        }),
+        ..Config::new(url)
+    })
+    .await;
+    let a1 = session("ada", "a1");
+    api.register(&a1).await.unwrap();
+    let shown = who(&api, &a1).await;
+    assert_eq!(
+        shown.lines().nth(1),
+        Some("The riff has no owner."),
+        "{shown}"
+    );
+}
+
+/// The `who` tool of `riff mcp` names the owner and tags each session
+/// of the owner, with no escape codes (01M3N754NY5JX4P0SN8R4ZYFG9).
+#[tokio::test]
+async fn the_who_tool_shows_the_owner() {
+    use riff::mcp::Tools;
+    use rmcp::ServiceExt;
+    use rmcp::model::CallToolRequestParams;
+
+    let (service, api) = start_with(true).await;
+    sign_in(&service, &api, "ada@gmail.com");
+    let a1 = session("ada", "a1");
+    let ada = api.clone().signed_in(Some("a1")).unwrap();
+    ada.register(&a1).await.unwrap();
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let tools = Tools::new(ada, a1);
+    tokio::spawn(async move {
+        tools
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let client = ().serve(client_io).await.unwrap();
+    let result = client
+        .call_tool(CallToolRequestParams::new("who"))
+        .await
+        .unwrap();
+    let shown: String = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect();
+    assert_eq!(
+        shown.lines().nth(1),
+        Some("The owner is ada (ada@gmail.com)."),
+        "{shown}"
+    );
+    let line = line_of(&shown, "a1");
+    assert!(line.contains(" (you) owner  riff://"), "{shown}");
+    assert!(!shown.contains('\x1b'), "{shown:?}");
+}
+
+/// The `riff who` how-to of the book shows the owner line and the tag
+/// (01M3N754NY5JX4P0SN8R4ZYFG9).
+#[test]
+fn the_book_shows_the_owner_in_who() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let (_, section) = page.split_once("## See who is in the riff").unwrap();
+    assert!(
+        section.contains("\nThe owner is mike (mike@comotechnologies.io).\n"),
+        "{section}"
+    );
+    assert!(section.contains("The riff has no owner."), "{section}");
+    assert!(section.contains("(you)  owner lead issue-6"), "{section}");
 }

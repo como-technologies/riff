@@ -587,12 +587,17 @@ impl Api {
 
     /// Lists the sessions. `all` lists gone sessions too.
     pub async fn who(&self, me: &SessionUri, all: bool) -> Result<Vec<SessionInfo>> {
+        Ok(self.roster(me, all).await?.sessions)
+    }
+
+    /// Lists the sessions and names the owner of the riff
+    /// (01M3N754NY5JX4P0SN8R4ZYFG9). `all` lists gone sessions too.
+    pub async fn roster(&self, me: &SessionUri, all: bool) -> Result<WhoReply> {
         let request = WhoRequest {
             me: me.clone(),
             all,
         };
-        let reply: WhoReply = self.call("who", &request).await?;
-        Ok(reply.sessions)
+        self.call("who", &request).await
     }
 
     pub async fn threads(&self, me: &SessionUri) -> Result<Vec<ThreadInfo>> {

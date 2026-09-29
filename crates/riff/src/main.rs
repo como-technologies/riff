@@ -490,8 +490,8 @@ async fn main() -> Result<()> {
         Command::Who { all, color } => {
             use_color(color);
             let state = api.riff(&me).await?;
-            let sessions = api.who(&me, all).await?;
-            anstream::print!("{}", text::who_view(state, &sessions, &me));
+            let who = api.roster(&me, all).await?;
+            anstream::print!("{}", text::who_view(state, &who.owner, &who.sessions, &me));
         }
         Command::Pause => pause(&api, &me, RiffState::Paused).await?,
         Command::Resume => pause(&api, &me, RiffState::Running).await?,
