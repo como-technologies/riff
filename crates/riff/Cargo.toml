@@ -45,4 +45,5 @@ axum.workspace = true
 jsonwebtoken = { workspace = true, features = ["use_pem"] }
 rmcp = { workspace = true, features = ["client"] }
 tower.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 vt100.workspace = true

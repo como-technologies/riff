@@ -577,7 +577,12 @@ async fn workers_lists_each_worker() {
 
     std::fs::remove_file(m.fake.path().join("workers")).unwrap();
     let out = m.riff(&main, &[], false).output().unwrap();
-    assert_eq!(stdout(&out), "No worker runs on this machine.\n");
+    let out = stdout(&out);
+    assert!(out.starts_with("This machine: limit "), "{out}");
+    assert!(
+        out.ends_with("\nNo worker runs on this machine.\n"),
+        "{out}"
+    );
 }
 
 /// `riff workers stop` ends each worker: within 10 seconds, no worker is
@@ -749,9 +754,10 @@ fn the_book_has_a_how_to_for_each_step() {
         ("### Start workers", "riff workers start 3"),
         ("### Start workers", "riff workers start 1 --claude "),
         (
-            "#### The lead keeps a worker on each free item",
-            "riff workers start 2",
+            "#### Change the rate of the rollout",
+            "riff workers interval 30",
         ),
+        ("#### Turn the rollout off", "riff workers interval 0"),
         (
             "### Take over a worker",
             "tmux select-window -t riff-workers",

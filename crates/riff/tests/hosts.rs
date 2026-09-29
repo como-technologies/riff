@@ -343,7 +343,10 @@ async fn the_lead_starts_workers_on_another_host() {
         "{out:?}"
     );
     let read = reads(&r.api, &r.lead, "b: started 2 workers").await;
-    assert!(read.contains("direct with mike@b"), "{read}");
+    assert!(
+        read.contains("mike@b:riff") && read.contains("note: b: started"),
+        "{read}"
+    );
 
     let workers = r.b.workers();
     assert_eq!(workers.len(), 2, "{}", r.b.log());
@@ -367,7 +370,17 @@ async fn the_lead_starts_workers_on_another_host() {
     })
     .await;
     assert!(
-        listed.starts_with("No worker runs on this machine."),
+        listed.contains("\nNo worker runs on this machine.\n"),
+        "{listed}"
+    );
+    // Each machine shows its numbers and its score
+    // (01M3Q5QE4SQ8VYN2PSF42KB3QJ).
+    let first = listed.lines().next().unwrap();
+    assert!(first.starts_with("This machine: limit 0. cpu "), "{listed}");
+    assert!(first.contains(", score "), "{listed}");
+    let host = listed.lines().find(|l| l.starts_with("Host b:")).unwrap();
+    assert!(
+        host.contains(". cpu ") && host.contains(", score "),
         "{listed}"
     );
     for (pane, id) in &workers {

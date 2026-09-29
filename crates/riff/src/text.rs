@@ -919,6 +919,28 @@ pub fn workers_limited(left: u16, limit: u16, run: usize) -> String {
     )
 }
 
+/// The answer to `riff workers interval` (01M3Q5QE9H42FQKEDC5G9GKCWD).
+///
+/// ```
+/// let path = std::path::Path::new("/h/.config/riff/config.toml");
+/// assert_eq!(
+///     riff::text::workers_interval(10, path),
+///     "The lead starts at most one worker each 10 seconds (/h/.config/riff/config.toml)."
+/// );
+/// assert_eq!(
+///     riff::text::workers_interval(0, path),
+///     "The lead starts no worker by itself (/h/.config/riff/config.toml)."
+/// );
+/// ```
+pub fn workers_interval(seconds: u16, path: &std::path::Path) -> String {
+    let what = match seconds {
+        0 => "starts no worker by itself".to_owned(),
+        1 => "starts at most one worker each second".to_owned(),
+        n => format!("starts at most one worker each {n} seconds"),
+    };
+    format!("The lead {what} ({}).", path.display())
+}
+
 /// The answer to `riff workers limit` (01M3JPQT35BMR7XMAMMFSCDC2B).
 ///
 /// ```
@@ -2363,11 +2385,13 @@ pub fn host_refused_not_the_lead(request: &crate::host::Request, me: &SessionUri
 /// use riff::host::Request;
 /// assert_eq!(
 ///     riff::text::host_asked("pangolin", &Request::Start(2)),
-///     "Asked the workers host on pangolin: workers start 2. Its reply comes as a direct message."
+///     "Asked the workers host on pangolin: workers start 2. Its reply comes as a note at your next read."
 /// );
 /// ```
 pub fn host_asked(host: &str, request: &crate::host::Request) -> String {
-    format!("Asked the workers host on {host}: {request}. Its reply comes as a direct message.")
+    format!(
+        "Asked the workers host on {host}: {request}. Its reply comes as a note at your next read."
+    )
 }
 
 /// The error when no workers host of the user runs on `host`.
@@ -2386,18 +2410,51 @@ pub fn no_host(host: &str) -> String {
 pub const HOST_NEEDS_THE_LEAD: &str = "riff: only the lead session asks a workers host. Run it \
 in the lead, or run riff workers start on that machine.";
 
-/// The heading of one host in `riff workers` (01M3N7AKFPX3ZGQARSG2V64GBD).
+/// The line of this machine in `riff workers`: its limit, its numbers
+/// and its score (01M3Q5QE4SQ8VYN2PSF42KB3QJ).
 ///
 /// ```
-/// let status = riff::host::HostStatus { limit: 3, workers: vec![("%3".into(), "1a2b".into())] };
+/// use riff::machine::Machine;
+///
+/// let m = Machine { cores: 32, mhz: 3000, mem_gb: 128, load: 2.0 };
+/// assert_eq!(
+///     riff::text::this_machine(4, &m),
+///     "This machine: limit 4. cpu 32x3000MHz, mem 128GB, load 2.00, score 32.0.",
+/// );
+/// ```
+pub fn this_machine(limit: u16, machine: &crate::machine::Machine) -> String {
+    format!(
+        "This machine: limit {limit}. {machine}, score {:.1}.",
+        machine.score()
+    )
+}
+
+/// The heading of one host in `riff workers` (01M3N7AKFPX3ZGQARSG2V64GBD),
+/// with the numbers and the score of its machine
+/// (01M3Q5QE4SQ8VYN2PSF42KB3QJ).
+///
+/// ```
+/// use riff::host::HostStatus;
+/// use riff::machine::Machine;
+///
+/// let status = HostStatus { limit: 3, machine: None, workers: vec![("%3".into(), "1a2b".into())] };
 /// assert_eq!(riff::text::host_heading("pangolin", &status), "Host pangolin: limit 3, 1 worker runs.");
+/// let machine = Some(Machine { cores: 16, mhz: 4500, mem_gb: 32, load: 1.5 });
+/// assert_eq!(
+///     riff::text::host_heading("pangolin", &HostStatus { machine, ..status }),
+///     "Host pangolin: limit 3, 1 worker runs. cpu 16x4500MHz, mem 32GB, load 1.50, score 24.0.",
+/// );
 /// ```
 pub fn host_heading(host: &str, status: &crate::host::HostStatus) -> String {
     let runs = match status.workers.len() {
         1 => "1 worker runs".to_owned(),
         n => format!("{n} workers run"),
     };
-    format!("Host {host}: limit {}, {runs}.", status.limit)
+    let machine = status
+        .machine
+        .map(|m| format!(" {m}, score {:.1}.", m.score()))
+        .unwrap_or_default();
+    format!("Host {host}: limit {}, {runs}.{machine}", status.limit)
 }
 
 /// The setting of the update of riff by itself, for `riff update --auto`
