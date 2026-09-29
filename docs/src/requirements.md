@@ -543,6 +543,10 @@
   runs, from the version of its build, also when a newer tag exists.
   When `riff` uses the server of the same machine, it installs the
   newest release tag.
+- **01M3N73Y9DMVMCV0PJE1R8YCFH** When the server of `riff` answers
+  with no build that `riff update` can read, `riff update` installs
+  the newest release tag, and says so in one line. When the server
+  does not answer, `riff update` installs nothing and names `--tag`.
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an
   input that is not a tag `vX.Y.Z` of the version of the crates.

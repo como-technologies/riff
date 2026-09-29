@@ -31,7 +31,10 @@
 //! riff of `riff` runs, from the version of its build. So a newer tag
 //! that nobody deployed yet does not break a machine. When `riff` uses
 //! the riff of this machine, it installs the newest release tag, and
-//! the person starts that riff again (01M3MRMAVVKJ5WS8GWCJHWH0R4):
+//! the person starts that riff again (01M3MRMAVVKJ5WS8GWCJHWH0R4). When
+//! the riff of `riff` answers with no build that this riff can read,
+//! for example after a change of the build header, it also installs
+//! the newest release tag, and says so (01M3N73Y9DMVMCV0PJE1R8YCFH):
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -48,7 +51,12 @@
 //!         G-->>U: the newest release vX.Y.Z
 //!     else riff uses another riff
 //!         U->>F: probe
-//!         F-->>U: its build, with the version X.Y.Z
+//!         alt a build that riff can read
+//!             F-->>U: its build, with the version X.Y.Z
+//!         else no build, or another form
+//!             U->>G: the tags v*
+//!             G-->>U: the newest release vX.Y.Z
+//!         end
 //!     end
 //!     U->>C: install --locked --git REPOSITORY --tag vX.Y.Z riff riff-server
 //!     U->>R: connect claude
@@ -266,22 +274,18 @@ pub fn newest_release() -> Result<String> {
 }
 
 /// The release that the riff at `server` runs: the release tag of the
-/// version of its build (01M3MRMAVVKJ5WS8GWCJHWH0R4). An error when it
-/// does not answer, or names no build.
-pub async fn server_release(server: &str) -> Result<String> {
+/// version of its build (01M3MRMAVVKJ5WS8GWCJHWH0R4). `None` when it
+/// answers with no build that riff can read, for example the header of
+/// another release (01M3N73Y9DMVMCV0PJE1R8YCFH). An error when it does
+/// not answer.
+pub async fn server_release(server: &str) -> Result<Option<String>> {
     let probe = Api::new(server).probe(PROBE_WAIT).await.with_context(|| {
         format!(
             "cannot find the release of the riff at {server}. \
                  Name one: riff update --tag vX.Y.Z"
         )
     })?;
-    match probe.build {
-        Some(build) => Ok(release_tag(&build.version)),
-        None => bail!(
-            "the riff at {server} names no build, so riff cannot find its release. \
-             Name one: riff update --tag vX.Y.Z"
-        ),
-    }
+    Ok(probe.build.map(|build| release_tag(&build.version)))
 }
 
 /// True when `url` names this machine: a riff that the person can
@@ -369,7 +373,9 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// the binaries of a release with `cargo`: `tag`, else the newest
 /// release ([`newest_release`]) when `server` is `local`, the riff of
 /// this machine, else the release that `server` runs
-/// ([`server_release`]). Then it updates the plugin with the new
+/// ([`server_release`]). When that riff names no build that riff can
+/// read, it prints [`text::newest_instead`](crate::text::newest_instead)
+/// and installs the newest release. Then it updates the plugin with the new
 /// `riff connect claude --claude CLAUDE`, and looks for an old riff with
 /// [`old_riff`]. It returns the last words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
@@ -383,7 +389,14 @@ pub async fn update(
     let tag = match tag {
         Some(tag) => tag.to_owned(),
         None if same_riff(server, local) => newest_release()?,
-        None => server_release(server).await?,
+        None => match server_release(server).await? {
+            Some(tag) => tag,
+            None => {
+                let tag = newest_release()?;
+                println!("{}", crate::text::newest_instead(server, &tag));
+                tag
+            }
+        },
     };
     run(
         Command::new(cargo).args(install_args(&tag)),

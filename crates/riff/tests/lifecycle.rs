@@ -25,10 +25,18 @@ fn other() -> Build {
 
 /// A fake server that answers each call with 200 and names `build`.
 async fn fake(build: Build) -> String {
+    fake_header(Some(build.to_string())).await
+}
+
+/// A fake server that answers each call with 200 and `header` as the
+/// build header, or no build header.
+async fn fake_header(header: Option<String>) -> String {
     let stamp = move |mut r: Response| {
-        let value = HeaderValue::from_str(&build.to_string()).unwrap();
+        let value = header.as_deref().map(|h| HeaderValue::from_str(h).unwrap());
         async move {
-            r.headers_mut().insert(HEADER, value);
+            if let Some(value) = value {
+                r.headers_mut().insert(HEADER, value);
+            }
             r
         }
     };
@@ -376,16 +384,45 @@ async fn server_takes_a_bare_ipv6_address_and_one_with_brackets() {
 #[tokio::test]
 async fn update_installs_the_release_of_the_server_not_a_newer_tag() {
     let bin = tempfile::tempdir().unwrap();
-    fake_command(bin.path(), "git", "0000 refs/tags/v0.4.0", 0);
+    fake_command(bin.path(), "git", "0000 refs/tags/v0.3.0", 0);
     let url = fake(Build {
-        version: "0.3.0".into(),
+        version: "0.2.0".into(),
         ..Build::this()
     })
     .await;
     let out = run(update(bin.path(), 0, &url)).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(log(bin.path(), "cargo"), install("v0.3.0"));
+    assert_eq!(log(bin.path(), "cargo"), install("v0.2.0"));
     assert_eq!(log(bin.path(), "git"), "");
+    assert!(!text(&out.stdout).contains("newest release"));
+}
+
+/// 01M3N73Y9DMVMCV0PJE1R8YCFH: when the riff answers with a build
+/// header that riff cannot read, or with none, `riff update` installs
+/// the newest release tag and says so in one line.
+#[tokio::test]
+async fn update_installs_the_newest_release_when_it_cannot_read_the_build_of_the_riff() {
+    for header in [Some("v2;0.3.0;e58e345".to_owned()), None] {
+        let bin = tempfile::tempdir().unwrap();
+        fake_command(
+            bin.path(),
+            "git",
+            "a1\trefs/tags/v0.2.0\nb2\trefs/tags/v0.3.0",
+            0,
+        );
+        let url = fake_header(header.clone()).await;
+        let out = run(update(bin.path(), 0, &url)).await;
+        assert!(out.status.success(), "{header:?}: {}", text(&out.stderr));
+        assert_eq!(log(bin.path(), "cargo"), install("v0.3.0"), "{header:?}");
+        let stdout = text(&out.stdout);
+        assert!(
+            stdout.contains(&format!(
+                "riff cannot read the build of the riff at {url}, \
+                 so riff installs the newest release, v0.3.0.\n"
+            )),
+            "{header:?}: {stdout}"
+        );
+    }
 }
 
 /// `riff update --tag` installs that release, and asks no riff.

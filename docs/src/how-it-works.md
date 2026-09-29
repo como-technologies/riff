@@ -226,11 +226,21 @@ flowchart TD
     T -- yes --> I[install that release]
     T -- no --> L{"riff uses the riff<br/>of this machine?"}
     L -- yes --> N[install the newest release tag]
-    L -- no --> S[install the release that the riff runs]
+    L -- no --> B{"riff can read<br/>the build of the riff?"}
+    B -- yes --> S[install the release that the riff runs]
+    B -- no --> N
 ```
 
 So a new tag does not break your machine before the shared server
 runs it. `riff server` shows the release of `riff` and of each riff.
+
+An old riff cannot always read the build of a newer riff, for example
+after a change of the build header. Then `riff update` installs the
+newest release tag and prints this line:
+
+```text
+riff cannot read the build of the riff at https://riff.example.com, so riff installs the newest release, v0.3.0.
+```
 
 ### Install one release
 
