@@ -2434,7 +2434,7 @@ riff workers
 ```
 
 ```text
-thelio  limit 3  runs 1
+thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
 PANE  ID        STATE  CLAIMS  STATUS
 %3    2a880834  live           idle 2m
 ```
