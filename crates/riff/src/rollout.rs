@@ -976,6 +976,7 @@ mod tests {
             status: None,
             worker,
             stopping: false,
+            claims_secs: 0,
         }
     }
 
