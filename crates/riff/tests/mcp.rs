@@ -1,5 +1,11 @@
 //! The MCP tools through a real MCP client, against a real server.
 
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use isolated::Isolated;
 use riff::api::Api;
 use riff::mcp::Tools;
 use riff_core::name::SessionUri;
@@ -408,39 +414,75 @@ async fn two_workers_talk_with_no_lead() {
     assert!(read.contains("No. Go ahead."), "{read}");
 }
 
-/// After a new binary on disk, the next tool call says so, and the
-/// tools stop (01M3MNVTE6GAK4WRSCFGYVS0BE).
-#[tokio::test]
-async fn a_new_binary_stops_the_tools_at_the_next_call() {
+/// Puts a copy of `from` at `to` as `cargo install` does: a new file
+/// beside it, then a rename. A child process copies, so that no fork of
+/// a parallel test holds a write fd of the file.
+fn install(from: &Path, to: &Path) {
+    let stage = to.with_extension("stage");
+    let out = std::process::Command::new("cp")
+        .arg(from)
+        .arg(&stage)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    std::fs::rename(&stage, to).unwrap();
+}
+
+/// The inode of the binary that the process `pid` runs.
+fn runs(pid: u32) -> u64 {
+    std::fs::metadata(format!("/proc/{pid}/exe")).unwrap().ino()
+}
+
+/// A running `riff mcp` runs a new binary in place, and keeps the
+/// connection: a tool call after the update answers from the new
+/// binary, with no new initialize (01M3NT6WZTKAFKGDWGCFKC8TB5).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_mcp_runs_the_new_binary_and_keeps_the_connection() {
     let api = start_server().await;
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("riff");
-    std::fs::write(&path, "old").unwrap();
-    let me: SessionUri = MIKE.parse().unwrap();
-    api.register(&me).await.unwrap();
-    let tools = Tools::new(api.clone(), me).with_binary(Some(riff::binary::Binary::at(&path)));
-    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
-    let served = tools.clone();
-    tokio::spawn(async move {
-        served
-            .serve(server_io)
-            .await
-            .unwrap()
-            .waiting()
-            .await
-            .unwrap();
-    });
-    let client = ().serve(client_io).await.unwrap();
+    let binary = dir.path().join("riff");
+    let riff = Isolated::shared().riff_path();
+    install(&riff, &binary);
+    let stderr = dir.path().join("stderr");
+    let mut cmd = tokio::process::Command::from(Isolated::shared().command(&binary));
+    let mut child = cmd
+        .arg("mcp")
+        .current_dir(dir.path())
+        .env("RIFF_HOME", dir.path())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr).unwrap())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let io = (child.stdout.take().unwrap(), child.stdin.take().unwrap());
+    let client = ().serve(io).await.unwrap();
     let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
-    assert!(!failed, "{text}");
+    assert!(!failed && text.contains("session=a1"), "{text}");
+    let old = runs(pid);
 
-    // A new file in its place, as `cargo install` does.
-    std::fs::write(dir.path().join("new"), "new binary").unwrap();
-    std::fs::rename(dir.path().join("new"), &path).unwrap();
+    install(&riff, &binary);
+    let new = std::fs::metadata(&binary).unwrap().ino();
+    assert_ne!(old, new);
+    let start = Instant::now();
+    while runs(pid) != new && start.elapsed() < Duration::from_secs(10) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
+    assert_eq!(runs(pid), new, "{}", log());
+    assert!(log().contains("a new riff is on disk"), "{}", log());
+
+    // The same connection: no new initialize.
     let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
-    assert!(failed);
-    assert_eq!(text, riff::binary::MCP_NEW);
-    assert!(text.contains("/mcp"), "{text}");
-    let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), tools.stopped());
-    assert!(stopped.await.is_ok(), "the tools did not stop");
+    assert!(!failed && text.contains("session=a1"), "{text}");
+    let (text, failed) = call(&client, "status", serde_json::json!({"step": "after"})).await;
+    assert!(!failed, "{text}");
+    assert!(child.try_wait().unwrap().is_none(), "{}", log());
 }

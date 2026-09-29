@@ -149,6 +149,10 @@ enum Command {
         /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
         #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
         color: ColorWhen,
+        /// The last line that the chat showed before an update. Only
+        /// riff gives it (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+        #[arg(long, hide = true)]
+        after: Option<u64>,
     },
     /// Show a live table of each session
     ///
@@ -215,7 +219,12 @@ enum Command {
     ///
     /// The plugin runs it.
     #[command(hide = true)]
-    Mcp,
+    Mcp {
+        /// The initialize request of the client, as JSON, after an
+        /// update. Only riff gives it (01M3NT6WZTKAFKGDWGCFKC8TB5).
+        #[arg(long, hide = true)]
+        client: Option<String>,
+    },
     /// Sign out of the riff on this device
     ///
     /// It removes the sign-in at riff-server from this device. With
@@ -685,6 +694,7 @@ async fn main() -> Result<()> {
             Ok(None) => {}
             Err(e) => anstream::eprintln!("riff: {}", text::connect_no_sign_in(&cli.server, &e)),
         }
+        ask_auto_update();
         return Ok(());
     }
     if let Command::Workers { command } = &cli.command {
@@ -704,6 +714,7 @@ async fn main() -> Result<()> {
         Command::Login => {
             let sign_in = login::login(&api, open_browser).await?;
             println!("{}", text::signed_in(&sign_in.user, api.base()));
+            ask_auto_update();
             return Ok(());
         }
         Command::Logout { all: false, .. } => {
@@ -730,10 +741,10 @@ async fn main() -> Result<()> {
             print_members_news(&changed.news);
             return Ok(());
         }
-        Command::Chat { color } => {
+        Command::Chat { color, after } => {
             use_color(*color);
             let me = person(&api)?;
-            return riff::chat::run(&api.signed_in(None)?, &me).await;
+            return riff::chat::run(&api.signed_in(None)?, &me, *after).await;
         }
         Command::Members => {
             println!("{}", text::members(&api.signed_in(None)?.members().await?));
@@ -780,7 +791,7 @@ async fn main() -> Result<()> {
         && local::left_here(id)
     {
         match cli.command {
-            Command::Mcp => {}
+            Command::Mcp { .. } => {}
             Command::Watch { .. } => {
                 println!("{}", text::WATCH_LEFT);
                 return Ok(());
@@ -928,7 +939,7 @@ async fn main() -> Result<()> {
             };
             watch(&api, &me, once).await
         }
-        Command::Mcp => {
+        Command::Mcp { client } => {
             let me = identity::session(&here, api.base())?;
             let _record = record_session(&me);
             let tail = async {
@@ -936,7 +947,8 @@ async fn main() -> Result<()> {
                     tail_beside_lead(&api, &me).await;
                 }
             };
-            let (_, served) = tokio::join!(tail, mcp::serve(api.clone(), me.clone()));
+            let (_, served) =
+                tokio::join!(tail, mcp::serve(api.clone(), me.clone(), client.as_deref()));
             served?
         }
         Command::Hook { .. }
@@ -1433,7 +1445,7 @@ async fn statusline(server: &str) -> String {
 }
 
 /// The tag of the status line for a riff of `server`
-/// (01M3NJCWBFJK03AC64XN04TTH0): the build of the `riff mcp` of the
+/// (01M3NT6X22A4GNFTNKRYV8Z4N1): the build of the `riff mcp` of the
 /// session, else of this riff, against the server. It reads only local
 /// files.
 fn update_tag(server: &Build) -> Option<auto_update::Tag> {
@@ -1507,6 +1519,27 @@ fn record_session(me: &SessionUri) -> Option<local::Held> {
         .flatten()
 }
 
+/// Asks the person once about the update by itself on a machine with no
+/// `update.auto` key, in a terminal only, and shows the new setting
+/// (01M3NT6WV8Q8EFZBK8DHYKW5CC).
+fn ask_auto_update() {
+    use std::io::IsTerminal;
+    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let asked = settings::path().and_then(|path| {
+        settings::ask_update_auto(
+            &path,
+            terminal,
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout(),
+        )
+    });
+    match asked {
+        Ok(Some(on)) => println!("{}", text::auto_update(on)),
+        Ok(None) => {}
+        Err(e) => eprintln!("riff: {e:#}"),
+    }
+}
+
 /// When `riff tail`, `riff who` and `riff server` use color
 /// (01M3JDCA9070MY30AYHK3Y67EF, 01M3MEW75WC7Y4M1BKQ7SXRPNR).
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -1566,8 +1599,25 @@ async fn tail_each(api: &Api, thread: &ThreadName) {
 /// Draws [`riff::top::Top`] once, or again every
 /// [`riff::top::REFRESH`] and after each message of `thread` until
 /// stopped (01M3NB54P1RBHTA5TKXP8BMY3K). It makes only read calls
-/// (01M3NB589WMPRSAR43BSG9SP41).
+/// (01M3NB589WMPRSAR43BSG9SP41). Until stopped, it runs a new binary
+/// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
 async fn top(api: &Api, me: &SessionUri, thread: Option<ThreadName>, once: bool) -> Result<()> {
+    if once {
+        return draw_top(api, me, thread, once).await;
+    }
+    tokio::select! {
+        drawn = draw_top(api, me, thread, once) => drawn,
+        () = binary::follow_update(me.place()) => Ok(()),
+    }
+}
+
+/// The loop of [`top`].
+async fn draw_top(
+    api: &Api,
+    me: &SessionUri,
+    thread: Option<ThreadName>,
+    once: bool,
+) -> Result<()> {
     use std::io::{IsTerminal, Write};
     use std::time::Instant;
     let fetch = |thread: Option<ThreadName>| {

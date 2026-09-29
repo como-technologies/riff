@@ -77,6 +77,7 @@ pub mod mcp;
 pub mod next;
 pub mod plugin;
 pub mod pr;
+pub mod relay;
 pub mod secrets;
 pub mod settings;
 pub mod style;

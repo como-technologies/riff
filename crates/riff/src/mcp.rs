@@ -29,9 +29,11 @@
 //! A session that left the riff makes no call (see [`crate::leave`]).
 //! Each tool except `join` refuses, and the keep-alive waits.
 //!
-//! After `riff update`, the next tool call replies
-//! [`crate::binary::MCP_NEW`], and `riff mcp` exits with no end call, so
-//! that the claims of the session stay (01M3MNVTE6GAK4WRSCFGYVS0BE).
+//! After `riff update`, `riff mcp` runs the new binary in place at the
+//! first moment with no request in flight, with no end call, so that
+//! the claims of the session stay. Claude Code keeps its connection: the
+//! new process answers the next request with no new handshake
+//! (01M3NT6WZTKAFKGDWGCFKC8TB5). See [`crate::relay`].
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,8 +49,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::api::Api;
-use crate::binary::{Binary, MCP_NEW};
-use crate::{identity, leave, local, text};
+use crate::binary::{Follow, with_last, with_place};
+use crate::{identity, leave, local, relay, text};
+
+/// The hidden option that gives a new `riff mcp` the initialize request
+/// of its client, as JSON, after an update (01M3NT6WZTKAFKGDWGCFKC8TB5).
+pub const CLIENT: &str = "--client";
 
 #[derive(Clone)]
 pub struct Tools {
@@ -60,10 +66,6 @@ pub struct Tools {
     local: Option<PathBuf>,
     /// True while the session is out of the riff.
     left: Arc<AtomicBool>,
-    /// The binary on disk at the start. A new one stops the tools.
-    binary: Option<Binary>,
-    /// Told when a tool saw a new binary and gave its reply.
-    stop: Arc<tokio::sync::Notify>,
     /// True in a worker session: each register says so
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
@@ -153,8 +155,6 @@ impl Tools {
             dir: Arc::new(Mutex::new(std::env::current_dir().unwrap_or_default())),
             local: None,
             left: Arc::new(AtomicBool::new(false)),
-            binary: None,
-            stop: Arc::new(tokio::sync::Notify::new()),
             worker: false,
         }
     }
@@ -164,20 +164,6 @@ impl Tools {
     pub fn as_worker(mut self, worker: bool) -> Self {
         self.worker = worker;
         self
-    }
-
-    /// Watches `binary` on disk. After a new binary, each tool replies
-    /// [`MCP_NEW`], and [`Tools::stopped`] ends
-    /// (01M3MNVTE6GAK4WRSCFGYVS0BE).
-    pub fn with_binary(mut self, binary: Option<Binary>) -> Self {
-        self.binary = binary;
-        self
-    }
-
-    /// Ends one second after a tool replied [`MCP_NEW`], so that the
-    /// reply reaches the agent first.
-    pub async fn stopped(&self) {
-        self.stop.notified().await;
     }
 
     /// Keeps the record of a leave in `local`. When the record is there,
@@ -305,7 +291,6 @@ commit and pushes the branch. Then it frees your claims, and you leave `who`. Ea
 or says \"join the riff\". Then start the watch and follow the start routine of the riff skill."
     )]
     async fn join(&self) -> ToolResult {
-        self.check_binary()?;
         let me = self.me();
         if let (Some(dir), Some(id)) = (&self.local, me.who().session()) {
             local::join(dir, id).map_err(err)?;
@@ -473,25 +458,10 @@ impl Tools {
     /// The session, or the refusal when it left the riff
     /// (01M3MEEFETT9A0DRWBKQTG77Z2).
     fn here(&self) -> Result<SessionUri, String> {
-        self.check_binary()?;
         if self.left() {
             return Err(text::LEFT.into());
         }
         Ok(self.me())
-    }
-
-    /// [`MCP_NEW`] when a new binary is on disk
-    /// (01M3MNVTE6GAK4WRSCFGYVS0BE).
-    fn check_binary(&self) -> Result<(), String> {
-        if !self.binary.as_ref().is_some_and(Binary::changed) {
-            return Ok(());
-        }
-        let stop = self.stop.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            stop.notify_one();
-        });
-        Err(MCP_NEW.into())
     }
 
     fn thread(&self, given: Option<String>) -> Result<ThreadName, String> {
@@ -556,13 +526,15 @@ pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Serves the tools on stdin and stdout until the session ends. It
 /// sends keep-alives while it runs, and the end call when its stdin
-/// closes or a signal stops it (R204, R205).
-pub async fn serve(api: Api, me: SessionUri) -> Result<()> {
+/// closes or a signal stops it (R204, R205). On a new binary, it runs
+/// it in place, with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5). With
+/// `client`, the initialize request of the old process, it skips the
+/// handshake.
+pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
     let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
         .in_local(local::dir())
-        .with_binary(Binary::this())
         .as_worker(worker);
     // Start even if the server is down: each tool call reports the error.
     if !tools.left()
@@ -574,19 +546,62 @@ pub async fn serve(api: Api, me: SessionUri) -> Result<()> {
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
-    let run = async {
-        let service = tools.clone().serve(rmcp::transport::stdio()).await?;
-        service.waiting().await?;
-        Ok(())
+    let follow = Follow::this();
+    // An update waits for the end of the handshake.
+    let ready = tokio::sync::Notify::new();
+    let update = async {
+        ready.notified().await;
+        follow.new_one().await;
     };
-    let result = tokio::select! {
-        r = run => r,
-        _ = term.recv() => Ok(()),
-        _ = int.recv() => Ok(()),
-        _ = hup.recv() => Ok(()),
-        // A new binary: no end call, so that the claims stay.
-        () = tools.stopped() => std::process::exit(0),
+    let (outside, inside) = tokio::io::duplex(relay::PIPE);
+    let relay = relay::run(outside, update);
+    tokio::pin!(relay);
+    let given = client
+        .map(serde_json::from_str::<rmcp::model::InitializeRequestParams>)
+        .transpose()?;
+    let service = async {
+        match given {
+            Some(client) => Ok(rmcp::service::serve_directly(
+                tools.clone(),
+                inside,
+                Some(client),
+            )),
+            None => tools.clone().serve(inside).await,
+        }
     };
+    // The relay runs while the tools make the handshake. Each way out
+    // but an update ends with the end call.
+    let mut result = Ok(());
+    let service = tokio::select! {
+        service = service => service.map_err(|e| result = Err(e.into())).ok(),
+        ended = &mut relay => {
+            result = ended.map(|_| ()).map_err(Into::into);
+            None
+        }
+        _ = term.recv() => None,
+        _ = int.recv() => None,
+        _ = hup.recv() => None,
+    };
+    ready.notify_one();
+    let ended = match &service {
+        Some(_) => tokio::select! {
+            ended = &mut relay => ended.map_err(|e| result = Err(e.into())).ok(),
+            _ = term.recv() => None,
+            _ = int.recv() => None,
+            _ = hup.recv() => None,
+        },
+        None => None,
+    };
+    if ended == Some(relay::Ended::Update)
+        && let Some(client) = service.as_ref().and_then(|s| s.peer().peer_info())
+    {
+        alive.abort();
+        let args = with_place(std::env::args_os().skip(1), tools.me().place());
+        let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let _ = std::env::set_current_dir(dir);
+        follow.run(with_last(args, CLIENT, serde_json::to_string(&*client)?));
+        anyhow::bail!("riff mcp cannot run the new riff");
+    }
     alive.abort();
     tools.end().await;
     result

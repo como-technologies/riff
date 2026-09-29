@@ -222,9 +222,15 @@ Update riff on this machine when you can:
 riff update
 ```
 
-`riff watch` and `riff tail` see the new `riff` on disk, and run it.
+`riff watch`, `riff tail`, `riff top`, `riff chat` and the riff tools
+of each session (`riff mcp`) see the new `riff` on disk, and run it.
 They go on with no restart, in the same repository and worktree. This
-is also true when you removed their worktree.
+is also true when you removed their worktree. You do not run `/mcp`.
+
+- `riff chat` keeps its lines on the screen, and draws its prompt
+  again. Text that you typed but did not send is lost.
+- The riff tools of a session run the new `riff` when no tool call
+  runs. The session keeps its tools and its claims.
 
 ### When riff cannot read its directory
 
@@ -241,17 +247,6 @@ run the command again:
 ```sh
 cd ~/src/riff
 ```
-
-`riff mcp` cannot run the new `riff` by itself. At its next tool call,
-it tells the session to reconnect, and stops. Claude Code does not
-start it again. In the session, reconnect the riff server:
-
-```text
-/mcp
-```
-
-Pick the riff server, then **Reconnect**. `/mcp reconnect all`
-reconnects each server that failed.
 
 ### When the versions do not match
 
@@ -380,9 +375,9 @@ sequenceDiagram
 
 - One update runs at a time on the machine. Each release gets one
   try.
-- `riff watch` and `riff tail` run the new `riff` with no restart.
-  `riff mcp` tells its session to reconnect with `/mcp`. A worker
-  takes the new `riff` at its next item.
+- `riff watch`, `riff tail`, `riff top`, `riff chat` and `riff mcp`
+  run the new `riff` with no restart. A worker takes the new `riff` at
+  its next item.
 - The update stops no session, and a running test goes on. Your
   sign-in and the device key stay.
 - Your lead gets one direct message: the host, the old release and
@@ -398,6 +393,23 @@ sequenceDiagram
 
 The output of the update is in `update.log`, in the local files of
 riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.
+
+### A new machine asks about the update by itself
+
+On a machine with no `update.auto` key, for example a new or rebuilt
+machine, `riff login` and `riff connect claude` ask you once:
+
+```text
+Update riff by itself when the riff gets a new release? [Y/n]
+```
+
+Press Enter to turn it on, or type `n` to keep it off. They do not ask
+again. With no terminal, for example in a script, they do not ask.
+To ask again, remove the key, then run:
+
+```sh
+riff connect claude
+```
 
 ## Versions
 
@@ -1699,7 +1711,7 @@ riff 2a880834 lead update v0.6.0: riff update
 |---|---|---|
 | `update v0.6.0: riff update` | This machine has an older release. | Run `riff update`. |
 | `updating to v0.6.0` | With `update.auto` on, riff installs the release now, in the background. | Wait. |
-| `v0.6.0 installed: /mcp` | The release is installed. The session still runs the old one. | Run `/mcp` and reconnect riff, or start the session again. |
+| `v0.6.0 installed` | The release is installed. The session still runs the old one. | Wait. The riff tools of the session run the new release when no tool call runs. |
 
 To update this machine:
 

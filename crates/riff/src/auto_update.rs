@@ -46,9 +46,9 @@
 //!     U->>L: tell: the host, v0.3.0, v0.4.0, or the error
 //! ```
 //!
-//! After the install, the new `riff` is on disk. `riff watch` and
-//! `riff tail` run it, and `riff mcp` tells its session to reconnect
-//! (see [`binary`](crate::binary)). The update tells the lead of the
+//! After the install, the new `riff` is on disk. `riff watch`,
+//! `riff tail`, `riff top`, `riff chat` and `riff mcp` run it (see
+//! [`binary`](crate::binary)). The update tells the lead of the
 //! user, as the person, once: the host, the old release and the new
 //! release, or the error (01M3N7JJKBME6VSNTHD8VPN3K9). `cargo install`
 //! replaces the binaries only after a good build, so a failed update
@@ -240,7 +240,7 @@ pub async fn run(
 }
 
 /// What the status line says about a newer release of `riff-server`
-/// (01M3NJCWBFJK03AC64XN04TTH0). Each holds the release tag of the
+/// (01M3NT6X22A4GNFTNKRYV8Z4N1). Each holds the release tag of the
 /// server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tag {
@@ -249,7 +249,7 @@ pub enum Tag {
     /// The update by itself installs the release now.
     Updating(String),
     /// The release is installed. The session still runs the old one
-    /// until `/mcp` or a restart.
+    /// until its `riff mcp` runs the new one.
     Installed(String),
 }
 
@@ -269,7 +269,7 @@ pub struct Machine<'a> {
 /// `server`. `session` is `None` for a riff too old to record its build
 /// (01M3NJCRVZW5BFQYZ9N185K2D2). Only the release counts, not the
 /// commit. `None` when the session runs the release of the server or a
-/// newer one (01M3NJCWBFJK03AC64XN04TTH0).
+/// newer one (01M3NT6X22A4GNFTNKRYV8Z4N1).
 ///
 /// ```
 /// use riff::auto_update::{tag, Machine, Tag};

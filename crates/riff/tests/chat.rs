@@ -475,6 +475,16 @@ impl Tty {
     /// Starts `riff chat` as `user` in a new pseudo-terminal, and waits
     /// for its prompt.
     async fn start(api: &Api, user: &str, host: &str) -> Tty {
+        Self::start_with(api, user, host, Isolated::shared().tokio_riff()).await
+    }
+
+    /// [`Tty::start`] with `riff`, a command of a riff binary.
+    async fn start_with(
+        api: &Api,
+        user: &str,
+        host: &str,
+        mut riff: tokio::process::Command,
+    ) -> Tty {
         let size = nix::pty::Winsize {
             ws_row: Self::ROWS,
             ws_col: Self::COLUMNS,
@@ -484,8 +494,7 @@ impl Tty {
         let pty = nix::pty::openpty(Some(&size), None).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let slave = std::fs::File::from(pty.slave);
-        let child = Isolated::shared()
-            .tokio_riff()
+        let child = riff
             .arg("chat")
             .current_dir(dir.path())
             .env("RIFF_SERVER", api.base())
@@ -615,6 +624,72 @@ async fn in_a_terminal_a_new_line_prints_above_what_you_type() {
     mike.keys("ne\r").await;
     let line = brett.shows("half a line").await;
     assert!(is_line(&line, "mike@thelio", "half a line"), "{line:?}");
+}
+
+/// Puts a copy of `from` at `to` as `cargo install` does: a new file
+/// beside it, then a rename. A child process copies, so that no fork of
+/// a parallel test holds a write fd of the file.
+fn install(from: &std::path::Path, to: &std::path::Path) {
+    let stage = to.with_extension("stage");
+    let out = std::process::Command::new("cp")
+        .arg(from)
+        .arg(&stage)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    std::fs::rename(&stage, to).unwrap();
+}
+
+/// A chat in a terminal runs a new binary in place, and goes on: the
+/// lines from before stay, each new line shows once, and the prompt
+/// comes back (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_runs_the_new_binary_and_shows_the_next_line_once() {
+    let api = start_server().await;
+    let bin = tempfile::tempdir().unwrap();
+    let binary = bin.path().join("riff");
+    let riff = Isolated::shared().riff_path();
+    install(&riff, &binary);
+    let command = tokio::process::Command::from(Isolated::shared().command(&binary));
+    let mut mike = Tty::start_with(&api, "mike", "thelio", command).await;
+    let mut brett = Client::start(&api, "brett", "heron", &[]).await;
+    brett.say("before the update").await;
+    mike.shows(|rows| rows.iter().any(|row| row.contains("before the update")))
+        .await;
+
+    install(&riff, &binary);
+    mike.shows(|rows| rows.iter().any(|row| row.contains("a new riff is on disk")))
+        .await;
+    brett.say("after the update").await;
+    let rows = mike
+        .shows(|rows| {
+            rows.iter().any(|row| row.contains("after the update"))
+                && rows.last().is_some_and(|row| row == PROMPT.trim_end())
+        })
+        .await;
+    for line in ["before the update", "after the update"] {
+        let seen = rows.iter().filter(|row| row.contains(line)).count();
+        assert_eq!(seen, 1, "{line}: {rows:#?}");
+    }
+    let start = rows
+        .iter()
+        .filter(|row| row.starts_with("riff: chat as"))
+        .count();
+    assert_eq!(start, 1, "{rows:#?}");
+    let is_date = |row: &String| row.len() == 10 && row.as_bytes()[4] == b'-';
+    assert_eq!(
+        rows.iter().filter(|row| is_date(row)).count(),
+        1,
+        "{rows:#?}"
+    );
+
+    // The new chat reads what the person types.
+    mike.keys("hello from the new riff\r").await;
+    let line = brett.shows("hello from the new riff").await;
+    assert!(
+        is_line(&line, "mike@thelio", "hello from the new riff"),
+        "{line:?}"
+    );
 }
 
 /// A TCP proxy in front of a riff server. It can cut each connection,

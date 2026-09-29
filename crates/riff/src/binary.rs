@@ -22,10 +22,14 @@
 //! process whose working directory is gone also moves to the nearest
 //! parent of it that exists, where each process that it starts works.
 //!
-//! `riff mcp` cannot exec: Claude Code talks to it over stdio, and the
-//! new process has none of the state of the session. So at its next
-//! tool call it replies with [`MCP_NEW`] and exits
-//! (01M3MNVTE6GAK4WRSCFGYVS0BE).
+//! `riff top` follows an update the same way (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+//! `riff chat` and `riff mcp`
+//! do too, but only at a moment with no work in flight, and they give
+//! the new process their state in a hidden option (see [`with_last`]):
+//! the chat its last line, so that it shows each line once, and
+//! `riff mcp` its client, so that the connection to Claude Code stays
+//! (01M3NT6WZTKAFKGDWGCFKC8TB5). The new process keeps stdin, stdout
+//! and stderr.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -51,11 +55,6 @@ use crate::identity;
 
 /// How often a long run looks at its binary on disk.
 pub const POLL: Duration = Duration::from_secs(1);
-
-/// The reply of `riff mcp` after an update (01M3MNVTE6GAK4WRSCFGYVS0BE).
-pub const MCP_NEW: &str = "riff: riff was updated on this machine. This riff MCP server stops \
-now, so that Claude Code can start the new one. Tell your user to run /mcp and reconnect the \
-riff server. Then call the tool again.";
 
 /// What tells two files apart: the inode, the size and the time of the
 /// last change.
@@ -162,14 +161,45 @@ impl Binary {
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn with_place(args: impl IntoIterator<Item = OsString>, place: &Place) -> Vec<OsString> {
-    let joined = format!("{}=", identity::PLACE_ARG);
     let mut out = vec![
         identity::PLACE_ARG.into(),
         identity::place_text(place).into(),
     ];
+    out.extend(without(args, identity::PLACE_ARG));
+    out
+}
+
+/// `args` with the option `name` and `value` last. It drops the value
+/// of an earlier update. The old process gives the new one its state in
+/// such a hidden option, for example the last line that the chat showed.
+///
+/// ```
+/// use std::ffi::OsString;
+/// use riff::binary::with_last;
+///
+/// let args = |a: &[&str]| a.iter().map(OsString::from).collect::<Vec<_>>();
+/// let want = args(&["chat", "--after", "7"]);
+/// assert_eq!(with_last(args(&["chat"]), "--after", "7"), want);
+/// assert_eq!(with_last(args(&["chat", "--after", "3"]), "--after", "7"), want);
+/// assert_eq!(with_last(args(&["chat", "--after=3"]), "--after", "7"), want);
+/// ```
+pub fn with_last(
+    args: impl IntoIterator<Item = OsString>,
+    name: &str,
+    value: impl Into<OsString>,
+) -> Vec<OsString> {
+    let mut out = without(args, name);
+    out.extend([name.into(), value.into()]);
+    out
+}
+
+/// `args` with no option `name`, as `name VALUE` or `name=VALUE`.
+fn without(args: impl IntoIterator<Item = OsString>, name: &str) -> Vec<OsString> {
+    let joined = format!("{name}=");
+    let mut out = Vec::new();
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
-        if arg == identity::PLACE_ARG {
+        if arg == name {
             args.next();
         } else if !arg.to_string_lossy().starts_with(&joined) {
             out.push(arg);
@@ -218,19 +248,53 @@ fn leave_a_gone_dir(start: Option<&Path>) {
     }
 }
 
+/// A long run that follows an update: it waits for a new binary, then
+/// runs it in place of this process (01M3MNVTC248YYJJQKFD9H1WY9).
+#[derive(Debug)]
+pub struct Follow {
+    binary: Option<Binary>,
+    /// The working directory at the start of the long run.
+    start: Option<PathBuf>,
+}
+
+impl Follow {
+    /// Follows the binary of this process, from the current directory.
+    pub fn this() -> Follow {
+        Follow {
+            binary: Binary::this(),
+            start: std::env::current_dir().ok(),
+        }
+    }
+
+    /// Waits until a new binary is on disk (see [`Binary::new_one`]). It
+    /// never returns when the OS does not name the binary of this
+    /// process.
+    pub async fn new_one(&self) {
+        match &self.binary {
+            Some(binary) => binary.new_one().await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Runs the new binary in place of this process with `args`, in a
+    /// directory that exists (01M3NJGD45GF7Y4CZWQ7GRDHZN). It returns
+    /// only on an error, and says so on stderr.
+    pub fn run(&self, args: Vec<OsString>) {
+        let Some(binary) = &self.binary else { return };
+        eprintln!("riff: a new riff is on disk. riff runs it now.");
+        leave_a_gone_dir(self.start.as_deref());
+        let error = binary.exec(args);
+        eprintln!("riff: cannot run the new riff: {error}");
+    }
+}
+
 /// Waits for a new binary, then runs it in place of this process with
 /// the same arguments (01M3MNVTC248YYJJQKFD9H1WY9), the same `place`,
 /// and in a directory that exists (01M3NJGD45GF7Y4CZWQ7GRDHZN). It never
-/// returns when the OS does not name the binary of this process.
+/// returns.
 pub async fn follow_update(place: &Place) {
-    let Some(binary) = Binary::this() else {
-        return std::future::pending().await;
-    };
-    let start = std::env::current_dir().ok();
-    binary.new_one().await;
-    eprintln!("riff: a new riff is on disk. riff runs it now.");
-    leave_a_gone_dir(start.as_deref());
-    let error = binary.exec(with_place(std::env::args_os().skip(1), place));
-    eprintln!("riff: cannot run the new riff: {error}");
+    let follow = Follow::this();
+    follow.new_one().await;
+    follow.run(with_place(std::env::args_os().skip(1), place));
     std::future::pending().await
 }
