@@ -11,10 +11,10 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, pr, settings,
-    terminal, text, worker,
+    auto_update, binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, pr,
+    settings, terminal, text, worker,
 };
-use riff_core::build::Mismatch;
+use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Freed, Kind, RiffState, Status};
@@ -1314,12 +1314,39 @@ async fn statusline(server: &str) -> String {
                 .find(|s| s.uri.who().session() == Some(id.as_str())),
         )
     };
-    let info = tokio::time::timeout(STATUSLINE_WAIT, find)
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .flatten();
-    text::statusline(&id, info.as_ref())
+    let found = tokio::time::timeout(STATUSLINE_WAIT, find).await;
+    // The build of the server comes with its answer: no extra call
+    // (01M3NJCWDN5APKZ3Z53XQR8P0B).
+    let server = match &found {
+        Ok(Err(e)) => e.downcast_ref::<Mismatch>().and_then(|m| m.server.clone()),
+        _ => riff::api::server_build(),
+    };
+    let info = found.ok().and_then(Result::ok).flatten();
+    let line = text::statusline(&id, info.as_ref());
+    match server.and_then(|server| update_tag(&server)) {
+        Some(tag) => format!("{line} {}", text::update_tag(&tag)),
+        None => line,
+    }
+}
+
+/// The tag of the status line for a riff of `server`
+/// (01M3NJCWBFJK03AC64XN04TTH0): the build of the `riff mcp` of the
+/// session, else of this riff, against the server. It reads only local
+/// files.
+fn update_tag(server: &Build) -> Option<auto_update::Tag> {
+    let installed = Build::this();
+    let dir = local::dir();
+    let session = match dir.as_deref().and_then(local::recorded_build_above) {
+        Some(recorded) => recorded,
+        None => Some(installed.clone()),
+    };
+    let tried = dir.as_deref().and_then(local::tried);
+    let machine = auto_update::Machine {
+        auto: settings::path().is_ok_and(|p| settings::update_auto(&p).unwrap_or(false)),
+        updating: dir.as_deref().is_some_and(local::updating),
+        tried: tried.as_deref(),
+    };
+    auto_update::tag(session.as_ref(), &installed, server, machine)
 }
 
 /// The SessionEnd hook: the end call for the session (R205). It never

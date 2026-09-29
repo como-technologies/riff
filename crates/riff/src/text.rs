@@ -1549,6 +1549,26 @@ pub fn statusline(id: &str, info: Option<&SessionInfo>) -> String {
     out
 }
 
+/// The tag of the status line for a newer release
+/// (01M3NJCWBFJK03AC64XN04TTH0).
+///
+/// ```
+/// use riff::auto_update::Tag;
+///
+/// let tag = |t| riff::text::update_tag(&t);
+/// assert_eq!(tag(Tag::Available("v0.6.0".into())), "update v0.6.0: riff update");
+/// assert_eq!(tag(Tag::Updating("v0.6.0".into())), "updating to v0.6.0");
+/// assert_eq!(tag(Tag::Installed("v0.6.0".into())), "v0.6.0 installed: /mcp");
+/// ```
+pub fn update_tag(tag: &crate::auto_update::Tag) -> String {
+    use crate::auto_update::Tag;
+    match tag {
+        Tag::Available(release) => format!("update {release}: riff update"),
+        Tag::Updating(release) => format!("updating to {release}"),
+        Tag::Installed(release) => format!("{release} installed: /mcp"),
+    }
+}
+
 /// A status with its age. A blocked status starts with `blocked` and
 /// names the step at the end.
 ///

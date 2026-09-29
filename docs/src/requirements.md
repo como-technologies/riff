@@ -1592,6 +1592,19 @@
   session, and changes no sign-in and no device key. The sessions take
   the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9 and
   01M3MNVTE6GAK4WRSCFGYVS0BE say.
+- **01M3NJCRVZW5BFQYZ9N185K2D2** `riff mcp` records its build on the
+  machine, with its session record, while it runs.
+- **01M3NJCWBFJK03AC64XN04TTH0** When `riff-server` runs a newer
+  release than the `riff mcp` of a session, the status line of the
+  session adds a tag: `update vX.Y.Z: riff update`; with
+  `update.auto = true`, `updating to vX.Y.Z` while the update by itself
+  runs or starts; and `vX.Y.Z installed: /mcp` when the installed riff
+  has the release but the session does not. Only the release counts,
+  not the commit.
+- **01M3NJCWDN5APKZ3Z53XQR8P0B** The tag makes no extra call to
+  `riff-server`. It comes from the build in the answer of the status
+  line, also an answer that riff cannot talk to. With no answer within
+  the wait of the status line, it shows no tag.
 
 ## Code
 

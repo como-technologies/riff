@@ -25,6 +25,7 @@
 //! | File | Written by | Holds |
 //! |---|---|---|
 //! | `mcp-PID` | `riff mcp`. PID is its parent: the agent tool. | The session ID. |
+//! | `build-PID` | The same `riff mcp`, next to `mcp-PID`. | The build of that `riff mcp`. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
 //! | `next-ID` | `riff workers next` of a worker. The Stop hook takes it (see [`crate::next`]). | The tmux pane of the worker. |
 //! | `left-ID` | The `leave` tool. The `join` tool removes it. | Nothing. The file counts. |
@@ -116,14 +117,50 @@ pub fn dir_from(
 
 /// Records `session` as the session of the agent process `agent`, and
 /// holds the record while the result lives. `None` when a live process
-/// holds the record of `agent` already.
+/// holds the record of `agent` already. It also records the build of
+/// this riff for the agent ([`recorded_build`]).
 pub fn record(dir: &Path, agent: u32, session: &str) -> io::Result<Option<Held>> {
     let Some(Held(mut file)) = lock(&dir.join(format!("mcp-{agent}")))? else {
         return Ok(None);
     };
     file.set_len(0)?;
     file.write_all(session.as_bytes())?;
+    std::fs::write(
+        dir.join(format!("build-{agent}")),
+        riff_core::build::VERSION,
+    )?;
     Ok(Some(Held(file)))
+}
+
+/// The build of the live `riff mcp` of the agent process `agent`
+/// (01M3NJCRVZW5BFQYZ9N185K2D2). `None` when no live `riff mcp` has a
+/// record for it. `Some(None)` when it has, but names no build: a riff
+/// older than this record.
+///
+/// ```
+/// use riff_core::build::Build;
+///
+/// let run = tempfile::tempdir()?;
+/// let agent = std::process::id();
+/// assert_eq!(riff::local::recorded_build(run.path(), agent), None);
+/// let mcp = riff::local::record(run.path(), agent, "a6cf")?.expect("free");
+/// assert_eq!(riff::local::recorded_build(run.path(), agent), Some(Some(Build::this())));
+/// std::fs::remove_file(run.path().join(format!("build-{agent}")))?;
+/// assert_eq!(riff::local::recorded_build(run.path(), agent), Some(None));
+/// drop(mcp);
+/// assert_eq!(riff::local::recorded_build(run.path(), agent), None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn recorded_build(dir: &Path, agent: u32) -> Option<Option<riff_core::build::Build>> {
+    recorded(dir, agent)?;
+    let build = std::fs::read_to_string(dir.join(format!("build-{agent}")));
+    Some(build.ok().and_then(|b| b.trim().parse().ok()))
+}
+
+/// [`recorded_build`] for the nearest process above this one with a
+/// live `riff mcp`.
+pub fn recorded_build_above(dir: &Path) -> Option<Option<riff_core::build::Build>> {
+    ancestors().find_map(|pid| recorded_build(dir, pid))
 }
 
 /// The session that a live process recorded for the agent process
