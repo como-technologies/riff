@@ -1001,12 +1001,21 @@
   session as `[USER ID]`, with the first 8 characters of its session
   ID.
 - **01M3NJD37CNQX580YC24S7K6ES** `/me TEXT` in `riff chat` posts an
-  action line: a post of kind `action`. `riff chat` and `riff tail`
-  show it as `* USER@HOST TEXT`, and `read` as `* USER@HOST TEXT` after
-  the head. `@lead` and `@USER` in an action wake as in a chat line.
+  action line: a plain message with the body `/me TEXT`, so the riff of
+  the release before reads it. `riff chat` and `riff tail` show it as
+  `* USER@HOST TEXT`, and `read` as `* USER@HOST TEXT` after the head.
+  `@lead` and `@USER` in an action wake as in a chat line.
   `riff chat` sends no line that starts with an unknown command, and
   names its commands. A line that starts with `//` sends the line from
   its second `/`.
+- **01M3NK7VHXB0PAR8VH8GQQA06K** A stream that ends is normal for a
+  long poll. `riff chat`, `riff tail` and `riff workers host` connect
+  again at once, and show nothing for it. Only a connect that fails
+  shows one short dim line `(reconnecting…)`, and the next item
+  `(back)`. A server that riff cannot talk to shows its error.
+- **01M3NK7VM1J5DDB0PECNZ28P4E** After each connect, `riff chat` reads
+  the thread. So it shows each line that came while it was not
+  connected, and each line only once.
 
 ## Security
 

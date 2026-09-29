@@ -65,7 +65,7 @@ use futures::StreamExt;
 use riff_core::name::SessionUri;
 use riff_core::wire::{SessionInfo, Status};
 
-use crate::api::{Api, Checked, follow};
+use crate::api::{Api, Checked, Reconnect, follow};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
 use crate::{identity, local, settings, text, worker};
 
@@ -335,13 +335,18 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str) -> Result<()> {
     let _ = session.set((host.api.clone(), host.me.clone()));
     let mut wakes = Box::pin(follow(|| host.api.watch(&host.me), RETRY));
     let mut refresh = tokio::time::interval(REFRESH);
+    let mut link = Reconnect::default();
     loop {
         tokio::select! {
-            wake = wakes.next() => match wake {
-                Some(Ok(_)) => host.answer().await,
-                Some(Err(e)) => eprintln!("riff: {e:#}. Trying again every {} seconds.", RETRY.as_secs()),
-                None => return Ok(()),
-            },
+            wake = wakes.next() => {
+                let Some(wake) = wake else { return Ok(()) };
+                if let Some(line) = link.line(&wake) {
+                    anstream::eprintln!("{line}");
+                }
+                if wake.is_ok() {
+                    host.answer().await;
+                }
+            }
             _ = refresh.tick() => {}
         }
         if let Err(e) = host.set_status().await {

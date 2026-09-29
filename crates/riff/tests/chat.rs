@@ -401,10 +401,23 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
     // The read tool of a session shows it as plain text.
     let thread = riff::chat::thread();
     let read = api.read(&lead_of("ann"), &thread, true).await.unwrap();
-    let action = read.iter().find(|c| c.message.body == "waves").unwrap();
-    assert_eq!(action.message.kind, Kind::Action);
+    let action = read.iter().find(|c| c.message.body == "/me waves").unwrap();
     let shown = riff::text::message(action, &thread);
     assert!(shown.ends_with(": * brett@heron waves"), "{shown}");
+
+    // On the wire, an action is a plain message: no new kind and no new
+    // field. So a riff of the release before reads it, and shows the
+    // body `/me waves`.
+    let wire = serde_json::to_value(&action.message).unwrap();
+    let mut fields: Vec<&str> = wire
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(fields, ["at_ms", "body", "from", "seq", "to"], "{wire}");
+    assert_eq!(wire["body"], "/me waves");
 }
 
 #[tokio::test]
@@ -421,7 +434,7 @@ async fn me_with_at_lead_wakes_the_lead_of_the_sender() {
         .unwrap()
         .unwrap();
     assert_eq!(wake.thread, riff::chat::thread());
-    assert_eq!(wake.kind, Kind::Action);
+    assert_eq!(wake.kind, Kind::Message);
 }
 
 #[tokio::test]
@@ -602,4 +615,169 @@ async fn in_a_terminal_a_new_line_prints_above_what_you_type() {
     mike.keys("ne\r").await;
     let line = brett.shows("half a line").await;
     assert!(is_line(&line, "mike@thelio", "half a line"), "{line:?}");
+}
+
+/// A TCP proxy in front of a riff server. It can cut each connection,
+/// as Cloud Run does at the end of a long poll, and refuse new ones for
+/// a time.
+struct Proxy {
+    url: String,
+    open: Arc<std::sync::atomic::AtomicBool>,
+    cut: tokio::sync::watch::Sender<u64>,
+}
+
+impl Proxy {
+    async fn start(upstream: &str) -> Proxy {
+        let upstream = upstream.trim_start_matches("http://").to_owned();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let open = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (cut, cuts) = tokio::sync::watch::channel(0);
+        let is_open = Arc::clone(&open);
+        tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                if !is_open.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue;
+                }
+                let upstream = upstream.clone();
+                let mut cuts = cuts.clone();
+                // Only a later cut ends this connection.
+                cuts.borrow_and_update();
+                tokio::spawn(async move {
+                    let Ok(mut server) = tokio::net::TcpStream::connect(upstream).await else {
+                        return;
+                    };
+                    tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                        _ = cuts.changed() => {}
+                    }
+                });
+            }
+        });
+        Proxy { url, open, cut }
+    }
+
+    /// Cuts each connection. With `open` false, it refuses each new
+    /// connection until [`Proxy::open`].
+    fn cut(&self, open: bool) {
+        self.open.store(open, std::sync::atomic::Ordering::SeqCst);
+        self.cut.send_modify(|n| *n += 1);
+    }
+
+    fn open(&self) {
+        self.open.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// A cut of the stream shows no error, and the running chat shows each
+/// line: one posted while it could not connect, and one after, once
+/// each (01M3NK7VHXB0PAR8VH8GQQA06K, 01M3NK7VM1J5DDB0PECNZ28P4E).
+#[tokio::test]
+async fn a_cut_stream_shows_no_error_and_loses_no_line() {
+    let api = start_server().await;
+    let proxy = Proxy::start(api.base()).await;
+    let behind = Api::new(&proxy.url);
+    let mut mike = Client::start(&behind, "mike", "thelio", &[]).await;
+    let lead = lead_of("mike");
+    let chat = riff::chat::thread();
+    let post = |body: &'static str| {
+        let (api, lead, chat) = (&api, &lead, &chat);
+        async move {
+            api.post(lead, Some(chat), &[], body, Kind::Message)
+                .await
+                .unwrap();
+        }
+    };
+    post("before the cut").await;
+    mike.shows("before the cut").await;
+
+    // The server ends the long poll: the chat connects again at once.
+    proxy.cut(true);
+    post("just after the cut").await;
+    mike.shows("just after the cut").await;
+
+    // The chat cannot connect for a time. A line comes in the gap.
+    proxy.cut(false);
+    post("in the gap").await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    proxy.open();
+    post("after the gap").await;
+    let gap = mike.shows("in the gap").await;
+    let after = mike.shows("after the gap").await;
+    assert!(gap.ends_with("] in the gap"), "{gap:?}");
+    assert!(after.ends_with("] after the gap"), "{after:?}");
+
+    // Each line shows once: the next line is the one of mike.
+    mike.say("the last line").await;
+    let next = mike.shows("").await;
+    assert!(next.ends_with("the last line"), "{next:?}");
+
+    // stderr has one short line for the gap, and no error.
+    mike.say("/quit").await;
+    let status = tokio::time::timeout(WAIT, mike.child.wait()).await;
+    assert!(status.unwrap().unwrap().success());
+    let mut warned = Vec::new();
+    while let Ok(Some(line)) = mike.stderr.next_line().await {
+        warned.push(line);
+    }
+    assert_eq!(warned, [riff::api::RECONNECTING, riff::api::BACK]);
+}
+
+/// `riff tail` connects again at once after a cut, with no error line
+/// (01M3NK7VHXB0PAR8VH8GQQA06K).
+#[tokio::test]
+async fn a_cut_stream_shows_no_error_in_tail() {
+    let api = start_server().await;
+    let proxy = Proxy::start(api.base()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Isolated::shared()
+        .tokio_riff()
+        .args(["tail", "chat", "--color", "never"])
+        .current_dir(dir.path())
+        .env("RIFF_SERVER", &proxy.url)
+        .env("RIFF_USER", "ann")
+        .env("RIFF_HOST", "wren")
+        .env("RIFF_HOME", dir.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut err = BufReader::new(child.stderr.take().unwrap()).lines();
+    let started = tokio::time::timeout(WAIT, err.next_line()).await.unwrap();
+    assert!(
+        started
+            .unwrap()
+            .unwrap()
+            .contains("showing new messages in chat")
+    );
+    let (lead, chat) = (lead_of("mike"), riff::chat::thread());
+    for body in ["before the cut", "after the cut"] {
+        // Give the tail time to connect: it shows only new messages.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        api.post(&lead, Some(&chat), &[], body, Kind::Message)
+            .await
+            .unwrap();
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let line = tokio::time::timeout(left, out.next_line())
+                .await
+                .unwrap_or_else(|_| panic!("riff tail shows {body:?} in time"))
+                .unwrap()
+                .unwrap();
+            if line.contains(body) {
+                break;
+            }
+        }
+        proxy.cut(true);
+    }
+    child.kill().await.unwrap();
+    let mut warned = Vec::new();
+    while let Ok(Some(line)) = err.next_line().await {
+        warned.push(line);
+    }
+    assert!(warned.is_empty(), "{warned:?}");
 }

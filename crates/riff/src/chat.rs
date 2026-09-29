@@ -13,8 +13,9 @@
 //! `[USER SESSION]` (01M3NJD3BR0XAYNNFTEY0CG761). With a pipe, the chat
 //! has no prompt and no line editor.
 //!
-//! `/me TEXT` posts an action line: a post of kind [`Kind::Action`]
-//! (01M3NJD37CNQX580YC24S7K6ES). It shows as `* USER@HOST TEXT`.
+//! `/me TEXT` posts an action line: a plain message with the body
+//! `/me TEXT` (01M3NJD37CNQX580YC24S7K6ES), so an older riff reads it
+//! too. It shows as `* USER@HOST TEXT`.
 //!
 //! A line wakes no session, unless it names a lead (01M3NB5N0D99JB5CE6RB4VEYPF):
 //! `@lead` wakes the lead of the sender, and `@USER` wakes the lead of
@@ -49,9 +50,9 @@ use riff_core::wire::Kind;
 use rustyline::ExternalPrinter;
 use tokio::sync::mpsc;
 
-use crate::api::{Api, Checked, follow};
+use crate::api::{Api, Checked, Reconnect, follow};
 use crate::style::{DIM, styled};
-use crate::text::safe;
+use crate::text::{ACTION, action_text, safe};
 
 /// The name of the chat thread.
 pub const THREAD: &str = "chat";
@@ -63,7 +64,7 @@ pub const QUIT: &str = "/quit";
 pub const PROMPT: &str = "[riff] > ";
 
 /// The time between two tries to connect the chat again.
-const RETRY: Duration = Duration::from_secs(5);
+const RETRY: Duration = Duration::from_secs(2);
 
 /// The chat thread.
 ///
@@ -255,7 +256,7 @@ pub fn sender(c: &Checked) -> (String, bool) {
 /// let answer = Message { from: lead, ..c.message.clone() };
 /// assert_eq!(plain(&Checked { message: answer, verified: true }), "14:13 [mike's lead] hi all");
 ///
-/// let waves = Message { kind: Kind::Action, body: "waves".into(), ..c.message.clone() };
+/// let waves = Message { body: "/me waves".into(), ..c.message.clone() };
 /// assert_eq!(plain(&Checked { message: waves, verified: true }), "14:13 * mike@thelio waves");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -270,12 +271,12 @@ where
     }
     let (name, session) = sender(c);
     let name = styled(crate::style::session(&m.from), &name);
-    let who = match (m.kind, session) {
-        (Kind::Action, _) => format!("* {name}"),
-        (_, false) => format!("<{name}>"),
-        (_, true) => format!("[{name}]"),
+    let (who, body) = match (action_text(&m.body), session) {
+        (Some(text), _) => (format!("* {name}"), text),
+        (None, false) => (format!("<{name}>"), m.body.as_str()),
+        (None, true) => (format!("[{name}]"), m.body.as_str()),
     };
-    let body = safe(&m.body).replace('\t', "    ");
+    let body = safe(body).replace('\t', "    ");
     let _ = write!(
         out,
         "{} {who} {}",
@@ -287,67 +288,63 @@ where
 
 /// Runs the chat of `me` until stdin ends, or the person types
 /// [`QUIT`]. It shows the start line and the history of the chat, then
-/// each new line, and posts each line that the person types. It
-/// connects again when the stream ends.
+/// each new line, and posts each line that the person types.
+///
+/// It connects again at once when the stream ends, and shows nothing
+/// for it (01M3NK7VHXB0PAR8VH8GQQA06K). After each connect, it reads the
+/// thread, so it shows each line that came while it was not connected,
+/// once (01M3NK7VM1J5DDB0PECNZ28P4E).
 pub async fn run(api: &Api, me: &SessionUri) -> Result<()> {
     let thread = thread();
     api.join(me, &thread).await?;
-    let first = api.tail(&thread).await?;
-    let mut stream = Box::pin(first.chain(follow(|| api.tail(&thread), RETRY)));
-    let history = api.read(me, &thread, true).await?;
     anstream::eprintln!(
         "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
          @lead wakes your lead. {QUIT} or Ctrl-C exits.",
         me.who().user(),
         me.place().host()
     );
-    let mut shown = Shown::default();
-    for c in history {
-        if let Some(line) = shown.next(&c) {
-            anstream::println!("{line}");
-        }
-    }
+    let thread = &thread;
+    // Connected first, then read: no line falls between the two.
+    let connect = || async move {
+        let tail = api.tail(thread).await?;
+        let read = api.read(me, thread, true).await?;
+        // A stream that fails ends: `follow` connects again.
+        let tail = tail.take_while(|item| std::future::ready(item.is_ok()));
+        anyhow::Ok(futures::stream::iter(read.into_iter().map(Ok)).chain(tail))
+    };
+    let first = connect().await?;
+    let mut stream = Box::pin(first.chain(follow(connect, RETRY)));
     let (screen, mut input) = Screen::start()?;
-    let mut lost = false;
+    let mut shown = Shown::default();
+    let mut link = Reconnect::default();
     loop {
         tokio::select! {
             typed_line = input.recv() => {
                 let Some(typed_line) = typed_line else { break };
-                let (text, kind) = match typed(&typed_line) {
+                let body = match typed(&typed_line) {
                     Typed::Nothing => continue,
                     Typed::Quit => break,
                     Typed::Unknown(name) => {
                         screen.warn(&unknown(name));
                         continue;
                     }
-                    Typed::Say(text) => (text, Kind::Message),
-                    Typed::Action(text) => (text, Kind::Action),
+                    Typed::Say(text) => text.to_owned(),
+                    Typed::Action(text) => format!("{ACTION}{text}"),
                 };
-                let to = wakes(text, me.who().user());
-                if let Err(e) = api.post(me, Some(&thread), &to, text, kind).await {
+                let to = wakes(&body, me.who().user());
+                if let Err(e) = api.post(me, Some(thread), &to, &body, Kind::Message).await {
                     screen.warn(&format!("riff: cannot send the line: {e:#}"));
                 }
             }
-            item = stream.next() => match item {
-                Some(Ok(c)) => {
-                    if lost {
-                        screen.warn("riff: connected again.");
-                        lost = false;
-                    }
-                    if let Some(line) = shown.next(&c) {
-                        screen.print(&line);
-                    }
+            item = stream.next() => {
+                let Some(item) = item else { break };
+                if let Some(line) = link.line(&item) {
+                    screen.warn(&line);
                 }
-                Some(Err(e)) if !lost => {
-                    screen.warn(&format!(
-                        "riff: {e:#}. Trying again every {} seconds.",
-                        RETRY.as_secs()
-                    ));
-                    lost = true;
+                if let Some(line) = item.ok().and_then(|c| shown.next(&c)) {
+                    screen.print(&line);
                 }
-                Some(Err(_)) => {}
-                None => break,
-            },
+            }
         }
     }
     Ok(())

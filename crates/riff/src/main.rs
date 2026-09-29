@@ -8,7 +8,7 @@ use chrono::TimeZone;
 use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
-use riff::api::{self, Api, DEFAULT_SERVER, follow};
+use riff::api::{self, Api, DEFAULT_SERVER, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     auto_update, binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, pr,
@@ -73,11 +73,10 @@ enum Command {
         /// --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,
-        /// The kind of post: message, status, note or action. A status
-        /// request asks each session that it wakes to set its status.
-        /// `riff who` then shows each status. A note wakes no session: the
-        /// sessions that --to selects see it at their next read. An action
-        /// is a /me line of the chat.
+        /// The kind of post: message, status or note. A status request
+        /// asks each session that it wakes to set its status. `riff who`
+        /// then shows each status. A note wakes no session: the sessions
+        /// that --to selects see it at their next read.
         #[arg(long, default_value = "message")]
         kind: Kind,
         /// The message. A status request needs none.
@@ -1436,44 +1435,28 @@ async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
     }
 }
 
-/// Prints each message of `thread`. It reports an error once, in red
-/// for a version that it cannot talk to, and tries again until the
-/// stream comes back (01M3MNVTC248YYJJQKFD9H1WY9).
+/// Prints each message of `thread`. It connects again at once when the
+/// stream ends, and shows only a short dim line while a connect fails,
+/// or the error in red for a version that it cannot talk to
+/// (01M3MNVTC248YYJJQKFD9H1WY9, 01M3NK7VHXB0PAR8VH8GQQA06K).
 async fn tail_each(api: &Api, thread: &ThreadName) {
-    let (warning, error) = (riff::style::WARNING, riff::style::ERROR);
+    let error = riff::style::ERROR;
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let mut stream = Box::pin(follow(|| api.tail(thread), RETRY));
-    let mut lost = false;
+    let mut link = Reconnect::default();
     let mut last_day = None;
     while let Some(item) = stream.next().await {
-        match item {
-            Ok(checked) => {
-                if lost {
-                    anstream::eprintln!("riff: connected again.");
-                    lost = false;
-                }
-                let at = i64::try_from(checked.message.at_ms)
-                    .ok()
-                    .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
-                    .unwrap_or_else(chrono::Local::now);
-                let block = text::block(&checked, &at, last_day, textwrap::termwidth());
-                last_day = Some(at.date_naive());
-                anstream::println!("{block}");
-            }
-            Err(e) if !lost => {
-                let style = if e.downcast_ref::<Mismatch>().is_some() {
-                    error
-                } else {
-                    warning
-                };
-                anstream::eprintln!(
-                    "{style}riff: {e:#}. Trying again every {} seconds.{style:#}",
-                    RETRY.as_secs()
-                );
-                lost = true;
-            }
-            Err(_) => {}
+        if let Some(line) = link.line(&item) {
+            anstream::eprintln!("{line}");
         }
+        let Ok(checked) = item else { continue };
+        let at = i64::try_from(checked.message.at_ms)
+            .ok()
+            .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
+            .unwrap_or_else(chrono::Local::now);
+        let block = text::block(&checked, &at, last_day, textwrap::termwidth());
+        last_day = Some(at.date_naive());
+        anstream::println!("{block}");
     }
     anstream::eprintln!("{error}riff: the stream of {thread} ended.{error:#}");
 }
