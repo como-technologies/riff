@@ -281,9 +281,11 @@
   (01M3Q5QE01DB0FJQJWFKR450KQ) reads its free work with `gh`. The
   current wave is the open milestone `Wave N` with the lowest N. A free
   item is an open issue of it that no session claims, with no comment
-  `Merged in #`, and with each open issue of its `Needs:` line merged. A
-  pull request that waits for a verify is open, not a draft, has no
-  status `riff/verify` on its head, and no session claims
+  `Merged in #`, and with each issue of its `Needs:` line closed. An
+  open need blocks the item, also a need outside the wave. A pull
+  request that waits for a verify has a branch that names an issue
+  (`worktree-issue-12`, `worktree-issue-12-book`), is open, not a draft,
+  has no status `riff/verify` on its head, and no session claims
   `verify-issue-N` for it. Both count as free work.
 
 ## Issue hygiene on GitHub
@@ -1643,8 +1645,9 @@
   and leaves the mode of the terminal as it is.
 - **01M3Q5QE01DB0FJQJWFKR450KQ** `riff mcp` of the lead runs the
   rollout of workers. Once each interval, while the session is the lead
-  and the riff runs, it compares the free work with the idle workers.
-  When the free work is more, it starts one worker. So riff starts at
+  and the riff runs, it looks at the free work and the idle workers.
+  When there is free work and no idle worker
+  (01M3Q5QEJNP1JGQM7VXXEBJ9J9), it starts one worker. So riff starts at
   most one worker each interval, with no step of an agent. An idle
   worker is a worker with no claim, also a new worker that did not
   join yet, and a live worker of another user. A worker that the
@@ -1671,6 +1674,11 @@
   lead a note with the host, the pane and the session of the new
   worker. A note wakes nobody. On the machine of the lead, the person
   posts it. On a host, the host posts it as its reply.
+- **01M3Q5QEJNP1JGQM7VXXEBJ9J9** The rollout starts a worker only when
+  no worker is idle: each worker with no claim, also a new one that did
+  not claim yet, counts. So when no worker takes the counted work, one
+  worker waits idle, the server keeps it, and riff starts no more
+  workers.
 - **01M3Q5QEGBD5JB4ZZWNVVS09KV** The skill tells the lead: riff starts
   workers by itself. The lead gives free work to an idle worker with a
   request. It starts workers by hand only while the rollout is off. It

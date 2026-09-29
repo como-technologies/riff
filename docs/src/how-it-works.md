@@ -2089,7 +2089,7 @@ flowchart TD
     T["each 10 seconds"] --> R{"the riff runs?"}
     R -- "no: paused" --> T
     R -- yes --> W["count the free work with gh"]
-    W --> I{"more free work than idle workers?"}
+    W --> I{"free work, and no idle worker?"}
     I -- no --> T
     I -- yes --> P["pick the machine with the most free capacity"]
     P --> S["start 1 worker there"]
@@ -2100,10 +2100,14 @@ flowchart TD
 - **Free work.** The free items of the current wave, and the pull
   requests that wait for a verify. A free item is an open issue of the
   current wave (see [Waves](waves.md)). No session claims it, it has no
-  comment `Merged in #`, and each issue of its `Needs:` line is merged.
+  comment `Merged in #`, and each issue of its `Needs:` line is
+  closed. A pull request counts only when its branch names an issue,
+  for example `worktree-issue-12`.
 - **Idle workers.** Workers with no claim. A new worker counts as idle
-  until it claims an item. So riff starts one worker for each free
-  item, not more.
+  until it claims an item. riff starts a worker only when no worker is
+  idle. So the next worker starts after the new one claims. When no
+  worker takes the free work, one worker waits idle, the server keeps
+  it, and riff starts no more.
 - **Machines.** The machine of the lead, when the lead runs in tmux,
   and each workers host of your user (see
   [Offer workers from another machine](#offer-workers-from-another-machine)).

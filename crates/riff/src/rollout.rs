@@ -17,7 +17,7 @@
 //!     R -- yes --> P{"a machine with room?"}
 //!     P -- no --> T
 //!     P -- yes --> W["free work (gh): free items of the current wave,<br/>pull requests that wait for a verify"]
-//!     W --> I{"free work > idle workers?"}
+//!     W --> I{"free work, and no idle worker?"}
 //!     I -- no --> T
 //!     I -- yes --> S["start 1 worker on the machine<br/>with the most free capacity"]
 //!     S --> N["a note to the lead: host, pane, session"]
@@ -28,14 +28,18 @@
 //!   01M3Q5QE2EWGKVD57Y6YCWA4BR). The current wave is the open milestone
 //!   `Wave N` with the lowest N. A free item is an open issue of it that
 //!   no session claims, that has no comment `Merged in #`, and whose
-//!   `Needs:` issues in the wave are merged. A pull request waits for a
-//!   verify when it is not a draft, its head has no status
-//!   `riff/verify`, and no session claims `verify-issue-N` for it.
+//!   `Needs:` issues are all closed. A pull request waits for a verify
+//!   when its branch names an issue, it is not a draft, its head has no
+//!   status `riff/verify`, and no session claims `verify-issue-N` for
+//!   it.
 //! - **Idle workers** ([`idle`]). A worker pane of the user with no
 //!   claim, also one that did not join yet, and a live worker of
-//!   another user with no claim. So a new worker counts as idle until
-//!   it claims an item, and the rollout does not start two workers for
-//!   one item. A worker that the server asked to stop is not idle.
+//!   another user with no claim. A worker that the server asked to stop
+//!   is not idle. riff starts a worker only when no worker is idle
+//!   (01M3Q5QEJNP1JGQM7VXXEBJ9J9). So a new worker must claim before
+//!   the next one starts. When no worker takes the counted work, one
+//!   worker waits idle, the server keeps it (#259), and riff starts no
+//!   more: no loop of starts and stops.
 //! - **Machines** ([`Place`], [`pick`], 01M3Q5QE76BZ27SZ14FFE8HM1G).
 //!   The machine of the lead, when the lead runs in tmux, and each live
 //!   workers host of the user. A machine has room when its workers are
@@ -153,20 +157,21 @@ pub fn pick(places: &[Place]) -> Option<usize> {
 }
 
 /// The machine for one new worker, or `None` when riff starts none:
-/// the riff is paused, the idle workers can take the free work, or no
-/// machine has room.
+/// the riff is paused, there is no free work, a worker is idle
+/// (01M3Q5QEJNP1JGQM7VXXEBJ9J9), or no machine has room.
 ///
 /// ```
 /// use riff::rollout::{Place, View, decide};
 ///
 /// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, machine: None };
-/// let view = View { running: true, work: 2, idle: 1, places: vec![here] };
+/// let view = View { running: true, work: 2, idle: 0, places: vec![here] };
 /// assert_eq!(decide(&view), Some(0));
 /// assert_eq!(decide(&View { running: false, ..view.clone() }), None);
-/// assert_eq!(decide(&View { idle: 2, ..view.clone() }), None);
+/// assert_eq!(decide(&View { work: 0, ..view.clone() }), None);
+/// assert_eq!(decide(&View { idle: 1, ..view.clone() }), None);
 /// ```
 pub fn decide(view: &View) -> Option<usize> {
-    if !view.running || view.work <= view.idle {
+    if !view.running || view.work == 0 || view.idle > 0 {
         return None;
     }
     pick(&view.places)
@@ -245,8 +250,8 @@ pub fn current_wave(open: &[Milestone]) -> Option<&str> {
         .map(|(_, title)| title)
 }
 
-/// An open issue, as `gh issue list --json number,body,comments` gives
-/// it.
+/// An open issue, as `gh issue list --json
+/// number,body,comments,milestone` gives it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Issue {
     pub number: u64,
@@ -254,6 +259,8 @@ pub struct Issue {
     pub body: String,
     #[serde(default)]
     pub comments: Vec<Comment>,
+    #[serde(default)]
+    pub milestone: Option<Milestone>,
 }
 
 /// A comment of an issue.
@@ -288,41 +295,45 @@ pub fn needs(body: &str) -> Vec<u64> {
         .collect()
 }
 
-/// The free items of the current wave, from its open `issues` and the
-/// `claims` of all sessions: no session claims `issue-N`, no comment
-/// `Merged in #`, and each need that is an open issue of the wave is
-/// merged.
+/// The free items of the wave `wave`, from all `open` issues of the
+/// repository and the `claims` of all sessions: an open issue of the
+/// wave that no session claims, with no comment `Merged in #`, and with
+/// each issue of its `Needs:` line closed. An open need blocks the item,
+/// also a need outside the wave, and also a need that is merged but not
+/// closed.
 ///
 /// ```
 /// use std::collections::HashSet;
-/// use riff::rollout::{Comment, Issue, free_items};
+/// use riff::rollout::{Comment, Issue, Milestone, free_items};
 ///
-/// let issue = |number, body: &str, merged| Issue {
+/// let issue = |number, wave: &str, body: &str, merged| Issue {
 ///     number,
 ///     body: body.into(),
 ///     comments: if merged { vec![Comment { body: "Merged in #9 (abc)".into() }] } else { vec![] },
+///     milestone: Some(Milestone { title: wave.into() }),
 /// };
-/// let issues = [
-///     issue(1, "", false),
-///     issue(2, "", true),
-///     issue(3, "Needs: #1", false),
-///     issue(4, "Needs: #2, #99", false),
-///     issue(5, "", false),
+/// let open = [
+///     issue(1, "Wave 2", "", false),
+///     issue(2, "Wave 2", "", true),
+///     issue(3, "Wave 2", "Needs: #1", false),
+///     issue(4, "Wave 2", "Needs: #99", false),
+///     issue(5, "Wave 2", "", false),
+///     issue(6, "Wave 2", "Needs: #2", false),
+///     issue(7, "Wave 2", "Needs: #50", false),
+///     issue(50, "Backlog", "", false),
+///     issue(51, "Wave 3", "", false),
 /// ];
 /// let claims: HashSet<String> = ["issue-5".to_owned()].into();
-/// assert_eq!(free_items(&issues, &claims), [1, 4]);
+/// // 99 is closed. 2 is merged but open. 50 is open outside the wave.
+/// assert_eq!(free_items(&open, "Wave 2", &claims), [1, 4]);
 /// ```
-pub fn free_items(issues: &[Issue], claims: &HashSet<String>) -> Vec<u64> {
-    let open: HashSet<u64> = issues
-        .iter()
-        .filter(|i| !i.merged())
-        .map(|i| i.number)
-        .collect();
-    issues
-        .iter()
+pub fn free_items(open: &[Issue], wave: &str, claims: &HashSet<String>) -> Vec<u64> {
+    let numbers: HashSet<u64> = open.iter().map(|i| i.number).collect();
+    open.iter()
+        .filter(|i| i.milestone.as_ref().is_some_and(|m| m.title == wave))
         .filter(|i| !i.merged())
         .filter(|i| !claims.contains(&format!("issue-{}", i.number)))
-        .filter(|i| needs(&i.body).iter().all(|n| !open.contains(n)))
+        .filter(|i| needs(&i.body).iter().all(|n| !numbers.contains(n)))
         .map(|i| i.number)
         .collect()
 }
@@ -348,19 +359,27 @@ pub struct Check {
     pub context: Option<String>,
 }
 
-/// The issue of a branch like `worktree-issue-12`.
+/// The issue of a branch like `worktree-issue-12` or
+/// `worktree-issue-207-book`.
 ///
 /// ```
-/// assert_eq!(riff::rollout::branch_issue("worktree-issue-12"), Some(12));
-/// assert_eq!(riff::rollout::branch_issue("main"), None);
+/// use riff::rollout::branch_issue;
+///
+/// assert_eq!(branch_issue("worktree-issue-12"), Some(12));
+/// assert_eq!(branch_issue("worktree-issue-207-book"), Some(207));
+/// assert_eq!(branch_issue("main"), None);
+/// assert_eq!(branch_issue("worktree-issue-x"), None);
 /// ```
 pub fn branch_issue(branch: &str) -> Option<u64> {
-    branch.rsplit_once("issue-")?.1.parse().ok()
+    let rest = branch.rsplit_once("issue-")?.1;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
-/// The pull requests that wait for a verify: not a draft, no status
-/// `riff/verify` on the head, and no session claims `verify-issue-N`
-/// for the issue of the branch.
+/// The pull requests that wait for a verify: the branch names an issue,
+/// not a draft, no status `riff/verify` on the head, and no session
+/// claims `verify-issue-N` for the issue of the branch. A pull request
+/// that a person opened by hand names no issue, so it is no work.
 ///
 /// ```
 /// use std::collections::HashSet;
@@ -377,6 +396,7 @@ pub fn branch_issue(branch: &str) -> Option<u64> {
 ///     pull(41, "worktree-issue-13", true),
 ///     pull(42, "worktree-issue-14", false),
 ///     Pull { draft: true, ..pull(43, "worktree-issue-15", false) },
+///     pull(44, "release-v0.8.0", false),
 /// ];
 /// let claims: HashSet<String> = ["verify-issue-14".to_owned()].into();
 /// assert_eq!(waiting_verifies(&pulls, &claims), [40]);
@@ -391,7 +411,7 @@ pub fn waiting_verifies(pulls: &[Pull], claims: &HashSet<String>) -> Vec<u64> {
                 .any(|c| c.context.as_deref() == Some(crate::pr::VERIFY_CONTEXT))
         })
         .filter(|p| {
-            branch_issue(&p.branch).is_none_or(|n| !claims.contains(&format!("verify-issue-{n}")))
+            branch_issue(&p.branch).is_some_and(|n| !claims.contains(&format!("verify-issue-{n}")))
         })
         .map(|p| p.number)
         .collect()
@@ -445,14 +465,12 @@ pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<usize>
                 repo,
                 "--state",
                 "open",
-                "--milestone",
-                wave,
                 "--limit",
-                "200",
+                "1000",
                 "--json",
-                "number,body,comments",
+                "number,body,comments,milestone",
             ])?;
-            free_items(&issues, claims).len()
+            free_items(&issues, wave, claims).len()
         }
         None => 0,
     };
@@ -621,8 +639,10 @@ mod tests {
     use std::sync::Mutex;
 
     /// A fake world: a riff with free work, and machines. Each start adds
-    /// a worker to its machine, and the new worker is idle until the
-    /// test says it claimed.
+    /// a worker to its machine. The new worker is idle until it claims an
+    /// item, [`World::claim_after`] after its start. With
+    /// [`World::keep_idle`], the fake stops idle workers as the server
+    /// does (#259).
     struct Fake {
         state: Mutex<World>,
     }
@@ -633,10 +653,56 @@ mod tests {
         lead: bool,
         running: bool,
         work: usize,
+        /// Idle workers that were there before, and never claim.
         idle: usize,
         places: Vec<Place>,
+        /// How long a new worker takes to claim an item. `None`: it never
+        /// claims, because no worker takes the counted work.
+        claim_after: Option<Duration>,
+        /// The idle workers that the server keeps on each host after 60
+        /// seconds of idle time. `None`: the server stops none.
+        keep_idle: Option<usize>,
+        /// Each new worker that did not claim: its host and its start.
+        new: Vec<(String, tokio::time::Instant)>,
         /// The host of each start, with the time of the start.
         starts: Vec<(String, tokio::time::Instant)>,
+        /// The workers that the server stopped.
+        stops: usize,
+    }
+
+    impl World {
+        /// The claims and the idle stops up to now.
+        fn advance(&mut self) {
+            let now = tokio::time::Instant::now();
+            if let Some(after) = self.claim_after {
+                while self.work > 0
+                    && let Some(i) = self.new.iter().position(|(_, at)| now >= *at + after)
+                {
+                    self.new.remove(i);
+                    self.work -= 1;
+                }
+            }
+            let Some(keep) = self.keep_idle else {
+                return;
+            };
+            for place in &mut self.places {
+                let mut idle: Vec<usize> = (0..self.new.len())
+                    .filter(|&i| self.new[i].0 == place.host)
+                    .collect();
+                // Keep the newest ones; stop the others past 60 s.
+                idle.sort_by_key(|&i| std::cmp::Reverse(self.new[i].1));
+                let stop: Vec<usize> = idle
+                    .into_iter()
+                    .skip(keep)
+                    .filter(|&i| now >= self.new[i].1 + Duration::from_secs(60))
+                    .collect();
+                for i in stop.into_iter().rev() {
+                    self.new.remove(i);
+                    place.workers -= 1;
+                    self.stops += 1;
+                }
+            }
+        }
     }
 
     impl Fake {
@@ -662,10 +728,11 @@ mod tests {
 
         async fn look(&self) -> Result<Option<View>> {
             Ok(self.with(|w| {
+                w.advance();
                 w.lead.then(|| View {
                     running: w.running,
                     work: w.work,
-                    idle: w.idle,
+                    idle: w.idle + w.new.len(),
                     places: w.places.clone(),
                 })
             }))
@@ -675,9 +742,9 @@ mod tests {
             self.with(|w| {
                 let p = w.places.iter_mut().find(|p| p.host == place.host).unwrap();
                 p.workers += 1;
-                w.idle += 1;
-                w.starts
-                    .push((place.host.clone(), tokio::time::Instant::now()));
+                let now = tokio::time::Instant::now();
+                w.new.push((place.host.clone(), now));
+                w.starts.push((place.host.clone(), now));
             });
             Ok(())
         }
@@ -720,7 +787,11 @@ mod tests {
             work,
             idle: 0,
             places: vec![thelio(), pangolin()],
+            claim_after: Some(Duration::from_secs(5)),
+            keep_idle: None,
+            new: Vec::new(),
             starts: Vec::new(),
+            stops: 0,
         }
     }
 
@@ -790,13 +861,45 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn idle_workers_take_the_work_first() {
+    async fn no_worker_starts_while_a_worker_is_idle() {
         let fake = Fake::new(World {
-            idle: 2,
+            idle: 1,
             ..world(3)
         });
         run_for(&fake, 60).await;
+        assert!(fake.hosts().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_next_worker_waits_until_the_new_one_claims() {
+        let fake = Fake::new(World {
+            claim_after: Some(Duration::from_secs(25)),
+            ..world(3)
+        });
+        let begin = tokio::time::Instant::now();
+        run_for(&fake, 100).await;
+        let secs: Vec<u64> = fake.with(|w| {
+            w.starts
+                .iter()
+                .map(|(_, at)| (*at - begin).as_secs())
+                .collect()
+        });
+        // Each new worker claims 25 s after its start.
+        assert_eq!(secs, [10, 40, 70]);
+    }
+
+    /// Work that no worker takes gives one idle worker, which the server
+    /// keeps (#259): no loop of starts and stops.
+    #[tokio::test(start_paused = true)]
+    async fn work_that_no_worker_takes_starts_no_endless_loop() {
+        let fake = Fake::new(World {
+            claim_after: None,
+            keep_idle: Some(1),
+            ..world(3)
+        });
+        run_for(&fake, 3600).await;
         assert_eq!(fake.hosts().len(), 1);
+        assert_eq!(fake.with(|w| w.stops), 0);
     }
 
     #[tokio::test(start_paused = true)]
@@ -916,11 +1019,14 @@ mod tests {
     #[test]
     fn the_json_of_gh_parses() {
         let issues: Vec<Issue> = serde_json::from_str(
-            r#"[{"number":266,"body":"Needs: #259","comments":[]},
-                {"number":259,"body":"","comments":[{"author":{"login":"m"},"body":"Merged in #270 (abc)"}]}]"#,
+            r#"[{"number":266,"body":"Needs: #259","comments":[],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
+                {"number":259,"body":"","comments":[{"author":{"login":"m"},"body":"Merged in #270 (abc)"}],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
+                {"number":265,"body":"Needs: nothing","comments":[],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
+                {"number":210,"body":"","comments":[],"milestone":null}]"#,
         )
         .unwrap();
-        assert_eq!(free_items(&issues, &HashSet::new()), [266]);
+        // 259 is merged but open, so 266 waits.
+        assert_eq!(free_items(&issues, "Wave 13", &HashSet::new()), [265]);
         let pulls: Vec<Pull> = serde_json::from_str(
             r#"[{"number":267,"headRefName":"worktree-issue-265","isDraft":false,
                  "statusCheckRollup":[{"__typename":"CheckRun","name":"Gate","conclusion":"SUCCESS"},

@@ -529,9 +529,9 @@ enum Workers {
     },
     /// Show or set the seconds between two workers that riff starts
     ///
-    /// When the riff runs and the current wave has more free work than
-    /// idle workers, the lead starts one worker each SECONDS, on the
-    /// machine with the most free capacity. The default is 10. 0 turns it
+    /// When the riff runs, the current wave has free work and no worker
+    /// is idle, the lead starts one worker each SECONDS, on the machine
+    /// with the most free capacity. The default is 10. 0 turns it
     /// off. It is in $XDG_CONFIG_HOME/riff/config.toml, key
     /// workers.interval, on the machine of the lead.
     Interval {

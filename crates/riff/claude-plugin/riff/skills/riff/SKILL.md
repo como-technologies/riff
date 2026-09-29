@@ -648,8 +648,9 @@ Workers are agent sessions in tmux. Each worker joins the riff and
 follows the start routine.
 
 riff starts workers by itself. While the riff runs, your `riff mcp`
-starts one worker each 10 seconds when the free work of the current
-wave is more than the idle workers. It picks the machine with the most
+starts one worker each 10 seconds when the current wave has free
+work and no worker is idle. A new worker is idle until it claims. It
+picks the machine with the most
 free capacity, and never goes past the limit of a machine. Each start
 gives you a note with the host, the pane and the session. You do not
 start workers for free work. The server stops idle workers past a
@@ -672,8 +673,9 @@ a scope, or a new item joins the current wave.
    different items.
 4. Only when the rollout is off (`riff workers interval` shows 0),
    and the free work is more than the free workers, and the workers
-   are fewer than the limit, start more workers. Do not wait for the
-   word of your user. N is the free work minus the free workers:
+   are fewer than the limit, start more workers. Start a worker when
+   you have work for it. Do not keep workers that wait. Do not wait for
+   the word of your user. N is the free work minus the free workers:
 
    ```sh
    riff workers start N

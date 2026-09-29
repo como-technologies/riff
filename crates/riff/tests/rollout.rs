@@ -83,6 +83,19 @@ impl Lead {
         self.api.set_riff(&self.me, state).await.unwrap();
     }
 
+    /// The worker `n` (from 1) of the fake tmux joins the riff and
+    /// claims `item`, as a real worker does.
+    async fn claim(&self, n: usize, item: &str) {
+        self.until_workers(n).await;
+        let workers = std::fs::read_to_string(self.fake.path().join("workers")).unwrap();
+        let line = workers.lines().nth(n - 1).unwrap();
+        let (_, id) = line.split_once(' ').unwrap();
+        let worker = SessionUri::new(Who::new("mike", Some(id)).unwrap(), self.me.place().clone());
+        self.api.register_as(&worker, true).await.unwrap();
+        let thread = self.me.default_thread().unwrap();
+        self.api.claim(&worker, &thread, item).await.unwrap();
+    }
+
     /// Waits until `n` workers run.
     async fn until_workers(&self, n: usize) {
         let start = Instant::now();
@@ -186,15 +199,17 @@ async fn lead(limit: u16) -> Lead {
     }
 }
 
-const TWO_FREE: &str = r#"[{"number":1,"body":"","comments":[]},
-{"number":2,"body":"Needs: nothing","comments":[]},
-{"number":3,"body":"Needs: #1","comments":[]},
-{"number":4,"body":"","comments":[{"body":"Merged in #9 (abc)"}]}]"#;
+const TWO_FREE: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}},
+{"number":2,"body":"Needs: nothing","comments":[],"milestone":{"title":"Wave 1"}},
+{"number":3,"body":"Needs: #1","comments":[],"milestone":{"title":"Wave 1"}},
+{"number":4,"body":"","comments":[{"body":"Merged in #9 (abc)"}],"milestone":{"title":"Wave 1"}},
+{"number":8,"body":"","comments":[],"milestone":{"title":"Backlog"}}]"#;
 
 /// A resume of a paused riff starts one worker for each free item, with
 /// no other step, and a note to the lead for each
-/// (01M3Q5QE01DB0FJQJWFKR450KQ, 01M3Q5QEE4MQNCRKVJK3D54G9Z). A pause
-/// stops the rollout (01M3Q5QEBTNM90SPYXNVTT7RJA).
+/// (01M3Q5QE01DB0FJQJWFKR450KQ, 01M3Q5QEE4MQNCRKVJK3D54G9Z). The next
+/// worker starts only when the new one claimed (01M3Q5QEJNP1JGQM7VXXEBJ9J9).
+/// A pause stops the rollout (01M3Q5QEBTNM90SPYXNVTT7RJA).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_resume_starts_one_worker_for_each_free_item() {
     let lead = lead(5).await;
@@ -206,14 +221,14 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
         "no worker starts while the riff is paused"
     );
 
-    let resumed = Instant::now();
+    // The unit tests of riff::rollout check the rate with a fake clock.
     lead.riff(RiffState::Running).await;
-    lead.until_workers(2).await;
-    assert!(
-        resumed.elapsed() >= Duration::from_secs(1),
-        "one worker each interval"
-    );
-    // The two new workers count as idle until they claim: no third one.
+    lead.until_workers(1).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(lead.workers(), 1, "the new worker is idle until it claims");
+    lead.claim(1, "issue-1").await;
+    lead.claim(2, "issue-2").await;
+    // Each free item has a worker: no third one.
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(lead.workers(), 2);
 
@@ -228,8 +243,8 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
 
     lead.riff(RiffState::Paused).await;
     lead.issues(
-        r#"[{"number":5,"body":"","comments":[]},{"number":6,"body":"","comments":[]},
-        {"number":7,"body":"","comments":[]}]"#,
+        r#"[{"number":5,"body":"","comments":[],"milestone":{"title":"Wave 1"}},
+        {"number":6,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#,
     );
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(lead.workers(), 2, "a pause stops the rollout");
@@ -243,7 +258,7 @@ async fn the_limit_caps_the_rollout() {
     let lead = lead(1).await;
     lead.issues(TWO_FREE);
     lead.riff(RiffState::Running).await;
-    lead.until_workers(1).await;
+    lead.claim(1, "issue-1").await;
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(lead.workers(), 1);
 }
