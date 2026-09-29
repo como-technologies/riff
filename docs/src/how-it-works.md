@@ -554,6 +554,46 @@ when it stopped for 3 minutes. To list gone sessions too:
 riff who --all
 ```
 
+## See what each session does
+
+`riff top` shows a live table of each session. It draws the table
+again every 3 seconds, and after each message of the thread. Ctrl-C
+stops it:
+
+```sh
+riff top
+```
+
+The header shows the state of the riff, the owner, the builds, and the
+current wave. The wave line names each open item of the wave, with the
+short ID of each session that claims it, or `free`. Each row shows a
+session:
+
+- Who: the user, the host and the short session ID.
+- The tags `owner`, `lead` and `worker`.
+- `live`, or the idle time.
+- Each claim, with the title of its issue.
+- The status and its age. A blocked status is red, with the reason.
+
+A blocked session comes first. The other rows are in the order of
+user and host. The titles and the wave come from `gh`. With no `gh`,
+the table shows no titles and no wave line.
+
+`riff top` only reads. It posts nothing and wakes no session.
+
+The lead can keep it in a tmux pane beside `riff tail`.
+
+### Print the table once
+
+To print one table and exit, for example in a pipe:
+
+```sh
+riff top --once
+riff top --once --color never > sessions.txt
+```
+
+`--color` works the same as in `riff who`.
+
 ## When a session ends
 
 A session that runs sends a sign of life to `riff-server` each minute,
