@@ -123,7 +123,7 @@ fn dev(args: &[&str], server: &str, env: Option<&str>) -> Dev {
         if let Ok(addr) = std::fs::read_to_string(&listen)
             && !addr.trim().is_empty()
         {
-            listener = Some(TcpListener::bind(addr.trim()).unwrap());
+            listener = listen_in_place(addr.trim());
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -135,6 +135,17 @@ fn dev(args: &[&str], server: &str, env: Option<&str>) -> Dev {
         log,
         home,
         tree,
+    }
+}
+
+/// Listen at `addr` in place of the fake server. Another process can
+/// take the port after `just dev` picks it. Then that process listens
+/// there, `just dev` sees it and goes on, and the test does not listen.
+fn listen_in_place(addr: &str) -> Option<TcpListener> {
+    match TcpListener::bind(addr) {
+        Ok(listener) => Some(listener),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => None,
+        Err(e) => panic!("listen at {addr}: {e}"),
     }
 }
 
@@ -207,6 +218,38 @@ fn dev_gives_riff_a_home_in_the_tree() {
         home.trim(),
         tree.join("target/dev-home").display().to_string()
     );
+}
+
+/// Another process takes the port after `just dev` picks it, before
+/// the test listens there. `just dev` still runs Claude Code.
+#[test]
+fn dev_runs_when_another_process_takes_the_picked_port() {
+    let sync = tempfile::tempdir().unwrap();
+    let (picked, stolen) = (sync.path().join("picked"), sync.path().join("stolen"));
+    let server = format!(
+        "echo \"$RIFF_LISTEN\" > {}\n\
+         while [ ! -f {} ]; do sleep 0.05; done\n{LISTENS}",
+        picked.display(),
+        stolen.display(),
+    );
+    let thief = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            if let Ok(addr) = std::fs::read_to_string(&picked)
+                && !addr.trim().is_empty()
+            {
+                let listener = TcpListener::bind(addr.trim()).unwrap();
+                std::fs::write(&stolen, "").unwrap();
+                return (addr.trim().to_owned(), listener);
+            }
+            assert!(Instant::now() < deadline, "just dev picks no port");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    let dev = dev(&[], &server, None);
+    let (addr, _listener) = thief.join().unwrap();
+    assert!(dev.out.status.success(), "{:?}", dev.out);
+    assert_eq!(listen_of(&dev.log), addr);
 }
 
 #[test]
