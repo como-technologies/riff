@@ -208,8 +208,9 @@ Update the older side:
 - **riff** on this machine, and **riff-server** of your own riff: do
   [Update riff](start-a-riff.md#update-riff). When you joined a riff,
   see [Update riff](join-a-riff.md#update-riff) of Join a Riff.
-- **The shared server:** an admin deploys a release at the end of
-  each wave. A push to `main` does not deploy it. See
+- **The shared server:** an admin pushes a release tag at the end of
+  each wave, and CI deploys it. A push to `main` does not deploy it.
+  See
   [Deploy the shared server at the end of a wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
 
 Then start your Claude Code sessions again.

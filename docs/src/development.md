@@ -663,6 +663,9 @@ only the bucket, and read only the client secret. Cloud Build builds
 the image as `riff-build`. The bucket has one lifecycle
 rule. The rule deletes each thread object 30 days after its last
 change. The rule does not touch the sessions, the tokens or the lease.
+CI signs in as `riff-deploy`, from `main` and from the tags `v*` of the
+repository only. When the identity provider exists, the command sets
+this condition on it again.
 
 ### See the lifecycle rule
 
@@ -750,13 +753,13 @@ email 30 days before.
 Do [Set up the cloud project](#set-up-the-cloud-project) and
 [Make the OAuth client](#make-the-oauth-client) first.
 
-CI deploys only a release, and only when an admin asks for it, at the
-end of a wave. The repository variable `CLOUD_DEPLOY` must be `true`.
-A push to `main` does not deploy. A `riff` refuses a server of another
-build (see [Builds](how-it-works.md#builds)), so a deploy in the
-middle of a wave would stop each session. For now, the variable is not
-set, and no shared server runs. The job signs in to Google Cloud from
-GitHub with no key.
+CI deploys only a release. An admin pushes the release tag at the end
+of a wave, and CI deploys it. The repository variable `CLOUD_DEPLOY`
+must be `true`. A push to `main` does not deploy. A `riff` refuses a
+server of another build (see [Builds](how-it-works.md#builds)), so a
+deploy in the middle of a wave would stop each session. The job signs
+in to Google Cloud from GitHub with no key. Only `main` and the tags
+`v*` can sign in.
 
 A release is a git tag `vX.Y.Z`. X.Y.Z is the version of the crates in
 `Cargo.toml`. [Versions](how-it-works.md#versions) tells you the
@@ -770,7 +773,8 @@ deploy make a release current.
 flowchart LR
     M[each item of the wave merged] --> S[stop the workers]
     S --> V[make a release:<br/>bump, merge, tag]
-    V --> D["gh workflow run CI<br/>-f tag=vX.Y.Z"]
+    V --> C[CI: Release check]
+    C --> D[CI: Deploy]
     D --> U[riff update on each machine]
     U --> R[start the sessions again]
 ```
@@ -833,7 +837,10 @@ When the last tag is not the release before this one, name the tag of
 that release, for example `--notes-start-tag v0.1.0`.
 
 CI runs the job `Release check` for the tag. It fails when the tag is
-not the version of the crates. Watch it:
+not the version of the crates. When it passes, the job `Deploy`
+deploys the tag to the shared server. See
+[Deploy the shared server at the end of a wave](#deploy-the-shared-server-at-the-end-of-a-wave).
+Watch both jobs:
 
 ```sh
 gh run list --workflow CI --event push --limit 1
@@ -842,18 +849,17 @@ gh run watch
 
 ### Deploy the shared server at the end of a wave
 
-Deploy the release. Run the CI workflow on `main` with the input `tag`.
-The gate runs first. Then the job checks out the tag, checks it,
-builds the image and deploys it. It refuses an input that is not a
-release tag:
+The release tag deploys itself. When you push the tag `vX.Y.Z` (see
+[Make a release](#make-a-release)), the job `Release check` runs
+first. Then the job `Deploy` checks out the tag, checks it, builds the
+image and deploys it. A tag that is not `vX.Y.Z` does not deploy. One
+deploy runs at a time.
 
-```sh
-gh workflow run CI --ref main -f tag=v0.2.0
-```
-
-Then update each machine (see
-[Update riff](start-a-riff.md#update-riff)), and start the sessions
-again. Start the workers again after the update with
+Then update each machine: each person runs `riff update`, or has
+`riff update --auto on` (see
+[Update riff](start-a-riff.md#update-riff) and
+[Update riff by itself](how-it-works.md#update-riff-by-itself)).
+Start the sessions again. Start the workers again after the update with
 `riff workers start`. Check that `riff` and the shared server run the
 same release:
 
@@ -861,7 +867,17 @@ same release:
 riff server
 ```
 
-See the deploys, and watch the last one:
+### Deploy a release again, or roll back
+
+Run the CI workflow on `main` with the input `tag`. Use it to deploy a
+release again, or to deploy an older release. The gate runs first.
+The job refuses an input that is not a release tag:
+
+```sh
+gh workflow run CI --ref main -f tag=v0.2.0
+```
+
+See the deploys by hand, and watch the last one:
 
 ```sh
 gh run list --workflow CI --event workflow_dispatch

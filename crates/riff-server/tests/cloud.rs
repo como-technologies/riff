@@ -1,5 +1,5 @@
 //! The cloud scripts in `deploy/`, the image and the CI deploy (R6,
-//! R46, R134-R136, R160, R161).
+//! R46, R134-R136, 01M3NJAZ6BYH7TWKDYTVEK78PG, 01M3NJAZAQ3AKMAM0EGM7R3S89).
 //! The tests run each script with a fake `gcloud` that writes each call
 //! to a log.
 //!
@@ -182,6 +182,18 @@ fn setup_again_keeps_each_resource() {
     assert!(calls.contains("storage buckets update gs://como-riff-state --lifecycle-file"));
 }
 
+/// A setup again gives the provider that exists the condition of
+/// 01M3NJAZAQ3AKMAM0EGM7R3S89.
+#[test]
+fn setup_again_sets_the_condition_of_the_provider() {
+    let calls = run("cloud-setup.sh", &SETUP);
+    let update = line(
+        &calls,
+        "iam workload-identity-pools providers update-oidc github ",
+    );
+    assert!(update.contains(CONDITION), "{update}");
+}
+
 #[test]
 fn the_rule_deletes_only_thread_objects_after_30_days() {
     let text = fs::read_to_string(deploy().join("lifecycle.json")).unwrap();
@@ -266,8 +278,12 @@ fn deploy_with_an_image_deploys_only_that_image() {
     assert!(!calls.contains("domain-mappings"), "{calls}");
 }
 
+/// 01M3NJAZAQ3AKMAM0EGM7R3S89: only `main` and the tags `v*` of the
+/// repository sign in.
+const CONDITION: &str = "--attribute-condition assertion.repository == 'como-technologies/riff' && (assertion.ref == 'refs/heads/main' || assertion.ref.startsWith('refs/tags/v'))";
+
 #[test]
-fn only_main_of_the_repository_signs_in_as_the_deploy_account() {
+fn only_main_and_the_release_tags_sign_in_as_the_deploy_account() {
     let calls = run("cloud-setup.sh", &[]);
     let provider = line(
         &calls,
@@ -277,12 +293,8 @@ fn only_main_of_the_repository_signs_in_as_the_deploy_account() {
         provider.contains("--issuer-uri https://token.actions.githubusercontent.com"),
         "{provider}"
     );
-    assert!(
-        provider.contains(
-            "assertion.repository == 'como-technologies/riff' && assertion.ref == 'refs/heads/main'"
-        ),
-        "{provider}"
-    );
+    assert!(provider.contains(CONDITION), "{provider}");
+    assert!(!calls.contains("providers update-oidc"), "{calls}");
     let user = line(
         &calls,
         "iam service-accounts add-iam-policy-binding riff-deploy@",
@@ -326,10 +338,10 @@ fn the_deploy_account_pushes_images_and_deploys_the_service() {
 }
 
 #[test]
-fn ci_deploys_after_the_gate_with_no_key() {
+fn ci_deploys_after_the_gate_or_the_release_check_with_no_key() {
     let (_, job) = ci_parts();
     for part in [
-        "needs: gate",
+        "needs: [gate, release]",
         "github.ref == 'refs/heads/main'",
         "id-token: write",
         "google-github-actions/auth@",
@@ -359,38 +371,232 @@ fn ci_parts() -> (String, String) {
     (on.to_owned(), job.to_owned())
 }
 
-/// 01M3MMZQ3KTF5Z3GXNR7DRQ65Z: a push to main never deploys. Only a
-/// run by hand with the input `tag` does (R160).
+/// The `if:` of the deploy job, as one line.
+fn deploy_if() -> String {
+    let (_, job) = ci_parts();
+    let when = job.split_once("\n    if: >-\n").unwrap().1;
+    let when = when.split_once("\n    runs-on:").unwrap().0;
+    when.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A value of a GitHub Actions expression.
+#[derive(Clone, Debug, PartialEq)]
+enum Value {
+    Str(String),
+    Bool(bool),
+}
+
+impl Value {
+    fn truthy(&self) -> bool {
+        match self {
+            Value::Str(s) => !s.is_empty(),
+            Value::Bool(b) => *b,
+        }
+    }
+}
+
+/// Evaluates the part of the GitHub Actions expression language that
+/// the deploy job uses: strings, context paths, `==`, `!=`, `&&`, `||`,
+/// `!`, parentheses, `startsWith` and `cancelled`. A context path that
+/// `ctx` does not name is the empty string. It panics on each other
+/// part, so a new part of the `if:` needs a new part here.
+struct Eval<'a> {
+    rest: &'a str,
+    ctx: &'a [(&'a str, &'a str)],
+}
+
+impl Eval<'_> {
+    fn eat(&mut self, token: &str) -> bool {
+        self.rest = self.rest.trim_start();
+        match self.rest.strip_prefix(token) {
+            Some(rest) => {
+                self.rest = rest;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn or(&mut self) -> Value {
+        let mut value = self.and();
+        while self.eat("||") {
+            let right = self.and();
+            value = Value::Bool(value.truthy() || right.truthy());
+        }
+        value
+    }
+
+    fn and(&mut self) -> Value {
+        let mut value = self.unary();
+        while self.eat("&&") {
+            let right = self.unary();
+            value = Value::Bool(value.truthy() && right.truthy());
+        }
+        value
+    }
+
+    fn unary(&mut self) -> Value {
+        if self.eat("!") {
+            return Value::Bool(!self.unary().truthy());
+        }
+        let left = self.primary();
+        if self.eat("==") {
+            Value::Bool(left == self.primary())
+        } else if self.eat("!=") {
+            Value::Bool(left != self.primary())
+        } else {
+            left
+        }
+    }
+
+    fn primary(&mut self) -> Value {
+        if self.eat("(") {
+            let value = self.or();
+            assert!(self.eat(")"), "no ): {}", self.rest);
+            return value;
+        }
+        if self.eat("'") {
+            let (text, rest) = self.rest.split_once('\'').unwrap();
+            self.rest = rest;
+            return Value::Str(text.to_owned());
+        }
+        let end = self
+            .rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '_'))
+            .unwrap_or(self.rest.len());
+        let (name, rest) = self.rest.split_at(end);
+        assert!(!name.is_empty(), "no value at: {}", self.rest);
+        self.rest = rest;
+        if self.eat("(") {
+            let mut args = Vec::new();
+            while !self.eat(")") {
+                args.push(self.or());
+                self.eat(",");
+            }
+            return match (name, args.as_slice()) {
+                ("cancelled", []) => Value::Bool(false),
+                ("startsWith", [Value::Str(text), Value::Str(start)]) => {
+                    Value::Bool(text.starts_with(start.as_str()))
+                }
+                _ => panic!("no function {name}({args:?})"),
+            };
+        }
+        let value = self.ctx.iter().find(|(key, _)| *key == name);
+        Value::Str(value.map_or("", |(_, value)| value).to_owned())
+    }
+}
+
+/// Does the deploy job run in the context `ctx`?
+fn deploys(ctx: &[(&str, &str)]) -> bool {
+    let when = deploy_if();
+    let mut eval = Eval { rest: &when, ctx };
+    let value = eval.or();
+    assert!(eval.rest.trim().is_empty(), "left: {}", eval.rest);
+    value.truthy()
+}
+
+type Ctx = Vec<(&'static str, &'static str)>;
+
+/// The context of a push of `git_ref`, with the results of the gate
+/// and the Release check.
+fn push(git_ref: &'static str, gate: &'static str, release: &'static str) -> Ctx {
+    vec![
+        ("github.event_name", "push"),
+        ("github.ref", git_ref),
+        ("vars.CLOUD_DEPLOY", "true"),
+        ("needs.gate.result", gate),
+        ("needs.release.result", release),
+    ]
+}
+
+/// The context of a run by hand on `git_ref` with the input `tag`.
+fn dispatch(git_ref: &'static str, tag: &'static str, gate: &'static str) -> Ctx {
+    vec![
+        ("github.event_name", "workflow_dispatch"),
+        ("github.ref", git_ref),
+        ("inputs.tag", tag),
+        ("vars.CLOUD_DEPLOY", "true"),
+        ("needs.gate.result", gate),
+        ("needs.release.result", "skipped"),
+    ]
+}
+
+/// The same context with no `CLOUD_DEPLOY`.
+fn off(mut ctx: Ctx) -> Ctx {
+    ctx.retain(|(key, _)| *key != "vars.CLOUD_DEPLOY");
+    ctx
+}
+
+/// 01M3NJAZ6BYH7TWKDYTVEK78PG, 01M3NJAZ8HSE87H0GZ8SNGWN31: a release
+/// tag deploys after its Release check, and a run by hand with the
+/// input `tag` deploys after the gate. A push to main never deploys.
 #[test]
-fn only_a_run_by_hand_deploys() {
+fn a_release_tag_or_a_run_by_hand_deploys() {
     let (on, job) = ci_parts();
     assert!(on.contains("\n  workflow_dispatch:\n"), "{on}");
     assert!(on.contains("\n      tag:\n"), "{on}");
     assert!(on.contains("type: string"), "{on}");
-    let when = job.lines().find(|l| l.trim().starts_with("if:")).unwrap();
-    assert!(
-        when.contains("github.event_name == 'workflow_dispatch'"),
-        "{when}"
-    );
-    assert!(when.contains("inputs.tag != ''"), "{when}");
-    assert!(!when.contains("'push'"), "{when}");
+    assert!(on.contains("tags: [\"v*\"]"), "{on}");
     assert!(!job.contains("github.event.before"), "{job}");
+
+    assert!(deploys(&push("refs/tags/v0.6.0", "skipped", "success")));
+    assert!(deploys(&dispatch("refs/heads/main", "v0.5.0", "success")));
+
+    for gate in ["success", "skipped", "failure"] {
+        for release in ["success", "skipped", "failure"] {
+            let ctx = push("refs/heads/main", gate, release);
+            assert!(!deploys(&ctx), "a push to main deploys: {ctx:?}");
+        }
+    }
+    // A tag that is not vX.Y.Z fails its Release check.
+    assert!(!deploys(&push("refs/tags/v0.6", "skipped", "failure")));
+    assert!(!deploys(&push("refs/tags/nightly", "skipped", "success")));
+    assert!(!deploys(&push("refs/tags/v0.6.0", "skipped", "cancelled")));
+    assert!(!deploys(&dispatch("refs/heads/main", "v0.5.0", "failure")));
+    assert!(!deploys(&dispatch("refs/heads/main", "", "success")));
+    assert!(!deploys(&dispatch("refs/heads/other", "v0.5.0", "success")));
+    assert!(!deploys(&off(push(
+        "refs/tags/v0.6.0",
+        "skipped",
+        "success"
+    ))));
+    assert!(!deploys(&off(dispatch(
+        "refs/heads/main",
+        "v0.5.0",
+        "success"
+    ))));
 }
 
-/// The book how-to runs the workflow with the real input name.
+/// The part of the Development page under `heading`, up to the next
+/// heading of its level.
+fn book_part(heading: &str) -> String {
+    let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
+    let part = &page[page.find(heading).unwrap()..];
+    part[..part[4..].find("\n### ").unwrap()].to_owned()
+}
+
+/// The book says that the release tag deploys, and that each machine
+/// updates after it (01M3NJAZ8HSE87H0GZ8SNGWN31).
 #[test]
 fn the_book_deploys_at_the_end_of_a_wave() {
-    let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
-    let part = &page[page
-        .find("### Deploy the shared server at the end of a wave\n")
-        .unwrap()..];
-    let part = &part[..part[4..].find("\n### ").unwrap()];
+    let part = book_part("### Deploy the shared server at the end of a wave\n");
+    assert!(part.contains("The release tag deploys itself."), "{part}");
+    assert!(part.contains("`riff update`"), "{part}");
+    assert!(part.contains("`riff update --auto on`"), "{part}");
+    assert!(part.contains("riff workers start"), "{part}");
+    assert!(!part.contains("gh workflow run"), "{part}");
+}
+
+/// The book how-to deploys again or rolls back with the real input
+/// name of the workflow.
+#[test]
+fn the_book_deploys_a_release_again() {
+    let part = book_part("### Deploy a release again, or roll back\n");
     assert!(part.contains("```sh\n"), "{part}");
     assert!(
         part.contains("gh workflow run CI --ref main -f tag=v0.2.0"),
         "{part}"
     );
-    assert!(part.contains("riff workers start"), "{part}");
 }
 
 /// The book how-to makes a release: bump, merge, tag, with the real
@@ -482,17 +688,20 @@ fn checkout(crates: &str, locked: &str) -> tempfile::TempDir {
     root
 }
 
-/// 01M3MRMAY3P1K151RGAP9K6GSH: the deploy checks out the release tag of
-/// its input and checks it before it builds. So it refuses an input
-/// that is not a tag vX.Y.Z.
+/// 01M3MRMAY3P1K151RGAP9K6GSH: the deploy checks out the release tag,
+/// the pushed tag or its input, and checks it before it builds. So it
+/// refuses a tag that is not vX.Y.Z.
 #[test]
 fn the_deploy_takes_only_a_release_tag() {
     let (_, job) = ci_parts();
-    let checkout = job.find("ref: refs/tags/${{ inputs.tag }}").unwrap();
+    let checkout = job.find("ref: refs/tags/${{ env.TAG }}").unwrap();
     let check = job.find("run: deploy/release-check.sh \"$TAG\"").unwrap();
     let build = job.find("docker/build-push-action@").unwrap();
     assert!(checkout < check && check < build, "{job}");
-    assert!(job.contains("TAG: ${{ inputs.tag }}"), "{job}");
+    assert!(
+        job.contains("TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"),
+        "{job}"
+    );
     assert!(job.contains("riff-server:$TAG"), "{job}");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let root = root.to_str().unwrap();

@@ -46,7 +46,7 @@ flowchart LR
     C --> M[each item merged]
     M --> S[the lead stops the workers]
     S --> V[an admin makes a release]
-    V --> P2[an admin deploys the release to the shared server]
+    V --> P2[CI deploys the release tag to the shared server]
     P2 --> U[each machine gets the merged code]
     U --> R[the sessions start again]
     R --> K[checks after the release]
@@ -68,7 +68,8 @@ the riff repository, the update is
 
 A push to `main` does not deploy the shared server. So a merge in the
 middle of a wave does not stop the sessions with a build mismatch.
-An admin makes a release and deploys it once, at the end of the wave.
+An admin makes a release once, at the end of the wave. CI deploys its
+tag.
 See [Make a release](development.md#make-a-release) and
 [Deploy the shared server at the end of a wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
 

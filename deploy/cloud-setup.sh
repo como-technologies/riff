@@ -78,7 +78,7 @@ bind gcloud projects add-iam-policy-binding "$CLOUD_PROJECT" \
 echo "Service accounts: roles set."
 
 # CI builds the image, pushes it to this repository, and deploys it
-# (R160).
+# (01M3NJAZ6BYH7TWKDYTVEK78PG).
 where=(--location "$CLOUD_REGION" "${project[@]}")
 if gcloud artifacts repositories describe "$CLOUD_REPOSITORY" "${where[@]}" >/dev/null 2>&1; then
     echo "Image repository $CLOUD_REPOSITORY: exists."
@@ -88,8 +88,10 @@ else
 fi
 
 # GitHub Actions signs in with its OIDC token, only from the main branch
-# of the repository (R161). No key exists.
+# and the tags v* of the repository (01M3NJAZAQ3AKMAM0EGM7R3S89). No key
+# exists. A provider that exists gets this condition too.
 pool=(--workload-identity-pool github --location global "${project[@]}")
+condition="assertion.repository == '$CLOUD_GITHUB_REPO' && (assertion.ref == 'refs/heads/main' || assertion.ref.startsWith('refs/tags/v'))"
 if gcloud iam workload-identity-pools describe github --location global "${project[@]}" >/dev/null 2>&1; then
     echo "Identity pool github: exists."
 else
@@ -98,17 +100,20 @@ else
         --display-name "GitHub Actions" "${project[@]}"
 fi
 if gcloud iam workload-identity-pools providers describe github "${pool[@]}" >/dev/null 2>&1; then
-    echo "Identity provider github: exists."
+    echo "Identity provider github: exists. Setting its condition."
+    gcloud iam workload-identity-pools providers update-oidc github "${pool[@]}" \
+        --attribute-condition "$condition"
 else
     echo "Identity provider github: making it."
     gcloud iam workload-identity-pools providers create-oidc github "${pool[@]}" \
         --issuer-uri https://token.actions.githubusercontent.com \
         --attribute-mapping google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref \
-        --attribute-condition "assertion.repository == '$CLOUD_GITHUB_REPO' && assertion.ref == 'refs/heads/main'"
+        --attribute-condition "$condition"
 fi
 
 # The deploy account pushes images, deploys the service, and runs it as
-# riff-server. Only the repository may use the account (R161).
+# riff-server. Only the repository may use the account
+# (01M3NJAZAQ3AKMAM0EGM7R3S89).
 deploy_account=serviceAccount:$(account "$CLOUD_DEPLOY_ACCOUNT")
 bind gcloud artifacts repositories add-iam-policy-binding "$CLOUD_REPOSITORY" \
     --member "$deploy_account" --role roles/artifactregistry.writer "${where[@]}"

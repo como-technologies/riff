@@ -4,7 +4,8 @@
 #
 # With no argument, Cloud Build builds the image from the source, and
 # the script maps the domain once. With `--image IMAGE`, the script
-# deploys that image and does nothing else. CI does that (R160).
+# deploys that image and does nothing else. CI does that
+# (01M3NJAZ6BYH7TWKDYTVEK78PG).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . deploy/cloud.env
