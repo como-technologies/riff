@@ -151,13 +151,40 @@ async fn three_sessions(server: &str, dir: &Path, path: &Path) {
     }
 }
 
-/// The lines of the tree, after the header and the board.
+/// `line` with each time in seconds, for example `0s` or `12s`, as `Ns`:
+/// a slow machine can take a second more.
+fn secs(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let word_start = start == 0 || !chars[start - 1].is_alphanumeric();
+        let word_end = i + 1 >= chars.len() || !chars[i + 1].is_alphanumeric();
+        if i > start && word_start && chars.get(i) == Some(&'s') && word_end {
+            out.push_str("Ns");
+            i += 1;
+        } else if i > start {
+            out.extend(&chars[start..i]);
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The lines of the tree, after the header and the board, with each
+/// time in seconds as `Ns`.
 fn rows(top: &str) -> Vec<String> {
     top.rsplit("\n\n")
         .next()
         .unwrap()
         .lines()
-        .map(str::to_owned)
+        .map(secs)
         .collect()
 }
 
@@ -209,13 +236,13 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
             "mike  online",
             "├─ pangolin",
             "│  ├─ c3  blocked",
-            "│  │    waits for a review (step: merge, 0s ago)",
+            "│  │    waits for a review (step: merge, Ns ago)",
             "│  └─ a1  lead  idle",
-            "│       ready for work for 0s",
+            "│       ready for work for Ns",
             "└─ thelio",
             "   └─ b2  worker  busy",
             "        working on #12 Show the wave",
-            "        0s ago: tests",
+            "        Ns ago: tests",
         ],
         "a local pane is no worker; blocked comes first: {top}"
     );
@@ -311,7 +338,7 @@ async fn with_no_gh_the_row_still_prints() {
     assert!(!top.contains("Wave 3"), "{top}");
     assert_eq!(
         detail(&top, "b2"),
-        ["working on #12", "0s ago: tests"],
+        ["working on #12", "Ns ago: tests"],
         "{top}"
     );
 }
@@ -426,7 +453,7 @@ async fn a_worker_with_no_claim_shows_idle_not_its_old_step() {
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(session(&top, "b2")[0].ends_with("  worker  idle"), "{top}");
-    assert_eq!(detail(&top, "b2"), ["ready for work for 0s"], "{top}");
+    assert_eq!(detail(&top, "b2"), ["ready for work for Ns"], "{top}");
     assert!(top.contains("\nWave 3\n  free: #12\n"), "{top}");
 }
 
@@ -442,12 +469,12 @@ async fn a_session_with_no_status_is_idle() {
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    assert_eq!(detail(&top, "a1"), ["ready for work for 0s"], "{top}");
+    assert_eq!(detail(&top, "a1"), ["ready for work for Ns"], "{top}");
     let who = ["who", "--color", "never"];
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
     let a1 = who.lines().find(|l| l.contains("(a1)")).unwrap();
     assert!(a1.contains("  idle  "), "{who}");
-    assert!(a1.ends_with("  ready for work for 0s"), "{who}");
+    assert!(secs(a1).ends_with("  ready for work for Ns"), "{who}");
 }
 
 /// With 12 sessions, long titles and long statuses, `riff top --once`
