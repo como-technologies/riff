@@ -40,6 +40,11 @@ struct Cli {
           value_parser = api::server_url)]
     server: String,
 
+    /// The place of the process that ran this binary after an update
+    /// (01M3NJGD45GF7Y4CZWQ7GRDHZN). Only riff gives it.
+    #[arg(long, global = true, hide = true, value_parser = identity::place_from_text)]
+    place: Option<Place>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -669,7 +674,7 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
-    let here = identity::place(&std::env::current_dir()?)?;
+    let here = identity::here(cli.place.as_ref())?;
     let me = identity::me(&here, api.base())?;
     // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
     // `riff mcp` still runs: its `join` tool brings the session back.
@@ -790,7 +795,7 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("cannot read {}", file.display()))?;
             let tested = match commit {
                 Some(commit) => commit,
-                None => pr::head_here(&std::env::current_dir()?)?,
+                None => pr::head_here(&identity::working_dir()?)?,
             };
             let thread = thread_or_default(None, &here)?;
             let verdict = verdict.into();
@@ -811,7 +816,7 @@ async fn main() -> Result<()> {
             println!("{}", text::posted(&posted));
         }
         Command::Tail { thread, color } => {
-            tail(&api, &thread_or_default(thread, &here)?, color).await
+            tail(&api, &thread_or_default(thread, &here)?, &here, color).await
         }
         Command::Top { once, color } => {
             use_color(color);
@@ -860,7 +865,7 @@ async fn main() -> Result<()> {
 /// The person on this host, with no session and no repository. It posts
 /// the note of a change of the members (01M3MN14ZCTRVD3T455P6TFK1B).
 fn person(api: &Api) -> Result<SessionUri> {
-    let here = identity::place(&std::env::current_dir()?)?;
+    let here = identity::place(&identity::working_dir()?)?;
     identity::person(&Place::host_only(here.host())?, api.base())
 }
 
@@ -890,7 +895,7 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
         }) => ask_host(host, riff::host::Request::Start(*count), server).await,
         Some(Workers::Start { count, claude, .. }) => start_workers(*count, claude, server).await,
         Some(Workers::Host { claude }) => {
-            riff::host::serve(&std::env::current_dir()?, claude, server).await
+            riff::host::serve(&identity::working_dir()?, claude, server).await
         }
         Some(Workers::Stop {
             host: Some(host), ..
@@ -950,7 +955,7 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         eprintln!("{}", text::NO_TMUX);
         std::process::exit(1);
     };
-    let started = match worker::start(&tmux, count, claude, server, &std::env::current_dir()?)? {
+    let started = match worker::start(&tmux, count, claude, server, &identity::working_dir()?)? {
         Ok(started) => started,
         Err(why) => {
             eprintln!("{why}");
@@ -980,7 +985,7 @@ async fn start_refusal(server: &str) -> Option<String> {
     }
     let id = identity::session_id()?;
     let lead = async {
-        let here = identity::place(&std::env::current_dir()?)?;
+        let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
         let me = identity::agent(&here, &id, api.base())?;
         let sessions = api.signed_in(Some(&id))?.who(&me, false).await?;
@@ -1010,7 +1015,7 @@ async fn next_item(server: &str) -> Result<()> {
     };
     let id = identity::session_id()
         .ok_or_else(|| anyhow::anyhow!("riff workers next needs the session ID of the worker"))?;
-    let here = identity::place(&std::env::current_dir()?)?;
+    let here = identity::place(&identity::working_dir()?)?;
     let api = Api::new(server);
     let me = identity::agent(&here, &id, api.base())?;
     let signed = api.signed_in(Some(&id))?;
@@ -1026,7 +1031,7 @@ async fn next_item(server: &str) -> Result<()> {
         eprintln!("{}", text::next_holds_claims(info.uri.claims()));
         std::process::exit(1);
     }
-    let fresh = hygiene::fast_forward(&std::env::current_dir()?);
+    let fresh = hygiene::fast_forward(&identity::working_dir()?);
     if let Some(line) = fresh.line() {
         println!("{line}");
         if fresh.tells_the_lead()
@@ -1062,7 +1067,7 @@ fn stop_hook() {
 async fn list_workers(server: &str) -> Result<()> {
     let panes = Tmux::machine().worker_panes()?;
     let who = async {
-        let here = identity::place(&std::env::current_dir()?)?;
+        let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
         let me = identity::me(&here, api.base())?;
         api.signed_in(me.who().session())?.who(&me, false).await
@@ -1077,7 +1082,7 @@ async fn list_workers(server: &str) -> Result<()> {
     });
     print!("{}", text::workers(&panes, &sessions));
     let me =
-        identity::place(&std::env::current_dir()?).and_then(|here| identity::me(&here, server));
+        identity::place(&identity::working_dir()?).and_then(|here| identity::me(&here, server));
     let Ok(me) = me else {
         return Ok(());
     };
@@ -1110,7 +1115,7 @@ async fn ask_host(host: &str, request: riff::host::Request, server: &str) -> Res
         eprintln!("{}", text::HOST_NEEDS_THE_LEAD);
         std::process::exit(1);
     };
-    let here = identity::place(&std::env::current_dir()?)?;
+    let here = identity::place(&identity::working_dir()?)?;
     let api = Api::new(server);
     let me = identity::agent(&here, &id, api.base())?;
     let api = api.signed_in(Some(&id))?;
@@ -1147,7 +1152,7 @@ async fn tail_beside_lead(api: &Api, me: &SessionUri) {
     let added = async {
         let program = Program::tail(
             &std::env::current_exe()?,
-            &std::env::current_dir()?,
+            &identity::working_dir()?,
             api.base(),
         );
         for _ in 0..REGISTER_TRIES {
@@ -1305,7 +1310,7 @@ async fn statusline(server: &str) -> String {
         return text::statusline_left(&id);
     }
     let find = async {
-        let here = identity::place(&std::env::current_dir()?)?;
+        let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
         let me = identity::agent(&here, &id, api.base())?;
         let who = api.signed_in(me.who().session())?.who(&me, false).await?;
@@ -1365,7 +1370,7 @@ async fn session_end(server: &str) {
         return;
     }
     let ended = async {
-        let here = identity::place(&std::env::current_dir()?)?;
+        let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
         let me = identity::agent(&here, &id, api.base())?;
         api.signed_in(me.who().session())?.end(&me).await
@@ -1426,11 +1431,11 @@ fn use_color(color: ColorWhen) {
 /// Each message is a [`text::block`]. The status lines go to stderr
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). On a new binary, it runs it
 /// (01M3MNVTC248YYJJQKFD9H1WY9).
-async fn tail(api: &Api, thread: &ThreadName, color: ColorWhen) {
+async fn tail(api: &Api, thread: &ThreadName, here: &Place, color: ColorWhen) {
     use_color(color);
     tokio::select! {
         () = tail_each(api, thread) => {}
-        () = binary::follow_update() => {}
+        () = binary::follow_update(here) => {}
     }
 }
 
@@ -1552,7 +1557,7 @@ async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     tokio::select! {
         () = print_each(stream, text::wake_line, once) => {}
         () = left => println!("{}", text::WATCH_LEFT),
-        () = binary::follow_update() => {}
+        () = binary::follow_update(me.place()) => {}
     }
 }
 

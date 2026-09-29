@@ -11,6 +11,10 @@
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
 //! | worktree | The directory name of a linked worktree. The main worktree has none. |
 //!
+//! After an update, a long run gives its place to its new binary in
+//! [`PLACE_ARG`]. The new binary takes host, owner/repo and worktree
+//! from there, not from the rules above (see [`here`]).
+//!
 //! Outside git, the repository part is `-` and the worktree part is the
 //! directory name. Each part goes through
 //! [`riff_core::name::sanitize`].
@@ -30,7 +34,8 @@
 //! is `riff://USER@HOST` (R65). The directory still gives the default
 //! thread.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
@@ -168,6 +173,109 @@ pub fn session(place: &Place, server: &str) -> Result<SessionUri> {
         );
     }
     Ok(me)
+}
+
+/// The hidden argument that gives a new binary the place of the process
+/// that ran it after an update (01M3NJGD45GF7Y4CZWQ7GRDHZN). Only riff
+/// gives it. A process that the new binary starts does not inherit it.
+pub const PLACE_ARG: &str = "--place";
+
+/// The place of this process: `given` in [`PLACE_ARG`], else the place
+/// of the working directory. So a long run keeps its repository and
+/// worktree over an update, also when its directory is gone.
+pub fn here(given: Option<&Place>) -> Result<Place> {
+    match given {
+        Some(place) => Ok(place.clone()),
+        None => place(&working_dir()?),
+    }
+}
+
+/// `place` as the text of [`PLACE_ARG`]: `HOST/OWNER/REPO#WORKTREE`, or
+/// `HOST/-` outside git. [`place_from_text`] reads it back.
+///
+/// ```
+/// use riff::identity::{place_from_text, place_text};
+/// use riff_core::name::{Place, Repo};
+///
+/// let repo = Repo::Git { owner: "acme".into(), name: "alpha".into() };
+/// for place in [
+///     Place::new("thelio", repo.clone(), Some("issue-12"))?,
+///     Place::new("thelio", repo, None)?,
+///     Place::new("thelio", Repo::None, Some("scratch"))?,
+///     Place::host_only("thelio")?,
+/// ] {
+///     let text = place_text(&place);
+///     assert_eq!(place_from_text(&text)?, place, "{text}");
+/// }
+/// assert_eq!(place_text(&place_from_text("thelio/acme/alpha#issue-12")?), "thelio/acme/alpha#issue-12");
+/// assert!(place_from_text("thelio").is_err());
+/// assert!(place_from_text("thelio/acme").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn place_text(place: &Place) -> String {
+    let worktree = place
+        .worktree()
+        .map(|w| format!("#{w}"))
+        .unwrap_or_default();
+    format!("{}/{}{worktree}", place.host(), place.repo_text())
+}
+
+/// The place in the text of [`place_text`].
+pub fn place_from_text(text: &str) -> Result<Place> {
+    let (rest, worktree) = match text.split_once('#') {
+        Some((rest, worktree)) => (rest, Some(worktree)),
+        None => (text, None),
+    };
+    let Some((host, repo)) = rest.split_once('/') else {
+        bail!("no repository part");
+    };
+    let repo = match repo {
+        "-" => Repo::None,
+        repo => {
+            let Some((owner, name)) = repo.split_once('/') else {
+                bail!("the repository is not OWNER/REPO");
+            };
+            Repo::Git {
+                owner: owner.into(),
+                name: name.into(),
+            }
+        }
+    };
+    Ok(Place::new(host, repo, worktree)?)
+}
+
+/// The working directory of this process. When riff cannot read it, for
+/// example because another process removed it, the error names it: see
+/// [`working_dir_error`] (01M3NJGD6H8DNVHHHG80F9YFCE).
+pub fn working_dir() -> Result<PathBuf> {
+    std::env::current_dir().map_err(|e| working_dir_error(e, std::env::var_os("PWD")))
+}
+
+/// The error of [`working_dir`] for `error`, with the directory from
+/// `PWD`.
+///
+/// ```
+/// use std::io::Error;
+/// use riff::identity::working_dir_error;
+///
+/// // ENOENT, as getcwd gives it for a removed directory.
+/// let gone = || Error::from_raw_os_error(2);
+/// let e = working_dir_error(gone(), Some("/src/riff/.claude/worktrees/w".into()));
+/// let text = format!("{e:#}");
+/// assert!(text.starts_with("riff cannot read its working directory \
+///     /src/riff/.claude/worktrees/w. Change to a directory that exists"), "{text}");
+/// assert!(text.contains("No such file or directory"), "{text}");
+/// let e = working_dir_error(gone(), None);
+/// assert!(format!("{e:#}").starts_with("riff cannot read its working directory. Change"));
+/// ```
+pub fn working_dir_error(error: std::io::Error, pwd: Option<OsString>) -> anyhow::Error {
+    let dir = pwd
+        .filter(|p| !p.is_empty())
+        .map(|p| format!(" {}", p.to_string_lossy()))
+        .unwrap_or_default();
+    anyhow::Error::new(error).context(format!(
+        "riff cannot read its working directory{dir}. Change to a directory that exists"
+    ))
 }
 
 /// The place for `dir`, with the host from the environment.
@@ -314,6 +422,18 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_working_dir_error_keeps_its_cause_and_skips_an_empty_pwd() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let e = working_dir_error(denied, Some("".into()));
+        assert_eq!(
+            e.to_string(),
+            "riff cannot read its working directory. Change to a directory that exists"
+        );
+        let cause = e.downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(cause.kind(), std::io::ErrorKind::PermissionDenied);
+    }
 
     #[test]
     fn remotes_parse_in_both_forms() {
