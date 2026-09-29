@@ -1617,9 +1617,8 @@ riff top --once
 ```
 
 ```text
-mike@thelio:riff (9c0d)  live  worker  riff://mike@thelio/...
-       idle 6m
-       status 20m ago (stale): tests
+SESSION                  STATE  ROLE    CLAIMS  STATUS
+mike@thelio:riff (9c0d)  live   worker          idle 6m  stale 20m: tests
 ```
 
 ### Set your status
