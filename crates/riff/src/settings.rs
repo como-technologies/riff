@@ -9,11 +9,15 @@
 //! ```toml
 //! [workers]
 //! limit = 2
+//!
+//! [update]
+//! auto = true
 //! ```
 //!
 //! | Key | Default | Meaning |
 //! |---|---|---|
 //! | `workers.limit` | 0 | The most workers that `riff workers start` runs on this machine (01M3JPQT35BMR7XMAMMFSCDC2B). |
+//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). |
 
 use std::path::{Path, PathBuf};
 
@@ -88,14 +92,45 @@ pub fn workers_limit(path: &Path) -> Result<u16> {
 
 /// Sets the most workers on this machine. It keeps each other key.
 pub fn set_workers_limit(path: &Path, limit: u16) -> Result<()> {
-    let mut doc = read(path)?;
-    if !doc.contains_key("workers") {
-        doc["workers"] = toml_edit::table();
-    }
-    let Some(workers) = doc["workers"].as_table_mut() else {
-        bail!("workers in {} is not a table", path.display());
+    set(path, "workers", "limit", value(i64::from(limit)))
+}
+
+/// True when riff updates itself on this machine: `update.auto`. False
+/// when the file or the key is missing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert!(!riff::settings::update_auto(&path)?);
+/// riff::settings::set_update_auto(&path, true)?;
+/// assert!(riff::settings::update_auto(&path)?);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn update_auto(path: &Path) -> Result<bool> {
+    let doc = read(path)?;
+    let Some(auto) = doc.get("update").and_then(|u| u.get("auto")) else {
+        return Ok(false);
     };
-    workers["limit"] = value(i64::from(limit));
+    auto.as_bool()
+        .with_context(|| format!("update.auto in {} is not true or false", path.display()))
+}
+
+/// Sets `update.auto`. It keeps each other key.
+pub fn set_update_auto(path: &Path, auto: bool) -> Result<()> {
+    set(path, "update", "auto", value(auto))
+}
+
+/// Sets `key` in the table `table`, and writes the file. It keeps each
+/// other key and each comment.
+fn set(path: &Path, table: &str, key: &str, item: toml_edit::Item) -> Result<()> {
+    let mut doc = read(path)?;
+    if !doc.contains_key(table) {
+        doc[table] = toml_edit::table();
+    }
+    let Some(t) = doc[table].as_table_mut() else {
+        bail!("{table} in {} is not a table", path.display());
+    };
+    t[key] = item;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     }
@@ -141,5 +176,26 @@ mod tests {
         assert!(workers_limit(&path).is_err());
         std::fs::write(&path, "workers = 3\n").unwrap();
         assert!(set_workers_limit(&path, 1).is_err());
+    }
+
+    #[test]
+    fn update_auto_keeps_the_workers_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        set_workers_limit(&path, 2).unwrap();
+        set_update_auto(&path, true).unwrap();
+        set_update_auto(&path, false).unwrap();
+        assert_eq!(workers_limit(&path).unwrap(), 2);
+        assert!(!update_auto(&path).unwrap());
+    }
+
+    #[test]
+    fn a_bad_update_auto_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[update]\nauto = \"yes\"\n").unwrap();
+        assert!(update_auto(&path).is_err());
+        std::fs::write(&path, "update = 1\n").unwrap();
+        assert!(set_update_auto(&path, true).is_err());
     }
 }

@@ -234,6 +234,16 @@ enum Command {
         /// that the riff runs.
         #[arg(long, value_parser = lifecycle::parse_tag)]
         tag: Option<String>,
+        /// Turn the update by itself on or off for this machine, and
+        /// install nothing now. When it is on, riff installs each new
+        /// release that the riff runs, in the background. With no value,
+        /// show the setting.
+        #[arg(long, value_enum, conflicts_with_all = ["tag", "background"])]
+        auto: Option<Option<Switch>>,
+        /// Run as the update by itself: take the update lock of this
+        /// machine, and tell the lead the result.
+        #[arg(long, hide = true, requires = "tag")]
+        background: bool,
         /// The cargo command.
         #[arg(long, default_value = "cargo")]
         cargo: std::path::PathBuf,
@@ -248,6 +258,13 @@ enum Command {
         #[command(subcommand)]
         command: Option<Workers>,
     },
+}
+
+/// On or off.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Switch {
+    On,
+    Off,
 }
 
 #[derive(Subcommand)]
@@ -368,7 +385,25 @@ async fn main() -> Result<()> {
         println!("{}", text::server_view(&view));
         return Ok(());
     }
-    if let Command::Update { tag, cargo, claude } = &cli.command {
+    if let Command::Update {
+        tag,
+        auto,
+        background,
+        cargo,
+        claude,
+    } = &cli.command
+    {
+        if let Some(auto) = auto {
+            let path = settings::path()?;
+            if let Some(switch) = auto {
+                settings::set_update_auto(&path, matches!(switch, Switch::On))?;
+            }
+            println!("{}", text::auto_update(settings::update_auto(&path)?));
+            return Ok(());
+        }
+        if let (true, Some(tag)) = (background, tag) {
+            return riff::auto_update::run(cargo, claude, tag, &cli.server, DEFAULT_SERVER).await;
+        }
         println!(
             "{}",
             lifecycle::update(cargo, claude, tag.as_deref(), &cli.server, DEFAULT_SERVER).await?

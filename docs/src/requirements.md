@@ -1435,6 +1435,28 @@
   no git. It gets the commit and its time as `RIFF_COMMIT` and
   `RIFF_COMMIT_TIME` from `deploy/build-id.sh`, which uses the same
   git command as the build of `riff`.
+- **01M3N7JJC5WQBJ7SJZSZNBAVVR** `riff update --auto on` and
+  `riff update --auto off` set `update.auto` in the settings of the
+  machine, and install nothing. The default is off. `riff update
+  --auto` with no value shows the setting.
+- **01M3N7JJEKZMN1E5NJQRK2QYVB** With `update.auto = true`, when a
+  `riff` process gets a reply from a `riff-server` of a newer version
+  than its own, it starts `riff update --tag vX.Y.Z` of the release of
+  that server in the background, and prints one note. It never
+  installs an older release. With `update.auto = false`, it starts
+  nothing, and the note to update stays.
+- **01M3N7JJH0SXXQYYBAHWPCNQGX** One update in the background runs at
+  a time on a machine. It tries each release once: many processes
+  that see the same release start one update, and a failed release
+  waits for the next release.
+- **01M3N7JJKBME6VSNTHD8VPN3K9** After an update in the background,
+  the lead of the user gets one direct message from the person: the
+  host, the old release and the new release. After a failed update,
+  the message holds the error, and the old binaries stay.
+- **01M3N7JJNPPJNTXFDTEY4MSDVJ** An update in the background stops no
+  session, and changes no sign-in and no device key. The sessions take
+  the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9 and
+  01M3MNVTE6GAK4WRSCFGYVS0BE say.
 
 ## Code
 

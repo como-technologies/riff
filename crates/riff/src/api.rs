@@ -81,7 +81,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
-use crate::{device, login, secrets, text};
+use crate::{auto_update, device, login, secrets, text};
 
 /// A change of the members that `riff-server` made, and the posts of
 /// its note (01M3MN14ZCTRVD3T455P6TFK1B). The change stands also when
@@ -543,7 +543,7 @@ impl Api {
                 .await
                 .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
             if check == Check::Build {
-                check_build(&response)?;
+                check_build(&self.base, &response)?;
             }
             if response.status() == reqwest::StatusCode::UNAUTHORIZED
                 && again
@@ -1063,10 +1063,14 @@ pub fn server_build() -> Option<Build> {
 /// cannot talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T).
 /// The error is a [`Mismatch`]. Another build that it can talk to goes
 /// on, with one note on stderr for each process
-/// (01M3MX1E8M9TKBN90P4DYKH3H8).
-fn check_build(response: &reqwest::Response) -> Result<()> {
+/// (01M3MX1E8M9TKBN90P4DYKH3H8). A newer release at `base` can start
+/// the update of riff by itself ([`auto_update::begin`]).
+fn check_build(base: &str, response: &reqwest::Response) -> Result<()> {
     let this = Build::this();
     let server = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
+    if let Some(server) = &server {
+        auto_update::begin(base, server);
+    }
     match server {
         Some(server) if build::compatible(&this, &server) => {
             if !server.matches(&this) && !NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
