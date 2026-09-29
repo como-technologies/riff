@@ -423,6 +423,106 @@ async fn tail_and_watch_run_the_new_binary() {
     }
 }
 
+/// Puts a copy of `from` at `to` as `cargo install` does: a new file
+/// beside it, then a rename.
+fn install(from: &Path, to: &Path) {
+    let stage = to.with_extension("stage");
+    by_child(Command::new("cp").arg(from).arg(&stage));
+    std::fs::rename(&stage, to).unwrap();
+}
+
+/// A watch whose working directory is gone at an update runs the new
+/// riff in the nearest parent that exists, and keeps watching: the next
+/// post wakes it (01M3NJGD45GF7Y4CZWQ7GRDHZN). The update goes as
+/// `riff update` does it: riff, then riff-server, then
+/// `riff connect claude`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_watch_in_a_removed_worktree_runs_the_new_riff_and_keeps_watching() {
+    let url = real(Build::this()).await;
+    let root = tempfile::tempdir().unwrap();
+    let (bin, data) = (root.path().join("bin"), root.path().join("data"));
+    let worktrees = root.path().join("repo/.claude/worktrees");
+    let worktree = worktrees.join("issue-12");
+    for dir in [&bin, &data, &worktree] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let isolated = Isolated::shared();
+    install(&isolated.riff_path(), &bin.join("riff"));
+    install(&isolated.riff_server_path(), &bin.join("riff-server"));
+    let mut watch = riff_at(&bin.join("riff"), &url, &worktree, &["watch", "--once"]);
+    watch.env("RIFF_HOME", root.path());
+    let (mut child, out, err) = spawn(watch, root.path());
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(child.try_wait().unwrap().is_none(), "{}", read(&err));
+
+    std::fs::remove_dir(&worktree).unwrap();
+    install(&isolated.riff_path(), &bin.join("riff"));
+    install(&isolated.riff_server_path(), &bin.join("riff-server"));
+    let claude = root.path().join("claude");
+    by_child(
+        Command::new("sh")
+            .args([
+                "-c",
+                "printf '#!/bin/sh\\nexit 0\\n' > \"$0\" && chmod 755 \"$0\"",
+            ])
+            .arg(&claude),
+    );
+    let mut connect = riff_at(&bin.join("riff"), &url, root.path(), &["connect", "claude"]);
+    connect
+        .arg("--claude")
+        .arg(&claude)
+        .env("XDG_DATA_HOME", &data)
+        .env("HOME", &data)
+        .env_remove("CLAUDE_CONFIG_DIR");
+    let connected = run(connect).await;
+    assert!(connected.status.success(), "{}", text(&connected.stderr));
+
+    let moved = format!(
+        "riff: the working directory {} is gone. The new riff runs in {}.",
+        worktree.display(),
+        worktrees.display()
+    );
+    let ran = wait_for(Duration::from_secs(10), || read(&err).contains(&moved)).await;
+    assert!(ran, "{}", read(&err));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "the new riff stopped: {}",
+        read(&err)
+    );
+
+    let mut tell = riff(&url, root.path(), &["tell", "b2", "wake up"]);
+    tell.env("RIFF_SESSION", "a1").env("RIFF_HOME", &data);
+    let told = run(tell).await;
+    assert!(told.status.success(), "{}", text(&told.stderr));
+    let woke = wait_for(Duration::from_secs(10), || !read(&out).is_empty()).await;
+    let _ = (child.kill(), child.wait());
+    assert!(woke, "no wake: {}", read(&err));
+    assert!(!read(&err).contains("No such file"), "{}", read(&err));
+}
+
+/// riff in a removed working directory names it in the error
+/// (01M3NJGD6H8DNVHHHG80F9YFCE).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_error_names_a_removed_working_directory() {
+    let url = real(Build::this()).await;
+    let root = tempfile::tempdir().unwrap();
+    let gone = root.path().join("issue-12");
+    std::fs::create_dir(&gone).unwrap();
+    let mut cmd = riff_at(Path::new("sh"), &url, root.path(), &["-c"]);
+    cmd.arg("cd \"$0\" && rmdir \"$0\" && exec \"$1\" whoami")
+        .arg(&gone)
+        .arg(Isolated::shared().riff_path());
+    let out = run(cmd).await;
+    let err = text(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    let named = format!(
+        "riff cannot read its working directory {}. Change to a directory that exists",
+        gone.display()
+    );
+    assert!(err.contains(&named), "{err}");
+}
+
 /// The error links to the book part that tells how to update, and the
 /// book shows how to see the build.
 #[test]

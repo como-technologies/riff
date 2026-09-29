@@ -176,7 +176,25 @@ riff update
 ```
 
 `riff watch` and `riff tail` see the new `riff` on disk, and run it.
-They go on with no restart.
+They go on with no restart. When their directory is gone, for example
+a worktree that you removed, the new `riff` runs in the nearest parent
+directory that exists.
+
+### When riff cannot read its directory
+
+A `riff` command in a removed directory fails. The error names the
+directory:
+
+```text
+Error: riff cannot read its working directory /src/riff/.claude/worktrees/issue-12. Change to a directory that exists
+```
+
+Change to a directory that exists, for example your repository, and
+run the command again:
+
+```sh
+cd ~/src/riff
+```
 
 `riff mcp` cannot run the new `riff` by itself. At its next tool call,
 it tells the session to reconnect, and stops. Claude Code does not

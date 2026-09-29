@@ -30,7 +30,8 @@
 //! is `riff://USER@HOST` (R65). The directory still gives the default
 //! thread.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
@@ -168,6 +169,40 @@ pub fn session(place: &Place, server: &str) -> Result<SessionUri> {
         );
     }
     Ok(me)
+}
+
+/// The working directory of this process. When riff cannot read it, for
+/// example because another process removed it, the error names it: see
+/// [`working_dir_error`] (01M3NJGD6H8DNVHHHG80F9YFCE).
+pub fn working_dir() -> Result<PathBuf> {
+    std::env::current_dir().map_err(|e| working_dir_error(e, std::env::var_os("PWD")))
+}
+
+/// The error of [`working_dir`] for `error`, with the directory from
+/// `PWD`.
+///
+/// ```
+/// use std::io::Error;
+/// use riff::identity::working_dir_error;
+///
+/// // ENOENT, as getcwd gives it for a removed directory.
+/// let gone = || Error::from_raw_os_error(2);
+/// let e = working_dir_error(gone(), Some("/src/riff/.claude/worktrees/w".into()));
+/// let text = format!("{e:#}");
+/// assert!(text.starts_with("riff cannot read its working directory \
+///     /src/riff/.claude/worktrees/w. Change to a directory that exists"), "{text}");
+/// assert!(text.contains("No such file or directory"), "{text}");
+/// let e = working_dir_error(gone(), None);
+/// assert!(format!("{e:#}").starts_with("riff cannot read its working directory. Change"));
+/// ```
+pub fn working_dir_error(error: std::io::Error, pwd: Option<OsString>) -> anyhow::Error {
+    let dir = pwd
+        .filter(|p| !p.is_empty())
+        .map(|p| format!(" {}", p.to_string_lossy()))
+        .unwrap_or_default();
+    anyhow::Error::new(error).context(format!(
+        "riff cannot read its working directory{dir}. Change to a directory that exists"
+    ))
 }
 
 /// The place for `dir`, with the host from the environment.
@@ -314,6 +349,18 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_working_dir_error_keeps_its_cause_and_skips_an_empty_pwd() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let e = working_dir_error(denied, Some("".into()));
+        assert_eq!(
+            e.to_string(),
+            "riff cannot read its working directory. Change to a directory that exists"
+        );
+        let cause = e.downcast_ref::<std::io::Error>().unwrap();
+        assert_eq!(cause.kind(), std::io::ErrorKind::PermissionDenied);
+    }
 
     #[test]
     fn remotes_parse_in_both_forms() {
