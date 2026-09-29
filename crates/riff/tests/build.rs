@@ -195,7 +195,10 @@ async fn wait_for(limit: Duration, test: impl Fn() -> bool) -> bool {
 async fn each_call_fails(server: Option<Build>, step: &str) {
     let url = fake(server.clone()).await;
     let dir = tempfile::tempdir().unwrap();
-    let theirs = server.map_or("an older build".into(), |b| b.to_string());
+    let theirs = server.map_or(
+        format!("no riff build in the reply: status 200 OK from {url}/v1/"),
+        |b| b.to_string(),
+    );
     for args in [
         &["read"][..],
         &["post", "--thread", "t", "hi"],
@@ -802,10 +805,85 @@ fn the_book_shows_the_real_notes_and_error() {
         Mismatch {
             riff: Some(b("0.2.0 929605821e54 2026-09-27T22:03:01Z")),
             server: Some(b("0.4.0 7213825ab1c2 2026-09-28T20:10:44Z")),
+            seen: None,
         }
         .to_string(),
     ] {
         let block = format!("```text\nriff: {text}\n```");
         assert!(book.contains(&block), "the book has no {block}");
+    }
+}
+
+/// A real riff-server behind a front end that answers the first `fails`
+/// calls with `status` and no build header, as Cloud Run does while it
+/// moves an instance (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+async fn behind_a_front_end(fails: usize, status: axum::http::StatusCode) -> String {
+    let left = Arc::new(std::sync::atomic::AtomicUsize::new(fails));
+    let router = riff_server::router().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let fail = left
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok();
+            async move {
+                if fail {
+                    status.into_response()
+                } else {
+                    next.run(request).await
+                }
+            }
+        },
+    ));
+    serve(router).await
+}
+
+/// A 5xx or 429 of the front end with no build is an outage, not a
+/// version error: riff tries again, and the call works
+/// (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_front_end_error_with_no_build_is_tried_again() {
+    use axum::http::StatusCode;
+    for status in [
+        StatusCode::BAD_GATEWAY,
+        StatusCode::GATEWAY_TIMEOUT,
+        StatusCode::TOO_MANY_REQUESTS,
+    ] {
+        let url = behind_a_front_end(3, status).await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = run(riff(&url, dir.path(), &["who"])).await;
+        let err = text(&out.stderr);
+        assert!(out.status.success(), "{status}: {err}");
+        assert!(!err.contains("do not match"), "{status}: {err}");
+    }
+}
+
+/// A reply with no build that is not an outage is still a version
+/// error: a 200 or a 404 comes from an old server. The error names the
+/// status and the URL (01M3MX1E65XGWDZ062PQ9YXQ5T,
+/// 01M3QCMJ9F1GRTRRSB4AW9TC3D).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_success_or_client_error_with_no_build_is_still_a_mismatch() {
+    use axum::http::StatusCode;
+    let me: riff_core::name::SessionUri = "riff://brett@heron/como-technologies/riff?session=b2"
+        .parse()
+        .unwrap();
+    for status in [StatusCode::OK, StatusCode::NOT_FOUND] {
+        let router = axum::Router::new().fallback(move || async move { (status, "{}") });
+        let api = riff::api::Api::new(&serve(router).await);
+        let error = api.who(&me, false).await.unwrap_err();
+        let mismatch = error.downcast_ref::<riff_core::build::Mismatch>();
+        assert!(
+            mismatch.is_some_and(|m| m.server.is_none()),
+            "{status}: {error:#}"
+        );
+        // The text says what riff saw: the status and the URL.
+        let seen = format!(
+            "no riff build in the reply: status {status} from {}/v1/who",
+            api.base()
+        );
+        assert!(error.to_string().contains(&seen), "{seen}: {error:#}");
+        assert!(
+            error.to_string().contains("Update riff-server"),
+            "{error:#}"
+        );
     }
 }

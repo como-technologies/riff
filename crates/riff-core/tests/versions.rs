@@ -45,6 +45,7 @@ fn riff_0_2_0_and_riff_server_0_4_0_refuse_with_the_error_and_the_link() {
     let error = Mismatch {
         riff: Some(riff),
         server: Some(server),
+        seen: None,
     }
     .to_string();
     assert_eq!(

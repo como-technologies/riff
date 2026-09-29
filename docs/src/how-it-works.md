@@ -264,6 +264,10 @@ Each `riff` command fails with an error like this one:
 riff: this riff (0.2.0 929605821e54 2026-09-27T22:03:01Z) and its riff-server (0.4.0 7213825ab1c2 2026-09-28T20:10:44Z) do not match. riff-server 0.4 talks only with riff 0.4 and 0.3. Update riff on this machine, then start your sessions again. See https://como-technologies.github.io/riff/how-it-works.html#when-the-versions-do-not-match
 ```
 
+A reply with no build names what riff saw in place of the build of
+riff-server, for example
+`no riff build in the reply: status 200 OK from https://…/v1/who`.
+
 A new session gets the same error at its start. It tells you, and it
 does not use the riff. `riff watch` and `riff tail` print the error
 once, try again every 5 seconds, and go on when the versions can
@@ -1988,6 +1992,11 @@ sequenceDiagram
 
 `riff` tries each call again while the server replies 503. A deploy
 stops riff for less than one minute.
+
+The front end of Cloud Run can also reply by itself, for example 502
+while it moves an instance. Such a reply has no `riff-build` header.
+`riff` tries the call again in the same way. It does not show a
+version error for it.
 
 ## Run the lead and its workers in tmux
 

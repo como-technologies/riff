@@ -89,7 +89,12 @@ impl Client {
 
     /// The next line of stdout that contains `text`.
     async fn shows(&mut self, text: &str) -> String {
-        let deadline = Instant::now() + WAIT;
+        self.shows_within(text, WAIT).await
+    }
+
+    /// The next line of stdout that contains `text`, within `wait`.
+    async fn shows_within(&mut self, text: &str, wait: Duration) -> String {
+        let deadline = Instant::now() + wait;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             let line = tokio::time::timeout(left, self.stdout.next_line())
@@ -855,4 +860,83 @@ async fn a_cut_stream_shows_no_error_in_tail() {
         warned.push(line);
     }
     assert!(warned.is_empty(), "{warned:?}");
+}
+
+/// A riff server behind a front end. While `down` is true, the front
+/// end answers each call with 502 and no build header, as Cloud Run
+/// does while it moves an instance (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+async fn behind_a_front_end(down: Arc<std::sync::atomic::AtomicBool>) -> String {
+    let router = riff_server::router().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let down = down.load(std::sync::atomic::Ordering::SeqCst);
+            async move {
+                if down {
+                    axum::response::IntoResponse::into_response(axum::http::StatusCode::BAD_GATEWAY)
+                } else {
+                    next.run(request).await
+                }
+            }
+        },
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{addr}")
+}
+
+/// A 502 of the front end with no build is no version error: the chat
+/// starts, and after a cut it connects again and goes on, with no error
+/// on stderr (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+#[tokio::test]
+async fn a_front_end_error_with_no_build_is_no_version_error() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let down = Arc::new(AtomicBool::new(true));
+    let front = behind_a_front_end(Arc::clone(&down)).await;
+    let proxy = Proxy::start(&front).await;
+    let behind = Api::new(&proxy.url);
+    let direct = Api::new(&front);
+
+    // The front end is down at the start: the chat waits and starts.
+    let up = {
+        let down = Arc::clone(&down);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            down.store(false, Ordering::SeqCst);
+        })
+    };
+    let mut mike = Client::start(&behind, "mike", "thelio", &[]).await;
+    up.await.unwrap();
+    let (lead, chat) = (lead_of("mike"), riff::chat::thread());
+    direct
+        .post(&lead, Some(&chat), &[], "before the outage", Kind::Message)
+        .await
+        .unwrap();
+    mike.shows("before the outage").await;
+
+    // The stream ends while the front end is down.
+    down.store(true, Ordering::SeqCst);
+    proxy.cut(true);
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    down.store(false, Ordering::SeqCst);
+    direct
+        .post(&lead, Some(&chat), &[], "after the outage", Kind::Message)
+        .await
+        .unwrap();
+    // A dead connection in the pool can add one wait of `follow`.
+    mike.shows_within("after the outage", 3 * WAIT).await;
+
+    mike.say("/quit").await;
+    let status = tokio::time::timeout(WAIT, mike.child.wait()).await;
+    assert!(status.unwrap().unwrap().success());
+    let mut warned = Vec::new();
+    while let Ok(Some(line)) = mike.stderr.next_line().await {
+        warned.push(line);
+    }
+    // At most the short lines of a cut: no version error.
+    assert!(
+        warned
+            .iter()
+            .all(|l| l == riff::api::RECONNECTING || l == riff::api::BACK),
+        "{warned:?}"
+    );
 }

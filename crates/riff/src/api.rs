@@ -57,6 +57,10 @@
 //!
 //! - While the server replies 503, the client sends the request again,
 //!   for up to [`BUSY_LIMIT`] (R132). See [`busy_waits`].
+//! - A 5xx or 429 reply with no build header comes from the front end, not
+//!   from `riff-server`. The client sends the request again in the same
+//!   way, and never reads it as another build
+//!   (01M3QCMJ9F1GRTRRSB4AW9TC3D). See [`outage`].
 //! - [`follow`] opens a stream again each time it ends (R131). `riff
 //!   watch` and `riff tail` use it.
 
@@ -621,7 +625,9 @@ impl Api {
 
     /// Sends a request to one path. `body` adds the rest to the request.
     /// While the server replies 503, it waits and sends a new request,
-    /// with a new proof (R132). See [`busy_waits`]. After a 401 to a
+    /// with a new proof (R132). See [`busy_waits`]. An outage of the
+    /// front end ([`is_outage`]) waits the same way, before the check of
+    /// the build (01M3QCMJ9F1GRTRRSB4AW9TC3D). After a 401 to a
     /// token, it sends the request once more with a new token
     /// (01M3MX4VCEBTY0DN4JMF624WYE).
     async fn send_with(
@@ -640,6 +646,17 @@ impl Api {
                 .send()
                 .await
                 .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            if is_outage(&response) {
+                let Some(wait) = waits.next() else {
+                    bail!(
+                        "riff-server at {} does not answer: its front end replied {}",
+                        self.base,
+                        response.status()
+                    );
+                };
+                tokio::time::sleep(wait).await;
+                continue;
+            }
             if check == Check::Build {
                 check_build(&self.base, &response)?;
             }
@@ -1198,8 +1215,41 @@ pub fn server_build() -> Option<Build> {
     SERVER_BUILD.lock().ok()?.clone()
 }
 
+/// True when a reply comes from the front end, not from `riff-server`:
+/// its status is 5xx or 429 and it names no build, for example a 502 of
+/// Cloud Run while it moves an instance. It is a short outage, not another
+/// build (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+///
+/// ```
+/// use riff::api::outage;
+/// use reqwest::StatusCode;
+///
+/// assert!(outage(StatusCode::BAD_GATEWAY, false));
+/// assert!(outage(StatusCode::SERVICE_UNAVAILABLE, false));
+/// assert!(outage(StatusCode::GATEWAY_TIMEOUT, false));
+/// assert!(outage(StatusCode::TOO_MANY_REQUESTS, false));
+/// // A reply of riff-server names its build.
+/// assert!(!outage(StatusCode::BAD_GATEWAY, true));
+/// // Another 2xx or 4xx with no build is an old server.
+/// assert!(!outage(StatusCode::OK, false));
+/// assert!(!outage(StatusCode::NOT_FOUND, false));
+/// ```
+pub fn outage(status: reqwest::StatusCode, has_build: bool) -> bool {
+    (status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS) && !has_build
+}
+
+/// [`outage`] for a reply.
+fn is_outage(response: &reqwest::Response) -> bool {
+    outage(
+        response.status(),
+        response.headers().contains_key(build::HEADER),
+    )
+}
+
 /// Refuses a reply of a `riff-server` of a version that this `riff`
 /// cannot talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T).
+/// For a reply with no build, the error names its status and URL
+/// (01M3QCMJ9F1GRTRRSB4AW9TC3D).
 /// The error is a [`Mismatch`]. Another build that it can talk to goes
 /// on, with one note on stderr for each process
 /// (01M3MX1E8M9TKBN90P4DYKH3H8). A newer release at `base` can start
@@ -1220,11 +1270,17 @@ fn check_build(base: &str, response: &reqwest::Response) -> Result<()> {
             }
             Ok(())
         }
-        server => Err(Mismatch {
-            riff: Some(this),
-            server,
+        server => {
+            let seen = server
+                .is_none()
+                .then(|| format!("status {} from {}", response.status(), response.url()));
+            Err(Mismatch {
+                riff: Some(this),
+                server,
+                seen,
+            }
+            .into())
         }
-        .into()),
     }
 }
 

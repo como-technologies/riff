@@ -327,6 +327,10 @@ pub struct Mismatch {
     pub riff: Option<Build>,
     /// The build of `riff-server`.
     pub server: Option<Build>,
+    /// What `riff` saw of a reply that named no build: its status and
+    /// URL, for example `status 200 OK from http://127.0.0.1:7878/v1/who`
+    /// (01M3QCMJ9F1GRTRRSB4AW9TC3D). `None` on the side of the server.
+    pub seen: Option<String>,
 }
 
 impl Mismatch {
@@ -337,7 +341,7 @@ impl Mismatch {
     /// use riff_core::build::{Build, Mismatch, Side};
     ///
     /// let b = |v: &str| Some(Build { version: v.into(), ..Build::this() });
-    /// let m = |riff, server| Mismatch { riff, server }.older();
+    /// let m = |riff, server| Mismatch { riff, server, seen: None }.older();
     /// assert_eq!(m(b("0.2.0"), b("0.4.0")), Side::Riff);
     /// assert_eq!(m(b("0.4.0"), b("0.3.2")), Side::Server);
     /// assert_eq!(m(b("0.4.0"), None), Side::Server);
@@ -369,6 +373,7 @@ impl fmt::Display for Mismatch {
     /// let m = Mismatch {
     ///     riff: Some("0.2.0 bbbb 2026-09-27T11:00:00Z".parse().unwrap()),
     ///     server: Some("0.4.0 aaaa 2026-09-28T11:00:00Z".parse().unwrap()),
+    ///     seen: None,
     /// };
     /// assert_eq!(
     ///     m.to_string(),
@@ -377,20 +382,33 @@ impl fmt::Display for Mismatch {
     ///      0.3. Update riff on this machine, then start your sessions again. See \
     ///      https://como-technologies.github.io/riff/how-it-works.html#when-the-versions-do-not-match"
     /// );
-    /// let old = Mismatch { riff: m.riff.clone(), server: None };
+    /// let old = Mismatch { riff: m.riff.clone(), server: None, seen: None };
     /// assert!(old.to_string().contains("riff-server (an older build)"), "{old}");
     /// assert!(old.to_string().contains("Update riff-server"), "{old}");
+    /// // riff names what it saw of a reply with no build.
+    /// let seen = Some("status 200 OK from http://127.0.0.1:7878/v1/who".to_string());
+    /// let old = Mismatch { seen, ..old };
+    /// assert!(
+    ///     old.to_string().contains(
+    ///         "its riff-server (no riff build in the reply: status 200 OK from \
+    ///          http://127.0.0.1:7878/v1/who) do not match"
+    ///     ),
+    ///     "{old}"
+    /// );
     /// ```
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = |b: &Option<Build>| match b {
             Some(b) => b.to_string(),
             None => "an older build".into(),
         };
+        let server = match (&self.server, &self.seen) {
+            (None, Some(seen)) => format!("no riff build in the reply: {seen}"),
+            (server, _) => name(server),
+        };
         write!(
             f,
-            "this riff ({}) and its riff-server ({}) do not match. ",
+            "this riff ({}) and its riff-server ({server}) do not match. ",
             name(&self.riff),
-            name(&self.server)
         )?;
         if let Some(s) = self.server.as_ref().and_then(Build::semver) {
             let line = s.line();
