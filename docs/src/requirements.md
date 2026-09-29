@@ -1835,7 +1835,8 @@
   After the last try, the error is a plain error, not a version
   error. So `riff chat`, `riff tail`, `riff watch` and `riff mcp` go
   on quietly. A reply with another status and no build header is
-  still a version error.
+  still a version error. Its text names the status and the URL of the
+  reply.
 - **01M3MNVT9TYNXZ8V845BHKQADV** Replaced by
   01M3MX1E8M9TKBN90P4DYKH3H8.
 - **01M3MX1E8M9TKBN90P4DYKH3H8** With another build that it can talk

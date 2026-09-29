@@ -1248,6 +1248,8 @@ fn is_outage(response: &reqwest::Response) -> bool {
 
 /// Refuses a reply of a `riff-server` of a version that this `riff`
 /// cannot talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T).
+/// For a reply with no build, the error names its status and URL
+/// (01M3QCMJ9F1GRTRRSB4AW9TC3D).
 /// The error is a [`Mismatch`]. Another build that it can talk to goes
 /// on, with one note on stderr for each process
 /// (01M3MX1E8M9TKBN90P4DYKH3H8). A newer release at `base` can start
@@ -1268,11 +1270,17 @@ fn check_build(base: &str, response: &reqwest::Response) -> Result<()> {
             }
             Ok(())
         }
-        server => Err(Mismatch {
-            riff: Some(this),
-            server,
+        server => {
+            let seen = server
+                .is_none()
+                .then(|| format!("status {} from {}", response.status(), response.url()));
+            Err(Mismatch {
+                riff: Some(this),
+                server,
+                seen,
+            }
+            .into())
         }
-        .into()),
     }
 }
 

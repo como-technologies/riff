@@ -1528,6 +1528,7 @@ async fn check_build(request: Request, next: Next) -> Response {
     let mismatch = Mismatch {
         riff,
         server: Some(this),
+        seen: None,
     };
     (StatusCode::CONFLICT, mismatch.to_string()).into_response()
 }

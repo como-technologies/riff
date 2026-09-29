@@ -195,7 +195,10 @@ async fn wait_for(limit: Duration, test: impl Fn() -> bool) -> bool {
 async fn each_call_fails(server: Option<Build>, step: &str) {
     let url = fake(server.clone()).await;
     let dir = tempfile::tempdir().unwrap();
-    let theirs = server.map_or("an older build".into(), |b| b.to_string());
+    let theirs = server.map_or(
+        format!("no riff build in the reply: status 200 OK from {url}/v1/"),
+        |b| b.to_string(),
+    );
     for args in [
         &["read"][..],
         &["post", "--thread", "t", "hi"],
@@ -802,6 +805,7 @@ fn the_book_shows_the_real_notes_and_error() {
         Mismatch {
             riff: Some(b("0.2.0 929605821e54 2026-09-27T22:03:01Z")),
             server: Some(b("0.4.0 7213825ab1c2 2026-09-28T20:10:44Z")),
+            seen: None,
         }
         .to_string(),
     ] {
@@ -852,9 +856,10 @@ async fn a_front_end_error_with_no_build_is_tried_again() {
     }
 }
 
-/// A reply with no build that is not an outage still names another
-/// build: a 200 or a 404 comes from an old server
-/// (01M3MX1E65XGWDZ062PQ9YXQ5T, 01M3QCMJ9F1GRTRRSB4AW9TC3D).
+/// A reply with no build that is not an outage is still a version
+/// error: a 200 or a 404 comes from an old server. The error names the
+/// status and the URL (01M3MX1E65XGWDZ062PQ9YXQ5T,
+/// 01M3QCMJ9F1GRTRRSB4AW9TC3D).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_success_or_client_error_with_no_build_is_still_a_mismatch() {
     use axum::http::StatusCode;
@@ -869,6 +874,16 @@ async fn a_success_or_client_error_with_no_build_is_still_a_mismatch() {
         assert!(
             mismatch.is_some_and(|m| m.server.is_none()),
             "{status}: {error:#}"
+        );
+        // The text says what riff saw: the status and the URL.
+        let seen = format!(
+            "no riff build in the reply: status {status} from {}/v1/who",
+            api.base()
+        );
+        assert!(error.to_string().contains(&seen), "{seen}: {error:#}");
+        assert!(
+            error.to_string().contains("Update riff-server"),
+            "{error:#}"
         );
     }
 }
