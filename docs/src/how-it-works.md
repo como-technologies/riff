@@ -2372,7 +2372,8 @@ these are true:
    minute), and its input line is empty. riff never types into a
    half-written prompt.
 6. The last message of the lead does not ask you a question.
-7. riff did not compact the lead for this wave already.
+7. riff did not compact the lead for this wave already. When two
+   checks run at the same time, only one acts.
 
 ```mermaid
 sequenceDiagram

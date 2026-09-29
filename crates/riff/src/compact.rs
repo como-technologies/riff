@@ -41,7 +41,10 @@
 //! - A later Stop hook starts a new check. So a blocker ends the check;
 //!   it does not wait.
 //! - The [`Record`] in the local directory keeps the wave and its step,
-//!   so riff compacts the lead only once for each wave.
+//!   so riff compacts the lead only once for each wave. Two turns can
+//!   end in the quiet time, so two checks can run at the same time. Only
+//!   one acts: it holds [`crate::local::compact_lock`] from the load of
+//!   the record to its save.
 //! - riff asks for the handoff note as the person of the lead, the way
 //!   the wrapper of a worker tells the lead (01M3Q88G6PM8KM5PR875PZXTRZ).
 //!   It finds the note with a read as the person, so the unread messages
@@ -736,8 +739,8 @@ async fn wait_quiet(transcript: Option<&Path>, quiet: Duration) {
 
 /// One check after a turn of a session ends. It waits for the quiet
 /// time, finds the [`Facts`], and does the [`Step`] of [`decide`].
-/// `None` when riff compacts no lead on this machine, or the session is
-/// not the lead.
+/// `None` when riff compacts no lead on this machine, the session is
+/// not the lead, or another check acts now.
 pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
     use crate::{api::Api, identity, local, settings, worker};
     use riff_core::wire::RiffState;
@@ -778,7 +781,17 @@ pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
         || forge::open_wave_prs(&gh, &repo)?;
     facts.unread = api.threads(&me).await?.iter().map(|t| t.unread).sum();
     transcript_facts(&mut facts, transcript, quiet);
-    let record_path = local::dir().map(|dir| Record::path(&dir, &repo));
+    let dir = local::dir();
+    // Only one check acts at a time: it holds the lock from the load of
+    // the record to its save.
+    let _lock = match &dir {
+        Some(dir) => match local::compact_lock(dir, &repo)? {
+            Some(held) => Some(held),
+            None => return Ok(None),
+        },
+        None => None,
+    };
+    let record_path = dir.map(|dir| Record::path(&dir, &repo));
     facts.record = record_path.as_deref().map(Record::load).unwrap_or_default();
     if facts.record.step(&wave) == Some(RecordStep::Asked)
         && let Some(thread) = place.default_thread()

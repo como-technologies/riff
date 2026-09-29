@@ -415,3 +415,48 @@ async fn a_half_written_prompt_stops_the_compact() {
     lead.check_in_pane();
     assert_eq!(lead.typed().lines().count(), 2);
 }
+
+/// Two turns of the lead end in the quiet time, so two checks run at
+/// the same time. Only one acts: one ask, and one `/compact`.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_checks_at_the_same_time_act_once() {
+    let (api, lead) = riff_with_a_lead().await;
+    let me = lead.uri("l1");
+    lead.in_tmux("");
+    let transcript = lead.transcript.to_str().unwrap().to_owned();
+    let both = |lead: &Lead| {
+        let spawn = || {
+            lead.riff(&[
+                "hook",
+                "compact",
+                "--session",
+                "l1",
+                "--transcript",
+                &transcript,
+                "--pane",
+                "%3",
+            ])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+        };
+        let (a, b) = (spawn(), spawn());
+        for child in [a, b] {
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success(), "{out:?}");
+            assert!(out.stderr.is_empty(), "{out:?}");
+        }
+    };
+
+    both(&lead);
+    assert_eq!(unread(&api, &me).await.len(), 1, "one ask");
+
+    let thread: ThreadName = "como-technologies/riff".parse().unwrap();
+    api.post(&me, Some(&thread), &[], "handoff: Wave 13.", Kind::Note)
+        .await
+        .unwrap();
+    both(&lead);
+    let typed = lead.typed();
+    assert_eq!(typed.matches("/compact").count(), 1, "{typed}");
+    assert_eq!(typed.lines().count(), 2, "{typed}");
+}

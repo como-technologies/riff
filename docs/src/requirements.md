@@ -1555,7 +1555,9 @@
 - **01M3Q88G1K7N2EMPBA07X069A7** riff compacts the lead at the end of
   a wave, once for each wave. The Stop hook of each session that is not
   a worker starts a detached check and returns at once. The check does
-  nothing when the session is not the lead.
+  nothing when the session is not the lead. Only one check acts at a
+  time: it holds a lock from the load of the record of the wave to its
+  save. A check that cannot take the lock does nothing.
 - **01M3Q88G45ERD0XJNYNB5C1RVN** riff compacts the lead only when all
   of these are true: the riff is paused; the last done wave has no open
   item, and its release is out (its release item is closed, its release
