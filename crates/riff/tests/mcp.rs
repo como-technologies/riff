@@ -486,3 +486,151 @@ async fn riff_mcp_runs_the_new_binary_and_keeps_the_connection() {
     assert!(!failed, "{text}");
     assert!(child.try_wait().unwrap().is_none(), "{}", log());
 }
+
+/// `riff mcp` with a file as stdin stops with an error that says so.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_mcp_names_a_file_as_stdin() {
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input");
+    std::fs::write(&input, "").unwrap();
+    let mut cmd = Isolated::shared().riff();
+    cmd.arg("mcp")
+        .current_dir(dir.path())
+        .env("RIFF_HOME", dir.path())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("TMUX")
+        .stdin(std::fs::File::open(&input).unwrap());
+    // Away from the runtime of the server.
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    assert!(
+        err.contains("reads stdin from a pipe or a terminal, not from a file"),
+        "{err}"
+    );
+}
+
+/// A tool call of JSON-RPC `id` on one line.
+fn call_line(id: u64, tool: &str) -> String {
+    let call = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+        "params": {"name": tool, "arguments": {}}});
+    format!("{call}\n")
+}
+
+/// Calls stream in bursts while a new binary comes: `riff mcp` runs it
+/// only at a moment with no request in flight, so each call gets
+/// exactly one answer (01M3NT6WZTKAFKGDWGCFKC8TB5).
+#[tokio::test(flavor = "multi_thread")]
+async fn each_call_in_flight_at_an_update_gets_one_answer() {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("riff");
+    let riff = Isolated::shared().riff_path();
+    install(&riff, &binary);
+    let stderr = dir.path().join("stderr");
+    let mut cmd = tokio::process::Command::from(Isolated::shared().command(&binary));
+    let mut child = cmd
+        .arg("mcp")
+        .current_dir(dir.path())
+        .env("RIFF_HOME", dir.path())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("TMUX")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr).unwrap())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let init = serde_json::json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "test", "version": "1"}}});
+    stdin
+        .write_all(format!("{init}\n").as_bytes())
+        .await
+        .unwrap();
+    let first = lines.next_line().await.unwrap().unwrap();
+    assert!(first.contains("\"id\":0"), "{first}");
+    let initialized = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n";
+    stdin.write_all(initialized.as_bytes()).await.unwrap();
+    let answers: Arc<Mutex<HashMap<u64, usize>>> = Arc::default();
+    let seen = answers.clone();
+    let reader = tokio::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let answer: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if let Some(id) = answer.get("id").and_then(serde_json::Value::as_u64) {
+                *seen.lock().unwrap().entry(id).or_default() += 1;
+            }
+        }
+    });
+
+    // Bursts of calls for 3 seconds. The new binary comes after half a
+    // second, so calls are in flight when riff mcp sees it.
+    let mut last = 0;
+    let start = Instant::now();
+    let mut installed = false;
+    while start.elapsed() < Duration::from_secs(3) {
+        if !installed && start.elapsed() > Duration::from_millis(500) {
+            install(&riff, &binary);
+            installed = true;
+        }
+        let mut burst = String::new();
+        for tool in ["whoami", "who", "whoami"] {
+            last += 1;
+            burst.push_str(&call_line(last, tool));
+        }
+        stdin.write_all(burst.as_bytes()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(7)).await;
+    }
+    let new = std::fs::metadata(&binary).unwrap().ino();
+    let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
+    let wait = Instant::now();
+    while runs(pid) != new && wait.elapsed() < Duration::from_secs(10) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(runs(pid), new, "{}", log());
+    last += 1;
+    stdin
+        .write_all(call_line(last, "whoami").as_bytes())
+        .await
+        .unwrap();
+
+    let wait = Instant::now();
+    while answers.lock().unwrap().len() < last as usize && wait.elapsed() < Duration::from_secs(20)
+    {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let answers = answers.lock().unwrap();
+    let missing: Vec<u64> = (1..=last).filter(|id| !answers.contains_key(id)).collect();
+    let twice: Vec<u64> = (1..=last)
+        .filter(|id| answers.get(id).is_some_and(|n| *n > 1))
+        .collect();
+    assert!(missing.is_empty(), "missing {missing:?}\n{}", log());
+    assert!(twice.is_empty(), "twice {twice:?}");
+    assert_eq!(
+        log().matches("a new riff is on disk").count(),
+        1,
+        "{}",
+        log()
+    );
+    reader.abort();
+}

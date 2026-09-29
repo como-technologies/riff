@@ -347,7 +347,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
             () = &mut update => {
                 screen.leave();
                 let args = with_place(std::env::args_os().skip(1), me.place());
-                follow.run(with_last(args, AFTER, shown.seq.to_string()));
+                follow.run(with_last(args, AFTER, shown.last().to_string()));
                 break;
             }
             typed_line = input.recv() => {
@@ -524,6 +524,11 @@ impl Shown {
             day: None,
             hidden,
         }
+    }
+
+    /// The last line that this chat or an old chat showed.
+    fn last(&self) -> u64 {
+        self.seq.max(self.hidden)
     }
 
     /// The line of `c`, once: a message from the history can come again

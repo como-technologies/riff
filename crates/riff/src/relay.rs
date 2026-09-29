@@ -144,7 +144,12 @@ fn nonblocking(fd: BorrowedFd<'_>, on: bool) -> io::Result<()> {
 /// with no request in flight and no part of a line held. Stdin is
 /// blocking again when it returns.
 pub async fn run(tools: DuplexStream, update: impl Future<Output = ()>) -> io::Result<Ended> {
-    let stdin = AsyncFd::new(Stdin)?;
+    let stdin = AsyncFd::new(Stdin).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("riff mcp reads stdin from a pipe or a terminal, not from a file: {e}"),
+        )
+    })?;
     nonblocking(io::stdin().as_fd(), true)?;
     let ended = pass(&stdin, tools, update).await;
     nonblocking(io::stdin().as_fd(), false)?;
