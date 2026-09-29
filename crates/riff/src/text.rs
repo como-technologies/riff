@@ -16,7 +16,7 @@ use crate::api::{Checked, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
     AdminSet, ClaimReply, Invited, Kind, LeadReply, MembersReply, OwnerPassed, Posted, Removed,
-    Revoked, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -1184,13 +1184,36 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     out
 }
 
+/// The owner line of `who` (01M3N754NY5JX4P0SN8R4ZYFG9), or `None` for
+/// a riff with no sign-in.
+///
+/// ```
+/// use riff::text::owner_line;
+/// use riff_core::wire::RiffOwner;
+///
+/// let ada = RiffOwner::Owner { user: "ada".into(), email: "ada@gmail.com".into() };
+/// assert_eq!(owner_line(&ada).unwrap(), "The owner is ada (ada@gmail.com).");
+/// assert_eq!(owner_line(&RiffOwner::Nobody).unwrap(), "The riff has no owner.");
+/// assert_eq!(owner_line(&RiffOwner::NoSignIn), None);
+/// ```
+pub fn owner_line(owner: &RiffOwner) -> Option<String> {
+    match owner {
+        RiffOwner::NoSignIn => None,
+        RiffOwner::Nobody => Some("The riff has no owner.".into()),
+        RiffOwner::Owner { user, email } => {
+            Some(format!("The owner is {} ({}).", safe(user), safe(email)))
+        }
+    }
+}
+
 /// One line for each session: its name, `live` or the time since its
-/// last call, and its URI. A session with a status gets a second line
-/// with the status and its age (R184).
+/// last call, `(you)`, `owner` for each session of the owner
+/// (01M3N754NY5JX4P0SN8R4ZYFG9), and its URI. A session with a status
+/// gets a second line with the status and its age (R184).
 ///
 /// ```
 /// use riff::text;
-/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{RiffOwner, SessionInfo, Status, StatusInfo};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
@@ -1204,13 +1227,14 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
 ///         status: Some(StatusInfo { status, age_secs: 240 }),
 ///     },
 /// ];
-/// let out = text::who(&list, &list[0].uri);
-/// assert!(out.contains("(a6cf) live (you)"), "{out}");
-/// assert!(out.contains("(77e0) idle 2m "), "{out}");
+/// let owner = RiffOwner::Owner { user: "brett".into(), email: "brett@x.io".into() };
+/// let out = text::who(&list, &owner, &list[0].uri);
+/// assert!(out.contains("(a6cf) live (you)  riff://"), "{out}");
+/// assert!(out.contains("(77e0) idle 2m owner  riff://"), "{out}");
 /// assert!(out.ends_with("\n  status 4m ago: write the tests\n"), "{out}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
+pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> String {
     if sessions.is_empty() {
         return "Nobody is in the riff.".into();
     }
@@ -1226,7 +1250,12 @@ pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
         } else {
             ""
         };
-        let _ = writeln!(out, "{} {state}{you}  {}", name(&s.uri), s.uri);
+        let owns = if owner.is(s.uri.who().user()) {
+            " owner"
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "{} {state}{you}{owns}  {}", name(&s.uri), s.uri);
         if let Some(status) = &s.status {
             let _ = writeln!(out, "  {}", status_line(status));
         }
@@ -1240,18 +1269,19 @@ pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
 /// uses the plain [`who`].
 ///
 /// - The header: the state of the riff, `running` in bold green or
-///   `paused` in bold yellow, and the dim build line.
+///   `paused` in bold yellow, the [`owner_line`], and the dim build
+///   line.
 /// - One line for each session: its [`name`] in the color of the
 ///   session ([`style::session`](crate::style::session)), `live` in
-///   green or a dim `idle` time, `(you)` in bold, `lead` and each claim
-///   muted, and the dim URI.
+///   green or a dim `idle` time, `(you)` in bold, `owner`, `lead` and
+///   each claim muted, and the dim URI.
 /// - The status under the session, with the indent of the body in
 ///   `riff tail`. The age is dim. A blocked status is red.
 ///
 /// Each text from the server is [`safe`].
 ///
 /// ```
-/// use riff_core::wire::{RiffState, SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{RiffOwner, RiffState, SessionInfo, Status, StatusInfo};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
 ///     .parse()?;
@@ -1266,23 +1296,36 @@ pub fn who(sessions: &[SessionInfo], me: &SessionUri) -> String {
 ///         status: Some(StatusInfo { status: blocked, age_secs: 60 }),
 ///     },
 /// ];
-/// let text = riff::text::who_view(RiffState::Running, &list, &list[0].uri);
+/// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
+/// let text = riff::text::who_view(RiffState::Running, &owner, &list, &list[0].uri);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert_eq!(lines[0], "The riff is running.");
-/// assert!(lines[1].starts_with("riff and riff-server have the build"));
+/// assert_eq!(lines[1], "The owner is mike (mike@x.io).");
+/// assert!(lines[2].starts_with("riff and riff-server have the build"));
 /// assert_eq!(
-///     lines[2],
-///     "mike@pangolin:riff#issue-6 (a6cf)  live  (you)  lead issue-6  \
+///     lines[3],
+///     "mike@pangolin:riff#issue-6 (a6cf)  live  (you)  owner lead issue-6  \
 ///      riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
 /// );
-/// assert_eq!(lines[3], "brett@heron:riff (77e0)  idle 2m  riff://brett@heron/como-technologies/riff?session=77e0");
-/// assert_eq!(lines[4], "       blocked 1m ago: waits for a review (step: merge)");
+/// assert_eq!(lines[4], "brett@heron:riff (77e0)  idle 2m  riff://brett@heron/como-technologies/riff?session=77e0");
+/// assert_eq!(lines[5], "       blocked 1m ago: waits for a review (step: merge)");
+///
+/// // A riff with no sign-in shows no owner line.
+/// let text = riff::text::who_view(RiffState::Running, &RiffOwner::NoSignIn, &list, &list[0].uri);
+/// let plain = anstream::adapter::strip_str(&text).to_string();
+/// assert!(plain.lines().nth(1).unwrap().starts_with("riff and riff-server have the build"));
+/// assert!(!plain.contains("owner"));
 /// let red = riff::style::ERROR;
 /// assert!(text.contains(&format!("{red}blocked 1m ago: waits for a review (step: merge){red:#}")));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn who_view(state: RiffState, sessions: &[SessionInfo], me: &SessionUri) -> String {
+pub fn who_view(
+    state: RiffState,
+    owner: &RiffOwner,
+    sessions: &[SessionInfo],
+    me: &SessionUri,
+) -> String {
     let mut out = match state {
         RiffState::Running => format!("The riff is {}.", styled(GOOD.bold(), "running")),
         RiffState::Paused => format!(
@@ -1291,6 +1334,9 @@ pub fn who_view(state: RiffState, sessions: &[SessionInfo], me: &SessionUri) -> 
             styled(WARNING.bold(), "paused")
         ),
     };
+    if let Some(line) = owner_line(owner) {
+        let _ = write!(out, "\n{line}");
+    }
     let _ = writeln!(
         out,
         "\n{}",
@@ -1316,6 +1362,9 @@ pub fn who_view(state: RiffState, sessions: &[SessionInfo], me: &SessionUri) -> 
         let mut marks: Vec<String> = s.uri.claims().iter().map(|c| safe(c)).collect();
         if s.uri.lead() {
             marks.insert(0, "lead".into());
+        }
+        if owner.is(s.uri.who().user()) {
+            marks.insert(0, "owner".into());
         }
         if !marks.is_empty() {
             let _ = write!(out, "  {}", styled(MUTED, &marks.join(" ")));

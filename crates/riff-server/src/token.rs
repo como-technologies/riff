@@ -172,7 +172,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use riff_core::name::Who;
-use riff_core::wire::TokenReply;
+use riff_core::wire::{RiffOwner, TokenReply};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -434,6 +434,37 @@ impl Tokens {
     /// The email of the owner, or `None` before the first sign-in.
     pub fn owner(&self) -> Option<&str> {
         self.owner.as_deref()
+    }
+
+    /// The owner for `who` (01M3N754NY5JX4P0SN8R4ZYFG9): the USER that
+    /// holds the email of the owner, or else the USER that the email
+    /// gives. [`RiffOwner::Nobody`] before the first sign-in.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::wire::RiffOwner;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let mut tokens = Tokens::default();
+    /// assert_eq!(tokens.riff_owner(), RiffOwner::Nobody);
+    /// tokens.name_owner("Ada.L@X.io");
+    /// let named = RiffOwner::Owner { user: "ada.l".into(), email: "ada.l@x.io".into() };
+    /// assert_eq!(tokens.riff_owner(), named);
+    /// tokens.admit("ada.l@x.io", false, &[], "k", Instant::now()).unwrap();
+    /// assert_eq!(tokens.riff_owner(), named);
+    /// ```
+    pub fn riff_owner(&self) -> RiffOwner {
+        let Some(email) = self.owner.clone() else {
+            return RiffOwner::Nobody;
+        };
+        let user = self
+            .users
+            .iter()
+            .find(|(_, held)| **held == email)
+            .map(|(user, _)| user.clone())
+            .or_else(|| user_of(&email).ok())
+            .unwrap_or_else(|| email.clone());
+        RiffOwner::Owner { user, email }
     }
 
     /// The emails of the members, sorted.

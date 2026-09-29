@@ -751,6 +751,11 @@
   `who` tool stays plain.
 - **01M3MEW75WC7Y4M1BKQ7SXRPNR** `riff who --color <auto|always|never>`
   controls the color, the same as `riff tail --color`.
+- **01M3N754NY5JX4P0SN8R4ZYFG9** `riff who` names the owner of the
+  riff after the state line: `The owner is USER (EMAIL).`, or
+  `The riff has no owner.`. A riff with no sign-in shows no owner line.
+  Each session of the owner gets the tag `owner`, before `lead`, muted.
+  The MCP `who` tool shows the same, plain.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
   line of a Claude Code session: `riff`, the short session ID of
   `riff who`, `lead`, each claim, and `blocked`. It is the

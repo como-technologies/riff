@@ -366,14 +366,17 @@ riff whoami
 riff who
 ```
 
-The first line shows the state of the riff. Each other line shows a
-session: its name, its state, `(you)`, `lead` and its claims, and its
-URI:
+The first line shows the state of the riff. The second line names the
+owner of the riff, or says `The riff has no owner.`. A riff with no
+sign-in has no owner line. Each other line shows a session: its name,
+its state, `(you)`, `owner`, `lead` and its claims, and its URI.
+`owner` marks each session of the owner:
 
 ```text
 The riff is running.
+The owner is mike (mike@comotechnologies.io).
 riff and riff-server have the build 0.1.0 ...
-mike@pangolin:riff#issue-6 (a6cf)  live  (you)  lead issue-6  riff://mike@pangolin/...
+mike@pangolin:riff#issue-6 (a6cf)  live  (you)  owner lead issue-6  riff://mike@pangolin/...
 brett@heron:riff (77e0)  idle 2m  riff://brett@heron/...
 ```
 

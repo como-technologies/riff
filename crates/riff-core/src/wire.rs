@@ -139,6 +139,45 @@ pub struct WhoRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WhoReply {
     pub sessions: Vec<SessionInfo>,
+    /// The owner of the riff (01M3N754NY5JX4P0SN8R4ZYFG9).
+    #[serde(default)]
+    pub owner: RiffOwner,
+}
+
+/// The owner of the riff, in the reply to `who`
+/// (01M3N754NY5JX4P0SN8R4ZYFG9). A reply with no owner field reads as
+/// [`RiffOwner::NoSignIn`].
+///
+/// ```
+/// use riff_core::wire::{RiffOwner, WhoReply};
+///
+/// let reply: WhoReply = serde_json::from_str(
+///     r#"{"sessions":[],"owner":{"kind":"owner","user":"ada","email":"ada@gmail.com"}}"#,
+/// ).unwrap();
+/// assert_eq!(reply.owner, RiffOwner::Owner { user: "ada".into(), email: "ada@gmail.com".into() });
+/// assert!(reply.owner.is("ada") && !reply.owner.is("bob"));
+///
+/// let old: WhoReply = serde_json::from_str(r#"{"sessions":[]}"#).unwrap();
+/// assert_eq!(old.owner, RiffOwner::NoSignIn);
+/// assert!(!RiffOwner::Nobody.is("ada"));
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RiffOwner {
+    /// A riff with no sign-in: it shows no owner.
+    #[default]
+    NoSignIn,
+    /// A riff with sign-in and no owner yet.
+    Nobody,
+    /// The owner: the USER and the email, in lower case.
+    Owner { user: String, email: String },
+}
+
+impl RiffOwner {
+    /// True when `user` is the owner.
+    pub fn is(&self, user: &str) -> bool {
+        matches!(self, RiffOwner::Owner { user: owner, .. } if owner == user)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

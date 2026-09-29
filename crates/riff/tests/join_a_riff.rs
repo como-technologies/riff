@@ -138,7 +138,7 @@ impl Machine {
     async fn who(&self, session: &Api, me: &SessionUri) -> Vec<String> {
         self.use_keyring();
         let sessions = session.who(me, false).await.unwrap();
-        let shown = text::who(&sessions, me);
+        let shown = text::who(&sessions, &Default::default(), me);
         // A person that posted, for example the note of an invite, is
         // in the list too. Count only the agent sessions.
         let mut hosts: Vec<String> = sessions
