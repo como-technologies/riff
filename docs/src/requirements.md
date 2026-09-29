@@ -810,22 +810,38 @@
 - **01M3N754NY5JX4P0SN8R4ZYFG9** `riff who` names the owner of the
   riff after the state line: `The owner is USER (EMAIL).`, or
   `The riff has no owner.`. A riff with no sign-in shows no owner line.
-  Each session of the owner gets the tag `owner`, before `lead`, muted.
-  The MCP `who` tool shows the same, plain.
+  The owner is a person: only a line with no session of the owner gets
+  the tag `owner`, muted. The MCP `who` tool shows the same, plain.
+- **01M3NT4M159EHN5W8JRTQ417N4** A session has a role: `lead`, `worker`,
+  or none. A worker (`RIFF_WORKER=1`) says so in each register call, and
+  the server keeps it and gives it in `who`. `riff who`, the MCP `who`
+  tool and `riff top` tag a session only with its role, `lead` or
+  `worker`, the same on each machine. No session gets the tag `owner`.
+- **01M3NT4M3A4E3K5S2NM7MS6PQD** The reply to `who` lists each member of
+  the riff with a USER, also when away: the USER, the role (`owner`,
+  `admin` or `member`), whether a session of the person is live, and
+  the seconds since the last call of a session of the person. A riff
+  with no sign-in lists none.
+- **01M3NT4M5D36KTZ5XZMDP6QFQT** `riff top` shows a tree for each
+  person: the person row, each host of the person, and each session on
+  the host, with `├─` and `└─`. The person row has the USER in a bold
+  color, the tag `owner` or `admin`, and `live`, `last seen` with the
+  time, or `away`. Each member of `who` gets a row, also when away; with
+  no sign-in, each user of a session. People come by USER and hosts by
+  name. On a host, blocked sessions come first, then by session ID. A
+  person on the command line gets no session row.
 - **01M3NB54P1RBHTA5TKXP8BMY3K** `riff top` shows a live table of the
   sessions of `riff who`, and draws it again in place every 3 seconds
   and after each message of the repository thread, until Ctrl-C.
   `riff top --once` prints one table and exits. The header has the
   state, the owner, the build line, and the current wave: each open
   item with the short ID of each session that claims it, or `free`.
-  Each row has the user, host and short session ID, the tags `owner`,
-  `lead` and `worker`, `live` or the idle time, each claim with the
-  title of its issue, and the status with its age. A blocked status is
-  red, with its reason. Blocked rows come first, then by user and host.
+  Each session row has the short session ID, the tag of its role,
+  `live` or the idle time, each claim with the title of its issue, and
+  the status with its age. A blocked status is red, with its reason.
   The titles and the wave come from `gh issue list`, kept for one
-  minute. With no `gh`, the rows still print. A session is a worker
-  when a worker pane of the machine or the status of a workers host
-  names it. `--color` works as in `riff who`.
+  minute. With no `gh`, the rows still print. `--color` works as in
+  `riff who`.
 - **01M3NB589WMPRSAR43BSG9SP41** `riff top` makes only read calls: the
   `riff` and `who` calls of `riff who`, and the stream of `riff tail`.
   It posts nothing and wakes no session.

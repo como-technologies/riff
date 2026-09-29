@@ -182,7 +182,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use riff_core::name::Who;
-use riff_core::wire::{RiffOwner, TokenReply};
+use riff_core::wire::{PersonRole, RiffOwner, TokenReply};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -522,6 +522,41 @@ impl Tokens {
             .filter(|(_, email)| admins.contains(email))
             .map(|(user, _)| user.clone())
             .collect()
+    }
+
+    /// The USER and the role of each member with a USER, sorted by USER
+    /// (01M3NT4M3A4E3K5S2NM7MS6PQD). `admins` are the admin emails of
+    /// the settings (R210). A member who never signed in has no USER,
+    /// and is not in it.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::wire::PersonRole;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// tokens.invite("bob@gmail.com").unwrap();
+    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
+    /// // An admin who never signed in has no USER.
+    /// tokens.add_admin("cy@gmail.com").unwrap();
+    /// assert_eq!(
+    ///     tokens.people(&[]),
+    ///     [("ada".to_string(), PersonRole::Owner), ("bob".to_string(), PersonRole::Member)]
+    /// );
+    /// ```
+    pub fn people(&self, admins: &[String]) -> Vec<(String, PersonRole)> {
+        let (owner, admins, members) = self.roles(admins);
+        let mut people: Vec<(String, PersonRole)> = owner
+            .into_iter()
+            .map(|email| (email, PersonRole::Owner))
+            .chain(admins.into_iter().map(|email| (email, PersonRole::Admin)))
+            .chain(members.into_iter().map(|email| (email, PersonRole::Member)))
+            .filter_map(|(email, role)| Some((self.user_of_email(&email)?.to_owned(), role)))
+            .collect();
+        people.sort();
+        people
     }
 
     /// An admin asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM).

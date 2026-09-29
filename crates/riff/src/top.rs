@@ -14,9 +14,11 @@
 //! [`ISSUES_TTL`]. With no `gh`, or when `gh` fails, the table has no
 //! titles and no wave line.
 //!
-//! A session gets the tag `worker` when a worker pane of this machine
-//! holds it, or when the status of a workers host names it
-//! ([`crate::host::HostStatus`]).
+//! The rows are a tree for each person: the person, each host, and each
+//! session on the host (01M3NT4M5D36KTZ5XZMDP6QFQT). A session gets only
+//! the tag of its role, `lead` or `worker`, from the server, so each
+//! machine shows the same (01M3NT4M159EHN5W8JRTQ417N4). The owner is a
+//! person: the tag `owner` is on the row of the person.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -30,15 +32,15 @@
 //!     end
 //! ```
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::time::Duration;
 
 use riff_core::build::Build;
-use riff_core::wire::{RiffOwner, RiffState, SessionInfo};
+use riff_core::wire::{Person, PersonRole, RiffOwner, RiffState, SessionInfo};
 use serde::Deserialize;
 
-use crate::style::{DIM, ERROR, MUTED, session as session_style, styled};
+use crate::style::{DIM, ERROR, GOOD, MUTED, session as session_style, styled};
 use crate::text::{self, ago, safe};
 
 /// The time between two draws of `riff top` with no message.
@@ -188,50 +190,70 @@ pub fn issue_of(claim: &str) -> Option<u64> {
         .ok()
 }
 
-/// The session IDs of the workers: the worker panes of this machine,
-/// and each worker that the status of a workers host names by its
-/// short ID.
-pub fn workers(panes: &[crate::terminal::WorkerPane], sessions: &[SessionInfo]) -> HashSet<String> {
-    let mut ids: HashSet<String> = panes.iter().map(|p| p.session.clone()).collect();
-    let users: HashSet<&str> = sessions.iter().map(|s| s.uri.who().user()).collect();
-    for user in users {
-        for (_, status) in crate::host::hosts(sessions, user) {
-            ids.extend(
-                crate::host::panes(&status, sessions)
-                    .into_iter()
-                    .map(|p| p.session),
-            );
-        }
-    }
-    ids
-}
-
 /// What `riff top` shows.
 pub struct Top<'a> {
     pub state: RiffState,
     pub owner: &'a RiffOwner,
     pub server: Option<&'a Build>,
     pub sessions: &'a [SessionInfo],
+    /// The members of the riff from `who`, also when away.
+    pub people: &'a [Person],
     pub issues: Option<&'a Issues>,
-    pub workers: &'a HashSet<String>,
 }
 
-/// One cell: its plain text, and its style.
-struct Cell(String, anstyle::Style);
+/// One cell: a plain lead-in, its text, and the style of the text.
+struct Cell {
+    pre: String,
+    text: String,
+    style: anstyle::Style,
+}
+
+impl Cell {
+    fn new(text: impl Into<String>, style: anstyle::Style) -> Self {
+        Cell {
+            pre: String::new(),
+            text: text.into(),
+            style,
+        }
+    }
+
+    fn empty() -> Self {
+        Cell::new("", anstyle::Style::new())
+    }
+
+    fn width(&self) -> usize {
+        self.pre.chars().count() + self.text.chars().count()
+    }
+}
+
+/// One person of the tree: the role, and live or the time since the
+/// last call.
+struct PersonRow {
+    role: PersonRole,
+    live: bool,
+    seen_secs: Option<u64>,
+}
 
 impl Top<'_> {
-    /// The header and one row for each session: who, the tags, the
-    /// idle time, each claim with the title of its issue, and the
-    /// status with its age. Blocked sessions come first, then by user,
-    /// host and session ID. It has ANSI styles: print it through
+    /// The header, then a tree for each person (01M3NT4M5D36KTZ5XZMDP6QFQT):
+    /// the person, each host of the person, and each session on the host.
+    ///
+    /// - A person row: the USER in bold color, the role tag `owner` or
+    ///   `admin`, and `live` or `last seen` with the time. Each member
+    ///   of `who` gets a row, also when away.
+    /// - A session row: the short session ID, the role tag `lead` or
+    ///   `worker`, `live` or the idle time, each claim with the title of
+    ///   its issue, and the status with its age.
+    ///
+    /// People come by USER, and hosts by name. In each person, blocked
+    /// sessions come first. It has ANSI styles: print it through
     /// `anstream`.
     ///
     /// ```
-    /// use std::collections::HashSet;
     /// use riff::top::{Issues, Top};
-    /// use riff_core::wire::{RiffOwner, RiffState, SessionInfo, Status, StatusInfo};
+    /// use riff_core::wire::{Person, PersonRole, RiffOwner, RiffState, SessionInfo, Status, StatusInfo};
     ///
-    /// let info = |uri: &str, step: &str, blocked: Option<&str>| SessionInfo {
+    /// let info = |uri: &str, step: &str, blocked: Option<&str>, worker| SessionInfo {
     ///     uri: uri.parse().unwrap(),
     ///     live: true,
     ///     idle_secs: 0,
@@ -239,34 +261,44 @@ impl Top<'_> {
     ///         status: Status { step: step.into(), blocked: blocked.map(Into::into) },
     ///         age_secs: 120,
     ///     }),
+    ///     worker,
     /// };
     /// let sessions = [
-    ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "lead", None),
-    ///     info("riff://mike@thelio/o/r?session=bbbb2222&claim=issue-12", "tests", None),
-    ///     info("riff://ann@heron/o/r?session=cccc3333", "merge", Some("waits")),
+    ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "lead", None, false),
+    ///     info("riff://mike@thelio/o/r?session=bbbb2222&claim=issue-12", "tests", None, true),
+    ///     info("riff://mike@thelio/o/r?session=cccc3333", "merge", Some("waits"), false),
+    ///     info("riff://mike@pangolin/o/r?session=dddd4444", "docs", None, true),
+    /// ];
+    /// let people = [
+    ///     Person { user: "ann".into(), role: PersonRole::Admin, live: false, seen_secs: Some(3600) },
+    ///     Person { user: "mike".into(), role: PersonRole::Owner, live: true, seen_secs: Some(0) },
     /// ];
     /// let issues = Issues::parse(
     ///     r#"[{"number": 12, "title": "Show the wave", "milestone": {"title": "Wave 3"}}]"#,
     /// );
-    /// let workers = HashSet::from(["bbbb2222".to_string()]);
     /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
     /// let top = Top {
     ///     state: RiffState::Running,
     ///     owner: &owner,
     ///     server: None,
     ///     sessions: &sessions,
+    ///     people: &people,
     ///     issues: issues.as_ref(),
-    ///     workers: &workers,
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
-    /// let rows: Vec<&str> = text.lines().skip_while(|l| !l.starts_with("SESSION")).collect();
+    /// let rows: Vec<&str> = text.lines().skip_while(|l| !l.starts_with("WHO")).skip(1).collect();
     /// assert!(text.contains("Wave 3: #12 bbbb2222\n"), "{text}");
-    /// assert!(rows[1].starts_with("ann@heron (cccc3333)"), "{text}");
-    /// assert!(rows[1].contains("blocked 2m: waits (step: merge)"), "{text}");
-    /// assert!(rows[2].contains("owner lead"), "{text}");
-    /// assert!(rows[3].contains("owner worker"), "{text}");
-    /// assert!(rows[3].contains("issue-12 Show the wave"), "{text}");
-    /// assert!(rows[3].contains("2m tests"), "{text}");
+    /// let words = |row: &str| row.split_whitespace().collect::<Vec<_>>().join(" ");
+    /// assert_eq!(words(rows[0]), "ann admin last seen 1h", "{text}");
+    /// assert_eq!(words(rows[1]), "mike owner live", "{text}");
+    /// assert_eq!(rows[2], "├─ pangolin", "{text}");
+    /// assert!(rows[3].starts_with("│  └─ dddd4444  worker  live"), "{text}");
+    /// assert_eq!(rows[4], "└─ thelio", "{text}");
+    /// assert!(rows[5].starts_with("   ├─ cccc3333"), "{text}");
+    /// assert!(rows[5].contains("blocked 2m: waits (step: merge)"), "{text}");
+    /// assert!(rows[6].starts_with("   ├─ aaaa1111  lead "), "{text}");
+    /// assert!(rows[7].starts_with("   └─ bbbb2222  worker"), "{text}");
+    /// assert!(rows[7].contains("issue-12 Show the wave  2m tests"), "{text}");
     /// ```
     pub fn view(&self) -> String {
         let mut out = text::riff_state(self.state);
@@ -277,41 +309,110 @@ impl Top<'_> {
         if let Some((wave, items)) = self.issues.and_then(|i| i.wave.as_ref()) {
             let _ = writeln!(out, "{}: {}", safe(wave), self.holders(items));
         }
-        let mut sessions: Vec<&SessionInfo> = self.sessions.iter().collect();
-        sessions.sort_by_key(|s| {
-            (
-                !blocked(s),
-                s.uri.who().user().to_owned(),
-                s.uri.place().host().to_owned(),
-                s.uri.who().session().unwrap_or_default().to_owned(),
-            )
-        });
-        let head = ["SESSION", "TAGS", "IDLE", "ITEM", "STATUS"]
-            .map(|h| Cell(h.into(), anstyle::Style::new().bold()));
+        let head = ["WHO", "TAGS", "IDLE", "ITEM", "STATUS"]
+            .map(|h| Cell::new(h, anstyle::Style::new().bold()));
         let mut rows = vec![head];
-        rows.extend(sessions.into_iter().map(|s| self.row(s)));
+        for (user, person) in self.people() {
+            rows.push(person_row(&user, &person));
+            let hosts = self.hosts(&user);
+            for (h, (host, sessions)) in hosts.iter().enumerate() {
+                let last_host = h + 1 == hosts.len();
+                let mut row = [(); 5].map(|()| Cell::empty());
+                row[0] = Cell {
+                    pre: branch(last_host).into(),
+                    ..Cell::new(safe(host), anstyle::Style::new())
+                };
+                rows.push(row);
+                for (i, s) in sessions.iter().enumerate() {
+                    let pre = format!(
+                        "{}{}",
+                        if last_host { "   " } else { "│  " },
+                        branch(i + 1 == sessions.len())
+                    );
+                    rows.push(self.row(pre, s));
+                }
+            }
+        }
         let columns = rows[0].len();
         let widths: Vec<usize> = (0..columns)
-            .map(|c| {
-                rows.iter()
-                    .map(|r| r[c].0.chars().count())
-                    .max()
-                    .unwrap_or(0)
-            })
+            .map(|c| rows.iter().map(|r| r[c].width()).max().unwrap_or(0))
             .collect();
         for row in &rows {
             let mut line = String::new();
-            for (c, Cell(text, style)) in row.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
                 let pad = if c + 1 == columns {
                     0
                 } else {
-                    widths[c] - text.chars().count() + 2
+                    widths[c] - cell.width() + 2
                 };
-                let _ = write!(line, "{}{}", styled(*style, text), " ".repeat(pad));
+                let text = if cell.text.is_empty() {
+                    String::new()
+                } else {
+                    styled(cell.style, &cell.text)
+                };
+                let _ = write!(line, "{}{text}{}", cell.pre, " ".repeat(pad));
             }
             let _ = writeln!(out, "{}", line.trim_end());
         }
         out
+    }
+
+    /// Each person by USER: each member of `who`, and each user with a
+    /// session. A user that `who` does not list, as in a riff with no
+    /// sign-in, gets the time from its sessions.
+    fn people(&self) -> BTreeMap<String, PersonRow> {
+        let mut people: BTreeMap<String, PersonRow> = self
+            .people
+            .iter()
+            .map(|p| {
+                let row = PersonRow {
+                    role: p.role,
+                    live: p.live,
+                    seen_secs: p.seen_secs,
+                };
+                (p.user.clone(), row)
+            })
+            .collect();
+        for s in self.sessions {
+            let user = s.uri.who().user();
+            if self.people.iter().any(|p| p.user == user) {
+                continue;
+            }
+            let row = people.entry(user.to_owned()).or_insert(PersonRow {
+                role: if self.owner.is(user) {
+                    PersonRole::Owner
+                } else {
+                    PersonRole::Member
+                },
+                live: false,
+                seen_secs: None,
+            });
+            row.live |= s.live;
+            row.seen_secs = Some(row.seen_secs.map_or(s.idle_secs, |t| t.min(s.idle_secs)));
+        }
+        people
+    }
+
+    /// The hosts of `user` by name, each with its agent sessions:
+    /// blocked first, then by session ID. A person on the command line
+    /// has no session, and no row.
+    fn hosts(&self, user: &str) -> Vec<(String, Vec<&SessionInfo>)> {
+        let mut hosts: BTreeMap<String, Vec<&SessionInfo>> = BTreeMap::new();
+        for s in self.sessions {
+            if s.uri.who().user() == user && s.uri.who().session().is_some() {
+                hosts
+                    .entry(s.uri.place().host().to_owned())
+                    .or_default()
+                    .push(s);
+            }
+        }
+        hosts
+            .into_iter()
+            .map(|(host, mut sessions)| {
+                sessions.sort_by_key(|s| (!blocked(s), s.uri.who().session().map(str::to_owned)));
+                (host, sessions)
+            })
+            .collect()
     }
 
     /// Each item of the wave with the short IDs of the sessions that
@@ -344,23 +445,12 @@ impl Top<'_> {
             .join(", ")
     }
 
-    fn row(&self, s: &SessionInfo) -> [Cell; 5] {
-        let mut who = format!("{}@{}", s.uri.who().user(), s.uri.place().host());
-        if s.uri.who().session().is_some() {
-            let _ = write!(who, " ({})", short(s));
-        }
+    fn row(&self, pre: String, s: &SessionInfo) -> [Cell; 5] {
         let mut tags = Vec::new();
-        if self.owner.is(s.uri.who().user()) {
-            tags.push("owner");
-        }
         if s.uri.lead() {
             tags.push("lead");
         }
-        if s.uri
-            .who()
-            .session()
-            .is_some_and(|id| self.workers.contains(id))
-        {
+        if s.worker {
             tags.push("worker");
         }
         let idle = if s.live {
@@ -380,12 +470,12 @@ impl Top<'_> {
             })
             .collect();
         let status = match &s.status {
-            None => Cell("-".into(), DIM),
+            None => Cell::new("-", DIM),
             Some(info) => {
                 let (age, step) = (ago(info.age_secs), safe(&info.status.step));
                 match &info.status.blocked {
-                    None => Cell(format!("{age} {step}"), anstyle::Style::new()),
-                    Some(why) => Cell(
+                    None => Cell::new(format!("{age} {step}"), anstyle::Style::new()),
+                    Some(why) => Cell::new(
                         format!("blocked {age}: {} (step: {step})", safe(why)),
                         ERROR,
                     ),
@@ -393,10 +483,13 @@ impl Top<'_> {
             }
         };
         [
-            Cell(safe(&who), session_style(&s.uri)),
-            Cell(tags.join(" "), MUTED),
-            Cell(idle, DIM),
-            Cell(
+            Cell {
+                pre,
+                ..Cell::new(short(s), session_style(&s.uri))
+            },
+            Cell::new(tags.join(" "), MUTED),
+            Cell::new(idle, DIM),
+            Cell::new(
                 if items.is_empty() {
                     "-".into()
                 } else {
@@ -407,6 +500,28 @@ impl Top<'_> {
             status,
         ]
     }
+}
+
+/// The row of a person: the USER, the role tag, and `live` or the time
+/// since the last call.
+fn person_row(user: &str, person: &PersonRow) -> [Cell; 5] {
+    let seen = match (person.live, person.seen_secs) {
+        (true, _) => Cell::new("live", GOOD),
+        (false, Some(secs)) => Cell::new(format!("last seen {}", ago(secs)), DIM),
+        (false, None) => Cell::new("away", DIM),
+    };
+    [
+        Cell::new(safe(user), crate::style::person(user)),
+        Cell::new(person.role.tag().unwrap_or_default(), MUTED),
+        seen,
+        Cell::empty(),
+        Cell::empty(),
+    ]
+}
+
+/// The branch of a tree row: the last one closes the tree.
+fn branch(last: bool) -> &'static str {
+    if last { "└─ " } else { "├─ " }
 }
 
 fn blocked(s: &SessionInfo) -> bool {

@@ -920,6 +920,7 @@ pub fn worker_mcp_missing(name: &str) -> String {
 ///     live: true,
 ///     idle_secs: 0,
 ///     status: None,
+///     worker: false,
 /// };
 /// let out = riff::text::workers(&panes, &[info]);
 /// assert!(out.contains("%3  a6cf2205  a6cf2205-1  live  claims: issue-12"), "{out}");
@@ -1353,10 +1354,45 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
     }
 }
 
+/// The tags of a row of `riff who`: the role of a session, `lead` or
+/// `worker` (01M3NT4M159EHN5W8JRTQ417N4), or `owner` on the row of the
+/// owner as a person, with no session (01M3N754NY5JX4P0SN8R4ZYFG9).
+///
+/// ```
+/// use riff::text::tags;
+/// use riff_core::wire::{RiffOwner, SessionInfo};
+///
+/// let row = |uri: &str, worker: bool| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+///     worker,
+/// };
+/// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
+/// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
+/// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=w1", true), &owner), ["worker"]);
+/// assert!(tags(&row("riff://mike@thelio/o/r?session=b2", false), &owner).is_empty());
+/// assert_eq!(tags(&row("riff://mike@thelio", false), &owner), ["owner"]);
+/// assert!(tags(&row("riff://ann@heron", false), &owner).is_empty());
+/// ```
+pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
+    let mut tags = Vec::new();
+    if s.uri.who().session().is_none() && owner.is(s.uri.who().user()) {
+        tags.push("owner");
+    }
+    if s.uri.lead() {
+        tags.push("lead");
+    }
+    if s.worker {
+        tags.push("worker");
+    }
+    tags
+}
+
 /// One line for each session: its name, `live` or the time since its
-/// last call, `(you)`, `owner` for each session of the owner
-/// (01M3N754NY5JX4P0SN8R4ZYFG9), and its URI. A session with a status
-/// gets a second line with the status and its age (R184).
+/// last call, `(you)`, its [`tags`], and its URI. A session with a
+/// status gets a second line with the status and its age (R184).
 ///
 /// ```
 /// use riff::text;
@@ -1366,18 +1402,21 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let status = Status { step: "write the tests".into(), blocked: None };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None },
+///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false },
 ///     SessionInfo {
 ///         uri: brett,
 ///         live: false,
 ///         idle_secs: 150,
 ///         status: Some(StatusInfo { status, age_secs: 240 }),
+///         worker: true,
 ///     },
 /// ];
+/// // The owner is a person: the sessions of brett get no tag `owner`.
 /// let owner = RiffOwner::Owner { user: "brett".into(), email: "brett@x.io".into() };
 /// let out = text::who(&list, &owner, &list[0].uri);
 /// assert!(out.contains("(a6cf) live (you)  riff://"), "{out}");
-/// assert!(out.contains("(77e0) idle 2m owner  riff://"), "{out}");
+/// assert!(out.contains("(77e0) idle 2m worker  riff://"), "{out}");
+/// assert!(!out.contains("owner"), "{out}");
 /// assert!(out.ends_with("\n  status 4m ago: write the tests\n"), "{out}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -1397,12 +1436,8 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
         } else {
             ""
         };
-        let owns = if owner.is(s.uri.who().user()) {
-            " owner"
-        } else {
-            ""
-        };
-        let _ = writeln!(out, "{} {state}{you}{owns}  {}", name(&s.uri), s.uri);
+        let tags: String = tags(s, owner).iter().map(|t| format!(" {t}")).collect();
+        let _ = writeln!(out, "{} {state}{you}{tags}  {}", name(&s.uri), s.uri);
         if let Some(status) = &s.status {
             let _ = writeln!(out, "  {}", status_line(status));
         }
@@ -1420,7 +1455,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///   line.
 /// - One line for each session: its [`name`] in the color of the
 ///   session ([`style::session`](crate::style::session)), `live` in
-///   green or a dim `idle` time, `(you)` in bold, `owner`, `lead` and
+///   green or a dim `idle` time, `(you)` in bold, the [`tags`] and
 ///   each claim muted, and the dim URI.
 /// - The status under the session, with the indent of the body in
 ///   `riff tail`. The age is dim. A blocked status is red.
@@ -1435,12 +1470,13 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None },
+///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false },
 ///     SessionInfo {
 ///         uri: brett,
 ///         live: false,
 ///         idle_secs: 150,
 ///         status: Some(StatusInfo { status: blocked, age_secs: 60 }),
+///         worker: false,
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
@@ -1452,7 +1488,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 /// assert!(lines[2].starts_with("riff and riff-server have the build"));
 /// assert_eq!(
 ///     lines[3],
-///     "mike@pangolin:riff#issue-6 (a6cf)  live  (you)  owner lead issue-6  \
+///     "mike@pangolin:riff#issue-6 (a6cf)  live  (you)  lead issue-6  \
 ///      riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
 /// );
 /// assert_eq!(lines[4], "brett@heron:riff (77e0)  idle 2m  riff://brett@heron/como-technologies/riff?session=77e0");
@@ -1506,13 +1542,8 @@ pub fn who_view(
         if s.uri.who() == me.who() {
             let _ = write!(out, "  {}", styled(BOLD, "(you)"));
         }
-        let mut marks: Vec<String> = s.uri.claims().iter().map(|c| safe(c)).collect();
-        if s.uri.lead() {
-            marks.insert(0, "lead".into());
-        }
-        if owner.is(s.uri.who().user()) {
-            marks.insert(0, "owner".into());
-        }
+        let mut marks: Vec<String> = tags(s, owner).into_iter().map(String::from).collect();
+        marks.extend(s.uri.claims().iter().map(|c| safe(c)));
         if !marks.is_empty() {
             let _ = write!(out, "  {}", styled(MUTED, &marks.join(" ")));
         }
@@ -1549,6 +1580,7 @@ pub fn who_view(
 ///     live: true,
 ///     idle_secs: 0,
 ///     status: None,
+///     worker: false,
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);

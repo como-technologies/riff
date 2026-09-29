@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use riff::api::Api;
+use riff_core::name::SessionUri;
+
 /// The path of each call that the server gets.
 type Calls = Arc<Mutex<Vec<String>>>;
 
@@ -51,12 +54,14 @@ fn repo() -> tempfile::TempDir {
 }
 
 /// A dir for `PATH` with `git`, a fake `tmux` that lists one worker
-/// pane of the session `b2`, and a fake `gh` when `gh` is true.
+/// pane of the session `c3` on this machine, and a fake `gh` when `gh`
+/// is true. The pane does not make `c3` a worker: only the server says
+/// who is a worker (01M3NT4M159EHN5W8JRTQ417N4).
 fn bin(gh: bool) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let git = String::from_utf8(Command::new("which").arg("git").output().unwrap().stdout).unwrap();
     std::os::unix::fs::symlink(git.trim(), dir.path().join("git")).unwrap();
-    script(dir.path(), "tmux", "echo '%3 b2'");
+    script(dir.path(), "tmux", "echo '%3 c3'");
     if gh {
         script(
             dir.path(),
@@ -105,11 +110,17 @@ async fn output(mut cmd: Command) -> String {
 }
 
 /// A lead `a1`, a worker `b2` with a claim and a status, and a blocked
-/// session `c3`, all of mike.
+/// session `c3`, all of mike. `b2` registers as a worker on the host
+/// thelio. Each command runs on the host pangolin.
 async fn three_sessions(server: &str, dir: &Path, path: &Path) {
+    for (id, args) in [("a1", &["read"][..]), ("a1", &["resume"][..])] {
+        output(riff(server, dir, Some(id), path, args)).await;
+    }
+    let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
+        .parse()
+        .unwrap();
+    Api::new(server).register_as(&b2, true).await.unwrap();
     for (id, args) in [
-        ("a1", &["read"][..]),
-        ("a1", &["resume"][..]),
         ("b2", &["claim", "issue-12"][..]),
         ("b2", &["status", "tests"][..]),
         (
@@ -124,9 +135,17 @@ async fn three_sessions(server: &str, dir: &Path, path: &Path) {
 /// The rows of the table, after the head.
 fn rows(top: &str) -> Vec<String> {
     top.lines()
-        .skip_while(|l| !l.starts_with("SESSION"))
+        .skip_while(|l| !l.starts_with("WHO"))
         .skip(1)
         .map(str::to_owned)
+        .collect()
+}
+
+/// The session rows of the table.
+fn session_rows(top: &str) -> Vec<String> {
+    rows(top)
+        .into_iter()
+        .filter(|r| r.contains("─ ") && (r.contains(" live ") || r.contains(" idle ")))
         .collect()
 }
 
@@ -149,21 +168,62 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
     assert!(top.starts_with("The riff is running.\n"), "{top}");
     assert!(top.contains("\nWave 3: #12 b2\n"), "{top}");
     let rows = rows(&top);
-    assert_eq!(rows.len(), 3, "{top}");
-    assert!(rows[0].starts_with("mike@pangolin (c3)"), "{top}");
+    assert_eq!(rows.len(), 6, "{top}");
+    assert!(rows[0].starts_with("mike "), "{top}");
+    assert!(rows[0].contains(" last seen "), "{top}");
+    assert_eq!(rows[1], "├─ pangolin", "{top}");
+    assert!(rows[2].starts_with("│  ├─ c3 "), "{top}");
     assert!(
-        rows[0].contains("blocked 0s: waits for a review (step: merge)"),
+        rows[2].contains("blocked 0s: waits for a review (step: merge)"),
         "{top}"
     );
-    assert!(rows[1].starts_with("mike@pangolin (a1)"), "{top}");
-    assert!(rows[1].contains(" lead "), "{top}");
-    assert!(rows[2].starts_with("mike@pangolin (b2)"), "{top}");
-    assert!(rows[2].contains(" worker "), "{top}");
-    assert!(rows[2].contains("issue-12 Show the wave"), "{top}");
-    assert!(rows[2].ends_with("0s tests"), "{top}");
-    for row in &rows {
+    assert!(
+        !rows[2].contains("worker"),
+        "a local pane is no worker: {top}"
+    );
+    assert!(rows[3].starts_with("│  └─ a1 "), "{top}");
+    assert!(rows[3].contains(" lead "), "{top}");
+    assert_eq!(rows[4], "└─ thelio", "{top}");
+    assert!(rows[5].starts_with("   └─ b2 "), "{top}");
+    assert!(rows[5].contains(" worker "), "{top}");
+    assert!(rows[5].contains("issue-12 Show the wave"), "{top}");
+    assert!(rows[5].ends_with("0s tests"), "{top}");
+    for row in session_rows(&top) {
         assert!(row.contains(" idle ") || row.contains(" live "), "{top}");
+        assert!(!row.contains("owner"), "{top}");
     }
+}
+
+/// A worker that registered on thelio shows `worker` in `riff top` and
+/// `riff who` on pangolin (01M3NT4M159EHN5W8JRTQ417N4).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_of_another_host_shows_worker() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    three_sessions(&server, dir, bin.path()).await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    let b2 = session_rows(&top)
+        .into_iter()
+        .find(|r| r.contains("─ b2 "))
+        .unwrap();
+    assert!(b2.contains(" worker "), "{top}");
+
+    let who = ["who", "--color", "never"];
+    let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
+    let line = |id: &str| {
+        who.lines()
+            .find(|l| l.contains(&format!("({id})")))
+            .unwrap_or_else(|| panic!("{id}: {who}"))
+            .to_owned()
+    };
+    assert!(line("b2").starts_with("mike@thelio:riff (b2)"), "{who}");
+    assert!(line("b2").contains("  worker issue-12  riff://"), "{who}");
+    assert!(!line("c3").contains("worker"), "{who}");
+    assert!(line("a1").contains("  lead  riff://"), "{who}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -217,9 +277,9 @@ async fn with_no_gh_the_row_still_prints() {
     .await;
     assert!(!top.contains("Wave 3"), "{top}");
     let rows = rows(&top);
-    assert_eq!(rows.len(), 3, "{top}");
-    assert!(rows[2].contains("issue-12  "), "{top}");
-    assert!(!rows[2].contains("Show the wave"), "{top}");
+    assert_eq!(rows.len(), 6, "{top}");
+    assert!(rows[5].contains("issue-12  "), "{top}");
+    assert!(!rows[5].contains("Show the wave"), "{top}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

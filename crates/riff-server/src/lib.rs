@@ -134,9 +134,9 @@ use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, AdminSet, Alive, Claim, ClaimReply, DenyOwner, End, ID_TOKEN_TYPE, Invite,
     Invited, Keys, Kind, Lead, LeadReply, Members, MembersReply, Membership, OwnerAsked,
-    OwnerDenied, OwnerPassed, PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed,
-    ResourceMetadata, Revoke, Revoked, Riff, RiffOwner, RiffReply, ServerMetadata, SetAdmin,
-    SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads,
+    OwnerDenied, OwnerPassed, PassOwner, Person, Post, Posted, Read, ReadReply, Register, Remove,
+    Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffOwner, RiffReply, ServerMetadata,
+    SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads,
     ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
@@ -855,7 +855,9 @@ async fn register(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Register>,
 ) -> Reply<()> {
-    acts_as(&s, caller, &r.me)?.register(&r.me, Instant::now());
+    let mut state = acts_as(&s, caller, &r.me)?;
+    state.register(&r.me, Instant::now());
+    state.worker(r.me.who(), r.worker);
     Ok(Json(()))
 }
 
@@ -896,16 +898,31 @@ async fn who(
     Json(r): Json<WhoRequest>,
 ) -> Reply<WhoReply> {
     let now = Instant::now();
-    let owner = if s.config.trusted() {
-        RiffOwner::NoSignIn
+    let (owner, members) = if s.config.trusted() {
+        (RiffOwner::NoSignIn, Vec::new())
     } else {
-        s.tokens().riff_owner()
+        let tokens = s.tokens();
+        (tokens.riff_owner(), tokens.people(&s.config.admins))
     };
     let mut state = acts_as(&s, caller, &r.me)?;
     state.called(&r.me, now);
+    let now_ms = now_ms();
+    let people = members
+        .into_iter()
+        .map(|(user, role)| {
+            let seen = state.seen(&user, now, now_ms);
+            Person {
+                live: seen.is_some_and(|(live, _)| live),
+                seen_secs: seen.map(|(_, secs)| secs),
+                user,
+                role,
+            }
+        })
+        .collect();
     Ok(Json(WhoReply {
-        sessions: state.who(now, now_ms(), r.all),
+        sessions: state.who(now, now_ms, r.all),
         owner,
+        people,
     }))
 }
 

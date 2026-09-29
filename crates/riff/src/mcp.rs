@@ -64,6 +64,9 @@ pub struct Tools {
     binary: Option<Binary>,
     /// Told when a tool saw a new binary and gave its reply.
     stop: Arc<tokio::sync::Notify>,
+    /// True in a worker session: each register says so
+    /// (01M3NT4M159EHN5W8JRTQ417N4).
+    worker: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -152,7 +155,15 @@ impl Tools {
             left: Arc::new(AtomicBool::new(false)),
             binary: None,
             stop: Arc::new(tokio::sync::Notify::new()),
+            worker: false,
         }
+    }
+
+    /// Registers the session as a worker or not
+    /// (01M3NT4M159EHN5W8JRTQ417N4).
+    pub fn as_worker(mut self, worker: bool) -> Self {
+        self.worker = worker;
+        self
     }
 
     /// Watches `binary` on disk. After a new binary, each tool replies
@@ -299,7 +310,7 @@ or says \"join the riff\". Then start the watch and follow the start routine of 
         if let (Some(dir), Some(id)) = (&self.local, me.who().session()) {
             local::join(dir, id).map_err(err)?;
         }
-        self.api.register(&me).await.map_err(err)?;
+        self.api.register_as(&me, self.worker).await.map_err(err)?;
         self.left.store(false, Ordering::SeqCst);
         Ok(text::joined(&me))
     }
@@ -421,7 +432,10 @@ Your session ID and your claims stay. Call it each time you change worktree."
         }
         let place = identity::place(&path).map_err(err)?;
         let moved = me.moved(place);
-        self.api.register(&moved).await.map_err(err)?;
+        self.api
+            .register_as(&moved, self.worker)
+            .await
+            .map_err(err)?;
         *self.me.lock().unwrap_or_else(|p| p.into_inner()) = moved.clone();
         *self.dir.lock().unwrap_or_else(|p| p.into_inner()) = path;
         Ok(format!("You moved. Your URI is now {moved}"))
@@ -545,12 +559,14 @@ pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// closes or a signal stops it (R204, R205).
 pub async fn serve(api: Api, me: SessionUri) -> Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
+    let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
         .in_local(local::dir())
-        .with_binary(Binary::this());
+        .with_binary(Binary::this())
+        .as_worker(worker);
     // Start even if the server is down: each tool call reports the error.
     if !tools.left()
-        && let Err(e) = api.register(&me).await
+        && let Err(e) = api.register_as(&me, worker).await
     {
         eprintln!("riff: {e:#}");
     }

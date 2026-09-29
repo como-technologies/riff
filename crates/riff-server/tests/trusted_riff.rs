@@ -69,7 +69,10 @@ async fn read_reply(port: u16) -> ReadReply {
     let http = common::client();
     let call =
         |op: &str, body: serde_json::Value| http.post(format!("{url}/{op}")).json(&body).send();
-    let register = Register { me: me.clone() };
+    let register = Register {
+        me: me.clone(),
+        worker: false,
+    };
     call("register", serde_json::to_value(register).unwrap())
         .await
         .unwrap()
@@ -146,6 +149,7 @@ async fn oidc_settings_in_the_environment_require_sign_in() {
     assert_eq!(config["client_id"], "my-app");
     let register = Register {
         me: "riff://mike@pangolin".parse().unwrap(),
+        worker: false,
     };
     let reply = http
         .post(format!("{url}/register"))

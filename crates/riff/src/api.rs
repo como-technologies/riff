@@ -634,9 +634,19 @@ impl Api {
     }
 
     /// Says where the session works now. Call it at the start and after
-    /// each move.
+    /// each move. It is not a worker.
     pub async fn register(&self, me: &SessionUri) -> Result<()> {
-        self.call("register", &Register { me: me.clone() }).await
+        self.register_as(me, false).await
+    }
+
+    /// [`Api::register`], a worker or not. A worker says that it is a
+    /// worker (01M3NT4M159EHN5W8JRTQ417N4).
+    pub async fn register_as(&self, me: &SessionUri, worker: bool) -> Result<()> {
+        let register = Register {
+            me: me.clone(),
+            worker,
+        };
+        self.call("register", &register).await
     }
 
     /// A keep-alive: the session still runs (R204).

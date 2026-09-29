@@ -102,10 +102,22 @@ use crate::signed::Content;
 
 /// `POST /v1/register`: a session says that it exists and where it
 /// works. A session registers when it starts and when it moves. It
-/// joins the thread of its repository.
+/// joins the thread of its repository. A worker says that it is a
+/// worker, so `who` shows it the same on each machine
+/// (01M3NT4M159EHN5W8JRTQ417N4).
+///
+/// ```
+/// use riff_core::wire::Register;
+///
+/// let old: Register = serde_json::from_str(r#"{"me":"riff://mike@pangolin/o/r?session=a1"}"#).unwrap();
+/// assert!(!old.worker);
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Register {
     pub me: SessionUri,
+    /// True when the session is a worker: `riff workers run` started it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worker: bool,
 }
 
 /// `riff mcp` sends a keep-alive this often, also while no turn runs
@@ -142,6 +154,59 @@ pub struct WhoReply {
     /// The owner of the riff (01M3N754NY5JX4P0SN8R4ZYFG9).
     #[serde(default)]
     pub owner: RiffOwner,
+    /// Each member of the riff with a USER, also when away
+    /// (01M3NT4M3A4E3K5S2NM7MS6PQD). A riff with no sign-in has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub people: Vec<Person>,
+}
+
+/// A member of the riff in the reply to `who`: a person, not a session
+/// (01M3NT4M3A4E3K5S2NM7MS6PQD).
+///
+/// ```
+/// use riff_core::wire::{Person, PersonRole};
+///
+/// let ada: Person =
+///     serde_json::from_str(r#"{"user":"ada","role":"owner","live":false,"seen_secs":3600}"#).unwrap();
+/// assert_eq!(ada.role, PersonRole::Owner);
+/// assert_eq!(ada.role.tag(), Some("owner"));
+/// assert_eq!(PersonRole::Member.tag(), None);
+/// assert_eq!(ada.seen_secs, Some(3600));
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Person {
+    /// The USER of the person.
+    pub user: String,
+    pub role: PersonRole,
+    /// True while a session of the person is live.
+    pub live: bool,
+    /// The seconds since the last call of a session of the person.
+    /// `None` when the server knows no session of the person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen_secs: Option<u64>,
+}
+
+/// The role of a person in the riff.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonRole {
+    Owner,
+    Admin,
+    Member,
+}
+
+impl PersonRole {
+    /// The tag on the row of the person: `owner`, `admin`, or none for
+    /// a member.
+    pub fn tag(self) -> Option<&'static str> {
+        match self {
+            PersonRole::Owner => Some("owner"),
+            PersonRole::Admin => Some("admin"),
+            PersonRole::Member => None,
+        }
+    }
 }
 
 /// The owner of the riff, in the reply to `who`
@@ -193,6 +258,10 @@ pub struct SessionInfo {
     /// The last status that the session set, if it set one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<StatusInfo>,
+    /// True when the session registered as a worker
+    /// (01M3NT4M159EHN5W8JRTQ417N4).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worker: bool,
 }
 
 /// The most characters in the step or the reason of a [`Status`].

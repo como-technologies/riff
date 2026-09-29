@@ -1567,15 +1567,14 @@ async fn top(api: &Api, me: &SessionUri, thread: Option<ThreadName>, once: bool)
     loop {
         let state = api.riff(me).await?;
         let who = api.roster(me, false).await?;
-        let panes = Tmux::machine().worker_panes().unwrap_or_default();
         let server = riff::api::server_build();
         let top = riff::top::Top {
             state,
             owner: &who.owner,
             server: server.as_ref(),
             sessions: &who.sessions,
+            people: &who.people,
             issues: issues.as_ref(),
-            workers: &riff::top::workers(&panes, &who.sessions),
         };
         if clear {
             // Home and erase: the table draws again in place.
