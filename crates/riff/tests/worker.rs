@@ -365,6 +365,50 @@ async fn the_server_stops_an_idle_worker_through_its_wrapper() {
     assert!(!read.contains("worker stopped"), "{read}");
 }
 
+/// The lead wakes an idle worker after the server asks it to stop, but
+/// before its next keep-alive. The end of the watch takes the ask back,
+/// so the worker goes on (01M3Q5A0NKY1FCS0YH6N6YD3GN).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wake_of_the_lead_takes_back_the_ask_to_stop() {
+    use futures::StreamExt;
+
+    let api = start_server().await;
+    let lead = lead(&api).await;
+    api.idle(&lead, Some(0), Some(1)).await.unwrap();
+    let w7: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w7"
+        .parse()
+        .unwrap();
+    api.register_as(&w7, true).await.unwrap();
+    let mut watch = Box::pin(api.watch(&w7).await.unwrap());
+
+    let stopping = async || {
+        api.who(&lead, false)
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.uri.who() == w7.who() && s.stopping)
+    };
+    let begin = Instant::now();
+    while !stopping().await {
+        assert!(begin.elapsed() < Duration::from_secs(30), "no ask to stop");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    api.tell(&lead, "w7", "request: claim issue-12")
+        .await
+        .unwrap();
+    let wake = tokio::time::timeout(Duration::from_secs(10), watch.next()).await;
+    assert!(matches!(wake, Ok(Some(Ok(_)))), "no wake");
+    drop(watch);
+
+    let begin = Instant::now();
+    while stopping().await {
+        assert!(begin.elapsed() < Duration::from_secs(10), "the ask stays");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!api.alive(&w7).await.unwrap().stop);
+}
+
 /// `riff workers idle` shows the settings of idle workers, and sets
 /// them (01M3Q5A0TF9K49V8Z1ZY9NDF74).
 #[tokio::test(flavor = "multi_thread")]

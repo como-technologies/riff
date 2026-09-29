@@ -19,9 +19,9 @@
 //! `riff who` (01M3Q5A0QZTSTXHHNYCE8HFJSB). This works on each machine,
 //! with or without a workers host.
 //!
-//! A call of the worker takes the mark back. So a worker that claims
-//! work, or answers a request of the lead, before its next keep-alive
-//! goes on.
+//! A call of the worker takes the mark back. The end of its watch at a
+//! wake takes it back too. So a worker that claims work, or that the
+//! lead wakes with a request, before its next keep-alive goes on.
 //!
 //! ```mermaid
 //! sequenceDiagram
