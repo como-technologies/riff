@@ -390,6 +390,11 @@ sequenceDiagram
 - A failed update keeps the old `riff`. The message to your lead holds
   the error. riff tries again at the next release. To try again now,
   run `riff update --tag` with the release.
+- When riff cannot run a command or read a file, for example because
+  a directory is missing, the release does not count as tried. The
+  next `riff` command tries again.
+- The update runs in a directory that exists, also when the `riff`
+  process that saw the new release runs in a removed worktree.
 - riff never installs an older release by itself.
 
 The output of the update is in `update.log`, in the local files of

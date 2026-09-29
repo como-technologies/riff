@@ -2263,20 +2263,29 @@ pub fn auto_updated(host: &str, old: &str, new: &str) -> String {
 }
 
 /// The message to the lead after a failed update of riff by itself
-/// (01M3N7JJKBME6VSNTHD8VPN3K9).
+/// (01M3N7JJKBME6VSNTHD8VPN3K9). `tried` is true when the failure is
+/// about the release, so riff waits for the next release
+/// (01M3NT2PYFHPB0C19Q2QB2AE6W).
 ///
 /// ```
-/// let failed = riff::text::auto_update_failed("pangolin", "v0.3.0", "v0.4.0", "cargo install failed");
+/// let failed = riff::text::auto_update_failed("pangolin", "v0.3.0", "v0.4.0", "cargo install failed", true);
 /// assert!(failed.starts_with(
 ///     "riff on pangolin cannot update itself from v0.3.0 to v0.4.0: cargo install failed. "
 /// ), "{failed}");
+/// assert!(failed.contains("riff tries again at the next release."), "{failed}");
 /// assert!(failed.contains("riff update --tag v0.4.0"), "{failed}");
+/// let failed = riff::text::auto_update_failed("pangolin", "v0.3.0", "v0.4.0", "no cargo", false);
+/// assert!(failed.contains("riff tries again at the next riff command."), "{failed}");
 /// ```
-pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str) -> String {
+pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str, tried: bool) -> String {
+    let again = if tried {
+        "the next release"
+    } else {
+        "the next riff command"
+    };
     format!(
         "riff on {host} cannot update itself from {old} to {new}: {error}. The old riff stays. \
-         riff tries again at the next release. To try again now, run riff update --tag {new} \
-         on {host}."
+         riff tries again at {again}. To try again now, run riff update --tag {new} on {host}."
     )
 }
 

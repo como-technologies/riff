@@ -626,7 +626,15 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         if let (true, Some(tag)) = (background, tag) {
-            return riff::auto_update::run(cargo, claude, tag, &cli.server, DEFAULT_SERVER).await;
+            return riff::auto_update::run(
+                cargo,
+                claude,
+                tag,
+                &cli.server,
+                DEFAULT_SERVER,
+                cli.place.as_ref(),
+            )
+            .await;
         }
         println!(
             "{}",
@@ -764,6 +772,7 @@ async fn main() -> Result<()> {
         _ => {}
     }
     let here = identity::here(cli.place.as_ref())?;
+    riff::auto_update::remember(&here);
     let me = identity::me(&here, api.base())?;
     // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
     // `riff mcp` still runs: its `join` tool brings the session back.

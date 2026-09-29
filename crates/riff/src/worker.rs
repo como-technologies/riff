@@ -52,6 +52,7 @@ use std::process::ExitStatus;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use riff_core::name::Place;
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::Api;
@@ -122,7 +123,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let session = std::env::var(identity::SESSION_VARS[0]).ok();
     let body = crate::text::worker_stopped(pane.as_deref(), session.as_deref(), &status);
     eprintln!("{body}");
-    if let Err(e) = tell_lead(server, &body).await {
+    if let Err(e) = tell_lead(None, server, &body).await {
         eprintln!("riff: cannot tell the lead: {e:#}");
     }
     Ok(status.code().unwrap_or(1))
@@ -141,10 +142,10 @@ async fn stop_child(child: &mut tokio::process::Child) -> Result<i32> {
     Ok(0)
 }
 
-/// Sends `body` to the lead of the person in the repository of this
-/// directory, as the person.
-pub(crate) async fn tell_lead(server: &str, body: &str) -> Result<()> {
-    let place = identity::place(&identity::working_dir()?)?;
+/// Sends `body` to the lead of the person in the repository of
+/// `place`, else of this directory, as the person.
+pub(crate) async fn tell_lead(place: Option<&Place>, server: &str, body: &str) -> Result<()> {
+    let place = identity::here(place)?;
     let me = identity::person(&place, server)?;
     let api = Api::new(server).signed_in(None)?;
     api.tell(&me, crate::api::LEAD, body).await?;
