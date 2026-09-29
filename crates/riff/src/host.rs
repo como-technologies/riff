@@ -11,7 +11,8 @@
 //! The lead asks it with a signed direct message
 //! (01M3N7AKB3KXS2XYK0309C4M18): `riff workers start N --host HOST`
 //! sends [`Request::Start`], `riff workers stop --host HOST` sends
-//! [`Request::Stop`]. The host starts and stops workers with the same
+//! [`Request::Stop`], and `riff workers stop PANE --host HOST` sends
+//! [`Request::StopOne`] (01M3Q5A0Z5DK0YV1MWTM4AQD5Z). The host starts and stops workers with the same
 //! code as `riff workers start` and `riff workers stop` on its own
 //! machine ([`crate::worker::start`], [`crate::worker::stop`]), so its
 //! own limit counts. It acts only on a verified request from the lead of
@@ -167,17 +168,22 @@ impl HostStatus {
 ///
 /// assert_eq!("workers start 2".parse(), Ok(Request::Start(2)));
 /// assert_eq!("workers stop".parse(), Ok(Request::Stop));
+/// assert_eq!("workers stop %3".parse(), Ok(Request::StopOne("%3".into())));
 /// assert_eq!(Request::Start(3).to_string(), "workers start 3");
 /// assert_eq!(Request::Stop.to_string(), "workers stop");
+/// assert_eq!(Request::StopOne("1a2b3c4d".into()).to_string(), "workers stop 1a2b3c4d");
 /// assert!("workers start 0".parse::<Request>().is_err());
 /// assert!("request: claim issue-12".parse::<Request>().is_err());
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     /// Start this many workers.
     Start(u16),
     /// Stop each worker of the host.
     Stop,
+    /// Stop the worker in this pane, or with this session ID or its
+    /// start (01M3Q5A0Z5DK0YV1MWTM4AQD5Z).
+    StopOne(String),
 }
 
 impl FromStr for Request {
@@ -186,6 +192,7 @@ impl FromStr for Request {
     fn from_str(body: &str) -> Result<Self, ()> {
         match body.split_whitespace().collect::<Vec<_>>()[..] {
             ["workers", "stop"] => Ok(Request::Stop),
+            ["workers", "stop", one] => Ok(Request::StopOne(one.to_owned())),
             ["workers", "start", n] => match n.parse() {
                 Ok(n) if n > 0 => Ok(Request::Start(n)),
                 _ => Err(()),
@@ -200,6 +207,7 @@ impl fmt::Display for Request {
         match self {
             Request::Start(n) => write!(f, "workers start {n}"),
             Request::Stop => write!(f, "workers stop"),
+            Request::StopOne(one) => write!(f, "workers stop {one}"),
         }
     }
 }
@@ -442,6 +450,12 @@ impl Host {
                 Ok(n) => format!("{host}: {}", text::workers_stopped(n)),
                 Err(e) => format!("{host}: riff workers stop failed: {e:#}"),
             },
+            Request::StopOne(one) => {
+                match worker::stop(&self.tmux, Some(&one), &self.server).await {
+                    Ok(n) => format!("{host}: {}", text::workers_stopped(n)),
+                    Err(e) => format!("{host}: riff workers stop failed: {e:#}"),
+                }
+            }
         }
     }
 }

@@ -650,8 +650,11 @@ In tmux, you can start worker sessions on your machine with
 `riff workers start N`. Each worker joins the riff and follows the
 start routine.
 
-Keep a worker on each free item. A worker with no work waits idle, so
-give it work before you start a new one. Check each time a riff line
+Keep a worker on each free item. Start a worker when you have work
+for it. Do not keep workers that wait. A worker with no work waits
+idle, so give it work before you start a new one. The server stops
+idle workers past a limit: at most 1 on each host
+(`riff workers idle`). Check each time a riff line
 wakes you, and each time you free an item: a need merges, your user
 decides a scope, or a new item joins the current wave.
 
@@ -684,11 +687,16 @@ decides a scope, or a new item joins the current wave.
    ```
 
    The reply of the host comes as a direct message. Stop the workers
-   of a host with `riff workers stop --host HOST`.
+   of a host with `riff workers stop --host HOST`, or one of them
+   with `riff workers stop PANE --host HOST`.
 
 - Start at most as many workers as there are free items.
-- A worker never ends itself. End workers with `riff workers stop`
-  when you decide, for example when the waves have no more work.
+- A worker never ends itself. The server stops idle workers past the
+  limit, and posts a note to you for each. End other workers with
+  `riff workers stop` when you decide, for example when the waves
+  have no more work.
+- Never change the settings of idle workers (`riff workers idle`).
+  Only your user sets them.
 - Never change the limit of workers (`riff workers limit`). Only your
   user sets it. When the limit stops a worker, tell your user.
 - Never change the MCP servers of the workers (`riff workers mcp`).
@@ -719,8 +727,8 @@ The start hook tells a worker that it is one (`RIFF_WORKER=1`).
 - When the start routine finds no free item and no free verify
   request, and you hold no claim, you are idle. Set your status
   `idle: waits for work`, keep the watch running, and end your turn.
-  Do not end this session. The lead gives you work with a request, and
-  ends workers when it decides.
+  Do not end this session. The lead gives you work with a request. The
+  server stops an idle worker when too many wait on its host.
 - While you wait for a verify, keep your claim and wait.
 
 ## A request from your lead

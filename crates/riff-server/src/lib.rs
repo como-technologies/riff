@@ -37,6 +37,8 @@
 //!   lets the owner pass the owner role. `POST /v1/owner/take` lets an
 //!   admin ask for it, and `POST /v1/owner/deny` lets the owner keep
 //!   it. See "Owner and members" in [`token`].
+//! - A task looks for idle workers each [`idle::CHECK_EVERY`], and asks
+//!   each idle worker past the limit to stop. See [`idle`].
 //! - A task looks at the owner role each [`owner::Timing::tick`]: it
 //!   grants a request whose time ended, and checks the owner. The server
 //!   posts the note of each change of the role itself. See [`owner`].
@@ -105,6 +107,7 @@
 
 pub mod auth;
 pub mod gcs;
+pub mod idle;
 pub mod lease;
 pub mod listen;
 pub mod oidc;
@@ -132,12 +135,13 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, AdminSet, Alive, Claim, ClaimReply, DenyOwner, End, ID_TOKEN_TYPE, Invite,
-    Invited, Keys, Kind, Lead, LeadReply, Members, MembersReply, Membership, OwnerAsked,
-    OwnerDenied, OwnerPassed, PassOwner, Person, Post, Posted, Read, ReadReply, Register, Remove,
-    Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffOwner, RiffReply, ServerMetadata,
-    SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads,
-    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, AdminSet, Alive, AliveReply, Claim, ClaimReply, DenyOwner, End,
+    ID_TOKEN_TYPE, Idle, Invite, Invited, Keys, Kind, Lead, LeadReply, Members, MembersReply,
+    Membership, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Person, Post, Posted, Read,
+    ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffOwner,
+    RiffReply, ServerMetadata, SetAdmin, SetIdle, SetStatus, SignInConfig, Start, Started,
+    TOKEN_EXCHANGE, Tailed, TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest,
+    Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -436,6 +440,38 @@ impl Server {
         self.announce(&news, &admins);
     }
 
+    /// Asks each idle worker past the limit to stop, and posts a note to
+    /// the lead of its user for each (see [`idle`]).
+    fn stop_idle_workers(&self) {
+        let (now, at_ms) = (Instant::now(), now_ms());
+        let me = owner::server_uri();
+        let mut deliveries = Vec::new();
+        {
+            let mut state = self.state();
+            let settings = state.idle();
+            for stopping in state.stop_idle_workers(now) {
+                let news = idle::news(&stopping, &settings);
+                tracing::info!("{news}");
+                let Some(thread) = stopping.worker.default_thread() else {
+                    continue;
+                };
+                let lead = Selector::lead(stopping.worker.who().user(), &thread.to_string());
+                let note =
+                    state.announce(&me, Some(thread), vec![lead], &news, Kind::Note, now, at_ms);
+                deliveries.push(note);
+            }
+        }
+        for delivery in deliveries {
+            match delivery {
+                Ok(mut delivery) => {
+                    delivery.tailed.trusted = self.config.trusted();
+                    self.deliver(delivery);
+                }
+                Err(error) => tracing::warn!("a note of the server did not go: {error}"),
+            }
+        }
+    }
+
     /// Posts a note of the server to the thread of each repository of
     /// the riff. It sends the same text to each live lead of `users` as a
     /// direct message (see [`owner`]).
@@ -639,6 +675,7 @@ impl Service {
             },
         }));
         service.watch_owner();
+        service.watch_idle_workers();
         service
     }
 
@@ -670,6 +707,32 @@ impl Service {
                 }
                 if let Some(change) = server.owner_tick(&mut checks, Instant::now()) {
                     server.owner_changed(&change).await;
+                }
+            }
+        });
+    }
+
+    /// Starts the task that asks the idle workers past the limit to stop,
+    /// each [`idle::CHECK_EVERY`] (see [`idle`]). A server with no async
+    /// runtime starts no task. The task ends when the service ends.
+    fn watch_idle_workers(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        runtime.spawn(async move {
+            let mut tick = tokio::time::interval(idle::CHECK_EVERY);
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(server) = server.upgrade() else {
+                    break;
+                };
+                if server.is_stopped() {
+                    break;
+                }
+                if server.serving() {
+                    server.stop_idle_workers();
                 }
             }
         });
@@ -802,10 +865,20 @@ impl Service {
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
+        // A riff with sign-in knows who changes the idle workers
+        // (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+        let trusted = self.0.config.trusted();
+        if trusted {
+            routes = routes.route("/v1/idle", post(idle_workers));
+        }
         if self.0.config.require_sign_in {
             routes = routes.route_layer(guard());
         }
-        let revoke = Router::new()
+        let mut admin_routes = Router::new();
+        if !trusted {
+            admin_routes = admin_routes.route("/v1/idle", post(idle_workers));
+        }
+        let admin_routes = admin_routes
             .route("/v1/revoke", post(revoke))
             .route("/v1/invite", post(invite))
             .route("/v1/remove", post(remove))
@@ -816,7 +889,7 @@ impl Service {
             .route("/v1/owner/deny", post(deny_owner))
             .route_layer(guard());
         routes
-            .merge(revoke)
+            .merge(admin_routes)
             .route_layer(middleware::from_fn(check_build))
             // `riff login` and a refresh work with each version
             // (01M3MX4V43SF2XFCZWANHD19WV).
@@ -866,9 +939,9 @@ async fn alive(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Alive>,
-) -> Reply<()> {
-    acts_as(&s, caller, &r.me)?.alive(&r.me, Instant::now());
-    Ok(Json(()))
+) -> Reply<AliveReply> {
+    let reply = acts_as(&s, caller, &r.me)?.alive(&r.me, Instant::now());
+    Ok(Json(reply))
 }
 
 /// The session ended: it is gone, and its claims are free (R205).
@@ -1063,6 +1136,26 @@ async fn riff(
         .riff(&r.me, r.state, Instant::now())
         .map_err(|message| (StatusCode::FORBIDDEN, message))?;
     Ok(Json(reply))
+}
+
+/// Reads the settings of idle workers, and sets each given value
+/// (01M3Q5A0TF9K49V8Z1ZY9NDF74). With sign-in, only the owner or an
+/// admin can set them.
+async fn idle_workers(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Json(r): Json<SetIdle>,
+) -> Reply<Idle> {
+    let sets = r.per_host.is_some() || r.after_secs.is_some();
+    if sets && let Some(Extension(SignedIn { who, .. })) = &caller {
+        admin_only(&s, who, "change the settings of idle workers")?;
+    }
+    if r.after_secs == Some(0) {
+        return Err(bad_request("the idle time is at least 1 second".into()));
+    }
+    let mut state = acts_as(&s, caller, &r.me)?;
+    state.called(&r.me, Instant::now());
+    Ok(Json(state.set_idle(r.per_host, r.after_secs)))
 }
 
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.

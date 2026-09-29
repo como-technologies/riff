@@ -542,15 +542,30 @@ enum Workers {
     ///
     /// It ends each worker, or only the worker in PANE. Each worker leaves
     /// `riff who` and frees its claims at once. With --host, the lead asks
-    /// the workers host on that machine to end each of its workers.
+    /// the workers host on that machine to end each of its workers, or
+    /// only the worker in PANE.
     Stop {
-        /// The tmux pane of one worker, for example %3. `riff workers`
-        /// shows it.
-        #[arg(conflicts_with = "host")]
+        /// The tmux pane of one worker, for example %3, or its session ID
+        /// or the first 8 characters of it. `riff workers` shows them.
         pane: Option<String>,
         /// Stop the workers on HOST, through its `riff workers host`.
         #[arg(long)]
         host: Option<String>,
+    },
+    /// Show or set how the server stops idle workers
+    ///
+    /// The server keeps at most PER_HOST idle workers on each host. It
+    /// stops each other worker that holds no claim and makes no call for
+    /// AFTER seconds. The defaults are 1 and 60. Only the owner or an
+    /// admin of the riff can set them.
+    Idle {
+        /// The most idle workers that stay on each host.
+        #[arg(long)]
+        per_host: Option<u16>,
+        /// The idle time in seconds after which the server stops a
+        /// worker.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        after: Option<u64>,
     },
     /// Run CLAUDE as a worker, and wait
     ///
@@ -1026,8 +1041,23 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
             riff::host::serve(&identity::working_dir()?, claude, server).await
         }
         Some(Workers::Stop {
-            host: Some(host), ..
-        }) => ask_host(host, riff::host::Request::Stop, server).await,
+            pane,
+            host: Some(host),
+        }) => {
+            let request = match pane {
+                Some(one) => riff::host::Request::StopOne(one.clone()),
+                None => riff::host::Request::Stop,
+            };
+            ask_host(host, request, server).await
+        }
+        Some(Workers::Idle { per_host, after }) => {
+            let here = identity::place(&identity::working_dir()?)?;
+            let me = identity::me(&here, server)?;
+            let api = Api::new(server).signed_in(me.who().session())?;
+            let idle = api.idle(&me, *per_host, *after).await?;
+            println!("{}", text::idle_workers(&idle));
+            Ok(())
+        }
         Some(Workers::Limit { limit }) => {
             let path = settings::path()?;
             if let Some(limit) = limit {

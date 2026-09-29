@@ -825,8 +825,9 @@ mod tests {
         }
     }
 
-    /// 01M3K0AXRNA0F2920E9QCSDFQZ, 01M3K0AXPFSWNG7YPVXE65W464: the lead
-    /// gives free work to a free worker first, and ends workers.
+    /// 01M3K0AXRNA0F2920E9QCSDFQZ, 01M3Q5A11RKZW1610SWGSMTE3W: the lead
+    /// gives free work to a free worker first, starts a worker when it
+    /// has work for it, and ends workers. The server stops idle workers.
     #[test]
     fn the_skill_tells_the_lead_to_give_work_to_an_idle_worker() {
         let skill = text("riff/skills/riff/SKILL.md");
@@ -836,7 +837,10 @@ mod tests {
         for word in [
             "A free worker waits idle, with the status `idle: waits for work`.",
             "Give free work to a free worker first: `tell` it `request: claim ITEM`. The request wakes it.",
-            "A worker never ends itself. End workers with `riff workers stop` when you decide",
+            "Start a worker when you have work for it. Do not keep workers that wait.",
+            "The server stops idle workers past a limit: at most 1 on each host (`riff workers idle`).",
+            "Never change the settings of idle workers (`riff workers idle`). Only your user sets them.",
+            "A worker never ends itself. The server stops idle workers past the limit, and posts a note to you for each. End other workers with `riff workers stop` when you decide",
         ] {
             assert!(flat.contains(word), "the skill does not say {word:?}");
         }

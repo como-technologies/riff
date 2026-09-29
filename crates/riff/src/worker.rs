@@ -4,12 +4,14 @@
 //!
 //! Each worker pane of `riff workers start` runs `claude` through
 //! `riff workers run` (01M3JQC8ANFYYEXSHBS2DCZYBX). The wrapper starts
-//! `claude`, and waits. A worker ends in one of two ways:
+//! `claude`, and waits. It gives `claude` its own process ID in
+//! [`WRAPPER`]. A worker ends in one of three ways:
 //!
 //! | End | Who acts | The lead gets |
 //! |---|---|---|
 //! | `claude` exits on its own, for example after a crash | the wrapper | a direct message with the pane, the session ID and the exit code |
 //! | `riff workers stop` | the command | nothing: the person or the lead asked for it |
+//! | the server stops an idle worker | `riff mcp` of the worker sends SIGTERM to the wrapper | a note of the server |
 //!
 //! The wrapper never starts `claude` again: a crash loop costs tokens.
 //! The lead decides.
@@ -18,24 +20,34 @@
 //! [`IDLE`], keeps its watch and ends its turn
 //! (01M3K0AXMCVRST7HYH4DM8B3AN). An idle session costs nothing. A
 //! request of the lead wakes it with its next item
-//! (01M3K0AXRNA0F2920E9QCSDFQZ). No command ends a worker from inside
-//! (01M3K0AXPFSWNG7YPVXE65W464).
+//! (01M3K0AXRNA0F2920E9QCSDFQZ). When more idle workers wait on its host
+//! than the riff keeps, the server asks it to stop
+//! (01M3Q5A0NKY1FCS0YH6N6YD3GN). The reply to the next keep-alive of
+//! `riff mcp` carries the ask, and `riff mcp` stops the wrapper
+//! (01M3Q5A0QZTSTXHHNYCE8HFJSB).
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant P as tmux pane
 //!     participant W as riff workers run
 //!     participant C as claude
+//!     participant M as riff mcp
 //!     participant S as riff-server
 //!     participant L as lead
 //!     P->>W: start
-//!     W->>C: start, RIFF_WORKER=1
+//!     W->>C: start, RIFF_WORKER=1, RIFF_WORKER_WRAPPER=pid
+//!     C->>M: start
 //!     alt claude exits
 //!         C-->>W: exit code
 //!         W->>S: tell lead: pane, session, exit code
 //!         S->>L: wake
 //!     else riff workers stop
 //!         P->>W: SIGHUP, the pane closes
+//!         W->>C: SIGTERM
+//!     else the server stops an idle worker
+//!         M->>S: keep-alive
+//!         S-->>M: stop
+//!         M->>W: SIGTERM
 //!         W->>C: SIGTERM
 //!     end
 //! ```
@@ -61,6 +73,10 @@ use crate::{hygiene, identity, settings, text, worker_mcp};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
+
+/// The variable with the process ID of the `riff workers run` wrapper
+/// of a worker (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+pub const WRAPPER: &str = "RIFF_WORKER_WRAPPER";
 
 /// The status of a worker with no work. It waits for a request of the
 /// lead (01M3K0AXMCVRST7HYH4DM8B3AN).
@@ -92,6 +108,22 @@ pub fn is_worker_value(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
+/// The process ID of the wrapper of this worker, from [`WRAPPER`].
+///
+/// ```
+/// assert_eq!(riff::worker::wrapper_value(Some("4242")), Some(4242));
+/// assert_eq!(riff::worker::wrapper_value(Some("x")), None);
+/// assert_eq!(riff::worker::wrapper_value(None), None);
+/// ```
+pub fn wrapper() -> Option<u32> {
+    wrapper_value(std::env::var(WRAPPER).ok().as_deref())
+}
+
+/// [`wrapper`] for the value of `RIFF_WORKER_WRAPPER`.
+pub fn wrapper_value(value: Option<&str>) -> Option<u32> {
+    value?.parse().ok()
+}
+
 /// Runs `claude` with `args` as a worker, and waits. When `claude`
 /// exits on its own, it tells the lead. Returns the exit code for the
 /// wrapper: the code of `claude`, or 0 after a stop.
@@ -101,6 +133,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let mut child = tokio::process::Command::new(claude)
         .args(args)
         .env(WORKER, "1")
+        .env(WRAPPER, std::process::id().to_string())
         .spawn()
         .with_context(|| format!("cannot start {}", claude.display()))?;
     let status = tokio::select! {
@@ -150,6 +183,24 @@ pub(crate) async fn tell_lead(place: Option<&Place>, server: &str, body: &str) -
     let api = Api::new(server).signed_in(None)?;
     api.tell(&me, crate::api::LEAD, body).await?;
     Ok(())
+}
+
+/// True when `one` names the worker `w`: its pane, or its session ID or
+/// the start of it (01M3Q5A0Z5DK0YV1MWTM4AQD5Z).
+///
+/// ```
+/// use riff::terminal::WorkerPane;
+/// use riff::worker::is_one;
+///
+/// let w = WorkerPane { pane: "%3".into(), session: "1a2b3c4d-5e6f".into() };
+/// assert!(is_one(&w, "%3"));
+/// assert!(is_one(&w, "1a2b3c4d"));
+/// assert!(is_one(&w, "1a2b3c4d-5e6f"));
+/// assert!(!is_one(&w, "%31"));
+/// assert!(!is_one(&w, "1a2"), "a start of fewer than 4 characters names no worker");
+/// ```
+pub fn is_one(w: &WorkerPane, one: &str) -> bool {
+    w.pane == one || (one.len() >= 4 && w.session.starts_with(one))
 }
 
 /// The exit of `claude` in words.
@@ -236,11 +287,12 @@ pub fn start(
 
 /// Ends each worker of `tmux`, or the one in `pane`: it kills the pane,
 /// then sends the end call of the session (01M3JPQTDFW3C7QBSZZ2M831MH).
-/// Returns the number of stopped workers.
+/// `pane` is a pane, or the session ID of a worker or its start
+/// (01M3Q5A0Z5DK0YV1MWTM4AQD5Z). Returns the number of stopped workers.
 pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Result<usize> {
     let mut panes = tmux.worker_panes()?;
     if let Some(pane) = pane {
-        panes.retain(|w| w.pane == pane);
+        panes.retain(|w| is_one(w, pane));
         if panes.is_empty() {
             anyhow::bail!("no worker runs in the pane {pane}. `riff workers` lists them");
         }

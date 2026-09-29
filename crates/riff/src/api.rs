@@ -71,12 +71,12 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    AdminSet, Alive, Claim, ClaimReply, DenyOwner, End, Freed, Invite, Invited, Keys, Kind, Lead,
-    LeadReply, Members, MembersReply, Membership, Message, OwnerAsked, OwnerDenied, OwnerPassed,
-    PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed, Revoke, Revoked, Riff,
-    RiffReply, RiffState, SessionInfo, SetAdmin, SetStatus, SignInConfig, Start, Started, Status,
-    Tailed, TakeOwner, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest,
-    Wake, WhoReply, WhoRequest,
+    AdminSet, Alive, AliveReply, Claim, ClaimReply, DenyOwner, End, Freed, Idle, Invite, Invited,
+    Keys, Kind, Lead, LeadReply, Members, MembersReply, Membership, Message, OwnerAsked,
+    OwnerDenied, OwnerPassed, PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed,
+    Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetAdmin, SetIdle, SetStatus,
+    SignInConfig, Start, Started, Status, Tailed, TakeOwner, ThreadInfo, Threads, ThreadsReply,
+    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -650,8 +650,24 @@ impl Api {
     }
 
     /// A keep-alive: the session still runs (R204).
-    pub async fn alive(&self, me: &SessionUri) -> Result<()> {
+    pub async fn alive(&self, me: &SessionUri) -> Result<AliveReply> {
         self.call("alive", &Alive { me: me.clone() }).await
+    }
+
+    /// Reads the settings of idle workers, and sets each given value
+    /// (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+    pub async fn idle(
+        &self,
+        me: &SessionUri,
+        per_host: Option<u16>,
+        after_secs: Option<u64>,
+    ) -> Result<Idle> {
+        let request = SetIdle {
+            me: me.clone(),
+            per_host,
+            after_secs,
+        };
+        self.call("idle", &request).await
     }
 
     /// The session ended (R205).
