@@ -11,8 +11,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    auto_update, binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, pr,
-    settings, terminal, text, worker,
+    auto_update, binary, help, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin,
+    pr, settings, terminal, text, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -37,7 +37,7 @@ struct Cli {
     /// uses http, and port 7878 when there is no port. The default is
     /// the riff of this machine.
     #[arg(long, global = true, env = "RIFF_SERVER", default_value = DEFAULT_SERVER,
-          value_parser = api::server_url)]
+          value_parser = api::server_url, hide_env_values = true)]
     server: String,
 
     /// The place of the process that ran this binary after an update
@@ -51,13 +51,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Sign in with the provider of riff-server. It opens the browser.
+    /// Sign in to the riff
+    ///
+    /// It opens the browser at the provider of riff-server.
     Login,
-    /// Show your URI and the state of the riff. Inside Claude Code, it
-    /// is the URI of the session.
+    /// Show your URI and the state of the riff
+    ///
+    /// Inside Claude Code, it is the URI of the session.
     Whoami,
-    /// Show the state of the riff and list its sessions. A session that
-    /// ended, or stopped for 3 minutes, is gone and not listed.
+    /// List the sessions of the riff
+    ///
+    /// It shows the state of the riff too. A session that ended, or
+    /// stopped for 3 minutes, is gone and not listed.
     Who {
         /// List gone sessions too.
         #[arg(long)]
@@ -87,8 +92,9 @@ enum Command {
         /// The message. A status request needs none.
         body: Vec<String>,
     },
-    /// Set your status: your current step. `riff who` shows it with its
-    /// age. It replaces your old status.
+    /// Set your status: your current step
+    ///
+    /// `riff who` shows it with its age. It replaces your old status.
     Status {
         /// You cannot go on. REASON says why.
         #[arg(long, value_name = "REASON")]
@@ -97,7 +103,9 @@ enum Command {
         #[arg(required = true)]
         step: Vec<String>,
     },
-    /// Send a direct message to one session. It wakes that session.
+    /// Send a direct message to one session
+    ///
+    /// It wakes that session.
     Tell {
         /// The session: its session ID or the start of it, as `riff read`
         /// shows it, its full riff:// URI from `riff who`, or `lead` for
@@ -107,8 +115,9 @@ enum Command {
         #[arg(required = true)]
         body: Vec<String>,
     },
-    /// Show the unread messages of your threads. You join the thread of
-    /// your repository first.
+    /// Show the unread messages of your threads
+    ///
+    /// You join the thread of your repository first.
     Read {
         /// Read only this thread. It need not be one of your threads.
         #[arg(long, short)]
@@ -117,8 +126,10 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Show each new message in a thread, for people: a block for each
-    /// message, with color in a terminal.
+    /// Follow a thread, for people
+    ///
+    /// It shows each new message of the thread in a block, with color in
+    /// a terminal.
     Tail {
         /// The thread. The default is your repository thread.
         thread: Option<String>,
@@ -127,20 +138,23 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
         color: ColorWhen,
     },
-    /// Chat with the people of the riff, in the style of IRC. It shows the
-    /// chat and each new line, and sends each line that you type. A line
-    /// with @lead wakes your lead, and @USER wakes the lead of USER. Other
-    /// lines wake no session. /me TEXT sends an action. /quit or Ctrl-C
-    /// exits.
+    /// Chat with the people of the riff
+    ///
+    /// It works in the style of IRC. It shows the chat and each new line,
+    /// and sends each line that you type. A line with @lead wakes your
+    /// lead, and @USER wakes the lead of USER. Other lines wake no
+    /// session. /me TEXT sends an action. /quit or Ctrl-C exits.
     Chat {
         /// When to use color. `auto` uses color only when stdout is a
         /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
         #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
         color: ColorWhen,
     },
-    /// Show a live table of each session: its tags, its item and its
-    /// status. It draws the table again in place until Ctrl-C. It posts
-    /// nothing and wakes no session.
+    /// Show a live table of each session
+    ///
+    /// Each row shows the tags, the item and the status of a session. It
+    /// draws the table again in place until Ctrl-C. It posts nothing and
+    /// wakes no session.
     Top {
         /// Print the table once and exit.
         #[arg(long)]
@@ -150,8 +164,10 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
         color: ColorWhen,
     },
-    /// Claim a work item so that no other session does the same work.
-    /// Exits with status 1 when another session holds it.
+    /// Claim a work item
+    ///
+    /// Then no other session does the same work. It exits with status 1
+    /// when another session holds it.
     Claim {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
@@ -167,29 +183,43 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// Make this session the lead of your user in this repository. The
-    /// other sessions of your user send their questions to the lead. It
-    /// replaces the old lead. Run it in the agent session, for example
-    /// `! riff lead` in Claude Code.
+    /// Make this session the lead of your user
+    ///
+    /// Each person has one lead in each repository. The other sessions of
+    /// your user send their questions to the lead. It replaces the old
+    /// lead. Run it in the agent session, for example `! riff lead` in
+    /// Claude Code.
     Lead,
-    /// Pause the riff. Each session stops at its next step and waits.
-    /// Nobody claims work. Only you in a shell, or the lead, can pause.
+    /// Pause the riff
+    ///
+    /// Each session stops at its next step and waits. Nobody claims work.
+    /// Only you in a shell, or the lead, can pause.
     Pause,
-    /// Resume the riff. Each session goes on from where it stopped.
-    /// A new riff starts paused, so resume it to start the work.
+    /// Resume the riff
+    ///
+    /// Each session goes on from where it stopped. A new riff starts
+    /// paused, so resume it to start the work.
     Resume,
-    /// Print one line each time a post wakes this session. One watch
-    /// runs for each session: a second one stops at once.
+    /// Print one line for each wake of this session
+    ///
+    /// The plugin runs it. One watch runs for each session: a second one
+    /// stops at once.
+    #[command(hide = true)]
     Watch {
         /// Exit after the first wake. For a runner that wakes the
         /// session when the command exits.
         #[arg(long)]
         once: bool,
     },
-    /// Serve the riff tools to an agent session over stdio.
+    /// Serve the riff tools to an agent session over stdio
+    ///
+    /// The plugin runs it.
+    #[command(hide = true)]
     Mcp,
-    /// Remove the sign-in at riff-server from this device. With --all,
-    /// end each sign-in of a person on each device.
+    /// Sign out of the riff on this device
+    ///
+    /// It removes the sign-in at riff-server from this device. With
+    /// --all, it ends each sign-in of a person on each device.
     Logout {
         /// End each sign-in, on each device.
         #[arg(long)]
@@ -199,32 +229,40 @@ enum Command {
         #[arg(long, requires = "all")]
         user: Option<String>,
     },
-    /// Let a person join this riff: add their verified email to the
-    /// members. They need no allowed domain. Only the owner or an admin
-    /// can. It prints the address of the riff and the lines that the
-    /// person runs to join.
+    /// Let a person join this riff
+    ///
+    /// It adds their verified email to the members. They need no allowed
+    /// domain. Only the owner or an admin can. It prints the address of
+    /// the riff and the lines that the person runs to join.
     Invite {
         /// The email that the person signs in with.
         email: String,
     },
-    /// Remove a member of this riff, and end each sign-in of that
-    /// person. Only the owner or an admin can. The owner stays.
+    /// Remove a member of this riff
+    ///
+    /// It also ends each sign-in of that person. Only the owner or an
+    /// admin can. The owner stays.
     Remove {
         /// The email of the person.
         email: String,
     },
-    /// List who may join this riff: the owner, the admins, the members
-    /// and the allowed domains.
+    /// List who may join this riff
+    ///
+    /// It lists the owner, the admins, the members and the allowed
+    /// domains.
     Members,
-    /// Make a person an admin, or an admin a member again. An admin can
-    /// invite and remove members. Only the owner can.
+    /// Make a person an admin, or a member again
+    ///
+    /// An admin can invite and remove members. Only the owner can.
     Admin {
         #[command(subcommand)]
         command: Admin,
     },
-    /// Pass the owner role to a member or an admin. You stay an admin.
-    /// Only the owner can. An admin asks for the role with --take, and
-    /// the owner keeps it with --deny.
+    /// Pass the owner role to another person
+    ///
+    /// The person is a member or an admin. You stay an admin. Only the
+    /// owner can. An admin asks for the role with --take, and the owner
+    /// keeps it with --deny.
     #[command(group = clap::ArgGroup::new("step").required(true).args(["email", "take", "deny"]))]
     Owner {
         /// The email of the new owner. The person must be a member or an
@@ -241,34 +279,43 @@ enum Command {
         #[arg(long)]
         deny: bool,
     },
-    /// Print the status line of a Claude Code session: its short session
-    /// ID, its claims, and `lead` or `blocked`. Claude Code runs it with
-    /// the session on stdin. It always exits with status 0.
+    /// Print the status line of a Claude Code session
+    ///
+    /// It shows the short session ID, the claims, and `lead` or
+    /// `blocked`. Claude Code runs it with the session on stdin. It always
+    /// exits with status 0.
+    #[command(hide = true)]
     Statusline,
-    /// Run a Claude Code hook. The riff plugin calls it.
+    /// Run a Claude Code hook
+    ///
+    /// The riff plugin calls it.
+    #[command(hide = true)]
     Hook {
         #[command(subcommand)]
         event: HookEvent,
     },
-    /// Install the riff plugin in an agent tool. When the riff has
-    /// sign-in and this machine has none, sign in. Run it again to update
-    /// the plugin.
+    /// Install the riff plugin in an agent tool
+    ///
+    /// When the riff has sign-in and this machine has none, it signs you
+    /// in. Run it again to update the plugin.
     Connect {
         #[command(subcommand)]
         tool: Tool,
     },
-    /// Show the riff that riff uses, and where that choice comes from:
-    /// --server, RIFF_SERVER, or the riff of this machine. For that riff
-    /// and the riff of this machine: whether it answers, its build, and
-    /// sign-in.
+    /// Show the riff that riff uses
+    ///
+    /// It says where that choice comes from: --server, RIFF_SERVER, or the
+    /// riff of this machine. For that riff and the riff of this machine,
+    /// it shows whether it answers, its build, and sign-in.
     Server,
-    /// Update riff on this machine: install riff and riff-server of a
-    /// release with cargo, then update the plugin with `riff connect
-    /// claude`. It installs the release that the riff runs, or the newest
-    /// release when riff uses the riff of this machine or cannot read the
-    /// build of the riff. When the riff of
-    /// this machine runs the old build, it tells you to start riff-server
-    /// again.
+    /// Update riff on this machine
+    ///
+    /// It installs riff and riff-server of a release with cargo, then
+    /// updates the plugin with `riff connect claude`. It installs the
+    /// release that the riff runs, or the newest release when riff uses
+    /// the riff of this machine or cannot read the build of the riff.
+    /// When the riff of this machine runs the old build, it tells you to
+    /// start riff-server again.
     Update {
         /// Install this release, for example v0.2.0, not the release
         /// that the riff runs.
@@ -291,16 +338,19 @@ enum Command {
         #[arg(long, default_value = "claude")]
         claude: std::path::PathBuf,
     },
-    /// The steps of a pull request on GitHub, with the gh of this
-    /// machine: open it, and wait for its merge.
+    /// Open a pull request, and wait for its merge
+    ///
+    /// These are the steps of a pull request on GitHub, with the gh of
+    /// this machine.
     Pr {
         #[command(subcommand)]
         command: Pr,
     },
-    /// Report the verify of a pull request, with the gh of this machine:
-    /// comment the result on the pull request, set the status
-    /// riff/verify of its head commit, and post the result to the
-    /// session that holds its issue.
+    /// Report the verify of a pull request
+    ///
+    /// It uses the gh of this machine. It comments the result on the pull
+    /// request, sets the status riff/verify of its head commit, and posts
+    /// the result to the session that holds its issue.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,
@@ -315,9 +365,10 @@ enum Command {
         #[arg(long, value_name = "SHA")]
         commit: Option<String>,
     },
-    /// Start, list and stop the worker sessions of this machine. They
-    /// need tmux. With no subcommand, it lists each worker: its pane,
-    /// its session ID, its claims and its status
+    /// Start, list and stop the workers of this machine
+    ///
+    /// Workers are agent sessions in tmux. With no subcommand, it lists
+    /// each worker: its pane, its session ID, its claims and its status.
     Workers {
         #[command(subcommand)]
         command: Option<Workers>,
@@ -349,10 +400,11 @@ impl From<VerdictArg> for riff::pr::Verdict {
 
 #[derive(Subcommand)]
 enum Pr {
-    /// Open the pull request of the current branch for the issue that
-    /// this session claims, and turn on auto-merge with a squash. The
-    /// body has the link line and the trailers Issue: and Milestone: of
-    /// the issue. Push the branch first.
+    /// Open the pull request of this branch
+    ///
+    /// It is for the issue that this session claims, and it turns on
+    /// auto-merge with a squash. The body has the link line and the
+    /// trailers Issue: and Milestone: of the issue. Push the branch first.
     Open {
         /// The title. Do not end it with (#N).
         #[arg(long)]
@@ -369,9 +421,11 @@ enum Pr {
         #[arg(long)]
         issue: Option<u64>,
     },
-    /// Wait until pull request NUMBER is merged, then print its merge
-    /// commit. Exit with status 1 when it closes unmerged or a required
-    /// check fails.
+    /// Wait for the merge of a pull request
+    ///
+    /// When pull request NUMBER is merged, it prints its merge commit. It
+    /// exits with status 1 when the pull request closes unmerged or a
+    /// required check fails.
     Wait {
         /// The number of the pull request.
         number: u64,
@@ -397,12 +451,14 @@ enum Admin {
 
 #[derive(Subcommand)]
 enum Workers {
-    /// Start COUNT worker sessions in the tmux window riff-workers, one
-    /// pane each. Each pane runs `claude "Join the riff."` in the main
-    /// worktree. It starts at most the limit minus the workers that run.
-    /// It refuses in a worker, and in an agent session that is not the
-    /// lead. Outside tmux, it starts nothing. With --host, the lead asks
-    /// the workers host on that machine to start them.
+    /// Start COUNT workers
+    ///
+    /// It starts them in the tmux window riff-workers, one pane each. Each
+    /// pane runs `claude "Join the riff."` in the main worktree. It
+    /// starts at most the limit minus the workers that run. It refuses in
+    /// a worker, and in an agent session that is not the lead. Outside
+    /// tmux, it starts nothing. With --host, the lead asks the workers
+    /// host on that machine to start them.
     Start {
         /// The number of workers.
         #[arg(value_parser = clap::value_parser!(u16).range(1..))]
@@ -415,37 +471,44 @@ enum Workers {
         #[arg(long)]
         host: Option<String>,
     },
-    /// Offer the workers of this machine to the lead of your user. Run
-    /// it in a tmux pane in the main clone, and leave it running. It
-    /// starts and stops workers only on a verified request of that lead,
-    /// at most the limit of this machine. Ctrl-C stops it
+    /// Offer the workers of this machine to your lead
+    ///
+    /// Run it in a tmux pane in the main clone, and leave it running. It
+    /// starts and stops workers only on a verified request of the lead of
+    /// your user, at most the limit of this machine. Ctrl-C stops it.
     Host {
         /// The claude command.
         #[arg(long, default_value = "claude")]
         claude: std::path::PathBuf,
     },
-    /// Show or set the most workers on this machine. The default is 0,
-    /// so no worker starts until you set it. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.limit
+    /// Show or set the most workers on this machine
+    ///
+    /// The default is 0, so no worker starts until you set it. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.limit.
     Limit {
         /// The new limit. Leave it out to show the limit.
         limit: Option<u16>,
     },
-    /// Show or change the MCP servers that each worker of this machine
-    /// loads. The default is riff only. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.mcp
+    /// Show or change the MCP servers of each worker
+    ///
+    /// These are the MCP servers that each worker of this machine loads.
+    /// The default is riff only. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.mcp.
     Mcp {
         #[command(subcommand)]
         command: Option<WorkersMcp>,
     },
-    /// In a worker whose item is merged and released: ask for a fresh
-    /// context. When the turn ends, riff gives the pane `/clear` and the
-    /// start prompt, and the worker claims its next item
+    /// Ask for a fresh context in a worker
+    ///
+    /// Run it in a worker whose item is merged and released. When the turn
+    /// ends, riff gives the pane `/clear` and the start prompt, and the
+    /// worker claims its next item.
     Next,
-    /// End each worker of this machine, or only the worker in PANE. Each
-    /// worker leaves `riff who` and frees its claims at once. With
-    /// --host, the lead asks the workers host on that machine to end
-    /// each of its workers
+    /// End the workers of this machine
+    ///
+    /// It ends each worker, or only the worker in PANE. Each worker leaves
+    /// `riff who` and frees its claims at once. With --host, the lead asks
+    /// the workers host on that machine to end each of its workers.
     Stop {
         /// The tmux pane of one worker, for example %3. `riff workers`
         /// shows it.
@@ -455,9 +518,12 @@ enum Workers {
         #[arg(long)]
         host: Option<String>,
     },
-    /// Run CLAUDE as a worker, and wait. When it exits on its own, tell
-    /// the lead the pane, the session ID and the exit code. It never
-    /// starts CLAUDE again. Each worker pane runs it
+    /// Run CLAUDE as a worker, and wait
+    ///
+    /// When CLAUDE exits on its own, it tells the lead the pane, the
+    /// session ID and the exit code. It never starts CLAUDE again. Each
+    /// worker pane runs it.
+    #[command(hide = true)]
     Run {
         /// The claude command.
         claude: std::path::PathBuf,
@@ -469,13 +535,17 @@ enum Workers {
 
 #[derive(Subcommand)]
 enum WorkersMcp {
-    /// Give each new worker the MCP server NAME from your Claude Code
-    /// config (`claude mcp list` shows the names)
+    /// Give each new worker an MCP server
+    ///
+    /// NAME is an MCP server of your Claude Code config. `claude mcp list`
+    /// shows the names.
     Add {
         /// The name of the MCP server.
         name: String,
     },
-    /// Take the MCP server NAME from each new worker. riff stays
+    /// Take an MCP server from each new worker
+    ///
+    /// riff stays.
     Remove {
         /// The name of the MCP server.
         name: String,
@@ -484,16 +554,22 @@ enum WorkersMcp {
 
 #[derive(Subcommand)]
 enum HookEvent {
-    /// Read the SessionStart input on stdin. Print the context that
-    /// starts the watch. It always exits with status 0.
+    /// Run the SessionStart hook
+    ///
+    /// It reads the SessionStart input on stdin, and prints the context
+    /// that starts the watch. It always exits with status 0.
     SessionStart,
-    /// Read the SessionEnd input on stdin. Tell riff-server that the
-    /// session ended, unless the reason is clear. It always exits with
-    /// status 0.
+    /// Run the SessionEnd hook
+    ///
+    /// It reads the SessionEnd input on stdin, and tells riff-server that
+    /// the session ended, unless the reason is clear. It always exits
+    /// with status 0.
     SessionEnd,
-    /// Read the Stop input on stdin. When the worker asked for its next
-    /// item with `riff workers next`, give its pane `/clear` and the start
-    /// prompt. It always exits with status 0.
+    /// Run the Stop hook
+    ///
+    /// It reads the Stop input on stdin. When the worker asked for its
+    /// next item with `riff workers next`, it gives its pane `/clear` and
+    /// the start prompt. It always exits with status 0.
     Stop,
 }
 
@@ -509,7 +585,7 @@ enum Tool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let matches = Cli::command().get_matches();
+    let matches = help::grouped(Cli::command(), help::GROUPS).get_matches();
     let cli = Cli::from_arg_matches(&matches)?;
     if let Command::Server = cli.command {
         let source = match matches.value_source("server") {
@@ -1586,5 +1662,43 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// Each subcommand that a person uses is in one group of `riff
+    /// --help`, and each name of a group is such a subcommand
+    /// (01M3NJDSQ23FFRMH8ZD4GC57WY).
+    #[test]
+    fn each_shown_command_is_in_one_group() {
+        let cli = Cli::command();
+        let mut shown: Vec<_> = cli
+            .get_subcommands()
+            .filter(|sub| !sub.is_hide_set())
+            .map(|sub| sub.get_name().to_string())
+            .collect();
+        let mut grouped: Vec<_> = riff::help::GROUPS
+            .iter()
+            .flat_map(|group| group.commands.iter().map(ToString::to_string))
+            .collect();
+        shown.sort();
+        grouped.sort();
+        assert_eq!(shown, grouped);
+    }
+
+    /// The short help of each command is one phrase of at most 60
+    /// characters, with no period (01M3NJDSQ23FFRMH8ZD4GC57WY).
+    #[test]
+    fn each_short_help_is_one_short_phrase() {
+        fn check(cmd: &clap::Command) {
+            for sub in cmd.get_subcommands() {
+                let about = sub.get_about().map(ToString::to_string).unwrap_or_default();
+                assert!(
+                    !about.is_empty() && about.len() <= 60 && !about.ends_with('.'),
+                    "{}: {about:?}",
+                    sub.get_name()
+                );
+                check(sub);
+            }
+        }
+        check(&Cli::command());
     }
 }

@@ -42,6 +42,23 @@ flowchart LR
   It tells `riff-server` that the session left. See
   [When a session ends](#when-a-session-ends).
 
+## Find a command
+
+`riff --help` lists the commands that people use, under the headings
+Get started, Work in the riff, Pull requests, Lead and Members. Each
+command has one short line. `riff help` with a command shows its full
+text:
+
+```sh
+riff --help
+riff help invite
+```
+
+The plugin runs `riff hook`, `riff mcp`, `riff statusline` and
+`riff watch`. `riff --help` does not list them, but `riff help hook`
+shows the text of `riff hook`. `riff-server --help` lists the settings
+of the server.
+
 ## Connect
 
 `riff connect claude` installs the riff plugin in Claude Code. The

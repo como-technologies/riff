@@ -17,6 +17,8 @@
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
 //!
+//! `riff --help` lists the commands under headings (see [`help`]).
+//!
 //! A session can leave the riff and join it again with the tools
 //! `leave` and `join` (see [`leave`]).
 //!
@@ -61,6 +63,7 @@ pub mod auto_update;
 pub mod binary;
 pub mod chat;
 pub mod device;
+pub mod help;
 pub mod home;
 pub mod hook;
 pub mod host;

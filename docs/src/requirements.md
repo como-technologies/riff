@@ -196,6 +196,15 @@
   one.
 - **R77** `riff connect claude` does not need a riff session or a git
   repository. It works in any directory.
+- **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
+  people use under the headings Get started, Work in the riff, Pull
+  requests, Lead and Members, in that order. Each command has one
+  short line: a phrase of at most 60 characters with no period.
+  `riff help CMD` shows the long text. The plumbing that the plugin
+  runs (`hook`, `mcp`, `statusline`, `watch`, `workers run`) is
+  hidden, and `riff help CMD` still shows it. The help of `riff` and
+  `riff-server` wraps at 80 columns and shows no value of an
+  environment variable.
 
 ## Waves
 
