@@ -1636,11 +1636,18 @@
 - **01M3NJGD6H8DNVHHHG80F9YFCE** When `riff` cannot read its working
   directory, the error names the directory from `PWD`, and tells the
   person to change to a directory that exists.
-- **01M3MNVTE6GAK4WRSCFGYVS0BE** When a new `riff` binary is on disk,
-  `riff mcp` replies to its next tool call that riff was updated, and
-  exits with no end call, so that the claims of the session stay.
-  Claude Code does not start it again. The book tells the person to
-  reconnect it with `/mcp`.
+- **01M3MNVTE6GAK4WRSCFGYVS0BE** Replaced by
+  01M3NT6WZTKAFKGDWGCFKC8TB5.
+- **01M3NT6WZTKAFKGDWGCFKC8TB5** When a new `riff` binary is on disk,
+  `riff mcp` runs it in its place at the first moment with no request
+  in flight, with no end call, so that the claims of the session stay.
+  It keeps stdin and stdout, so the connection to Claude Code stays.
+  The new process answers the next request with no new handshake. No
+  person runs `/mcp`.
+- **01M3NT6WXGCNKW3EQ7MBJDQTR4** When a new `riff` binary is on disk,
+  `riff top` and `riff chat` run it in their place, as `riff tail`
+  does. The chat does it between two lines. The new chat shows no
+  line of the old chat again, and draws its prompt again.
 - **01M3JEE7WT04BKX377VW5GDSPY** `riff --version`,
   `riff-server --version`, `riff whoami`, `riff who` and the whoami
   tool show the build.
@@ -1652,6 +1659,11 @@
   `riff update --auto off` set `update.auto` in the settings of the
   machine, and install nothing. The default is off. `riff update
   --auto` with no value shows the setting.
+- **01M3NT6WV8Q8EFZBK8DHYKW5CC** On a machine with no `update.auto`
+  key, `riff login` and `riff connect claude` ask the person once in a
+  terminal: `Update riff by itself when the riff gets a new release?
+  [Y/n]`. The answer sets the key: `n` or `no` is off, each other
+  answer is on. With no terminal, they do not ask.
 - **01M3N7JJEKZMN1E5NJQRK2QYVB** With `update.auto = true`, when a
   `riff` process gets a reply from a `riff-server` of a newer version
   than its own, it starts `riff update --tag vX.Y.Z` of the release of
@@ -1681,16 +1693,18 @@
   and one message to the lead.
 - **01M3N7JJNPPJNTXFDTEY4MSDVJ** An update in the background stops no
   session, and changes no sign-in and no device key. The sessions take
-  the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9 and
-  01M3MNVTE6GAK4WRSCFGYVS0BE say.
+  the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9,
+  01M3NT6WXGCNKW3EQ7MBJDQTR4 and 01M3NT6WZTKAFKGDWGCFKC8TB5 say.
 - **01M3NJCRVZW5BFQYZ9N185K2D2** `riff mcp` records its build on the
   machine, with its session record, while it runs.
-- **01M3NJCWBFJK03AC64XN04TTH0** When `riff-server` runs a newer
+- **01M3NJCWBFJK03AC64XN04TTH0** Replaced by
+  01M3NT6X22A4GNFTNKRYV8Z4N1.
+- **01M3NT6X22A4GNFTNKRYV8Z4N1** When `riff-server` runs a newer
   release than the `riff mcp` of a session, the status line of the
   session adds a tag: `update vX.Y.Z: riff update`; with
   `update.auto = true`, `updating to vX.Y.Z` while the update by itself
-  runs or starts; and `vX.Y.Z installed: /mcp` when the installed riff
-  has the release but the session does not. Only the release counts,
+  runs or starts; and `vX.Y.Z installed` when the installed riff has
+  the release but the session does not yet. Only the release counts,
   not the commit.
 - **01M3NJCWDN5APKZ3Z53XQR8P0B** The tag makes no extra call to
   `riff-server`. It comes from the build in the answer of the status

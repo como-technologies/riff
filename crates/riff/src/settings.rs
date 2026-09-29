@@ -19,7 +19,7 @@
 //! |---|---|---|
 //! | `workers.limit` | 0 | The most workers that `riff workers start` runs on this machine (01M3JPQT35BMR7XMAMMFSCDC2B). |
 //! | `workers.mcp` | `["riff"]` | The MCP servers that a worker loads (see [`worker_mcp`](crate::worker_mcp)). |
-//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). |
+//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
 
 use std::path::{Path, PathBuf};
 
@@ -167,6 +167,53 @@ pub fn update_auto(path: &Path) -> Result<bool> {
 /// Sets `update.auto`. It keeps each other key.
 pub fn set_update_auto(path: &Path, auto: bool) -> Result<()> {
     set(path, "update", "auto", value(auto))
+}
+
+/// The question about `update.auto` on a new machine.
+pub const ASK_UPDATE_AUTO: &str = "Update riff by itself when the riff gets a new release? [Y/n] ";
+
+/// Asks the person once about `update.auto`, when the machine has no
+/// such key and `terminal` is true (01M3NT6WV8Q8EFZBK8DHYKW5CC). It
+/// writes [`ASK_UPDATE_AUTO`] to `out`, reads one line of `input`, and
+/// sets the key: `n` or `no` is off, each other answer is on. It returns
+/// the new value, or `None` when it did not ask, or the input ended.
+///
+/// ```
+/// use riff::settings::{ask_update_auto, update_auto};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// let mut out = Vec::new();
+/// // No terminal: no question.
+/// assert_eq!(ask_update_auto(&path, false, &mut &b"n\n"[..], &mut out)?, None);
+/// assert!(out.is_empty());
+/// // The first time in a terminal, it asks. Enter says yes.
+/// assert_eq!(ask_update_auto(&path, true, &mut &b"\n"[..], &mut out)?, Some(true));
+/// assert!(update_auto(&path)?);
+/// // The key is there: no second question.
+/// assert_eq!(ask_update_auto(&path, true, &mut &b"n\n"[..], &mut out)?, None);
+/// assert_eq!(String::from_utf8(out)?, riff::settings::ASK_UPDATE_AUTO);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn ask_update_auto(
+    path: &Path,
+    terminal: bool,
+    input: &mut impl std::io::BufRead,
+    out: &mut impl std::io::Write,
+) -> Result<Option<bool>> {
+    let doc = read(path)?;
+    if !terminal || doc.get("update").and_then(|u| u.get("auto")).is_some() {
+        return Ok(None);
+    }
+    write!(out, "{ASK_UPDATE_AUTO}")?;
+    out.flush()?;
+    let mut answer = String::new();
+    if input.read_line(&mut answer)? == 0 {
+        return Ok(None);
+    }
+    let auto = !matches!(answer.trim().to_lowercase().as_str(), "n" | "no");
+    set_update_auto(path, auto)?;
+    Ok(Some(auto))
 }
 
 /// Sets `key` in the table `table`, and writes the file. It keeps each

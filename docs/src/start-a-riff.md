@@ -55,6 +55,9 @@ flowchart TD
    riff connect claude
    ```
 
+   On a new machine, it asks once whether riff updates itself. Press
+   Enter for yes.
+
 ## Use it
 
 Start Claude Code in your project. Then start a second Claude Code

@@ -13,6 +13,14 @@
 //! `[USER SESSION]` (01M3NJD3BR0XAYNNFTEY0CG761). With a pipe, the chat
 //! has no prompt and no line editor.
 //!
+//! After an update, the chat runs the new `riff` in place
+//! (01M3NT6WXGCNKW3EQ7MBJDQTR4), between two lines. It gives the new
+//! chat the last line that it showed in the hidden option [`AFTER`], so
+//! the new chat shows no line again. In a terminal, the old chat puts
+//! the terminal back in its normal mode first, and the new chat draws
+//! its prompt again. The text that the person typed but did not send
+//! is lost.
+//!
 //! `/me TEXT` posts an action line: a plain message with the body
 //! `/me TEXT` (01M3NJD37CNQX580YC24S7K6ES), so an older riff reads it
 //! too. It shows as `* USER@HOST TEXT`.
@@ -50,7 +58,10 @@ use riff_core::wire::Kind;
 use rustyline::ExternalPrinter;
 use tokio::sync::mpsc;
 
+use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
+
 use crate::api::{Api, Checked, Reconnect, follow};
+use crate::binary::{Follow, with_last, with_place};
 use crate::style::{DIM, styled};
 use crate::text::{ACTION, action_text, safe};
 
@@ -62,6 +73,10 @@ pub const QUIT: &str = "/quit";
 
 /// The prompt of the input line in a terminal.
 pub const PROMPT: &str = "[riff] > ";
+
+/// The hidden option that gives a new chat the last line that the old
+/// chat showed, after an update.
+pub const AFTER: &str = "--after";
 
 /// The time between two tries to connect the chat again.
 const RETRY: Duration = Duration::from_secs(2);
@@ -294,15 +309,22 @@ where
 /// for it (01M3NK7VHXB0PAR8VH8GQQA06K). After each connect, it reads the
 /// thread, so it shows each line that came while it was not connected,
 /// once (01M3NK7VM1J5DDB0PECNZ28P4E).
-pub async fn run(api: &Api, me: &SessionUri) -> Result<()> {
+///
+/// With `after`, the chat runs after an update: it shows no start line
+/// and no line up to `after`, the last line that the old chat showed.
+/// On a new binary, it runs it in place, between two lines
+/// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     let thread = thread();
     api.join(me, &thread).await?;
-    anstream::eprintln!(
-        "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
-         @lead wakes your lead. {QUIT} or Ctrl-C exits.",
-        me.who().user(),
-        me.place().host()
-    );
+    if after.is_none() {
+        anstream::eprintln!(
+            "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
+             @lead wakes your lead. {QUIT} or Ctrl-C exits.",
+            me.who().user(),
+            me.place().host()
+        );
+    }
     let thread = &thread;
     // Connected first, then read: no line falls between the two.
     let connect = || async move {
@@ -315,10 +337,19 @@ pub async fn run(api: &Api, me: &SessionUri) -> Result<()> {
     let first = connect().await?;
     let mut stream = Box::pin(first.chain(follow(connect, RETRY)));
     let (screen, mut input) = Screen::start()?;
-    let mut shown = Shown::default();
+    let mut shown = Shown::after(after.unwrap_or(0));
     let mut link = Reconnect::default();
+    let follow = Follow::this();
+    let update = follow.new_one();
+    tokio::pin!(update);
     loop {
         tokio::select! {
+            () = &mut update => {
+                screen.leave();
+                let args = with_place(std::env::args_os().skip(1), me.place());
+                follow.run(with_last(args, AFTER, shown.last().to_string()));
+                break;
+            }
             typed_line = input.recv() => {
                 let Some(typed_line) = typed_line else { break };
                 let body = match typed(&typed_line) {
@@ -357,8 +388,13 @@ type Printer = Arc<Mutex<Box<dyn ExternalPrinter + Send>>>;
 enum Screen {
     /// A pipe or a file: no prompt and no line editor.
     Plain,
-    /// A terminal: a line editor with the prompt [`PROMPT`].
-    Editor { printer: Printer, color: bool },
+    /// A terminal: a line editor with the prompt [`PROMPT`], and the
+    /// mode of the terminal before it.
+    Editor {
+        printer: Printer,
+        color: bool,
+        normal: Option<Termios>,
+    },
 }
 
 impl Screen {
@@ -381,6 +417,7 @@ impl Screen {
             });
             return Ok((Screen::Plain, rx));
         }
+        let normal = tcgetattr(std::io::stdin()).ok();
         let mut editor = rustyline::DefaultEditor::new()?;
         let printer: Printer = Arc::new(Mutex::new(Box::new(editor.create_external_printer()?)));
         let held = Arc::clone(&printer);
@@ -401,14 +438,42 @@ impl Screen {
         });
         let color =
             anstream::AutoStream::choice(&std::io::stdout()) != anstream::ColorChoice::Never;
-        Ok((Screen::Editor { printer, color }, rx))
+        Ok((
+            Screen::Editor {
+                printer,
+                color,
+                normal,
+            },
+            rx,
+        ))
+    }
+
+    /// Makes the terminal ready for another program: it clears the
+    /// prompt line, and puts the terminal back in its normal mode. The
+    /// line editor waits on, so this is only for the last moment of the
+    /// chat.
+    fn leave(&self) {
+        let Screen::Editor {
+            printer, normal, ..
+        } = self
+        else {
+            return;
+        };
+        // No chat line prints after the clear.
+        let _held = printer.lock();
+        let mut out = std::io::stdout();
+        let _ = write!(out, "\r\x1b[K");
+        let _ = out.flush();
+        if let Some(normal) = normal {
+            let _ = tcsetattr(std::io::stdin(), SetArg::TCSANOW, normal);
+        }
     }
 
     /// Prints a chat line.
     fn print(&self, text: &str) {
         match self {
             Screen::Plain => anstream::println!("{text}"),
-            Screen::Editor { printer, color } => {
+            Screen::Editor { printer, color, .. } => {
                 let text = if *color {
                     text.to_owned()
                 } else {
@@ -443,13 +508,29 @@ fn clear_typed(line: &str) {
 }
 
 /// What the chat has shown: the last message and the last day.
-#[derive(Default)]
 struct Shown {
     seq: u64,
     day: Option<NaiveDate>,
+    /// The last line that an old chat showed.
+    hidden: u64,
 }
 
 impl Shown {
+    /// Nothing shown yet. The lines up to `hidden` do not show: the old
+    /// chat showed them.
+    fn after(hidden: u64) -> Shown {
+        Shown {
+            seq: 0,
+            day: None,
+            hidden,
+        }
+    }
+
+    /// The last line that this chat or an old chat showed.
+    fn last(&self) -> u64 {
+        self.seq.max(self.hidden)
+    }
+
     /// The line of `c`, once: a message from the history can come again
     /// on the stream.
     fn next(&mut self, c: &Checked) -> Option<String> {
@@ -463,6 +544,6 @@ impl Shown {
             .unwrap_or_else(Local::now);
         let line = line(c, &at, self.day);
         self.day = Some(at.date_naive());
-        Some(line)
+        (self.seq > self.hidden).then_some(line)
     }
 }

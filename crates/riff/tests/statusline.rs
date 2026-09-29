@@ -1,7 +1,7 @@
 //! `riff statusline` shows the short session ID and the claims of the
 //! Claude Code session on stdin (01M3JDWA0WZWKF3JT3NYA2FV5Z). It never
 //! fails. It adds a tag when the riff runs a newer release
-//! (01M3NJCWBFJK03AC64XN04TTH0, 01M3NJCWDN5APKZ3Z53XQR8P0B).
+//! (01M3NT6X22A4GNFTNKRYV8Z4N1, 01M3NJCWDN5APKZ3Z53XQR8P0B).
 
 use axum::http::HeaderValue;
 use axum::response::Response;
@@ -235,13 +235,10 @@ async fn with_update_auto_on_the_tag_says_updating_then_installed() {
     join(&server, dir.path()).await;
     assert_eq!(
         line(&server, dir.path()).await,
-        format!(
-            "riff a6cf2205 lead v{} installed: /mcp\n",
-            Build::this().version
-        )
+        format!("riff a6cf2205 lead v{} installed\n", Build::this().version)
     );
 
-    // After /mcp, the session runs the new release: no tag.
+    // riff mcp runs the new release: no tag.
     std::fs::write(&build_file, Build::this().to_string()).unwrap();
     assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
     drop(mcp);

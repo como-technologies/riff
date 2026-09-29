@@ -1,6 +1,7 @@
 //! `riff` and a `riff-server` of another build (01M3JEE7P46GWXR1BD4Q1TTSGN
 //! to 01M3JEE7WT04BKX377VW5GDSPY, 01M3MX1DYY6AVDW946NR0B9T2C to
-//! 01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MNVTC248YYJJQKFD9H1WY9). A fake server
+//! 01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MNVTC248YYJJQKFD9H1WY9,
+//! 01M3NT6WXGCNKW3EQ7MBJDQTR4). A fake server
 //! names a version that this riff cannot talk to, or no build. A real
 //! server with another build in its reply names a version that it can
 //! talk to.
@@ -379,54 +380,64 @@ fn by_child(cmd: &mut Command) {
 #[tokio::test(flavor = "multi_thread")]
 async fn tail_and_watch_run_the_new_binary() {
     let url = streams(Arc::new(AtomicBool::new(false))).await;
-    for args in [
-        &["tail", "como-technologies/riff"][..],
-        &["watch", "--once"],
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = dir.path().join("riff");
-        by_child(
-            Command::new("cp")
-                .arg(Isolated::shared().riff_path())
-                .arg(&binary),
-        );
-        let (mut child, _, err) = spawn(riff_at(&binary, &url, dir.path(), args), dir.path());
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        assert!(
-            child.try_wait().unwrap().is_none(),
-            "{args:?}: {}",
-            read(&err)
-        );
+    runs_the_new_binary(&url, &["tail", "como-technologies/riff"]).await;
+    runs_the_new_binary(&url, &["watch", "--once"]).await;
+}
 
-        // A new binary in its place, as `cargo install` does.
-        let marker = dir.path().join("ran");
-        let new = dir.path().join("new");
-        let script = format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display());
-        by_child(
-            Command::new("sh")
-                .args(["-c", "printf '%s' \"$1\" > \"$0\" && chmod 755 \"$0\""])
-                .arg(&new)
-                .arg(script),
-        );
-        std::fs::rename(&new, &binary).unwrap();
+/// `riff top` runs the new binary the same way
+/// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+#[tokio::test(flavor = "multi_thread")]
+async fn top_runs_the_new_binary() {
+    let url = real(Build::this()).await;
+    runs_the_new_binary(&url, &["top"]).await;
+}
 
-        // The line ends with a newline once the script wrote all of it.
-        let ran = wait_for(Duration::from_secs(10), || read(&marker).ends_with('\n')).await;
-        let _ = (child.kill(), child.wait());
-        assert!(ran, "{args:?}: {}", read(&err));
-        // The same arguments, after the place of the old process: the
-        // host, no repository, and the directory as the worktree.
-        let line = read(&marker);
-        let (place, rest) = line.trim().split_once(' ').unwrap();
-        assert_eq!(place, "--place", "{line}");
-        assert!(rest.starts_with("heron/-#"), "{line}");
-        assert_eq!(rest.split_once(' ').unwrap().1, args.join(" "), "{line}");
-        assert!(
-            read(&err).contains("a new riff is on disk"),
-            "{}",
-            read(&err)
-        );
-    }
+/// A riff that runs `args` at `url` runs the new binary on disk, with
+/// the same arguments after the place of the old process.
+async fn runs_the_new_binary(url: &str, args: &[&str]) {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("riff");
+    by_child(
+        Command::new("cp")
+            .arg(Isolated::shared().riff_path())
+            .arg(&binary),
+    );
+    let (mut child, _, err) = spawn(riff_at(&binary, url, dir.path(), args), dir.path());
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "{args:?}: {}",
+        read(&err)
+    );
+
+    // A new binary in its place, as `cargo install` does.
+    let marker = dir.path().join("ran");
+    let new = dir.path().join("new");
+    let script = format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display());
+    by_child(
+        Command::new("sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\" && chmod 755 \"$0\""])
+            .arg(&new)
+            .arg(script),
+    );
+    std::fs::rename(&new, &binary).unwrap();
+
+    // The line ends with a newline once the script wrote all of it.
+    let ran = wait_for(Duration::from_secs(10), || read(&marker).ends_with('\n')).await;
+    let _ = (child.kill(), child.wait());
+    assert!(ran, "{args:?}: {}", read(&err));
+    // The same arguments, after the place of the old process: the
+    // host, no repository, and the directory as the worktree.
+    let line = read(&marker);
+    let (place, rest) = line.trim().split_once(' ').unwrap();
+    assert_eq!(place, "--place", "{line}");
+    assert!(rest.starts_with("heron/-#"), "{line}");
+    assert_eq!(rest.split_once(' ').unwrap().1, args.join(" "), "{line}");
+    assert!(
+        read(&err).contains("a new riff is on disk"),
+        "{}",
+        read(&err)
+    );
 }
 
 /// Puts a copy of `from` at `to` as `cargo install` does: a new file
