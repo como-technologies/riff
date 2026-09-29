@@ -664,7 +664,6 @@ mod tests {
             "### A new session in a paused riff",
             "Claim nothing",
             "Call `tell` with the session `lead`",
-            "`waiting: the riff is paused`",
             "### A session with work",
             "Let a command that runs finish",
             "WIP commit on the branch of your worktree",
@@ -817,7 +816,7 @@ mod tests {
         let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
         for word in [
             "and you hold no claim, you are idle.",
-            "Set your status `idle: waits for work`, keep the watch running, and end your turn.",
+            "you are idle. Keep the watch running, and end your turn.",
             "Do not end this session.",
             "While you wait for a verify, keep your claim and wait.",
         ] {
@@ -835,7 +834,7 @@ mod tests {
         let part = &part[..part.find("### When you are a worker").unwrap()];
         let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
         for word in [
-            "A free worker waits idle, with the status `idle: waits for work`.",
+            "`riff who` shows a free worker as `idle`, with its time.",
             "Give free work to a free worker first: `tell` it `request: claim ITEM`. The request wakes it.",
             "Start a worker when you have work for it. Do not keep workers that wait.",
             "The server stops idle workers past a limit: at most 1 on each host (`riff workers idle`).",

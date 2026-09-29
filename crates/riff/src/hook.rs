@@ -293,7 +293,7 @@ pub async fn linked(dir: &Path) -> Option<Linked> {
 /// use riff::hook::others_here;
 /// use riff_core::wire::SessionInfo;
 ///
-/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false };
+/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0 };
 /// let me: riff_core::name::SessionUri = "riff://mike@pangolin/o/r?session=a1#issue-12".parse()?;
 /// let who = [
 ///     info("riff://mike@pangolin/o/r?session=a1#issue-12", true),
@@ -404,15 +404,15 @@ impl Source {
 /// (01M3K0AXMCVRST7HYH4DM8B3AN).
 ///
 /// ```
-/// assert!(riff::hook::WORKER_LINE.contains(riff::worker::IDLE));
+/// assert!(!riff::hook::WORKER_LINE.contains("set your status"));
 /// assert!(!riff::hook::WORKER_LINE.contains("workers done"));
 /// ```
 pub const WORKER_LINE: &str = "- You are a worker (RIFF_WORKER=1). When you finish an item, run \
 `riff workers next` (step 11 of the start routine). When the start routine finds no free item and \
-no free verify request, and you hold no claim, set your status `idle: waits for work`, keep your \
-watch running, and end your turn. Do not end this session: the lead gives you work with a \
-request, and the server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). \
-While you wait for a verify, keep your claim and wait.\n";
+no free verify request, and you hold no claim, keep your watch running, and end your turn. riff \
+shows you as idle. Do not end this session: the lead gives you work with a request, and the \
+server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). While you wait for \
+a verify, keep your claim and wait.\n";
 
 /// The part of the SessionStart hook input that riff uses.
 #[derive(Debug, Default, Deserialize)]
@@ -499,8 +499,7 @@ pub fn start_context(
         ),
         Some(RiffState::Paused) if new => out.push_str(
             "- The riff is paused. Claim nothing. Say hello to the lead: call the riff tell \
-             tool with the session `lead`. Set your status to \"waiting: the riff is paused\". \
-             Then wait. A resume wakes you. See \"Pause\" in the riff skill.\n",
+             tool with the session `lead`. Then wait. A resume wakes you. See \"Pause\" in the riff skill.\n",
         ),
         Some(RiffState::Paused) => out.push_str(
             "- The riff is paused. Stop at your next step and wait. See \"Pause\" in the riff \
@@ -698,7 +697,10 @@ mod tests {
             let context = start_context(Some(&uri()), source, false, PAUSED, &[]);
             assert!(context.contains("Claim nothing."), "{context}");
             assert!(context.contains("the session `lead`"), "{context}");
-            assert!(context.contains("waiting: the riff is paused"), "{context}");
+            assert!(
+                !context.contains("Set your status"),
+                "riff shows the pause: {context}"
+            );
             assert!(!context.contains("Pick a free item"), "{context}");
         }
     }

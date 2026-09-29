@@ -205,6 +205,9 @@ pub struct State {
     riff: RiffState,
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     idle: Idle,
+    /// The last pause or resume of the riff, or the load of the state.
+    /// A status from before it is stale (01M3Q551YHYZBFV2NDS1QCYXCD).
+    riff_changed: Option<Instant>,
     /// Each object that changed since the last [`State::changes`].
     changed: BTreeSet<Object>,
 }
@@ -234,6 +237,9 @@ struct Session {
     /// True when the server asked this idle worker to stop, and it made
     /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN). It is not saved.
     stopping: bool,
+    /// The last change of the claims of the session, or its arrival
+    /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
+    claims_changed: Instant,
 }
 
 /// A status with the time that the session set it.
@@ -243,6 +249,21 @@ struct SetStatus {
     status: Status,
     /// Milliseconds since the Unix epoch.
     set_ms: u64,
+    /// The time of the set. `None` for a status from before the load:
+    /// it is stale (01M3Q551YHYZBFV2NDS1QCYXCD).
+    #[serde(skip)]
+    set: Option<Instant>,
+}
+
+impl SetStatus {
+    /// True when the session set the status before `changed`.
+    fn before(&self, changed: Option<Instant>) -> bool {
+        match (self.set, changed) {
+            (None, _) => true,
+            (Some(set), Some(changed)) => set < changed,
+            (Some(_), None) => false,
+        }
+    }
 }
 
 impl Session {
@@ -259,6 +280,7 @@ impl Session {
             status: None,
             worker: false,
             stopping: false,
+            claims_changed: now,
         }
     }
 
@@ -499,6 +521,7 @@ impl State {
         let mut state = State {
             riff: saved.riff,
             idle: saved.idle,
+            riff_changed: Some(now),
             ..State::default()
         };
         let mut lapsed = BTreeSet::new();
@@ -736,6 +759,7 @@ impl State {
         session.ended = true;
         session.last_seen = now;
         session.seen_before_load = None;
+        session.claims_changed = now;
         self.claims.retain(|_, holder| holder != who);
         self.changed.insert(Object::Sessions);
     }
@@ -779,6 +803,11 @@ impl State {
             }
             !mine
         });
+        if !freed.is_empty()
+            && let Some(session) = self.sessions.get_mut(&who)
+        {
+            session.claims_changed = now;
+        }
         freed
     }
 
@@ -815,9 +844,13 @@ impl State {
                 status: session.status.as_ref().map(|s| StatusInfo {
                     status: s.status.clone(),
                     age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
+                    stale: s.before(Some(session.claims_changed)) || s.before(self.riff_changed),
                 }),
                 worker: session.worker,
                 stopping: session.stopping,
+                claims_secs: now
+                    .saturating_duration_since(session.claims_changed)
+                    .as_secs(),
             })
             .collect()
     }
@@ -1073,6 +1106,9 @@ impl State {
         }
         let changed = self.riff != set;
         self.riff = set;
+        if changed {
+            self.riff_changed = Some(now);
+        }
         Ok(RiffReply {
             state: set,
             changed,
@@ -1113,6 +1149,7 @@ impl State {
             session.status = Some(SetStatus {
                 status,
                 set_ms: now_ms,
+                set: Some(now),
             });
         }
         Ok(())
@@ -1524,7 +1561,14 @@ impl State {
                 holder: self.uri(holder, now),
             });
         }
-        self.claims.insert(key, who.clone());
+        let old = self.claims.insert(key, who.clone());
+        if old.as_ref() != Some(&who) {
+            for holder in old.iter().chain([&who]) {
+                if let Some(session) = self.sessions.get_mut(holder) {
+                    session.claims_changed = now;
+                }
+            }
+        }
         Ok(ClaimReply {
             granted: true,
             holder: self.uri(&who, now),
@@ -1544,6 +1588,9 @@ impl State {
         match self.claims.get(&key) {
             Some(holder) if *holder == who => {
                 self.claims.remove(&key);
+                if let Some(session) = self.sessions.get_mut(&who) {
+                    session.claims_changed = now;
+                }
                 Ok(())
             }
             Some(holder) => Err(format!(
@@ -2520,8 +2567,16 @@ mod tests {
         let brett = listed(&loaded)
             .into_iter()
             .find(|s| s.uri.who() == tests().who());
-        assert_eq!(brett.unwrap().status.unwrap().age_secs, 5);
-        assert_eq!(json(&listed(&loaded)), json(&listed(&state)));
+        let brett = brett.unwrap().status.unwrap();
+        assert_eq!(brett.age_secs, 5);
+        assert!(brett.stale, "a load is a change");
+        let mut before = listed(&state);
+        for s in &mut before {
+            if let Some(status) = &mut s.status {
+                status.stale = true;
+            }
+        }
+        assert_eq!(json(&listed(&loaded)), json(&before));
         for me in [api(), tests(), docs()] {
             let threads = loaded.threads(&me, later);
             assert_eq!(json(&threads), json(&state.threads(&me, later)));
@@ -3210,5 +3265,94 @@ mod tests {
         let agent = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
         state.watch_started(&agent, now);
         assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
+    }
+
+    fn info(state: &State, me: &SessionUri, now: Instant) -> SessionInfo {
+        state
+            .who(now, T0, false)
+            .into_iter()
+            .find(|s| s.uri.who() == me.who())
+            .unwrap()
+    }
+
+    fn set_step(state: &mut State, me: &SessionUri, step: &str, now: Instant) {
+        let status = Status {
+            step: step.into(),
+            blocked: None,
+        };
+        state.set_status(me, status, now, T0).unwrap();
+    }
+
+    fn stale(state: &State, me: &SessionUri, now: Instant) -> bool {
+        info(state, me, now).status.unwrap().stale
+    }
+
+    #[test]
+    fn a_status_from_before_a_claim_or_a_release_is_stale() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = |secs| now + Duration::from_secs(secs);
+        set_step(&mut state, &docs(), "look for work", t(1));
+        assert!(!stale(&state, &docs(), t(1)));
+
+        state.claim(&docs(), &repo(), "issue-12", t(2)).unwrap();
+        assert!(stale(&state, &docs(), t(2)), "the claim is newer");
+        set_step(&mut state, &docs(), "tests", t(3));
+        assert!(!stale(&state, &docs(), t(3)));
+
+        // A claim that the session holds already changes nothing.
+        state.claim(&docs(), &repo(), "issue-12", t(4)).unwrap();
+        assert!(!stale(&state, &docs(), t(4)));
+
+        state.release(&docs(), &repo(), "issue-12", t(5)).unwrap();
+        assert!(stale(&state, &docs(), t(5)), "the release is newer");
+    }
+
+    #[test]
+    fn a_status_from_before_a_pause_or_a_resume_is_stale() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = |secs| now + Duration::from_secs(secs);
+        set_step(&mut state, &docs(), "tests", t(1));
+        state.riff(&api(), Some(RiffState::Paused), t(2)).unwrap();
+        assert!(stale(&state, &docs(), t(2)));
+        set_step(&mut state, &docs(), "paused at: tests", t(3));
+        assert!(!stale(&state, &docs(), t(3)));
+
+        // A set to the same state is no change.
+        state.riff(&api(), Some(RiffState::Paused), t(4)).unwrap();
+        assert!(!stale(&state, &docs(), t(4)));
+        state.riff(&api(), Some(RiffState::Running), t(5)).unwrap();
+        assert!(stale(&state, &docs(), t(5)));
+    }
+
+    #[test]
+    fn a_status_from_before_a_load_is_stale() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        set_step(&mut state, &docs(), "tests", now);
+        state.mark_changed(Object::Sessions);
+        let mut saved = Saved::new();
+        save(&mut state, &mut saved, now, T0);
+        let loaded = load(&saved, now, T0);
+        let status = info(&loaded, &docs(), now).status.unwrap();
+        assert_eq!(status.status.step, "tests");
+        assert!(status.stale, "a new start of riff-server is a change");
+    }
+
+    #[test]
+    fn the_claims_time_counts_from_the_last_change_of_the_claims() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = |secs| now + Duration::from_secs(secs);
+        assert_eq!(info(&state, &docs(), t(30)).claims_secs, 30);
+        state.claim(&docs(), &repo(), "issue-12", t(40)).unwrap();
+        state.release(&docs(), &repo(), "issue-12", t(100)).unwrap();
+        assert_eq!(info(&state, &docs(), t(160)).claims_secs, 60);
+
+        // A new start frees the claims: a change.
+        state.claim(&docs(), &repo(), "issue-12", t(170)).unwrap();
+        state.start(&docs(), t(200));
+        assert_eq!(info(&state, &docs(), t(230)).claims_secs, 30);
     }
 }

@@ -40,7 +40,7 @@ use riff_core::build::Build;
 use riff_core::wire::{Person, PersonRole, RiffOwner, RiffState, SessionInfo};
 use serde::Deserialize;
 
-use crate::style::{DIM, ERROR, GOOD, MUTED, session as session_style, styled};
+use crate::style::{DIM, ERROR, GOOD, MUTED, WARNING, session as session_style, styled};
 use crate::text::{self, ago, safe};
 
 /// The time between two draws of `riff top` with no message.
@@ -201,19 +201,17 @@ pub struct Top<'a> {
     pub issues: Option<&'a Issues>,
 }
 
-/// One cell: a plain lead-in, its text, and the style of the text.
+/// One cell: a plain lead-in, then its parts, each with its style.
 struct Cell {
     pre: String,
-    text: String,
-    style: anstyle::Style,
+    parts: Vec<(String, anstyle::Style)>,
 }
 
 impl Cell {
     fn new(text: impl Into<String>, style: anstyle::Style) -> Self {
         Cell {
             pre: String::new(),
-            text: text.into(),
-            style,
+            parts: vec![(text.into(), style)],
         }
     }
 
@@ -222,7 +220,21 @@ impl Cell {
     }
 
     fn width(&self) -> usize {
-        self.pre.chars().count() + self.text.chars().count()
+        self.pre.chars().count()
+            + self
+                .parts
+                .iter()
+                .map(|(text, _)| text.chars().count())
+                .sum::<usize>()
+    }
+
+    /// The parts with their styles. An empty part gets no style.
+    fn styled(&self) -> String {
+        self.parts
+            .iter()
+            .filter(|(text, _)| !text.is_empty())
+            .map(|(text, style)| styled(*style, text))
+            .collect()
     }
 }
 
@@ -243,7 +255,14 @@ impl Top<'_> {
     ///   of `who` gets a row, also when away.
     /// - A session row: the short session ID, the role tag `lead` or
     ///   `worker`, `live` or the idle time, each claim with the title of
-    ///   its issue, and the status with its age.
+    ///   its issue, and the status.
+    ///
+    /// The status starts with the facts that the riff derives
+    /// (01M3Q555KC1RKNEC4ZA9HQYJG2): `paused` while the riff is paused,
+    /// the [`text::idle_worker`] time, and for the lead the current wave
+    /// with its open items. The step that
+    /// the session set comes after them, with its age. A stale step is
+    /// dim and says `stale`: it is not the current state.
     ///
     /// People come by USER, and hosts by name. In each person, blocked
     /// sessions come first. It has ANSI styles: print it through
@@ -260,9 +279,11 @@ impl Top<'_> {
     ///     status: Some(StatusInfo {
     ///         status: Status { step: step.into(), blocked: blocked.map(Into::into) },
     ///         age_secs: 120,
+    ///         stale: false,
     ///     }),
     ///     worker,
     ///     stopping: false,
+    ///     claims_secs: 600,
     /// };
     /// let sessions = [
     ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "lead", None, false),
@@ -294,10 +315,12 @@ impl Top<'_> {
     /// assert_eq!(words(rows[1]), "mike owner live", "{text}");
     /// assert_eq!(rows[2], "├─ pangolin", "{text}");
     /// assert!(rows[3].starts_with("│  └─ dddd4444  worker  live"), "{text}");
+    /// assert!(rows[3].ends_with("idle 10m  2m docs"), "{text}");
     /// assert_eq!(rows[4], "└─ thelio", "{text}");
     /// assert!(rows[5].starts_with("   ├─ cccc3333"), "{text}");
     /// assert!(rows[5].contains("blocked 2m: waits (step: merge)"), "{text}");
     /// assert!(rows[6].starts_with("   ├─ aaaa1111  lead "), "{text}");
+    /// assert!(rows[6].ends_with("Wave 3: #12  2m lead"), "{text}");
     /// assert!(rows[7].starts_with("   └─ bbbb2222  worker"), "{text}");
     /// assert!(rows[7].contains("issue-12 Show the wave  2m tests"), "{text}");
     /// ```
@@ -346,12 +369,7 @@ impl Top<'_> {
                 } else {
                     widths[c] - cell.width() + 2
                 };
-                let text = if cell.text.is_empty() {
-                    String::new()
-                } else {
-                    styled(cell.style, &cell.text)
-                };
-                let _ = write!(line, "{}{text}{}", cell.pre, " ".repeat(pad));
+                let _ = write!(line, "{}{}{}", cell.pre, cell.styled(), " ".repeat(pad));
             }
             let _ = writeln!(out, "{}", line.trim_end());
         }
@@ -470,17 +488,48 @@ impl Top<'_> {
                 format!("{}{}", safe(c), title.unwrap_or_default())
             })
             .collect();
-        let status = match &s.status {
-            None => Cell::new("-", DIM),
-            Some(info) => {
-                let (age, step) = (ago(info.age_secs), safe(&info.status.step));
-                match &info.status.blocked {
-                    None => Cell::new(format!("{age} {step}"), anstyle::Style::new()),
-                    Some(why) => Cell::new(
-                        format!("blocked {age}: {} (step: {step})", safe(why)),
-                        ERROR,
-                    ),
-                }
+        let mut facts: Vec<(String, anstyle::Style)> = Vec::new();
+        if self.state == RiffState::Paused {
+            facts.push(("paused".into(), WARNING));
+        }
+        facts.extend(text::idle_worker(s).map(|idle| (idle, anstyle::Style::new())));
+        if s.uri.lead()
+            && let Some((wave, items)) = self.issues.and_then(|i| i.wave.as_ref())
+        {
+            let items: Vec<String> = items.iter().map(|n| format!("#{n}")).collect();
+            facts.push((
+                format!("{}: {}", safe(wave), items.join(" ")),
+                anstyle::Style::new(),
+            ));
+        }
+        let step = s.status.as_ref().map(|info| {
+            let (age, step) = (ago(info.age_secs), safe(&info.status.step));
+            match (&info.status.blocked, info.stale) {
+                (None, false) => (format!("{age} {step}"), anstyle::Style::new()),
+                (Some(why), false) => (
+                    format!("blocked {age}: {} (step: {step})", safe(why)),
+                    ERROR,
+                ),
+                (None, true) => (format!("stale {age}: {step}"), DIM),
+                (Some(why), true) => (
+                    format!("stale {age}: blocked: {} (step: {step})", safe(why)),
+                    DIM,
+                ),
+            }
+        });
+        let mut parts = Vec::new();
+        for (i, part) in facts.into_iter().chain(step).enumerate() {
+            if i > 0 {
+                parts.push(("  ".to_owned(), anstyle::Style::new()));
+            }
+            parts.push(part);
+        }
+        let status = if parts.is_empty() {
+            Cell::new("-", DIM)
+        } else {
+            Cell {
+                pre: String::new(),
+                parts,
             }
         };
         [
@@ -525,10 +574,11 @@ fn branch(last: bool) -> &'static str {
     if last { "└─ " } else { "├─ " }
 }
 
+/// True when the current status is blocked. A stale block is not.
 fn blocked(s: &SessionInfo) -> bool {
     s.status
         .as_ref()
-        .is_some_and(|i| i.status.blocked.is_some())
+        .is_some_and(|i| i.status.blocked.is_some() && !i.stale)
 }
 
 /// The short session ID of `riff who`.

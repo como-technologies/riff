@@ -381,12 +381,11 @@
   posts to the thread of each repository of such a session, to that
   repository.
 - **01M3JCG40FN0DP135EHHF403TY** While the riff is paused, a new
-  session says hello to the lead, sets its status to waiting, and
-  claims nothing.
+  session says hello to the lead, waits, and claims nothing.
 - **01M3JCG42FYS8FJ0V6WK89KXAP** While the riff is paused, a session
   with work stops at its next step. A command that runs finishes
   first. The session commits each change as a WIP commit on the branch
-  of its worktree, pushes that branch, sets its status, and waits.
+  of its worktree, pushes that branch, and waits.
   Nothing goes to the default branch: a session between a verify pass
   and its merge stops before the push, and a verify stops with no
   result.
@@ -931,6 +930,26 @@
   `who` shows each status and its age, for example
   `status 4m ago: write the tests`. A blocked status starts with
   `blocked`.
+- **01M3Q551WCMPQRCNJ8FXQEBFY4** `who` gives for each session the
+  seconds since its claims last changed: a claim, a release, a new
+  start of the session, or a start of `riff-server`. A worker with no
+  claim is idle for this time.
+- **01M3Q551YHYZBFV2NDS1QCYXCD** A status is stale when the session set
+  it before the last change of its state: a claim or a release of the
+  session, a pause or a resume of the riff, or a start of
+  `riff-server`. `who` marks a stale status. A claim that the session
+  holds already, and a set of the riff to its state, are no change.
+- **01M3Q555KC1RKNEC4ZA9HQYJG2** `riff who`, the MCP `who` tool and
+  `riff top` show the facts that riff derives for a session before its
+  step: `idle` with its time for a worker with no claim. `riff top`
+  also shows `paused` in each session row while the riff is paused, and
+  the current wave and its open items on the lead row. A stale step is
+  dim and says `stale`. A stale block is not red, does not come first
+  in `riff top`, and is not `blocked` in the status line.
+  `riff workers` shows `no claims` with the idle time.
+- **01M3Q555NV8ZCQ8PVPBXQ7J82C** The skill, the start hook and the
+  `status` tool do not tell a session to set its status for a fact
+  that riff derives: a claim, a release, a pause, or an idle worker.
 - **01M3MEEFC9ZQVW2KC9FNJ75MTY** A session leaves the riff with the
   `leave` tool. The plugin command `/riff:leave` tells the session to
   call it. The tool acts on its own session only. When the session
@@ -1530,10 +1549,9 @@
 - **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
   start context of such a session says that it is a worker.
 - **01M3K0AXMCVRST7HYH4DM8B3AN** A worker with no claim, and no free
-  item or verify request, sets its status `idle: waits for work`, keeps
-  its watch, and ends its turn. It does not end its session. A worker
-  that waits for a verify keeps its claim and waits. The start hook and
-  the skill say so.
+  item or verify request, keeps its watch, and ends its turn. It does
+  not end its session. A worker that waits for a verify keeps its claim
+  and waits. The start hook and the skill say so.
 - **01M3K0AXPFSWNG7YPVXE65W464** Replaced by
   01M3Q5A0NKY1FCS0YH6N6YD3GN and 01M3Q5A11RKZW1610SWGSMTE3W.
 - **01M3K0AXRNA0F2920E9QCSDFQZ** The skill tells the lead: when an item

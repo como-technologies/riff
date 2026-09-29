@@ -16,9 +16,9 @@
 //! The wrapper never starts `claude` again: a crash loop costs tokens.
 //! The lead decides.
 //!
-//! A worker with no work does not end. It sets its status
-//! [`IDLE`], keeps its watch and ends its turn
-//! (01M3K0AXMCVRST7HYH4DM8B3AN). An idle session costs nothing. A
+//! A worker with no work does not end. It keeps its watch and ends its
+//! turn (01M3K0AXMCVRST7HYH4DM8B3AN). riff shows it idle
+//! (01M3Q555KC1RKNEC4ZA9HQYJG2). An idle session costs nothing. A
 //! request of the lead wakes it with its next item
 //! (01M3K0AXRNA0F2920E9QCSDFQZ). When more idle workers wait on its host
 //! than the riff keeps, the server asks it to stop
@@ -77,14 +77,6 @@ pub const WORKER: &str = "RIFF_WORKER";
 /// The variable with the process ID of the `riff workers run` wrapper
 /// of a worker (01M3Q5A0QZTSTXHHNYCE8HFJSB).
 pub const WRAPPER: &str = "RIFF_WORKER_WRAPPER";
-
-/// The status of a worker with no work. It waits for a request of the
-/// lead (01M3K0AXMCVRST7HYH4DM8B3AN).
-///
-/// ```
-/// assert_eq!(riff::worker::IDLE, "idle: waits for work");
-/// ```
-pub const IDLE: &str = "idle: waits for work";
 
 /// How long the wrapper waits for `claude` after it sends SIGTERM.
 pub const STOP_WAIT: Duration = Duration::from_secs(5);
