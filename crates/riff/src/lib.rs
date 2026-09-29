@@ -60,6 +60,7 @@ pub mod binary;
 pub mod device;
 pub mod home;
 pub mod hook;
+pub mod host;
 pub mod hygiene;
 pub mod identity;
 pub mod leave;

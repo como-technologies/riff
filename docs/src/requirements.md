@@ -1318,6 +1318,29 @@
   request (`tell`, `request: claim ITEM`) before it starts a new
   worker. End workers with `riff workers stop` when the lead decides.
   A request of the lead wakes an idle worker.
+- **01M3N7AK8TVYV8S0WR3RP0TN8X** `riff workers host` offers the workers
+  of a machine to the lead of its user in the repository. It runs in
+  tmux in the main clone until Ctrl-C. It is a riff session with a
+  watch that never becomes the lead. Its status is `workers host:
+  limit L, …` with the pane and the short session ID of each worker.
+  With no tmux, or a limit of 0, it refuses to start.
+- **01M3N7AKB3KXS2XYK0309C4M18** `riff workers start N --host HOST` and
+  `riff workers stop --host HOST` send the workers host on HOST a
+  signed direct message: `workers start N` or `workers stop`. The host
+  starts at most its own limit minus its workers, in its own tmux, or
+  stops each of its workers. It replies to the sender with the pane
+  and the session of each new worker, the count of stopped workers, or
+  the reason.
+- **01M3N7AKDE7DEA6NXS9ZMECRMH** A workers host acts only on a verified
+  request from the lead of its user in its repository. It replies to
+  each other request with a refusal, and changes nothing.
+- **01M3N7AKFPX3ZGQARSG2V64GBD** `riff workers` lists the workers of
+  its machine, then each live workers host of the user on another
+  machine: its limit, and each of its workers with its claims and
+  status.
+- **01M3N7AKHXGYQ58G61BEHS89WG** The skill tells the lead: count the
+  free workers and the room of each host. Start workers where there is
+  room: on each host first, on the machine of the lead last.
 
 ## Builds
 
