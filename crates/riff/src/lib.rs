@@ -13,7 +13,7 @@
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
 //! | `riff workers` | Starts, lists and stops the worker sessions of this machine in tmux, with [`terminal`]. Its limit is in [`settings`]. |
-//! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`]. |
+//! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //!
 //! A session can leave the riff and join it again with the tools
@@ -56,6 +56,7 @@
 //! user. Each other message is advice (R10).
 
 pub mod api;
+pub mod auto_update;
 pub mod binary;
 pub mod device;
 pub mod home;

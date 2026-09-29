@@ -28,9 +28,12 @@
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
 //! | `next-ID` | `riff workers next` of a worker. The Stop hook takes it (see [`crate::next`]). | The tmux pane of the worker. |
 //! | `left-ID` | The `leave` tool. The `join` tool removes it. | Nothing. The file counts. |
+//! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
+//! | `update-tried` | The same update. | The release tag that it tried last. |
+//! | `update.log` | The same update. | Its output. |
 //!
-//! The writers of `mcp-PID` and `watch-ID` hold a lock on the file while
-//! they run. The system ends
+//! The writers of `mcp-PID`, `watch-ID` and `update.lock` hold a lock on
+//! the file while they run. The system ends
 //! the lock when the process ends, also after a crash. A file with no
 //! lock is stale, and riff ignores it. So a PID that the system gives
 //! to a new process again does not find a stale session.
@@ -162,6 +165,53 @@ pub fn watching(dir: &Path, session: &str) -> bool {
 
 fn watch_file(dir: &Path, session: &str) -> PathBuf {
     dir.join(format!("watch-{}", riff_core::name::sanitize(session)))
+}
+
+/// Takes the update lock of this machine
+/// (01M3N7JJH0SXXQYYBAHWPCNQGX). `None` when another update holds it.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// assert!(!riff::local::updating(run.path()));
+/// let update = riff::local::update(run.path())?.expect("free");
+/// assert!(riff::local::updating(run.path()));
+/// assert!(riff::local::update(run.path())?.is_none());
+/// drop(update);
+/// assert!(!riff::local::updating(run.path()));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn update(dir: &Path) -> io::Result<Option<Held>> {
+    lock(&dir.join("update.lock"))
+}
+
+/// True while an update of riff holds the update lock.
+pub fn updating(dir: &Path) -> bool {
+    File::open(dir.join("update.lock")).is_ok_and(|file| locked(&file))
+}
+
+/// The release tag that the last update of riff by itself tried.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// assert_eq!(riff::local::tried(run.path()), None);
+/// riff::local::set_tried(run.path(), "v0.4.0")?;
+/// assert_eq!(riff::local::tried(run.path()).as_deref(), Some("v0.4.0"));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn tried(dir: &Path) -> Option<String> {
+    let tag = std::fs::read_to_string(dir.join("update-tried")).ok()?;
+    Some(tag.trim().to_owned()).filter(|t| !t.is_empty())
+}
+
+/// Records `tag` as the release that the update of riff by itself tries.
+pub fn set_tried(dir: &Path, tag: &str) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("update-tried"), tag)
+}
+
+/// The log of the update of riff by itself.
+pub fn update_log(dir: &Path) -> PathBuf {
+    dir.join("update.log")
 }
 
 /// Records that the session `session` left the riff

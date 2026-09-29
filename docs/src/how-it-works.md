@@ -252,6 +252,73 @@ its tag:
 riff update --tag v0.2.0
 ```
 
+### Update riff by itself
+
+A machine can update riff by itself. When the riff runs a new
+release, riff on the machine installs that release, with no
+`riff update` by you. Turn it on for this machine:
+
+```sh
+riff update --auto on
+```
+
+Turn it off:
+
+```sh
+riff update --auto off
+```
+
+See the setting:
+
+```sh
+riff update --auto
+```
+
+The setting is the key `update.auto` in
+`~/.config/riff/config.toml` (`$XDG_CONFIG_HOME/riff/config.toml`).
+It is off by default.
+
+Each reply of the riff names its release. When a `riff` process sees
+a newer release than its own, it starts one update in the background,
+and tells you once:
+
+```text
+riff: riff-server runs the release v0.4.0. riff installs it now, in the background (update.auto).
+```
+
+The update goes this way:
+
+```mermaid
+sequenceDiagram
+    participant P as riff process
+    participant S as the riff
+    participant U as riff update, in the background
+    participant L as your lead
+    P->>S: call
+    S-->>P: reply, release v0.4.0 (newer)
+    P->>U: start: riff update --tag v0.4.0
+    U->>U: take the update lock of the machine
+    U->>U: install v0.4.0, update the plugin
+    U->>L: "riff on pangolin updated itself from v0.3.0 to v0.4.0."
+```
+
+- One update runs at a time on the machine. Each release gets one
+  try.
+- `riff watch` and `riff tail` run the new `riff` with no restart.
+  `riff mcp` tells its session to reconnect with `/mcp`. A worker
+  takes the new `riff` at its next item.
+- The update stops no session, and a running test goes on. Your
+  sign-in and the device key stay.
+- Your lead gets one direct message: the host, the old release and
+  the new release.
+- A failed update keeps the old `riff`. The message to your lead holds
+  the error. riff tries again at the next release. To try again now,
+  run `riff update --tag` with the release.
+- riff never installs an older release by itself.
+
+The output of the update is in `update.log`, in the local files of
+riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.
+
 ## Versions
 
 A riff is a contract between machines and between sessions. Two

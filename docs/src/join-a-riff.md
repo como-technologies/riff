@@ -92,6 +92,10 @@ Then start your Claude Code sessions again. Pull each clone of your
 project too (see
 [A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
 
+To skip this step at each new release, let riff update itself on your
+machine (see
+[Update riff by itself](how-it-works.md#update-riff-by-itself)).
+
 A riff with no bucket forgets each sign-in when it starts again. Then
 sign in again (see
 [After a restart with no bucket, run riff login](how-it-works.md#after-a-restart-with-no-bucket-run-riff-login)).

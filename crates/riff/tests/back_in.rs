@@ -166,11 +166,9 @@ async fn other_version() -> (Service, String) {
     server_as(false, Some(other)).await
 }
 
-/// [`server`], and with `version`, each reply names that version.
-async fn server_as(busy: bool, version: Option<axum::http::HeaderValue>) -> (Service, String) {
-    env();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+/// The settings of a server at `url` with sign-in that needs a token for
+/// each call, and a fake provider that signs in Ada.
+async fn config(url: &str) -> Config {
     let issuer = FakeProvider::start("Ada@comotechnologies.io", Some(DEFAULT_DOMAIN))
         .await
         .issuer;
@@ -182,9 +180,18 @@ async fn server_as(busy: bool, version: Option<axum::http::HeaderValue>) -> (Ser
             client_secret: None,
             allowed_domains: vec![DEFAULT_DOMAIN.into()],
         }),
-        ..Config::new(&url)
+        ..Config::new(url)
     };
     config.lease.wait = Duration::from_millis(10);
+    config
+}
+
+/// [`server`], and with `version`, each reply names that version.
+async fn server_as(busy: bool, version: Option<axum::http::HeaderValue>) -> (Service, String) {
+    env();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let config = config(&url).await;
     let service = if busy {
         let store = Busy {
             store: Memory::default(),
@@ -410,6 +417,52 @@ async fn riff_login_works_with_another_version() {
         "{error:#}"
     );
     assert!(!format!("{error:#}").contains("sign-in ended"), "{error:#}");
+}
+
+/// A sign-in made before a restart of `riff-server` on the same store
+/// works after it, with no `riff login` (R124, R31). So a deploy of a new
+/// release keeps each machine in the riff, also a machine that updates
+/// riff by itself (01M3N7JJNPPJNTXFDTEY4MSDVJ).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sign_in_stays_over_a_restart_of_riff_server() {
+    env();
+    let store = Memory::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}");
+    let config = config(&url).await;
+    let old = Service::load(config.clone(), Arc::new(store.clone()))
+        .await
+        .unwrap();
+    let router = old.router();
+    let serving = tokio::spawn(async move { axum::serve(listener, router).await });
+    login::login(&Api::new(&url), browser).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let members = || {
+        let mut cmd = riff(&url, dir.path(), "m1", &["members"]);
+        tokio::task::spawn_blocking(move || cmd.output().unwrap())
+    };
+    let before = members().await.unwrap();
+    assert!(before.status.success(), "{}", text(&before.stderr));
+
+    // The deploy: the old server stops, a new one loads the same store
+    // at the same address.
+    serving.abort();
+    let _ = serving.await;
+    drop(old);
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let new = Service::load(config, Arc::new(store)).await.unwrap();
+    let router = new.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    // A call with the old access token, then one that refreshes it.
+    let kept = members().await.unwrap();
+    assert!(kept.status.success(), "{}", text(&kept.stderr));
+    expire(&url);
+    let refreshed = members().await.unwrap();
+    assert!(refreshed.status.success(), "{}", text(&refreshed.stderr));
+    assert!(!text(&refreshed.stderr).contains("riff login"));
+    assert_eq!(login::stored(&url).unwrap().unwrap().user, "ada");
 }
 
 /// "Get back into the riff" in the book names the real error texts and

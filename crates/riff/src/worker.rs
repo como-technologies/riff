@@ -143,7 +143,7 @@ async fn stop_child(child: &mut tokio::process::Child) -> Result<i32> {
 
 /// Sends `body` to the lead of the person in the repository of this
 /// directory, as the person.
-async fn tell_lead(server: &str, body: &str) -> Result<()> {
+pub(crate) async fn tell_lead(server: &str, body: &str) -> Result<()> {
     let place = identity::place(&std::env::current_dir()?)?;
     let me = identity::person(&place, server)?;
     let api = Api::new(server).signed_in(None)?;

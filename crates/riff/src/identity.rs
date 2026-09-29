@@ -172,12 +172,16 @@ pub fn session(place: &Place, server: &str) -> Result<SessionUri> {
 
 /// The place for `dir`, with the host from the environment.
 pub fn place(dir: &Path) -> Result<Place> {
-    let host = host(
+    place_in(dir, &this_host())
+}
+
+/// The host of this machine, from the environment: see [`host`].
+pub fn this_host() -> String {
+    host(
         std::env::var("RIFF_HOST").ok().as_deref(),
         std::env::var(REMOTE_VAR).ok().as_deref(),
         &gethostname::gethostname().to_string_lossy(),
-    );
-    place_in(dir, &host)
+    )
 }
 
 /// Claude Code sets this variable to `true` in a cloud session (R100).

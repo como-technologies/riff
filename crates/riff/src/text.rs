@@ -1919,6 +1919,72 @@ pub fn host_heading(host: &str, status: &crate::host::HostStatus) -> String {
     format!("Host {host}: limit {}, {runs}.", status.limit)
 }
 
+/// The setting of the update of riff by itself, for `riff update --auto`
+/// (01M3N7JJC5WQBJ7SJZSZNBAVVR).
+///
+/// ```
+/// let on = riff::text::auto_update(true);
+/// assert!(on.starts_with("update.auto = true: "), "{on}");
+/// assert!(riff::text::auto_update(false).contains("riff update --auto on"));
+/// ```
+pub fn auto_update(on: bool) -> String {
+    if on {
+        "update.auto = true: riff on this machine installs each new release of its riff by \
+         itself. Turn it off with riff update --auto off."
+            .into()
+    } else {
+        "update.auto = false: riff on this machine tells you to run riff update. Turn on the \
+         update by itself with riff update --auto on."
+            .into()
+    }
+}
+
+/// The note of a `riff` process that starts the update of riff by
+/// itself (01M3N7JJEKZMN1E5NJQRK2QYVB).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::auto_update_started("v0.4.0"),
+///     "riff-server runs the release v0.4.0. riff installs it now, in the background (update.auto)."
+/// );
+/// ```
+pub fn auto_update_started(tag: &str) -> String {
+    format!(
+        "riff-server runs the release {tag}. riff installs it now, in the background (update.auto)."
+    )
+}
+
+/// The message to the lead after the update of riff by itself
+/// (01M3N7JJKBME6VSNTHD8VPN3K9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::auto_updated("pangolin", "v0.3.0", "v0.4.0"),
+///     "riff on pangolin updated itself from v0.3.0 to v0.4.0."
+/// );
+/// ```
+pub fn auto_updated(host: &str, old: &str, new: &str) -> String {
+    format!("riff on {host} updated itself from {old} to {new}.")
+}
+
+/// The message to the lead after a failed update of riff by itself
+/// (01M3N7JJKBME6VSNTHD8VPN3K9).
+///
+/// ```
+/// let failed = riff::text::auto_update_failed("pangolin", "v0.3.0", "v0.4.0", "cargo install failed");
+/// assert!(failed.starts_with(
+///     "riff on pangolin cannot update itself from v0.3.0 to v0.4.0: cargo install failed. "
+/// ), "{failed}");
+/// assert!(failed.contains("riff update --tag v0.4.0"), "{failed}");
+/// ```
+pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str) -> String {
+    format!(
+        "riff on {host} cannot update itself from {old} to {new}: {error}. The old riff stays. \
+         riff tries again at the next release. To try again now, run riff update --tag {new} \
+         on {host}."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
