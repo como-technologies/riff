@@ -1059,6 +1059,9 @@
 - **01M3NK7VM1J5DDB0PECNZ28P4E** After each connect, `riff chat` reads
   the thread. So it shows each line that came while it was not
   connected, and each line only once.
+- **01M3Q59CAA46C316BD4D1ED7C6** When the first connect after a stream
+  ends fails, riff tries once more at once, and shows nothing for it.
+  Only when that try fails too does it show `(reconnecting…)`.
 
 ## Security
 
