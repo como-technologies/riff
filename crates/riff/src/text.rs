@@ -178,7 +178,7 @@ pub fn wake_line(wake: &Wake) -> String {
     let from = name(&wake.from);
     match wake.kind {
         // A note wakes no session, so a wake of a note does not come.
-        Kind::Message | Kind::Note => format!(
+        Kind::Message | Kind::Note | Kind::Action => format!(
             "riff: {from} wrote to you in {place} (message {}). Use the riff read tool.",
             wake.seq
         ),
@@ -1245,7 +1245,20 @@ pub fn message(c: &Checked, thread: &ThreadName) -> String {
         (Kind::Status, true) => format!("{head} asks for your status."),
         (Kind::Status, false) => format!("{head} asks for your status: {}", m.body),
         (Kind::Note, _) => format!("{head} note: {}", m.body),
+        (Kind::Action, _) => format!("{head}: {}", action(&m.from, &m.body)),
     }
+}
+
+/// An action line of the chat as plain text: `* USER@HOST BODY`
+/// (01M3NJD37CNQX580YC24S7K6ES).
+///
+/// ```
+/// let from = "riff://brett@kadomony".parse()?;
+/// assert_eq!(riff::text::action(&from, "waves"), "* brett@kadomony waves");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn action(from: &SessionUri, body: &str) -> String {
+    format!("* {}@{} {body}", from.who().user(), from.place().host())
 }
 
 /// The answer to a read. It starts with [`DATA_NOTE`], then shows each
@@ -1748,6 +1761,7 @@ where
         (Kind::Status, true) => "asks for your status.".into(),
         (Kind::Status, false) => format!("asks for your status: {}", safe(&m.body)),
         (Kind::Note, _) => format!("note: {}", safe(&m.body)),
+        (Kind::Action, _) => safe(&action(&m.from, &m.body)),
     };
     let options = textwrap::Options::new(width.max(INDENT.len() + 20))
         .initial_indent(INDENT)

@@ -379,6 +379,8 @@ impl Post {
 /// assert_eq!("note".parse::<Kind>(), Ok(Kind::Note));
 /// assert!("other".parse::<Kind>().is_err());
 /// assert!(Kind::Note.needs_body() && !Kind::Status.needs_body());
+/// assert_eq!("action".parse::<Kind>(), Ok(Kind::Action));
+/// assert!(Kind::Action.needs_body());
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -392,6 +394,10 @@ pub enum Kind {
     /// A note: it informs and wakes no session. A session sees it at its
     /// next `read` (01M3JPMQE6S7YM4HPEVGXWK7ET).
     Note,
+    /// An action line of the chat, as `/me` in IRC: the body tells what
+    /// the sender does (01M3NJD37CNQX580YC24S7K6ES). It wakes as a
+    /// message.
+    Action,
 }
 
 impl Kind {
@@ -414,7 +420,10 @@ impl std::str::FromStr for Kind {
             "message" => Ok(Kind::Message),
             "status" => Ok(Kind::Status),
             "note" => Ok(Kind::Note),
-            _ => Err(format!("no kind {text}: use message, status or note")),
+            "action" => Ok(Kind::Action),
+            _ => Err(format!(
+                "no kind {text}: use message, status, note or action"
+            )),
         }
     }
 }

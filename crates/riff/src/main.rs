@@ -73,10 +73,11 @@ enum Command {
         /// --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,
-        /// The kind of post: message, status or note. A status request
-        /// asks each session that it wakes to set its status. `riff who`
-        /// then shows each status. A note wakes no session: the sessions
-        /// that --to selects see it at their next read.
+        /// The kind of post: message, status, note or action. A status
+        /// request asks each session that it wakes to set its status.
+        /// `riff who` then shows each status. A note wakes no session: the
+        /// sessions that --to selects see it at their next read. An action
+        /// is a /me line of the chat.
         #[arg(long, default_value = "message")]
         kind: Kind,
         /// The message. A status request needs none.
@@ -125,7 +126,8 @@ enum Command {
     /// Chat with the people of the riff, in the style of IRC. It shows the
     /// chat and each new line, and sends each line that you type. A line
     /// with @lead wakes your lead, and @USER wakes the lead of USER. Other
-    /// lines wake no session. /quit or Ctrl-C exits.
+    /// lines wake no session. /me TEXT sends an action. /quit or Ctrl-C
+    /// exits.
     Chat {
         /// When to use color. `auto` uses color only when stdout is a
         /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.

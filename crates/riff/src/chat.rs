@@ -5,6 +5,17 @@
 //! as `USER@HOST`, with no session. The server keeps its rules: only a
 //! member reads or posts, and the sender comes from the sign-in.
 //!
+//! In a terminal, the chat has a prompt line at the bottom
+//! (01M3NJD39JVJHY5G71CD79JBY3). A new line prints above the prompt, and
+//! the text that the person types stays. After Enter, the typed line
+//! goes away: the line shows once, as the chat line from the server. A
+//! person shows as `<USER@HOST>`, and a session as `[USER's lead]` or
+//! `[USER SESSION]` (01M3NJD3BR0XAYNNFTEY0CG761). With a pipe, the chat
+//! has no prompt and no line editor.
+//!
+//! `/me TEXT` posts an action line: a post of kind [`Kind::Action`]
+//! (01M3NJD37CNQX580YC24S7K6ES). It shows as `* USER@HOST TEXT`.
+//!
 //! A line wakes no session, unless it names a lead (01M3NB5N0D99JB5CE6RB4VEYPF):
 //! `@lead` wakes the lead of the sender, and `@USER` wakes the lead of
 //! USER. A lead answers with a post to the chat thread.
@@ -25,6 +36,8 @@
 //! ```
 
 use std::fmt::Write as _;
+use std::io::{IsTerminal, Write as _};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -33,10 +46,11 @@ use futures::StreamExt;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::Kind;
-use tokio::io::AsyncBufReadExt;
+use rustyline::ExternalPrinter;
+use tokio::sync::mpsc;
 
 use crate::api::{Api, Checked, follow};
-use crate::style::{BOLD, DIM, styled};
+use crate::style::{DIM, styled};
 use crate::text::safe;
 
 /// The name of the chat thread.
@@ -44,6 +58,9 @@ pub const THREAD: &str = "chat";
 
 /// The line that ends `riff chat`.
 pub const QUIT: &str = "/quit";
+
+/// The prompt of the input line in a terminal.
+pub const PROMPT: &str = "[riff] > ";
 
 /// The time between two tries to connect the chat again.
 const RETRY: Duration = Duration::from_secs(5);
@@ -94,11 +111,120 @@ pub fn wakes(line: &str, sender: &str) -> Vec<Selector> {
         .collect()
 }
 
+/// What a person typed in the chat.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Typed<'a> {
+    /// An empty line, or `/me` with no text: send nothing.
+    Nothing,
+    /// [`QUIT`]: end the chat.
+    Quit,
+    /// A chat line to send.
+    Say(&'a str),
+    /// `/me TEXT`: an action line to send.
+    Action(&'a str),
+    /// A command that the chat does not know: send nothing.
+    Unknown(&'a str),
+}
+
+/// What `line` asks for. A line that starts with `/` is a command. A
+/// line that starts with `//` is a chat line that starts with `/`, as in
+/// IRC.
+///
+/// ```
+/// use riff::chat::{Typed, typed};
+///
+/// assert_eq!(typed("  hi all "), Typed::Say("hi all"));
+/// assert_eq!(typed("/me waves"), Typed::Action("waves"));
+/// assert_eq!(typed("/me @lead look"), Typed::Action("@lead look"));
+/// assert_eq!(typed("/quit"), Typed::Quit);
+/// assert_eq!(typed("/foo bar"), Typed::Unknown("foo"));
+/// assert_eq!(typed("//foo"), Typed::Say("/foo"));
+/// assert_eq!(typed("/me"), Typed::Nothing);
+/// assert_eq!(typed(" "), Typed::Nothing);
+/// ```
+pub fn typed(line: &str) -> Typed<'_> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Typed::Nothing;
+    }
+    if line.starts_with("//") {
+        return Typed::Say(&line[1..]);
+    }
+    let Some(command) = line.strip_prefix('/') else {
+        return Typed::Say(line);
+    };
+    let (name, text) = command
+        .split_once(char::is_whitespace)
+        .unwrap_or((command, ""));
+    match (name, text.trim()) {
+        ("quit", _) => Typed::Quit,
+        ("me", "") => Typed::Nothing,
+        ("me", text) => Typed::Action(text),
+        (name, _) => Typed::Unknown(name),
+    }
+}
+
+/// The answer to a command that the chat does not know. It sends
+/// nothing.
+///
+/// ```
+/// assert_eq!(
+///     riff::chat::unknown("foo"),
+///     "riff: unknown command /foo. Commands: /me, /quit. \
+///      To send a line that starts with /, start it with //."
+/// );
+/// ```
+pub fn unknown(name: &str) -> String {
+    format!(
+        "riff: unknown command /{}. Commands: /me, {QUIT}. \
+         To send a line that starts with /, start it with //.",
+        safe(name)
+    )
+}
+
+/// The name of the sender of a chat line, and true for a session. A
+/// person is `USER@HOST`. A verified lead is `USER's lead`. Each other
+/// session is `USER` and the first 8 characters of its session ID.
+///
+/// ```
+/// use riff::api::Checked;
+/// use riff_core::wire::{Kind, Message};
+///
+/// let from = |uri: &str, verified| Checked {
+///     message: Message {
+///         seq: 1,
+///         from: uri.parse().unwrap(),
+///         to: vec![],
+///         body: "hi".into(),
+///         at_ms: 0,
+///         kind: Kind::Message,
+///         sig: None,
+///     },
+///     verified,
+/// };
+/// let lead = "riff://mike@thelio/o/r?session=4e54d4e5-c891&lead=true";
+/// let person = riff::chat::sender(&from("riff://mike@thelio", true));
+/// assert_eq!(person, ("mike@thelio".to_owned(), false));
+/// assert_eq!(riff::chat::sender(&from(lead, true)), ("mike's lead".to_owned(), true));
+/// assert_eq!(riff::chat::sender(&from(lead, false)), ("mike 4e54d4e5".to_owned(), true));
+/// ```
+pub fn sender(c: &Checked) -> (String, bool) {
+    let from = &c.message.from;
+    let user = from.who().user();
+    let name = match from.who().session() {
+        None => return (safe(&format!("{user}@{}", from.place().host())), false),
+        Some(_) if c.verified && from.lead() => format!("{user}'s lead"),
+        Some(id) => format!("{user} {}", id.chars().take(8).collect::<String>()),
+    };
+    (safe(&name), true)
+}
+
 /// One chat line for people. A date line comes first when the day of
-/// `at` is not `last_day`. Then the time, the sender as `USER@HOST`,
-/// `lead` for a verified lead, and the body. Each more line of the body
-/// is indented. The line has ANSI styles: print it through `anstream`.
-/// It removes each escape sequence from the body and the sender.
+/// `at` is not `last_day`. Then the time, the sender and the body: a
+/// person as `<USER@HOST>`, a session as `[NAME]` (see [`sender`]), and
+/// an action as `* NAME TEXT`. Each more line of the body is indented.
+/// The line has ANSI styles: print it through `anstream`. It removes
+/// each escape sequence from the body and the sender.
 ///
 /// ```
 /// use chrono::TimeZone;
@@ -116,10 +242,21 @@ pub fn wakes(line: &str, sender: &str) -> Vec<Selector> {
 /// };
 /// let c = Checked { message, verified: true };
 /// let at = chrono::Utc.with_ymd_and_hms(2026, 9, 28, 14, 13, 0).unwrap();
-/// let line = riff::chat::line(&c, &at, Some(at.date_naive()));
-/// assert_eq!(anstream::adapter::strip_str(&line).to_string(), "14:13 mike@thelio  hi all");
+/// let plain = |c: &Checked| {
+///     let line = riff::chat::line(c, &at, Some(at.date_naive()));
+///     anstream::adapter::strip_str(&line).to_string()
+/// };
+/// assert_eq!(plain(&c), "14:13 <mike@thelio> hi all");
 /// let first = riff::chat::line(&c, &at, None);
 /// assert!(anstream::adapter::strip_str(&first).to_string().starts_with("2026-09-28\n14:13"));
+///
+/// // A lead looks different from its person.
+/// let lead = "riff://mike@thelio/o/r?session=4e54d4e5&lead=true".parse()?;
+/// let answer = Message { from: lead, ..c.message.clone() };
+/// assert_eq!(plain(&Checked { message: answer, verified: true }), "14:13 [mike's lead] hi all");
+///
+/// let waves = Message { kind: Kind::Action, body: "waves".into(), ..c.message.clone() };
+/// assert_eq!(plain(&Checked { message: waves, verified: true }), "14:13 * mike@thelio waves");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn line<Tz: TimeZone>(c: &Checked, at: &DateTime<Tz>, last_day: Option<NaiveDate>) -> String
@@ -131,75 +268,81 @@ where
     if last_day != Some(at.date_naive()) {
         let _ = writeln!(out, "{}", styled(DIM, &at.format("%Y-%m-%d").to_string()));
     }
-    let from = format!("{}@{}", m.from.who().user(), m.from.place().host());
-    let _ = write!(
-        out,
-        "{} {}",
-        styled(DIM, &at.format("%H:%M").to_string()),
-        styled(crate::style::session(&m.from), &safe(&from))
-    );
-    if c.verified && m.from.lead() {
-        let _ = write!(out, " {}", styled(BOLD, "lead"));
-    }
+    let (name, session) = sender(c);
+    let name = styled(crate::style::session(&m.from), &name);
+    let who = match (m.kind, session) {
+        (Kind::Action, _) => format!("* {name}"),
+        (_, false) => format!("<{name}>"),
+        (_, true) => format!("[{name}]"),
+    };
     let body = safe(&m.body).replace('\t', "    ");
     let _ = write!(
         out,
-        "  {}",
+        "{} {who} {}",
+        styled(DIM, &at.format("%H:%M").to_string()),
         body.lines().collect::<Vec<_>>().join("\n      ")
     );
     out
 }
 
 /// Runs the chat of `me` until stdin ends, or the person types
-/// [`QUIT`]. It shows the history of the chat, then each new line, and
-/// posts each line that the person types. It connects again when the
-/// stream ends.
+/// [`QUIT`]. It shows the start line and the history of the chat, then
+/// each new line, and posts each line that the person types. It
+/// connects again when the stream ends.
 pub async fn run(api: &Api, me: &SessionUri) -> Result<()> {
     let thread = thread();
     api.join(me, &thread).await?;
     let first = api.tail(&thread).await?;
     let mut stream = Box::pin(first.chain(follow(|| api.tail(&thread), RETRY)));
-    let mut shown = Shown::default();
-    for c in api.read(me, &thread, true).await? {
-        shown.print(&c);
-    }
+    let history = api.read(me, &thread, true).await?;
     anstream::eprintln!(
-        "riff: chat as {}@{}. Type a line and press Enter. @lead wakes your lead. \
-         {QUIT} or Ctrl-C exits.",
+        "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
+         @lead wakes your lead. {QUIT} or Ctrl-C exits.",
         me.who().user(),
         me.place().host()
     );
-    let mut input = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    let mut shown = Shown::default();
+    for c in history {
+        if let Some(line) = shown.next(&c) {
+            anstream::println!("{line}");
+        }
+    }
+    let (screen, mut input) = Screen::start()?;
     let mut lost = false;
     loop {
         tokio::select! {
-            typed = input.next_line() => {
-                let Some(typed) = typed? else { break };
-                let typed = typed.trim();
-                if typed == QUIT {
-                    break;
-                }
-                if typed.is_empty() {
-                    continue;
-                }
-                let to = wakes(typed, me.who().user());
-                if let Err(e) = api.post(me, Some(&thread), &to, typed, Kind::Message).await {
-                    anstream::eprintln!("riff: cannot send the line: {e:#}");
+            typed_line = input.recv() => {
+                let Some(typed_line) = typed_line else { break };
+                let (text, kind) = match typed(&typed_line) {
+                    Typed::Nothing => continue,
+                    Typed::Quit => break,
+                    Typed::Unknown(name) => {
+                        screen.warn(&unknown(name));
+                        continue;
+                    }
+                    Typed::Say(text) => (text, Kind::Message),
+                    Typed::Action(text) => (text, Kind::Action),
+                };
+                let to = wakes(text, me.who().user());
+                if let Err(e) = api.post(me, Some(&thread), &to, text, kind).await {
+                    screen.warn(&format!("riff: cannot send the line: {e:#}"));
                 }
             }
             item = stream.next() => match item {
                 Some(Ok(c)) => {
                     if lost {
-                        anstream::eprintln!("riff: connected again.");
+                        screen.warn("riff: connected again.");
                         lost = false;
                     }
-                    shown.print(&c);
+                    if let Some(line) = shown.next(&c) {
+                        screen.print(&line);
+                    }
                 }
                 Some(Err(e)) if !lost => {
-                    anstream::eprintln!(
+                    screen.warn(&format!(
                         "riff: {e:#}. Trying again every {} seconds.",
                         RETRY.as_secs()
-                    );
+                    ));
                     lost = true;
                 }
                 Some(Err(_)) => {}
@@ -210,6 +353,98 @@ pub async fn run(api: &Api, me: &SessionUri) -> Result<()> {
     Ok(())
 }
 
+/// The printer of the line editor: it prints above the prompt.
+type Printer = Arc<Mutex<Box<dyn ExternalPrinter + Send>>>;
+
+/// Where the chat prints.
+enum Screen {
+    /// A pipe or a file: no prompt and no line editor.
+    Plain,
+    /// A terminal: a line editor with the prompt [`PROMPT`].
+    Editor { printer: Printer, color: bool },
+}
+
+impl Screen {
+    /// Starts to read the typed lines: with a line editor when stdin and
+    /// stdout are a terminal, else line by line. The lines come on the
+    /// receiver. It closes when stdin ends, on Ctrl-C or Ctrl-D, and
+    /// after [`QUIT`], so the terminal is back in its normal mode.
+    fn start() -> Result<(Screen, mpsc::Receiver<String>)> {
+        let (tx, rx) = mpsc::channel(16);
+        if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+            // A thread, not a task: a read of stdin that waits does not
+            // stop the exit.
+            std::thread::spawn(move || {
+                for line in std::io::stdin().lines() {
+                    let Ok(line) = line else { break };
+                    if tx.blocking_send(line).is_err() {
+                        break;
+                    }
+                }
+            });
+            return Ok((Screen::Plain, rx));
+        }
+        let mut editor = rustyline::DefaultEditor::new()?;
+        let printer: Printer = Arc::new(Mutex::new(Box::new(editor.create_external_printer()?)));
+        let held = Arc::clone(&printer);
+        std::thread::spawn(move || {
+            while let Ok(line) = editor.readline(PROMPT) {
+                {
+                    // No chat line prints between the typed line and its
+                    // clear.
+                    let _held = held.lock();
+                    clear_typed(&line);
+                }
+                let _ = editor.add_history_entry(line.as_str());
+                let quit = typed(&line) == Typed::Quit;
+                if tx.blocking_send(line).is_err() || quit {
+                    break;
+                }
+            }
+        });
+        let color =
+            anstream::AutoStream::choice(&std::io::stdout()) != anstream::ColorChoice::Never;
+        Ok((Screen::Editor { printer, color }, rx))
+    }
+
+    /// Prints a chat line.
+    fn print(&self, text: &str) {
+        match self {
+            Screen::Plain => anstream::println!("{text}"),
+            Screen::Editor { printer, color } => {
+                let text = if *color {
+                    text.to_owned()
+                } else {
+                    anstream::adapter::strip_str(text).to_string()
+                };
+                if let Ok(mut printer) = printer.lock() {
+                    let _ = printer.print(format!("{text}\n"));
+                }
+            }
+        }
+    }
+
+    /// Prints a line of riff itself: on stderr with a pipe, above the
+    /// prompt in a terminal.
+    fn warn(&self, text: &str) {
+        match self {
+            Screen::Plain => anstream::eprintln!("{text}"),
+            Screen::Editor { .. } => self.print(text),
+        }
+    }
+}
+
+/// Clears the prompt and the typed `line` after Enter: the line comes
+/// back from the server as a chat line.
+fn clear_typed(line: &str) {
+    let columns = textwrap::termwidth().max(1);
+    let width = textwrap::core::display_width(PROMPT) + textwrap::core::display_width(line);
+    let rows = width.saturating_sub(1) / columns + 1;
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b[{rows}A\r\x1b[J");
+    let _ = out.flush();
+}
+
 /// What the chat has shown: the last message and the last day.
 #[derive(Default)]
 struct Shown {
@@ -218,18 +453,19 @@ struct Shown {
 }
 
 impl Shown {
-    /// Prints `c` once: a message from the history can come again on the
-    /// stream.
-    fn print(&mut self, c: &Checked) {
+    /// The line of `c`, once: a message from the history can come again
+    /// on the stream.
+    fn next(&mut self, c: &Checked) -> Option<String> {
         if c.message.seq <= self.seq {
-            return;
+            return None;
         }
         self.seq = c.message.seq;
         let at = i64::try_from(c.message.at_ms)
             .ok()
             .and_then(|ms| Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(Local::now);
-        anstream::println!("{}", line(c, &at, self.day));
+        let line = line(c, &at, self.day);
         self.day = Some(at.date_naive());
+        Some(line)
     }
 }

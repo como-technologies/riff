@@ -46,11 +46,14 @@ anstream = "1.0.0"
 anstyle = "1.0.14"
 textwrap = { version = "0.16.4", features = ["terminal_size"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+rustyline = { version = "18.0.1", default-features = false }
 
 # ── Testing ──
 assert_cmd = "2.2"
 tempfile = "3"
 tower = { version = "0.5.3", features = ["util"] }
+nix = { version = "0.31.3", features = ["term"] }
+vt100 = "0.16.2"
 
 [profile.release]
 strip = true

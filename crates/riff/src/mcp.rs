@@ -85,7 +85,7 @@ pub struct PostArgs {
     /// Each session that a status request wakes sets its status with the
     /// `status` tool. A note wakes no session: the sessions that `to`
     /// selects see it at their next `read`. Use it for a board, a
-    /// "started" or a "done".
+    /// "started" or a "done". An `action` is a `/me` line of the chat.
     kind: Option<Kind>,
 }
 
