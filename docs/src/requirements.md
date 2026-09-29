@@ -1666,6 +1666,19 @@
   the lead of the user gets one direct message from the person: the
   host, the old release and the new release. After a failed update,
   the message holds the error, and the old binaries stay.
+- **01M3NT2Q0RNM9PVHT42V459624** An update in the background runs in
+  the local files of riff, not in the working directory of the process
+  that started it. It gets the place of that process, so the message
+  to the lead finds the repository also when that directory is gone.
+- **01M3NT2Q30P9GCQGENWMP1NKN2** `riff update` runs `cargo`, `git`,
+  `riff connect` and `riff-server --version` in the home directory,
+  else in `/`. So it works in a removed directory.
+- **01M3NT2PYFHPB0C19Q2QB2AE6W** When the working directory of an
+  update in the background is missing, the update stops before `cargo`
+  runs, and does not mark the release as tried. The next `riff` process
+  tries again, and the message to the lead says so. Each other failure
+  marks the release as tried, so one release gets at most one install
+  and one message to the lead.
 - **01M3N7JJNPPJNTXFDTEY4MSDVJ** An update in the background stops no
   session, and changes no sign-in and no device key. The sessions take
   the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9 and

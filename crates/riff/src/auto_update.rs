@@ -22,6 +22,15 @@
 //! release, and a failed release waits for the next release. The files
 //! are in [`local`].
 //!
+//! The update in the background runs in the local files of riff, a
+//! directory that exists, also when the process that saw the new server
+//! runs in a removed worktree. It gets the place of that process, which
+//! [`remember`] keeps, so that the message to the lead finds the
+//! repository (01M3NT2Q0RNM9PVHT42V459624). When its own working
+//! directory is missing, it stops before `cargo` runs, and the release
+//! does not count as tried (01M3NT2PYFHPB0C19Q2QB2AE6W). Each other
+//! failure counts, so one release gets at most one install.
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant P as riff process
@@ -54,14 +63,34 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use riff_core::build::Build;
+use riff_core::name::Place;
 
-use crate::{lifecycle, local, settings, text};
+use crate::{identity, lifecycle, local, settings, text};
 
 /// True in the update in the background: it starts no other update.
 static OFF: AtomicBool = AtomicBool::new(false);
 
 /// The release that this process started an update for.
 static STARTED: Mutex<Option<String>> = Mutex::new(None);
+
+/// The place of this process, while its directory still existed.
+static HERE: Mutex<Option<Place>> = Mutex::new(None);
+
+/// Keeps `place`, the place of this process, for the update in the
+/// background (01M3NT2Q0RNM9PVHT42V459624). `riff` calls it once it
+/// knows the place, before its first call to the riff.
+pub fn remember(place: &Place) {
+    if let Ok(mut here) = HERE.lock() {
+        *here = Some(place.clone());
+    }
+}
+
+/// The place of this process: the one that [`remember`] keeps, else the
+/// place of the working directory. `None` when neither is known.
+fn here() -> Option<Place> {
+    let kept = HERE.lock().ok().and_then(|here| here.clone());
+    kept.or_else(|| identity::place(&identity::working_dir().ok()?).ok())
+}
 
 /// The release tag to install when `this` riff gets a reply from
 /// `server`: the release of the server, when its version is newer.
@@ -127,8 +156,9 @@ fn on(path: &Path) -> bool {
 
 /// Starts `riff update --background --tag TAG --server URL` with this
 /// binary, in a process group of its own, so that the end of this
-/// process or a Ctrl-C does not stop it. Its output goes to the log in
-/// `dir`.
+/// process or a Ctrl-C does not stop it. It runs in `dir`, with the
+/// place of this process (01M3NT2Q0RNM9PVHT42V459624). Its output goes
+/// to the log in `dir`.
 fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     let path = local::update_log(dir);
@@ -138,8 +168,14 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
         .open(&path)
         .with_context(|| format!("cannot open {}", path.display()))?;
     let exe = std::env::current_exe().context("cannot find the riff binary")?;
-    let mut child = Command::new(exe)
+    let mut command = Command::new(exe);
+    if let Some(place) = here() {
+        command.args([identity::PLACE_ARG, &identity::place_text(&place)]);
+    }
+    let mut child = command
         .args(["update", "--background", "--tag", tag, "--server", url])
+        .current_dir(dir)
+        .env("PWD", dir)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
@@ -153,11 +189,20 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
 
 /// The update in the background (01M3N7JJH0SXXQYYBAHWPCNQGX): takes
 /// the update lock, records `tag`, runs [`lifecycle::update`], and tells
-/// the lead of the user the result (01M3N7JJKBME6VSNTHD8VPN3K9). It
-/// stops at once when another update holds the lock, or when `tag` was
-/// tried. `riff` passes [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER)
-/// as `local`.
-pub async fn run(cargo: &Path, claude: &Path, tag: &str, server: &str, local: &str) -> Result<()> {
+/// the lead of the user in the repository of `place` the result
+/// (01M3N7JJKBME6VSNTHD8VPN3K9). It stops at once when another update
+/// holds the lock, or when `tag` was tried. When its working directory
+/// is missing, it stops before it records `tag`
+/// (01M3NT2PYFHPB0C19Q2QB2AE6W). `riff` passes
+/// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
+pub async fn run(
+    cargo: &Path,
+    claude: &Path,
+    tag: &str,
+    server: &str,
+    local: &str,
+    place: Option<&Place>,
+) -> Result<()> {
     OFF.store(true, Ordering::Relaxed);
     let dir = local::dir().context("cannot find the local files of riff: set HOME")?;
     let Some(_lock) = local::update(&dir)? else {
@@ -168,19 +213,27 @@ pub async fn run(cargo: &Path, claude: &Path, tag: &str, server: &str, local: &s
         println!("riff: this machine tried {tag} already.");
         return Ok(());
     }
-    local::set_tried(&dir, tag)?;
     let old = lifecycle::release_tag(env!("CARGO_PKG_VERSION"));
     let host = crate::identity::this_host();
-    let done = lifecycle::update(cargo, claude, Some(tag), server, local).await;
+    let done = match identity::working_dir() {
+        Ok(_) => {
+            local::set_tried(&dir, tag)?;
+            lifecycle::update(cargo, claude, Some(tag), server, local).await
+        }
+        Err(e) => Err(e),
+    };
     let body = match &done {
         Ok(words) => {
             println!("{words}");
             text::auto_updated(&host, &old, tag)
         }
-        Err(e) => text::auto_update_failed(&host, &old, tag, &format!("{e:#}")),
+        Err(e) => {
+            let tried = local::tried(&dir).as_deref() == Some(tag);
+            text::auto_update_failed(&host, &old, tag, &format!("{e:#}"), tried)
+        }
     };
     println!("riff: {body}");
-    if let Err(e) = crate::worker::tell_lead(server, &body).await {
+    if let Err(e) = crate::worker::tell_lead(place, server, &body).await {
         println!("riff: cannot tell the lead: {e:#}");
     }
     done.map(|_| ())

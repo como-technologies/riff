@@ -364,3 +364,179 @@ fn the_book_shows_how_to_update_riff_by_itself() {
     assert!(text(&help.stdout).contains("--auto [<AUTO>]"));
     assert!(!text(&help.stdout).contains("--background"));
 }
+
+/// A fake `cargo` in `bin` that logs its arguments like
+/// [`fake_command`], and its working directory to `bin/cargo.pwd`. The
+/// log shows `gone` when it runs in a removed directory.
+fn fake_cargo_with_dir(bin: &Path) {
+    let path = bin.join("cargo");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> {log}\n(/bin/pwd -P 2>/dev/null || echo gone) > {pwd}\n",
+            log = bin.join("cargo.log").display(),
+            pwd = bin.join("cargo.pwd").display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// The directory where the fake `cargo` of [`fake_cargo_with_dir`] ran.
+fn cargo_dir(bin: &Path) -> String {
+    let pwd = std::fs::read_to_string(bin.join("cargo.pwd")).unwrap_or_default();
+    pwd.trim_end().to_owned()
+}
+
+/// `command` in `dir`, a directory that a shell removes just before it
+/// runs `command`.
+fn in_removed_dir(command: &Command, dir: &Path) -> Command {
+    std::fs::create_dir_all(dir).unwrap();
+    let mut sh = Command::new("sh");
+    sh.arg("-c")
+        .arg(r#"cd "$1" && rmdir "$1" && shift && exec "$@""#)
+        .arg("sh")
+        .arg(dir)
+        .arg(command.get_program())
+        .args(command.get_args())
+        .current_dir(dir);
+    for (key, value) in command.get_envs() {
+        match value {
+            Some(value) => sh.env(key, value),
+            None => sh.env_remove(key),
+        };
+    }
+    sh
+}
+
+/// Runs `command` away from the runtime of the server.
+async fn output(mut command: Command) -> Output {
+    tokio::task::spawn_blocking(move || command.output().unwrap())
+        .await
+        .unwrap()
+}
+
+/// A `riff` process in a removed worktree sees a newer release. The
+/// update in the background runs in the local files of riff, `cargo`
+/// runs in the home directory, and the lead gets its message
+/// (01M3NT2Q0RNM9PVHT42V459624, 01M3NT2Q30P9GCQGENWMP1NKN2).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_update_of_a_process_in_a_removed_directory_runs_in_a_directory_that_exists() {
+    let machine = Machine::new(0).await;
+    fake_cargo_with_dir(machine.bin.path());
+    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    machine.run("w", &["update", "--auto", "on"]).await;
+
+    let gone = machine
+        .repo
+        .path()
+        .join(".claude/worktrees/verify-issue-12");
+    let place = "pangolin/como-technologies/riff#verify-issue-12";
+    let who = machine.riff("w1", &["--place", place, "who"]);
+    let out = output(in_removed_dir(&who, &gone)).await;
+    assert!(!gone.exists());
+    assert!(
+        text(&out.stderr).contains("riff installs it now, in the background"),
+        "{}",
+        text(&out.stderr)
+    );
+    let done = wait_for(Duration::from_secs(20), async || {
+        machine
+            .lead_messages("lead")
+            .await
+            .contains("updated itself")
+    })
+    .await;
+    let update_log = std::fs::read_to_string(riff::local::update_log(&machine.state()));
+    assert!(done, "no message to the lead. update.log: {update_log:?}");
+    // The first try works: no failure for the removed directory.
+    let messages = machine.lead_messages("lead").await;
+    assert!(!messages.contains("cannot update itself"), "{messages}");
+    assert_eq!(messages.matches("updated itself").count(), 1, "{messages}");
+    assert_eq!(log(machine.bin.path(), "cargo"), install(&newer_tag()));
+    let home = machine.env.home().canonicalize().unwrap();
+    assert_eq!(cargo_dir(machine.bin.path()), home.display().to_string());
+}
+
+/// `riff update` by hand in a removed directory runs `cargo` in the home
+/// directory (01M3NT2Q30P9GCQGENWMP1NKN2).
+#[tokio::test]
+async fn riff_update_by_hand_in_a_removed_directory_runs_in_the_home_directory() {
+    let machine = Machine::new(0).await;
+    fake_cargo_with_dir(machine.bin.path());
+    let gone = machine.repo.path().join("gone");
+    let tag = newer_tag();
+    let update = machine.riff("w1", &["update", "--tag", &tag]);
+    let out = output(in_removed_dir(&update, &gone)).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(log(machine.bin.path(), "cargo"), install(&tag));
+    let home = machine.env.home().canonicalize().unwrap();
+    assert_eq!(cargo_dir(machine.bin.path()), home.display().to_string());
+}
+
+/// An update in the background whose working directory is missing runs
+/// no `cargo`, and does not mark the release as tried, so the next
+/// `riff` process tries it again (01M3NT2PYFHPB0C19Q2QB2AE6W). The lead
+/// still gets its message.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failure_for_a_missing_directory_leaves_the_release_untried() {
+    let machine = Machine::new(0).await;
+    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    let tag = newer_tag();
+    let place = "pangolin/como-technologies/riff";
+    let args = ["--place", place, "update", "--background", "--tag", &tag];
+    let update = machine.riff("w1", &args);
+    let gone = machine.repo.path().join("gone");
+    let out = output(in_removed_dir(&update, &gone)).await;
+    assert!(!out.status.success());
+    assert_eq!(log(machine.bin.path(), "cargo"), "");
+    assert_eq!(riff::local::tried(&machine.state()), None);
+    assert!(!riff::local::updating(&machine.state()));
+    let messages = machine.lead_messages("lead").await;
+    assert!(
+        messages.contains("cannot update itself") && messages.contains("the next riff command"),
+        "{messages}"
+    );
+}
+
+/// With `cargo` missing from `PATH`, each failure repeats. Many `riff`
+/// processes start one update of the release, and the lead gets one
+/// message (01M3N7JJH0SXXQYYBAHWPCNQGX, 01M3NT2PYFHPB0C19Q2QB2AE6W).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_with_no_cargo_is_tried_once() {
+    let machine = Machine::new(0).await;
+    std::fs::remove_file(machine.bin.path().join("cargo")).unwrap();
+    let path = format!("{}:/usr/bin:/bin", machine.bin.path().display());
+    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    machine.run("w", &["update", "--auto", "on"]).await;
+
+    for n in 1..4 {
+        let mut who = machine.riff(&format!("w{n}"), &["who"]);
+        who.env("PATH", &path);
+        assert!(output(who).await.status.success());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    let told = wait_for(Duration::from_secs(20), async || {
+        machine
+            .lead_messages("lead")
+            .await
+            .contains("cannot update itself")
+    })
+    .await;
+    assert!(told, "no message to the lead");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let messages = machine.lead_messages("lead").await;
+    assert_eq!(
+        messages.matches("cannot update itself").count(),
+        1,
+        "{messages}"
+    );
+    assert!(
+        messages.contains("riff tries again at the next release."),
+        "{messages}"
+    );
+    assert_eq!(
+        riff::local::tried(&machine.state()).as_deref(),
+        Some(newer_tag().as_str())
+    );
+}

@@ -71,7 +71,7 @@
 //! It does not restart `riff-server`: the server runs in a terminal of
 //! the person.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -259,6 +259,7 @@ pub fn newest_release() -> Result<String> {
             env!("CARGO_PKG_REPOSITORY"),
             "v*",
         ])
+        .current_dir(run_dir())
         .output()
         .context("cannot run git ls-remote")?;
     if !out.status.success() {
@@ -379,7 +380,8 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// read, it prints [`text::newest_instead`](crate::text::newest_instead)
 /// and installs the newest release. Then it updates the plugin with the new
 /// `riff connect claude --claude CLAUDE`, and looks for an old riff with
-/// [`old_riff`]. It returns the last words for the person. `riff` passes
+/// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
+/// words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
 pub async fn update(
     cargo: &Path,
@@ -400,18 +402,23 @@ pub async fn update(
             }
         },
     };
+    let dir = run_dir();
     run(
-        Command::new(cargo).args(install_args(&tag)),
+        Command::new(cargo)
+            .args(install_args(&tag))
+            .current_dir(&dir),
         "cargo install",
     )?;
     run(
         Command::new("riff")
             .args(["connect", "claude", "--claude"])
-            .arg(claude),
+            .arg(claude)
+            .current_dir(&dir),
         "riff connect claude",
     )?;
     let out = Command::new("riff-server")
         .arg("--version")
+        .current_dir(&dir)
         .output()
         .context("cannot run riff-server --version")?;
     let new = version_build(&String::from_utf8_lossy(&out.stdout));
@@ -427,6 +434,20 @@ pub async fn old_riff(new: Option<&Build>, server: &str, local: &str) -> Option<
     let url = if is_loopback(server) { server } else { local };
     let running = probe(&Api::new(url)).await.ok()?.build?;
     (!new?.matches(&running)).then(|| url.to_owned())
+}
+
+/// The directory where `riff update` runs its commands: the home
+/// directory, else `/`. It always exists, also when the working
+/// directory of riff was removed (01M3NT2Q30P9GCQGENWMP1NKN2).
+///
+/// ```
+/// assert!(riff::lifecycle::run_dir().is_dir());
+/// ```
+pub fn run_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// Runs `command` with the terminal of the person. An error when it
