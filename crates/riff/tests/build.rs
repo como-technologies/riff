@@ -427,6 +427,37 @@ fn the_book_has_the_part_that_the_error_names() {
     assert!(book.contains("```sh\nriff --version\nriff-server --version\n```"));
 }
 
+/// The book says what each level of a version means, and the test for
+/// each release (01M3N73E7YTHFX2J2KXT7017QX to
+/// 01M3N73EEQ4HPCPPAGCAHH3S6B).
+#[test]
+fn the_book_says_what_patch_minor_and_major_mean() {
+    let book = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let part = &book[book.find("\n## Versions\n").expect("no ## Versions")..];
+    let part = &part[..part[4..].find("\n## ").map_or(part.len(), |end| end + 4)];
+    for heading in [
+        "### Patch\n",
+        "### Minor\n",
+        "### Major\n",
+        "### The test for each release\n",
+    ] {
+        assert!(part.contains(heading), "no {heading:?} in: {part}");
+    }
+    for minor in [
+        "the wire",
+        "the saved state of `riff-server`",
+        "the plugin contract",
+        "the behavior",
+    ] {
+        assert!(part.contains(minor), "no {minor:?} in: {part}");
+    }
+    assert!(part.contains("act differently"), "{part}");
+    assert!(part.contains("fail to understand"), "{part}");
+}
+
 /// The notes and the error in the book are the real text
 /// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T).
 #[test]

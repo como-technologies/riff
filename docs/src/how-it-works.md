@@ -118,8 +118,9 @@ that changes only the book keeps the build.
 The version is a semantic version, `MAJOR.MINOR.PATCH`. It tells which
 versions can talk. The line of a version is its major, and its minor
 while the major is 0: `0.4.1` is on the line `0.4`, and `1.2.0` is on
-the line `1`. A change to a message, the API or the header starts a
-new line. Most merges keep the line.
+the line `1`. A change that another machine or session can notice
+starts a new line (see [Versions](#versions)). Most merges keep the
+line.
 
 `riff-server` talks with a `riff` of its own line, and of the line
 before. So you have one release to update `riff` in:
@@ -240,6 +241,64 @@ its tag:
 ```sh
 riff update --tag v0.2.0
 ```
+
+## Versions
+
+A riff is a contract between machines and between sessions. Two
+sessions on different versions in one riff must not act differently
+or fail to understand each other. The level of a release tells you
+what changed. While riff is `0.x`, the minor has the role of the
+major.
+
+### Patch
+
+`0.3.0` to `0.3.1`. Nothing changes that another machine or session
+can notice:
+
+- a fix that restores the intended behavior;
+- the docs, an output format, the tests;
+- words of the skill or of a requirement that make a rule clearer,
+  with no change in behavior.
+
+### Minor
+
+`0.3.x` to `0.4.0`. A change that another machine or session can
+notice:
+
+- the wire: a route or a field that a client needs, a removed one, or
+  a new meaning;
+- the saved state of `riff-server`;
+- the plugin contract: the hook input, and the names and arguments of
+  the riff tools;
+- the behavior: a change of the skill or of a requirement that changes
+  what a session does, for example the pull request flow, the verify,
+  the claims, the waves or the pause.
+
+`riff-server` still talks with a `riff` of the minor before its own
+(see [Builds](#builds)), so a wire change stays additive for one
+minor. Riff does not bridge a difference in behavior: the version note
+tells the older session to update.
+
+### Major
+
+`1.0.0` promises that the wire and the behavior stay stable. After
+it, a major breaks, a minor adds and a patch fixes. A change of
+behavior that can break a pipeline or a policy is a major.
+
+### The test for each release
+
+Ask: can a session on the old version and a session on the new
+version, in the same riff, act differently or fail to understand each
+other?
+
+```mermaid
+flowchart LR
+    Q{"old and new session<br/>in one riff: act differently<br/>or fail to understand?"} -- yes --> M["minor<br/>(major after 1.0)"]
+    Q -- no --> P[patch]
+```
+
+A wave release is a patch unless the wave has a minor change. Most
+waves change the skill, so most wave releases are a minor.
 
 ## A clone that is behind
 
