@@ -1875,6 +1875,7 @@ async fn draw_top(
             sessions: &who.sessions,
             people: &who.people,
             issues: issues.as_ref(),
+            width: textwrap::termwidth(),
         };
         if clear {
             // Home and erase: the table draws again in place.

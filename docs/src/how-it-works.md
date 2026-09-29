@@ -625,10 +625,10 @@ riff   running
 owner  mike (mike@comotechnologies.io)
 build  v0.7.0  (f45be4d, 2026-09-29)
 
-SESSION                            STATE    ROLE      CLAIMS   STATUS
-mike@pangolin:riff#issue-6 (a6cf)  live     you lead  issue-6
-mike@thelio:riff#issue-7 (5b1e)    live     worker    issue-7  4m ago: write the tests
-brett@heron:riff (77e0)            idle 2m                     blocked 1m ago: waits for a review (step: merge)
+SESSION                            STATE       ROLE      CLAIMS   STATUS
+mike@pangolin:riff#issue-6 (a6cf)  online      you lead  issue-6
+mike@thelio:riff#issue-7 (5b1e)    online      worker    issue-7  4m ago: write the tests
+brett@heron:riff (77e0)            offline 2m                     blocked 1m ago: waits for a review (step: merge)
 ```
 
 `you` marks your own row. A tag shows the role of a session:
@@ -642,8 +642,10 @@ The owner is a person, not a session. So no session has the tag
 `owner`. Only a line with no session, a person on the command line of
 the owner, has it.
 
-`live` means the session has an open watch. `idle 2m` means its last
-call was 2 minutes ago. See [A status](#a-status) for the last column.
+STATE is the presence of the session. `online` means the session has
+an open watch. `offline 2m` means its last call was 2 minutes ago.
+`riff top`, `riff workers` and the `who` tool use the same words. See
+[A status](#a-status) for the last column.
 
 When you must act, the last line says so, in yellow: for example when
 the riff is paused, or when the riff has no owner.
@@ -690,39 +692,58 @@ thread. Ctrl-C stops it:
 riff top
 ```
 
-The header shows the state of the riff, the owner, the builds, and the
-current wave. The wave line names each open item of the wave, with the
-short ID of each session that claims it, or `free`. Under the header, a
-tree shows each person, the hosts of the person, and the sessions on
-each host:
+The header shows the state of the riff, the owner and the build, as in
+`riff who`. The board of the current wave comes next: one line for the
+`free` items, one for the `claimed` items, and one for the items in
+`verify`. Under it, a tree shows each person, the hosts of the person,
+and the sessions on each host:
 
 ```text
-WHO             TAGS    IDLE          ITEM                   STATUS
-ann             admin   last seen 1h
-mike            owner   live
+riff   running
+owner  mike (mike@example.com)
+build  v0.7.0  (10df8a4, 2026-09-29)
+
+Wave 3
+  free: #9
+  claimed: #7
+
+ann  admin  offline 1h
+mike  owner  online
 ├─ pangolin
-│  ├─ 5b1e2a90  worker  live          issue-7 Fix the help   2m tests
-│  └─ 9c0d1e2f  worker  live          -                      idle 6m  stale 20m: tests
+│  ├─ 5b1e2a90  worker  online
+│  │    issue-7 Fix the help
+│  │    2m tests
+│  └─ 9c0d1e2f  worker  online
+│       idle 6m  stale 20m: tests
 └─ thelio
-   ├─ 3a3f8d5d          idle 4m       -                      blocked 1m: waits for a review (step: merge)
-   └─ 4e54d4e5  lead    live          -                      Wave 3: #7 #9  5m plan the next wave
+   ├─ 3a3f8d5d  offline 4m
+   │    blocked 1m: waits for a review (step: merge)
+   └─ 4e54d4e5  lead  online
+        Wave 3: #7 #9  5m plan the next wave
 ```
 
-- A person row: the user in a bold color, the tag `owner` or `admin`,
-  and `live` or `last seen` with the time. Each member of the riff has
-  a row, also when away.
-- A session row: the short session ID, the tag `lead` or `worker`,
-  `live` or the idle time, each claim with the title of its issue, and
-  the status. The status starts with the facts that riff knows by
-  itself (see [What riff shows by itself](#what-riff-shows-by-itself)).
-  The lead row shows the current wave and its open items. Then comes
-  the step that the session set, with its age. A blocked step is red,
-  with the reason.
+- A person line: the user in a bold color, the tag `owner` or `admin`,
+  and the presence. Each member of the riff has a line, also when
+  away.
+- A session: the first line has the short session ID, the tag `lead`
+  or `worker`, and the presence. Under it comes what the session does:
+  one line for each claim, with the title of its issue, and one line
+  for the status.
+  The status starts with the facts that riff knows by itself (see
+  [What riff shows by itself](#what-riff-shows-by-itself)). The lead
+  shows the current wave and its open items. Then comes the step that
+  the session set, with its age. A blocked step is red, with the
+  reason.
+- The presence: `online` in green when the session is connected. Else
+  `offline`, with the time since its last call.
+
+The tree grows down, not across. No line is wider than your terminal,
+or 80 columns in a pipe. riff cuts a longer line with `…`.
 
 The tags mean the same as in [`riff who`](#see-who-is-in-the-riff).
 People are in the order of user, and hosts in the order of name. On a
 host, a blocked session comes first. The titles and the wave come from
-`gh`. With no `gh`, the table shows no titles and no wave line.
+`gh`. With no `gh`, the tree shows no titles and no board.
 
 `riff top` only reads. It posts nothing and wakes no session.
 
@@ -759,8 +780,8 @@ sequenceDiagram
     Note over S: gone: not in who, claims free, lead does not count
 ```
 
-- `idle` does not change with a keep-alive. It is the time since the
-  last call.
+- The time of `offline` does not change with a keep-alive. It is the
+  time since the last call.
 - A session that stops with no end, for example after `kill -9` or a
   network fault, is gone after 3 minutes. Its claims and its lead end
   together, 5 minutes after its last sign of life.
@@ -1552,9 +1573,9 @@ is blocked. `riff who` shows each status with its age, in the last
 column of the row of its session:
 
 ```text
-SESSION                            STATE  ROLE  CLAIMS   STATUS
-mike@pangolin:riff#issue-6 (a6cf)  live         issue-6  4m ago: write the tests
-brett@heron:riff#issue-7 (77e0)    live         issue-7  blocked 1m ago: waits for a review (step: merge)
+SESSION                            STATE   ROLE  CLAIMS   STATUS
+mike@pangolin:riff#issue-6 (a6cf)  online        issue-6  4m ago: write the tests
+brett@heron:riff#issue-7 (77e0)    online        issue-7  blocked 1m ago: waits for a review (step: merge)
 ```
 
 A status request is a post of kind `status`. It wakes each session
@@ -1592,11 +1613,11 @@ riff knows some facts of each session, so no session sets a status for
 them. `riff who` and `riff top` show them before the step:
 
 - `paused`: the riff is paused. `riff who` shows it in its first line,
-  and `riff top` in each row.
+  and `riff top` for each session.
 - The claims of the session.
 - `idle` with its time: a worker with no claim. The time counts from
   its last release.
-- The current wave and its open items: on the lead row of `riff top`.
+- The current wave and its open items: under the lead in `riff top`.
 
 A step goes stale when the state of the session changes after the step
 was set: a claim, a release, a pause, a resume, or a new start of
@@ -1618,8 +1639,8 @@ riff top --once
 ```
 
 ```text
-SESSION                  STATE  ROLE    CLAIMS  STATUS
-mike@thelio:riff (9c0d)  live   worker          idle 6m  stale 20m: tests
+SESSION                  STATE   ROLE    CLAIMS  STATUS
+mike@thelio:riff (9c0d)  online  worker          idle 6m  stale 20m: tests
 ```
 
 ### Set your status
@@ -2218,8 +2239,8 @@ riff workers
 
 ```text
 thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
-PANE  ID        STATE  CLAIMS    STATUS
-%3    2a880834  live   issue-12  1m ago: tests of issue-12
+PANE  ID        STATE   CLAIMS    STATUS
+%3    2a880834  online  issue-12  1m ago: tests of issue-12
 ```
 
 The first line shows the limit, the numbers and the score of this
@@ -2319,8 +2340,8 @@ the numbers and the score of the host:
 thelio  limit 3  runs 0  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
 
 pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, load 0.40  score 24.0
-PANE  ID        STATE  CLAIMS  STATUS
-%3    2a880834  live           idle 1m
+PANE  ID        STATE   CLAIMS  STATUS
+%3    2a880834  online          idle 1m
 ```
 
 ### A worker goes to its next item
@@ -2493,8 +2514,8 @@ riff workers
 
 ```text
 thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
-PANE  ID        STATE  CLAIMS  STATUS
-%3    2a880834  live           idle 2m
+PANE  ID        STATE   CLAIMS  STATUS
+%3    2a880834  online          idle 2m
 ```
 
 A request of your lead wakes it, and it claims the item (see

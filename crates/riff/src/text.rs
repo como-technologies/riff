@@ -1398,8 +1398,28 @@ pub fn idle_worker(s: &SessionInfo) -> Option<String> {
     (s.worker && s.uri.claims().is_empty()).then(|| format!("idle {}", ago(s.claims_secs)))
 }
 
-/// One line for each session: its name, `live` or the time since its
-/// last call, `(you)`, its [`tags`], and its URI. Under it come the
+/// The presence of a session or a person, the same words in each
+/// command (01M3QA8EZHX5B8C9CKF8Q3154X): `online` when it is connected,
+/// else `offline` with the time since its last call, when riff knows
+/// it.
+///
+/// ```
+/// use riff::text::presence;
+///
+/// assert_eq!(presence(true, Some(40)), "online");
+/// assert_eq!(presence(false, Some(300)), "offline 5m");
+/// assert_eq!(presence(false, None), "offline");
+/// ```
+pub fn presence(live: bool, secs: Option<u64>) -> String {
+    match (live, secs) {
+        (true, _) => "online".into(),
+        (false, Some(secs)) => format!("offline {}", ago(secs)),
+        (false, None) => "offline".into(),
+    }
+}
+
+/// One line for each session: its name, its [`presence`], `(you)`, its
+/// [`tags`], and its URI. Under it come the
 /// [`idle_worker`] time, and the status with its age (R184). A stale
 /// status says so (01M3Q555KC1RKNEC4ZA9HQYJG2).
 ///
@@ -1425,8 +1445,8 @@ pub fn idle_worker(s: &SessionInfo) -> Option<String> {
 /// // The owner is a person: the sessions of brett get no tag `owner`.
 /// let owner = RiffOwner::Owner { user: "brett".into(), email: "brett@x.io".into() };
 /// let out = text::who(&list, &owner, &list[0].uri);
-/// assert!(out.contains("(a6cf) live (you)  riff://"), "{out}");
-/// assert!(out.contains("(77e0) idle 2m worker  riff://"), "{out}");
+/// assert!(out.contains("(a6cf) online (you)  riff://"), "{out}");
+/// assert!(out.contains("(77e0) offline 2m worker  riff://"), "{out}");
 /// assert!(!out.contains("owner"), "{out}");
 /// assert!(
 ///     out.ends_with("\n  idle 1m\n  status 4m ago (stale): write the tests\n"),
@@ -1440,11 +1460,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
     }
     let mut out = String::new();
     for s in sessions {
-        let idle = if s.live {
-            "live".into()
-        } else {
-            format!("idle {}", ago(s.idle_secs))
-        };
+        let idle = presence(s.live, Some(s.idle_secs));
         let you = if s.uri.who() == me.who() {
             " (you)"
         } else {

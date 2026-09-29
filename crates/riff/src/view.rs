@@ -226,7 +226,7 @@ pub fn workers_mcp(names: &[String], path: &Path) -> String {
 /// The facts of the build: `riff` and, when the server of the last call
 /// runs another build, `riff-server` in yellow
 /// (01M3JEE7WT04BKX377VW5GDSPY).
-fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)> {
+pub(crate) fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)> {
     let this = Build::this();
     let mut rows = vec![("build", text::build_facts(&this))];
     if let Some(server) = server.filter(|s| !s.matches(&this)) {
@@ -241,7 +241,7 @@ fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)> {
 
 /// The fact of the state of the riff, and the action for a paused
 /// riff.
-fn state_fact(state: RiffState) -> ((&'static str, String), Option<String>) {
+pub(crate) fn state_fact(state: RiffState) -> ((&'static str, String), Option<String>) {
     match state {
         RiffState::Running => (("riff", styled(GOOD, "running")), None),
         RiffState::Paused => (
@@ -345,11 +345,11 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 /// assert_eq!(lines[1], "owner  mike (mike@x.io)");
 /// assert!(lines[2].starts_with("build  v"));
 /// assert_eq!(lines[3], "");
-/// assert_eq!(lines[4], "SESSION                            STATE    ROLE      CLAIMS   STATUS");
-/// assert_eq!(lines[5], "mike@pangolin:riff#issue-6 (a6cf)  live     you lead  issue-6");
+/// assert_eq!(lines[4], "SESSION                            STATE       ROLE      CLAIMS   STATUS");
+/// assert_eq!(lines[5], "mike@pangolin:riff#issue-6 (a6cf)  online      you lead  issue-6");
 /// assert_eq!(
 ///     lines[6],
-///     "brett@heron:riff (77e0)            idle 2m                     \
+///     "brett@heron:riff (77e0)            offline 2m                     \
 ///      blocked 1m ago: waits for a review (step: merge)"
 /// );
 /// let red = riff::style::ERROR;
@@ -438,13 +438,11 @@ pub fn who(
     out
 }
 
-/// `live` in green, or the dim time since the last call.
+/// The [`text::presence`] of `s`: `online` in green, or a dim
+/// `offline` with the time since the last call.
 fn state_cell(s: &SessionInfo) -> String {
-    if s.live {
-        styled(GOOD, "live")
-    } else {
-        styled(DIM, &format!("idle {}", ago(s.idle_secs)))
-    }
+    let style = if s.live { GOOD } else { DIM };
+    styled(style, &text::presence(s.live, Some(s.idle_secs)))
 }
 
 /// The STATUS cell of `s`: the [`text::idle_worker`] time of a worker
@@ -557,11 +555,11 @@ pub fn host_heading(
 /// assert_eq!(
 ///     plain,
 ///     "PANE  ID        STATE            CLAIMS    STATUS\n\
-///      %3    a6cf2205  live             issue-12\n\
+///      %3    a6cf2205  online           issue-12\n\
 ///      %4    77e0aaaa  not in riff who\n"
 /// );
 /// let long = riff::view::workers(&panes, &[info], true);
-/// assert!(anstream::adapter::strip_str(&long).to_string().contains("\n%3    a6cf2205-1  live"));
+/// assert!(anstream::adapter::strip_str(&long).to_string().contains("\n%3    a6cf2205-1  online"));
 /// assert_eq!(riff::view::workers(&[], &[], false), "");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```

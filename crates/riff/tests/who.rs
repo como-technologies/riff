@@ -137,7 +137,7 @@ async fn a_pipe_gets_no_color_unless_asked() {
 
     let auto = output(riff(&server, dir, None, &["who"])).await;
     assert!(
-        auto.contains("\nmike@pangolin:riff (a1)  idle 0s  lead\n"),
+        auto.contains("\nmike@pangolin:riff (a1)  offline 0s  lead\n"),
         "{auto}"
     );
     assert!(!auto.contains('\x1b'), "{auto:?}");

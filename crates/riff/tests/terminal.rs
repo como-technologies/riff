@@ -569,14 +569,14 @@ async fn workers_lists_each_worker() {
     assert!(out.status.success(), "{out:?}");
     let out = stdout(&out);
     assert!(
-        out.contains("\nPANE  ID  STATE    CLAIMS    STATUS\n"),
+        out.contains("\nPANE  ID  STATE       CLAIMS    STATUS\n"),
         "{out}"
     );
     let row = |pane: &str| out.lines().find(|l| l.starts_with(pane)).unwrap();
-    assert!(row("%3  ").starts_with("%3    w1  idle "), "{out}");
+    assert!(row("%3  ").starts_with("%3    w1  offline "), "{out}");
     assert!(row("%3  ").contains("  issue-12  "), "{out}");
     assert!(row("%3  ").ends_with(" ago: tests of issue-12"), "{out}");
-    assert!(row("%4  ").starts_with("%4    w2  idle "), "{out}");
+    assert!(row("%4  ").starts_with("%4    w2  offline "), "{out}");
     assert!(row("%4  ").contains("  issue-13  "), "{out}");
 
     std::fs::remove_file(m.fake.path().join("workers")).unwrap();

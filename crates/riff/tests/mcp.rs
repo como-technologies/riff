@@ -132,7 +132,7 @@ async fn the_tools_carry_a_conversation() {
 
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
     assert!(who.contains(BRETT_LEAD), "{who}");
-    assert!(who.contains("(b2) idle 0s lead  "), "{who}");
+    assert!(who.contains("(b2) offline 0s lead  "), "{who}");
     // The who tool keeps plain text for agents (01M3Q63MVZ74WPNBA3QJYQGHFG).
     assert!(!who.contains('\x1b'), "{who:?}");
     let (all, _) = call(&mike, "who", serde_json::json!({ "all": true })).await;
