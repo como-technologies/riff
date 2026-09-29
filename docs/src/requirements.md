@@ -927,6 +927,16 @@
   that fits more than one session in `who` is an error.
 - **R187** The skill tells a session to set its status when it claims,
   when it changes step, when it is blocked, and when it releases.
+- **01M3NB5MY93KV9RKZGGSMZW00D** The people of a riff chat in the
+  thread `chat` on the riff server. `riff chat` is a line client in
+  the style of IRC. It shows the history and each new line with the
+  time and `USER@HOST`, and posts each line that the person types.
+  `--color` works as in `riff tail`. `/quit` or Ctrl-C exits. The
+  chat has no private channels, no nick changes and no files.
+- **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes no session, unless
+  it names a lead: `@lead` wakes the lead of the sender, and `@USER`
+  wakes the lead of USER. The skill tells a lead to answer a chat line
+  with a post to the thread `chat`.
 
 ## Security
 

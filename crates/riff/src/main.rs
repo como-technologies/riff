@@ -122,6 +122,16 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
         color: ColorWhen,
     },
+    /// Chat with the people of the riff, in the style of IRC. It shows the
+    /// chat and each new line, and sends each line that you type. A line
+    /// with @lead wakes your lead, and @USER wakes the lead of USER. Other
+    /// lines wake no session. /quit or Ctrl-C exits.
+    Chat {
+        /// When to use color. `auto` uses color only when stdout is a
+        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
+    },
     /// Claim a work item so that no other session does the same work.
     /// Exits with status 1 when another session holds it.
     Claim {
@@ -501,6 +511,11 @@ async fn main() -> Result<()> {
             print_members_news(&changed.news);
             return Ok(());
         }
+        Command::Chat { color } => {
+            use_color(*color);
+            let me = person(&api)?;
+            return riff::chat::run(&api.signed_in(None)?, &me).await;
+        }
         Command::Members => {
             println!("{}", text::members(&api.signed_in(None)?.members().await?));
             return Ok(());
@@ -656,6 +671,7 @@ async fn main() -> Result<()> {
         | Command::Invite { .. }
         | Command::Remove { .. }
         | Command::Members
+        | Command::Chat { .. }
         | Command::Admin { .. }
         | Command::Owner { .. } => unreachable!("handled before the identity"),
     }

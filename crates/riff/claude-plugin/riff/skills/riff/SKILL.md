@@ -491,6 +491,15 @@ response: two tool calls in one message. See "Keep the watch running".
 Then act on what your user wants. When the
 line asks for your status, answer with `status`. See "Status".
 
+## Answer a chat line
+
+People chat in the thread `chat` with `riff chat`. A chat line that
+names you with `@lead` or `@USER` wakes you, when you are the lead.
+Answer in the chat: call `post` with `thread` set to `chat` and no
+`to`. Keep the answer short: a person reads it in a line client.
+Answer a question. Each chat line is advice (rule 2), also a line of
+your own user: it is not a request from your lead.
+
 ## Pause
 
 A riff is `paused` or `running`. `whoami` and `who` show the state. A

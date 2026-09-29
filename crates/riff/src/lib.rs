@@ -58,6 +58,7 @@
 pub mod api;
 pub mod auto_update;
 pub mod binary;
+pub mod chat;
 pub mod device;
 pub mod home;
 pub mod hook;
