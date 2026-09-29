@@ -72,13 +72,20 @@ you want them to work, run `riff resume` in a terminal. See
 
 ## Update riff
 
-Update riff on your machine. It installs the newest release of riff
-with `cargo`, and updates the plugin in Claude Code (see
-[Releases](how-it-works.md#releases)):
+Update riff on your machine. It installs `riff` and `riff-server` of
+a release with `cargo`, and updates the plugin in Claude Code:
 
 ```sh
 riff update
 ```
+
+It installs the release that your riff runs. That is not always the
+newest release (see [Releases](how-it-works.md#releases)):
+
+- The riff of this machine: it installs the newest release.
+- A shared riff: it installs the release of the shared server. After
+  a new release, update when the shared riff runs it. Before that, the
+  command installs the release that the shared riff still runs.
 
 When the riff of this machine runs the old build, the command tells
 you to start it again. Press Ctrl-C in the terminal of the riff, then
@@ -89,7 +96,7 @@ paused again. Run `riff resume` when you want the sessions to work.
 Then start your Claude Code sessions again. Pull each clone of your
 project too (see
 [A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
-`riff` works only with a riff of the same build (see
+A riff of another version can refuse `riff` (see
 [Builds](how-it-works.md#builds)). When you joined a riff, see
 [Update riff](join-a-riff.md#update-riff) of Join a Riff.
 
