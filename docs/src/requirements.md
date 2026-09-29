@@ -463,6 +463,11 @@
   `.env`.
 - **R33** `riff-server` rejects a token that it does not know. A lost
   token record means the person signs in again.
+- **01M3QA6TDF6FB5PH8E5V7HCYDQ** Each event stream of `riff-server`
+  (`/v1/watch`, `/v1/tail`) sends the comment `: ready` when it opens.
+  So a front end that holds a reply until its first body byte lets
+  the connect finish at once. `riff chat` shows its history less than
+  1 second after the connect.
 
 ## Saved state
 

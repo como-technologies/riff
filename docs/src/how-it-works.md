@@ -1234,7 +1234,8 @@ tmux pane. Type a line after the prompt `[riff] >` and press Enter.
 riff chat
 ```
 
-The chat shows its history first, then each new line. A person shows
+The chat shows its history first, in less than 1 second, then each
+new line. A person shows
 as `<USER@HOST>`. A lead shows as `[USER's lead]`, and another session
 as `[USER ID]`. A new line prints above the prompt, and what you type
 stays. Your own line shows once, from the server:

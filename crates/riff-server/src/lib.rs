@@ -17,7 +17,8 @@
 //! - A post returns a [`state::Delivery`]. The handler sends its wakes
 //!   and its tail event to two broadcast channels. Each open stream
 //!   filters the channel for its own session or thread.
-//! - A watch stream starts with the wake from [`state::State::missed`],
+//! - Each stream starts with the comment `: ready`, see [`opened`].
+//! - A watch stream then gives the wake from [`state::State::missed`],
 //!   if there is one. It subscribes to the wakes channel first, so no
 //!   wake falls in the gap.
 //! - A watch stream owns a guard. When the stream closes, the guard marks
@@ -1710,7 +1711,7 @@ async fn watch(
         .chain(live)
         .filter_map(|wake| std::future::ready(Event::default().json_data(wake).ok().map(Ok)))
         .take_until(s.stopping());
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
 }
 
 /// Marks the session as stopped when its watch stream closes.
@@ -1743,7 +1744,27 @@ async fn tail_thread(
         std::future::ready(event.map(Ok))
     });
     let stream = stream.take_until(s.stopping());
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Sse::new(opened(stream)).keep_alive(KeepAlive::default())
+}
+
+/// Puts the comment `: ready` first in an event stream, so that the
+/// stream sends its first bytes when it opens
+/// (01M3QA6TDF6FB5PH8E5V7HCYDQ). A front end such as Cloud Run holds a
+/// reply until its first body byte. Without the comment, the connect
+/// waits for the first keep-alive, 15 seconds. A client reads only the
+/// `data:` lines, so it skips the comment.
+///
+/// ```
+/// use futures::StreamExt;
+///
+/// let events = riff_server::opened(futures::stream::empty());
+/// assert_eq!(futures::executor::block_on(events.count()), 1);
+/// ```
+pub fn opened<S>(stream: S) -> impl Stream<Item = Result<Event, Infallible>>
+where
+    S: Stream<Item = Result<Event, Infallible>>,
+{
+    futures::stream::once(std::future::ready(Ok(Event::default().comment("ready")))).chain(stream)
 }
 
 fn posted(s: &Server, delivery: Delivery) -> Posted {

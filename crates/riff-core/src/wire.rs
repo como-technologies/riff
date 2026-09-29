@@ -65,6 +65,10 @@
 //! | `GET /v1/watch` | `uri=<session URI>` | [`Wake`] |
 //! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
 //!
+//! Each stream starts with the comment line `: ready`, so that it sends
+//! its first bytes when it opens. A reader skips each line that is not
+//! a `data:` line.
+//!
 //! A session is live while its watch stream is open. Each request
 //! carries the session URI of its sender as `me`. The server finds the
 //! session by the *who* part of that URI. When the server needs
