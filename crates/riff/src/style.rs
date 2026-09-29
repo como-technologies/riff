@@ -1,6 +1,6 @@
-//! The styles of the output for people: `riff tail` and `riff who`
-//! (01M3MEW73CDSJDSKX32XW80WZH). Both use this one module, so a session
-//! has the same color in each.
+//! The styles of the output for people: `riff tail`, `riff who` and
+//! `riff server` (01M3MEW73CDSJDSKX32XW80WZH). Each uses this one
+//! module, so a session has the same color in each.
 //!
 //! The styles are ANSI escape codes. Print styled text through
 //! `anstream`, which removes them when the output has no color

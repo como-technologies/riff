@@ -1799,97 +1799,170 @@ where
     out
 }
 
-/// What `riff server` shows (01M3K0Q854K18DGXJKQ427W586): the build of
-/// `riff`, the riff that it uses and where that choice comes from, and
-/// one line for each riff: answers or not, its build, and sign-in.
+/// What `riff server` shows (01M3K0Q854K18DGXJKQ427W586): a short
+/// table, one fact on a line (01M3NTEMQAY1Z10H1GX2K6PEAH). First the
+/// build of `riff`, then the riff that it uses and where that choice
+/// comes from, with its release and sign-in. The riff of this machine
+/// shows only when it answers. When the riff that `riff` uses needs an
+/// action, the last line says what to run: yellow when the versions can
+/// talk, red when they cannot. Print it through `anstream`, so that
+/// `--color never` and a pipe get no escape codes.
 ///
 /// ```
 /// use riff::api::Probe;
 /// use riff::lifecycle::{Seen, Source, View};
 /// use riff_core::build::Build;
 ///
+/// let plain = |view: &View| anstream::adapter::strip_str(&riff::text::server_view(view)).to_string();
+/// let this = Build::this();
+/// let release = format!("v{}", env!("CARGO_PKG_VERSION"));
 /// let local = Seen {
 ///     url: "http://127.0.0.1:7878".into(),
-///     answer: Ok(Probe { build: Some(Build::this()), sign_in: Some(false) }),
-///     signed_in: false,
+///     answer: Ok(Probe { build: Some(this.clone()), sign_in: Some(false) }),
+///     user: None,
 /// };
 /// let view = View { source: Source::Default, used: local.clone(), local: None };
-/// let text = riff::text::server_view(&view);
-/// let release = format!("v{}", env!("CARGO_PKG_VERSION"));
-/// let first = format!("riff {}: the release {release}.\n", riff_core::build::VERSION);
-/// assert!(text.starts_with(&first), "{text}");
-/// assert!(text.contains("riff uses http://127.0.0.1:7878: the riff of this machine"), "{text}");
-/// assert!(
-///     text.contains(&format!("answers, the same build. It runs the release {release}. It has no sign-in")),
-///     "{text}"
+/// assert_eq!(
+///     plain(&view),
+///     format!(
+///         "riff        {release}  ({}, {})\n\
+///          server      http://127.0.0.1:7878  (the default: the riff of this machine)\n  \
+///            release   {release}  same build ✓\n  \
+///            sign-in   none: the riff trusts its network",
+///         &this.commit[..7],
+///         &this.time[..10],
+///     )
 /// );
 ///
 /// let shared = Seen {
 ///     url: "https://riff.example.com".into(),
-///     answer: Ok(Probe { build: None, sign_in: None }),
-///     signed_in: true,
+///     answer: Ok(Probe { build: Some(this.clone()), sign_in: Some(true) }),
+///     user: None,
 /// };
 /// let down = Seen { answer: Err("refused".into()), ..local };
 /// let view = View { source: Source::Env, used: shared, local: Some(down) };
-/// let text = riff::text::server_view(&view);
-/// assert!(text.contains("riff uses https://riff.example.com: RIFF_SERVER names it."), "{text}");
-/// assert!(text.contains("names no build"), "{text}");
-/// assert!(text.ends_with("The riff of this machine, http://127.0.0.1:7878: no answer."), "{text}");
+/// let text = plain(&view);
+/// assert!(text.contains("\nserver      https://riff.example.com  (from RIFF_SERVER)\n"), "{text}");
+/// assert!(text.contains("\n  sign-in   yes, you are not signed in\n"), "{text}");
+/// assert!(!text.contains("7878"), "{text}");
+/// assert!(text.ends_with("\nRun riff login"), "{text}");
 /// ```
 pub fn server_view(view: &crate::lifecycle::View) -> String {
     use crate::lifecycle::Source;
 
-    let why = match view.source {
-        Source::Flag => "--server names it.",
-        Source::Env => "RIFF_SERVER names it.",
-        Source::Default => "the riff of this machine. RIFF_SERVER or --server names another riff.",
+    let from = match view.source {
+        Source::Flag => "(from --server)",
+        Source::Env => "(from RIFF_SERVER)",
+        Source::Default => "(the default: the riff of this machine)",
     };
-    let mut out = format!(
-        "riff {}: the release {}.\nriff uses {}: {why}\n{}",
-        riff_core::build::VERSION,
-        crate::lifecycle::release_tag(env!("CARGO_PKG_VERSION")),
-        view.used.url,
-        seen_line(&view.used.url, &view.used)
-    );
-    if let Some(local) = &view.local {
-        let label = format!("The riff of this machine, {}", local.url);
-        let _ = write!(out, "\n{}", seen_line(&label, local));
+    let mut out = row("riff", &build_facts(&Build::this()));
+    out.push('\n');
+    out.push_str(&row(
+        "server",
+        &format!("{}  {}", safe(&view.used.url), styled(DIM, from)),
+    ));
+    let mut need = Need::default();
+    seen_rows(&mut out, &view.used, &mut need);
+    if view.used.answer.is_err() && view.source == Source::Default {
+        need.add("riff-server", ERROR);
+    }
+    if let Some(local) = view.local.as_ref().filter(|l| l.answer.is_ok()) {
+        out.push('\n');
+        out.push_str(&row("local", &safe(&local.url)));
+        seen_rows(&mut out, local, &mut Need::default());
+    }
+    if let Some(style) = need.style {
+        let run = format!("Run {}", need.run.join(", then "));
+        let _ = write!(out, "\n{}", styled(style, &run));
     }
     out
 }
 
-/// One line of [`server_view`] for the riff `seen`, named `label`.
-fn seen_line(label: &str, seen: &crate::lifecycle::Seen) -> String {
+/// The width of the first column of [`server_view`].
+const SERVER_LABEL: usize = 12;
+
+/// One line of [`server_view`]: `label`, padded to its column, then
+/// `value`.
+fn row(label: &str, value: &str) -> String {
+    format!("{label:<SERVER_LABEL$}{value}")
+}
+
+/// The release of `build`, with its commit and date short in brackets,
+/// for example `v0.6.0  (75209ac, 2026-09-29)`.
+fn build_facts(build: &Build) -> String {
+    let commit: String = build.commit.chars().take(7).collect();
+    let date: String = build.time.chars().take(10).collect();
+    format!(
+        "{}  ({commit}, {date})",
+        crate::lifecycle::release_tag(&build.version)
+    )
+}
+
+/// What the person must run after [`server_view`], and its style.
+#[derive(Default)]
+struct Need {
+    run: Vec<&'static str>,
+    style: Option<anstyle::Style>,
+}
+
+impl Need {
+    /// Adds `command`, once. Red wins over yellow.
+    fn add(&mut self, command: &'static str, style: anstyle::Style) {
+        if !self.run.contains(&command) {
+            self.run.push(command);
+        }
+        if self.style != Some(ERROR) {
+            self.style = Some(style);
+        }
+    }
+}
+
+/// The lines of [`server_view`] under the riff `seen`: no answer, or its
+/// release and its sign-in. Adds to `need` what the person must run.
+fn seen_rows(out: &mut String, seen: &crate::lifecycle::Seen, need: &mut Need) {
     let probe = match &seen.answer {
         Ok(probe) => probe,
-        Err(_) => return format!("{label}: no answer."),
+        Err(_) => {
+            let _ = write!(out, "\n{}", row("  answer", &styled(ERROR, "none")));
+            return;
+        }
     };
-    let build = match &probe.build {
-        None => "names no build: an old riff-server".to_owned(),
-        Some(b) if b.matches(&Build::this()) => "the same build".to_owned(),
-        Some(b) if riff_core::build::compatible(&Build::this(), b) => {
-            format!("another build, {b}; the versions can talk. Run riff update when you can")
+    let this = Build::this();
+    let release = match &probe.build {
+        None => {
+            need.add("riff update", WARNING);
+            styled(WARNING, "unknown: an old riff-server names no build")
+        }
+        Some(b) if b.matches(&this) => format!(
+            "{}  same build {}",
+            crate::lifecycle::release_tag(&b.version),
+            styled(GOOD, "✓")
+        ),
+        Some(b) if riff_core::build::compatible(&this, b) => {
+            need.add("riff update", WARNING);
+            let facts = format!("{}  another build; the versions can talk", build_facts(b));
+            styled(WARNING, &facts)
         }
         Some(b) => {
-            format!(
-                "a version that this riff cannot talk to, {b}. See \"When the versions do not \
-                 match\" in How It Works"
-            )
+            need.add("riff update", ERROR);
+            let facts = format!(
+                "{}  another build; this riff cannot talk to it",
+                build_facts(b)
+            );
+            styled(ERROR, &facts)
         }
     };
-    let release = probe.build.as_ref().map_or(String::new(), |b| {
-        format!(
-            " It runs the release {}.",
-            crate::lifecycle::release_tag(&b.version)
-        )
-    });
-    let sign_in = match (probe.sign_in, seen.signed_in) {
-        (None, _) => "",
-        (Some(false), _) => " It has no sign-in: it trusts its network.",
-        (Some(true), true) => " It has sign-in, and you are signed in.",
-        (Some(true), false) => " It has sign-in. You are not signed in: run riff login.",
+    let _ = write!(out, "\n{}", row("  release", &release));
+    let sign_in = match (probe.sign_in, &seen.user) {
+        (None, _) => return,
+        (Some(false), _) => "none: the riff trusts its network".to_owned(),
+        (Some(true), Some(user)) => format!("yes, signed in as {}", safe(user)),
+        (Some(true), None) => {
+            need.add("riff login", ERROR);
+            styled(ERROR, "yes, you are not signed in")
+        }
     };
-    format!("{label}: answers, {build}.{release}{sign_in}")
+    let _ = write!(out, "\n{}", row("  sign-in", &sign_in));
 }
 
 /// The last words of `riff update` (01M3K0Q892KWM76R9DJC1P37JA). `old` is

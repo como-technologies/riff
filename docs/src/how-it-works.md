@@ -116,15 +116,36 @@ riff help server
 ### Show the riffs
 
 `riff server` shows the riff that `riff` uses, and where that choice
-comes from. For that riff and for the riff of this machine, it shows
-if the riff answers, its build, and your sign-in:
+comes from, with its release and your sign-in. It shows one fact on a
+line:
 
 ```sh
 riff server
 ```
 
+```text
+riff        v0.6.0  (75209ac, 2026-09-29)
+server      https://riff.example.com  (from RIFF_SERVER)
+  release   v0.6.0  same build ✓
+  sign-in   yes, signed in as mike@example.com
+```
+
+- `local` shows the riff of this machine too, when it answers.
+- `answer    none`: the riff does not answer.
+- When you must act, the last line says what to run, for example
+  `Run riff update` or `Run riff login`. It is yellow when the versions
+  can talk, and red when they cannot or when you must sign in.
+
 `localhost`, `127.0.0.1` and `[::1]` with the same port are one riff:
 the riff of this machine. `riff server` shows it once.
+
+To show the riffs with no color, use `--color never`. A pipe gets no
+color either, so a `grep` finds a line:
+
+```sh
+riff server --color never
+riff server | grep release
+```
 
 ### Name the riff for one command
 
