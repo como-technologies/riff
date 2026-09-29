@@ -366,12 +366,18 @@ async fn tail_and_watch_wait_on_another_line_and_go_on() {
     );
 }
 
+/// Runs `cmd`, which writes an executable file. This process never
+/// holds a write fd of the file. So a fork of a parallel test cannot
+/// inherit one, and an exec of the file cannot fail with ETXTBSY.
+fn by_child(cmd: &mut Command) {
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+}
+
 /// `riff tail` and `riff watch` run the new binary when the file on
 /// disk changes, with the same arguments (01M3MNVTC248YYJJQKFD9H1WY9).
 #[tokio::test(flavor = "multi_thread")]
 async fn tail_and_watch_run_the_new_binary() {
-    use std::os::unix::fs::PermissionsExt;
-
     let url = streams(Arc::new(AtomicBool::new(false))).await;
     for args in [
         &["tail", "como-technologies/riff"][..],
@@ -379,7 +385,11 @@ async fn tail_and_watch_run_the_new_binary() {
     ] {
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("riff");
-        std::fs::copy(Isolated::shared().riff_path(), &binary).unwrap();
+        by_child(
+            Command::new("cp")
+                .arg(Isolated::shared().riff_path())
+                .arg(&binary),
+        );
         let (mut child, _, err) = spawn(riff_at(&binary, &url, dir.path(), args), dir.path());
         tokio::time::sleep(Duration::from_secs(2)).await;
         assert!(
@@ -392,8 +402,12 @@ async fn tail_and_watch_run_the_new_binary() {
         let marker = dir.path().join("ran");
         let new = dir.path().join("new");
         let script = format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display());
-        std::fs::write(&new, script).unwrap();
-        std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755)).unwrap();
+        by_child(
+            Command::new("sh")
+                .args(["-c", "printf '%s' \"$1\" > \"$0\" && chmod 755 \"$0\""])
+                .arg(&new)
+                .arg(script),
+        );
         std::fs::rename(&new, &binary).unwrap();
 
         // The line ends with a newline once the script wrote all of it.
