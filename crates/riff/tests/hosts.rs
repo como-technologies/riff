@@ -3,10 +3,12 @@
 //! a fake `tmux` on `PATH` that writes each call to a log and keeps the
 //! worker panes in a file. The lead runs on `a`; `riff workers host`
 //! runs on `b`. A line in the file `slow` of a fake `tmux` is a pattern:
-//! a call that matches it sleeps for 30 seconds.
+//! a call that matches it sleeps for 30 seconds. As in tmux, a pane
+//! whose program does not exist ends at once, so a later call on it
+//! fails, and the window of the workers closes with its last pane.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -17,7 +19,9 @@ use riff_core::name::{SessionUri, Who};
 use riff_core::wire::{RiffState, Status};
 
 /// `list-panes -a` lists the worker panes with their session marks, from
-/// the file `workers`. `kill-pane` removes a pane from it.
+/// the file `workers`. `kill-pane` removes a pane from it, and the
+/// window when it was the last pane. A new pane whose program does not
+/// exist goes to the file `dead`: `set-option` on it fails.
 const FAKE_TMUX: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
@@ -25,6 +29,17 @@ if [ -f "$dir/slow" ]; then
   case "$*" in $(cat "$dir/slow")) sleep 30 ;; esac
 fi
 n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
+case "$1" in
+  new-window|split-window)
+    for last; do :; done
+    program=$(eval "set -- $last"; printf '%s' "$1")
+    [ -e "$program" ] || echo "%$n" >> "$dir/dead" ;;
+  set-option)
+    if [ "$2" = "-p" ] && grep -qx -- "$4" "$dir/dead" 2>/dev/null; then
+      echo "no such pane: $4" >&2
+      exit 1
+    fi ;;
+esac
 case "$1" in
   list-panes)
     if [ "$2" = "-a" ]; then cat "$dir/workers" 2>/dev/null; else cat "$dir/panes" 2>/dev/null; fi ;;
@@ -39,7 +54,8 @@ case "$1" in
     esac ;;
   kill-pane)
     grep -v "^$3 " "$dir/workers" > "$dir/workers.new"
-    mv "$dir/workers.new" "$dir/workers" ;;
+    mv "$dir/workers.new" "$dir/workers"
+    [ -s "$dir/workers" ] || rm -f "$dir/windows" ;;
 esac
 exit 0
 "#;
@@ -85,12 +101,17 @@ impl Machine {
     /// `riff workers ARGS` of mike in `dir`, in a tmux pane. `session`
     /// is the agent session, or `None` for a plain terminal.
     fn riff(&self, dir: &Path, args: &[&str], session: Option<&str>) -> Command {
+        self.riff_at(&Isolated::shared().riff_path(), dir, args, session)
+    }
+
+    /// [`Machine::riff`] with the `riff` binary at `binary`.
+    fn riff_at(&self, binary: &Path, dir: &Path, args: &[&str], session: Option<&str>) -> Command {
         let path = format!(
             "{}:{}",
             self.fake.path().display(),
             std::env::var("PATH").unwrap()
         );
-        let mut cmd = Isolated::shared().riff();
+        let mut cmd = Isolated::shared().command(binary);
         cmd.arg("workers")
             .args(args)
             .current_dir(dir)
@@ -434,6 +455,147 @@ async fn a_start_on_a_host_with_no_workers_host_fails() {
         String::from_utf8_lossy(&out.stderr).contains("no workers host of your user runs on z"),
         "{out:?}"
     );
+}
+
+/// Puts a copy of `from` at `to` as `cargo install` does: a new file
+/// beside it, then a rename. A child process copies, so that no fork of
+/// a parallel test holds a write fd of the file.
+fn install(from: &Path, to: &Path) {
+    let stage = to.with_extension("stage");
+    let out = Command::new("cp").arg(from).arg(&stage).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    std::fs::rename(&stage, to).unwrap();
+}
+
+/// The inode of the binary that the process `pid` runs.
+fn runs(pid: u32) -> u64 {
+    std::fs::metadata(format!("/proc/{pid}/exe")).unwrap().ino()
+}
+
+/// A riff that runs, the lead on `a`, and machine `b` with limit 3 and
+/// its own copy of `riff` at `binary`.
+struct Copy {
+    api: Api,
+    b: Machine,
+    main: PathBuf,
+    lead: SessionUri,
+    binary: PathBuf,
+    _root: tempfile::TempDir,
+}
+
+async fn copy() -> Copy {
+    let api = start_server().await;
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    api.register(&lead).await.unwrap();
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let b = Machine::new("b", api.base());
+    b.limit(3);
+    let binary = root.path().join("bin/riff");
+    std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+    install(&Isolated::shared().riff_path(), &binary);
+    Copy {
+        api,
+        b,
+        main,
+        lead,
+        binary,
+        _root: root,
+    }
+}
+
+impl Copy {
+    /// Starts `riff workers host` on `b` from the copy of `riff`.
+    fn host(&self) -> Running {
+        let args = ["host", "--claude", "true"];
+        self.b
+            .host_with(self.b.riff_at(&self.binary, &self.main, &args, None))
+    }
+}
+
+/// A running host sees a new `riff` installed as `cargo install` does
+/// it, runs it in its place with the same session, and answers the next
+/// start request of the lead (01M3Q55KJ8BKMPE9RADB63X8SP).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_runs_a_new_binary_and_answers_the_next_start() {
+    let c = copy().await;
+    let host = c.host();
+    let id = host_session(&c.api, &c.lead, "b").await;
+    let pid = host.0.id();
+
+    install(&Isolated::shared().riff_path(), &c.binary);
+    let new = std::fs::metadata(&c.binary).unwrap().ino();
+    until("the host runs the new binary", || async {
+        (runs(pid) == new).then_some(())
+    })
+    .await;
+    assert!(
+        c.b.host_output().contains("a new riff is on disk"),
+        "{}",
+        c.b.host_output()
+    );
+
+    c.api.tell(&c.lead, &id, "workers start 1").await.unwrap();
+    let read = reads(&c.api, &c.lead, "b: started 1 worker").await;
+    assert!(read.contains("mike@b"), "{read}");
+    assert_eq!(c.b.workers().len(), 1, "{}", c.b.log());
+    assert_eq!(host_session(&c.api, &c.lead, "b").await, id);
+    assert!(host.0.id() == pid && runs(pid) == new);
+}
+
+/// Stop all workers of a host, so that the window of the workers
+/// closes. A new `riff` is on disk, but the host still runs the old one.
+/// Start 1: it starts, in a new window, and its pane runs the `riff` on
+/// disk (01M3Q55KMQSSJVQEN86XFB8PSG).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_after_a_stop_of_all_workers_starts() {
+    let c = copy().await;
+    let host = c.host();
+    let id = host_session(&c.api, &c.lead, "b").await;
+    c.api.tell(&c.lead, &id, "workers start 2").await.unwrap();
+    reads(&c.api, &c.lead, "b: started 2 workers").await;
+    c.api.tell(&c.lead, &id, "workers stop").await.unwrap();
+    reads(&c.api, &c.lead, "b: Stopped 2 workers.").await;
+    assert!(c.b.workers().is_empty(), "{}", c.b.log());
+    assert!(
+        !c.b.fake.path().join("windows").exists(),
+        "the window closed"
+    );
+
+    // A new binary replaces the old one, and changes at each poll, so the
+    // host does not run it yet: its own binary is `riff (deleted)` now.
+    install(&Isolated::shared().riff_path(), &c.binary);
+    let old = runs(host.0.id());
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let touch = {
+        let (stop, binary) = (stop.clone(), c.binary.clone());
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = Command::new("touch").arg(&binary).status();
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        })
+    };
+
+    c.api.tell(&c.lead, &id, "workers start 1").await.unwrap();
+    let read = reads(&c.api, &c.lead, "b: ").await;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    touch.join().unwrap();
+    assert_eq!(
+        runs(host.0.id()),
+        old,
+        "the host ran the new binary too early"
+    );
+    assert!(
+        read.contains("b: started 1 worker"),
+        "{read}\n{}",
+        c.b.log()
+    );
+    assert_eq!(c.b.workers().len(), 1, "{}", c.b.log());
+    let log = c.b.log();
+    assert_eq!(log.matches("new-window").count(), 2, "{log}");
+    assert!(!log.contains("(deleted)"), "{log}");
 }
 
 /// The book has the how-to with the real commands, each in `--help`,

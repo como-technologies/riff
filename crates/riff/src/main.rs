@@ -500,6 +500,10 @@ enum Workers {
         /// The claude command.
         #[arg(long, default_value = "claude")]
         claude: std::path::PathBuf,
+        /// The session of the host that ran this binary after an update
+        /// (01M3Q55KJ8BKMPE9RADB63X8SP).
+        #[arg(long, hide = true)]
+        session: Option<String>,
     },
     /// Show or set the most workers on this machine
     ///
@@ -1004,8 +1008,14 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
             ..
         }) => ask_host(host, riff::host::Request::Start(*count), server).await,
         Some(Workers::Start { count, claude, .. }) => start_workers(*count, claude, server).await,
-        Some(Workers::Host { claude }) => {
-            riff::host::serve(&identity::working_dir()?, claude, server).await
+        Some(Workers::Host { claude, session }) => {
+            riff::host::serve(
+                &identity::working_dir()?,
+                claude,
+                server,
+                session.as_deref(),
+            )
+            .await
         }
         Some(Workers::Stop {
             host: Some(host), ..
@@ -1261,7 +1271,7 @@ async fn tail_beside_lead(api: &Api, me: &SessionUri) {
     };
     let added = async {
         let program = Program::tail(
-            &std::env::current_exe()?,
+            &riff::binary::this_on_disk()?,
             &identity::working_dir()?,
             api.base(),
         );

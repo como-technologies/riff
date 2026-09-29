@@ -1653,6 +1653,13 @@
   `riff top` and `riff chat` run it in their place, as `riff tail`
   does. The chat does it between two lines. The new chat shows no
   line of the old chat again, and draws its prompt again.
+- **01M3Q55KJ8BKMPE9RADB63X8SP** When a new `riff` binary is on disk,
+  `riff workers host` runs it in its place, as `riff tail` does, but
+  only between two requests of the lead. The new host keeps the
+  session of the old one. Its workers go on.
+- **01M3Q55KMQSSJVQEN86XFB8PSG** Each process that `riff` starts, for
+  example a worker pane, runs the `riff` binary on disk. It never runs
+  the path of a binary that a new one replaced.
 - **01M3JEE7WT04BKX377VW5GDSPY** `riff --version`,
   `riff-server --version`, `riff whoami`, `riff who` and the whoami
   tool show the build.
