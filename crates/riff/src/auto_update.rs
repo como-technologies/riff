@@ -26,9 +26,10 @@
 //! directory that exists, also when the process that saw the new server
 //! runs in a removed worktree. It gets the place of that process, which
 //! [`remember`] keeps, so that the message to the lead finds the
-//! repository (01M3NT2Q0RNM9PVHT42V459624). A failure that is not about
-//! the release, for example a missing directory, does not count as a
-//! try: [`about_release`] holds the rule (01M3NT2PYFHPB0C19Q2QB2AE6W).
+//! repository (01M3NT2Q0RNM9PVHT42V459624). When its own working
+//! directory is missing, it stops before `cargo` runs, and the release
+//! does not count as tried (01M3NT2PYFHPB0C19Q2QB2AE6W). Each other
+//! failure counts, so one release gets at most one install.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -89,28 +90,6 @@ pub fn remember(place: &Place) {
 fn here() -> Option<Place> {
     let kept = HERE.lock().ok().and_then(|here| here.clone());
     kept.or_else(|| identity::place(&identity::working_dir().ok()?).ok())
-}
-
-/// True when `error`, the failure of an update, is about the release:
-/// the next process does not try it again. A failure to run a command
-/// or to read a file, for example a missing directory, is not about the
-/// release (01M3NT2PYFHPB0C19Q2QB2AE6W).
-///
-/// ```
-/// use std::process::Command;
-/// use anyhow::Context;
-/// use riff::auto_update::about_release;
-///
-/// let gone = Command::new("true").current_dir("/no/such/dir").status();
-/// let gone = gone.context("cannot run cargo install").unwrap_err();
-/// assert!(!about_release(&gone));
-/// assert!(about_release(&anyhow::anyhow!("cargo install failed: exit status: 101")));
-/// ```
-pub fn about_release(error: &anyhow::Error) -> bool {
-    error
-        .root_cause()
-        .downcast_ref::<std::io::Error>()
-        .is_none()
 }
 
 /// The release tag to install when `this` riff gets a reply from
@@ -212,8 +191,9 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
 /// the update lock, records `tag`, runs [`lifecycle::update`], and tells
 /// the lead of the user in the repository of `place` the result
 /// (01M3N7JJKBME6VSNTHD8VPN3K9). It stops at once when another update
-/// holds the lock, or when `tag` was tried. A failure that is not
-/// [`about_release`] forgets the try. `riff` passes
+/// holds the lock, or when `tag` was tried. When its working directory
+/// is missing, it stops before it records `tag`
+/// (01M3NT2PYFHPB0C19Q2QB2AE6W). `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
 pub async fn run(
     cargo: &Path,
@@ -233,20 +213,22 @@ pub async fn run(
         println!("riff: this machine tried {tag} already.");
         return Ok(());
     }
-    local::set_tried(&dir, tag)?;
     let old = lifecycle::release_tag(env!("CARGO_PKG_VERSION"));
     let host = crate::identity::this_host();
-    let done = lifecycle::update(cargo, claude, Some(tag), server, local).await;
+    let done = match identity::working_dir() {
+        Ok(_) => {
+            local::set_tried(&dir, tag)?;
+            lifecycle::update(cargo, claude, Some(tag), server, local).await
+        }
+        Err(e) => Err(e),
+    };
     let body = match &done {
         Ok(words) => {
             println!("{words}");
             text::auto_updated(&host, &old, tag)
         }
         Err(e) => {
-            let tried = about_release(e);
-            if !tried && let Err(e) = local::clear_tried(&dir) {
-                println!("riff: cannot forget the try of {tag}: {e}");
-            }
+            let tried = local::tried(&dir).as_deref() == Some(tag);
             text::auto_update_failed(&host, &old, tag, &format!("{e:#}"), tried)
         }
     };

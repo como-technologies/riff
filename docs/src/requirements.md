@@ -1673,11 +1673,12 @@
 - **01M3NT2Q30P9GCQGENWMP1NKN2** `riff update` runs `cargo`, `git`,
   `riff connect` and `riff-server --version` in the home directory,
   else in `/`. So it works in a removed directory.
-- **01M3NT2PYFHPB0C19Q2QB2AE6W** A failed update in the background
-  marks the release as tried only when the failure is about the
-  release. A failure to run a command or to read a file, for example a
-  missing directory, does not mark it. The next `riff` process tries
-  again, and the message to the lead says so.
+- **01M3NT2PYFHPB0C19Q2QB2AE6W** When the working directory of an
+  update in the background is missing, the update stops before `cargo`
+  runs, and does not mark the release as tried. The next `riff` process
+  tries again, and the message to the lead says so. Each other failure
+  marks the release as tried, so one release gets at most one install
+  and one message to the lead.
 - **01M3N7JJNPPJNTXFDTEY4MSDVJ** An update in the background stops no
   session, and changes no sign-in and no device key. The sessions take
   the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9 and

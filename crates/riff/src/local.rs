@@ -285,25 +285,6 @@ pub fn set_tried(dir: &Path, tag: &str) -> io::Result<()> {
     std::fs::write(dir.join("update-tried"), tag)
 }
 
-/// Forgets the release that the last update of riff by itself tried,
-/// so that the next `riff` process tries it again
-/// (01M3NT2PYFHPB0C19Q2QB2AE6W). No record is no error.
-///
-/// ```
-/// let run = tempfile::tempdir()?;
-/// riff::local::set_tried(run.path(), "v0.4.0")?;
-/// riff::local::clear_tried(run.path())?;
-/// assert_eq!(riff::local::tried(run.path()), None);
-/// riff::local::clear_tried(run.path())?;
-/// # Ok::<(), std::io::Error>(())
-/// ```
-pub fn clear_tried(dir: &Path) -> io::Result<()> {
-    match std::fs::remove_file(dir.join("update-tried")) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
-}
-
 /// The log of the update of riff by itself.
 pub fn update_log(dir: &Path) -> PathBuf {
     dir.join("update.log")
