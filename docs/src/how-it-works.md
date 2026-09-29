@@ -772,7 +772,7 @@ sequenceDiagram
     participant V as verifier
     participant G as GitHub
     A->>A: commit, checks pass, push the branch
-    A->>G: gh pr create, gh pr merge --auto --squash
+    A->>G: riff pr open: the pull request, auto-merge on
     A->>E: post to [lead of mike] "verify request: issue-6, PR #40, commit"
     E->>L: wake
     L->>E: tell V "request: claim verify-issue-6"
@@ -780,8 +780,8 @@ sequenceDiagram
     V->>E: claim verify-issue-6
     E-->>V: granted
     V->>V: check out the commit, test each criterion
-    V->>G: comment the result, set riff/verify on the commit
-    V->>E: post to [claim=issue-6] "pass" or "fail, with steps"
+    V->>G: riff verify: comment the result, set riff/verify
+    V->>E: riff verify: post to [claim=issue-6] the result
     V->>E: release verify-issue-6
     E->>A: wake
     alt pass
@@ -809,9 +809,72 @@ A live check of new code runs in a dev session (see
 [Test a change without the shared riff](development.md#test-a-change-without-the-shared-riff)).
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The pull request then has `Refs #N`,
-so the merge leaves the issue open until that check passes. The `gh`
-steps are in
+so the merge leaves the issue open until that check passes. The rules
+of GitHub are in
 [Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github).
+
+Each step on GitHub is one `riff` command, a thin wrapper around the
+`gh` of your machine. A session runs one command for one step, with no
+shell loop.
+
+### Open a pull request
+
+Push the branch first. Then open its pull request:
+
+```sh
+riff pr open --title "Show the wave" --file summary.md
+```
+
+The issue is the claim `issue-N` of the session. Give `--issue 12`
+when the session holds no claim or more than one. The body gets the
+link line `Closes #12`, the summary of `summary.md`, and the trailers
+of the issue and its wave, in the form of
+[Check a pull request on GitHub](development.md#check-a-pull-request-on-github).
+The pull request gets the wave of the issue. Then `riff pr open`
+turns on auto-merge with a squash at once. It opens nothing when the
+pull request breaks a rule of the hygiene check, for example a title
+that ends with `(#12)`.
+
+When a check after the release is left, or a later pull request
+closes the issue, link with `Refs #12`:
+
+```sh
+riff pr open --title "Show the wave" --file summary.md --refs
+```
+
+### Wait for the merge
+
+```sh
+riff pr wait 40
+```
+
+It looks at pull request 40 every 30 seconds (`--every SECONDS`) until
+GitHub merges it, and then prints the merge commit. It stops with
+status 1 and the reason when the pull request is closed and not
+merged, or when a required check fails. A session runs it as a
+background task.
+
+### Report a verify
+
+Write the result to a file: each criterion, and what you did to check
+it. For a fail, give the steps to see each failure. Then report a
+pass:
+
+```sh
+riff verify pass 40 --file result.md
+```
+
+Or a fail:
+
+```sh
+riff verify fail 40 --file result.md
+```
+
+It puts the result on pull request 40 as a comment that names its
+head commit. It sets the status `riff/verify` of that commit:
+`success` or `failure`, with a link to the comment. Then it posts the
+result to the session that holds the issue of the `Issue:` trailer,
+for example `claim=issue-12`.
 
 ### Ask for a verify by hand
 
@@ -1418,7 +1481,7 @@ user. A session never asks the lead of another person.
 
 You look only at your lead. So a session that is not the lead never
 asks you in its own terminal. When a permission refusal stops it, for
-example `gh pr create`, it tells the lead the pull request, the commit
+example `riff pr open`, it tells the lead the pull request, the commit
 and the verify result. You decide. No session pushes to `main` (see
 [Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github)).
 

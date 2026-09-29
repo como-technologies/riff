@@ -105,6 +105,10 @@ fn the_settings_allow_the_steps_of_a_pull_request() {
         "gh pr merge 40 --auto --squash",
         "gh pr comment 40 --body-file result.md",
         "gh api repos/como-technologies/riff/statuses/1a2b3c4 -f state=success -f context=riff/verify",
+        "riff pr open --title \"Show the wave\" --file summary.md",
+        "riff pr wait 40",
+        "riff verify pass 40 --file result.md",
+        "riff verify fail 40 --file result.md",
     ] {
         assert!(allowed(command), "not allowed: {command}");
     }

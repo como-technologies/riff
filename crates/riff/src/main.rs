@@ -3,7 +3,7 @@
 use std::io::Read;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::TimeZone;
 use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -11,7 +11,7 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, settings,
+    binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, pr, settings,
     terminal, text, worker,
 };
 use riff_core::build::Mismatch;
@@ -273,6 +273,25 @@ enum Command {
         #[arg(long, default_value = "claude")]
         claude: std::path::PathBuf,
     },
+    /// The steps of a pull request on GitHub, with the gh of this
+    /// machine: open it, and wait for its merge.
+    Pr {
+        #[command(subcommand)]
+        command: Pr,
+    },
+    /// Report the verify of a pull request, with the gh of this machine:
+    /// comment the result on the pull request, set the status
+    /// riff/verify of its head commit, and post the result to the
+    /// session that holds its issue.
+    Verify {
+        /// pass sets the status success, fail sets failure.
+        verdict: VerdictArg,
+        /// The number of the pull request.
+        number: u64,
+        /// The result: each criterion, and what you did to check it.
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
     /// Start, list and stop the worker sessions of this machine. They
     /// need tmux. With no subcommand, it lists each worker: its pane,
     /// its session ID, its claims and its status
@@ -287,6 +306,56 @@ enum Command {
 enum Switch {
     On,
     Off,
+}
+
+/// The result of a verify.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum VerdictArg {
+    Pass,
+    Fail,
+}
+
+impl From<VerdictArg> for riff::pr::Verdict {
+    fn from(verdict: VerdictArg) -> Self {
+        match verdict {
+            VerdictArg::Pass => Self::Pass,
+            VerdictArg::Fail => Self::Fail,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum Pr {
+    /// Open the pull request of the current branch for the issue that
+    /// this session claims, and turn on auto-merge with a squash. The
+    /// body has the link line and the trailers Issue: and Milestone: of
+    /// the issue. Push the branch first.
+    Open {
+        /// The title. Do not end it with (#N).
+        #[arg(long)]
+        title: String,
+        /// A file with the summary of the change, for the body.
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// Link with Refs #N, not Closes #N: the merge leaves the issue
+        /// open. Use it for each pull request before the last one of the
+        /// issue, and when a check after the release is left.
+        #[arg(long)]
+        refs: bool,
+        /// The issue. The default is the claim issue-N of this session.
+        #[arg(long)]
+        issue: Option<u64>,
+    },
+    /// Wait until pull request NUMBER is merged, then print its merge
+    /// commit. Exit with status 1 when it closes unmerged or a required
+    /// check fails.
+    Wait {
+        /// The number of the pull request.
+        number: u64,
+        /// The seconds between two looks at the pull request.
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+        every: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -502,6 +571,15 @@ async fn main() -> Result<()> {
     if let Command::Workers { command } = &cli.command {
         return workers(command.as_ref(), &cli.server).await;
     }
+    if let Command::Pr {
+        command: Pr::Wait { number, every },
+    } = &cli.command
+    {
+        eprintln!("{}", text::pr_waits(*number));
+        let every = Duration::from_secs(*every);
+        println!("{}", pr::wait(&pr::Gh::default(), *number, every)?);
+        return Ok(());
+    }
     let api = Api::new(&cli.server);
     match &cli.command {
         Command::Login => {
@@ -660,6 +738,55 @@ async fn main() -> Result<()> {
             println!("{}", text::released(&thread, &item));
         }
         Command::Lead => println!("{}", text::led(&api.lead(&me).await?)),
+        Command::Pr {
+            command:
+                Pr::Open {
+                    title,
+                    file,
+                    refs,
+                    issue,
+                },
+        } => {
+            let issue = match issue {
+                Some(n) => n,
+                None => {
+                    let sessions = api.who(&me, false).await?;
+                    let mine = sessions.iter().find(|s| s.uri.who() == me.who());
+                    pr::claimed_issue(mine.map_or(&[][..], |s| s.uri.claims()))?
+                }
+            };
+            let summary = match file {
+                Some(file) => std::fs::read_to_string(&file)
+                    .with_context(|| format!("cannot read {}", file.display()))?,
+                None => String::new(),
+            };
+            let (number, url) = pr::open(&pr::Gh::default(), &title, &summary, issue, refs)?;
+            println!("{}", text::pr_opened(number, &url));
+        }
+        Command::Verify {
+            verdict,
+            number,
+            file,
+        } => {
+            let result = std::fs::read_to_string(&file)
+                .with_context(|| format!("cannot read {}", file.display()))?;
+            let thread = thread_or_default(None, &here)?;
+            let verdict = verdict.into();
+            let reported = pr::report(
+                &pr::Gh::default(),
+                &thread.to_string(),
+                number,
+                verdict,
+                &result,
+            )?;
+            println!("{}", text::verify_reported(verdict, number, &reported));
+            let to: Selector = format!("claim=issue-{}", reported.issue).parse()?;
+            let body = text::verify_post(verdict, number, &reported, &result);
+            let posted = api
+                .post(&me, Some(&thread), &[to], &body, Kind::Message)
+                .await?;
+            println!("{}", text::posted(&posted));
+        }
         Command::Tail { thread, color } => {
             tail(&api, &thread_or_default(thread, &here)?, color).await
         }
@@ -688,6 +815,9 @@ async fn main() -> Result<()> {
         | Command::Server
         | Command::Update { .. }
         | Command::Workers { .. }
+        | Command::Pr {
+            command: Pr::Wait { .. },
+        }
         | Command::Login
         | Command::Logout { .. }
         | Command::Invite { .. }

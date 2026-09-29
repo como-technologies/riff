@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 riff-core.workspace = true
+hygiene.workspace = true
 anyhow.workspace = true
 anstream.workspace = true
 anstyle.workspace = true

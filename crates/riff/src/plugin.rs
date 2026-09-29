@@ -93,7 +93,7 @@ macro_rules! embed {
 /// assert!(!skill[..waves].contains("milestone"));
 /// assert!(skill[waves..waves_end].contains("milestone"));
 /// assert!(!skill[waves_end..prs].contains("milestone"));
-/// assert!(skill[prs..prs_end].contains("--milestone"));
+/// assert!(skill[prs..prs_end].contains("Milestone: Wave 3"));
 /// assert!(!skill[prs_end..].contains("milestone"));
 /// ```
 pub const FILES: &[(&str, &str)] = &[
@@ -811,7 +811,8 @@ mod tests {
     }
 
     /// 01M3JFEXJG2D651PWA30DNRGWF, 01M3JFEXMPNFEV4HBZJQ15JD25,
-    /// 01M3JFEXPXRTXYHCV0WSKEK07M, 01M3JN4QQCM0GXK9BCGXVS2YC7.
+    /// 01M3JFEXPXRTXYHCV0WSKEK07M, 01M3JN4QQCM0GXK9BCGXVS2YC7,
+    /// 01M3NB6G132QG4TAEJ5QPRJNAE.
     #[test]
     fn the_skill_merges_by_pull_request() {
         let skill = text("riff/skills/riff/SKILL.md");
@@ -822,7 +823,7 @@ mod tests {
             "You never merge, and you never push to the default branch.",
             "A pass counts only for its commit",
             "`Merged in #PR (COMMIT)`",
-            "Turn on auto-merge with a squash at once, before any other push.",
+            "turns on auto-merge with a squash at once, before any other push.",
             "Never turn it on after a push.",
             "the ruleset on `main` has no bypass. Never change the ruleset.",
         ] {
@@ -831,11 +832,10 @@ mod tests {
         let forge = &skill[skill.find("### Pull requests on GitHub").unwrap()..];
         let forge = &forge[..forge.find("\n## ").unwrap()];
         for command in [
-            "`gh pr create --title \"TITLE\" --milestone \"Wave 3\" --body-file pr.md`",
-            "`gh pr merge 40 --auto --squash`",
-            "`gh pr checks 40 --watch`",
-            "`gh pr comment 40 --body-file result.md`",
-            "-f state=success -f context=riff/verify",
+            "`riff pr open --title \"TITLE\" --file summary.md`",
+            "`riff pr wait 40`",
+            "`riff verify pass 40 --file result.md`",
+            "`riff verify fail 40 --file result.md`",
             "Closes #12",
             "Issue: #12\nMilestone: Wave 3",
             "Never run `gh pr merge --admin`",

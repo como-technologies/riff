@@ -15,6 +15,7 @@
 //! | `riff workers` | Starts, lists and stops the worker sessions of this machine in tmux, with [`terminal`]. Its limit is in [`settings`]. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
+//! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
 //!
 //! A session can leave the riff and join it again with the tools
 //! `leave` and `join` (see [`leave`]).
@@ -72,6 +73,7 @@ pub mod login;
 pub mod mcp;
 pub mod next;
 pub mod plugin;
+pub mod pr;
 pub mod secrets;
 pub mod settings;
 pub mod style;
