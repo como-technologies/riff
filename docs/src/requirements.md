@@ -337,7 +337,9 @@
   `riff/verify` on that commit (`success` or `failure`) with the URL of
   the comment, and one riff post of the result to
   `[{"claim": "issue-M"}]`, where M is the `Issue:` trailer of the
-  pull request.
+  pull request. The tested commit is `HEAD` of the directory, or
+  `--commit SHA`. When it is not the head of the pull request, it
+  makes no comment, no status and no post, and exits with status 1.
 - **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.

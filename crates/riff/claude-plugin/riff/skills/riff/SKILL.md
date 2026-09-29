@@ -288,8 +288,11 @@ claim, or starts a worker for it.
    - Pass: each criterion, with what you did to check it.
    - Fail: each criterion that failed, with the steps to see the
      failure.
-   Report it with one command: `riff verify pass 40 --file result.md`
-   or `riff verify fail 40 --file result.md`. It puts the result on
+   Report it with one command in the verify worktree:
+   `riff verify pass 40 --file result.md` or
+   `riff verify fail 40 --file result.md`. It reports nothing when
+   the head of the pull request is not `HEAD` there, the commit that
+   you tested. It puts the result on
    the pull request as a comment that names the commit, and sets the
    verify status of that commit: success on a pass, failure on a fail.
    It posts the result to the author, with `to`

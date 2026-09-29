@@ -196,7 +196,12 @@ async fn verify(verdict: &str, state: &str) {
     machine.claim("author", "issue-12").await;
     let result = machine.write("result.md", "1. The wave shows.\n");
     let out = machine
-        .ok("verifier", &["verify", verdict, "40", "--file", &result])
+        .ok(
+            "verifier",
+            &[
+                "verify", verdict, "40", "--file", &result, "--commit", "1a2b3c4d",
+            ],
+        )
         .await;
     assert!(out.contains("Woke mike@thelio:"), "{out}");
 
@@ -238,6 +243,83 @@ async fn verify_pass_comments_sets_success_and_posts_to_the_claim() {
 #[tokio::test]
 async fn verify_fail_sets_failure() {
     verify("fail", "failure").await;
+}
+
+/// Makes one empty commit in the clone of `machine`, and returns it.
+fn commit(machine: &Machine) -> String {
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(machine.repo.path())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        text(&out.stdout).trim().to_owned()
+    };
+    git(&["commit", "-q", "--allow-empty", "-m", "tested"]);
+    git(&["rev-parse", "HEAD"])
+}
+
+/// A verify counts only for its commit: when the head of the pull
+/// request is not HEAD of the verifier, riff makes no comment, no
+/// status and no post.
+#[tokio::test]
+async fn verify_refuses_when_the_head_is_not_the_tested_commit() {
+    let machine = Machine::new(VERIFY).await;
+    machine.claim("author", "issue-12").await;
+    let tested = commit(&machine);
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    for args in [
+        &["verify", "pass", "40", "--file", &result][..],
+        &[
+            "verify", "fail", "40", "--file", &result, "--commit", "9f8e7d6",
+        ],
+    ] {
+        let out = machine.run("verifier", args).await;
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            text(&out.stderr).contains("but the head of the pull request is 1a2b3c4d"),
+            "{}",
+            text(&out.stderr)
+        );
+    }
+    assert!(
+        text(
+            &machine
+                .run("verifier", &["verify", "pass", "40", "--file", &result])
+                .await
+                .stderr
+        )
+        .contains(&format!("you tested {tested},"))
+    );
+    let log = log(machine.bin.path());
+    assert!(!log.contains("gh pr comment"), "{log}");
+    assert!(!log.contains("/statuses/"), "{log}");
+    let inbox = machine.ok("author", &["read"]).await;
+    assert!(!inbox.contains("verify result:"), "{inbox}");
+}
+
+/// With no --commit, the tested commit is HEAD of the verifier.
+#[tokio::test]
+async fn verify_takes_head_as_the_tested_commit() {
+    let machine = Machine::new(VERIFY).await;
+    machine.claim("author", "issue-12").await;
+    let tested = commit(&machine);
+    fake_gh(machine.bin.path(), &VERIFY.replace("1a2b3c4d", &tested));
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    machine
+        .ok("verifier", &["verify", "pass", "40", "--file", &result])
+        .await;
+    let log = log(machine.bin.path());
+    assert!(
+        log.contains(&format!(
+            "gh api repos/como-technologies/riff/statuses/{tested} -f state=success"
+        )),
+        "{log}"
+    );
 }
 
 const OPEN: &str = r#"*'issue view 12 --json number,state,milestone'*) echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 3"}}' ;;
@@ -396,6 +478,8 @@ fn the_book_has_a_how_to_for_each_command() {
     let verify = help(&["verify"]);
     assert!(verify.contains("[possible values: pass, fail]"), "{verify}");
     assert!(verify.contains("--file <FILE>"), "{verify}");
+    assert!(verify.contains("--commit <SHA>"), "{verify}");
+    assert!(how_to("Report a verify").contains("`--commit 1a2b3c4`"));
     assert!(how_to("Open a pull request").contains("`--issue 12`"));
     assert!(how_to("Wait for the merge").contains("`--every SECONDS`"));
 }

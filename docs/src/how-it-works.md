@@ -870,6 +870,12 @@ Or a fail:
 riff verify fail 40 --file result.md
 ```
 
+Run it in the worktree where you tested: the tested commit is `HEAD`
+there. Or name it with `--commit 1a2b3c4`. A verify counts only for
+its commit. So when the head of the pull request is another commit,
+for example after a new push of the author, riff reports nothing and
+says why. Test the new head, or tell the author.
+
 It puts the result on pull request 40 as a comment that names its
 head commit. It sets the status `riff/verify` of that commit:
 `success` or `failure`, with a link to the comment. Then it posts the

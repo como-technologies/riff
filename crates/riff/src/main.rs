@@ -291,6 +291,11 @@ enum Command {
         /// The result: each criterion, and what you did to check it.
         #[arg(long)]
         file: std::path::PathBuf,
+        /// The commit that you tested. The default is HEAD of this
+        /// directory. riff reports nothing when it is not the head of the
+        /// pull request.
+        #[arg(long, value_name = "SHA")]
+        commit: Option<String>,
     },
     /// Start, list and stop the worker sessions of this machine. They
     /// need tmux. With no subcommand, it lists each worker: its pane,
@@ -767,15 +772,21 @@ async fn main() -> Result<()> {
             verdict,
             number,
             file,
+            commit,
         } => {
             let result = std::fs::read_to_string(&file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
+            let tested = match commit {
+                Some(commit) => commit,
+                None => pr::head_here(&std::env::current_dir()?)?,
+            };
             let thread = thread_or_default(None, &here)?;
             let verdict = verdict.into();
             let reported = pr::report(
                 &pr::Gh::default(),
                 &thread.to_string(),
                 number,
+                &tested,
                 verdict,
                 &result,
             )?;

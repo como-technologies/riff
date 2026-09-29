@@ -29,7 +29,10 @@
 //! comment that names the head commit, sets the status `riff/verify` of
 //! that commit with the URL of the comment, and posts the result to the
 //! holder of the issue of the `Issue:` trailer
-//! (01M3NB6FYXXKX80VHEVA5CV6RY).
+//! (01M3NB6FYXXKX80VHEVA5CV6RY). A verify counts only for its commit: it
+//! reports nothing when the head of the pull request is not the commit
+//! that the verifier tested, `HEAD` of its worktree or `--commit`
+//! ([`same_commit`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -44,7 +47,7 @@
 //! ```
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -386,19 +389,61 @@ pub struct Reported {
     pub url: String,
 }
 
+/// The commit `HEAD` of the git worktree `dir`: the commit that the
+/// verifier tested.
+pub fn head_here(dir: &Path) -> Result<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .context("cannot run git")?;
+    if !out.status.success() {
+        bail!(
+            "cannot read HEAD of {}: give the commit that you tested with --commit SHA",
+            dir.display()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// Checks that the verifier tested the head commit of the pull request:
+/// a verify counts only for its commit. `tested` is a full hash, or its
+/// first 7 or more characters.
+///
+/// ```
+/// use riff::pr::same_commit;
+/// assert!(same_commit("1a2b3c4d5e6f", "1a2b3c4d5e6f").is_ok());
+/// assert!(same_commit("1a2b3c4d5e6f", "1a2b3c4").is_ok());
+/// assert!(same_commit("1a2b3c4d5e6f", "1a2b").is_err(), "too short");
+/// let moved = same_commit("9f8e7d6c5b4a", "1a2b3c4d5e6f").unwrap_err().to_string();
+/// assert!(moved.starts_with("you tested 1a2b3c4d5e6f, but the head of the pull request is 9f8e7d6c5b4a"));
+/// ```
+pub fn same_commit(head: &str, tested: &str) -> Result<()> {
+    if tested.len() >= 7 && head.starts_with(tested) {
+        return Ok(());
+    }
+    bail!(
+        "you tested {tested}, but the head of the pull request is {head}. A verify counts only \
+         for its commit: nothing is reported. Test the head commit, or tell the author."
+    )
+}
+
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
-/// (01M3NB6FYXXKX80VHEVA5CV6RY). The caller posts it to the holder of
-/// the issue.
+/// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is
+/// not the commit `tested` ([`same_commit`]). The caller posts it to the
+/// holder of the issue.
 pub fn report(
     gh: &Gh,
     repo: &str,
     number: u64,
+    tested: &str,
     verdict: Verdict,
     result: &str,
 ) -> Result<Reported> {
     let n = number.to_string();
     let head: Head = gh.json(&["pr", "view", &n, "--json", "headRefOid,body"])?;
+    same_commit(&head.head_ref_oid, tested)?;
     let Some(issue) = trailer_issue(&head.body) else {
         bail!("pull request #{number} has no trailer `Issue: #N`");
     };
