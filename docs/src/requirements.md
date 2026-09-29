@@ -1828,6 +1828,14 @@
   lines that the server talks with, the older side, the step to update
   it, and the link to the book. The OAuth metadata stays open to each
   client.
+- **01M3QCMJ9F1GRTRRSB4AW9TC3D** `riff` checks the build only of a
+  reply that comes from `riff-server`. A reply with status 5xx or 429
+  and no build header comes from the front end: a short outage, not
+  another build. `riff` tries the call again, as after a 503 (R132).
+  After the last try, the error is a plain error, not a version
+  error. So `riff chat`, `riff tail`, `riff watch` and `riff mcp` go
+  on quietly. A reply with another status and no build header is
+  still a version error.
 - **01M3MNVT9TYNXZ8V845BHKQADV** Replaced by
   01M3MX1E8M9TKBN90P4DYKH3H8.
 - **01M3MX1E8M9TKBN90P4DYKH3H8** With another build that it can talk

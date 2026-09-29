@@ -1989,6 +1989,11 @@ sequenceDiagram
 `riff` tries each call again while the server replies 503. A deploy
 stops riff for less than one minute.
 
+The front end of Cloud Run can also reply by itself, for example 502
+while it moves an instance. Such a reply has no `riff-build` header.
+`riff` tries the call again in the same way. It does not show a
+version error for it.
+
 ## Run the lead and its workers in tmux
 
 In tmux, riff lays out your sessions. The lead gets a `riff tail`
