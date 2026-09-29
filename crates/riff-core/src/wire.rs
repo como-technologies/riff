@@ -135,8 +135,8 @@ pub struct Alive {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AliveReply {
     /// True when the server asks this idle worker to stop
-    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN). A call of the session since the ask
-    /// takes it back.
+    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN). A call of the session since the ask,
+    /// or the end of its watch at a wake, takes it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stop: bool,
 }

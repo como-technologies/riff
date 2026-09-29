@@ -1565,8 +1565,9 @@
   call. On each host of each user, it keeps the idle workers with the
   shortest idle time, at most the setting `per_host`. It asks each
   other idle worker that made no call for the setting `after_secs` to
-  stop. It asks each worker once. A call of the worker after the ask
-  takes the ask back, so a worker that claims work goes on.
+  stop. It asks each worker once. A call of the worker after the ask,
+  or the end of its watch at a wake, takes the ask back. So a worker
+  that the lead wakes, or that claims work, goes on.
 - **01M3Q5A0QZTSTXHHNYCE8HFJSB** The reply to a keep-alive tells a
   worker that the server asks it to stop. `riff mcp` in a worker sends
   a keep-alive each 10 seconds. On the ask, it sends SIGTERM to the

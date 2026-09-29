@@ -669,12 +669,36 @@ impl State {
     }
 
     /// Records that a watch stream closed. The session is idle when it
-    /// has no open stream.
+    /// has no open stream. A wake ends the watch of a worker, so the end
+    /// takes back an ask to stop, as a call does
+    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead".parse()?;
+    /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.set_idle(Some(0), None);
+    /// state.watch_started(&w1, now);
+    /// state.worker(w1.who(), true);
+    ///
+    /// let later = now + Duration::from_secs(80);
+    /// assert_eq!(state.stop_idle_workers(later).len(), 1);
+    /// state.watch_ended(w1.who(), later);
+    /// assert!(!state.alive(&w1, later).stop);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn watch_ended(&mut self, who: &Who, now: Instant) {
         if let Some(session) = self.sessions.get_mut(who) {
             session.watchers = session.watchers.saturating_sub(1);
             session.last_seen = now;
             session.seen_before_load = None;
+            session.stopping = false;
             if !session.ended {
                 session.live(now);
             }
@@ -3217,6 +3241,23 @@ mod tests {
         state.claim(&w3, &repo(), "issue-13", later).unwrap();
         assert!(!state.alive(&w3, later).stop, "the claim wins");
         assert!(!state.who(later, 80_000, false).iter().any(|s| s.stopping));
+    }
+
+    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: a wake of the lead ends the watch of
+    /// an idle worker after the ask. The worker is not stopped before it
+    /// reads the request.
+    #[test]
+    fn a_woken_worker_is_not_stopped() {
+        let now = Instant::now();
+        let mut state = State::default();
+        state.register(&lead(api()), now);
+        state.set_idle(Some(0), None);
+        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
+        let later = now + Duration::from_secs(80);
+        assert_eq!(stopped(&mut state, later), ["w1"]);
+
+        state.watch_ended(w1.who(), later + Duration::from_secs(1));
+        assert!(!state.alive(&w1, later + Duration::from_secs(5)).stop);
     }
 
     /// 01M3Q5A0TF9K49V8Z1ZY9NDF74: the settings change the numbers, and
