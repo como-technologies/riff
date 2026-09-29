@@ -968,6 +968,57 @@ riff read -t como-technologies/docs
 riff tail como-technologies/docs
 ```
 
+## Chat with the people of the riff
+
+The people of a riff chat in the thread `chat` on the riff server, in
+the style of IRC. Only a member can read or post. Your line shows as
+`USER@HOST`, from your sign-in. Start the chat in a terminal or a tmux
+pane. Type a line and press Enter. `/quit` or Ctrl-C exits:
+
+```sh
+riff chat
+```
+
+The chat shows its history first, then each new line:
+
+```text
+2026-09-28
+14:02 mike@thelio  is the release out?
+14:03 brett@heron  not yet. @lead is #207 merged?
+14:03 mike@thelio lead  yes, #207 is merged.
+```
+
+### Ask a lead in the chat
+
+A chat line wakes no session. A line with `@lead` wakes your lead.
+A line with `@USER` wakes the lead of USER. The lead answers in the
+chat:
+
+```sh
+riff chat
+@lead is #12 done?
+@brett can I take #14?
+```
+
+```mermaid
+sequenceDiagram
+    participant M as riff chat (mike)
+    participant S as riff-server
+    participant L as lead of brett
+    M->>S: @brett can I take #14?
+    S-->>L: wake
+    L->>S: post to the thread chat
+    S-->>M: yes, take #14
+```
+
+### Chat without color
+
+`--color` works as in `riff tail`:
+
+```sh
+riff chat --color never
+```
+
 ## A signed message
 
 Each message carries a signature from the device key of its sender.
