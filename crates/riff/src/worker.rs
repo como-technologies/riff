@@ -56,7 +56,7 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::Api;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
-use crate::{hygiene, identity, settings, text};
+use crate::{hygiene, identity, settings, text, worker_mcp};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -185,7 +185,8 @@ pub struct Started {
 
 /// Starts at most `count` workers in `tmux`, in the main worktree of
 /// `dir` (01M3JD392Q5ANX0FPZ51W7B0E3): at most the limit of the machine
-/// minus the workers that run (01M3JPQT57PJCRBQYJNDVESS04). The inner
+/// minus the workers that run (01M3JPQT57PJCRBQYJNDVESS04). Each loads
+/// only the MCP servers of `workers.mcp` (01M3NB5R92ZC61VW6Y45SJEAY9). The inner
 /// error is the refusal to show when it started nothing. The caller
 /// checks who may start workers.
 pub fn start(
@@ -209,8 +210,18 @@ pub fn start(
     let fresh = hygiene::fast_forward(&main).line();
     let base = Api::new(server).base().to_owned();
     let riff = std::env::current_exe()?;
+    let mcp = worker_mcp::prepare(&main, &riff)?;
     let programs: Vec<Program> = (0..start)
-        .map(|_| Program::worker(&riff, claude, &main, &base, &terminal::new_session_id()))
+        .map(|_| {
+            Program::worker(
+                &riff,
+                claude,
+                &main,
+                &base,
+                &terminal::new_session_id(),
+                &mcp,
+            )
+        })
         .collect();
     let (window, panes) = tmux.workers(&programs)?;
     Ok(Ok(Started {

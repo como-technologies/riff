@@ -1657,6 +1657,51 @@ To start a different `claude`, give its path:
 riff workers start 1 --claude ~/.local/bin/claude
 ```
 
+#### The MCP servers of a worker
+
+A worker loads only the riff MCP server. It does not load your other
+MCP servers or the claude.ai connectors, for example mail or your home
+network. So a worker starts faster, uses less context, and cannot reach
+what it does not need.
+
+`riff workers start` runs `claude` with `--strict-mcp-config` and an
+`--mcp-config` file. The file holds only the servers of the setting
+`workers.mcp`. Only you can read the file. Your MCP config does not
+change. In a worker, the riff tools have the names `mcp__riff__*`.
+
+Show the MCP servers of the workers on this machine:
+
+```sh
+riff workers mcp
+```
+
+```text
+Each new worker on this machine loads these MCP servers: riff (/home/mike/.config/riff/config.toml).
+```
+
+#### Give workers another MCP server
+
+Add a server by its name in your Claude Code config. `claude mcp list`
+shows the names. The next workers that start load it:
+
+```sh
+riff workers mcp add github
+```
+
+riff copies the server from your user config or local config
+(`~/.claude.json`), or from `.mcp.json` of the repository. When it
+finds no server with the name, `riff workers start` warns and starts
+the workers without it.
+
+Take a server away from the next workers:
+
+```sh
+riff workers mcp remove github
+```
+
+`riff` always stays. Each machine has its own list, also a workers
+host. Only you change it: the lead never does.
+
 #### The lead keeps a worker on each free item
 
 Your lead checks each time a riff line wakes it, and each time it

@@ -329,6 +329,13 @@ enum Workers {
         /// The new limit. Leave it out to show the limit.
         limit: Option<u16>,
     },
+    /// Show or change the MCP servers that each worker of this machine
+    /// loads. The default is riff only. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.mcp
+    Mcp {
+        #[command(subcommand)]
+        command: Option<WorkersMcp>,
+    },
     /// In a worker whose item is merged and released: ask for a fresh
     /// context. When the turn ends, riff gives the pane `/clear` and the
     /// start prompt, and the worker claims its next item
@@ -355,6 +362,21 @@ enum Workers {
         /// The arguments of CLAUDE.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkersMcp {
+    /// Give each new worker the MCP server NAME from your Claude Code
+    /// config (`claude mcp list` shows the names)
+    Add {
+        /// The name of the MCP server.
+        name: String,
+    },
+    /// Take the MCP server NAME from each new worker. riff stays
+    Remove {
+        /// The name of the MCP server.
+        name: String,
     },
 }
 
@@ -709,6 +731,28 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
                 "{}",
                 text::workers_limit(settings::workers_limit(&path)?, &path)
             );
+            Ok(())
+        }
+        Some(Workers::Mcp { command }) => {
+            let path = settings::path()?;
+            let mut names = settings::workers_mcp(&path)?;
+            match command {
+                None => {}
+                Some(WorkersMcp::Add { name }) => {
+                    if !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                    settings::set_workers_mcp(&path, &names)?;
+                }
+                Some(WorkersMcp::Remove { name }) => {
+                    if name == settings::RIFF_MCP {
+                        anyhow::bail!(text::WORKERS_MCP_KEEPS_RIFF);
+                    }
+                    names.retain(|n| n != name);
+                    settings::set_workers_mcp(&path, &names)?;
+                }
+            }
+            println!("{}", text::workers_mcp(&names, &path));
             Ok(())
         }
         Some(Workers::Stop { pane, .. }) => stop_workers(pane.as_deref(), server).await,

@@ -139,6 +139,16 @@ impl Machine {
         self.riff(dir, &all, true).output().unwrap()
     }
 
+    /// The MCP config file of the workers.
+    fn mcp_file(&self) -> PathBuf {
+        self.run.path().join("state").join(riff::worker_mcp::FILE)
+    }
+
+    /// The MCP config of the workers, as JSON.
+    fn mcp(&self) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(self.mcp_file()).unwrap()).unwrap()
+    }
+
     /// `riff workers limit N`.
     fn limit(&self, limit: u16) {
         let out = self
@@ -191,9 +201,10 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     let env = |id: &str| {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
-             '{}' workers run 'claude' '--settings' \
+             '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
              '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false}}' 'Join the riff.'",
-            Isolated::shared().riff_path().display()
+            Isolated::shared().riff_path().display(),
+            m.mcp_file().display(),
         )
     };
     let pane = |id: &str| format!("-d -c {dir} -P -F #{{pane_id}} {}", env(id));
@@ -258,6 +269,118 @@ fn workers_start_leaves_the_user_settings_file() {
     );
 }
 
+/// A worker loads only the MCP servers of `workers.mcp`: riff by
+/// default (01M3NB5R92ZC61VW6Y45SJEAY9), and riff plus NAME after
+/// `riff workers mcp add NAME` (01M3NB5R6X5AV79DQNKKJBH5J8).
+#[test]
+fn a_worker_loads_only_the_mcp_servers_of_workers_mcp() {
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(2);
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+    let home = tempfile::tempdir().unwrap();
+    let claude_json = home.path().join(".claude.json");
+    let person = serde_json::json!({
+        "mcpServers": {
+            "github": {"command": "gh-mcp", "env": {"TOKEN": "t"}},
+            "gmail": {"type": "http", "url": "https://mail.test"},
+        },
+    });
+    std::fs::write(&claude_json, person.to_string()).unwrap();
+    let start = || {
+        m.riff(&main, &["start", "1"], true)
+            .env("HOME", home.path())
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .output()
+            .unwrap()
+    };
+
+    let out = start();
+    assert!(out.status.success(), "{out:?}");
+    let command = format!(
+        "'--strict-mcp-config' '--mcp-config' '{}' '--settings'",
+        m.mcp_file().display()
+    );
+    assert!(m.log().contains(&command), "{}", m.log());
+    let riff = Isolated::shared().riff_path().display().to_string();
+    assert_eq!(
+        m.mcp(),
+        serde_json::json!({"mcpServers": {"riff": {"command": riff, "args": ["mcp"]}}})
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(m.mcp_file())
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+
+    let out = m
+        .riff(&main, &["mcp", "add", "github"], false)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        stdout(&out).contains("MCP servers: riff, github"),
+        "{out:?}"
+    );
+    let out = start();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        m.mcp(),
+        serde_json::json!({"mcpServers": {
+            "riff": {"command": riff, "args": ["mcp"]},
+            "github": {"command": "gh-mcp", "env": {"TOKEN": "t"}},
+        }})
+    );
+    assert_eq!(m.log().matches(&command).count(), 2, "{}", m.log());
+    // The token of a server is in the file, never on the command line.
+    assert!(!m.log().contains("gh-mcp"), "{}", m.log());
+    // The MCP config of the person does not change.
+    assert_eq!(
+        std::fs::read_to_string(&claude_json).unwrap(),
+        person.to_string()
+    );
+}
+
+/// `riff workers mcp` shows the list, and changes it only as asked.
+/// riff stays in the list. A name that the person does not have is
+/// left out of a worker, with a warning.
+#[test]
+fn workers_mcp_keeps_riff_and_warns_about_a_missing_server() {
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(1);
+    let mcp = |args: &[&str]| {
+        let mut all = vec!["mcp"];
+        all.extend(args);
+        m.riff(Path::new("/"), &all, false).output().unwrap()
+    };
+    let out = mcp(&[]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout(&out).contains("MCP servers: riff ("), "{out:?}");
+    let out = mcp(&["remove", "riff"]);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(stderr(&out).contains("riff stays"), "{out:?}");
+    assert!(mcp(&["add", "unifi"]).status.success());
+    assert!(mcp(&["add", "unifi"]).status.success());
+    assert!(stdout(&mcp(&[])).contains("MCP servers: riff, unifi ("));
+
+    let root = tempfile::tempdir().unwrap();
+    let (main, _) = repository(root.path());
+    let home = tempfile::tempdir().unwrap();
+    let out = m
+        .riff(&main, &["start", "1"], true)
+        .env("HOME", home.path())
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(stderr(&out).contains("no MCP server unifi"), "{out:?}");
+    assert_eq!(m.mcp()["mcpServers"].as_object().unwrap().len(), 1);
+
+    let out = mcp(&["remove", "unifi"]);
+    assert!(stdout(&out).contains("MCP servers: riff ("), "{out:?}");
+}
+
 #[test]
 fn a_second_start_adds_panes_to_the_same_window() {
     let m = Machine::new("http://riff.test:7878");
@@ -270,7 +393,10 @@ fn a_second_start_adds_panes_to_the_same_window() {
     let log = m.log();
     assert_eq!(log.matches("new-window").count(), 1, "{log}");
     assert_eq!(log.matches("split-window -t @7").count(), 2, "{log}");
-    assert!(log.contains("run '/opt/claude' '--settings'"), "{log}");
+    assert!(
+        log.contains("run '/opt/claude' '--strict-mcp-config'"),
+        "{log}"
+    );
 }
 
 #[test]

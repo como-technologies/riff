@@ -1281,6 +1281,18 @@
   workers on the machine, in the key `workers.limit`. The default is 0.
   With 0, `riff workers start` starts no worker, and names
   `riff workers limit`.
+- **01M3NB5R6X5AV79DQNKKJBH5J8** `riff workers mcp` shows the MCP
+  servers that each worker of the machine loads, in the key
+  `workers.mcp`. The default is `["riff"]`. `riff workers mcp add NAME`
+  and `riff workers mcp remove NAME` change it. `riff` always stays.
+- **01M3NB5R92ZC61VW6Y45SJEAY9** `riff workers start` runs each worker
+  with `--strict-mcp-config` and an `--mcp-config` file that holds only
+  the servers of `workers.mcp`: `riff` as `riff mcp`, and each other
+  name from the MCP config of the person. A name that the person does
+  not have is left out, with a warning. Only the person can read the
+  file. The command line names only the file.
+- **01M3NB5RB539RGCVXEZN575ERE** The lead never changes `workers.mcp`.
+  Only the person does.
 - **01M3JPQT57PJCRBQYJNDVESS04** `riff workers start N` starts at most
   the limit minus the workers that run on the machine. It says how many
   it started, and when it started fewer, why.

@@ -77,3 +77,4 @@ pub mod style;
 pub mod terminal;
 pub mod text;
 pub mod worker;
+pub mod worker_mcp;
