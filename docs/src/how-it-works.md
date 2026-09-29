@@ -2094,6 +2094,16 @@ its claims are free at once. Another session can take its item from
 its pushed branch. At the end of a wave, the lead stops the workers
 before the deploy and the update, and starts them again after them.
 
+#### Stop one worker on another machine
+
+Give the pane, or the first 8 characters of the session ID, with the
+host. The workers host on that machine stops only that worker:
+
+```sh
+riff workers stop %3 --host pangolin
+riff workers stop 2a880834 --host pangolin
+```
+
 ### Offer workers from another machine
 
 Your lead runs on one machine. Another machine of yours can run
@@ -2242,6 +2252,7 @@ flowchart TD
     Q -- "claude exits on its own, for example a crash" --> C["the wrapper tells the lead:<br/>pane, session ID, exit code"]
     Q -- "no claim and no free item" --> I["it waits idle:<br/>status idle: waits for work,<br/>its watch runs"]
     I -- "a request of the lead" --> N[it claims the item]
+    I -- "idle too long, and another idle worker on its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
     Q -- "riff workers stop" --> S[the pane closes, no message]
     Q -- "it waits for a verify" --> K[it keeps its claim and waits]
 ```
@@ -2253,8 +2264,10 @@ worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, exit code
 riff does not start it again. Look at the pane, then start a worker again with riff workers start 1.
 ```
 
-A worker never ends itself. The lead or you end workers with
-`riff workers stop` (see [Stop the workers](#stop-the-workers)).
+A worker never ends itself. The server stops idle workers (see
+[The server stops idle workers](#the-server-stops-idle-workers)). The
+lead or you end the other workers with `riff workers stop` (see
+[Stop the workers](#stop-the-workers)).
 
 ### A worker with no work waits idle
 
@@ -2278,3 +2291,52 @@ item runs `riff workers next` first (see
 [A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
 waits idle only when its start routine then finds no work. A worker
 that waits for a verify keeps its claim, and waits.
+
+### The server stops idle workers
+
+Your lead starts a worker when it has work for it. So idle workers do
+not pile up, the server looks at the workers each 5 seconds. An idle
+worker is a worker with no claim that makes no call. On each host, the
+server keeps the idle worker with the shortest idle time. It stops
+each other worker that is idle for 60 seconds. It never stops a lead,
+a session that is not a worker, or a worker with a claim.
+
+```mermaid
+sequenceDiagram
+    participant S as riff-server
+    participant M as riff mcp of the worker
+    participant W as riff workers run
+    participant L as lead
+    S->>S: each 5 s: find the idle workers past the limit
+    S->>L: note: the server stops the idle worker
+    M->>S: keep-alive, each 10 s
+    S-->>M: stop
+    M->>W: stop
+    W-->>W: claude ends, the pane closes
+    M->>S: end: the session leaves riff who
+```
+
+A worker that claims work before its next keep-alive goes on. Your
+lead gets a note for each worker that the server stops:
+
+```text
+workers: the server stops the idle worker 2a880834 on pangolin. It made no call for 75 seconds. At most 1 idle worker stays on each host.
+```
+
+#### Change the idle workers
+
+Show the settings of the riff:
+
+```sh
+riff workers idle
+```
+
+The owner or an admin of the riff changes them. Keep at most 2 idle
+workers on each host, and stop the others after 5 minutes:
+
+```sh
+riff workers idle --per-host 2 --after 300
+```
+
+With `--per-host 0`, the server stops each worker that is idle for the
+idle time.

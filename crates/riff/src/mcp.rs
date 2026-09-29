@@ -42,7 +42,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{ALIVE_EVERY, Kind, RiffState, Status};
+use riff_core::wire::{ALIVE_EVERY, Kind, RiffState, Status, WORKER_ALIVE_EVERY};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -69,6 +69,9 @@ pub struct Tools {
     /// True in a worker session: each register says so
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
+    /// The process ID of the `riff workers run` wrapper of a worker. The
+    /// tools stop it when the server asks (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+    wrapper: Option<u32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -156,7 +159,16 @@ impl Tools {
             local: None,
             left: Arc::new(AtomicBool::new(false)),
             worker: false,
+            wrapper: None,
         }
+    }
+
+    /// Stops the process `wrapper`, the `riff workers run` of this
+    /// worker, when the server asks this idle worker to stop
+    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+    pub fn in_wrapper(mut self, wrapper: Option<u32>) -> Self {
+        self.wrapper = wrapper;
+        self
     }
 
     /// Registers the session as a worker or not
@@ -481,10 +493,16 @@ fn err(e: impl std::fmt::Display) -> String {
 
 impl Tools {
     /// Sends a keep-alive each [`ALIVE_EVERY`] for as long as the tools
-    /// run (R204). A failed keep-alive is not reported: the next one
-    /// tries again.
+    /// run (R204), in a worker each [`WORKER_ALIVE_EVERY`]. A failed
+    /// keep-alive is not reported: the next one tries again. When the
+    /// reply asks this idle worker to stop, it stops its wrapper
+    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
     pub fn keep_alive(&self) -> tokio::task::JoinHandle<()> {
-        self.keep_alive_every(ALIVE_EVERY)
+        self.keep_alive_every(if self.worker {
+            WORKER_ALIVE_EVERY
+        } else {
+            ALIVE_EVERY
+        })
     }
 
     /// [`Tools::keep_alive`] with another period, for tests.
@@ -500,9 +518,28 @@ impl Tools {
                     continue;
                 }
                 // A hung request must not stop the next keep-alive.
-                let _ = tokio::time::timeout(every, tools.api.alive(&tools.me())).await;
+                let reply = tokio::time::timeout(every, tools.api.alive(&tools.me())).await;
+                if let Ok(Ok(reply)) = reply
+                    && reply.stop
+                {
+                    tools.stop_wrapper();
+                }
             }
         })
+    }
+
+    /// Sends SIGTERM to the wrapper of this worker. The wrapper stops
+    /// `claude`; then the input of the tools closes, and they end the
+    /// session (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+    fn stop_wrapper(&self) {
+        let Some(pid) = self.wrapper.filter(|_| self.worker) else {
+            eprintln!("riff: {}", crate::text::IDLE_STOP_NO_WRAPPER);
+            return;
+        };
+        eprintln!("riff: {}", crate::text::IDLE_STOP);
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
     }
 
     /// Tells the server that the session ended (R205). It waits at most
@@ -535,7 +572,8 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
     let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
         .in_local(local::dir())
-        .as_worker(worker);
+        .as_worker(worker)
+        .in_wrapper(crate::worker::wrapper());
     // Start even if the server is down: each tool call reports the error.
     if !tools.left()
         && let Err(e) = api.register_as(&me, worker).await

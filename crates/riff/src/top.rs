@@ -262,6 +262,7 @@ impl Top<'_> {
     ///         age_secs: 120,
     ///     }),
     ///     worker,
+    ///     stopping: false,
     /// };
     /// let sessions = [
     ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "lead", None, false),

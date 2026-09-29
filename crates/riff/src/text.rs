@@ -950,6 +950,48 @@ pub fn workers_mcp(names: &[String], path: &std::path::Path) -> String {
     )
 }
 
+/// The line of `riff mcp` when the server asks its idle worker to stop
+/// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+pub const IDLE_STOP: &str =
+    "the server stops this idle worker. riff stops its riff workers run, and claude ends.";
+
+/// The line of `riff mcp` when the server asks it to stop, but no
+/// `riff workers run` wraps it.
+pub const IDLE_STOP_NO_WRAPPER: &str = "the server asks this idle worker to stop, but no riff \
+workers run wraps it. End this session.";
+
+/// The answer of `riff workers idle` (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+///
+/// ```
+/// use riff_core::wire::Idle;
+///
+/// assert_eq!(
+///     riff::text::idle_workers(&Idle::default()),
+///     "The server keeps at most 1 idle worker on each host. It stops each other worker \
+/// that is idle for 60 seconds."
+/// );
+/// assert!(riff::text::idle_workers(&Idle { per_host: 0, after_secs: 30 })
+///     .starts_with("The server keeps no idle worker on a host. It stops each worker"));
+/// ```
+pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
+    let after = idle.after_secs;
+    match idle.per_host {
+        0 => format!(
+            "The server keeps no idle worker on a host. It stops each worker that is idle for \
+             {after} seconds."
+        ),
+        n => format!(
+            "The server keeps at most {} on each host. It stops each other worker that is idle \
+             for {after} seconds.",
+            if n == 1 {
+                "1 idle worker".to_owned()
+            } else {
+                format!("{n} idle workers")
+            }
+        ),
+    }
+}
+
 /// The refusal of `riff workers mcp remove riff`.
 pub const WORKERS_MCP_KEEPS_RIFF: &str =
     "a worker needs the riff MCP server, so riff stays in workers.mcp";
@@ -990,6 +1032,7 @@ pub fn worker_mcp_missing(name: &str) -> String {
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker: false,
+///     stopping: false,
 /// };
 /// let out = riff::text::workers(&panes, &[info]);
 /// assert!(out.contains("%3  a6cf2205  a6cf2205-1  live  claims: issue-12"), "{out}");
@@ -1437,6 +1480,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker,
+///     stopping: false,
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
 /// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
@@ -1471,13 +1515,14 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let status = Status { step: "write the tests".into(), blocked: None };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false },
+///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false },
 ///     SessionInfo {
 ///         uri: brett,
 ///         live: false,
 ///         idle_secs: 150,
 ///         status: Some(StatusInfo { status, age_secs: 240 }),
 ///         worker: true,
+///         stopping: false,
 ///     },
 /// ];
 /// // The owner is a person: the sessions of brett get no tag `owner`.
@@ -1539,13 +1584,14 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
 /// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
 /// let list = [
-///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false },
+///     SessionInfo { uri: me, live: true, idle_secs: 0, status: None, worker: false, stopping: false },
 ///     SessionInfo {
 ///         uri: brett,
 ///         live: false,
 ///         idle_secs: 150,
 ///         status: Some(StatusInfo { status: blocked, age_secs: 60 }),
 ///         worker: false,
+///         stopping: false,
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
@@ -1650,6 +1696,7 @@ pub fn who_view(
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker: false,
+///     stopping: false,
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);

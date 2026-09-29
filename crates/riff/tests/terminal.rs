@@ -786,9 +786,10 @@ fn the_book_has_a_how_to_for_each_step() {
         .output()
         .unwrap();
     let help = String::from_utf8_lossy(&help.stdout);
-    for command in ["start", "limit", "next", "stop"] {
+    for command in ["start", "limit", "next", "stop", "idle"] {
         assert!(help.contains(&format!("  {command} ")), "{help}");
     }
-    // No command ends a worker from inside (01M3K0AXPFSWNG7YPVXE65W464).
+    // A worker does not end itself; the server stops idle workers
+    // (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     assert!(!help.contains("  done "), "{help}");
 }

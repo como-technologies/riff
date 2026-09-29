@@ -1534,14 +1534,50 @@
   its watch, and ends its turn. It does not end its session. A worker
   that waits for a verify keeps its claim and waits. The start hook and
   the skill say so.
-- **01M3K0AXPFSWNG7YPVXE65W464** No riff command ends a worker from
-  inside the worker. The lead or the person ends workers with
-  `riff workers stop`.
+- **01M3K0AXPFSWNG7YPVXE65W464** Replaced by
+  01M3Q5A0NKY1FCS0YH6N6YD3GN and 01M3Q5A11RKZW1610SWGSMTE3W.
 - **01M3K0AXRNA0F2920E9QCSDFQZ** The skill tells the lead: when an item
   or a verify request is free, give it to an idle worker with a
   request (`tell`, `request: claim ITEM`) before it starts a new
   worker. End workers with `riff workers stop` when the lead decides.
   A request of the lead wakes an idle worker.
+- **01M3Q5A0NKY1FCS0YH6N6YD3GN** The server stops idle workers. Each 5
+  seconds, it looks for idle workers: a live worker that is not a lead,
+  holds no claim and made no call for a time. A keep-alive is not a
+  call. On each host of each user, it keeps the idle workers with the
+  shortest idle time, at most the setting `per_host`. It asks each
+  other idle worker that made no call for the setting `after_secs` to
+  stop. It asks each worker once. A call of the worker after the ask
+  takes the ask back, so a worker that claims work goes on.
+- **01M3Q5A0QZTSTXHHNYCE8HFJSB** The reply to a keep-alive tells a
+  worker that the server asks it to stop. `riff mcp` in a worker sends
+  a keep-alive each 10 seconds. On the ask, it sends SIGTERM to the
+  `riff workers run` wrapper of its worker, which the variable
+  `RIFF_WORKER_WRAPPER` names. The wrapper stops `claude` and sends no
+  message, so the pane closes. `riff mcp` sends the end call, so the
+  session leaves `riff who`.
+- **01M3Q5A0TF9K49V8Z1ZY9NDF74** The riff keeps the settings of idle
+  workers: `per_host` (default 1) and `after_secs` (default 60, at
+  least 1). The server saves them. `riff workers idle` shows them.
+  `riff workers idle --per-host N --after SECS` sets them. In a riff
+  with sign-in, only the owner or an admin sets them. In a riff with no
+  sign-in, each person can.
+- **01M3Q5A0WRQT4SGPSD0CQFF011** For each worker that the server asks
+  to stop, the server posts a note to the repository thread of the
+  worker, to the lead of its user: the short session ID, the host, the
+  idle time and the setting `per_host`.
+- **01M3Q5A0Z5DK0YV1MWTM4AQD5Z** `riff workers stop PANE --host HOST`
+  asks the workers host on HOST to stop only the worker in PANE. PANE
+  can also be the session ID of the worker, or its first 4 or more
+  characters, also in `riff workers stop PANE` on the same machine.
+  The other workers go on.
+- **01M3Q5A11RKZW1610SWGSMTE3W** The skill tells the lead: start a
+  worker when you have work for it. The server stops idle workers past
+  the limit. The skill does not say that workers wait idle until the
+  lead ends them.
+- **01M3Q5A1483TGCQYB1Q9CCP5BP** The book has the how-to "The server
+  stops idle workers", with `riff workers idle` in a `sh` block, and
+  the how-to "Stop one worker on another machine".
 - **01M3N7AK8TVYV8S0WR3RP0TN8X** `riff workers host` offers the workers
   of a machine to the lead of its user in the repository. It runs in
   tmux in the main clone until Ctrl-C. It is a riff session with a
