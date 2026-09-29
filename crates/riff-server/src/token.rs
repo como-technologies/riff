@@ -311,7 +311,7 @@ pub enum Took {
 
 /// A change of the owner role that no person made: the server makes it
 /// when a time ends (01M3N7K41N03P26BEFFNX5617K,
-/// 01M3N7K46H5BRFJCB46P3JNAFZ).
+/// 01M3Q546335NBTKG5BHQ27QC93).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OwnerChange {
     /// The owner `old` did not answer the request in time. The admin
@@ -562,7 +562,7 @@ impl Tokens {
     /// An admin asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM).
     /// `user` is the USER of the caller, `admins` the admin emails of the
     /// settings (R210), and `wait` the time that the owner has to answer
-    /// (01M3N7K443DGPZ8XH5WWKK6M35).
+    /// (01M3Q5460YESBSQHTV3M15PE53).
     ///
     /// On a riff with no owner, the admin is the owner at once
     /// (01M3N7K48XQ8XSP7R0HD535ZX3). Else the request waits: the owner
@@ -702,7 +702,7 @@ impl Tokens {
         self.take.as_ref().is_some_and(|t| t.until <= now)
     }
 
-    /// The owner is gone (01M3N7K46H5BRFJCB46P3JNAFZ). The old owner
+    /// The owner is gone (01M3Q546335NBTKG5BHQ27QC93). The old owner
     /// stays an admin. The admin of a request that waits is the owner at
     /// once. With no request, the riff has no owner
     /// (01M3N7K48XQ8XSP7R0HD535ZX3). `None` when the riff has no owner.

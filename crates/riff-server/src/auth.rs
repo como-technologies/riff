@@ -97,7 +97,7 @@ pub struct Config {
     pub provider: Option<Provider>,
     /// The times of the lease, for a server with a store.
     pub lease: crate::lease::Timing,
-    /// The times of the owner role (01M3N7K443DGPZ8XH5WWKK6M35).
+    /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
     pub owner_role: crate::owner::Timing,
 }
 

@@ -440,7 +440,19 @@ pub struct ThreadName(String);
 
 const DIRECT_PREFIX: &str = "dm:";
 
+/// The name of the chat thread of `riff chat`.
+pub const CHAT: &str = "chat";
+
 impl ThreadName {
+    /// The chat thread of `riff chat`.
+    ///
+    /// ```
+    /// assert_eq!(riff_core::name::ThreadName::chat().to_string(), "chat");
+    /// ```
+    pub fn chat() -> Self {
+        Self(CHAT.to_owned())
+    }
+
     /// The thread that holds the direct messages between two sessions.
     /// The order of the two sessions does not matter.
     ///

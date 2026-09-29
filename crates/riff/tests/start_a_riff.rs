@@ -223,6 +223,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff owner --take",
             "riff owner EMAIL",
             "riff owner --deny",
+            "riff who",
         ]
     );
     each_is_real(&riff);

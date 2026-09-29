@@ -106,13 +106,15 @@ struct Cli {
     owner_take_minutes: u64,
 
     /// The minutes between two checks of the owner. A check misses when
-    /// the owner has no live lead session.
-    #[arg(long, env = "RIFF_OWNER_PING_MINUTES", hide_env_values = true, default_value_t = 5,
+    /// no session of the owner is live, and the owner made no call since
+    /// the last check.
+    #[arg(long, env = "RIFF_OWNER_PING_MINUTES", hide_env_values = true, default_value_t = 10,
           value_parser = clap::value_parser!(u64).range(1..))]
     owner_ping_minutes: u64,
 
-    /// The misses in a row after which the owner is gone. The riff then
-    /// has no owner, and asks each admin for a volunteer.
+    /// The misses in a row after which the server warns the owner. One
+    /// more miss, and the owner is gone: the riff then has no owner, and
+    /// asks each admin for a volunteer.
     #[arg(long, env = "RIFF_OWNER_PINGS", hide_env_values = true, default_value_t = 3,
           value_parser = clap::value_parser!(u32).range(1..))]
     owner_pings: u32,
@@ -262,6 +264,28 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn the_owner_settings_set_the_window_of_the_owner_check() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["riff-server"]).unwrap();
+        let timing = riff_server::owner::Timing::from_minutes(
+            cli.owner_take_minutes,
+            cli.owner_ping_minutes,
+            cli.owner_pings,
+        );
+        assert_eq!(timing, riff_server::owner::Timing::default());
+        let cli = Cli::try_parse_from([
+            "riff-server",
+            "--owner-ping-minutes",
+            "20",
+            "--owner-pings",
+            "4",
+        ])
+        .unwrap();
+        assert_eq!((cli.owner_ping_minutes, cli.owner_pings), (20, 4));
+        assert!(Cli::try_parse_from(["riff-server", "--owner-pings", "0"]).is_err());
     }
 
     #[test]

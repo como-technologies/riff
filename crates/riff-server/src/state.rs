@@ -1202,6 +1202,46 @@ impl State {
         leads.into_iter().collect()
     }
 
+    /// True when `user` shows a sign of life at `now`: a session of the
+    /// user that is not gone, or a call of the user at `since` or later,
+    /// also a call as a person (01M3Q546335NBTKG5BHQ27QC93). A person
+    /// entry is not a session, so only its calls count.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::{GONE, State};
+    ///
+    /// let lead: SessionUri = "riff://ada@thelio/como-technologies/riff?session=a6cf".parse()?;
+    /// let other: SessionUri = "riff://ada@pangolin/como-technologies/riff?session=b7d0".parse()?;
+    /// let person: SessionUri = "riff://ada@pangolin".parse()?;
+    /// let start = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, start);
+    /// state.register(&other, start);
+    /// state.end(&lead, start);
+    /// assert!(state.present("ada", start, start), "another live session");
+    /// assert!(!state.present("bob", start, start));
+    ///
+    /// let later = start + GONE;
+    /// assert!(!state.present("ada", later, later), "each session is gone");
+    /// state.register(&person, later);
+    /// assert!(state.present("ada", later, later), "a call as a person");
+    /// let after = later + Duration::from_secs(1);
+    /// assert!(!state.present("ada", after, after), "no call since the last check");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn present(&self, user: &str, since: Instant, now: Instant) -> bool {
+        self.sessions
+            .iter()
+            .filter(|(who, _)| who.user() == user)
+            .any(|(who, session)| {
+                (who.session().is_some() && !session.gone(now))
+                    || session.alive.is_some_and(|alive| alive >= since)
+                    || session.last_seen >= since
+            })
+    }
+
     /// The thread of each repository of the riff, sorted: the repository
     /// of each known session, also a gone one (01M3MN14ZCTRVD3T455P6TFK1B).
     pub fn repositories(&self) -> Vec<ThreadName> {
