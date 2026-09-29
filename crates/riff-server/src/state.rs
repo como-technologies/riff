@@ -64,6 +64,9 @@
 //! - A post has a kind. A post of kind [`Kind::Status`] is a status
 //!   request. It wakes as each post does, and its wakes carry the kind
 //!   (R185).
+//! - [`State::announce`] posts a note or a message of the riff server
+//!   itself. The server is not a session: it does not show in `who`
+//!   (01M3N7K4BC1RPZKQ1XNDTBRPGF).
 //! - A post of kind [`Kind::Note`] wakes no
 //!   session. Each session that its selectors match still joins the
 //!   thread, so it sees the note at its next `read`
@@ -1024,16 +1027,7 @@ impl State {
                 "the post has the lead mark, but this session is not the lead. Post again.".into(),
             );
         }
-        if to.iter().any(Selector::is_empty) {
-            return Err("a selector needs one or more fields".into());
-        }
-        let thread = match thread {
-            Some(thread) if thread.is_direct() => {
-                return Err("leave out the thread to send a direct message".into());
-            }
-            Some(thread) => thread,
-            None => ThreadName::direct(&from, &self.direct_target(&from, &to, now)?),
-        };
+        let thread = self.thread_of(&from, thread, &to, now)?;
         if let Some(sig) = &sig
             && let Some(copy) = self.threads.get(&thread).and_then(|t| {
                 t.messages
@@ -1047,10 +1041,147 @@ impl State {
             ));
         }
         self.member(&from, &thread);
+        let mut sender = self.uri(&from, now);
+        if signed {
+            sender = sender.with_lead(me.lead());
+        }
+        let message = Message {
+            seq: 0,
+            from: sender,
+            to,
+            body,
+            at_ms,
+            kind,
+            sig,
+        };
+        Ok(self.put(&from, thread, message, now))
+    }
+
+    /// Posts a note or a message of the riff server itself
+    /// (01M3N7K4BC1RPZKQ1XNDTBRPGF). `me` is the URI of the server, for
+    /// example [`crate::owner::server_uri`]. It is not a session: it does
+    /// not arrive, and does not show in `who`. The post has no signature.
+    /// A post with no thread is a direct message, as with
+    /// [`State::post`].
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::selector::Selector;
+    /// use riff_core::wire::Kind;
+    /// use riff_server::owner::server_uri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    ///
+    /// let to = vec![Selector::session("a6cf")];
+    /// let delivery = state.announce(&server_uri(), None, to, "hello", Kind::Message, now, 0).unwrap();
+    /// assert_eq!(&delivery.wakes[0].0, mike.who());
+    /// assert_eq!(delivery.tailed.message.from, server_uri());
+    /// assert_eq!(state.who(now, 0, true).len(), 1, "the server is not a session");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub fn announce(
+        &mut self,
+        me: &SessionUri,
+        thread: Option<ThreadName>,
+        to: Vec<Selector>,
+        body: &str,
+        kind: Kind,
+        now: Instant,
+        at_ms: u64,
+    ) -> Result<Delivery, String> {
+        let from = me.who().clone();
+        let thread = self.thread_of(&from, thread, &to, now)?;
+        let message = Message {
+            seq: 0,
+            from: me.clone(),
+            to,
+            body: body.to_owned(),
+            at_ms,
+            kind,
+            sig: None,
+        };
+        Ok(self.put(&from, thread, message, now))
+    }
+
+    /// The live lead of `user` in each repository, sorted: a lead that
+    /// holds, and that is not gone.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::{GONE, State};
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// assert_eq!(state.live_leads("mike", now), [mike.who().clone()]);
+    /// assert!(state.live_leads("brett", now).is_empty());
+    /// assert!(state.live_leads("mike", now + GONE).is_empty());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn live_leads(&self, user: &str, now: Instant) -> Vec<Who> {
+        let leads: BTreeSet<Who> = self
+            .leads
+            .keys()
+            .filter(|key| key.0 == user)
+            .filter_map(|key| self.lead_of(key, now))
+            .filter(|who| !self.sessions[*who].gone(now))
+            .cloned()
+            .collect();
+        leads.into_iter().collect()
+    }
+
+    /// The thread of each repository of the riff, sorted: the repository
+    /// of each known session, also a gone one (01M3MN14ZCTRVD3T455P6TFK1B).
+    pub fn repositories(&self) -> Vec<ThreadName> {
+        let threads: BTreeSet<ThreadName> = self
+            .sessions
+            .values()
+            .filter_map(|s| s.place.default_thread())
+            .collect();
+        threads.into_iter().collect()
+    }
+
+    /// The thread of a post: `thread`, or the direct thread of `from` and
+    /// the one session that `to` names.
+    fn thread_of(
+        &self,
+        from: &Who,
+        thread: Option<ThreadName>,
+        to: &[Selector],
+        now: Instant,
+    ) -> Result<ThreadName, String> {
+        if to.iter().any(Selector::is_empty) {
+            return Err("a selector needs one or more fields".into());
+        }
+        match thread {
+            Some(thread) if thread.is_direct() => {
+                Err("leave out the thread to send a direct message".into())
+            }
+            Some(thread) => Ok(thread),
+            None => Ok(ThreadName::direct(
+                from,
+                &self.direct_target(from, to, now)?,
+            )),
+        }
+    }
+
+    /// Puts `message` in `thread` with the next sequence number, and
+    /// wakes each live session that its selectors match, except `from`.
+    fn put(&mut self, from: &Who, thread: ThreadName, message: Message, now: Instant) -> Delivery {
+        let Message { to, kind, .. } = &message;
+        let kind = *kind;
         let mut woken = BTreeSet::new();
         let mut unmatched = Vec::new();
-        for selector in &to {
-            let live = |who: &&Who| **who != from && !self.sessions[*who].gone(now);
+        for selector in to {
+            let live = |who: &&Who| *who != from && !self.sessions[*who].gone(now);
             let mut matched: Vec<Who> = self
                 .sessions
                 .keys()
@@ -1085,19 +1216,10 @@ impl State {
         if kind == Kind::Note {
             woken.clear();
         }
-        let mut sender = self.uri(&from, now);
-        if signed {
-            sender = sender.with_lead(me.lead());
-        }
         let t = self.threads.entry(thread.clone()).or_default();
         let message = Message {
             seq: t.messages.last().map_or(1, |m| m.message.seq + 1),
-            from: sender,
-            to,
-            body,
-            at_ms,
-            kind,
-            sig,
+            ..message
         };
         t.messages.push(Stored {
             message: message.clone(),
@@ -1108,7 +1230,7 @@ impl State {
             .iter()
             .map(|who| (who.clone(), wake(&thread, &message)))
             .collect();
-        Ok(Delivery {
+        Delivery {
             wakes,
             woken: woken.iter().map(|who| self.uri(who, now)).collect(),
             unmatched,
@@ -1118,7 +1240,7 @@ impl State {
                 keys: Keys::new(),
                 trusted: false,
             },
-        })
+        }
     }
 
     /// Returns unread messages (or all of them) and marks them as read.

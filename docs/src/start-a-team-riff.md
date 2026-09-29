@@ -102,9 +102,11 @@ members of the riff, run `riff members`.
 
 The riff posts each change of the members to the thread of each
 repository of the riff, as a note: `riff invite`, `riff remove`,
-`riff admin add`, `riff admin remove` and `riff owner`. The note names
-the user that made the change, the email and the change. It wakes no
-session. The command prints the threads that got the note.
+`riff admin add`, `riff admin remove` and each step of the owner role
+(see [Take the owner role](#take-the-owner-role)). The note names the
+user that made the change, the email and the change. It wakes no
+session. The command prints the threads that got the note. A note that
+the riff posts by itself comes from `riff@server`.
 
 To see the notes as they come, run this in the directory of a
 repository:
@@ -117,6 +119,80 @@ A note looks like this:
 
 ```text
 members: ada invited bob@gmail.com. bob@gmail.com is a member now.
+```
+
+## Take the owner role
+
+A riff has one owner. Each admin can take the owner role. The owner
+can answer, but an owner who is away does not stop the riff.
+
+```mermaid
+stateDiagram-v2
+    Owner --> Asked: an admin runs riff owner --take
+    Asked --> Owner: the owner passes or keeps the role
+    Asked --> Owner: no answer in 10 minutes, the admin is the owner
+    Owner --> NoOwner: the owner is gone
+    NoOwner --> Owner: the first admin runs riff owner --take
+```
+
+### Ask for the owner role
+
+Only an admin can ask:
+
+```sh
+riff owner --take
+```
+
+The riff tells the owner at once: a direct message to the lead session
+of the owner, and a note. The owner has 10 minutes to answer. With no
+answer, you are the owner. The old owner stays an admin. One request
+waits at a time. A second request is refused, and the refusal names
+the admin that asked first.
+
+### Answer a request
+
+To pass the role, the owner names the admin that asked:
+
+```sh
+riff owner EMAIL
+```
+
+To keep the role:
+
+```sh
+riff owner --deny
+```
+
+The riff tells the admin.
+
+### An owner who is gone
+
+`riff-server` checks the owner each 5 minutes, while the riff has an
+admin who is not the owner. A check misses when the owner has no live
+lead session. After 3 misses in a row, the owner is gone. The old
+owner stays an admin, and the riff has no owner. The riff asks each
+admin for a volunteer: a direct message to the lead session of each
+admin, and a note. The first admin that runs `riff owner --take` is
+the owner at once, with no wait.
+
+While the riff has no owner, `riff members` says so. `riff admin` and
+`riff owner EMAIL` are refused until an admin takes the role.
+
+### Change the times
+
+Three settings of `riff-server` set the times:
+
+| Option | Variable | Default | What |
+|---|---|---|---|
+| `--owner-take-minutes` | `RIFF_OWNER_TAKE_MINUTES` | 10 | The minutes that the owner has to answer. |
+| `--owner-ping-minutes` | `RIFF_OWNER_PING_MINUTES` | 5 | The minutes between two checks of the owner. |
+| `--owner-pings` | `RIFF_OWNER_PINGS` | 3 | The misses in a row after which the owner is gone. |
+
+For example, to give the owner 30 minutes to answer, add the option
+to step 3 of [Start the riff](#start-the-riff):
+
+```sh
+riff-server --public-url URL --owner EMAIL --owner-take-minutes 30
 ```
 
 ## A restart

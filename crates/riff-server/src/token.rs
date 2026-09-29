@@ -81,7 +81,8 @@
 //!
 //! - The person is the owner, a member or an admin.
 //! - The account is in an allowed domain (R15).
-//! - The riff has no owner and no admin: the person becomes the owner.
+//! - The riff is new, with no owner and no admin: the person becomes
+//!   the owner. A riff whose owner was gone is not new.
 //!
 //! The first person that [`Tokens::admit`] lets in is the owner
 //! (01M3JN3AD44CC98AGMVP43F56G). On a riff with admins, only an admin
@@ -95,6 +96,15 @@
 //! passes the owner role to a member or an admin with
 //! [`Tokens::pass_owner`]; the old owner stays an admin. A riff has one
 //! owner at a time.
+//!
+//! An admin asks for the owner role with [`Tokens::take_owner`]. The
+//! request waits for the owner: [`Tokens::pass_owner`] and
+//! [`Tokens::deny_owner`] answer it, and [`Tokens::owner_due`] grants it
+//! when its time ends. [`Tokens::owner_gone`] ends the role of an owner
+//! who is gone. The riff then has no owner: a sign-in and
+//! [`Tokens::name_owner`] make none, and the next request makes its
+//! admin the owner at once. [`crate::owner`] has the times and the
+//! checks of the owner.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -188,6 +198,15 @@ pub const REFRESH_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// (R116).
 pub const REUSE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// The USER of the riff server itself. The server posts its own notes as
+/// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
+pub const SERVER_USER: &str = "riff";
+
+/// The refusal of an action of the owner on a riff with no owner
+/// (01M3N7K48XQ8XSP7R0HD535ZX3).
+pub const NO_OWNER: &str =
+    "the riff has no owner; an admin takes the owner role with: riff owner --take";
+
 /// Why the server refuses a token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refused {
@@ -263,7 +282,45 @@ pub struct Tokens {
     members: BTreeSet<String>,
     /// The email of each admin that the owner made, in lower case.
     admins: BTreeSet<String>,
+    /// True when the owner was gone and no admin took the role yet
+    /// (01M3N7K48XQ8XSP7R0HD535ZX3). A sign-in then makes no owner.
+    no_owner: bool,
+    /// The request for the owner role that waits for the owner
+    /// (01M3N7K3ZAZFGABN7032AYJWEM).
+    take: Option<Take>,
     riff_id: RiffId,
+}
+
+/// A request for the owner role that waits for the answer of the owner.
+#[derive(Clone, Debug)]
+struct Take {
+    /// The email of the admin that asked, in lower case.
+    admin: String,
+    /// With no answer before this time, the admin is the owner.
+    until: Instant,
+}
+
+/// The answer to [`Tokens::take_owner`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Took {
+    /// The riff had no owner. The admin is the owner now.
+    Owner { owner: String },
+    /// The request waits for the answer of `owner`.
+    Asked { owner: String, admin: String },
+}
+
+/// A change of the owner role that no person made: the server makes it
+/// when a time ends (01M3N7K41N03P26BEFFNX5617K,
+/// 01M3N7K46H5BRFJCB46P3JNAFZ).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OwnerChange {
+    /// The owner `old` did not answer the request in time. The admin
+    /// that asked is the `owner` now. `old` stays an admin.
+    Granted { owner: String, old: String },
+    /// The owner `old` is gone and stays an admin. The admin of a
+    /// request that waited is the `owner` now. With no request, the
+    /// riff has no owner.
+    Gone { old: String, owner: Option<String> },
 }
 
 /// The ID of one riff. [`Default`] makes a new, random one.
@@ -340,6 +397,11 @@ impl Tokens {
     ) -> Result<TokenReply, NoSignIn> {
         let email = email.trim().to_lowercase();
         let user = user_of(&email).map_err(|e| NoSignIn::Email(e.to_string()))?;
+        if user == SERVER_USER {
+            return Err(NoSignIn::Email(format!(
+                "the user {SERVER_USER} is the riff server; sign in with another email"
+            )));
+        }
         match self.users.get(&user) {
             Some(held) if held != &email => return Err(NoSignIn::Taken(user)),
             _ => {
@@ -394,7 +456,7 @@ impl Tokens {
         let email = email.trim().to_lowercase();
         let admin =
             self.admins.contains(&email) || admins.iter().any(|a| a.trim().to_lowercase() == email);
-        let new_riff = self.owner.is_none() && admins.is_empty();
+        let new_riff = self.owner.is_none() && !self.no_owner && admins.is_empty();
         let may_join = admin
             || allowed_domain
             || new_riff
@@ -404,26 +466,255 @@ impl Tokens {
             return Err(NoSignIn::NotMember(email));
         }
         let pair = self.sign_in(&email, jkt, now)?;
-        if self.owner.is_none() && (admins.is_empty() || admin) {
+        if self.owner.is_none() && !self.no_owner && (admins.is_empty() || admin) {
             self.owner = Some(email);
         }
         Ok(pair)
     }
 
-    /// Names the owner of a riff that has none, for example from a
-    /// setting (01M3JN3ASSV9SA0QZKXXJ0RTEV). A riff that has an owner
-    /// keeps it. Returns the owner.
+    /// Names the owner of a new riff, for example from a setting
+    /// (01M3JN3ASSV9SA0QZKXXJ0RTEV). A riff that has an owner keeps it.
+    /// A riff whose owner was gone keeps no owner
+    /// (01M3N7K4GAKJ621V5AWJRQVF3M). Returns the owner.
     ///
     /// ```
     /// use riff_server::token::Tokens;
     ///
     /// let mut tokens = Tokens::default();
-    /// assert_eq!(tokens.name_owner(" Ada@X.io"), "ada@x.io");
-    /// assert_eq!(tokens.name_owner("bob@x.io"), "ada@x.io");
+    /// assert_eq!(tokens.name_owner(" Ada@X.io"), Some("ada@x.io"));
+    /// assert_eq!(tokens.name_owner("bob@x.io"), Some("ada@x.io"));
     /// ```
-    pub fn name_owner(&mut self, email: &str) -> &str {
-        self.owner
-            .get_or_insert_with(|| email.trim().to_lowercase())
+    pub fn name_owner(&mut self, email: &str) -> Option<&str> {
+        if self.owner.is_none() && !self.no_owner {
+            self.owner = Some(email.trim().to_lowercase());
+        }
+        self.owner.as_deref()
+    }
+
+    /// True when the riff has an owner, or had one: a riff whose owner
+    /// was gone counts (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+    pub fn owned(&self) -> bool {
+        self.owner.is_some() || self.no_owner
+    }
+
+    /// The USER that holds `email`, or `None` when nobody signed in with
+    /// it.
+    pub fn user_of_email(&self, email: &str) -> Option<&str> {
+        self.users
+            .iter()
+            .find(|(_, held)| *held == email)
+            .map(|(user, _)| user.as_str())
+    }
+
+    /// The USER of the owner, or `None` when the riff has no owner or the
+    /// owner never signed in.
+    pub fn owner_user(&self) -> Option<&str> {
+        self.user_of_email(self.owner.as_deref()?)
+    }
+
+    /// The USER of each admin that is not the owner, sorted: the admins
+    /// that the owner made and the admins of `admins` (R210). An admin
+    /// who never signed in has no USER, and is not in it.
+    pub fn admin_users(&self, admins: &[String]) -> Vec<String> {
+        let (_, admins, _) = self.roles(admins);
+        self.users
+            .iter()
+            .filter(|(_, email)| admins.contains(email))
+            .map(|(user, _)| user.clone())
+            .collect()
+    }
+
+    /// An admin asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM).
+    /// `user` is the USER of the caller, `admins` the admin emails of the
+    /// settings (R210), and `wait` the time that the owner has to answer
+    /// (01M3N7K443DGPZ8XH5WWKK6M35).
+    ///
+    /// On a riff with no owner, the admin is the owner at once
+    /// (01M3N7K48XQ8XSP7R0HD535ZX3). Else the request waits: the owner
+    /// answers with [`Tokens::pass_owner`] or [`Tokens::deny_owner`], and
+    /// [`Tokens::owner_due`] grants it when `wait` ends. One request
+    /// waits at a time: a second request is refused, with the email of
+    /// the admin that asked first.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_server::token::{OwnerChange, Took, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let wait = Duration::from_secs(600);
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// tokens.add_admin("bob@gmail.com").unwrap();
+    /// tokens.add_admin("carol@gmail.com").unwrap();
+    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
+    /// tokens.admit("carol@gmail.com", false, &[], "k3", now).unwrap();
+    ///
+    /// let asked = tokens.take_owner("bob", &[], wait, now).unwrap();
+    /// assert_eq!(
+    ///     asked,
+    ///     Took::Asked { owner: "ada@gmail.com".into(), admin: "bob@gmail.com".into() }
+    /// );
+    /// // A second request waits for the first.
+    /// let refused = tokens.take_owner("carol", &[], wait, now).unwrap_err();
+    /// assert!(refused.contains("bob@gmail.com asked for the owner role first"), "{refused}");
+    ///
+    /// // With no answer in time, bob is the owner.
+    /// assert_eq!(tokens.owner_due(now), None);
+    /// assert_eq!(tokens.owner_due(now + wait), Some(OwnerChange::Granted {
+    ///     owner: "bob@gmail.com".into(),
+    ///     old: "ada@gmail.com".into(),
+    /// }));
+    /// assert!(tokens.is_owner("bob") && tokens.is_admin("ada", &[]));
+    /// ```
+    pub fn take_owner(
+        &mut self,
+        user: &str,
+        admins: &[String],
+        wait: Duration,
+        now: Instant,
+    ) -> Result<Took, String> {
+        if !self.is_admin(user, admins) {
+            return Err(format!(
+                "{user} is not an admin; only an admin takes the owner role"
+            ));
+        }
+        // An admin has an email: is_admin checks it.
+        let email = self.email_of(user).unwrap_or_default().to_owned();
+        let Some(owner) = self.owner.clone() else {
+            self.make_owner(&email);
+            return Ok(Took::Owner { owner: email });
+        };
+        if owner == email {
+            return Err(format!("{email} is the owner of this riff already"));
+        }
+        if let Some(take) = &self.take {
+            return Err(format!(
+                "{} asked for the owner role first; wait for the answer of the owner",
+                take.admin
+            ));
+        }
+        self.take = Some(Take {
+            admin: email.clone(),
+            until: now + wait,
+        });
+        Ok(Took::Asked {
+            owner,
+            admin: email,
+        })
+    }
+
+    /// The owner keeps the owner role that an admin asks for
+    /// (01M3N7K41N03P26BEFFNX5617K). `user` is the USER of the caller.
+    /// Returns the email of the admin that asked.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// tokens.add_admin("bob@gmail.com").unwrap();
+    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
+    /// assert!(tokens.deny_owner("ada").is_err(), "no request waits");
+    ///
+    /// let wait = Duration::from_secs(600);
+    /// tokens.take_owner("bob", &[], wait, now).unwrap();
+    /// assert!(tokens.deny_owner("bob").is_err(), "only the owner denies");
+    /// assert_eq!(tokens.deny_owner("ada").unwrap(), "bob@gmail.com");
+    /// assert_eq!(tokens.owner_due(now + wait), None);
+    /// assert!(tokens.is_owner("ada"));
+    /// ```
+    pub fn deny_owner(&mut self, user: &str) -> Result<String, String> {
+        if self.owner.is_none() {
+            return Err(NO_OWNER.into());
+        }
+        if !self.is_owner(user) {
+            return Err(format!(
+                "{user} is not the owner; only the owner denies the owner role"
+            ));
+        }
+        let take = self
+            .take
+            .take()
+            .ok_or("no admin asks for the owner role now")?;
+        Ok(take.admin)
+    }
+
+    /// The email of the admin whose request waits, or `None`.
+    pub fn asks(&self) -> Option<&str> {
+        self.take.as_ref().map(|t| t.admin.as_str())
+    }
+
+    /// Grants a request whose time ended with no answer of the owner
+    /// (01M3N7K41N03P26BEFFNX5617K). The old owner stays an admin.
+    /// `None` when no request waits, or its time did not end yet.
+    pub fn owner_due(&mut self, now: Instant) -> Option<OwnerChange> {
+        if self.take.as_ref().is_none_or(|t| now < t.until) {
+            return None;
+        }
+        let take = self.take.take()?;
+        let old = self.owner.clone()?;
+        self.make_owner(&take.admin);
+        Some(OwnerChange::Granted {
+            owner: take.admin,
+            old,
+        })
+    }
+
+    /// True when a request waits and its time ended at `now`.
+    pub fn is_due(&self, now: Instant) -> bool {
+        self.take.as_ref().is_some_and(|t| t.until <= now)
+    }
+
+    /// The owner is gone (01M3N7K46H5BRFJCB46P3JNAFZ). The old owner
+    /// stays an admin. The admin of a request that waits is the owner at
+    /// once. With no request, the riff has no owner
+    /// (01M3N7K48XQ8XSP7R0HD535ZX3). `None` when the riff has no owner.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{OwnerChange, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// assert_eq!(tokens.owner_gone(), Some(OwnerChange::Gone {
+    ///     old: "ada@gmail.com".into(),
+    ///     owner: None,
+    /// }));
+    /// assert_eq!(tokens.owner(), None);
+    /// assert!(tokens.is_admin("ada", &[]));
+    ///
+    /// // A riff with no owner gets none at a sign-in, nor from a setting.
+    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
+    /// assert_eq!(tokens.name_owner("ada@gmail.com"), None);
+    /// assert!(tokens.owned());
+    /// ```
+    pub fn owner_gone(&mut self) -> Option<OwnerChange> {
+        let old = self.owner.take()?;
+        self.members.insert(old.clone());
+        self.admins.insert(old.clone());
+        let owner = self.take.take().map(|take| {
+            self.make_owner(&take.admin);
+            take.admin
+        });
+        self.no_owner = owner.is_none();
+        Some(OwnerChange::Gone { old, owner })
+    }
+
+    /// Makes `email` the owner, and ends a request that waits. The old
+    /// owner, if any, stays an admin and a member.
+    fn make_owner(&mut self, email: &str) {
+        self.members.remove(email);
+        self.admins.remove(email);
+        if let Some(old) = self.owner.take() {
+            self.members.insert(old.clone());
+            self.admins.insert(old);
+        }
+        self.owner = Some(email.to_owned());
+        self.no_owner = false;
+        self.take = None;
     }
 
     /// The ID of this riff (see "Riff ID" in the module docs).
@@ -458,10 +749,8 @@ impl Tokens {
             return RiffOwner::Nobody;
         };
         let user = self
-            .users
-            .iter()
-            .find(|(_, held)| **held == email)
-            .map(|(user, _)| user.clone())
+            .user_of_email(&email)
+            .map(str::to_owned)
             .or_else(|| user_of(&email).ok())
             .unwrap_or_else(|| email.clone());
         RiffOwner::Owner { user, email }
@@ -607,10 +896,10 @@ impl Tokens {
     /// ```
     pub fn pass_owner(&mut self, email: &str, admins: &[String]) -> Result<String, String> {
         let email = email.trim().to_lowercase();
-        let Some(old) = self.owner.clone() else {
-            return Err("this riff has no owner yet".into());
+        let Some(old) = self.owner.as_ref() else {
+            return Err(NO_OWNER.into());
         };
-        if old == email {
+        if *old == email {
             return Err(format!("{email} is the owner of this riff already"));
         }
         let admin = admins.iter().any(|a| a.trim().to_lowercase() == email);
@@ -619,11 +908,7 @@ impl Tokens {
                 "{email} is not a member of this riff; run riff invite {email} first"
             ));
         }
-        self.members.remove(&email);
-        self.admins.remove(&email);
-        self.members.insert(old.clone());
-        self.admins.insert(old);
-        self.owner = Some(email.clone());
+        self.make_owner(&email);
         Ok(email)
     }
 
@@ -856,6 +1141,11 @@ impl Tokens {
             members: self.members.clone(),
             admins: self.admins.clone(),
             riff_id: Some(self.riff_id.0.clone()),
+            no_owner: self.no_owner,
+            take: self.take.as_ref().map(|t| SavedTake {
+                admin: t.admin.clone(),
+                until: clock.save(t.until),
+            }),
             sign_ins: self
                 .sign_ins
                 .iter()
@@ -916,6 +1206,12 @@ impl Tokens {
             admins: saved.admins,
             // A saved form from before the riff ID gets a new one.
             riff_id: saved.riff_id.map(RiffId).unwrap_or_default(),
+            no_owner: saved.no_owner,
+            // A time that ended while the server was down ends now.
+            take: saved.take.map(|t| Take {
+                admin: t.admin,
+                until: clock.load(t.until).unwrap_or(now),
+            }),
             ..Tokens::default()
         };
         for s in saved.sign_ins {
@@ -1055,9 +1351,22 @@ struct Saved {
     /// The riff ID (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
     #[serde(default)]
     riff_id: Option<String>,
+    /// A riff whose owner was gone, and the request for the owner role
+    /// that waits (01M3N7K4GAKJ621V5AWJRQVF3M). A saved form from before
+    /// them has neither.
+    #[serde(default)]
+    no_owner: bool,
+    #[serde(default)]
+    take: Option<SavedTake>,
     sign_ins: Vec<SavedSignIn>,
     access: Vec<SavedAccess>,
     refresh: Vec<SavedRefresh>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedTake {
+    admin: String,
+    until: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1585,9 +1894,57 @@ mod tests {
         tokens.pass_owner("bob@gmail.com", &[]).unwrap();
         let (mut loaded, _) = restart(&tokens, now, Duration::from_secs(5));
         // The old `--owner` setting names the owner only of a new riff.
-        assert_eq!(loaded.name_owner("ada@gmail.com"), "bob@gmail.com");
+        assert_eq!(loaded.name_owner("ada@gmail.com"), Some("bob@gmail.com"));
         assert_eq!(loaded.admins().collect::<Vec<_>>(), ["ada@gmail.com"]);
         assert_eq!(loaded.members().collect::<Vec<_>>(), ["ada@gmail.com"]);
+    }
+
+    /// A riff with no owner, and a request that waits, stay after a
+    /// restart (01M3N7K4GAKJ621V5AWJRQVF3M).
+    #[test]
+    fn no_owner_and_a_request_stay_after_a_restart() {
+        let now = Instant::now();
+        let wait = Duration::from_secs(600);
+        let mut tokens = Tokens::default();
+        tokens
+            .admit("ada@gmail.com", false, &[], "k1", now)
+            .unwrap();
+        tokens.add_admin("bob@gmail.com").unwrap();
+        tokens
+            .admit("bob@gmail.com", false, &[], "k2", now)
+            .unwrap();
+        tokens.take_owner("bob", &[], wait, now).unwrap();
+
+        let (mut loaded, later) = restart(&tokens, now, Duration::from_secs(5));
+        assert_eq!(loaded.asks(), Some("bob@gmail.com"));
+        assert!(!loaded.is_due(later));
+        assert!(loaded.is_due(later + wait));
+
+        // A request whose time ended while the server was down is due at
+        // the load.
+        let (loaded_late, late) = restart(&tokens, now, wait * 2);
+        assert!(loaded_late.is_due(late));
+
+        loaded.deny_owner("ada").unwrap();
+        loaded.owner_gone().unwrap();
+        let (mut again, _) = restart(&loaded, later, Duration::from_secs(5));
+        assert_eq!(again.owner(), None);
+        assert!(again.owned());
+        assert_eq!(again.name_owner("ada@gmail.com"), None);
+        again
+            .admit("carol@gmail.com", true, &[], "k3", later)
+            .unwrap();
+        assert_eq!(again.owner(), None, "a sign-in makes no owner");
+    }
+
+    #[test]
+    fn nobody_signs_in_as_the_riff_server() {
+        let mut tokens = Tokens::default();
+        let refused = tokens.sign_in("Riff@gmail.com", "k", Instant::now());
+        assert!(
+            matches!(&refused, Err(NoSignIn::Email(why)) if why.contains("the riff server")),
+            "{refused:?}"
+        );
     }
 
     #[test]

@@ -454,7 +454,9 @@ riff owner bob@gmail.com
 ```
 
 The new owner stays after a restart. The `--owner` setting of
-`riff-server` names the owner only of a new riff.
+`riff-server` names the owner only of a new riff. An admin can also
+ask for the role: see
+[Take the owner role](start-a-team-riff.md#take-the-owner-role).
 
 ### See the members
 

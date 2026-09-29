@@ -15,8 +15,9 @@ use riff_core::selector::Selector;
 use crate::api::{Checked, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
-    AdminSet, ClaimReply, Invited, Kind, LeadReply, MembersReply, OwnerPassed, Posted, Removed,
-    Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    AdminSet, ClaimReply, Invited, Kind, LeadReply, MembersReply, OwnerAsked, OwnerDenied,
+    OwnerPassed, Posted, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo,
+    StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -564,6 +565,61 @@ pub fn owner_passed(done: &OwnerPassed) -> String {
     )
 }
 
+/// The answer to `riff owner --take` (01M3N7K3ZAZFGABN7032AYJWEM).
+///
+/// ```
+/// use riff_core::wire::OwnerAsked;
+///
+/// let asked = OwnerAsked {
+///     admin: "bob@gmail.com".into(),
+///     owner: Some("ada@gmail.com".into()),
+///     answer_secs: 600,
+/// };
+/// assert_eq!(
+///     riff::text::owner_asked(&asked),
+///     "You asked ada@gmail.com for the owner role. The owner has 10 minutes to \
+///      answer. With no answer, you are the owner. The riff posts each step to the \
+///      thread of each repository."
+/// );
+/// let took = OwnerAsked { owner: None, answer_secs: 0, ..asked };
+/// assert_eq!(
+///     riff::text::owner_asked(&took),
+///     "The riff had no owner. bob@gmail.com is now the owner."
+/// );
+/// ```
+pub fn owner_asked(asked: &OwnerAsked) -> String {
+    let Some(owner) = &asked.owner else {
+        return format!("The riff had no owner. {} is now the owner.", asked.admin);
+    };
+    let minutes = match asked.answer_secs / 60 {
+        0 => "less than a minute".to_owned(),
+        1 => "1 minute".to_owned(),
+        n => format!("{n} minutes"),
+    };
+    format!(
+        "You asked {owner} for the owner role. The owner has {minutes} to answer. With no \
+         answer, you are the owner. The riff posts each step to the thread of each repository."
+    )
+}
+
+/// The answer to `riff owner --deny` (01M3N7K41N03P26BEFFNX5617K).
+///
+/// ```
+/// use riff_core::wire::OwnerDenied;
+///
+/// let denied = OwnerDenied { owner: "ada@gmail.com".into(), admin: "bob@gmail.com".into() };
+/// assert_eq!(
+///     riff::text::owner_denied(&denied),
+///     "ada@gmail.com stays the owner. The riff tells bob@gmail.com."
+/// );
+/// ```
+pub fn owner_denied(denied: &OwnerDenied) -> String {
+    format!(
+        "{} stays the owner. The riff tells {}.",
+        denied.owner, denied.admin
+    )
+}
+
 /// The note of `riff invite` in each repository thread
 /// (01M3MN14ZCTRVD3T455P6TFK1B). `user` made the change.
 ///
@@ -696,6 +752,13 @@ pub fn members_news(news: &anyhow::Result<Vec<Posted>>) -> String {
 ///     riff::text::members(&reply),
 ///     "owner: ada@gmail.com\nadmins: none\nmembers: bob@gmail.com\nallowed domains: x.io"
 /// );
+///
+/// // A riff with no owner says so (01M3N7K48XQ8XSP7R0HD535ZX3).
+/// let none = MembersReply { owner: None, ..reply };
+/// assert!(riff::text::members(&none).starts_with("owner: none\n"));
+/// assert!(riff::text::members(&none).ends_with(
+///     "\nThe riff has no owner. An admin takes the owner role with: riff owner --take"
+/// ));
 /// ```
 pub fn members(reply: &MembersReply) -> String {
     let list = |items: &[String]| {
@@ -705,14 +768,23 @@ pub fn members(reply: &MembersReply) -> String {
             items.join(", ")
         }
     };
-    format!(
+    let list = format!(
         "owner: {}\nadmins: {}\nmembers: {}\nallowed domains: {}",
-        reply.owner.as_deref().unwrap_or("none yet"),
+        reply.owner.as_deref().unwrap_or("none"),
         list(&reply.admins),
         list(&reply.members),
         list(&reply.allowed_domains)
-    )
+    );
+    match reply.owner {
+        Some(_) => list,
+        None => format!("{list}\n{NO_OWNER}"),
+    }
 }
+
+/// The line of `riff members` for a riff with no owner
+/// (01M3N7K48XQ8XSP7R0HD535ZX3).
+pub const NO_OWNER: &str =
+    "The riff has no owner. An admin takes the owner role with: riff owner --take";
 
 fn workers_count(n: usize) -> String {
     if n == 1 {

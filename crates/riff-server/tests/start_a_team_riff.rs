@@ -118,7 +118,15 @@ async fn the_page_starts_a_team_riff_signs_in_the_owner_and_invites_a_person() {
         .iter()
         .filter(|c| c.starts_with("riff-server "))
         .collect();
-    assert_eq!(servers, ["riff-server --public-url URL --owner EMAIL"]);
+    // The second command is the example of "Change the times"
+    // (01M3N7K443DGPZ8XH5WWKK6M35).
+    assert_eq!(
+        servers,
+        [
+            "riff-server --public-url URL --owner EMAIL",
+            "riff-server --public-url URL --owner EMAIL --owner-take-minutes 30",
+        ]
+    );
 
     let issuer = common::fake_provider().await;
     let listen = format!("127.0.0.1:{}", free_port());
