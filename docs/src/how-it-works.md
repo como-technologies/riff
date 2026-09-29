@@ -197,9 +197,14 @@ riff-server --version
 ```
 
 `riff whoami` and `riff who` also show the build, after the server
-answers: `riff and riff-server have the build 0.4.0 929605821e54
-2026-09-27T22:03:01Z.` When the builds differ, the line shows both
-builds and says that the versions can talk.
+answers, in the fact `build`. When the builds differ, the fact
+`riff-server` shows the build of the server, in yellow, and says that
+the versions can talk:
+
+```text
+build        v0.7.0  (3c7b111, 2026-09-29)
+riff-server  v0.7.0  (f45be4d, 2026-09-29)  another build; the versions can talk
+```
 
 ### When the builds differ
 
@@ -620,10 +625,10 @@ riff   running
 owner  mike (mike@comotechnologies.io)
 build  v0.7.0  (f45be4d, 2026-09-29)
 
-SESSION                            STATE    ROLE         CLAIMS   STATUS
-mike@pangolin:riff#issue-6 (a6cf)  live     you lead     issue-6
-mike@thelio:riff#issue-7 (5b1e)    live     worker       issue-7  4m ago: write the tests
-brett@heron:riff (77e0)            idle 2m                        blocked 1m ago: waits for a review (step: merge)
+SESSION                            STATE    ROLE      CLAIMS   STATUS
+mike@pangolin:riff#issue-6 (a6cf)  live     you lead  issue-6
+mike@thelio:riff#issue-7 (5b1e)    live     worker    issue-7  4m ago: write the tests
+brett@heron:riff (77e0)            idle 2m                     blocked 1m ago: waits for a review (step: merge)
 ```
 
 `you` marks your own row. A tag shows the role of a session:
