@@ -1563,6 +1563,32 @@ the session of `riff who` by its short ID:
 riff who
 ```
 
+### See a new release in the status line
+
+When the riff runs a newer release than your session, the status line
+adds a tag. For example:
+
+```text
+riff 2a880834 lead update v0.6.0: riff update
+```
+
+| Tag | What it means | What to do |
+|---|---|---|
+| `update v0.6.0: riff update` | This machine has an older release. | Run `riff update`. |
+| `updating to v0.6.0` | With `update.auto` on, riff installs the release now, in the background. | Wait. |
+| `v0.6.0 installed: /mcp` | The release is installed. The session still runs the old one. | Run `/mcp` and reconnect riff, or start the session again. |
+
+To update this machine:
+
+```sh
+riff update
+```
+
+A dev build or another commit of the same release shows no tag. The
+status line asks the riff nothing more for the tag. When the riff does
+not answer in time, the status line shows no tag. To update by itself,
+see [Update riff by itself](#update-riff-by-itself).
+
 ### The lead conducts your sessions
 
 The lead splits the work among the other sessions of its person. It

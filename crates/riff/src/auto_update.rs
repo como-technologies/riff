@@ -185,3 +185,83 @@ pub async fn run(cargo: &Path, claude: &Path, tag: &str, server: &str, local: &s
     }
     done.map(|_| ())
 }
+
+/// What the status line says about a newer release of `riff-server`
+/// (01M3NJCWBFJK03AC64XN04TTH0). Each holds the release tag of the
+/// server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tag {
+    /// The session runs an older release. Run `riff update`.
+    Available(String),
+    /// The update by itself installs the release now.
+    Updating(String),
+    /// The release is installed. The session still runs the old one
+    /// until `/mcp` or a restart.
+    Installed(String),
+}
+
+/// The machine as the status line sees it, for [`tag`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Machine<'a> {
+    /// `update.auto` is on.
+    pub auto: bool,
+    /// An update by itself holds the update lock.
+    pub updating: bool,
+    /// The release that the update by itself tried last.
+    pub tried: Option<&'a str>,
+}
+
+/// The tag of the status line for a session that runs `session`, on a
+/// machine with `installed` on disk and `machine`, in a riff of
+/// `server`. `session` is `None` for a riff too old to record its build
+/// (01M3NJCRVZW5BFQYZ9N185K2D2). Only the release counts, not the
+/// commit. `None` when the session runs the release of the server or a
+/// newer one (01M3NJCWBFJK03AC64XN04TTH0).
+///
+/// ```
+/// use riff::auto_update::{tag, Machine, Tag};
+/// use riff_core::build::Build;
+///
+/// let b = |v: &str| Build { version: v.into(), ..Build::this() };
+/// let off = Machine::default();
+/// let on = Machine { auto: true, ..off };
+/// // The same release, or another commit of it: no tag.
+/// let dev = Build { commit: "dev".into(), ..b("0.5.0") };
+/// assert_eq!(tag(Some(&b("0.5.0")), &b("0.5.0"), &dev, off), None);
+/// assert_eq!(tag(Some(&b("0.6.0")), &b("0.6.0"), &b("0.5.0"), off), None);
+/// assert_eq!(tag(None, &b("0.5.0"), &b("next"), off), None);
+/// // A newer release: update it.
+/// assert_eq!(tag(Some(&b("0.5.0")), &b("0.5.0"), &b("0.6.0"), off), Some(Tag::Available("v0.6.0".into())));
+/// // With update.auto on, the update by itself installs it.
+/// assert_eq!(tag(Some(&b("0.5.0")), &b("0.5.0"), &b("0.6.0"), on), Some(Tag::Updating("v0.6.0".into())));
+/// let running = Machine { updating: true, tried: Some("v0.6.0"), ..on };
+/// assert_eq!(tag(Some(&b("0.5.0")), &b("0.5.0"), &b("0.6.0"), running), Some(Tag::Updating("v0.6.0".into())));
+/// // A failed update by itself waits for the next release.
+/// let failed = Machine { tried: Some("v0.6.0"), ..on };
+/// assert_eq!(tag(Some(&b("0.5.0")), &b("0.5.0"), &b("0.6.0"), failed), Some(Tag::Available("v0.6.0".into())));
+/// // Installed on disk, but the session runs the old release.
+/// assert_eq!(tag(Some(&b("0.5.0")), &b("0.6.0"), &b("0.6.0"), failed), Some(Tag::Installed("v0.6.0".into())));
+/// // A session of a riff too old to record its build.
+/// assert_eq!(tag(None, &b("0.6.0"), &b("0.6.0"), off), Some(Tag::Installed("v0.6.0".into())));
+/// ```
+pub fn tag(
+    session: Option<&Build>,
+    installed: &Build,
+    server: &Build,
+    machine: Machine,
+) -> Option<Tag> {
+    server.semver()?;
+    if session.is_some_and(|s| wanted(s, server).is_none()) {
+        return None;
+    }
+    let release = lifecycle::release_tag(&server.version);
+    if wanted(installed, server).is_none() {
+        return Some(Tag::Installed(release));
+    }
+    let starts = machine.auto && (machine.updating || machine.tried != Some(&release));
+    Some(if starts {
+        Tag::Updating(release)
+    } else {
+        Tag::Available(release)
+    })
+}
