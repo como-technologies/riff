@@ -14,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
 
-use book::{commands_of, commands_of_part, each_is_real, page};
+use book::{commands_of, commands_of_part, each_is_real, page, part};
 
 const PAGE: &str = "start-a-riff.md";
 
@@ -170,6 +170,32 @@ fn a_person_updates_riff_with_riff_update() {
     let update = commands_of_part(PAGE, "Update riff");
     assert_eq!(update, ["riff update"]);
     each_is_real(&update);
+}
+
+/// "Update riff" of "Start a Riff" says which release `riff update`
+/// installs (01M3MRMAVVKJ5WS8GWCJHWH0R4): the newest release only for
+/// the riff of this machine, and the release of the shared server for
+/// a shared riff.
+#[test]
+fn update_riff_says_that_it_installs_the_release_of_the_riff() {
+    let text = part(PAGE, "Update riff")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for words in [
+        "It installs the release that your riff runs.",
+        "That is not always the newest release (see [Releases](how-it-works.md#releases))",
+        "The riff of this machine: it installs the newest release.",
+        "A shared riff: it installs the release of the shared server.",
+        "After a new release, update when the shared riff runs it.",
+    ] {
+        assert!(text.contains(words), "{words}");
+    }
+    assert!(
+        !text.contains("installs the newest release of riff"),
+        "{text}"
+    );
+    assert!(!text.contains("same build"), "{text}");
 }
 
 /// "Start a Team Riff" (01M3MEFG6F102T1H8DFJ38EJ4A): the owner uses the

@@ -35,15 +35,21 @@ pub fn commands_of(name: &str) -> Vec<String> {
     commands_in(&page(name))
 }
 
-/// The commands of one `##` part of the book page `name`.
-pub fn commands_of_part(name: &str, heading: &str) -> Vec<String> {
+/// The text of one `##` part of the book page `name`, from its heading
+/// to the next `##` heading.
+pub fn part(name: &str, heading: &str) -> String {
     let page = page(name);
     let start = page
         .find(&format!("\n## {heading}\n"))
         .unwrap_or_else(|| panic!("{heading} is in {name}"));
     let rest = &page[start + 1..];
     let part = rest[3..].find("\n## ").map_or(rest, |end| &rest[..end + 3]);
-    commands_in(part)
+    part.to_owned()
+}
+
+/// The commands of one `##` part of the book page `name`.
+pub fn commands_of_part(name: &str, heading: &str) -> Vec<String> {
+    commands_in(&part(name, heading))
 }
 
 /// The `riff` commands of the book page `name`, in order.

@@ -79,7 +79,7 @@ machine, not the riff that you joined.
 
 ## Update riff
 
-`riff` works only with a riff of the same build (see
+A riff of another version can refuse `riff` (see
 [Builds](how-it-works.md#builds)). When the owner updates the riff,
 update riff on your machine. It installs the release that the riff
 runs (see [Releases](how-it-works.md#releases)):
