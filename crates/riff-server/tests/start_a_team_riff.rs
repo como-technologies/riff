@@ -119,7 +119,7 @@ async fn the_page_starts_a_team_riff_signs_in_the_owner_and_invites_a_person() {
         .filter(|c| c.starts_with("riff-server "))
         .collect();
     // The second command is the example of "Change the times"
-    // (01M3N7K443DGPZ8XH5WWKK6M35).
+    // (01M3Q5460YESBSQHTV3M15PE53).
     assert_eq!(
         servers,
         [

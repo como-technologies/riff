@@ -66,7 +66,7 @@ use crate::style::{DIM, styled};
 use crate::text::{ACTION, action_text, safe};
 
 /// The name of the chat thread.
-pub const THREAD: &str = "chat";
+pub const THREAD: &str = riff_core::name::CHAT;
 
 /// The line that ends `riff chat`.
 pub const QUIT: &str = "/quit";
@@ -87,7 +87,7 @@ const RETRY: Duration = Duration::from_secs(2);
 /// assert_eq!(riff::chat::thread().to_string(), "chat");
 /// ```
 pub fn thread() -> ThreadName {
-    THREAD.parse().expect("chat is a thread name")
+    ThreadName::chat()
 }
 
 /// The sessions that a chat line of `sender` wakes: the lead of each

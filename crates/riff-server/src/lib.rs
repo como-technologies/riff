@@ -146,7 +146,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::lease::Lease;
-use crate::owner::Checks;
+use crate::owner::{Check, Checks};
 use crate::state::{Delivery, State};
 use crate::store::{SESSIONS, Store, StoreError, THREADS, TOKENS, Version};
 use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
@@ -391,7 +391,8 @@ impl Server {
 
     /// One look at the owner role at `now` (see [`owner`]): it grants a
     /// request whose time ended, then checks the owner when a check is
-    /// due. Returns the change that it made.
+    /// due. It warns the owner one check before the owner is gone.
+    /// Returns the change that it made.
     fn owner_tick(&self, checks: &mut Checks, now: Instant) -> Option<OwnerChange> {
         let timing = &self.config.owner_role;
         if self.tokens().is_due(now) {
@@ -404,20 +405,70 @@ impl Server {
             let tokens = self.tokens();
             let others = !tokens.roles(&self.config.admins).1.is_empty();
             match tokens.owner() {
-                Some(_) if others => Some(tokens.owner_user().map(str::to_owned)),
+                Some(email) if others => {
+                    Some((email.to_owned(), tokens.owner_user().map(str::to_owned)))
+                }
                 _ => None,
             }
         };
         // Only a riff with an owner and another admin checks the owner.
-        let Some(user) = owner else {
+        let Some((email, user)) = owner else {
             checks.reset(now, timing);
             return None;
         };
-        let live = user.is_some_and(|user| !self.state().live_leads(&user, now).is_empty());
-        if !checks.record(now, live, timing) {
-            return None;
+        let since = checks.since(timing);
+        let seen = user
+            .as_deref()
+            .is_some_and(|user| self.state().present(user, since, now));
+        match checks.record(now, seen, timing) {
+            Check::Seen | Check::Missed => None,
+            Check::Warn => {
+                self.warn_owner(&owner::warn_news(&email, timing), user.as_deref());
+                None
+            }
+            Check::Gone => self.tokens_change().owner_gone(),
         }
-        self.tokens_change().owner_gone()
+    }
+
+    /// Warns the owner that the next check can drop the owner
+    /// (01M3Q546335NBTKG5BHQ27QC93): a note to each session of `user` in
+    /// the thread of each repository, and one line in the chat.
+    fn warn_owner(&self, news: &str, user: Option<&str>) {
+        tracing::info!("{news}");
+        let (now, at_ms) = (Instant::now(), now_ms());
+        let me = owner::server_uri();
+        let mut deliveries = Vec::new();
+        {
+            let mut state = self.state();
+            if let Some(user) = user {
+                for thread in state.repositories() {
+                    let to = vec![Selector {
+                        user: Some(user.to_owned()),
+                        ..Selector::default()
+                    }];
+                    deliveries.push(state.announce(
+                        &me,
+                        Some(thread),
+                        to,
+                        news,
+                        Kind::Note,
+                        now,
+                        at_ms,
+                    ));
+                }
+            }
+            let chat = ThreadName::chat();
+            deliveries.push(state.announce(
+                &me,
+                Some(chat),
+                Vec::new(),
+                news,
+                Kind::Message,
+                now,
+                at_ms,
+            ));
+        }
+        self.deliver_all(deliveries);
     }
 
     /// Saves a change of the owner role that no person made, and posts
@@ -465,6 +516,12 @@ impl Server {
                 }
             }
         }
+        self.deliver_all(deliveries);
+    }
+
+    /// Delivers each post of the server. A post that did not go is only
+    /// logged.
+    fn deliver_all(&self, deliveries: Vec<Result<Delivery, String>>) {
         for delivery in deliveries {
             match delivery {
                 Ok(mut delivery) => {

@@ -167,16 +167,27 @@ The riff tells the admin.
 
 ### An owner who is gone
 
-`riff-server` checks the owner each 5 minutes, while the riff has an
-admin who is not the owner. A check misses when the owner has no live
-lead session. After 3 misses in a row, the owner is gone. The old
-owner stays an admin, and the riff has no owner. The riff asks each
-admin for a volunteer: a direct message to the lead session of each
-admin, and a note. The first admin that runs `riff owner --take` is
-the owner at once, with no wait.
+`riff-server` checks the owner each 10 minutes, while the riff has an
+admin who is not the owner. A check misses when no session of the
+owner is live, and the owner ran no riff command since the last check.
+After 3 misses in a row, the server warns the owner: a note to the
+sessions of the owner, and one line in the chat. When the next check
+misses too, the owner is gone. The old owner stays an admin, and the
+riff has no owner. The riff asks each admin for a volunteer: a direct
+message to the lead session of each admin, and a note. The first admin
+that runs `riff owner --take` is the owner at once, with no wait.
 
 While the riff has no owner, `riff members` says so. `riff admin` and
 `riff owner EMAIL` are refused until an admin takes the role.
+
+### Stay the owner
+
+When the server warns you, run any riff command before the next
+check, for example:
+
+```sh
+riff who
+```
 
 ### Change the times
 
@@ -185,8 +196,8 @@ Three settings of `riff-server` set the times:
 | Option | Variable | Default | What |
 |---|---|---|---|
 | `--owner-take-minutes` | `RIFF_OWNER_TAKE_MINUTES` | 10 | The minutes that the owner has to answer. |
-| `--owner-ping-minutes` | `RIFF_OWNER_PING_MINUTES` | 5 | The minutes between two checks of the owner. |
-| `--owner-pings` | `RIFF_OWNER_PINGS` | 3 | The misses in a row after which the owner is gone. |
+| `--owner-ping-minutes` | `RIFF_OWNER_PING_MINUTES` | 10 | The minutes between two checks of the owner. |
+| `--owner-pings` | `RIFF_OWNER_PINGS` | 3 | The misses in a row after which the server warns the owner. One more miss, and the owner is gone. |
 
 For example, to give the owner 30 minutes to answer, add the option
 to step 3 of [Start the riff](#start-the-riff):

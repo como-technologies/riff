@@ -1,8 +1,8 @@
 //! Any admin can take the owner role: `riff owner --take`, `riff owner
 //! --deny`, a request with no answer, and an owner who is gone, against a
 //! real server with short times (01M3N7K3ZAZFGABN7032AYJWEM,
-//! 01M3N7K41N03P26BEFFNX5617K, 01M3N7K443DGPZ8XH5WWKK6M35,
-//! 01M3N7K46H5BRFJCB46P3JNAFZ, 01M3N7K48XQ8XSP7R0HD535ZX3,
+//! 01M3N7K41N03P26BEFFNX5617K, 01M3Q5460YESBSQHTV3M15PE53,
+//! 01M3Q546335NBTKG5BHQ27QC93, 01M3N7K48XQ8XSP7R0HD535ZX3,
 //! 01M3N7K4BC1RPZKQ1XNDTBRPGF, 01M3N7K4DVHSF7AQ402F14J26Z). The sign-in
 //! is in the mock store of `keyring-core`, so the tests run in process.
 
@@ -300,6 +300,98 @@ async fn with_no_volunteer_the_riff_has_no_owner() {
     assert_eq!(service.tokens().owner(), Some("bob@gmail.com"));
 }
 
+/// The lead of the owner ends, but the owner has another live session:
+/// the owner stays (01M3Q546335NBTKG5BHQ27QC93).
+#[tokio::test]
+async fn another_live_session_keeps_the_owner() {
+    let (service, api, _) = start(timing(LONG, Duration::from_millis(50), 2)).await;
+    let other: SessionUri = "riff://ada@thelio/como-technologies/riff?session=ada-other"
+        .parse()
+        .unwrap();
+    Api::new(api.base()).register(&other).await.unwrap();
+    Api::new(api.base()).end(&lead("ada")).await.unwrap();
+    // 10 checks, more than the 3 misses of a drop.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(service.tokens().owner(), Some("ada@gmail.com"));
+
+    // With no session and no call, the owner is gone.
+    Api::new(api.base()).end(&other).await.unwrap();
+    wait_for("ada is gone", || service.tokens().owner().is_none()).await;
+}
+
+/// The server warns the owner one check before the drop: a note to the
+/// owner in the thread of each repository, and one line in the chat
+/// (01M3Q546335NBTKG5BHQ27QC93).
+#[tokio::test]
+async fn the_owner_gets_a_warning_one_check_before_the_drop() {
+    let every = Duration::from_millis(100);
+    let (service, api) = {
+        let (service, api, _) = start(timing(LONG, every, 2)).await;
+        Api::new(api.base()).end(&lead("ada")).await.unwrap();
+        (service, api)
+    };
+    wait_for("ada is gone", || service.tokens().owner().is_none()).await;
+    let bob = Api::new(api.base());
+    let notes = bob.read(&lead("bob"), &repo(), true).await.unwrap();
+    let [warning, gone] = &notes[..] else {
+        panic!("{notes:#?}");
+    };
+    assert_eq!(
+        warning.message.body,
+        "members: the owner ada@gmail.com was not seen at 2 checks in a row, less than a \
+         minute apart. At the next check, in less than a minute, the riff has no owner. To \
+         stay the owner, run a riff command, for example: riff who."
+    );
+    assert_eq!(warning.message.kind, Kind::Note);
+    assert_eq!(warning.message.to.len(), 1);
+    assert_eq!(warning.message.to[0].user.as_deref(), Some("ada"));
+    assert!(
+        gone.message.body.contains("is gone"),
+        "{}",
+        gone.message.body
+    );
+    // One check lies between the warning and the drop.
+    let gap = gone.message.at_ms - warning.message.at_ms;
+    assert!(gap + 20 >= 100, "{gap} ms");
+
+    let chat = bob
+        .read(&lead("bob"), &ThreadName::chat(), true)
+        .await
+        .unwrap();
+    let bodies: Vec<&str> = chat.iter().map(|m| m.message.body.as_str()).collect();
+    assert_eq!(bodies, [warning.message.body.as_str()]);
+    assert_eq!(chat[0].message.from, server_uri());
+}
+
+/// A call of the owner as a person, for example `riff who`, is a sign
+/// of life after the warning (01M3Q546335NBTKG5BHQ27QC93).
+#[tokio::test]
+async fn a_call_as_a_person_keeps_the_owner() {
+    let (service, api, _) = start(timing(LONG, Duration::from_millis(100), 2)).await;
+    Api::new(api.base()).end(&lead("ada")).await.unwrap();
+    let ada = person("ada");
+    let until = Instant::now() + Duration::from_millis(800);
+    while Instant::now() < until {
+        Api::new(api.base()).who(&ada, false).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert_eq!(service.tokens().owner(), Some("ada@gmail.com"));
+}
+
+/// `--owner-pings` sets the window: more misses keep the owner longer
+/// (01M3Q5460YESBSQHTV3M15PE53).
+#[tokio::test]
+async fn the_setting_changes_the_window() {
+    let every = Duration::from_millis(100);
+    let (short, short_api, _) = start(timing(LONG, every, 1)).await;
+    let (long, long_api, _) = start(timing(LONG, every, 6)).await;
+    Api::new(short_api.base()).end(&lead("ada")).await.unwrap();
+    Api::new(long_api.base()).end(&lead("ada")).await.unwrap();
+    wait_for("ada is gone", || short.tokens().owner().is_none()).await;
+    assert_eq!(long.tokens().owner(), Some("ada@gmail.com"));
+    wait_for("ada is gone", || long.tokens().owner().is_none()).await;
+}
+
 /// Each step posts one note to the thread of each repository. The notes
 /// of the server come from `riff@server`, wake no session and hold no
 /// token (01M3N7K4DVHSF7AQ402F14J26Z).
@@ -341,7 +433,8 @@ async fn each_step_posts_one_note() {
         "members: carol asks for the owner role. The owner bob@gmail.com",
         "members: the owner bob@gmail.com did not answer in less than a minute. \
          carol@gmail.com is the owner now.",
-        "members: the owner carol@gmail.com is gone: no live lead at 2 checks in a row",
+        "members: the owner carol@gmail.com was not seen at 2 checks in a row",
+        "members: the owner carol@gmail.com is gone: not seen at 3 checks in a row",
         "members: ada took the owner role. The riff had no owner.",
     ];
     assert_eq!(bodies.len(), starts.len(), "{bodies:#?}");
@@ -377,10 +470,11 @@ fn the_book_shows_how_to_take_the_owner_role() {
             "riff owner --take",
             "riff owner EMAIL",
             "riff owner --deny",
+            "riff who",
             "riff-server --public-url URL --owner EMAIL --owner-take-minutes 30",
         ]
     );
-    each_is_real(&commands[..3]);
+    each_is_real(&commands[..4]);
     let help = Isolated::shared()
         .assert_riff_server()
         .arg("--help")

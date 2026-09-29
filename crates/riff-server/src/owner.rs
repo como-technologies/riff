@@ -14,17 +14,33 @@
 //!
 //! [`crate::token::Tokens`] keeps the owner, the request that waits and
 //! whether the riff has no owner. This module holds the times
-//! ([`Timing`], 01M3N7K443DGPZ8XH5WWKK6M35), the check of the owner
-//! ([`Checks`], 01M3N7K46H5BRFJCB46P3JNAFZ), and the text of each note
+//! ([`Timing`], 01M3Q5460YESBSQHTV3M15PE53), the check of the owner
+//! ([`Checks`], 01M3Q546335NBTKG5BHQ27QC93), and the text of each note
 //! (01M3N7K4DVHSF7AQ402F14J26Z).
 //!
 //! # Rules
 //!
 //! - The server checks the owner each [`Timing::check_every`], while the
 //!   riff has an owner and an admin who is not the owner. A check misses
-//!   when the owner has no live lead in any repository. After
-//!   [`Timing::misses`] misses in a row, the owner is gone. A check
-//!   wakes no session: a live lead has an open watch or a keep-alive.
+//!   when the owner shows no sign of life: no session of the owner is
+//!   live, and the owner made no call since the last check, also as a
+//!   person (`riff chat`, `riff top`, `riff who`). See
+//!   [`crate::state::State::present`]. A check wakes no session: a live
+//!   session has an open watch or a keep-alive.
+//! - After [`Timing::misses`] misses in a row, the server warns the
+//!   owner ([`warn_news`]): a note to each session of the owner, and one
+//!   line in the chat. When the next check misses too, the owner is
+//!   gone.
+//!
+//! ```mermaid
+//! stateDiagram-v2
+//!     Seen --> Missed: a check with no sign of the owner
+//!     Missed --> Missed: fewer than P misses in a row
+//!     Missed --> Warned: P misses in a row
+//!     Warned --> Gone: the next check misses too
+//!     Missed --> Seen: a sign of the owner
+//!     Warned --> Seen: a sign of the owner
+//! ```
 //! - The server posts each note as [`server_uri`]: the USER
 //!   [`crate::token::SERVER_USER`], which no person can sign in as
 //!   (01M3N7K4BC1RPZKQ1XNDTBRPGF). A note has no signature.
@@ -42,7 +58,7 @@ use riff_core::name::SessionUri;
 
 use crate::token::{OwnerChange, SERVER_USER};
 
-/// The times of the owner role (01M3N7K443DGPZ8XH5WWKK6M35).
+/// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
 ///
 /// ```
 /// use std::time::Duration;
@@ -50,7 +66,7 @@ use crate::token::{OwnerChange, SERVER_USER};
 ///
 /// let timing = Timing::default();
 /// assert_eq!(timing.answer, Duration::from_secs(10 * 60));
-/// assert_eq!(timing.check_every, Duration::from_secs(5 * 60));
+/// assert_eq!(timing.check_every, Duration::from_secs(10 * 60));
 /// assert_eq!(timing.misses, 3);
 /// assert_eq!(timing.tick(), Duration::from_secs(1));
 /// ```
@@ -61,7 +77,8 @@ pub struct Timing {
     pub answer: Duration,
     /// The time between two checks of the owner (M).
     pub check_every: Duration,
-    /// The misses in a row after which the owner is gone (P).
+    /// The misses in a row after which the server warns the owner (P).
+    /// One more miss after the warning, and the owner is gone.
     pub misses: u32,
 }
 
@@ -69,7 +86,7 @@ impl Default for Timing {
     fn default() -> Self {
         Timing {
             answer: Duration::from_secs(10 * 60),
-            check_every: Duration::from_secs(5 * 60),
+            check_every: Duration::from_secs(10 * 60),
             misses: 3,
         }
     }
@@ -95,12 +112,26 @@ impl Timing {
     }
 }
 
+/// The result of one check of the owner (01M3Q546335NBTKG5BHQ27QC93).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Check {
+    /// The owner showed a sign of life. The misses start again.
+    Seen,
+    /// A miss, with fewer than [`Timing::misses`] in a row.
+    Missed,
+    /// [`Timing::misses`] misses in a row: the server warns the owner.
+    Warn,
+    /// A miss after the warning: the owner is gone. The misses start
+    /// again.
+    Gone,
+}
+
 /// The checks of the owner: when the next one is due, and the misses in
-/// a row (01M3N7K46H5BRFJCB46P3JNAFZ).
+/// a row (01M3Q546335NBTKG5BHQ27QC93).
 ///
 /// ```
 /// use std::time::{Duration, Instant};
-/// use riff_server::owner::{Checks, Timing};
+/// use riff_server::owner::{Check, Checks, Timing};
 ///
 /// let timing = Timing { check_every: Duration::from_secs(60), misses: 2, ..Timing::default() };
 /// let start = Instant::now();
@@ -109,13 +140,17 @@ impl Timing {
 ///
 /// let first = start + Duration::from_secs(60);
 /// assert!(checks.due(first));
-/// assert!(!checks.record(first, false, &timing), "one miss");
+/// assert_eq!(checks.record(first, false, &timing), Check::Missed);
 /// assert!(!checks.due(first));
 /// let second = first + Duration::from_secs(60);
-/// assert!(!checks.record(second, true, &timing), "a live lead starts again");
+/// assert_eq!(checks.record(second, true, &timing), Check::Seen, "a sign of life");
 /// let third = second + Duration::from_secs(60);
-/// assert!(!checks.record(third, false, &timing));
-/// assert!(checks.record(third + Duration::from_secs(60), false, &timing), "gone");
+/// assert_eq!(checks.record(third, false, &timing), Check::Missed);
+/// let fourth = third + Duration::from_secs(60);
+/// assert_eq!(checks.record(fourth, false, &timing), Check::Warn);
+/// let fifth = fourth + Duration::from_secs(60);
+/// assert_eq!(checks.record(fifth, false, &timing), Check::Gone);
+/// assert_eq!(checks.record(fifth + Duration::from_secs(60), false, &timing), Check::Missed);
 /// ```
 #[derive(Clone, Debug)]
 pub struct Checks {
@@ -138,17 +173,33 @@ impl Checks {
         self.next <= now
     }
 
-    /// Records a check at `now`: `live` is true when the owner has a live
-    /// lead. Returns true when the owner is gone: this check made
-    /// [`Timing::misses`] misses in a row. The misses then start again.
-    pub fn record(&mut self, now: Instant, live: bool, timing: &Timing) -> bool {
+    /// The time of the last check: one [`Timing::check_every`] before
+    /// the next one. A call of the owner at this time or later is a sign
+    /// of life.
+    pub fn since(&self, timing: &Timing) -> Instant {
+        self.next
+            .checked_sub(timing.check_every)
+            .unwrap_or(self.next)
+    }
+
+    /// Records a check at `now`: `seen` is true when the owner showed a
+    /// sign of life.
+    pub fn record(&mut self, now: Instant, seen: bool, timing: &Timing) -> Check {
         self.next = now + timing.check_every;
-        self.misses = if live { 0 } else { self.misses + 1 };
-        let gone = self.misses >= timing.misses.max(1);
-        if gone {
+        if seen {
             self.misses = 0;
+            return Check::Seen;
         }
-        gone
+        self.misses += 1;
+        let warn_at = timing.misses.max(1);
+        if self.misses > warn_at {
+            self.misses = 0;
+            Check::Gone
+        } else if self.misses == warn_at {
+            Check::Warn
+        } else {
+            Check::Missed
+        }
     }
 
     /// Starts again with no misses, for example while the riff has no
@@ -235,6 +286,29 @@ pub fn denied_news(user: &str, owner: &str, admin: &str) -> String {
     format!("members: {user} kept the owner role. {admin} asked for it. {owner} stays the owner.")
 }
 
+/// The warning to the owner, one check before the owner is gone
+/// (01M3Q546335NBTKG5BHQ27QC93).
+///
+/// ```
+/// use riff_server::owner::{Timing, warn_news};
+///
+/// assert_eq!(
+///     warn_news("ada@gmail.com", &Timing::default()),
+///     "members: the owner ada@gmail.com was not seen at 3 checks in a row, 10 minutes \
+///      apart. At the next check, in 10 minutes, the riff has no owner. To stay the \
+///      owner, run a riff command, for example: riff who."
+/// );
+/// ```
+pub fn warn_news(owner: &str, timing: &Timing) -> String {
+    let every = minutes(timing.check_every);
+    format!(
+        "members: the owner {owner} was not seen at {} checks in a row, {every} apart. At \
+         the next check, in {every}, the riff has no owner. To stay the owner, run a riff \
+         command, for example: riff who.",
+        timing.misses
+    )
+}
+
 /// The note of a change that no person made.
 ///
 /// ```
@@ -252,8 +326,8 @@ pub fn denied_news(user: &str, owner: &str, admin: &str) -> String {
 /// let gone = OwnerChange::Gone { old: "ada@gmail.com".into(), owner: None };
 /// assert_eq!(
 ///     change_news(&gone, &timing),
-///     "members: the owner ada@gmail.com is gone: no live lead at 3 checks in a row, \
-///      5 minutes apart. The riff has no owner now. ada@gmail.com stays an admin. The \
+///     "members: the owner ada@gmail.com is gone: not seen at 4 checks in a row, \
+///      10 minutes apart. The riff has no owner now. ada@gmail.com stays an admin. The \
 ///      riff needs a volunteer: the first admin that runs riff owner --take is the owner."
 /// );
 /// ```
@@ -266,8 +340,8 @@ pub fn change_news(change: &OwnerChange, timing: &Timing) -> String {
         ),
         OwnerChange::Gone { old, owner } => {
             let gone = format!(
-                "members: the owner {old} is gone: no live lead at {} checks in a row, {} apart.",
-                timing.misses,
+                "members: the owner {old} is gone: not seen at {} checks in a row, {} apart.",
+                timing.misses.max(1) + 1,
                 minutes(timing.check_every)
             );
             match owner {

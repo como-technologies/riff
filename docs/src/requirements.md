@@ -1234,18 +1234,25 @@
   direct message to each live lead of the admin, and a note. With no
   answer in N minutes, the admin that asked is the owner. The old owner
   stays an admin.
-- **01M3N7K443DGPZ8XH5WWKK6M35** `riff-server` has three settings of
+- **01M3N7K443DGPZ8XH5WWKK6M35** Replaced by
+  01M3Q5460YESBSQHTV3M15PE53.
+- **01M3Q5460YESBSQHTV3M15PE53** `riff-server` has three settings of
   the owner role, each 1 or more: N is `--owner-take-minutes`
   (`RIFF_OWNER_TAKE_MINUTES`, default 10). M is `--owner-ping-minutes`
-  (`RIFF_OWNER_PING_MINUTES`, default 5). P is `--owner-pings`
+  (`RIFF_OWNER_PING_MINUTES`, default 10). P is `--owner-pings`
   (`RIFF_OWNER_PINGS`, default 3).
-- **01M3N7K46H5BRFJCB46P3JNAFZ** `riff-server` checks the owner each M
+- **01M3N7K46H5BRFJCB46P3JNAFZ** Replaced by
+  01M3Q546335NBTKG5BHQ27QC93.
+- **01M3Q546335NBTKG5BHQ27QC93** `riff-server` checks the owner each M
   minutes, while the riff has an owner and an admin who is not the
-  owner. A check misses when the owner has no live lead in any
-  repository. A check wakes no session. After P misses in a row, the
-  owner is gone, and stays an admin. The admin of a request that waits
-  is the owner at once. With no request, the riff has no owner, and
-  asks for a volunteer: a direct message to each live lead of each
+  owner. A check misses when no session of the owner is live, and the
+  owner made no call since the last check, also as a person. A check
+  wakes no session. After P misses in a row, the server warns the
+  owner: a note to the sessions of the owner in the thread of each
+  repository, and one line in the chat. When the next check misses too,
+  the owner is gone, and stays an admin. The admin of a request that
+  waits is the owner at once. With no request, the riff has no owner,
+  and asks for a volunteer: a direct message to each live lead of each
   admin, and a note.
 - **01M3N7K48XQ8XSP7R0HD535ZX3** On a riff with no owner,
   `riff owner --take` of an admin makes that admin the owner at once.
