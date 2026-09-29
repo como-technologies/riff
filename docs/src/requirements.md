@@ -555,6 +555,12 @@
   a release: the tag ruleset `releases` on `v*` lets only the
   repository admin role create, move or delete a tag. `just github`
   makes it.
+- **01M3NB3EWE2V9PCTMNTZAKEXMA** Each release has a GitHub release on
+  its tag. Its notes start with the level line of the release pull
+  request and the command that each person runs. GitHub generates the
+  rest: each pull request merged since the last release, except the
+  pull requests with the label `release`. The GitHub releases are the
+  changelog. The repository has no changelog file.
 - **R161** CI signs in to Google Cloud with the OIDC token of GitHub.
   No key exists. Only the `main` branch of the repository can sign in.
   The deploy account can push images, deploy the service, and run it

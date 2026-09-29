@@ -396,7 +396,8 @@ fn the_book_deploys_at_the_end_of_a_wave() {
 /// The book how-to makes a release: bump, merge, tag, with the real
 /// commands (01M3N73AW2J3TVSZWFJ88A91PG). The pull request states the
 /// level and the reason, and the notes list what each person runs
-/// (01M3N73EGY4NQDQQP8Y185E9VZ).
+/// (01M3N73EGY4NQDQQP8Y185E9VZ). GitHub generates the rest of the
+/// notes (01M3NB3EWE2V9PCTMNTZAKEXMA).
 #[test]
 fn the_book_makes_a_release() {
     let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
@@ -409,7 +410,10 @@ fn the_book_makes_a_release() {
         "```text\nLevel: minor.",
         "the commands that each person\nruns",
         "`riff update --tag v0.2.0`",
-        "gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md\n",
+        "gh pr create --title \"Release v0.2.0\" --label release --body-file pr.md\n",
+        "the level line\nof the pull request",
+        "gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md --generate-notes\n",
+        "`--notes-start-tag v0.1.0`",
         "riff workers stop\n",
         "sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml\n",
         "sed -i 's/\"version\": \".*\"/\"version\": \"0.2.0\"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json\n",
@@ -557,4 +561,32 @@ fn the_image_holds_only_the_binary_and_the_certificates() {
     assert!(copies.iter().any(|c| c.contains("ca-certificates.crt")));
     let user = last.lines().find(|l| l.starts_with("USER ")).unwrap();
     assert!(!user.contains(" 0") && !user.contains("root"), "{user}");
+}
+
+/// The generated notes of the GitHub releases are the changelog: they
+/// leave out the release pull requests, no changelog file exists, and
+/// the book says where to read them (01M3NB3EWE2V9PCTMNTZAKEXMA).
+#[test]
+fn the_release_notes_are_the_changelog() {
+    let root = deploy().join("..");
+    let config = fs::read_to_string(root.join(".github/release.yml")).unwrap();
+    assert!(
+        config.contains("changelog:\n  exclude:\n    labels:\n      - release\n"),
+        "{config}"
+    );
+    for name in ["CHANGELOG.md", "CHANGELOG", "docs/src/changelog.md"] {
+        assert!(!root.join(name).exists(), "{name} exists");
+    }
+    let page = fs::read_to_string(root.join("docs/src/how-it-works.md")).unwrap();
+    let part = &page[page
+        .find("### See what changed in a release\n")
+        .expect("no how-to")..];
+    let part = &part[..part[4..].find("\n### ").unwrap() + 4];
+    assert!(
+        part.contains(
+            "```sh\ngh release list --repo como-technologies/riff\n\
+             gh release view v0.4.0 --repo como-technologies/riff\n```"
+        ),
+        "{part}"
+    );
 }

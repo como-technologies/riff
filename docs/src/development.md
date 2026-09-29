@@ -828,6 +828,13 @@ reason in one line, for example:
 Level: minor. The skill changes the verify flow, and the header changes.
 ```
 
+Give it the label `release`. The release notes leave out the pull
+requests with this label:
+
+```sh
+gh pr create --title "Release v0.2.0" --label release --body-file pr.md
+```
+
 Get it verified and merged as each other change. Then tag the merge
 commit, and push the tag:
 
@@ -837,13 +844,19 @@ git tag v0.2.0 origin/main
 git push origin v0.2.0
 ```
 
-Write the release notes. They list the commands that each person
+Write the start of the release notes in `notes.md`: the level line
+of the pull request. It also lists the commands that each person
 runs, for example `riff update --tag v0.2.0` when the old `riff`
-cannot read the new server. Publish them on the tag:
+cannot read the new server. Publish the release on the tag. GitHub
+adds each pull request merged since the last release. The GitHub
+releases are the changelog of riff:
 
 ```sh
-gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md
+gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md --generate-notes
 ```
+
+When the last tag is not the release before this one, name the tag of
+that release, for example `--notes-start-tag v0.1.0`.
 
 CI runs the job `Release check` for the tag. It fails when the tag is
 not the version of the crates. Watch it:

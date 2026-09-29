@@ -252,6 +252,17 @@ its tag:
 riff update --tag v0.2.0
 ```
 
+### See what changed in a release
+
+The GitHub releases are the changelog of riff. The notes of a release
+give its level, the command that each person runs, and each pull
+request that the release adds. List the releases, and read one:
+
+```sh
+gh release list --repo como-technologies/riff
+gh release view v0.4.0 --repo como-technologies/riff
+```
+
 ### Update riff by itself
 
 A machine can update riff by itself. When the riff runs a new
