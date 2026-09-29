@@ -33,11 +33,11 @@ const LEFT_POLL: Duration = Duration::from_millis(250);
 #[derive(Parser)]
 #[command(version = riff_core::build::VERSION, about)]
 struct Cli {
-    /// The riff-server: a URL, HOST or HOST:PORT. With no scheme, riff
-    /// uses http, and port 7878 when there is no port. The default is
-    /// the riff of this machine.
+    // `riff help server` shows the long text (01M3NT228WA11PGNWDJ0WP7PQD).
+    /// The riff-server (default: the riff of this machine)
     #[arg(long, global = true, env = "RIFF_SERVER", default_value = DEFAULT_SERVER,
-          value_parser = api::server_url, hide_env_values = true)]
+          value_parser = api::server_url, hide_env_values = true,
+          hide_default_value = true)]
     server: String,
 
     /// The place of the process that ran this binary after an update
@@ -307,6 +307,10 @@ enum Command {
     /// It says where that choice comes from: --server, RIFF_SERVER, or the
     /// riff of this machine. For that riff and the riff of this machine,
     /// it shows whether it answers, its build, and sign-in.
+    ///
+    /// --server and RIFF_SERVER take a URL, HOST or HOST:PORT. With no
+    /// scheme, riff uses http, and port 7878 when there is no port. With
+    /// neither, riff uses the riff of this machine, http://127.0.0.1:7878.
     Server,
     /// Update riff on this machine
     ///
@@ -585,7 +589,7 @@ enum Tool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let matches = help::grouped(Cli::command(), help::GROUPS).get_matches();
+    let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
     if let Command::Server = cli.command {
         let source = match matches.value_source("server") {
@@ -1700,5 +1704,36 @@ mod tests {
             }
         }
         check(&Cli::command());
+    }
+
+    /// The help of `--server` is one short line on each command
+    /// (01M3NT228WA11PGNWDJ0WP7PQD).
+    #[test]
+    fn the_server_help_is_short_on_each_command() {
+        fn check(cmd: &clap::Command, seen: &mut usize) {
+            let server = cmd
+                .get_arguments()
+                .find(|arg| arg.get_id() == "server")
+                .unwrap_or_else(|| panic!("{}: no --server", cmd.get_name()));
+            let help = server
+                .get_help()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            assert!(
+                !help.is_empty() && help.len() <= 60 && server.get_long_help().is_none(),
+                "{}: {help:?}",
+                cmd.get_name()
+            );
+            *seen += 1;
+            // clap makes a `help` subcommand with no options.
+            for sub in cmd.get_subcommands().filter(|sub| sub.get_name() != "help") {
+                check(sub, seen);
+            }
+        }
+        let mut cli = Cli::command();
+        cli.build();
+        let mut seen = 0;
+        check(&cli, &mut seen);
+        assert!(seen > 30, "{seen}");
     }
 }
