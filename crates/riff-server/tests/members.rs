@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use riff_core::dpop::Key;
 use riff_core::wire::{
-    AdminSet, ID_TOKEN_TYPE, Invite, Invited, MembersReply, OwnerPassed, PassOwner, Remove,
+    AdminSet, ID_TOKEN_TYPE, Idle, Invite, Invited, MembersReply, OwnerPassed, PassOwner, Remove,
     Removed, SetAdmin, TOKEN_EXCHANGE, TokenError, TokenReply, TokenRequest,
 };
 use riff_server::Service;
@@ -397,4 +397,40 @@ async fn the_owner_passes_the_role_that_stays_after_a_restart() {
     assert_eq!(list.admins, ["ada@gmail.com"]);
     assert_eq!(list.members, ["carol@gmail.com"]);
     assert_eq!(set_admin(&url, &bob, "ada@gmail.com", false).await.0, 200);
+}
+
+/// Only the owner or an admin sets the settings of idle workers. A
+/// member reads them, and gets 403 on a change
+/// (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+#[tokio::test]
+async fn only_an_admin_sets_the_idle_workers() {
+    let issuer = common::fake_provider().await;
+    let (_, url) = serve(&issuer, &[], None, None).await;
+    let ada = sign_in(&url, &issuer, "ada@gmail.com", None).await.unwrap();
+    assert_eq!(invite(&url, &ada, "bob@gmail.com").await.0, 200);
+    let bob = sign_in(&url, &issuer, "bob@gmail.com", None).await.unwrap();
+    let idle = |me: &str, per_host: Option<u16>, after: Option<u64>| serde_json::json!({ "me": me, "per_host": per_host, "after_secs": after });
+    let read = |body: &str| serde_json::from_str::<Idle>(body).unwrap();
+
+    let (status, body) = call(&url, &bob, "idle", idle("riff://bob@b", None, None)).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(read(&body), Idle::default());
+    let (status, body) = call(&url, &bob, "idle", idle("riff://bob@b", Some(3), None)).await;
+    assert_eq!(status, 403);
+    assert!(
+        body.contains("only an admin can change the settings of idle workers"),
+        "{body}"
+    );
+
+    let set = Idle {
+        per_host: 3,
+        after_secs: 30,
+    };
+    let (status, body) = call(&url, &ada, "idle", idle("riff://ada@a", Some(3), Some(30))).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(read(&body), set);
+    let (status, body) = call(&url, &ada, "idle", idle("riff://ada@a", None, Some(0))).await;
+    assert_eq!(status, 400, "{body}");
+    let (_, body) = call(&url, &bob, "idle", idle("riff://bob@b", None, None)).await;
+    assert_eq!(read(&body), set);
 }

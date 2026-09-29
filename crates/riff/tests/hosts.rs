@@ -441,6 +441,46 @@ async fn workers_stop_on_a_host_stops_only_its_workers() {
     assert!(!r.a.log().contains("kill-pane"), "{}", r.a.log());
 }
 
+/// `riff workers stop PANE --host b` stops that one worker on `b`; the
+/// other workers there go on. The start of a session ID works as PANE
+/// too (01M3Q5A0Z5DK0YV1MWTM4AQD5Z).
+#[tokio::test(flavor = "multi_thread")]
+async fn workers_stop_pane_on_a_host_stops_only_that_worker() {
+    let r = riff().await;
+    let out =
+        r.a.riff(&r.main, &["start", "3", "--host", "b"], Some("l1"))
+            .output()
+            .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    reads(&r.api, &r.lead, "b: started 3 workers").await;
+    let workers = r.b.workers();
+    assert_eq!(workers.len(), 3);
+
+    let (pane, _) = &workers[0];
+    let out =
+        r.a.riff(&r.main, &["stop", pane, "--host", "b"], Some("l1"))
+            .output()
+            .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        stdout(&out).contains(&format!(
+            "Asked the workers host on b: workers stop {pane}."
+        )),
+        "{out:?}"
+    );
+    reads(&r.api, &r.lead, "b: Stopped 1 worker.").await;
+    assert_eq!(r.b.workers(), workers[1..]);
+
+    let (_, session) = &workers[1];
+    let out =
+        r.a.riff(&r.main, &["stop", &session[..8], "--host", "b"], Some("l1"))
+            .output()
+            .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    reads(&r.api, &r.lead, "b: Stopped 1 worker.").await;
+    assert_eq!(r.b.workers(), workers[2..]);
+}
+
 /// `riff workers start --host` names `riff workers host` when no host
 /// runs there.
 #[tokio::test(flavor = "multi_thread")]

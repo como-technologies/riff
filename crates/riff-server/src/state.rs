@@ -9,7 +9,7 @@
 //! | Read cursors | who and thread | The last sequence number that the session read. |
 //! | Claims | thread and item | The session that holds the item. |
 //! | Leads | user and repository thread | The lead session of the user. |
-//! | Riff state | none: one for the server | Paused or running. |
+//! | Riff state | none: one for the server | Paused or running, and the settings of idle workers. |
 //!
 //! The server keys each session by its [`Who`]: the user and the session
 //! ID. It builds the [`SessionUri`] of a session from the who, the place
@@ -91,6 +91,9 @@
 //! - The riff is paused or running. A new state is paused.
 //!   [`State::riff`] reads it, and sets it for a person or a lead
 //!   (01M3JCFTWCR72HQB8CBTQKXJNF, 01M3JCG3T8AJZN31SZQQTP3FAF).
+//! - [`State::stop_idle_workers`] asks each idle worker past the limit
+//!   to stop. The reply to its keep-alive carries the ask. A call of the
+//!   worker takes it back (01M3Q5A0NKY1FCS0YH6N6YD3GN).
 //! - While the riff is paused, a claim fails. A held claim stays, and a
 //!   release works (01M3JCG3WBHDF0ZWM06XV94ZDC).
 //!
@@ -170,8 +173,8 @@ use std::time::{Duration, Instant};
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ClaimReply, Freed, Keys, Kind, LeadReply, Message, Post, RiffReply, RiffState, SessionInfo,
-    Status, StatusInfo, Tailed, ThreadInfo, Wake,
+    AliveReply, ClaimReply, Freed, Idle, Keys, Kind, LeadReply, Message, Post, RiffReply,
+    RiffState, SessionInfo, Status, StatusInfo, Tailed, ThreadInfo, Wake,
 };
 use serde::{Deserialize, Serialize};
 
@@ -200,6 +203,8 @@ pub struct State {
     leads: BTreeMap<(String, ThreadName), Who>,
     /// The state of the riff. A new riff is paused.
     riff: RiffState,
+    /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+    idle: Idle,
     /// Each object that changed since the last [`State::changes`].
     changed: BTreeSet<Object>,
 }
@@ -226,6 +231,9 @@ struct Session {
     /// True when the session registered as a worker
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
+    /// True when the server asked this idle worker to stop, and it made
+    /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN). It is not saved.
+    stopping: bool,
 }
 
 /// A status with the time that the session set it.
@@ -250,6 +258,7 @@ impl Session {
             ended: false,
             status: None,
             worker: false,
+            stopping: false,
         }
     }
 
@@ -364,6 +373,10 @@ struct SavedSessions {
     /// A saved state from before the riff state loads as paused.
     #[serde(default)]
     riff: RiffState,
+    /// A saved state from before the settings of idle workers loads the
+    /// defaults.
+    #[serde(default)]
+    idle: Idle,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -410,6 +423,18 @@ struct Named<N, T> {
     name: N,
     #[serde(flatten)]
     thread: T,
+}
+
+/// An idle worker that the server asks to stop
+/// ([`State::stop_idle_workers`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stopping {
+    /// The worker.
+    pub worker: SessionUri,
+    /// Its host.
+    pub host: String,
+    /// The time since its last call.
+    pub idle: Duration,
 }
 
 /// What a new message causes: sessions to wake and a line for `tail`.
@@ -473,6 +498,7 @@ impl State {
         let grace = u64::try_from(CLAIM_GRACE.as_millis()).unwrap_or(u64::MAX);
         let mut state = State {
             riff: saved.riff,
+            idle: saved.idle,
             ..State::default()
         };
         let mut lapsed = BTreeSet::new();
@@ -663,14 +689,17 @@ impl State {
     /// assert!(state.who(hour + GONE, 3_780_000, false).is_empty());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn alive(&mut self, me: &SessionUri, now: Instant) {
+    pub fn alive(&mut self, me: &SessionUri, now: Instant) -> AliveReply {
         let who = me.who();
         let Some(session) = self.sessions.get_mut(who) else {
             self.arrive(me, now);
-            return;
+            return AliveReply::default();
         };
         session.live(now);
         self.changed.insert(Object::Sessions);
+        AliveReply {
+            stop: session.stopping,
+        }
     }
 
     /// Records that `me` ended (R205, R206). The session is gone at once.
@@ -788,6 +817,7 @@ impl State {
                     age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
                 }),
                 worker: session.worker,
+                stopping: session.stopping,
             })
             .collect()
     }
@@ -815,6 +845,95 @@ impl State {
             session.worker = worker;
             self.changed.insert(Object::Sessions);
         }
+    }
+
+    /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+    pub fn idle(&self) -> Idle {
+        self.idle
+    }
+
+    /// Sets the settings of idle workers: each value that is `Some`
+    /// (01M3Q5A0TF9K49V8Z1ZY9NDF74). The caller checks who may set them.
+    /// It gives the settings now.
+    pub fn set_idle(&mut self, per_host: Option<u16>, after_secs: Option<u64>) -> Idle {
+        let old = self.idle;
+        if let Some(per_host) = per_host {
+            self.idle.per_host = per_host;
+        }
+        if let Some(after_secs) = after_secs {
+            self.idle.after_secs = after_secs;
+        }
+        if self.idle != old {
+            self.changed.insert(Object::Sessions);
+        }
+        self.idle
+    }
+
+    /// Asks each idle worker past the limit to stop, and gives each
+    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN). An idle worker is a live worker
+    /// that is not a lead, holds no claim, was not asked before, and made
+    /// no call for a time. On each host of each user, the server keeps
+    /// the [`Idle::per_host`] idle workers with the shortest idle time. It
+    /// asks each other one that is idle for [`Idle::after_secs`] or more.
+    /// A later call of the worker takes the ask back: a worker that
+    /// claims work goes on.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let worker = |id: &str| -> SessionUri {
+    ///     format!("riff://mike@pangolin/como-technologies/riff?session={id}").parse().unwrap()
+    /// };
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&worker("lead"), now);
+    /// for (id, at) in [("w1", 10), ("w2", 5), ("w3", 0)] {
+    ///     let w = worker(id);
+    ///     state.watch_started(&w, now + Duration::from_secs(at));
+    ///     state.worker(w.who(), true);
+    /// }
+    /// let later = now + Duration::from_secs(80);
+    /// let stopped: Vec<_> = state.stop_idle_workers(later).iter().map(|s| s.worker.to_string()).collect();
+    /// assert_eq!(stopped, [worker("w2").to_string(), worker("w3").to_string()]);
+    /// assert!(state.stop_idle_workers(later).is_empty(), "asks once");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn stop_idle_workers(&mut self, now: Instant) -> Vec<Stopping> {
+        let after = Duration::from_secs(self.idle.after_secs);
+        let mut idle: BTreeMap<(String, String), Vec<(Duration, Who)>> = BTreeMap::new();
+        for (who, session) in &self.sessions {
+            let free = session.worker
+                && session.watchers > 0
+                && !session.ended
+                && !session.stopping
+                && !self.claims.values().any(|holder| holder == who)
+                && !self.is_lead(who, now);
+            if free {
+                let key = (who.user().to_owned(), session.place.host().to_owned());
+                let time = now.saturating_duration_since(session.last_seen);
+                idle.entry(key).or_default().push((time, who.clone()));
+            }
+        }
+        let mut stopping = Vec::new();
+        for ((_, host), mut workers) in idle {
+            workers.sort();
+            for (time, who) in workers.into_iter().skip(usize::from(self.idle.per_host)) {
+                if time < after {
+                    continue;
+                }
+                if let Some(session) = self.sessions.get_mut(&who) {
+                    session.stopping = true;
+                }
+                stopping.push(Stopping {
+                    worker: self.uri(&who, now),
+                    host: host.clone(),
+                    idle: time,
+                });
+            }
+        }
+        stopping
     }
 
     /// Whether a session of `user` is live, and the seconds since the
@@ -1528,6 +1647,7 @@ impl State {
             }
             session.last_seen = now;
             session.seen_before_load = None;
+            session.stopping = false;
             session.live(now);
             return who;
         }
@@ -1593,6 +1713,7 @@ impl State {
             claims,
             leads,
             riff: self.riff,
+            idle: self.idle,
         }
     }
 
@@ -2940,5 +3061,154 @@ mod tests {
         let loaded = load(&saved, later, T0 + ms(CLAIM_GRACE * 2));
         assert!(is_lead(&loaded, &docs(), later));
         assert!(!is_lead(&loaded, &tests(), later));
+    }
+
+    /// A live worker `id` of mike on `host`, with its last call at `at`.
+    fn idle_worker(state: &mut State, host: &str, id: &str, at: Instant) -> SessionUri {
+        let w = uri(&format!(
+            "riff://mike@{host}/como-technologies/riff?session={id}"
+        ));
+        state.watch_started(&w, at);
+        state.worker(w.who(), true);
+        w
+    }
+
+    fn stopped(state: &mut State, now: Instant) -> Vec<String> {
+        state
+            .stop_idle_workers(now)
+            .iter()
+            .map(|s| s.worker.who().session().unwrap().to_owned())
+            .collect()
+    }
+
+    fn running(state: &mut State) -> Result<(), String> {
+        let person = uri("riff://mike@pangolin/como-technologies/riff");
+        state.riff(&person, Some(RiffState::Running), Instant::now())?;
+        Ok(())
+    }
+
+    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: three idle workers on one host, past
+    /// the idle time: two stop, one stays. A worker with a claim and the
+    /// lead stay.
+    #[test]
+    fn three_idle_workers_on_a_host_leave_one() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        let lead = uri("riff://mike@pangolin/como-technologies/riff?session=lead");
+        state.watch_started(&lead, now);
+        state.worker(lead.who(), true);
+        let busy = idle_worker(&mut state, "pangolin", "busy", now);
+        state.claim(&busy, &repo(), "issue-12", now).unwrap();
+        idle_worker(&mut state, "pangolin", "w1", now);
+        idle_worker(&mut state, "pangolin", "w2", now + Duration::from_secs(1));
+        idle_worker(&mut state, "pangolin", "w3", now + Duration::from_secs(2));
+
+        let later = now + Duration::from_secs(90);
+        assert_eq!(stopped(&mut state, later), ["w2", "w1"]);
+        let shown = state.who(later, 90_000, false);
+        let stopping: Vec<_> = shown
+            .iter()
+            .filter(|s| s.stopping)
+            .map(|s| s.uri.who().session().unwrap())
+            .collect();
+        assert_eq!(stopping, ["w1", "w2"]);
+        assert!(state.uri(lead.who(), later).lead());
+        assert!(
+            stopped(&mut state, later).is_empty(),
+            "the server asks once"
+        );
+    }
+
+    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: an idle worker on each of two hosts:
+    /// both stay. A worker that is idle for less than the idle time stays.
+    #[test]
+    fn one_idle_worker_on_each_host_stays() {
+        let now = Instant::now();
+        let mut state = State::default();
+        state.register(&lead(api()), now);
+        idle_worker(&mut state, "pangolin", "w1", now);
+        let w2 = idle_worker(&mut state, "thelio", "w2", now);
+        let ten = now + Duration::from_secs(600);
+        assert!(stopped(&mut state, ten).is_empty());
+
+        state.called(&w2, ten);
+        idle_worker(&mut state, "thelio", "w3", ten);
+        let soon = ten + Duration::from_secs(30);
+        assert!(
+            stopped(&mut state, soon).is_empty(),
+            "w2 is idle for 30 s only"
+        );
+    }
+
+    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: a worker that claims work just before
+    /// the stop is not stopped. A claim after the ask takes it back, so
+    /// the next keep-alive does not stop it.
+    #[test]
+    fn a_worker_that_claims_is_not_stopped() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        state.register(&lead(api()), now);
+        idle_worker(&mut state, "pangolin", "w1", now + Duration::from_secs(5));
+        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
+        let w3 = idle_worker(&mut state, "pangolin", "w3", now);
+
+        let later = now + Duration::from_secs(80);
+        state.claim(&w2, &repo(), "issue-12", later).unwrap();
+        assert_eq!(stopped(&mut state, later), ["w3"]);
+
+        assert!(state.alive(&w3, later).stop);
+        state.claim(&w3, &repo(), "issue-13", later).unwrap();
+        assert!(!state.alive(&w3, later).stop, "the claim wins");
+        assert!(!state.who(later, 80_000, false).iter().any(|s| s.stopping));
+    }
+
+    /// 01M3Q5A0TF9K49V8Z1ZY9NDF74: the settings change the numbers, and
+    /// the save keeps them.
+    #[test]
+    fn the_settings_change_the_numbers() {
+        let now = Instant::now();
+        let mut state = State::default();
+        state.register(&lead(api()), now);
+        for id in ["w1", "w2", "w3"] {
+            idle_worker(&mut state, "pangolin", id, now);
+        }
+        assert_eq!(state.set_idle(None, Some(120)).after_secs, 120);
+        assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
+
+        let idle = state.set_idle(Some(2), None);
+        assert_eq!(
+            idle,
+            Idle {
+                per_host: 2,
+                after_secs: 120
+            }
+        );
+        assert_eq!(stopped(&mut state, now + Duration::from_secs(130)).len(), 1);
+
+        let changes = state.changes(now, 0);
+        let sessions = changes
+            .iter()
+            .find(|(o, _)| *o == Object::Sessions)
+            .map(|(_, b)| b.as_slice());
+        let loaded = State::load(sessions, [], now, 0).unwrap();
+        assert_eq!(loaded.idle(), idle);
+        assert_eq!(State::default().idle(), Idle::default());
+    }
+
+    /// A worker with no watch, and a session that is no worker, are not
+    /// idle workers.
+    #[test]
+    fn only_a_live_worker_is_an_idle_worker() {
+        let now = Instant::now();
+        let mut state = State::default();
+        state.register(&lead(api()), now);
+        state.set_idle(Some(0), None);
+        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
+        state.watch_ended(w1.who(), now);
+        let agent = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
+        state.watch_started(&agent, now);
+        assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
     }
 }

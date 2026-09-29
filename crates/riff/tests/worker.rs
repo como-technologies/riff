@@ -290,6 +290,114 @@ async fn a_hangup_stops_the_worker_with_no_message() {
     assert_eq!(lead_reads(&api, &lead).await, "No unread messages.");
 }
 
+/// The server stops an idle worker (01M3Q5A0NKY1FCS0YH6N6YD3GN,
+/// 01M3Q5A0QZTSTXHHNYCE8HFJSB): the `riff mcp` of the worker gets the
+/// ask in the reply to its keep-alive, and stops its wrapper. The
+/// wrapper exits with 0, the session leaves `riff who`, and the lead
+/// gets a note (01M3Q5A0WRQT4SGPSD0CQFF011).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_server_stops_an_idle_worker_through_its_wrapper() {
+    let api = start_server().await;
+    let lead = lead(&api).await;
+    let idle = api.idle(&lead, Some(0), Some(1)).await.unwrap();
+    assert_eq!((idle.per_host, idle.after_secs), (0, 1));
+    let dir = repo();
+    let claude = fake_claude(dir.path(), "exec \"$RIFF_BIN\" mcp");
+    let mut child = riff(&api, dir.path(), "w6")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // The worker registers as a worker. Then it has a watch, as each
+    // worker does.
+    let w6: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w6"
+        .parse()
+        .unwrap();
+    let begin = Instant::now();
+    while !api
+        .who(&lead, false)
+        .await
+        .unwrap()
+        .iter()
+        .any(|s| s.uri.who() == w6.who() && s.worker)
+    {
+        assert!(begin.elapsed() < Duration::from_secs(30), "no worker w6");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let _watch = api.watch(&w6).await.unwrap();
+
+    let status = tokio::task::spawn_blocking(move || {
+        let begin = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                return (status, child.wait_with_output().unwrap());
+            }
+            assert!(begin.elapsed() < Duration::from_secs(60), "w6 runs");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    })
+    .await
+    .unwrap();
+    let err = String::from_utf8_lossy(&status.1.stderr).into_owned();
+    assert_eq!(status.0.code(), Some(0), "{err}");
+    assert!(err.contains(riff::text::IDLE_STOP), "{err}");
+
+    let begin = Instant::now();
+    while api
+        .who(&lead, false)
+        .await
+        .unwrap()
+        .iter()
+        .any(|s| s.uri.who() == w6.who())
+    {
+        assert!(begin.elapsed() < Duration::from_secs(10), "w6 in who");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let read = lead_reads(&api, &lead).await;
+    assert!(
+        read.contains("workers: the server stops the idle worker w6 on pangolin."),
+        "{read}"
+    );
+    assert!(!read.contains("worker stopped"), "{read}");
+}
+
+/// `riff workers idle` shows the settings of idle workers, and sets
+/// them (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_workers_idle_shows_and_sets_the_settings() {
+    let api = start_server().await;
+    lead(&api).await;
+    let dir = repo();
+    let idle = |args: &[&str]| {
+        let out = riff(&api, dir.path(), "lead1")
+            .args(["workers", "idle"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(
+        idle(&[]),
+        "The server keeps at most 1 idle worker on each host. It stops each other worker \
+         that is idle for 60 seconds.\n"
+    );
+    assert_eq!(
+        idle(&["--per-host", "2", "--after", "300"]),
+        "The server keeps at most 2 idle workers on each host. It stops each other worker \
+         that is idle for 300 seconds.\n"
+    );
+    let zero = riff(&api, dir.path(), "lead1")
+        .args(["workers", "idle", "--after", "0"])
+        .output()
+        .unwrap();
+    assert!(!zero.status.success(), "{zero:?}");
+}
+
 /// The start hook tells a session with `RIFF_WORKER=1` that it is a
 /// worker, to wait idle with no work, and to wait for a verify.
 #[tokio::test(flavor = "multi_thread")]

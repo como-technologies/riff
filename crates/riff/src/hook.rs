@@ -293,7 +293,7 @@ pub async fn linked(dir: &Path) -> Option<Linked> {
 /// use riff::hook::others_here;
 /// use riff_core::wire::SessionInfo;
 ///
-/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false };
+/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false };
 /// let me: riff_core::name::SessionUri = "riff://mike@pangolin/o/r?session=a1#issue-12".parse()?;
 /// let who = [
 ///     info("riff://mike@pangolin/o/r?session=a1#issue-12", true),
@@ -411,8 +411,8 @@ pub const WORKER_LINE: &str = "- You are a worker (RIFF_WORKER=1). When you fini
 `riff workers next` (step 11 of the start routine). When the start routine finds no free item and \
 no free verify request, and you hold no claim, set your status `idle: waits for work`, keep your \
 watch running, and end your turn. Do not end this session: the lead gives you work with a \
-request, and ends workers when it decides. While you wait for a verify, keep your claim and \
-wait.\n";
+request, and the server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). \
+While you wait for a verify, keep your claim and wait.\n";
 
 /// The part of the SessionStart hook input that riff uses.
 #[derive(Debug, Default, Deserialize)]

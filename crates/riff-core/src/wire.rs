@@ -131,6 +131,20 @@ pub struct Alive {
     pub me: SessionUri,
 }
 
+/// The reply to [`Alive`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AliveReply {
+    /// True when the server asks this idle worker to stop
+    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN). A call of the session since the ask
+    /// takes it back.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stop: bool,
+}
+
+/// A worker session sends a keep-alive this often, so that it stops soon
+/// after the server asks (01M3Q5A0NKY1FCS0YH6N6YD3GN).
+pub const WORKER_ALIVE_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// `POST /v1/end`: the session ended (R205). It leaves `who`, and its
 /// claims are free at once.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -262,6 +276,10 @@ pub struct SessionInfo {
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub worker: bool,
+    /// True when the server asked this idle worker to stop
+    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stopping: bool,
 }
 
 /// The most characters in the step or the reason of a [`Status`].
@@ -691,6 +709,43 @@ pub struct RiffReply {
     /// True when the call changed the state.
     #[serde(default)]
     pub changed: bool,
+}
+
+/// `POST /v1/idle`: reads the settings of idle workers. With a value, it
+/// sets it. Only the owner or an admin can set them; in a riff with no
+/// sign-in, each person can (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SetIdle {
+    pub me: SessionUri,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_host: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_secs: Option<u64>,
+}
+
+/// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74): the server
+/// keeps at most `per_host` idle workers on each host, and stops each
+/// other worker that is idle for `after_secs` seconds.
+///
+/// ```
+/// use riff_core::wire::Idle;
+///
+/// let idle = Idle::default();
+/// assert_eq!((idle.per_host, idle.after_secs), (1, 60));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Idle {
+    pub per_host: u16,
+    pub after_secs: u64,
+}
+
+impl Default for Idle {
+    fn default() -> Self {
+        Idle {
+            per_host: 1,
+            after_secs: 60,
+        }
+    }
 }
 
 /// The state of a riff. A new riff is paused.
