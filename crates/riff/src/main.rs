@@ -527,6 +527,17 @@ enum Workers {
         /// The new limit. Leave it out to show the limit.
         limit: Option<u16>,
     },
+    /// Show or set the seconds between two workers that riff starts
+    ///
+    /// When the riff runs, the current wave has free work and no worker
+    /// is idle, the lead starts one worker each SECONDS, on the machine
+    /// with the most free capacity. The default is 10. 0 turns it
+    /// off. It is in $XDG_CONFIG_HOME/riff/config.toml, key
+    /// workers.interval, on the machine of the lead.
+    Interval {
+        /// The new interval in seconds. Leave it out to show it.
+        seconds: Option<u16>,
+    },
     /// Show or change the MCP servers of each worker
     ///
     /// These are the MCP servers that each worker of this machine loads.
@@ -1079,6 +1090,17 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
             );
             Ok(())
         }
+        Some(Workers::Interval { seconds }) => {
+            let path = settings::path()?;
+            if let Some(seconds) = seconds {
+                settings::set_workers_interval(&path, *seconds)?;
+            }
+            println!(
+                "{}",
+                text::workers_interval(settings::workers_interval(&path)?, &path)
+            );
+            Ok(())
+        }
         Some(Workers::Mcp { command }) => {
             let path = settings::path()?;
             let mut names = settings::workers_mcp(&path)?;
@@ -1248,6 +1270,11 @@ async fn list_workers(server: &str) -> Result<()> {
         }
         Vec::new()
     });
+    let limit = settings::workers_limit(&settings::path()?)?;
+    println!(
+        "{}",
+        text::this_machine(limit, &riff::machine::Machine::here())
+    );
     print!("{}", text::workers(&panes, &sessions));
     let me =
         identity::place(&identity::working_dir()?).and_then(|here| identity::me(&here, server));

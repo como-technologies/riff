@@ -55,6 +55,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+/// The context of the verify status of a commit.
+pub const VERIFY_CONTEXT: &str = "riff/verify";
+
 /// The `gh` of the machine.
 pub struct Gh {
     program: PathBuf,
@@ -69,6 +72,13 @@ impl Default for Gh {
 }
 
 impl Gh {
+    /// The `gh` at `program`, for tests.
+    pub fn at(program: impl Into<PathBuf>) -> Self {
+        Self {
+            program: program.into(),
+        }
+    }
+
     /// Runs `gh ARGS` with `input` on stdin, and returns its stdout. It
     /// fails with the stderr of `gh` when `gh` fails.
     pub fn run(&self, args: &[&str], input: Option<&str>) -> Result<String> {
@@ -464,7 +474,7 @@ pub fn report(
             "-f",
             &state,
             "-f",
-            "context=riff/verify",
+            &format!("context={VERIFY_CONTEXT}"),
             "-f",
             &description,
             "-f",

@@ -2078,23 +2078,85 @@ riff workers mcp remove github
 `riff` always stays. Each machine has its own list, also a workers
 host. Only you change it: the lead never does.
 
-#### The lead keeps a worker on each free item
+### riff starts workers by itself
 
-Your lead checks each time a riff line wakes it, and each time it
-frees an item. It counts the free items of the current wave and the
-free verify requests. It gives each one to a free worker first: a
-worker with no claim, which waits idle. When free work is left, and
-fewer workers run than the limit, it starts the difference. It does
-not wait for your word:
+When the riff runs and the current wave has free work, riff starts
+workers by itself. You do not ask, and the lead does not remember a
+step. The `riff mcp` of your lead does it, once each 10 seconds:
 
-```sh
-riff workers start 2
+```mermaid
+flowchart TD
+    T["each 10 seconds"] --> R{"the riff runs?"}
+    R -- "no: paused" --> T
+    R -- yes --> W["count the free work with gh"]
+    W --> I{"free work, and no idle worker?"}
+    I -- no --> T
+    I -- yes --> P["pick the machine with the most free capacity"]
+    P --> S["start 1 worker there"]
+    S --> N["a note to the lead: host, pane, session"]
+    N --> T
 ```
 
-The lead starts at most one worker for each free item. It starts them
-on each host with room first, and on its own machine last (see
-[Offer workers from another machine](#offer-workers-from-another-machine)).
-The limit still caps it: set the limit to 0 to stop new workers.
+- **Free work.** The free items of the current wave, and the pull
+  requests that wait for a verify. A free item is an open issue of the
+  current wave (see [Waves](waves.md)). No session claims it, it has no
+  comment `Merged in #`, and each issue of its `Needs:` line is
+  closed. A pull request counts only when its branch names an issue,
+  for example `worktree-issue-12`.
+- **Idle workers.** Workers with no claim. A new worker counts as idle
+  until it claims an item. riff starts a worker only when no worker is
+  idle. So the next worker starts after the new one claims. When no
+  worker takes the free work, one worker waits idle, the server keeps
+  it, and riff starts no more.
+- **Machines.** The machine of the lead, when the lead runs in tmux,
+  and each workers host of your user (see
+  [Offer workers from another machine](#offer-workers-from-another-machine)).
+  riff never starts more workers on a machine than its limit.
+- **Pause.** While the riff is paused, riff starts no worker. The
+  resume starts the rollout again.
+
+Each start gives the lead a note with the host, the pane and the
+session. A note does not wake the lead. Your lead gives an idle worker
+a free item with a request. The server stops idle workers.
+
+#### Which machine gets a worker
+
+Each machine tells four numbers: its CPU cores, its CPU speed, its
+memory and its 1-minute load average. From them riff makes a score:
+the number of workers that the machine runs well. One worker needs one
+core and 2 GB of memory. A core at 3000 MHz counts 1:
+
+```text
+score = min(cores, memory GB / 2) × MHz / 3000
+```
+
+The score less the workers that run there is the free capacity. riff
+starts the next worker on the machine with the most free capacity. A
+small machine gets workers only when a big machine has less room. riff
+starts no worker on a machine whose load average is more than its
+cores. `riff workers` shows the numbers and the score of each machine
+(see [List the workers](#list-the-workers)).
+
+#### Change the rate of the rollout
+
+The lead starts at most one worker each 10 seconds. Set another
+interval in seconds on the machine of the lead:
+
+```sh
+riff workers interval 30
+```
+
+`riff workers interval` with no number shows it. It is in
+`~/.config/riff/config.toml`, key `workers.interval`.
+
+#### Turn the rollout off
+
+Set the interval to 0. Then riff starts no worker by itself, and you
+or the lead start them with `riff workers start`:
+
+```sh
+riff workers interval 0
+```
 
 ### Take over a worker
 
@@ -2117,9 +2179,14 @@ riff workers
 ```
 
 ```text
+This machine: limit 3. cpu 32x5883MHz, mem 124GB, load 2.10, score 62.8.
 %3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  claims: issue-12
   status 1m ago: tests of issue-12
 ```
+
+The first line shows the limit, the numbers and the score of this
+machine (see
+[Which machine gets a worker](#which-machine-gets-a-worker)).
 
 ### Stop the workers
 
@@ -2166,12 +2233,12 @@ your lead:
 riff workers host: pangolin offers 2 workers to the lead of mike in como-technologies/riff. Ctrl-C stops it.
 ```
 
-The host is a riff session with the status `workers host: limit 2,
-no workers`. It starts and stops workers only when the lead of your
-user asks, at most its own limit. It refuses each other request, and
-each request that is not verified. One host of your user runs on a
-machine for a repository. A second one refuses to start and names the
-process of the first.
+The host is a riff session with the status `workers host: limit 2, cpu
+16x4500MHz, mem 32GB, load 0.40, no workers`. It starts and stops
+workers only when the lead of your user asks, at most its own limit. It
+refuses each other request, and each request that is not verified. One
+host of your user runs on a machine for a repository. A second one
+refuses to start and names the process of the first.
 
 `Ctrl-C` stops the host in under 2 seconds, in each state. Its
 workers keep running. After `riff update`, the host runs the new
@@ -2189,7 +2256,7 @@ sequenceDiagram
     L->>S: riff workers start 2 --host pangolin
     S->>H: direct message: workers start 2
     H->>H: 2 worker panes in its tmux
-    H->>S: reply to the lead: panes and sessions
+    H->>S: a note to the lead: panes and sessions
 ```
 
 The lead starts and stops workers on that machine by its host name:
@@ -2199,13 +2266,15 @@ riff workers start 2 --host pangolin
 riff workers stop --host pangolin
 ```
 
-The reply of the host comes to the lead as a direct message.
-`riff workers` in the lead lists each host after the workers of its
-own machine:
+The reply of the host comes to the lead as a note. A note does not
+wake the lead: it sees the reply at its next read. `riff workers` in
+the lead lists each host after the workers of its own machine, with
+the numbers and the score of the host:
 
 ```text
+This machine: limit 3. cpu 32x5883MHz, mem 124GB, load 2.10, score 62.8.
 No worker runs on this machine.
-Host pangolin: limit 2, 1 worker runs.
+Host pangolin: limit 2, 1 worker runs. cpu 16x4500MHz, mem 32GB, load 0.40, score 24.0.
 %3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims, idle 1m
 ```
 
@@ -2325,7 +2394,7 @@ riff workers
 ```
 
 A request of your lead wakes it, and it claims the item (see
-[The lead keeps a worker on each free item](#the-lead-keeps-a-worker-on-each-free-item)).
+[riff starts workers by itself](#riff-starts-workers-by-itself)).
 A worker that finished an
 item runs `riff workers next` first (see
 [A worker goes to its next item](#a-worker-goes-to-its-next-item)). It

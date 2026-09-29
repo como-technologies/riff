@@ -277,6 +277,16 @@
 - **R225** The skill gives the `gh` command for each step of the
   waves: see the open waves, see the items of a wave, see the items
   with no wave, make a wave, put an item in a wave and end a wave.
+- **01M3Q5QE2EWGKVD57Y6YCWA4BR** The rollout of workers
+  (01M3Q5QE01DB0FJQJWFKR450KQ) reads its free work with `gh`. The
+  current wave is the open milestone `Wave N` with the lowest N. A free
+  item is an open issue of it that no session claims, with no comment
+  `Merged in #`, and with each issue of its `Needs:` line closed. An
+  open need blocks the item, also a need outside the wave. A pull
+  request that waits for a verify has a branch that names an issue
+  (`worktree-issue-12`, `worktree-issue-12-book`), is open, not a draft,
+  has no status `riff/verify` on its head, and no session claims
+  `verify-issue-N` for it. Both count as free work.
 
 ## Issue hygiene on GitHub
 
@@ -1539,7 +1549,8 @@
   items of the current wave and the free verify requests. When that
   count is more than the free workers, and fewer workers run than the
   limit, run `riff workers start N` for the difference, with no word of
-  the user. The book says the same in "Start workers".
+  the user. This applies only while the rollout is off
+  (01M3Q5QE9H42FQKEDC5G9GKCWD).
 - **01M3JQC8ANFYYEXSHBS2DCZYBX** Each worker pane runs `claude` through
   `riff workers run`. When `claude` exits on its own, the wrapper sends
   the lead of the person in the repository a direct message, as the
@@ -1607,9 +1618,9 @@
   `riff workers stop --host HOST` send the workers host on HOST a
   signed direct message: `workers start N` or `workers stop`. The host
   starts at most its own limit minus its workers, in its own tmux, or
-  stops each of its workers. It replies to the sender with the pane
-  and the session of each new worker, the count of stopped workers, or
-  the reason.
+  stops each of its workers. It replies to the sender with a note: the
+  pane and the session of each new worker, the count of stopped
+  workers, or the reason.
 - **01M3N7AKDE7DEA6NXS9ZMECRMH** A workers host acts only on a verified
   request from the lead of its user in its repository. It replies to
   each other request with a refusal, and changes nothing.
@@ -1619,7 +1630,8 @@
   status.
 - **01M3N7AKHXGYQ58G61BEHS89WG** The skill tells the lead: count the
   free workers and the room of each host. Start workers where there is
-  room: on each host first, on the machine of the lead last.
+  room: on each host first, on the machine of the lead last. This
+  applies only while the rollout is off (01M3Q5QE9H42FQKEDC5G9GKCWD).
 - **01M3NBV405PVYHKTMQ5VN87FYN** Ctrl-C, SIGTERM and SIGHUP stop
   `riff workers host` in under 2 seconds in each state: at start,
   waiting for a wake, answering a request, setting its status, and
@@ -1632,6 +1644,46 @@
   the process and the session of the first.
 - **01M3NBV46R0VB0JQNQ1ERG16J6** `riff workers host` reads no input
   and leaves the mode of the terminal as it is.
+- **01M3Q5QE01DB0FJQJWFKR450KQ** `riff mcp` of the lead runs the
+  rollout of workers. Once each interval, while the session is the lead
+  and the riff runs, it looks at the free work and the idle workers.
+  When there is free work and no idle worker
+  (01M3Q5QEJNP1JGQM7VXXEBJ9J9), it starts one worker. So riff starts at
+  most one worker each interval, with no step of an agent. An idle
+  worker is a worker with no claim, also a new worker that did not
+  join yet, and a live worker of another user. A worker that the
+  server asked to stop is not idle.
+- **01M3Q5QE4SQ8VYN2PSF42KB3QJ** Each machine that runs workers tells
+  its CPU cores, its CPU speed, its memory and its 1-minute load
+  average. A workers host puts them in its status. `riff workers` shows
+  the numbers and the score of this machine and of each host.
+- **01M3Q5QE76BZ27SZ14FFE8HM1G** The score of a machine is
+  `min(cores, memory GB / 2) × MHz / 3000`. Its free capacity is the
+  score less its workers. The rollout starts a worker on the machine
+  with the most free capacity: the machine of the lead when it runs in
+  tmux, or a live workers host of the user. It skips a machine at its
+  limit, and a machine whose load average is more than its cores. On a
+  tie, the machine of the lead wins. A host with no numbers counts its
+  limit as its score.
+- **01M3Q5QE9H42FQKEDC5G9GKCWD** The interval of the rollout is the
+  setting `workers.interval` of the machine of the lead, in seconds.
+  The default is 10. 0 turns the rollout off. `riff workers interval`
+  shows it and sets it.
+- **01M3Q5QEBTNM90SPYXNVTT7RJA** While the riff is paused, the rollout
+  starts no worker. The resume starts the rollout again.
+- **01M3Q5QEE4MQNCRKVJK3D54G9Z** Each start of the rollout gives the
+  lead a note with the host, the pane and the session of the new
+  worker. A note wakes nobody. On the machine of the lead, the person
+  posts it. On a host, the host posts it as its reply.
+- **01M3Q5QEJNP1JGQM7VXXEBJ9J9** The rollout starts a worker only when
+  no worker is idle: each worker with no claim, also a new one that did
+  not claim yet, counts. So when no worker takes the counted work, one
+  worker waits idle, the server keeps it, and riff starts no more
+  workers.
+- **01M3Q5QEGBD5JB4ZZWNVVS09KV** The skill tells the lead: riff starts
+  workers by itself. The lead gives free work to an idle worker with a
+  request. It starts workers by hand only while the rollout is off. It
+  never changes `workers.interval`.
 
 ## Builds
 

@@ -9,6 +9,7 @@
 //! ```toml
 //! [workers]
 //! limit = 2
+//! interval = 10
 //! mcp = ["riff", "github"]
 //!
 //! [update]
@@ -18,6 +19,7 @@
 //! | Key | Default | Meaning |
 //! |---|---|---|
 //! | `workers.limit` | 0 | The most workers that `riff workers start` runs on this machine (01M3JPQT35BMR7XMAMMFSCDC2B). |
+//! | `workers.interval` | 10 | The seconds between two workers that the rollout of the lead starts. 0 turns the rollout off (see [`rollout`](crate::rollout), 01M3Q5QE9H42FQKEDC5G9GKCWD). |
 //! | `workers.mcp` | `["riff"]` | The MCP servers that a worker loads (see [`worker_mcp`](crate::worker_mcp)). |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
 
@@ -95,6 +97,40 @@ pub fn workers_limit(path: &Path) -> Result<u16> {
 /// Sets the most workers on this machine. It keeps each other key.
 pub fn set_workers_limit(path: &Path, limit: u16) -> Result<()> {
     set(path, "workers", "limit", value(i64::from(limit)))
+}
+
+/// The default of `workers.interval`, in seconds.
+pub const WORKERS_INTERVAL: u16 = 10;
+
+/// The seconds between two workers that the rollout starts:
+/// `workers.interval`, or [`WORKERS_INTERVAL`] when the file or the key
+/// is missing. 0 turns the rollout off (01M3Q5QE9H42FQKEDC5G9GKCWD).
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::workers_interval(&path)?, 10);
+/// riff::settings::set_workers_interval(&path, 30)?;
+/// assert_eq!(riff::settings::workers_interval(&path)?, 30);
+/// riff::settings::set_workers_interval(&path, 0)?;
+/// assert_eq!(riff::settings::workers_interval(&path)?, 0);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn workers_interval(path: &Path) -> Result<u16> {
+    let doc = read(path)?;
+    let Some(interval) = doc.get("workers").and_then(|w| w.get("interval")) else {
+        return Ok(WORKERS_INTERVAL);
+    };
+    let Some(interval) = interval.as_integer() else {
+        bail!("workers.interval in {} is not a number", path.display());
+    };
+    u16::try_from(interval)
+        .with_context(|| format!("workers.interval in {} is out of range", path.display()))
+}
+
+/// Sets `workers.interval`. It keeps each other key.
+pub fn set_workers_interval(path: &Path, seconds: u16) -> Result<()> {
+    set(path, "workers", "interval", value(i64::from(seconds)))
 }
 
 /// The MCP servers that a worker loads: `workers.mcp`

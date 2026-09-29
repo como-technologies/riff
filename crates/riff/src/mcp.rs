@@ -21,6 +21,9 @@
 //!     M->>S: end
 //! ```
 //!
+//! The `riff mcp` of the lead also starts workers by itself when the
+//! wave has free work (see [`crate::rollout`]).
+//!
 //! A keep-alive is not a call: `who` still shows the time since the
 //! last call (R204). After the end call, the session leaves `who`, and
 //! its claims are free at once (R205). A session that stops with no end
@@ -542,6 +545,21 @@ impl Tools {
             .status();
     }
 
+    /// Runs the rollout of workers for as long as the tools run
+    /// (01M3Q5QE01DB0FJQJWFKR450KQ). It acts only while this session is
+    /// the lead. See [`crate::rollout`].
+    pub fn rollout(&self) -> tokio::task::JoinHandle<()> {
+        let tools = self.clone();
+        let env = crate::rollout::Live {
+            api: self.api.clone(),
+            me: move || tools.me(),
+            tmux: crate::terminal::Tmux::from_env(),
+            claude: "claude".into(),
+            gh: Arc::new(crate::pr::Gh::default()),
+        };
+        tokio::spawn(crate::rollout::run(env))
+    }
+
     /// Tells the server that the session ended (R205). It waits at most
     /// [`END_WAIT`].
     pub async fn end(&self) {
@@ -581,6 +599,8 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
         eprintln!("riff: {e:#}");
     }
     let alive = tools.keep_alive();
+    // A worker is never the lead.
+    let rollout = (!worker).then(|| tools.rollout());
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
@@ -634,6 +654,9 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
         && let Some(client) = service.as_ref().and_then(|s| s.peer().peer_info())
     {
         alive.abort();
+        if let Some(rollout) = &rollout {
+            rollout.abort();
+        }
         let args = with_place(std::env::args_os().skip(1), tools.me().place());
         let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let _ = std::env::set_current_dir(dir);
@@ -641,6 +664,9 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
         anyhow::bail!("riff mcp cannot run the new riff");
     }
     alive.abort();
+    if let Some(rollout) = rollout {
+        rollout.abort();
+    }
     tools.end().await;
     result
 }

@@ -17,7 +17,8 @@
 //! machine ([`crate::worker::start`], [`crate::worker::stop`]), so its
 //! own limit counts. It acts only on a verified request from the lead of
 //! its user in its repository ([`judge`], 01M3N7AKDE7DEA6NXS9ZMECRMH).
-//! It replies to the sender with the result, or with the refusal.
+//! It replies to the sender with a note: the result, or the refusal
+//! (01M3Q5QEE4MQNCRKVJK3D54G9Z). A note does not wake the lead.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -30,7 +31,7 @@
 //!     S->>H: wake: direct message "workers start 2"
 //!     H->>H: judge: verified, lead of its user
 //!     H->>T: 2 worker panes
-//!     H->>S: reply to the lead: panes and sessions
+//!     H->>S: a note to the lead: panes and sessions
 //!     H->>S: status "workers host: limit 2, workers: %3 1a2b3c4d, %4 5e6f7a8b"
 //!     L->>S: riff workers: who
 //!     S-->>L: the host and its workers
@@ -76,10 +77,12 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use futures::StreamExt;
 use riff_core::name::SessionUri;
-use riff_core::wire::{SessionInfo, Status};
+use riff_core::selector::Selector;
+use riff_core::wire::{Kind, SessionInfo, Status};
 
 use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
+use crate::machine::Machine;
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
 use crate::{identity, local, settings, text, worker};
 
@@ -97,36 +100,46 @@ const RETRY: Duration = Duration::from_secs(5);
 /// a signal.
 pub const END_WAIT: Duration = Duration::from_secs(1);
 
-/// What the status of a host tells: its limit, and the pane and short
-/// session ID of each worker.
+/// What the status of a host tells: its limit, the numbers of its
+/// machine (01M3Q5QE4SQ8VYN2PSF42KB3QJ), and the pane and short session
+/// ID of each worker.
 ///
 /// ```
 /// use riff::host::HostStatus;
+/// use riff::machine::Machine;
 ///
-/// let none = HostStatus { limit: 2, workers: vec![] };
+/// let none = HostStatus { limit: 2, machine: None, workers: vec![] };
 /// assert_eq!(none.line(), "workers host: limit 2, no workers");
 /// let two = HostStatus {
 ///     limit: 3,
+///     machine: Some(Machine { cores: 16, mhz: 4500, mem_gb: 32, load: 1.5 }),
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()), ("%4".into(), "5e6f7a8b".into())],
 /// };
-/// assert_eq!(two.line(), "workers host: limit 3, workers: %3 1a2b3c4d, %4 5e6f7a8b");
+/// assert_eq!(
+///     two.line(),
+///     "workers host: limit 3, cpu 16x4500MHz, mem 32GB, load 1.50, workers: %3 1a2b3c4d, %4 5e6f7a8b",
+/// );
 /// assert_eq!(HostStatus::parse(&two.line()), Some(two));
 /// assert_eq!(HostStatus::parse(&none.line()), Some(none));
 /// assert_eq!(HostStatus::parse("idle: waits for work"), None);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HostStatus {
     pub limit: u16,
+    /// The numbers of the machine. `None` from a host that does not
+    /// tell them.
+    pub machine: Option<Machine>,
     /// The pane and the first 8 characters of the session ID of each
     /// worker.
     pub workers: Vec<(String, String)>,
 }
 
 impl HostStatus {
-    /// The status of a host with `panes`.
-    pub fn of(limit: u16, panes: &[WorkerPane]) -> Self {
+    /// The status of a host with `panes` on `machine`.
+    pub fn of(limit: u16, machine: Machine, panes: &[WorkerPane]) -> Self {
         HostStatus {
             limit,
+            machine: Some(machine),
             workers: panes
                 .iter()
                 .map(|w| (w.pane.clone(), w.session.chars().take(8).collect()))
@@ -134,10 +147,11 @@ impl HostStatus {
         }
     }
 
-    /// The status line. It fits in a status for 13 workers.
+    /// The status line. It fits in a status for 10 workers.
     pub fn line(&self) -> String {
+        let machine = self.machine.map(|m| format!("{m}, ")).unwrap_or_default();
         if self.workers.is_empty() {
-            return format!("{MARK}: limit {}, no workers", self.limit);
+            return format!("{MARK}: limit {}, {machine}no workers", self.limit);
         }
         let workers: Vec<String> = self
             .workers
@@ -145,7 +159,7 @@ impl HostStatus {
             .map(|(pane, short)| format!("{pane} {short}"))
             .collect();
         format!(
-            "{MARK}: limit {}, workers: {}",
+            "{MARK}: limit {}, {machine}workers: {}",
             self.limit,
             workers.join(", ")
         )
@@ -154,11 +168,20 @@ impl HostStatus {
     /// The host status in a status step, or `None` for another status.
     pub fn parse(step: &str) -> Option<Self> {
         let rest = step.strip_prefix(MARK)?.strip_prefix(": limit ")?;
-        let (limit, rest) = rest.split_once(", ")?;
+        let (limit, mut rest) = rest.split_once(", ")?;
         let limit = limit.parse().ok()?;
+        let mut machine = None;
+        if rest.starts_with("cpu ") {
+            let end = rest
+                .find(", no workers")
+                .or_else(|| rest.find(", workers: "))?;
+            machine = Some(Machine::parse(&rest[..end])?);
+            rest = &rest[end + 2..];
+        }
         if rest == "no workers" {
             return Some(HostStatus {
                 limit,
+                machine,
                 workers: Vec::new(),
             });
         }
@@ -170,7 +193,11 @@ impl HostStatus {
                     .map(|(pane, short)| (pane.to_owned(), short.to_owned()))
             })
             .collect::<Option<Vec<_>>>()?;
-        Some(HostStatus { limit, workers })
+        Some(HostStatus {
+            limit,
+            machine,
+            workers,
+        })
     }
 }
 
@@ -423,7 +450,7 @@ impl Host {
     /// Sets the status: the limit and the workers of the machine.
     async fn set_status(&self) -> Result<()> {
         let limit = settings::workers_limit(&settings::path()?)?;
-        let status = HostStatus::of(limit, &self.tmux.worker_panes()?);
+        let status = HostStatus::of(limit, Machine::here(), &self.tmux.worker_panes()?);
         let status = Status {
             step: status.line(),
             blocked: None,
@@ -456,10 +483,22 @@ impl Host {
             let Some(to) = checked.message.from.who().session() else {
                 continue;
             };
-            if let Err(e) = self.api.tell(&self.me, to, &reply).await {
+            if let Err(e) = self.reply(to, &reply).await {
                 eprintln!("riff: cannot reply: {e:#}");
             }
         }
+    }
+
+    /// Posts `reply` to the session `to` as a note in the repository
+    /// thread. A note wakes nobody, so a start by the rollout does not
+    /// wake the lead (01M3Q5QEE4MQNCRKVJK3D54G9Z).
+    async fn reply(&self, to: &str, reply: &str) -> Result<()> {
+        let to: Selector = format!("session={to}").parse()?;
+        let thread = self.me.default_thread();
+        self.api
+            .post(&self.me, thread.as_ref(), &[to], reply, Kind::Note)
+            .await?;
+        Ok(())
     }
 
     /// Does one request. Returns the reply.
