@@ -34,8 +34,12 @@
 //! - `POST /v1/invite`, `/v1/remove` and `/v1/members` change and show
 //!   who may join the riff. `POST /v1/admin` lets the owner make a
 //!   person an admin, or an admin a member again. `POST /v1/owner`
-//!   lets the owner pass the owner role. See "Owner and
-//!   members" in [`token`].
+//!   lets the owner pass the owner role. `POST /v1/owner/take` lets an
+//!   admin ask for it, and `POST /v1/owner/deny` lets the owner keep
+//!   it. See "Owner and members" in [`token`].
+//! - A task looks at the owner role each [`owner::Timing::tick`]: it
+//!   grants a request whose time ended, and checks the owner. The server
+//!   posts the note of each change of the role itself. See [`owner`].
 //! - Each route with a `me` acts only as the [`auth::SignedIn`] caller
 //!   of its token: the same user and the same session ID, or 403
 //!   (R104). A person token acts only as the person. A session token
@@ -104,6 +108,7 @@ pub mod gcs;
 pub mod lease;
 pub mod listen;
 pub mod oidc;
+pub mod owner;
 pub mod state;
 pub mod store;
 pub mod token;
@@ -125,13 +130,14 @@ use futures::{Stream, StreamExt};
 use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::selector::Selector;
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, AdminSet, Alive, Claim, ClaimReply, End, ID_TOKEN_TYPE, Invite, Invited,
-    Keys, Lead, LeadReply, Members, MembersReply, Membership, OwnerPassed, PassOwner, Post, Posted,
-    Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffOwner,
-    RiffReply, ServerMetadata, SetAdmin, SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE,
-    Tailed, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
-    WhoRequest,
+    ACCESS_TOKEN_TYPE, AdminSet, Alive, Claim, ClaimReply, DenyOwner, End, ID_TOKEN_TYPE, Invite,
+    Invited, Keys, Kind, Lead, LeadReply, Members, MembersReply, Membership, OwnerAsked,
+    OwnerDenied, OwnerPassed, PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed,
+    ResourceMetadata, Revoke, Revoked, Riff, RiffOwner, RiffReply, ServerMetadata, SetAdmin,
+    SetStatus, SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -140,9 +146,10 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::lease::Lease;
+use crate::owner::Checks;
 use crate::state::{Delivery, State};
 use crate::store::{SESSIONS, Store, StoreError, THREADS, TOKENS, Version};
-use crate::token::Tokens;
+use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
@@ -381,6 +388,93 @@ impl Server {
         }
         let _ = self.tail.send(delivery.tailed);
     }
+
+    /// One look at the owner role at `now` (see [`owner`]): it grants a
+    /// request whose time ended, then checks the owner when a check is
+    /// due. Returns the change that it made.
+    fn owner_tick(&self, checks: &mut Checks, now: Instant) -> Option<OwnerChange> {
+        let timing = &self.config.owner_role;
+        if self.tokens().is_due(now) {
+            return self.tokens_change().owner_due(now);
+        }
+        if !checks.due(now) {
+            return None;
+        }
+        let owner = {
+            let tokens = self.tokens();
+            let others = !tokens.roles(&self.config.admins).1.is_empty();
+            match tokens.owner() {
+                Some(_) if others => Some(tokens.owner_user().map(str::to_owned)),
+                _ => None,
+            }
+        };
+        // Only a riff with an owner and another admin checks the owner.
+        let Some(user) = owner else {
+            checks.reset(now, timing);
+            return None;
+        };
+        let live = user.is_some_and(|user| !self.state().live_leads(&user, now).is_empty());
+        if !checks.record(now, live, timing) {
+            return None;
+        }
+        self.tokens_change().owner_gone()
+    }
+
+    /// Saves a change of the owner role that no person made, and posts
+    /// its note (01M3N7K4DVHSF7AQ402F14J26Z). When the riff has no owner
+    /// now, it also asks each admin for a volunteer.
+    async fn owner_changed(&self, change: &OwnerChange) {
+        if let Err(error) = self.save_tokens_since(0).await {
+            tracing::error!("the token store was not saved: {error}");
+        }
+        let news = owner::change_news(change, &self.config.owner_role);
+        tracing::info!("{news}");
+        let admins = match change {
+            OwnerChange::Gone { owner: None, .. } => self.tokens().admin_users(&self.config.admins),
+            _ => Vec::new(),
+        };
+        self.announce(&news, &admins);
+    }
+
+    /// Posts a note of the server to the thread of each repository of
+    /// the riff. It sends the same text to each live lead of `users` as a
+    /// direct message (see [`owner`]).
+    fn announce(&self, news: &str, users: &[String]) {
+        let (now, at_ms) = (Instant::now(), now_ms());
+        let me = owner::server_uri();
+        let mut deliveries = Vec::new();
+        {
+            let mut state = self.state();
+            for thread in state.repositories() {
+                let to = vec![Selector {
+                    repo: Some(thread.to_string()),
+                    ..Selector::default()
+                }];
+                let note = state.announce(&me, Some(thread), to, news, Kind::Note, now, at_ms);
+                deliveries.push(note);
+            }
+            let direct = owner::to_lead(news);
+            for user in users {
+                for lead in state.live_leads(user, now) {
+                    let Some(id) = lead.session() else {
+                        continue;
+                    };
+                    let to = vec![Selector::session(id)];
+                    let message = state.announce(&me, None, to, &direct, Kind::Message, now, at_ms);
+                    deliveries.push(message);
+                }
+            }
+        }
+        for delivery in deliveries {
+            match delivery {
+                Ok(mut delivery) => {
+                    delivery.tailed.trusted = self.config.trusted();
+                    self.deliver(delivery);
+                }
+                Err(error) => tracing::warn!("a note of the server did not go: {error}"),
+            }
+        }
+    }
 }
 
 /// One `riff-server`: its state, its tokens and its routes. Clones
@@ -527,7 +621,7 @@ impl Service {
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         let mut replay = Replay::default();
         replay.refuse_before(start);
-        Service(Arc::new(Server {
+        let service = Service(Arc::new(Server {
             config,
             state: Mutex::new(state),
             tokens: Mutex::new(tokens),
@@ -543,7 +637,42 @@ impl Service {
                 stopped: tokio::sync::watch::Sender::new(false),
                 closing: AtomicBool::new(false),
             },
-        }))
+        }));
+        service.watch_owner();
+        service
+    }
+
+    /// Starts the task that looks at the owner role each
+    /// [`owner::Timing::tick`]: it grants a request whose time ended, and
+    /// checks the owner (see [`owner`]). A server with no async runtime,
+    /// for example in a doc test, starts no task. The task ends when the
+    /// service ends.
+    fn watch_owner(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        let timing = self.0.config.owner_role;
+        runtime.spawn(async move {
+            let mut tick = tokio::time::interval(timing.tick());
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            let mut checks = Checks::new(Instant::now(), &timing);
+            loop {
+                tick.tick().await;
+                let Some(server) = server.upgrade() else {
+                    break;
+                };
+                if server.is_stopped() {
+                    break;
+                }
+                if !server.serving() {
+                    continue;
+                }
+                if let Some(change) = server.owner_tick(&mut checks, Instant::now()) {
+                    server.owner_changed(&change).await;
+                }
+            }
+        });
     }
 
     /// Saves each changed object now. A server with no store does
@@ -682,7 +811,9 @@ impl Service {
             .route("/v1/remove", post(remove))
             .route("/v1/members", post(members))
             .route("/v1/admin", post(admin))
-            .route("/v1/owner", post(owner))
+            .route("/v1/owner", post(pass_owner))
+            .route("/v1/owner/take", post(take_owner))
+            .route("/v1/owner/deny", post(deny_owner))
             .route_layer(guard());
         routes
             .merge(revoke)
@@ -1044,15 +1175,7 @@ async fn admin(
     Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
     Json(r): Json<SetAdmin>,
 ) -> Reply<AdminSet> {
-    if !s.tokens().is_owner(caller.user()) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!(
-                "{} is not the owner; only the owner adds or removes an admin",
-                caller.user()
-            ),
-        ));
-    }
+    owner_only(&s, &caller, "adds or removes an admin")?;
     let mark = s.tokens_changes.load(Ordering::SeqCst);
     let email = if r.admin {
         s.tokens_change()
@@ -1071,21 +1194,97 @@ async fn admin(
     }))
 }
 
+/// Refuses a caller who is not the owner, with 403. On a riff with no
+/// owner, the text names `riff owner --take` (01M3N7K48XQ8XSP7R0HD535ZX3).
+fn owner_only(s: &Server, caller: &Who, what: &str) -> Result<(), (StatusCode, String)> {
+    let tokens = s.tokens();
+    if tokens.owner().is_none() {
+        return Err((StatusCode::FORBIDDEN, NO_OWNER.into()));
+    }
+    if tokens.is_owner(caller.user()) {
+        return Ok(());
+    }
+    Err((
+        StatusCode::FORBIDDEN,
+        format!("{} is not the owner; only the owner {what}", caller.user()),
+    ))
+}
+
+/// An admin asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM). The
+/// server posts the note, and tells each live lead of the owner.
+async fn take_owner(
+    AxumState(s): AxumState<Shared>,
+    Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
+    Json(TakeOwner {}): Json<TakeOwner>,
+) -> Reply<OwnerAsked> {
+    admin_only(&s, &caller, "take the owner role")?;
+    let answer = s.config.owner_role.answer;
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let took = s
+        .tokens_change()
+        .take_owner(caller.user(), &s.config.admins, answer, Instant::now())
+        .map_err(|why| (StatusCode::CONFLICT, why))?;
+    saved(&s, mark).await?;
+    let user = caller.user();
+    let (reply, news, tell) = match took {
+        Took::Owner { owner } => {
+            let news = owner::took_news(user, &owner);
+            let reply = OwnerAsked {
+                admin: owner,
+                owner: None,
+                answer_secs: 0,
+            };
+            (reply, news, None)
+        }
+        Took::Asked { owner, admin } => {
+            let news = owner::asked_news(user, &admin, &owner, answer);
+            let tell = s.tokens().user_of_email(&owner).map(str::to_owned);
+            let reply = OwnerAsked {
+                admin,
+                owner: Some(owner),
+                answer_secs: answer.as_secs(),
+            };
+            (reply, news, tell)
+        }
+    };
+    tracing::info!(%caller, "{news}");
+    s.announce(&news, tell.as_slice());
+    Ok(Json(reply))
+}
+
+/// The owner keeps the owner role that an admin asks for
+/// (01M3N7K41N03P26BEFFNX5617K). The server posts the note, and tells
+/// each live lead of the admin.
+async fn deny_owner(
+    AxumState(s): AxumState<Shared>,
+    Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
+    Json(DenyOwner {}): Json<DenyOwner>,
+) -> Reply<OwnerDenied> {
+    owner_only(&s, &caller, "denies the owner role")?;
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let (owner, admin) = {
+        let mut tokens = s.tokens_change();
+        let admin = tokens
+            .deny_owner(caller.user())
+            .map_err(|why| (StatusCode::CONFLICT, why))?;
+        (tokens.owner().unwrap_or_default().to_owned(), admin)
+    };
+    saved(&s, mark).await?;
+    let news = owner::denied_news(caller.user(), &owner, &admin);
+    tracing::info!(%caller, "{news}");
+    let tell = s.tokens().user_of_email(&admin).map(str::to_owned);
+    s.announce(&news, tell.as_slice());
+    Ok(Json(OwnerDenied { owner, admin }))
+}
+
 /// Passes the owner role to a member or an admin. Only the owner can.
-async fn owner(
+/// It ends a request for the owner role that waits.
+async fn pass_owner(
     AxumState(s): AxumState<Shared>,
     Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
     Json(r): Json<PassOwner>,
 ) -> Reply<OwnerPassed> {
-    if !s.tokens().is_owner(caller.user()) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            format!(
-                "{} is not the owner; only the owner passes the owner role",
-                caller.user()
-            ),
-        ));
-    }
+    owner_only(&s, &caller, "passes the owner role")?;
     let mark = s.tokens_changes.load(Ordering::SeqCst);
     let (owner, admin) = {
         let mut tokens = s.tokens_change();

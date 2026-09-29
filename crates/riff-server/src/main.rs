@@ -82,6 +82,24 @@ struct Cli {
     /// saves nothing.
     #[arg(long, env = "RIFF_BUCKET")]
     bucket: Option<String>,
+
+    /// The minutes that the owner has to answer `riff owner --take` of an
+    /// admin. With no answer, the admin is the owner.
+    #[arg(long, env = "RIFF_OWNER_TAKE_MINUTES", default_value_t = 10,
+          value_parser = clap::value_parser!(u64).range(1..))]
+    owner_take_minutes: u64,
+
+    /// The minutes between two checks of the owner. A check misses when
+    /// the owner has no live lead session.
+    #[arg(long, env = "RIFF_OWNER_PING_MINUTES", default_value_t = 5,
+          value_parser = clap::value_parser!(u64).range(1..))]
+    owner_ping_minutes: u64,
+
+    /// The misses in a row after which the owner is gone. The riff then
+    /// has no owner, and asks each admin for a volunteer.
+    #[arg(long, env = "RIFF_OWNER_PINGS", default_value_t = 3,
+          value_parser = clap::value_parser!(u32).range(1..))]
+    owner_pings: u32,
 }
 
 impl Cli {
@@ -134,6 +152,11 @@ async fn run() -> std::io::Result<()> {
     config.require_sign_in = cli.require_sign_in || cli.client_id.is_some();
     config.admins = cli.admins;
     config.owner = cli.owner;
+    config.owner_role = riff_server::owner::Timing::from_minutes(
+        cli.owner_take_minutes,
+        cli.owner_ping_minutes,
+        cli.owner_pings,
+    );
     for admin in &config.admins {
         if !admin.contains('@') {
             tracing::warn!("the admin {admin} is not an email: it names nobody (R210)");
@@ -172,7 +195,7 @@ async fn run() -> std::io::Result<()> {
             Service::new(config)
         }
     };
-    let owned = service.tokens().owner().is_some();
+    let owned = service.tokens().owned();
     listen::check(cli.listen, trusted, cli.insecure, owned)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let stop = async {

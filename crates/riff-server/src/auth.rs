@@ -97,6 +97,8 @@ pub struct Config {
     pub provider: Option<Provider>,
     /// The times of the lease, for a server with a store.
     pub lease: crate::lease::Timing,
+    /// The times of the owner role (01M3N7K443DGPZ8XH5WWKK6M35).
+    pub owner_role: crate::owner::Timing,
 }
 
 impl Default for Config {
@@ -116,6 +118,7 @@ impl Config {
             owner: None,
             provider: None,
             lease: crate::lease::Timing::default(),
+            owner_role: crate::owner::Timing::default(),
         }
     }
 

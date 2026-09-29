@@ -875,6 +875,47 @@ pub struct OwnerPassed {
     pub admin: String,
 }
 
+/// `POST /v1/owner/take`: an admin asks for the owner role
+/// (01M3N7K3ZAZFGABN7032AYJWEM).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TakeOwner {}
+
+/// The reply to [`TakeOwner`].
+///
+/// ```
+/// use riff_core::wire::OwnerAsked;
+///
+/// let asked: OwnerAsked = serde_json::from_str(
+///     r#"{"admin":"bob@gmail.com","owner":"ada@gmail.com","answer_secs":600}"#,
+/// ).unwrap();
+/// assert_eq!(asked.owner.as_deref(), Some("ada@gmail.com"));
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OwnerAsked {
+    /// The email of the admin that asked, in lower case.
+    pub admin: String,
+    /// The email of the owner that answers. `None` when the riff had no
+    /// owner: the admin is the owner now.
+    pub owner: Option<String>,
+    /// The time that the owner has to answer, in seconds. With no
+    /// answer, the admin is the owner.
+    pub answer_secs: u64,
+}
+
+/// `POST /v1/owner/deny`: the owner keeps the owner role that an admin
+/// asks for (01M3N7K41N03P26BEFFNX5617K).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DenyOwner {}
+
+/// The reply to [`DenyOwner`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OwnerDenied {
+    /// The email of the owner, who stays the owner.
+    pub owner: String,
+    /// The email of the admin that asked.
+    pub admin: String,
+}
+
 /// `POST /v1/members`: shows who may join the riff.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Members {}
@@ -891,7 +932,9 @@ pub struct Members {}
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MembersReply {
-    /// The email of the owner. `None` before the first sign-in.
+    /// The email of the owner. `None` when the riff has no owner: before
+    /// the first sign-in, or after the owner was gone
+    /// (01M3N7K48XQ8XSP7R0HD535ZX3).
     pub owner: Option<String>,
     /// The email of each admin, sorted: the admins that the owner made
     /// and the admins of the settings (R210). The owner is not in it.

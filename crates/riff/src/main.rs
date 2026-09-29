@@ -195,11 +195,23 @@ enum Command {
         command: Admin,
     },
     /// Pass the owner role to a member or an admin. You stay an admin.
-    /// Only the owner can.
+    /// Only the owner can. An admin asks for the role with --take, and
+    /// the owner keeps it with --deny.
+    #[command(group = clap::ArgGroup::new("step").required(true).args(["email", "take", "deny"]))]
     Owner {
         /// The email of the new owner. The person must be a member or an
         /// admin.
-        email: String,
+        email: Option<String>,
+        /// Ask for the owner role. Only an admin can. The owner has 10
+        /// minutes to answer (a setting of riff-server). With no answer,
+        /// you are the owner. On a riff with no owner, you are the owner
+        /// at once.
+        #[arg(long)]
+        take: bool,
+        /// Keep the owner role when an admin asks for it. Only the owner
+        /// can.
+        #[arg(long)]
+        deny: bool,
     },
     /// Print the status line of a Claude Code session: its short session
     /// ID, its claims, and `lead` or `blocked`. Claude Code runs it with
@@ -504,11 +516,23 @@ async fn main() -> Result<()> {
             print_members_news(&changed.news);
             return Ok(());
         }
-        Command::Owner { email } => {
+        Command::Owner {
+            email: Some(email), ..
+        } => {
             let me = person(&api)?;
             let changed = api.signed_in(None)?.pass_owner(&me, email).await?;
             println!("{}", text::owner_passed(&changed.done));
             print_members_news(&changed.news);
+            return Ok(());
+        }
+        Command::Owner { take: true, .. } => {
+            let asked = api.signed_in(None)?.take_owner().await?;
+            println!("{}", text::owner_asked(&asked));
+            return Ok(());
+        }
+        Command::Owner { .. } => {
+            let denied = api.signed_in(None)?.deny_owner().await?;
+            println!("{}", text::owner_denied(&denied));
             return Ok(());
         }
         _ => {}

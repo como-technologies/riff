@@ -214,7 +214,17 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
         .into_iter()
         .filter(|c| c.starts_with("riff "))
         .collect();
-    assert_eq!(riff, ["riff login", "riff invite EMAIL", "riff tail"]);
+    assert_eq!(
+        riff,
+        [
+            "riff login",
+            "riff invite EMAIL",
+            "riff tail",
+            "riff owner --take",
+            "riff owner EMAIL",
+            "riff owner --deny",
+        ]
+    );
     each_is_real(&riff);
     // The example note of the page is the note that riff posts.
     let invited = riff_core::wire::Invited {

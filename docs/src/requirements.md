@@ -1075,6 +1075,53 @@
   command still prints the change, and prints the error of the post.
 - **01M3MN157X8N9QKER1AJEPEJVX** `riff members` lists each person
   once, with the highest role: owner, then admin, then member.
+- **01M3N7K3ZAZFGABN7032AYJWEM** `riff owner --take`: an admin asks
+  for the owner role. Only an admin can. `riff-server` tells the owner
+  at once: a direct message to each live lead of the owner, and a note.
+  One request waits at a time. A second request is refused, and the
+  refusal names the admin that asked first.
+- **01M3N7K41N03P26BEFFNX5617K** The owner answers a request in N
+  minutes. `riff owner EMAIL` passes the role and ends the request.
+  `riff owner --deny` keeps the role: the riff tells the admin with a
+  direct message to each live lead of the admin, and a note. With no
+  answer in N minutes, the admin that asked is the owner. The old owner
+  stays an admin.
+- **01M3N7K443DGPZ8XH5WWKK6M35** `riff-server` has three settings of
+  the owner role, each 1 or more: N is `--owner-take-minutes`
+  (`RIFF_OWNER_TAKE_MINUTES`, default 10). M is `--owner-ping-minutes`
+  (`RIFF_OWNER_PING_MINUTES`, default 5). P is `--owner-pings`
+  (`RIFF_OWNER_PINGS`, default 3).
+- **01M3N7K46H5BRFJCB46P3JNAFZ** `riff-server` checks the owner each M
+  minutes, while the riff has an owner and an admin who is not the
+  owner. A check misses when the owner has no live lead in any
+  repository. A check wakes no session. After P misses in a row, the
+  owner is gone, and stays an admin. The admin of a request that waits
+  is the owner at once. With no request, the riff has no owner, and
+  asks for a volunteer: a direct message to each live lead of each
+  admin, and a note.
+- **01M3N7K48XQ8XSP7R0HD535ZX3** On a riff with no owner,
+  `riff owner --take` of an admin makes that admin the owner at once.
+  `riff members` shows `owner: none` and says that the riff has no
+  owner. `riff admin`, `riff owner EMAIL` and `riff owner --deny` are
+  refused, with a text that names `riff owner --take`. A sign-in makes
+  no owner.
+- **01M3N7K4BC1RPZKQ1XNDTBRPGF** `riff-server` posts its own notes and
+  messages as `riff://riff@server`. The USER `riff` belongs to the
+  server: no person signs in with it. A post of the server has no
+  signature. The server is not a session: `who` does not show it.
+- **01M3N7K4DVHSF7AQ402F14J26Z** Each change of the owner role posts
+  one note to the thread of each repository of the riff: a request, a
+  pass, a deny, a grant after N minutes, a gone owner, and a take on a
+  riff with no owner. The note wakes no session and holds no token. The
+  server posts each of these notes, except the note of a pass
+  (01M3MN14ZCTRVD3T455P6TFK1B).
+- **01M3N7K4GAKJ621V5AWJRQVF3M** `riff-server` keeps a request that
+  waits, and a riff with no owner, with the tokens in its state. They
+  stay after a restart with a bucket. A request whose time ended while
+  the server was down is granted at the first look after the load.
+  `--owner` names no owner on a riff with no owner. A riff with no
+  owner counts as a riff with an owner for the listen address
+  (01M3JN3AQMHZHT6JP3P6GM9PWZ).
 - **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
   loopback address until it has an owner, so the owner signs in from
   the machine of the server. `riff-server` refuses another address at

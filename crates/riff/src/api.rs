@@ -71,11 +71,12 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    AdminSet, Alive, Claim, ClaimReply, End, Freed, Invite, Invited, Keys, Kind, Lead, LeadReply,
-    Members, MembersReply, Membership, Message, OwnerPassed, PassOwner, Post, Posted, Read,
-    ReadReply, Register, Remove, Removed, Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo,
-    SetAdmin, SetStatus, SignInConfig, Start, Started, Status, Tailed, ThreadInfo, Threads,
-    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    AdminSet, Alive, Claim, ClaimReply, DenyOwner, End, Freed, Invite, Invited, Keys, Kind, Lead,
+    LeadReply, Members, MembersReply, Membership, Message, OwnerAsked, OwnerDenied, OwnerPassed,
+    PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed, Revoke, Revoked, Riff,
+    RiffReply, RiffState, SessionInfo, SetAdmin, SetStatus, SignInConfig, Start, Started, Status,
+    Tailed, TakeOwner, ThreadInfo, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest,
+    Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -923,6 +924,21 @@ impl Api {
         let done: OwnerPassed = self.call("owner", &request).await?;
         let body = text::owner_news(me.who().user(), &done);
         Ok(self.members_news(me, done, &body).await)
+    }
+
+    /// Asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM). Only an
+    /// admin can. The server posts the note of the change.
+    pub async fn take_owner(&self) -> Result<OwnerAsked> {
+        self.need_sign_in().await?;
+        self.call("owner/take", &TakeOwner {}).await
+    }
+
+    /// Keeps the owner role that an admin asks for
+    /// (01M3N7K41N03P26BEFFNX5617K). Only the owner can. The server posts
+    /// the note of the change.
+    pub async fn deny_owner(&self) -> Result<OwnerDenied> {
+        self.need_sign_in().await?;
+        self.call("owner/deny", &DenyOwner {}).await
     }
 
     /// Who may join the riff.
