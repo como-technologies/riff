@@ -6,7 +6,12 @@
       "Bash(gh pr comment *)",
       "Bash(gh api repos/como-technologies/riff/statuses/*)",
       "Bash(riff pr *)",
-      "Bash(riff verify *)"
+      "Bash(riff verify *)",
+      "mcp__plugin_riff_riff",
+      "mcp__riff",
+      "Bash(riff)",
+      "Bash(riff *)",
+      "Bash(gh pr view *)"
     ],
     "deny": [
       "Bash(git push * main)",

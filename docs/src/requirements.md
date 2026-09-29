@@ -870,6 +870,22 @@
   and its format, and writes the file only when it changes. When
   another `statusLine` is set, or the settings are not a JSON object,
   it changes nothing and names the manual how-to.
+- **01M3Q53RNDJBDHVDFHJ9HCX9S1** `riff setup` adds the Claude Code
+  permission rules of riff work to the project settings,
+  `.claude/settings.json` at the top of the repository. Allow: each
+  riff tool (`mcp__plugin_riff_riff`, `mcp__riff`), `Bash(riff)`,
+  `Bash(riff *)`, and the pull request steps (`gh pr create`, `gh pr
+  merge --auto --squash`, `gh pr comment`, `gh pr view`, and the
+  statuses API of a GitHub `origin`). Deny: a push to the default
+  branch (`origin/HEAD`, else `main`) and `gh pr merge --admin`. It
+  adds only the missing rules. A rule in the user, project or local
+  settings counts as there. It keeps each other rule and key in its
+  order, and writes the file only when it changes. `riff setup
+  --check` changes nothing, names each missing rule, and exits with
+  status 1 when a rule is missing.
+- **01M3Q53RQGXMYVYGCQQMWA9380** When the project lacks a riff
+  permission rule, the start hook of the lead tells the lead to ask
+  its user to run `riff setup`.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is

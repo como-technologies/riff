@@ -362,6 +362,7 @@ impl EndInput {
     }
 }
 
+use crate::permissions::Rules;
 use crate::text::DATA_NOTE;
 
 /// Why the session started, as Claude Code gives it.
@@ -542,6 +543,35 @@ pub fn mismatch_context(uri: Option<&SessionUri>, mismatch: &Mismatch) -> String
          the riff tools, until your user updates riff and starts this session again.\n",
     );
     out
+}
+
+/// The start line for the lead when the project lacks riff permission
+/// rules (01M3Q53RQGXMYVYGCQQMWA9380), or `None` when it has them all.
+///
+/// ```
+/// use riff::permissions::Rules;
+///
+/// let left = Rules { allow: vec!["mcp__riff".into()], deny: vec![] };
+/// let line = riff::hook::rules_line(&left, "/src/app".as_ref()).unwrap();
+/// assert!(line.contains("1 riff permission rule is missing"));
+/// assert!(line.contains("run `riff setup` in /src/app"));
+/// assert_eq!(riff::hook::rules_line(&Rules::default(), "/src/app".as_ref()), None);
+/// ```
+pub fn rules_line(missing: &Rules, top: &Path) -> Option<String> {
+    if missing.is_empty() {
+        return None;
+    }
+    let count = match missing.len() {
+        1 => "1 riff permission rule is".to_owned(),
+        n => format!("{n} riff permission rules are"),
+    };
+    Some(format!(
+        "- In the Claude Code settings of this project, {count} missing, so auto mode can \
+         block riff work. You cannot add them yourself. Tell your user in your first reply: \
+         run `riff setup` in {}, commit .claude/settings.json, and start the sessions \
+         again.\n",
+        top.display()
+    ))
 }
 
 /// The hook output that gives `context` to Claude Code.

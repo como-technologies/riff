@@ -13,8 +13,9 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The rules of `permissions.KIND` in `.claude/settings.json`, as the
-/// patterns inside `Bash(...)`.
+/// The Bash rules of `permissions.KIND` in `.claude/settings.json`, as
+/// the patterns inside `Bash(...)`. It skips each other rule, for
+/// example `mcp__riff`.
 fn rules(kind: &str) -> Vec<String> {
     let text = std::fs::read_to_string(repo().join(".claude/settings.json")).unwrap();
     let settings: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -22,12 +23,12 @@ fn rules(kind: &str) -> Vec<String> {
         .as_array()
         .unwrap()
         .iter()
-        .map(|r| {
+        .filter_map(|r| {
             let r = r.as_str().unwrap();
-            r.strip_prefix("Bash(")
-                .and_then(|r| r.strip_suffix(')'))
-                .unwrap_or_else(|| panic!("not a Bash rule: {r}"))
-                .to_owned()
+            let pattern = r.strip_prefix("Bash(")?;
+            let pattern = pattern.strip_suffix(')');
+            assert!(pattern.is_some(), "a Bash rule with no end: {r}");
+            pattern.map(str::to_owned)
         })
         .collect()
 }
