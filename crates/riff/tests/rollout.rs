@@ -280,8 +280,9 @@ fn riff_workers_interval_shows_and_sets_the_interval() {
         assert!(out.status.success(), "{out:?}");
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
-    assert!(run(&[]).starts_with("The lead starts at most one worker each 10 seconds"));
-    assert!(run(&["30"]).starts_with("The lead starts at most one worker each 30 seconds"));
+    assert!(run(&[]).starts_with("workers.interval  10  ("));
+    assert!(run(&[]).contains("\nThe lead starts at most one worker each 10 seconds."));
+    assert!(run(&["30"]).starts_with("workers.interval  30  ("));
     assert!(run(&[]).contains("each 30 seconds"));
-    assert!(run(&["0"]).starts_with("The lead starts no worker by itself"));
+    assert!(run(&["0"]).contains("\nThe lead starts no worker by itself."));
 }

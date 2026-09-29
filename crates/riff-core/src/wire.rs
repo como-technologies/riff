@@ -165,7 +165,7 @@ pub struct WhoRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WhoReply {
     pub sessions: Vec<SessionInfo>,
-    /// The owner of the riff (01M3N754NY5JX4P0SN8R4ZYFG9).
+    /// The owner of the riff (01M3Q63NK0AHM25MB258B0K8XP).
     #[serde(default)]
     pub owner: RiffOwner,
     /// Each member of the riff with a USER, also when away
@@ -224,7 +224,7 @@ impl PersonRole {
 }
 
 /// The owner of the riff, in the reply to `who`
-/// (01M3N754NY5JX4P0SN8R4ZYFG9). A reply with no owner field reads as
+/// (01M3Q63NK0AHM25MB258B0K8XP). A reply with no owner field reads as
 /// [`RiffOwner::NoSignIn`].
 ///
 /// ```
@@ -1070,7 +1070,7 @@ pub struct Members {}
 pub struct MembersReply {
     /// The email of the owner. `None` when the riff has no owner: before
     /// the first sign-in, or after the owner was gone
-    /// (01M3N7K48XQ8XSP7R0HD535ZX3).
+    /// (01M3Q63NNC6SC03BFCG80M7B4D).
     pub owner: Option<String>,
     /// The email of each admin, sorted: the admins that the owner made
     /// and the admins of the settings (R210). The owner is not in it.

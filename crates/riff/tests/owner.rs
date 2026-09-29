@@ -2,7 +2,7 @@
 //! --deny`, a request with no answer, and an owner who is gone, against a
 //! real server with short times (01M3N7K3ZAZFGABN7032AYJWEM,
 //! 01M3N7K41N03P26BEFFNX5617K, 01M3Q5460YESBSQHTV3M15PE53,
-//! 01M3Q546335NBTKG5BHQ27QC93, 01M3N7K48XQ8XSP7R0HD535ZX3,
+//! 01M3Q546335NBTKG5BHQ27QC93, 01M3Q63NNC6SC03BFCG80M7B4D,
 //! 01M3N7K4BC1RPZKQ1XNDTBRPGF, 01M3N7K4DVHSF7AQ402F14J26Z). The sign-in
 //! is in the mock store of `keyring-core`, so the tests run in process.
 
@@ -269,10 +269,10 @@ async fn the_first_volunteer_is_the_owner_at_once() {
 async fn with_no_volunteer_the_riff_has_no_owner() {
     let (service, api) = gone_owner().await;
     let bob = as_person(&service, &api, "bob@gmail.com");
-    let list = text::members(&bob.members().await.unwrap());
-    assert!(list.starts_with("owner: none\n"), "{list}");
+    let list = members(&bob.members().await.unwrap());
+    assert!(list.starts_with("owner            none\n"), "{list}");
     assert!(list.contains("The riff has no owner."), "{list}");
-    // riff who says it too (01M3N754NY5JX4P0SN8R4ZYFG9).
+    // riff who says it too (01M3Q63NK0AHM25MB258B0K8XP).
     assert_eq!(service.tokens().riff_owner(), RiffOwner::Nobody);
 
     // Each action of the owner is refused, and names riff owner --take.
@@ -493,4 +493,9 @@ fn the_book_shows_how_to_take_the_owner_role() {
         assert!(page.contains(&format!("`{setting}`")), "{setting}");
         assert!(help.contains(setting), "{setting}");
     }
+}
+
+/// `riff members` with no color.
+fn members(list: &riff_core::wire::MembersReply) -> String {
+    anstream::adapter::strip_str(&riff::view::members(list)).to_string()
 }

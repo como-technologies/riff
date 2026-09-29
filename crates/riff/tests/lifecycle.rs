@@ -1,4 +1,4 @@
-//! `riff server` (01M3K0Q854K18DGXJKQ427W586), the forms of `--server`
+//! `riff server` (01M3Q5VE74608N5H2M73RB6Y2Z), the forms of `--server`
 //! (01M3K0Q80BCZQD7DNQQ333ZN09) and `riff update`
 //! (01M3K0Q892KWM76R9DJC1P37JA). The update runs a fake `cargo`, a fake
 //! `riff` and a fake `riff-server` that log their arguments.

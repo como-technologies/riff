@@ -320,7 +320,7 @@ fn a_worker_loads_only_the_mcp_servers_of_workers_mcp() {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     assert!(
-        stdout(&out).contains("MCP servers: riff, github"),
+        stdout(&out).starts_with("workers.mcp  riff, github  ("),
         "{out:?}"
     );
     let out = start();
@@ -356,13 +356,13 @@ fn workers_mcp_keeps_riff_and_warns_about_a_missing_server() {
     };
     let out = mcp(&[]);
     assert!(out.status.success(), "{out:?}");
-    assert!(stdout(&out).contains("MCP servers: riff ("), "{out:?}");
+    assert!(stdout(&out).starts_with("workers.mcp  riff  ("), "{out:?}");
     let out = mcp(&["remove", "riff"]);
     assert!(!out.status.success(), "{out:?}");
     assert!(stderr(&out).contains("riff stays"), "{out:?}");
     assert!(mcp(&["add", "unifi"]).status.success());
     assert!(mcp(&["add", "unifi"]).status.success());
-    assert!(stdout(&mcp(&[])).contains("MCP servers: riff, unifi ("));
+    assert!(stdout(&mcp(&[])).starts_with("workers.mcp  riff, unifi  ("));
 
     let root = tempfile::tempdir().unwrap();
     let (main, _) = repository(root.path());
@@ -378,7 +378,7 @@ fn workers_mcp_keeps_riff_and_warns_about_a_missing_server() {
     assert_eq!(m.mcp()["mcpServers"].as_object().unwrap().len(), 1);
 
     let out = mcp(&["remove", "unifi"]);
-    assert!(stdout(&out).contains("MCP servers: riff ("), "{out:?}");
+    assert!(stdout(&out).starts_with("workers.mcp  riff  ("), "{out:?}");
 }
 
 #[test]
@@ -439,7 +439,7 @@ fn a_new_machine_starts_no_worker() {
     assert!(err.contains("riff workers limit"), "{err}");
     assert_eq!(m.log(), "");
     let out = m.riff(&main, &["limit"], false).output().unwrap();
-    assert!(stdout(&out).contains("is 0 ("), "{out:?}");
+    assert!(stdout(&out).starts_with("workers.limit  0  ("), "{out:?}");
 }
 
 /// The limit stops the third worker, then each more
@@ -568,21 +568,29 @@ async fn workers_lists_each_worker() {
     let out = m.riff(&main, &[], false).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     let out = stdout(&out);
-    assert!(out.contains("%3  w1  w1  idle"), "{out}");
-    assert!(out.contains("claims: issue-12"), "{out}");
-    assert!(out.contains("status "), "{out}");
-    assert!(out.contains(": tests of issue-12"), "{out}");
-    assert!(out.contains("%4  w2  w2  idle"), "{out}");
-    assert!(out.contains("claims: issue-13"), "{out}");
+    assert!(
+        out.contains("\nPANE  ID  STATE    CLAIMS    STATUS\n"),
+        "{out}"
+    );
+    let row = |pane: &str| out.lines().find(|l| l.starts_with(pane)).unwrap();
+    assert!(row("%3  ").starts_with("%3    w1  idle "), "{out}");
+    assert!(row("%3  ").contains("  issue-12  "), "{out}");
+    assert!(row("%3  ").ends_with(" ago: tests of issue-12"), "{out}");
+    assert!(row("%4  ").starts_with("%4    w2  idle "), "{out}");
+    assert!(row("%4  ").contains("  issue-13  "), "{out}");
 
     std::fs::remove_file(m.fake.path().join("workers")).unwrap();
     let out = m.riff(&main, &[], false).output().unwrap();
     let out = stdout(&out);
-    assert!(out.starts_with("This machine: limit "), "{out}");
+    // The heading of this machine has its numbers and its score
+    // (01M3Q5QE4SQ8VYN2PSF42KB3QJ), and no table follows it.
+    assert!(out.contains("  runs 0  cpu "), "{out}");
     assert!(
-        out.ends_with("\nNo worker runs on this machine.\n"),
+        out.trim_end().ends_with(|c: char| c.is_ascii_digit()),
         "{out}"
     );
+    assert!(out.contains("  score "), "{out}");
+    assert_eq!(out.lines().count(), 1, "{out}");
 }
 
 /// `riff workers stop` ends each worker: within 10 seconds, no worker is

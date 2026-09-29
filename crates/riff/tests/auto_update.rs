@@ -191,17 +191,17 @@ async fn update_auto_sets_and_shows_the_setting() {
     let machine = Machine::new(0).await;
     let show = machine.run("s1", &["update", "--auto"]).await;
     assert!(
-        text(&show.stdout).starts_with("update.auto = false: "),
+        text(&show.stdout).starts_with("update.auto  false  ("),
         "{}",
         text(&show.stdout)
     );
     let on = machine.run("s1", &["update", "--auto", "on"]).await;
     assert!(on.status.success(), "{}", text(&on.stderr));
-    assert!(text(&on.stdout).starts_with("update.auto = true: "));
+    assert!(text(&on.stdout).starts_with("update.auto  true  ("));
     let config = std::fs::read_to_string(machine.env.riff_home().join("config.toml")).unwrap();
     assert_eq!(config, "[update]\nauto = true\n");
     let off = machine.run("s1", &["update", "--auto", "off"]).await;
-    assert!(text(&off.stdout).starts_with("update.auto = false: "));
+    assert!(text(&off.stdout).starts_with("update.auto  false  ("));
     // The setting installs nothing.
     assert_eq!(log(machine.bin.path(), "cargo"), "");
     let both = machine

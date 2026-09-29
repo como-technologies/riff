@@ -442,6 +442,16 @@ then member:
 riff members
 ```
 
+```text
+owner            mike@example.com
+admins           ada@example.com
+members          bob@gmail.com
+allowed domains  example.com
+```
+
+A riff with no owner shows the owner `none`. Its last line, in
+yellow, says how an admin takes the owner role.
+
 ## Run the server in a terminal
 
 `riff-server` runs in the foreground, in a terminal. Its log goes to

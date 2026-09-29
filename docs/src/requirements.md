@@ -541,11 +541,12 @@
   URL, `HOST` or `HOST:PORT`. With no scheme, `riff` uses `http://`,
   and port 7878 when there is no port. A bare IPv6 address gets
   brackets in the URL.
-- **01M3K0Q854K18DGXJKQ427W586** `riff server` shows the server that
+- **01M3K0Q854K18DGXJKQ427W586** Replaced by 01M3Q5VE74608N5H2M73RB6Y2Z.
+- **01M3Q5VE74608N5H2M73RB6Y2Z** `riff server` shows the server that
   `riff` uses, and where that choice comes from: `--server`,
-  `RIFF_SERVER` or the default. For that server and for the server of
-  the same machine, it shows if the server answers, its build, and the
-  sign-in.
+  `RIFF_SERVER` or the default. For that server, it shows if the
+  server answers, its build and the sign-in. 01M3NTEMQAY1Z10H1GX2K6PEAH
+  says when it shows the server of the same machine.
 - **01M3NTEMQAY1Z10H1GX2K6PEAH** `riff server` shows a short aligned
   table, one fact on a line: the release of `riff` with its commit and
   date short, the server with where it comes from, its release and the
@@ -553,6 +554,21 @@
   is the server of `riff`. When the person must act, the last line says
   what to run: yellow when the versions can talk, red when they cannot
   or when the person must sign in. `--color` works as in `riff tail`.
+- **01M3Q5V313XQN86BA2PBTXHEZC** Each `riff` command that shows facts
+  or a list has one look. Facts are `key  value` lines, aligned. A
+  list is a table with a header row. A row shows a short session ID
+  (8 characters). `--long` shows the full URI or session ID in its
+  place; a row never shows both. A status is on the row of its
+  session, in its own column. A setting shows as `key  value  (file)`,
+  and one dim line at the end says how to change it. An action that
+  the person must take comes last, in yellow or red.
+- **01M3Q63NQQT3G30GMS55FY4499** `riff whoami` shows the facts
+  `session`, `uri`, `riff` and `build`. When riff cannot read the
+  state of the riff, the fact `riff` says `unknown` and the reason, in
+  red.
+- **01M3Q5VE4VVXT9FH4J4MAWX68V** `riff` reads `RIFF_SERVER` itself. A
+  usage error of a `riff` command does not name `--server` as a
+  required argument, also when `RIFF_SERVER` is set.
 - **01M3MRMB2M0RM1JFVJ0W695SHB** `riff server` shows the release of
   `riff`, and the release of each server that answers with a build.
 - **01M3MX598VTWZ02R7J6AYJB2E5** Only the network counts in the wait
@@ -818,21 +834,30 @@
   removes each escape sequence and each control character from the
   body and the names. It keeps newlines and tabs. A body cannot change
   the terminal.
-- **01M3MEW73CDSJDSKX32XW80WZH** `riff who` uses the styles of
-  `riff tail`, from one shared module. The state of the riff is bold:
-  `running` green, `paused` yellow. The build line is dim. The name of
-  each session is bold, in the same color as in `riff tail`. `live` is
-  green, the idle time dim, `(you)` bold, `lead` and each claim muted,
-  the URI dim. The status is under the session, with the indent of a
-  body in `riff tail`, and a dim age. A blocked status is red. The MCP
-  `who` tool stays plain.
-- **01M3MEW75WC7Y4M1BKQ7SXRPNR** `riff who --color <auto|always|never>`
-  controls the color, the same as `riff tail --color`.
-- **01M3N754NY5JX4P0SN8R4ZYFG9** `riff who` names the owner of the
-  riff after the state line: `The owner is USER (EMAIL).`, or
-  `The riff has no owner.`. A riff with no sign-in shows no owner line.
-  The owner is a person: only a line with no session of the owner gets
-  the tag `owner`, muted. The MCP `who` tool shows the same, plain.
+- **01M3MEW73CDSJDSKX32XW80WZH** Replaced by 01M3Q63MVZ74WPNBA3QJYQGHFG.
+- **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the
+  riff, then a table with a row for each session. The facts are
+  `riff` (`running` green, `paused` yellow), `owner` and `build`. The
+  columns are SESSION, STATE, ROLE, CLAIMS and STATUS. SESSION is the
+  name with the short session ID, bold, in the same color as in
+  `riff tail`. `live` is green and the idle time dim. ROLE has `you`
+  in bold and the tags. The claims are muted. The status has a dim
+  age; a blocked status is red. With `--long`, the column URI takes
+  the place of SESSION and CLAIMS. The styles come from one shared
+  module. The MCP `who` tool stays plain.
+- **01M3MEW75WC7Y4M1BKQ7SXRPNR** Replaced by 01M3Q5VE2D244XDZRYXM8DNSRS.
+- **01M3Q5VE2D244XDZRYXM8DNSRS** `--color <auto|always|never>` is an
+  option of each `riff` command. `auto` uses color only when stdout is
+  a terminal, and obeys `NO_COLOR` and `CLICOLOR_FORCE`. A pipe gets
+  plain text.
+- **01M3N754NY5JX4P0SN8R4ZYFG9** Replaced by 01M3Q63NK0AHM25MB258B0K8XP.
+- **01M3Q63NK0AHM25MB258B0K8XP** `riff who` names the owner of the
+  riff in the fact `owner`: `USER (EMAIL)`, or `none`. A riff with no
+  owner ends with the line that names `riff owner --take`, in yellow.
+  A riff with no sign-in shows no owner. The owner is a person: only a
+  row with no session of the owner gets the tag `owner`. The MCP `who`
+  tool shows the owner line `The owner is USER (EMAIL).` or
+  `The riff has no owner.`, plain.
 - **01M3NT4M159EHN5W8JRTQ417N4** A session has a role: `lead`, `worker`,
   or none. A worker (`RIFF_WORKER=1`) says so in each register call, and
   the server keeps it and gives it in `who`. `riff who`, the MCP `who`
@@ -1286,12 +1311,13 @@
   waits is the owner at once. With no request, the riff has no owner,
   and asks for a volunteer: a direct message to each live lead of each
   admin, and a note.
-- **01M3N7K48XQ8XSP7R0HD535ZX3** On a riff with no owner,
+- **01M3N7K48XQ8XSP7R0HD535ZX3** Replaced by 01M3Q63NNC6SC03BFCG80M7B4D.
+- **01M3Q63NNC6SC03BFCG80M7B4D** On a riff with no owner,
   `riff owner --take` of an admin makes that admin the owner at once.
-  `riff members` shows `owner: none` and says that the riff has no
-  owner. `riff admin`, `riff owner EMAIL` and `riff owner --deny` are
-  refused, with a text that names `riff owner --take`. A sign-in makes
-  no owner.
+  `riff members` shows the owner `none` and ends with the line that
+  says that the riff has no owner, in yellow. `riff admin`,
+  `riff owner EMAIL` and `riff owner --deny` are refused, with a text
+  that names `riff owner --take`. A sign-in makes no owner.
 - **01M3N7K4BC1RPZKQ1XNDTBRPGF** `riff-server` posts its own notes and
   messages as `riff://riff@server`. The USER `riff` belongs to the
   server: no person signs in with it. A post of the server has no

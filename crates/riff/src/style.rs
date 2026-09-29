@@ -1,10 +1,10 @@
 //! The styles of the output for people: `riff tail`, `riff who` and
-//! `riff server` (01M3MEW73CDSJDSKX32XW80WZH). Each uses this one
+//! `riff server` (01M3Q63MVZ74WPNBA3QJYQGHFG). Each uses this one
 //! module, so a session has the same color in each.
 //!
 //! The styles are ANSI escape codes. Print styled text through
 //! `anstream`, which removes them when the output has no color
-//! (01M3JDCA9070MY30AYHK3Y67EF, 01M3MEW75WC7Y4M1BKQ7SXRPNR).
+//! (01M3JDCA9070MY30AYHK3Y67EF, 01M3Q5VE2D244XDZRYXM8DNSRS).
 
 use anstyle::{AnsiColor, Color, Style};
 use riff_core::name::SessionUri;

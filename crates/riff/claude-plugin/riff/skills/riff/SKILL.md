@@ -666,7 +666,7 @@ a scope, or a new item joins the current wave.
    workers with no claim. `riff who` shows a free worker as `idle`,
    with its time. `riff workers` shows the limit and the score of
    your machine, and each host of your user on another machine
-   (`Host pangolin: limit 2, 1 worker runs.`) with its
+   (`pangolin  limit 2  runs 1`) with its
    workers.
 3. Give free work to a free worker first: `tell` it
    `request: claim ITEM`. The request wakes it. Give two workers two

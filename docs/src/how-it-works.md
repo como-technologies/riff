@@ -348,6 +348,11 @@ See the setting:
 riff update --auto
 ```
 
+```text
+update.auto  true  (/home/mike/.config/riff/config.toml)
+Turn it off with: riff update --auto off
+```
+
 The setting is the key `update.auto` in
 `~/.config/riff/config.toml` (`$XDG_CONFIG_HOME/riff/config.toml`).
 It is off by default.
@@ -591,27 +596,37 @@ post from a terminal names the host where you ran the command.
 riff whoami
 ```
 
+```text
+session  mike@pangolin:riff#issue-6 (a6cf2205)
+uri      riff://mike@pangolin/como-technologies/riff?session=a6cf2205-…#issue-6
+riff     running
+build    v0.7.0  (f45be4d, 2026-09-29)
+```
+
 ## See who is in the riff
 
 ```sh
 riff who
 ```
 
-The first line shows the state of the riff. The second line names the
-owner of the riff, or says `The riff has no owner.`. A riff with no
-sign-in has no owner line. Each other line shows a session: its name,
-its state, `(you)`, its tags and its claims, and its URI:
+The first lines are facts: the state of the riff, the owner, and the
+build. The owner is `none` when the riff has no owner. A riff with no
+sign-in shows no owner. Then a table shows a row for each session: its
+name with the short session ID, its state, its role, its claims and its
+status:
 
 ```text
-The riff is running.
-The owner is mike (mike@comotechnologies.io).
-riff and riff-server have the build 0.1.0 ...
-mike@pangolin:riff#issue-6 (a6cf)  live  (you)  lead issue-6  riff://mike@pangolin/...
-mike@thelio:riff#issue-7 (5b1e)  live  worker issue-7  riff://mike@thelio/...
-brett@heron:riff (77e0)  idle 2m  riff://brett@heron/...
+riff   running
+owner  mike (mike@comotechnologies.io)
+build  v0.7.0  (f45be4d, 2026-09-29)
+
+SESSION                            STATE    ROLE         CLAIMS   STATUS
+mike@pangolin:riff#issue-6 (a6cf)  live     you lead     issue-6
+mike@thelio:riff#issue-7 (5b1e)    live     worker       issue-7  4m ago: write the tests
+brett@heron:riff (77e0)            idle 2m                        blocked 1m ago: waits for a review (step: merge)
 ```
 
-A tag shows the role of a session:
+`you` marks your own row. A tag shows the role of a session:
 
 - `lead`: the lead of its user in the repository (see
   [The lead](#the-lead)).
@@ -623,18 +638,29 @@ The owner is a person, not a session. So no session has the tag
 the owner, has it.
 
 `live` means the session has an open watch. `idle 2m` means its last
-call was 2 minutes ago. A session with a status has a second line. See
-[A status](#a-status).
+call was 2 minutes ago. See [A status](#a-status) for the last column.
+
+When you must act, the last line says so, in yellow: for example when
+the riff is paused, or when the riff has no owner.
 
 In a terminal, `riff who` has the colors of `riff tail`: each session
 has the same color in both. `running` is green and `paused` is yellow.
 A blocked status is red. The `who` tool of a session stays plain.
 
+### Show the URI of each session
+
+The table shows a short name. To see the full URI of each session in
+its place, use `--long`:
+
+```sh
+riff who --long
+```
+
 ### List the sessions without color
 
 Color goes only to a terminal. `--color never` turns it off also in a
 terminal. `NO_COLOR=1` does the same. `--color always` keeps the color
-in a pipe:
+in a pipe. `--color` works the same on each `riff` command:
 
 ```sh
 riff who --color never
@@ -1516,13 +1542,13 @@ riff whoami
 
 Each session has a status: its current step, and a reason when it is
 blocked. A session sets its status when it changes step, and when it
-is blocked. `riff who` shows each status with its age:
+is blocked. `riff who` shows each status with its age, in the last
+column of the row of its session:
 
 ```text
-mike@pangolin:riff#issue-6 (a6cf)  live  issue-6  riff://mike@pangolin/...
-       status 4m ago: write the tests
-brett@heron:riff#issue-7 (77e0)  live  issue-7  riff://brett@heron/...
-       blocked 1m ago: waits for a review (step: merge)
+SESSION                            STATE  ROLE  CLAIMS   STATUS
+mike@pangolin:riff#issue-6 (a6cf)  live         issue-6  4m ago: write the tests
+brett@heron:riff#issue-7 (77e0)    live         issue-7  blocked 1m ago: waits for a review (step: merge)
 ```
 
 A status request is a post of kind `status`. It wakes each session
@@ -2002,7 +2028,12 @@ riff workers limit 3
 
 `riff workers limit` with no number shows the limit. It is in
 `~/.config/riff/config.toml` (`$XDG_CONFIG_HOME/riff/config.toml`),
-key `workers.limit`.
+key `workers.limit`:
+
+```text
+workers.limit  3  (/home/mike/.config/riff/config.toml)
+Set it with: riff workers limit N
+```
 
 ### Start workers
 
@@ -2052,7 +2083,8 @@ riff workers mcp
 ```
 
 ```text
-Each new worker on this machine loads these MCP servers: riff (/home/mike/.config/riff/config.toml).
+workers.mcp  riff  (/home/mike/.config/riff/config.toml)
+Change it with: riff workers mcp add NAME, or riff workers mcp remove NAME
 ```
 
 #### Give workers another MCP server
@@ -2171,22 +2203,29 @@ number of each pane.
 
 ### List the workers
 
-Show each worker of this machine, with its pane, its session ID, its
-claims and its status:
+Show each worker of this machine, with its pane, its short session
+ID, its claims and its status. The first line names the machine, its
+limit and the workers that run:
 
 ```sh
 riff workers
 ```
 
 ```text
-This machine: limit 3. cpu 32x5883MHz, mem 124GB, load 2.10, score 62.8.
-%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  claims: issue-12
-  status 1m ago: tests of issue-12
+thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
+PANE  ID        STATE  CLAIMS    STATUS
+%3    2a880834  live   issue-12  1m ago: tests of issue-12
 ```
 
 The first line shows the limit, the numbers and the score of this
 machine (see
 [Which machine gets a worker](#which-machine-gets-a-worker)).
+
+To see the full session ID of each worker, use `--long`:
+
+```sh
+riff workers --long
+```
 
 ### Stop the workers
 
@@ -2272,10 +2311,11 @@ the lead lists each host after the workers of its own machine, with
 the numbers and the score of the host:
 
 ```text
-This machine: limit 3. cpu 32x5883MHz, mem 124GB, load 2.10, score 62.8.
-No worker runs on this machine.
-Host pangolin: limit 2, 1 worker runs. cpu 16x4500MHz, mem 32GB, load 0.40, score 24.0.
-%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims, idle 1m
+thelio  limit 3  runs 0  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
+
+pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, load 0.40  score 24.0
+PANE  ID        STATE  CLAIMS  STATUS
+%3    2a880834  live           idle 1m
 ```
 
 ### A worker goes to its next item
@@ -2390,7 +2430,9 @@ riff workers
 ```
 
 ```text
-%3  2a880834  2a880834-3707-4672-ba4a-50438db97e1f  live  no claims, idle 2m
+thelio  limit 3  runs 1
+PANE  ID        STATE  CLAIMS  STATUS
+%3    2a880834  live           idle 2m
 ```
 
 A request of your lead wakes it, and it claims the item (see

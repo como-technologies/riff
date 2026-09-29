@@ -101,7 +101,7 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
 
     let (out, code) = run(&server, dir, "mike", None, &["who"]).await;
     assert_eq!(code, 0);
-    assert!(out.starts_with("The riff is paused."), "{out}");
+    assert!(out.starts_with("riff   paused\n"), "{out}");
     let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_ne!(code, 0, "a paused riff refuses a claim");
 
@@ -111,7 +111,7 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     let (out, _) = run(&server, dir, "mike", None, &["resume"]).await;
     assert_eq!(out, "The riff was running already.\n");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
-    assert!(out.contains("\nThe riff is running.\n"), "{out}");
+    assert!(out.contains("\nriff     running\n"), "{out}");
     let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_eq!(code, 0);
 
@@ -121,7 +121,7 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     let (_, code) = agent(&server, dir, "brett", "second", &["pause"]).await;
     assert_ne!(code, 0, "only a person or a lead can pause");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
-    assert!(out.contains("\nThe riff is running.\n"), "{out}");
+    assert!(out.contains("\nriff     running\n"), "{out}");
 
     let (out, code) = run(&server, dir, "mike", None, &["pause"]).await;
     assert_eq!(code, 0);
@@ -334,9 +334,9 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
 
     agent(&server, dir, "mike", "a1", &["read"]).await;
     agent(&server, dir, "mike", "b2", &["read"]).await;
-    let (out, _) = riff(&server, dir, "mike", &["who"]).await;
-    assert!(out.contains("?session=a1&lead=true\n"), "{out}");
-    assert!(out.contains("?session=b2\n"), "{out}");
+    let (out, _) = riff(&server, dir, "mike", &["who", "--long"]).await;
+    assert!(out.contains("?session=a1&lead=true  "), "{out}");
+    assert!(out.contains("?session=b2  "), "{out}");
 
     let (out, code) = agent(&server, dir, "mike", "b2", &["lead"]).await;
     assert_eq!(
@@ -400,12 +400,10 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     assert_eq!(code, 0);
 
     let (out, _) = riff(&server, dir, "mike", &["who"]).await;
+    let row = |id: &str| out.lines().find(|l| l.contains(id)).unwrap();
+    assert!(row("(a1)").ends_with("  0s ago: write the tests"), "{out}");
     assert!(
-        out.contains("?session=a1&lead=true\n       status 0s ago: write the tests\n"),
-        "{out}"
-    );
-    assert!(
-        out.contains("?session=b2\n       blocked 0s ago: waits for a review (step: merge)\n"),
+        row("(b2)").ends_with("  blocked 0s ago: waits for a review (step: merge)"),
         "{out}"
     );
 

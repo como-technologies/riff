@@ -439,11 +439,16 @@ async fn a_sign_in_stays_over_a_restart_of_riff_server() {
     login::login(&Api::new(&url), browser).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let members = || {
-        let mut cmd = riff(&url, dir.path(), "m1", &["members"]);
+        let mut cmd = riff(&url, dir.path(), "m1", &["members", "--color", "never"]);
         tokio::task::spawn_blocking(move || cmd.output().unwrap())
     };
     let before = members().await.unwrap();
     assert!(before.status.success(), "{}", text(&before.stderr));
+    // The facts are aligned (01M3Q5V313XQN86BA2PBTXHEZC).
+    let shown = text(&before.stdout);
+    assert!(shown.starts_with("owner            "), "{shown}");
+    assert!(shown.contains("\nallowed domains  "), "{shown}");
+    assert!(!shown.contains('\x1b'), "{shown:?}");
 
     // The deploy: the old server stops, a new one loads the same store
     // at the same address.

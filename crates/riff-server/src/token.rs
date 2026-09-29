@@ -203,7 +203,7 @@ pub const REUSE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 pub const SERVER_USER: &str = "riff";
 
 /// The refusal of an action of the owner on a riff with no owner
-/// (01M3N7K48XQ8XSP7R0HD535ZX3).
+/// (01M3Q63NNC6SC03BFCG80M7B4D).
 pub const NO_OWNER: &str =
     "the riff has no owner; an admin takes the owner role with: riff owner --take";
 
@@ -283,7 +283,7 @@ pub struct Tokens {
     /// The email of each admin that the owner made, in lower case.
     admins: BTreeSet<String>,
     /// True when the owner was gone and no admin took the role yet
-    /// (01M3N7K48XQ8XSP7R0HD535ZX3). A sign-in then makes no owner.
+    /// (01M3Q63NNC6SC03BFCG80M7B4D). A sign-in then makes no owner.
     no_owner: bool,
     /// The request for the owner role that waits for the owner
     /// (01M3N7K3ZAZFGABN7032AYJWEM).
@@ -565,7 +565,7 @@ impl Tokens {
     /// (01M3Q5460YESBSQHTV3M15PE53).
     ///
     /// On a riff with no owner, the admin is the owner at once
-    /// (01M3N7K48XQ8XSP7R0HD535ZX3). Else the request waits: the owner
+    /// (01M3Q63NNC6SC03BFCG80M7B4D). Else the request waits: the owner
     /// answers with [`Tokens::pass_owner`] or [`Tokens::deny_owner`], and
     /// [`Tokens::owner_due`] grants it when `wait` ends. One request
     /// waits at a time: a second request is refused, with the email of
@@ -705,7 +705,7 @@ impl Tokens {
     /// The owner is gone (01M3Q546335NBTKG5BHQ27QC93). The old owner
     /// stays an admin. The admin of a request that waits is the owner at
     /// once. With no request, the riff has no owner
-    /// (01M3N7K48XQ8XSP7R0HD535ZX3). `None` when the riff has no owner.
+    /// (01M3Q63NNC6SC03BFCG80M7B4D). `None` when the riff has no owner.
     ///
     /// ```
     /// use std::time::Instant;
@@ -762,7 +762,7 @@ impl Tokens {
         self.owner.as_deref()
     }
 
-    /// The owner for `who` (01M3N754NY5JX4P0SN8R4ZYFG9): the USER that
+    /// The owner for `who` (01M3Q63NK0AHM25MB258B0K8XP): the USER that
     /// holds the email of the owner, or else the USER that the email
     /// gives. [`RiffOwner::Nobody`] before the first sign-in.
     ///

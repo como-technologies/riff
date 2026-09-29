@@ -5,14 +5,13 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::TimeZone;
-use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     auto_update, binary, help, hook, hygiene, identity, lifecycle, local, login, mcp, next,
-    permissions, plugin, pr, settings, terminal, text, worker,
+    permissions, plugin, pr, settings, terminal, text, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -34,11 +33,17 @@ const LEFT_POLL: Duration = Duration::from_millis(250);
 #[command(version = riff_core::build::VERSION, about)]
 struct Cli {
     // `riff help server` shows the long text (01M3NT228WA11PGNWDJ0WP7PQD).
-    /// The riff-server (default: the riff of this machine)
-    #[arg(long, global = true, env = "RIFF_SERVER", default_value = DEFAULT_SERVER,
-          value_parser = api::server_url, hide_env_values = true,
-          hide_default_value = true)]
-    server: String,
+    // riff reads RIFF_SERVER itself, not with the `env` of clap: so a
+    // usage error does not name --server (01M3Q5VE4VVXT9FH4J4MAWX68V).
+    /// The riff-server (default: RIFF_SERVER, else this machine)
+    #[arg(long, global = true, value_parser = api::server_url)]
+    server: Option<String>,
+
+    // One option of each command (01M3Q5VE2D244XDZRYXM8DNSRS).
+    /// When to use color. `auto` uses color only when stdout is a
+    /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
+    #[arg(long, global = true, value_enum, default_value_t = ColorWhen::Auto)]
+    color: ColorWhen,
 
     /// The place of the process that ran this binary after an update
     /// (01M3NJGD45GF7Y4CZWQ7GRDHZN). Only riff gives it.
@@ -67,10 +72,9 @@ enum Command {
         /// List gone sessions too.
         #[arg(long)]
         all: bool,
-        /// When to use color. `auto` uses color only when stdout is a
-        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
-        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
-        color: ColorWhen,
+        /// Show the URI of each session in place of its name and claims.
+        #[arg(long)]
+        long: bool,
     },
     /// Post a message to a thread.
     Post {
@@ -133,10 +137,6 @@ enum Command {
     Tail {
         /// The thread. The default is your repository thread.
         thread: Option<String>,
-        /// When to use color. `auto` uses color only when stdout is a
-        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
-        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
-        color: ColorWhen,
     },
     /// Chat with the people of the riff
     ///
@@ -145,10 +145,6 @@ enum Command {
     /// lead, and @USER wakes the lead of USER. Other lines wake no
     /// session. /me TEXT sends an action. /quit or Ctrl-C exits.
     Chat {
-        /// When to use color. `auto` uses color only when stdout is a
-        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
-        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
-        color: ColorWhen,
         /// The last line that the chat showed before an update. Only
         /// riff gives it (01M3NT6WXGCNKW3EQ7MBJDQTR4).
         #[arg(long, hide = true)]
@@ -163,10 +159,6 @@ enum Command {
         /// Print the table once and exit.
         #[arg(long)]
         once: bool,
-        /// When to use color. `auto` uses color only when stdout is a
-        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
-        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
-        color: ColorWhen,
     },
     /// Claim a work item
     ///
@@ -336,12 +328,7 @@ enum Command {
     /// --server and RIFF_SERVER take a URL, HOST or HOST:PORT. With no
     /// scheme, riff uses http, and port 7878 when there is no port. With
     /// neither, riff uses the riff of this machine, http://127.0.0.1:7878.
-    Server {
-        /// When to use color. `auto` uses color only when stdout is a
-        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
-        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
-        color: ColorWhen,
-    },
+    Server,
     /// Update riff on this machine
     ///
     /// It installs riff and riff-server of a release with cargo, then
@@ -404,6 +391,9 @@ enum Command {
     /// Workers are agent sessions in tmux. With no subcommand, it lists
     /// each worker: its pane, its session ID, its claims and its status.
     Workers {
+        /// Show the full session ID of each worker.
+        #[arg(long)]
+        long: bool,
         #[command(subcommand)]
         command: Option<Workers>,
     },
@@ -651,14 +641,10 @@ enum Tool {
 async fn main() -> Result<()> {
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
-    if let Command::Server { color } = cli.command {
-        use_color(color);
-        let source = match matches.value_source("server") {
-            Some(ValueSource::CommandLine) => lifecycle::Source::Flag,
-            Some(ValueSource::EnvVariable) => lifecycle::Source::Env,
-            _ => lifecycle::Source::Default,
-        };
-        let view = lifecycle::view(&cli.server, DEFAULT_SERVER, source).await;
+    use_color(cli.color);
+    let (server, source) = server_of(cli.server.as_deref())?;
+    if let Command::Server = cli.command {
+        let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
         anstream::println!("{}", text::server_view(&view));
         return Ok(());
     }
@@ -675,7 +661,10 @@ async fn main() -> Result<()> {
             if let Some(switch) = auto {
                 settings::set_update_auto(&path, matches!(switch, Switch::On))?;
             }
-            println!("{}", text::auto_update(settings::update_auto(&path)?));
+            anstream::println!(
+                "{}",
+                view::auto_update(settings::update_auto(&path)?, &path)
+            );
             return Ok(());
         }
         if let (true, Some(tag)) = (background, tag) {
@@ -683,7 +672,7 @@ async fn main() -> Result<()> {
                 cargo,
                 claude,
                 tag,
-                &cli.server,
+                &server,
                 DEFAULT_SERVER,
                 cli.place.as_ref(),
             )
@@ -691,7 +680,7 @@ async fn main() -> Result<()> {
         }
         println!(
             "{}",
-            lifecycle::update(cargo, claude, tag.as_deref(), &cli.server, DEFAULT_SERVER).await?
+            lifecycle::update(cargo, claude, tag.as_deref(), &server, DEFAULT_SERVER).await?
         );
         return Ok(());
     }
@@ -699,7 +688,7 @@ async fn main() -> Result<()> {
         event: HookEvent::SessionStart,
     } = cli.command
     {
-        let output = session_start(&cli.server).await;
+        let output = session_start(&server).await;
         if !output.is_empty() {
             println!("{output}");
         }
@@ -709,7 +698,7 @@ async fn main() -> Result<()> {
         event: HookEvent::SessionEnd,
     } = cli.command
     {
-        session_end(&cli.server).await;
+        session_end(&server).await;
         return Ok(());
     }
     if let Command::Hook {
@@ -720,7 +709,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Statusline = cli.command {
-        println!("{}", statusline(&cli.server).await);
+        println!("{}", statusline(&server).await);
         return Ok(());
     }
     if let Command::Connect {
@@ -733,10 +722,10 @@ async fn main() -> Result<()> {
         );
         let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
         println!("{}", text::connected(&connected));
-        match login::ensure(&Api::new(&cli.server), open_browser).await {
-            Ok(Some(_)) => println!("{}", text::connect_signed_in(&cli.server)),
+        match login::ensure(&Api::new(&server), open_browser).await {
+            Ok(Some(_)) => println!("{}", text::connect_signed_in(&server)),
             Ok(None) => {}
-            Err(e) => anstream::eprintln!("riff: {}", text::connect_no_sign_in(&cli.server, &e)),
+            Err(e) => anstream::eprintln!("riff: {}", text::connect_no_sign_in(&server, &e)),
         }
         ask_auto_update();
         return Ok(());
@@ -744,8 +733,8 @@ async fn main() -> Result<()> {
     if let Command::Setup { check } = cli.command {
         return setup(check);
     }
-    if let Command::Workers { command } = &cli.command {
-        return workers(command.as_ref(), &cli.server).await;
+    if let Command::Workers { command, long } = &cli.command {
+        return workers(command.as_ref(), *long, &server).await;
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
@@ -756,7 +745,7 @@ async fn main() -> Result<()> {
         println!("{}", pr::wait(&pr::Gh::default(), *number, every)?);
         return Ok(());
     }
-    let api = Api::new(&cli.server);
+    let api = Api::new(&server);
     match &cli.command {
         Command::Login => {
             let sign_in = login::login(&api, open_browser).await?;
@@ -788,13 +777,12 @@ async fn main() -> Result<()> {
             print_members_news(&changed.news);
             return Ok(());
         }
-        Command::Chat { color, after } => {
-            use_color(*color);
+        Command::Chat { after } => {
             let me = person(&api)?;
             return riff::chat::run(&api.signed_in(None)?, &me, *after).await;
         }
         Command::Members => {
-            println!("{}", text::members(&api.signed_in(None)?.members().await?));
+            anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
             return Ok(());
         }
         Command::Admin { command } => {
@@ -849,21 +837,13 @@ async fn main() -> Result<()> {
     let api = api.signed_in(me.who().session())?;
     match cli.command {
         Command::Whoami => {
-            println!("{}  {me}", text::name(&me));
-            match api.riff(&me).await {
-                Ok(state) => println!(
-                    "{}\n{}",
-                    text::riff_state(state),
-                    text::build_line(riff::api::server_build().as_ref())
-                ),
-                Err(e) => eprintln!("riff: cannot read the state of the riff: {e:#}"),
-            }
+            let state = api.riff(&me).await.map_err(|e| format!("{e:#}"));
+            anstream::print!("{}", view::whoami(&me, state));
         }
-        Command::Who { all, color } => {
-            use_color(color);
+        Command::Who { all, long } => {
             let state = api.riff(&me).await?;
             let who = api.roster(&me, all).await?;
-            anstream::print!("{}", text::who_view(state, &who.owner, &who.sessions, &me));
+            anstream::print!("{}", view::who(state, &who.owner, &who.sessions, &me, long));
         }
         Command::Pause => pause(&api, &me, RiffState::Paused).await?,
         Command::Resume => pause(&api, &me, RiffState::Running).await?,
@@ -971,13 +951,8 @@ async fn main() -> Result<()> {
                 .await?;
             println!("{}", text::posted(&posted));
         }
-        Command::Tail { thread, color } => {
-            tail(&api, &thread_or_default(thread, &here)?, &here, color).await
-        }
-        Command::Top { once, color } => {
-            use_color(color);
-            top(&api, &me, here.default_thread(), once).await?
-        }
+        Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?, &here).await,
+        Command::Top { once } => top(&api, &me, here.default_thread(), once).await?,
         Command::Watch { once } => {
             let me = identity::session(&here, api.base())?;
             let Some(_lock) = lock_watch(&me) else {
@@ -1002,7 +977,7 @@ async fn main() -> Result<()> {
         | Command::Statusline
         | Command::Connect { .. }
         | Command::Setup { .. }
-        | Command::Server { .. }
+        | Command::Server
         | Command::Update { .. }
         | Command::Workers { .. }
         | Command::Pr {
@@ -1043,9 +1018,9 @@ fn open_browser(url: &str) {
 }
 
 /// `riff workers` and its subcommands.
-async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
+async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<()> {
     match command {
-        None => list_workers(server).await,
+        None => list_workers(long, server).await,
         Some(Workers::Start {
             count,
             host: Some(host),
@@ -1084,9 +1059,9 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
             if let Some(limit) = limit {
                 settings::set_workers_limit(&path, *limit)?;
             }
-            println!(
+            anstream::println!(
                 "{}",
-                text::workers_limit(settings::workers_limit(&path)?, &path)
+                view::workers_limit(settings::workers_limit(&path)?, &path)
             );
             Ok(())
         }
@@ -1095,9 +1070,9 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
             if let Some(seconds) = seconds {
                 settings::set_workers_interval(&path, *seconds)?;
             }
-            println!(
+            anstream::println!(
                 "{}",
-                text::workers_interval(settings::workers_interval(&path)?, &path)
+                view::workers_interval(settings::workers_interval(&path)?, &path)
             );
             Ok(())
         }
@@ -1120,7 +1095,7 @@ async fn workers(command: Option<&Workers>, server: &str) -> Result<()> {
                     settings::set_workers_mcp(&path, &names)?;
                 }
             }
-            println!("{}", text::workers_mcp(&names, &path));
+            anstream::println!("{}", view::workers_mcp(&names, &path));
             Ok(())
         }
         Some(Workers::Stop { pane, .. }) => stop_workers(pane.as_deref(), server).await,
@@ -1254,7 +1229,7 @@ fn stop_hook() {
 
 /// Lists the workers of this machine, with their claims and status in
 /// `riff who` (01M3JPQTBDGT54WN7FZP9CD6B5).
-async fn list_workers(server: &str) -> Result<()> {
+async fn list_workers(long: bool, server: &str) -> Result<()> {
     let panes = Tmux::machine().worker_panes()?;
     let who = async {
         let here = identity::place(&identity::working_dir()?)?;
@@ -1271,13 +1246,17 @@ async fn list_workers(server: &str) -> Result<()> {
         Vec::new()
     });
     let limit = settings::workers_limit(&settings::path()?)?;
-    println!(
-        "{}",
-        text::this_machine(limit, &riff::machine::Machine::here())
-    );
-    print!("{}", text::workers(&panes, &sessions));
     let me =
         identity::place(&identity::working_dir()?).and_then(|here| identity::me(&here, server));
+    let host = me
+        .as_ref()
+        .map_or_else(|_| identity::this_host(), |me| me.place().host().to_owned());
+    let machine = riff::machine::Machine::here();
+    anstream::println!(
+        "{}",
+        view::host_heading(&host, limit, panes.len(), Some(&machine))
+    );
+    anstream::print!("{}", view::workers(&panes, &sessions, long));
     let Ok(me) = me else {
         return Ok(());
     };
@@ -1286,11 +1265,17 @@ async fn list_workers(server: &str) -> Result<()> {
         if host == me.place().host() {
             continue;
         }
-        println!("{}", text::host_heading(host, &status));
-        print!(
-            "{}",
-            text::workers(&riff::host::panes(&status, &sessions), &sessions)
+        let panes = riff::host::panes(&status, &sessions);
+        anstream::println!(
+            "\n{}",
+            view::host_heading(
+                host,
+                status.limit,
+                status.workers.len(),
+                status.machine.as_ref()
+            )
         );
+        anstream::print!("{}", view::workers(&panes, &sessions, long));
     }
     Ok(())
 }
@@ -1654,14 +1639,34 @@ fn ask_auto_update() {
         )
     });
     match asked {
-        Ok(Some(on)) => println!("{}", text::auto_update(on)),
+        Ok(Some(on)) => {
+            if let Ok(path) = settings::path() {
+                anstream::println!("{}", view::auto_update(on, &path));
+            }
+        }
         Ok(None) => {}
         Err(e) => eprintln!("riff: {e:#}"),
     }
 }
 
-/// When `riff tail`, `riff who` and `riff server` use color
-/// (01M3JDCA9070MY30AYHK3Y67EF, 01M3MEW75WC7Y4M1BKQ7SXRPNR).
+/// The riff-server that riff uses, and where it comes from: `--server`,
+/// else a `RIFF_SERVER` that is not empty, else the riff of this
+/// machine (01M3Q5VE4VVXT9FH4J4MAWX68V).
+fn server_of(flag: Option<&str>) -> Result<(String, lifecycle::Source)> {
+    if let Some(flag) = flag {
+        return Ok((flag.to_owned(), lifecycle::Source::Flag));
+    }
+    match std::env::var("RIFF_SERVER") {
+        Ok(env) if !env.is_empty() => {
+            let url = api::server_url(&env).map_err(|e| anyhow::anyhow!("RIFF_SERVER: {e}"))?;
+            Ok((url, lifecycle::Source::Env))
+        }
+        _ => Ok((DEFAULT_SERVER.to_owned(), lifecycle::Source::Default)),
+    }
+}
+
+/// When each riff command uses color (01M3Q5VE2D244XDZRYXM8DNSRS,
+/// 01M3JDCA9070MY30AYHK3Y67EF).
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum ColorWhen {
     Auto,
@@ -1682,8 +1687,7 @@ fn use_color(color: ColorWhen) {
 /// Each message is a [`text::block`]. The status lines go to stderr
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). On a new binary, it runs it
 /// (01M3MNVTC248YYJJQKFD9H1WY9).
-async fn tail(api: &Api, thread: &ThreadName, here: &Place, color: ColorWhen) {
-    use_color(color);
+async fn tail(api: &Api, thread: &ThreadName, here: &Place) {
     tokio::select! {
         () = tail_each(api, thread) => {}
         () = binary::follow_update(here) => {}
