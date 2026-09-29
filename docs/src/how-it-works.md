@@ -1212,8 +1212,9 @@ stays. Your own line shows once, from the server:
 ```
 
 When the connection ends, the chat connects again by itself. Then it
-shows each line that came while it was away, once. While it cannot
-connect, it shows `(reconnecting…)`, then `(back)`. `riff tail` and
+shows each line that came while it was away, once. When the first
+connect fails, it tries once more at once. While it cannot connect, it
+shows `(reconnecting…)`, then `(back)`. `riff tail` and
 `riff workers host` connect again in the same way.
 
 ### Ask a lead in the chat

@@ -188,9 +188,11 @@ pub fn busy_waits() -> impl Iterator<Item = Duration> {
 
 /// Follows a stream across connections (R131, R148). `connect` opens the
 /// stream. When the stream ends or fails, `follow` connects again at
-/// once. When a connect fails, `follow` gives the error as one item and
-/// waits `retry` before the next connect. The stream of `follow` never
-/// ends.
+/// once. When that connect fails, `follow` tries once more at once and
+/// gives no item for it: a cut can leave a dead connection in the pool
+/// (01M3Q59CAA46C316BD4D1ED7C6). When a connect fails again, `follow`
+/// gives the error as one item and waits `retry` before the next
+/// connect. The stream of `follow` never ends.
 ///
 /// ```
 /// use std::time::Duration;
@@ -217,29 +219,54 @@ where
     S: Stream<Item = Result<T>>,
 {
     enum Link<S> {
-        Down { wait: bool },
+        /// Not connected. After a failed connect, `follow` waits. The
+        /// first connect after a stream ends is `fresh`: when it fails,
+        /// `follow` tries once more at once, with no item.
+        Down {
+            wait: bool,
+            fresh: bool,
+        },
         Up(std::pin::Pin<Box<S>>),
     }
-    let start = (connect, Link::<S>::Down { wait: false });
-    futures::stream::unfold(start, move |(mut connect, mut link)| async move {
-        loop {
-            link = match link {
-                Link::Up(mut stream) => match stream.next().await {
-                    Some(Ok(item)) => return Some((Ok(item), (connect, Link::Up(stream)))),
-                    Some(Err(_)) | None => Link::Down { wait: false },
-                },
-                Link::Down { wait } => {
-                    if wait {
-                        tokio::time::sleep(retry).await;
-                    }
-                    match connect().await {
-                        Ok(stream) => Link::Up(Box::pin(stream)),
-                        Err(e) => return Some((Err(e), (connect, Link::Down { wait: true }))),
+    let ended = Link::<S>::Down {
+        wait: false,
+        fresh: true,
+    };
+    futures::stream::unfold(
+        (connect, ended),
+        move |(mut connect, mut link)| async move {
+            loop {
+                link = match link {
+                    Link::Up(mut stream) => match stream.next().await {
+                        Some(Ok(item)) => return Some((Ok(item), (connect, Link::Up(stream)))),
+                        Some(Err(_)) | None => Link::Down {
+                            wait: false,
+                            fresh: true,
+                        },
+                    },
+                    Link::Down { wait, fresh } => {
+                        if wait {
+                            tokio::time::sleep(retry).await;
+                        }
+                        match connect().await {
+                            Ok(stream) => Link::Up(Box::pin(stream)),
+                            Err(_) if fresh => Link::Down {
+                                wait: false,
+                                fresh: false,
+                            },
+                            Err(e) => {
+                                let down = Link::Down {
+                                    wait: true,
+                                    fresh: false,
+                                };
+                                return Some((Err(e), (connect, down)));
+                            }
+                        }
                     }
                 }
             }
-        }
-    })
+        },
+    )
 }
 
 /// The line of [`Reconnect`] while a connect fails.
@@ -1318,7 +1345,7 @@ mod tests {
         let connect = move || {
             n += 1;
             let reply = match n {
-                2 | 3 => Err(anyhow::anyhow!("try {n} failed")),
+                2..=4 => Err(anyhow::anyhow!("try {n} failed")),
                 _ => Ok(futures::stream::iter([Ok(n)])),
             };
             std::future::ready(reply)
@@ -1328,7 +1355,33 @@ mod tests {
             .map(|item| item.map_or_else(|e| e.to_string(), |n: u32| n.to_string()))
             .collect()
             .await;
-        assert_eq!(items, ["1", "try 2 failed", "try 3 failed", "4"]);
+        assert_eq!(items, ["1", "try 3 failed", "try 4 failed", "5"]);
+    }
+
+    /// A cut can leave a dead connection in the pool, so the first
+    /// connect after a stream ends can fail. `follow` tries once more at
+    /// once, and gives no error (01M3Q59CAA46C316BD4D1ED7C6).
+    #[tokio::test]
+    async fn follow_tries_once_more_at_once_after_a_stream_ends() {
+        let mut n = 0;
+        let connect = move || {
+            n += 1;
+            let reply = match n {
+                1 | 3 => Err(anyhow::anyhow!("dead connection")),
+                _ => Ok(futures::stream::iter([Ok(n)])),
+            };
+            std::future::ready(reply)
+        };
+        // A wait of a minute would stop the test: no connect waits.
+        let items = follow(connect, Duration::from_secs(60)).take(2);
+        let items = tokio::time::timeout(Duration::from_secs(5), items.collect::<Vec<_>>());
+        let items: Vec<u32> = items
+            .await
+            .unwrap()
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(items, [2, 4]);
     }
 
     #[tokio::test]
