@@ -1241,11 +1241,48 @@ pub fn message(c: &Checked, thread: &ThreadName) -> String {
     let lead = if lead { " lead=true" } else { "" };
     let head = format!("[{}] {}{lead}{to} ({mark})", m.seq, name(&m.from));
     match (m.kind, m.body.is_empty()) {
-        (Kind::Message, _) => format!("{head}: {}", m.body),
+        (Kind::Message, _) => match action(&m.from, &m.body) {
+            Some(action) => format!("{head}: {action}"),
+            None => format!("{head}: {}", m.body),
+        },
         (Kind::Status, true) => format!("{head} asks for your status."),
         (Kind::Status, false) => format!("{head} asks for your status: {}", m.body),
         (Kind::Note, _) => format!("{head} note: {}", m.body),
     }
+}
+
+/// The start of the body of an action line of the chat, as `/me` in
+/// IRC (01M3NJD37CNQX580YC24S7K6ES). An action is a plain message, so
+/// each riff shows it, also an older one.
+pub const ACTION: &str = "/me ";
+
+/// The text of an action line: the body after [`ACTION`]. `None` for
+/// each other body.
+///
+/// ```
+/// assert_eq!(riff::text::action_text("/me waves"), Some("waves"));
+/// assert_eq!(riff::text::action_text("hi /me"), None);
+/// ```
+pub fn action_text(body: &str) -> Option<&str> {
+    body.strip_prefix(ACTION)
+}
+
+/// An action line of the chat as plain text: `* USER@HOST TEXT`.
+/// `None` when the body is not an action.
+///
+/// ```
+/// let from = "riff://brett@kadomony".parse()?;
+/// assert_eq!(riff::text::action(&from, "/me waves").unwrap(), "* brett@kadomony waves");
+/// assert_eq!(riff::text::action(&from, "waves"), None);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn action(from: &SessionUri, body: &str) -> Option<String> {
+    let text = action_text(body)?;
+    Some(format!(
+        "* {}@{} {text}",
+        from.who().user(),
+        from.place().host()
+    ))
 }
 
 /// The answer to a read. It starts with [`DATA_NOTE`], then shows each
@@ -1744,7 +1781,7 @@ where
     };
     let _ = write!(out, "  {mark}  {}", styled(DIM, &format!("#{}", m.seq)));
     let body = match (m.kind, m.body.is_empty()) {
-        (Kind::Message, _) => safe(&m.body),
+        (Kind::Message, _) => safe(&action(&m.from, &m.body).unwrap_or_else(|| m.body.clone())),
         (Kind::Status, true) => "asks for your status.".into(),
         (Kind::Status, false) => format!("asks for your status: {}", safe(&m.body)),
         (Kind::Note, _) => format!("note: {}", safe(&m.body)),

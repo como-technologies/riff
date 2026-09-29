@@ -990,6 +990,32 @@
   it names a lead: `@lead` wakes the lead of the sender, and `@USER`
   wakes the lead of USER. The skill tells a lead to answer a chat line
   with a post to the thread `chat`.
+- **01M3NJD39JVJHY5G71CD79JBY3** In a terminal, `riff chat` has a
+  prompt line at the bottom. A new line prints above the prompt, and
+  the typed text stays. After Enter, the typed line goes away, so the
+  line shows once: as the chat line from the server. The start line
+  comes before the history. With a pipe, `riff chat` has no prompt and
+  no line editor.
+- **01M3NJD3BR0XAYNNFTEY0CG761** A chat line shows a person as
+  `<USER@HOST>`, a verified lead as `[USER's lead]`, and each other
+  session as `[USER ID]`, with the first 8 characters of its session
+  ID.
+- **01M3NJD37CNQX580YC24S7K6ES** `/me TEXT` in `riff chat` posts an
+  action line: a plain message with the body `/me TEXT`, so the riff of
+  the release before reads it. `riff chat` and `riff tail` show it as
+  `* USER@HOST TEXT`, and `read` as `* USER@HOST TEXT` after the head.
+  `@lead` and `@USER` in an action wake as in a chat line.
+  `riff chat` sends no line that starts with an unknown command, and
+  names its commands. A line that starts with `//` sends the line from
+  its second `/`.
+- **01M3NK7VHXB0PAR8VH8GQQA06K** A stream that ends is normal for a
+  long poll. `riff chat`, `riff tail` and `riff workers host` connect
+  again at once, and show nothing for it. Only a connect that fails
+  shows one short dim line `(reconnecting…)`, and the next item
+  `(back)`. A server that riff cannot talk to shows its error.
+- **01M3NK7VM1J5DDB0PECNZ28P4E** After each connect, `riff chat` reads
+  the thread. So it shows each line that came while it was not
+  connected, and each line only once.
 
 ## Security
 

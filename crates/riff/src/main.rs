@@ -8,7 +8,7 @@ use chrono::TimeZone;
 use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
-use riff::api::{self, Api, DEFAULT_SERVER, follow};
+use riff::api::{self, Api, DEFAULT_SERVER, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     auto_update, binary, hook, hygiene, identity, lifecycle, local, login, mcp, next, plugin, pr,
@@ -130,7 +130,8 @@ enum Command {
     /// Chat with the people of the riff, in the style of IRC. It shows the
     /// chat and each new line, and sends each line that you type. A line
     /// with @lead wakes your lead, and @USER wakes the lead of USER. Other
-    /// lines wake no session. /quit or Ctrl-C exits.
+    /// lines wake no session. /me TEXT sends an action. /quit or Ctrl-C
+    /// exits.
     Chat {
         /// When to use color. `auto` uses color only when stdout is a
         /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
@@ -1439,44 +1440,28 @@ async fn tail(api: &Api, thread: &ThreadName, here: &Place, color: ColorWhen) {
     }
 }
 
-/// Prints each message of `thread`. It reports an error once, in red
-/// for a version that it cannot talk to, and tries again until the
-/// stream comes back (01M3MNVTC248YYJJQKFD9H1WY9).
+/// Prints each message of `thread`. It connects again at once when the
+/// stream ends, and shows only a short dim line while a connect fails,
+/// or the error in red for a version that it cannot talk to
+/// (01M3MNVTC248YYJJQKFD9H1WY9, 01M3NK7VHXB0PAR8VH8GQQA06K).
 async fn tail_each(api: &Api, thread: &ThreadName) {
-    let (warning, error) = (riff::style::WARNING, riff::style::ERROR);
+    let error = riff::style::ERROR;
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let mut stream = Box::pin(follow(|| api.tail(thread), RETRY));
-    let mut lost = false;
+    let mut link = Reconnect::default();
     let mut last_day = None;
     while let Some(item) = stream.next().await {
-        match item {
-            Ok(checked) => {
-                if lost {
-                    anstream::eprintln!("riff: connected again.");
-                    lost = false;
-                }
-                let at = i64::try_from(checked.message.at_ms)
-                    .ok()
-                    .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
-                    .unwrap_or_else(chrono::Local::now);
-                let block = text::block(&checked, &at, last_day, textwrap::termwidth());
-                last_day = Some(at.date_naive());
-                anstream::println!("{block}");
-            }
-            Err(e) if !lost => {
-                let style = if e.downcast_ref::<Mismatch>().is_some() {
-                    error
-                } else {
-                    warning
-                };
-                anstream::eprintln!(
-                    "{style}riff: {e:#}. Trying again every {} seconds.{style:#}",
-                    RETRY.as_secs()
-                );
-                lost = true;
-            }
-            Err(_) => {}
+        if let Some(line) = link.line(&item) {
+            anstream::eprintln!("{line}");
         }
+        let Ok(checked) = item else { continue };
+        let at = i64::try_from(checked.message.at_ms)
+            .ok()
+            .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
+            .unwrap_or_else(chrono::Local::now);
+        let block = text::block(&checked, &at, last_day, textwrap::termwidth());
+        last_day = Some(at.date_naive());
+        anstream::println!("{block}");
     }
     anstream::eprintln!("{error}riff: the stream of {thread} ended.{error:#}");
 }

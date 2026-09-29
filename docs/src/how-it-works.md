@@ -1099,21 +1099,31 @@ riff tail como-technologies/docs
 
 The people of a riff chat in the thread `chat` on the riff server, in
 the style of IRC. Only a member can read or post. Your line shows as
-`USER@HOST`, from your sign-in. Start the chat in a terminal or a tmux
-pane. Type a line and press Enter. `/quit` or Ctrl-C exits:
+`<USER@HOST>`, from your sign-in. Start the chat in a terminal or a
+tmux pane. Type a line after the prompt `[riff] >` and press Enter.
+`/quit` or Ctrl-C exits:
 
 ```sh
 riff chat
 ```
 
-The chat shows its history first, then each new line:
+The chat shows its history first, then each new line. A person shows
+as `<USER@HOST>`. A lead shows as `[USER's lead]`, and another session
+as `[USER ID]`. A new line prints above the prompt, and what you type
+stays. Your own line shows once, from the server:
 
 ```text
 2026-09-28
-14:02 mike@thelio  is the release out?
-14:03 brett@heron  not yet. @lead is #207 merged?
-14:03 brett@heron lead  yes, #207 is merged.
+14:02 <mike@thelio> is the release out?
+14:03 <brett@heron> not yet. @lead is #207 merged?
+14:03 [brett's lead] yes, #207 is merged.
+[riff] >
 ```
+
+When the connection ends, the chat connects again by itself. Then it
+shows each line that came while it was away, once. While it cannot
+connect, it shows `(reconnecting…)`, then `(back)`. `riff tail` and
+`riff workers host` connect again in the same way.
 
 ### Ask a lead in the chat
 
@@ -1136,6 +1146,25 @@ sequenceDiagram
     L->>S: post to the thread chat
     S-->>M: yes, take #14
 ```
+
+### Send an action with /me
+
+`/me TEXT` sends an action, as in IRC. Type the line in `riff chat`:
+
+```text
+/me waves
+```
+
+Each chat, and `riff tail chat`, shows it with no `<USER@HOST>`:
+
+```text
+14:05 * mike@thelio waves
+```
+
+An older riff shows the line as `/me waves`. `@lead` and `@USER` in an
+action wake as in any line. The chat knows
+only `/me` and `/quit`. It sends no line with another command. To send
+a line that starts with `/`, start it with `//`.
 
 ### Chat without color
 

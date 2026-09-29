@@ -580,7 +580,9 @@ async fn ctrl_c_stops_a_host_that_tries_again() {
     b.limit(1);
     let mut host = b.host(&main);
     until("the host tries again", || async {
-        b.host_output().contains("Trying again").then_some(())
+        b.host_output()
+            .contains(riff::api::RECONNECTING)
+            .then_some(())
     })
     .await;
     let took = host.stop("INT");

@@ -242,6 +242,57 @@ where
     })
 }
 
+/// The line of [`Reconnect`] while a connect fails.
+pub const RECONNECTING: &str = "(reconnecting…)";
+
+/// The line of [`Reconnect`] when a stream is back after a failed connect.
+pub const BACK: &str = "(back)";
+
+/// What a person sees of a stream that [`follow`] follows
+/// (01M3NK7VHXB0PAR8VH8GQQA06K). A server that ends a long poll is
+/// normal, so a reconnect shows nothing. Only a failed connect shows one
+/// short dim line, [`RECONNECTING`], and the next item [`BACK`]. A server
+/// that riff cannot talk to ([`Mismatch`]) shows its error in red.
+///
+/// ```
+/// use riff::api::{BACK, RECONNECTING, Reconnect};
+///
+/// let plain = |line: Option<String>| line.map(|l| anstream::adapter::strip_str(&l).to_string());
+/// let mut link = Reconnect::default();
+/// assert_eq!(link.line(&anyhow::Ok(1)), None);
+/// let cut: anyhow::Result<u32> = Err(anyhow::anyhow!("error decoding response body"));
+/// assert_eq!(plain(link.line(&cut)).as_deref(), Some(RECONNECTING));
+/// assert_eq!(link.line(&cut), None);
+/// assert_eq!(plain(link.line(&anyhow::Ok(2))).as_deref(), Some(BACK));
+/// assert_eq!(link.line(&anyhow::Ok(3)), None);
+/// ```
+#[derive(Debug, Default)]
+pub struct Reconnect {
+    lost: bool,
+}
+
+impl Reconnect {
+    /// The line to show before `item`, with its style, if any.
+    pub fn line<T>(&mut self, item: &Result<T>) -> Option<String> {
+        use crate::style::{DIM, ERROR, styled};
+        match (item, self.lost) {
+            (Ok(_), true) => {
+                self.lost = false;
+                Some(styled(DIM, BACK))
+            }
+            (Ok(_), false) | (Err(_), true) => None,
+            (Err(e), false) => {
+                self.lost = true;
+                Some(if e.downcast_ref::<Mismatch>().is_some() {
+                    styled(ERROR, &format!("riff: {e:#}"))
+                } else {
+                    styled(DIM, RECONNECTING)
+                })
+            }
+        }
+    }
+}
+
 /// What a server that answers tells about itself: see [`Api::probe`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Probe {
