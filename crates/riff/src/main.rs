@@ -225,7 +225,8 @@ enum Command {
     /// Update riff on this machine: install riff and riff-server of a
     /// release with cargo, then update the plugin with `riff connect
     /// claude`. It installs the release that the riff runs, or the newest
-    /// release when riff uses the riff of this machine. When the riff of
+    /// release when riff uses the riff of this machine or cannot read the
+    /// build of the riff. When the riff of
     /// this machine runs the old build, it tells you to start riff-server
     /// again.
     Update {

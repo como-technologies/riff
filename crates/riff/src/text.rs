@@ -1697,6 +1697,24 @@ pub fn updated(old: Option<&str>) -> String {
     format!("riff is up to date. {restart}Start your Claude Code sessions again.")
 }
 
+/// The line of `riff update` when the riff at `server` names no build
+/// that riff can read, so riff installs the newest release `tag`
+/// (01M3N73Y9DMVMCV0PJE1R8YCFH).
+///
+/// ```
+/// let line = riff::text::newest_instead("https://riff.example.com", "v0.3.0");
+/// assert_eq!(
+///     line,
+///     "riff cannot read the build of the riff at https://riff.example.com, \
+///      so riff installs the newest release, v0.3.0."
+/// );
+/// ```
+pub fn newest_instead(server: &str, tag: &str) -> String {
+    format!(
+        "riff cannot read the build of the riff at {server}, \
+         so riff installs the newest release, {tag}."
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::*;
