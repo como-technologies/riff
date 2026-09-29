@@ -14,43 +14,54 @@ use tokio::signal::unix::{SignalKind, signal};
 /// The central service that sessions connect to. It runs in the
 /// foreground (R118).
 #[derive(Parser)]
-#[command(version = riff_core::build::VERSION, about)]
+#[command(version = riff_core::build::VERSION, about, max_term_width = 80)]
 struct Cli {
     /// The address to listen on.
-    #[arg(long, env = "RIFF_LISTEN", default_value = "127.0.0.1:7878")]
+    #[arg(
+        long,
+        env = "RIFF_LISTEN",
+        hide_env_values = true,
+        default_value = "127.0.0.1:7878"
+    )]
     listen: SocketAddr,
 
     /// The verified email of a person who may revoke the tokens of any
     /// person. Repeat it for more admins.
-    #[arg(long = "admin", env = "RIFF_ADMINS", value_delimiter = ',')]
+    #[arg(
+        long = "admin",
+        env = "RIFF_ADMINS",
+        hide_env_values = true,
+        value_delimiter = ','
+    )]
     admins: Vec<String>,
 
     /// The verified email of the owner of a new riff. Without it, the
     /// first person who signs in is the owner, and the server listens
     /// only on a loopback address until then. A riff that has an owner
     /// keeps it.
-    #[arg(long, env = "RIFF_OWNER")]
+    #[arg(long, env = "RIFF_OWNER", hide_env_values = true)]
     owner: Option<String>,
 
     /// The URL where people reach the server. It is the OAuth resource
     /// and issuer. The default is http://<listen>.
-    #[arg(long, env = "RIFF_PUBLIC_URL")]
+    #[arg(long, env = "RIFF_PUBLIC_URL", hide_env_values = true)]
     public_url: Option<String>,
 
     /// Refuse each request that has no live riff access token.
-    #[arg(long, env = "RIFF_REQUIRE_SIGN_IN")]
+    #[arg(long, env = "RIFF_REQUIRE_SIGN_IN", hide_env_values = true)]
     require_sign_in: bool,
 
     /// Listen on an address that is not loopback with no sign-in. Each
     /// machine that can reach the server can then read, post and answer
     /// as any person. riff-server has no TLS.
-    #[arg(long, env = "RIFF_INSECURE")]
+    #[arg(long, env = "RIFF_INSECURE", hide_env_values = true)]
     insecure: bool,
 
     /// The OpenID Connect issuer that people sign in with.
     #[arg(
         long,
         env = "RIFF_OIDC_ISSUER",
+        hide_env_values = true,
         default_value = "https://accounts.google.com"
     )]
     issuer: String,
@@ -58,20 +69,25 @@ struct Cli {
     /// The OAuth client ID of your own OIDC app at the issuer. With it,
     /// each call needs sign-in. Without it, the server has no sign-in.
     /// riff has no built-in client.
-    #[arg(long, env = "RIFF_OIDC_CLIENT_ID")]
+    #[arg(long, env = "RIFF_OIDC_CLIENT_ID", hide_env_values = true)]
     client_id: Option<String>,
 
     /// The client secret, when the issuer asks for one. Google asks for
     /// it for a desktop client. It is not a secret: each `riff login`
     /// gets it.
-    #[arg(long, env = "RIFF_OIDC_CLIENT_SECRET", requires = "client_id")]
+    #[arg(
+        long,
+        env = "RIFF_OIDC_CLIENT_SECRET",
+        hide_env_values = true,
+        requires = "client_id"
+    )]
     client_secret: Option<String>,
 
     /// A Workspace domain whose accounts may sign in. Repeat it for more
     /// domains.
     #[arg(
         long = "allowed-domain",
-        env = "RIFF_ALLOWED_DOMAINS",
+        env = "RIFF_ALLOWED_DOMAINS", hide_env_values = true,
         value_delimiter = ',',
         default_value = DEFAULT_DOMAIN
     )]
@@ -80,24 +96,24 @@ struct Cli {
     /// The Cloud Storage bucket that holds the state. The server loads
     /// the state at start and saves each change. Without it, the server
     /// saves nothing.
-    #[arg(long, env = "RIFF_BUCKET")]
+    #[arg(long, env = "RIFF_BUCKET", hide_env_values = true)]
     bucket: Option<String>,
 
     /// The minutes that the owner has to answer `riff owner --take` of an
     /// admin. With no answer, the admin is the owner.
-    #[arg(long, env = "RIFF_OWNER_TAKE_MINUTES", default_value_t = 10,
+    #[arg(long, env = "RIFF_OWNER_TAKE_MINUTES", hide_env_values = true, default_value_t = 10,
           value_parser = clap::value_parser!(u64).range(1..))]
     owner_take_minutes: u64,
 
     /// The minutes between two checks of the owner. A check misses when
     /// the owner has no live lead session.
-    #[arg(long, env = "RIFF_OWNER_PING_MINUTES", default_value_t = 5,
+    #[arg(long, env = "RIFF_OWNER_PING_MINUTES", hide_env_values = true, default_value_t = 5,
           value_parser = clap::value_parser!(u64).range(1..))]
     owner_ping_minutes: u64,
 
     /// The misses in a row after which the owner is gone. The riff then
     /// has no owner, and asks each admin for a volunteer.
-    #[arg(long, env = "RIFF_OWNER_PINGS", default_value_t = 3,
+    #[arg(long, env = "RIFF_OWNER_PINGS", hide_env_values = true, default_value_t = 3,
           value_parser = clap::value_parser!(u32).range(1..))]
     owner_pings: u32,
 }
