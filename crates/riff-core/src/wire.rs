@@ -290,6 +290,72 @@ pub struct SessionInfo {
     /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
     #[serde(default)]
     pub claims_secs: u64,
+    /// The state of the session, that the server derives
+    /// (01M3QB6CJ1XCQG5B1BVR8AF3B4).
+    #[serde(default)]
+    pub state: SessionState,
+}
+
+/// The state of a session. The server derives it; no session reports it
+/// (01M3QB6CJ1XCQG5B1BVR8AF3B4). The first state that matches wins, in
+/// this order:
+///
+/// 1. `offline`: the session has no open watch stream.
+/// 2. `paused`: the riff is paused.
+/// 3. `blocked`: its current status, not a stale one, is blocked.
+/// 4. `busy`: it holds a claim.
+/// 5. `idle`: each other session.
+///
+/// ```
+/// use riff_core::wire::SessionState;
+///
+/// // live, paused, blocked, claims
+/// assert_eq!(SessionState::of(false, true, true, true), SessionState::Offline);
+/// assert_eq!(SessionState::of(true, true, true, true), SessionState::Paused);
+/// assert_eq!(SessionState::of(true, false, true, true), SessionState::Blocked);
+/// assert_eq!(SessionState::of(true, false, false, true), SessionState::Busy);
+/// assert_eq!(SessionState::of(true, false, false, false), SessionState::Idle);
+/// assert_eq!(serde_json::to_string(&SessionState::Busy).unwrap(), r#""busy""#);
+/// assert_eq!(SessionState::Blocked.word(), "blocked");
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionState {
+    #[default]
+    Offline,
+    Paused,
+    Blocked,
+    Busy,
+    Idle,
+}
+
+impl SessionState {
+    /// The state of a session from its facts: an open watch stream
+    /// (`live`), a paused riff, a current blocked status, and a claim.
+    pub fn of(live: bool, paused: bool, blocked: bool, claims: bool) -> Self {
+        if !live {
+            SessionState::Offline
+        } else if paused {
+            SessionState::Paused
+        } else if blocked {
+            SessionState::Blocked
+        } else if claims {
+            SessionState::Busy
+        } else {
+            SessionState::Idle
+        }
+    }
+
+    /// The word of the state, the same in each command.
+    pub fn word(self) -> &'static str {
+        match self {
+            SessionState::Offline => "offline",
+            SessionState::Paused => "paused",
+            SessionState::Blocked => "blocked",
+            SessionState::Busy => "busy",
+            SessionState::Idle => "idle",
+        }
+    }
 }
 
 /// The most characters in the step or the reason of a [`Status`].

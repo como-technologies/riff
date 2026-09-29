@@ -174,7 +174,7 @@ use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     AliveReply, ClaimReply, Freed, Idle, Keys, Kind, LeadReply, Message, Post, RiffReply,
-    RiffState, SessionInfo, Status, StatusInfo, Tailed, ThreadInfo, Wake,
+    RiffState, SessionInfo, SessionState, Status, StatusInfo, Tailed, ThreadInfo, Wake,
 };
 use serde::{Deserialize, Serialize};
 
@@ -861,20 +861,35 @@ impl State {
         self.sessions
             .iter()
             .filter(|(_, session)| all || !session.gone(now))
-            .map(|(who, session)| SessionInfo {
-                uri: self.uri(who, now),
-                live: session.watchers > 0,
-                idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
-                status: session.status.as_ref().map(|s| StatusInfo {
+            .map(|(who, session)| {
+                let uri = self.uri(who, now);
+                let live = session.watchers > 0;
+                let status = session.status.as_ref().map(|s| StatusInfo {
                     status: s.status.clone(),
                     age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
                     stale: s.before(Some(session.claims_changed)) || s.before(self.riff_changed),
-                }),
-                worker: session.worker,
-                stopping: session.stopping,
-                claims_secs: now
-                    .saturating_duration_since(session.claims_changed)
-                    .as_secs(),
+                });
+                let blocked = status
+                    .as_ref()
+                    .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
+                let state = SessionState::of(
+                    live,
+                    self.riff == RiffState::Paused,
+                    blocked,
+                    !uri.claims().is_empty(),
+                );
+                SessionInfo {
+                    uri,
+                    live,
+                    idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
+                    status,
+                    worker: session.worker,
+                    stopping: session.stopping,
+                    claims_secs: now
+                        .saturating_duration_since(session.claims_changed)
+                        .as_secs(),
+                    state,
+                }
             })
             .collect()
     }
@@ -3347,6 +3362,34 @@ mod tests {
 
         state.release(&docs(), &repo(), "issue-12", t(5)).unwrap();
         assert!(stale(&state, &docs(), t(5)), "the release is newer");
+    }
+
+    /// The server derives the state of each session in `who`
+    /// (01M3QB6CJ1XCQG5B1BVR8AF3B4): the first that matches of offline,
+    /// paused, blocked, busy and idle.
+    #[test]
+    fn who_derives_the_state_of_each_session() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = |secs| now + Duration::from_secs(secs);
+        let of = |state: &State, secs| info(state, &docs(), t(secs)).state;
+        assert_eq!(of(&state, 0), SessionState::Offline, "no watch");
+        state.watch_started(&docs(), t(1));
+        assert_eq!(of(&state, 1), SessionState::Idle);
+        state.claim(&docs(), &repo(), "issue-12", t(2)).unwrap();
+        assert_eq!(of(&state, 2), SessionState::Busy);
+        let blocked = Status {
+            step: "merge".into(),
+            blocked: Some("waits for a review".into()),
+        };
+        state.set_status(&docs(), blocked, t(3), T0).unwrap();
+        assert_eq!(of(&state, 3), SessionState::Blocked);
+        state.riff(&api(), Some(RiffState::Paused), t(4)).unwrap();
+        assert_eq!(of(&state, 4), SessionState::Paused);
+        state.riff(&api(), Some(RiffState::Running), t(5)).unwrap();
+        assert_eq!(of(&state, 5), SessionState::Busy, "the block is stale");
+        state.watch_ended(docs().who(), t(6));
+        assert_eq!(of(&state, 6), SessionState::Offline);
     }
 
     #[test]

@@ -132,7 +132,8 @@ async fn the_tools_carry_a_conversation() {
 
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
     assert!(who.contains(BRETT_LEAD), "{who}");
-    assert!(who.contains("(b2) offline 0s lead  "), "{who}");
+    assert!(who.contains("(b2) offline lead  "), "{who}");
+    assert!(who.contains(&format!("{BRETT_LEAD}\n  seen ")), "{who}");
     // The who tool keeps plain text for agents (01M3Q63MVZ74WPNBA3QJYQGHFG).
     assert!(!who.contains('\x1b'), "{who:?}");
     let (all, _) = call(&mike, "who", serde_json::json!({ "all": true })).await;
@@ -312,11 +313,15 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
         "Your status is now: blocked at merge: waits for a review"
     );
 
+    // With a watch, brett is live, so the server gives its state. The
+    // riff is paused: paused wins, with the step it stopped at
+    // (01M3QB6CJ1XCQG5B1BVR8AF3B4).
+    let uri: riff_core::name::SessionUri = BRETT_LEAD.parse().unwrap();
+    let _watch = api.watch(&uri).await.unwrap();
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
+    assert!(who.contains("(b2) paused lead  "), "{who}");
     assert!(
-        who.contains(&format!(
-            "{BRETT_LEAD}\n  blocked 0s ago: waits for a review (step: merge)\n"
-        )),
+        who.contains(&format!("{BRETT_LEAD}\n  stopped at: merge\n")),
         "{who}"
     );
 
