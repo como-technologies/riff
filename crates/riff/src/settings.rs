@@ -21,6 +21,8 @@
 //! | `workers.limit` | 0 | The most workers that `riff workers start` runs on this machine (01M3JPQT35BMR7XMAMMFSCDC2B). |
 //! | `workers.interval` | 10 | The seconds between two workers that the rollout of the lead starts. 0 turns the rollout off (see [`rollout`](crate::rollout), 01M3Q5QE9H42FQKEDC5G9GKCWD). |
 //! | `workers.mcp` | `["riff"]` | The MCP servers that a worker loads (see [`worker_mcp`](crate::worker_mcp)). |
+//! | `lead.compact` | true | riff compacts the lead at the end of a wave (see [`compact`](crate::compact)). |
+//! | `lead.quiet` | 60 | The seconds with no input in the pane of the lead before riff compacts it. |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
 
 use std::path::{Path, PathBuf};
@@ -204,6 +206,66 @@ pub fn update_auto(path: &Path) -> Result<bool> {
 pub fn set_update_auto(path: &Path, auto: bool) -> Result<()> {
     set(path, "update", "auto", value(auto))
 }
+
+/// True when riff compacts the lead at the end of a wave: `lead.compact`
+/// (01M3Q88GBSRJRP4VGVDV3EJZ4R). True when the file or the key is
+/// missing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert!(riff::settings::lead_compact(&path)?);
+/// riff::settings::set_lead_compact(&path, false)?;
+/// assert!(!riff::settings::lead_compact(&path)?);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn lead_compact(path: &Path) -> Result<bool> {
+    let doc = read(path)?;
+    let Some(compact) = doc.get("lead").and_then(|l| l.get("compact")) else {
+        return Ok(true);
+    };
+    compact
+        .as_bool()
+        .with_context(|| format!("lead.compact in {} is not true or false", path.display()))
+}
+
+/// Sets `lead.compact`. It keeps each other key.
+pub fn set_lead_compact(path: &Path, compact: bool) -> Result<()> {
+    set(path, "lead", "compact", value(compact))
+}
+
+/// The quiet time before riff compacts the lead: `lead.quiet`, in
+/// seconds (01M3Q88GBSRJRP4VGVDV3EJZ4R). [`LEAD_QUIET`] when the file or
+/// the key is missing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::lead_quiet(&path)?, 60);
+/// riff::settings::set_lead_quiet(&path, 90)?;
+/// assert_eq!(riff::settings::lead_quiet(&path)?, 90);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn lead_quiet(path: &Path) -> Result<u64> {
+    let doc = read(path)?;
+    let Some(quiet) = doc.get("lead").and_then(|l| l.get("quiet")) else {
+        return Ok(LEAD_QUIET);
+    };
+    let Some(quiet) = quiet.as_integer() else {
+        bail!("lead.quiet in {} is not a number", path.display());
+    };
+    u64::try_from(quiet)
+        .with_context(|| format!("lead.quiet in {} is out of range", path.display()))
+}
+
+/// Sets `lead.quiet`. It keeps each other key.
+pub fn set_lead_quiet(path: &Path, secs: u64) -> Result<()> {
+    let secs = i64::try_from(secs).context("the quiet time is too long")?;
+    set(path, "lead", "quiet", value(secs))
+}
+
+/// The default quiet time, in seconds.
+pub const LEAD_QUIET: u64 = 60;
 
 /// The question about `update.auto` on a new machine.
 pub const ASK_UPDATE_AUTO: &str = "Update riff by itself when the riff gets a new release? [Y/n] ";

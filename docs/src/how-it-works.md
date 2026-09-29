@@ -2352,8 +2352,64 @@ sequenceDiagram
 ```
 
 `riff workers next` works only in a worker that holds no claims. riff
-never clears the lead: you work in it. To see the context of a worker,
-type `/context` in its pane.
+never clears the lead: you work in it. It compacts the lead at the end
+of a wave (see the next section). To see the context of a worker, type
+`/context` in its pane.
+
+### riff compacts the lead at the end of a wave
+
+The lead keeps its context over many waves. riff compacts it at a safe
+point: the end of a wave. You do nothing. riff does it only when all of
+these are true:
+
+1. The riff is paused.
+2. The last done wave has no open item, and its release is out: the
+   release item is closed, the release pull request is merged, and the
+   CI run of the tag passed.
+3. No session holds a claim, and no pull request of a wave is open.
+4. The turn of the lead ended, and it has no unread message.
+5. Nobody typed in the pane of the lead for the quiet time (default 1
+   minute), and its input line is empty. riff never types into a
+   half-written prompt.
+6. The last message of the lead does not ask you a question.
+7. riff did not compact the lead for this wave already.
+
+```mermaid
+sequenceDiagram
+    participant L as lead
+    participant R as riff (Stop hook)
+    participant T as tmux pane of the lead
+    L->>R: the turn ends
+    R->>L: tell: post a handoff note
+    L->>R: note "handoff: Wave 13 ..." and the turn ends
+    R->>T: /compact with instructions
+    T->>L: the lead reads the note and starts its watch again
+```
+
+First riff asks the lead to post a handoff note to the repository
+thread: the state, the next wave and the open decisions. After the
+note, riff types `/compact` into the pane of the lead. The instructions
+tell the compact what to keep. When the lead does not run in tmux, riff
+tells the lead to ask you to run `/compact`.
+
+See the setting of this machine:
+
+```sh
+riff lead compact
+```
+
+Turn it off, or on again:
+
+```sh
+riff lead compact off
+riff lead compact on
+```
+
+Change the quiet time, in seconds:
+
+```sh
+riff lead compact --quiet 120
+```
 
 ### Workers keep good git hygiene
 
