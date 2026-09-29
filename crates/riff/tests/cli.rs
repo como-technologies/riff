@@ -93,7 +93,7 @@ fn login_says_when_it_cannot_reach_the_server() {
 fn the_default_server_is_the_local_server() {
     let out = Isolated::shared()
         .assert_riff()
-        .args(["login", "--help"])
+        .args(["help", "server"])
         .env_remove("RIFF_SERVER")
         .assert()
         .success()
@@ -101,5 +101,8 @@ fn the_default_server_is_the_local_server() {
         .stdout
         .clone();
     let help = String::from_utf8(out).unwrap();
-    assert!(help.contains("[default: http://127.0.0.1:7878]"), "{help}");
+    assert!(
+        help.contains("of this machine, http://127.0.0.1:7878."),
+        "{help}"
+    );
 }

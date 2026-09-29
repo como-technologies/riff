@@ -24,10 +24,13 @@
 //! assert!(!help.contains("hook"));
 //! ```
 
+use std::ffi::OsString;
 use std::fmt::Write;
+use std::io::IsTerminal;
 
-use clap::Command;
 use clap::builder::StyledStr;
+use clap::error::ErrorKind;
+use clap::{ArgMatches, Command};
 
 /// The widest line of help, in columns. Help wraps at this width, also
 /// in a wider terminal.
@@ -104,4 +107,56 @@ pub fn grouped(cmd: Command, groups: &[Group]) -> Command {
         name = cmd.get_name()
     );
     cmd.help_template(template).max_term_width(WIDTH)
+}
+
+/// Parse the arguments of this process with `cmd`. See [`try_matches`].
+/// With no argument at all, show the help on stderr and exit with 2.
+pub fn matches(mut cmd: Command) -> ArgMatches {
+    if std::env::args_os().len() == 1 {
+        let help = cmd.render_help();
+        if std::io::stderr().is_terminal() {
+            eprint!("{}", help.ansi());
+        } else {
+            eprint!("{help}");
+        }
+        std::process::exit(2);
+    }
+    try_matches(cmd, std::env::args_os()).unwrap_or_else(|e| e.exit())
+}
+
+/// Parse `args` with `cmd`. With no subcommand, the error names no
+/// subcommand, so that it names no hidden one
+/// (01M3NT228WA11PGNWDJ0WP7PQD).
+///
+/// ```
+/// use clap::Command;
+///
+/// let cmd = Command::new("tool")
+///     .subcommand_required(true)
+///     .arg(clap::Arg::new("server").long("server"))
+///     .subcommand(Command::new("go"))
+///     .subcommand(Command::new("hook").hide(true));
+/// let e = riff::help::try_matches(cmd.clone(), ["tool", "--server", "x"]).unwrap_err();
+/// assert_eq!(
+///     e.to_string(),
+///     "error: name a command. Run 'tool --help' to list them.\n"
+/// );
+/// assert!(riff::help::try_matches(cmd, ["tool", "go"]).is_ok());
+/// ```
+pub fn try_matches<I, T>(cmd: Command, args: I) -> Result<ArgMatches, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    let name = cmd.get_name().to_owned();
+    cmd.try_get_matches_from(args).map_err(|e| {
+        if e.kind() == ErrorKind::MissingSubcommand {
+            clap::Error::raw(
+                e.kind(),
+                format!("name a command. Run '{name} --help' to list them.\n"),
+            )
+        } else {
+            e
+        }
+    })
 }

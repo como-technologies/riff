@@ -104,6 +104,15 @@ Each value is a URL, `HOST` or `HOST:PORT`. With no scheme, riff uses
 is `http://[::1]:7878`, and so is `[::1]:7878`. To use another riff, see
 [Change to another riff](join-a-riff.md#change-to-another-riff).
 
+### Show the forms of --server
+
+The help of each command gives `--server` one short line.
+`riff help server` shows the forms of a value and the default:
+
+```sh
+riff help server
+```
+
 ### Show the riffs
 
 `riff server` shows the riff that `riff` uses, and where that choice

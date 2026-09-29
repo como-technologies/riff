@@ -58,6 +58,8 @@ fn each_line_of_the_help_fits_in_80_columns() {
         &["workers", "--help"],
         &["workers", "start", "--help"],
         &["update", "--help"],
+        &["help", "server"],
+        &["who", "-h"],
     ] {
         let help = riff(args);
         for line in help.lines() {
@@ -156,4 +158,48 @@ fn the_book_shows_how_to_find_a_command() {
     for name in PLUMBING {
         assert!(part.contains(&format!("`riff {name}`")), "{name}");
     }
+}
+
+#[test]
+fn the_server_help_is_short_and_riff_help_server_has_the_long_text() {
+    let short = "--server <SERVER>  The riff-server (default: the riff of this machine)";
+    for args in [&["--help"][..], &["who", "-h"], &["workers", "start", "-h"]] {
+        let help = riff(args);
+        assert!(help.contains(short), "riff {args:?}: {help}");
+        assert!(!help.contains("7878"), "riff {args:?}: {help}");
+    }
+    let long = riff(&["help", "server"]);
+    for words in [
+        "URL, HOST or HOST:PORT",
+        "port 7878",
+        "http://127.0.0.1:7878",
+    ] {
+        assert!(long.contains(words), "{words}: {long}");
+    }
+}
+
+#[test]
+fn riff_with_no_command_names_no_hidden_command() {
+    for args in [&[][..], &["--server", "127.0.0.1:9"]] {
+        let out = Isolated::shared().riff().args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "riff {args:?}: {out:?}");
+        let err = String::from_utf8(out.stderr).unwrap();
+        for name in PLUMBING {
+            assert!(!err.contains(name), "riff {args:?}: {name}: {err}");
+        }
+        assert!(!err.contains("[subcommands:"), "riff {args:?}: {err}");
+    }
+    let out = Isolated::shared().riff().output().unwrap();
+    let help = String::from_utf8(out.stderr).unwrap();
+    assert!(help.contains("Get started:\n"), "{help}");
+    let out = Isolated::shared()
+        .riff()
+        .args(["--server", "127.0.0.1:9"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(
+        err,
+        "error: name a command. Run 'riff --help' to list them.\n"
+    );
 }
