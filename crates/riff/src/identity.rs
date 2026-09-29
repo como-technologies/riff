@@ -12,7 +12,7 @@
 //! | worktree | The directory name of a linked worktree. The main worktree has none. |
 //!
 //! After an update, a long run gives its place to its new binary in
-//! [`PLACE_VAR`]. The new binary takes host, owner/repo and worktree
+//! [`PLACE_ARG`]. The new binary takes host, owner/repo and worktree
 //! from there, not from the rules above (see [`here`]).
 //!
 //! Outside git, the repository part is `-` and the worktree part is the
@@ -175,24 +175,22 @@ pub fn session(place: &Place, server: &str) -> Result<SessionUri> {
     Ok(me)
 }
 
-/// The variable that gives a new binary the place of the process that
-/// ran it after an update (01M3NJGD45GF7Y4CZWQ7GRDHZN). Only riff sets
-/// it.
-pub const PLACE_VAR: &str = "RIFF_PLACE";
+/// The hidden argument that gives a new binary the place of the process
+/// that ran it after an update (01M3NJGD45GF7Y4CZWQ7GRDHZN). Only riff
+/// gives it. A process that the new binary starts does not inherit it.
+pub const PLACE_ARG: &str = "--place";
 
-/// The place of this process: from [`PLACE_VAR`], else from the working
-/// directory. So a long run keeps its repository and worktree over an
-/// update, also when its directory is gone.
-pub fn here() -> Result<Place> {
-    match std::env::var(PLACE_VAR) {
-        Ok(text) if !text.is_empty() => {
-            place_from_text(&text).with_context(|| format!("{PLACE_VAR} is not a place: {text}"))
-        }
-        _ => place(&working_dir()?),
+/// The place of this process: `given` in [`PLACE_ARG`], else the place
+/// of the working directory. So a long run keeps its repository and
+/// worktree over an update, also when its directory is gone.
+pub fn here(given: Option<&Place>) -> Result<Place> {
+    match given {
+        Some(place) => Ok(place.clone()),
+        None => place(&working_dir()?),
     }
 }
 
-/// `place` as the text of [`PLACE_VAR`]: `HOST/OWNER/REPO#WORKTREE`, or
+/// `place` as the text of [`PLACE_ARG`]: `HOST/OWNER/REPO#WORKTREE`, or
 /// `HOST/-` outside git. [`place_from_text`] reads it back.
 ///
 /// ```

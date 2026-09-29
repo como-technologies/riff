@@ -40,6 +40,11 @@ struct Cli {
           value_parser = api::server_url)]
     server: String,
 
+    /// The place of the process that ran this binary after an update
+    /// (01M3NJGD45GF7Y4CZWQ7GRDHZN). Only riff gives it.
+    #[arg(long, global = true, hide = true, value_parser = identity::place_from_text)]
+    place: Option<Place>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -669,7 +674,7 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
-    let here = identity::here()?;
+    let here = identity::here(cli.place.as_ref())?;
     let me = identity::me(&here, api.base())?;
     // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
     // `riff mcp` still runs: its `join` tool brings the session back.

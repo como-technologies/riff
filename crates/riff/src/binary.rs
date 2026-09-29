@@ -11,10 +11,12 @@
 //! Claude Code that runs the watch goes on. The lock of the watch is on
 //! a file with close-on-exec, so the new process takes it again.
 //!
-//! The new binary keeps the place of the old one: the old process puts
-//! its place (host, repository and worktree) in
-//! [`crate::identity::PLACE_VAR`], and the new one reads it there, not
-//! from its directory (01M3NJGD45GF7Y4CZWQ7GRDHZN). A long run can
+//! The new binary keeps the place of the old one: the old process gives
+//! its place (host, repository and worktree) in the hidden argument
+//! [`crate::identity::PLACE_ARG`], and the new one reads it there, not
+//! from its directory (01M3NJGD45GF7Y4CZWQ7GRDHZN). An argument, not a
+//! variable, so that no process that the new binary starts inherits
+//! the place. A long run can
 //! outlive its working directory, for example a watch that started in a
 //! worktree which the session removed later. So before the `exec`, a
 //! process whose working directory is gone also moves to the nearest
@@ -129,20 +131,51 @@ impl Binary {
         }
     }
 
-    /// Runs the binary on disk in place of this process, with `args` and
-    /// the extra variables `vars`. It returns only on an error.
-    pub fn exec(
-        &self,
-        args: impl IntoIterator<Item = OsString>,
-        vars: &[(&str, String)],
-    ) -> std::io::Error {
+    /// Runs the binary on disk in place of this process, with `args`.
+    /// It returns only on an error.
+    pub fn exec(&self, args: impl IntoIterator<Item = OsString>) -> std::io::Error {
         let mut command = std::process::Command::new(&self.path);
-        command.envs(vars.iter().map(|(k, v)| (k, v)));
         if let Ok(dir) = std::env::current_dir() {
             command.env("PWD", dir);
         }
         command.args(args).exec()
     }
+}
+
+/// `args` with [`identity::PLACE_ARG`] and `place` first. It drops the
+/// place of an earlier update.
+///
+/// ```
+/// use std::ffi::OsString;
+/// use riff::binary::with_place;
+/// use riff_core::name::{Place, Repo};
+///
+/// let repo = Repo::Git { owner: "acme".into(), name: "alpha".into() };
+/// let place = Place::new("thelio", repo, Some("issue-12"))?;
+/// let args = |a: &[&str]| a.iter().map(OsString::from).collect::<Vec<_>>();
+/// let want = args(&["--place", "thelio/acme/alpha#issue-12", "watch", "--once"]);
+/// assert_eq!(with_place(args(&["watch", "--once"]), &place), want);
+/// let again = args(&["--place", "old/acme/beta", "watch", "--once"]);
+/// assert_eq!(with_place(again, &place), want);
+/// let joined = args(&["--place=old/acme/beta", "watch", "--once"]);
+/// assert_eq!(with_place(joined, &place), want);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn with_place(args: impl IntoIterator<Item = OsString>, place: &Place) -> Vec<OsString> {
+    let joined = format!("{}=", identity::PLACE_ARG);
+    let mut out = vec![
+        identity::PLACE_ARG.into(),
+        identity::place_text(place).into(),
+    ];
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == identity::PLACE_ARG {
+            args.next();
+        } else if !arg.to_string_lossy().starts_with(&joined) {
+            out.push(arg);
+        }
+    }
+    out
 }
 
 /// The nearest directory that exists: `dir` or one of its parents.
@@ -197,8 +230,7 @@ pub async fn follow_update(place: &Place) {
     binary.new_one().await;
     eprintln!("riff: a new riff is on disk. riff runs it now.");
     leave_a_gone_dir(start.as_deref());
-    let place = (identity::PLACE_VAR, identity::place_text(place));
-    let error = binary.exec(std::env::args_os().skip(1), &[place]);
+    let error = binary.exec(with_place(std::env::args_os().skip(1), place));
     eprintln!("riff: cannot run the new riff: {error}");
     std::future::pending().await
 }

@@ -414,7 +414,13 @@ async fn tail_and_watch_run_the_new_binary() {
         let ran = wait_for(Duration::from_secs(10), || read(&marker).ends_with('\n')).await;
         let _ = (child.kill(), child.wait());
         assert!(ran, "{args:?}: {}", read(&err));
-        assert_eq!(read(&marker).trim(), args.join(" "), "{args:?}");
+        // The same arguments, after the place of the old process: the
+        // host, no repository, and the directory as the worktree.
+        let line = read(&marker);
+        let (place, rest) = line.trim().split_once(' ').unwrap();
+        assert_eq!(place, "--place", "{line}");
+        assert!(rest.starts_with("heron/-#"), "{line}");
+        assert_eq!(rest.split_once(' ').unwrap().1, args.join(" "), "{line}");
         assert!(
             read(&err).contains("a new riff is on disk"),
             "{}",
@@ -601,6 +607,42 @@ async fn tail_and_watch_keep_their_place_over_an_update() {
     .await;
     assert!(both, "{}\n{}", read(&runs[0].2), read(&runs[1].2));
     ready.store(true, Ordering::SeqCst);
+
+    // The new watch has the place in its arguments, not in its
+    // environment. A riff that it starts, with that environment, takes
+    // the place of its own directory.
+    let proc = PathBuf::from(format!("/proc/{}", runs[1].0.id()));
+    let cmdline = || {
+        let bytes = std::fs::read(proc.join("cmdline")).unwrap_or_default();
+        String::from_utf8_lossy(&bytes).replace('\0', " ")
+    };
+    let want = "--place heron/acme/alpha#issue-12 watch --once";
+    let execed = wait_for(Duration::from_secs(5), || cmdline().contains(want)).await;
+    assert!(execed, "{:?}: {}", cmdline(), read(&runs[1].2));
+    let environ = std::fs::read(proc.join("environ")).unwrap();
+    let vars = environ
+        .split(|b| *b == 0)
+        .filter_map(|var| {
+            String::from_utf8_lossy(var)
+                .split_once('=')
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        })
+        .collect::<Vec<_>>();
+    let mut child = Command::new(Isolated::shared().riff_path());
+    child
+        .env_clear()
+        .envs(vars)
+        // No server, so that the watch session stays where it is.
+        .env("RIFF_SERVER", "http://127.0.0.1:9")
+        .current_dir(&beta)
+        .arg("whoami");
+    let whoami = run(child).await;
+    let me = text(&whoami.stdout);
+    assert!(
+        me.contains("riff://brett@heron/acme/beta?session=b2"),
+        "{me}{}",
+        text(&whoami.stderr)
+    );
 
     let (tail_out, tail_err) = (&runs[0].1, &runs[0].2);
     let showing = "showing new messages in acme/alpha";
