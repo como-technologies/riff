@@ -675,6 +675,9 @@ decides a scope, or a new item joins the current wave.
   when you decide, for example when the waves have no more work.
 - Never change the limit of workers (`riff workers limit`). Only your
   user sets it. When the limit stops a worker, tell your user.
+- Never change the MCP servers of the workers (`riff workers mcp`).
+  Only your user sets them. A worker has only the riff MCP server by
+  default.
 - `riff workers` lists the workers: pane, session ID, claims, status.
 - At the end of a wave, stop the workers with `riff workers stop`
   before the deploy of the shared server and the update of each

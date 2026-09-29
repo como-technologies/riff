@@ -9,6 +9,7 @@
 //! ```toml
 //! [workers]
 //! limit = 2
+//! mcp = ["riff", "github"]
 //!
 //! [update]
 //! auto = true
@@ -17,6 +18,7 @@
 //! | Key | Default | Meaning |
 //! |---|---|---|
 //! | `workers.limit` | 0 | The most workers that `riff workers start` runs on this machine (01M3JPQT35BMR7XMAMMFSCDC2B). |
+//! | `workers.mcp` | `["riff"]` | The MCP servers that a worker loads (see [`worker_mcp`](crate::worker_mcp)). |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). |
 
 use std::path::{Path, PathBuf};
@@ -94,6 +96,53 @@ pub fn workers_limit(path: &Path) -> Result<u16> {
 pub fn set_workers_limit(path: &Path, limit: u16) -> Result<()> {
     set(path, "workers", "limit", value(i64::from(limit)))
 }
+
+/// The MCP servers that a worker loads: `workers.mcp`
+/// (01M3NB5R6X5AV79DQNKKJBH5J8). `riff` is always the first, also when
+/// the file leaves it out. `["riff"]` when the file or the key is
+/// missing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::workers_mcp(&path)?, ["riff"]);
+/// riff::settings::set_workers_mcp(&path, &["riff".into(), "github".into()])?;
+/// assert_eq!(riff::settings::workers_mcp(&path)?, ["riff", "github"]);
+/// std::fs::write(&path, "[workers]\nmcp = [\"github\", \"riff\"]\n")?;
+/// assert_eq!(riff::settings::workers_mcp(&path)?, ["riff", "github"]);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn workers_mcp(path: &Path) -> Result<Vec<String>> {
+    let doc = read(path)?;
+    let mut names = vec![RIFF_MCP.to_owned()];
+    let Some(mcp) = doc.get("workers").and_then(|w| w.get("mcp")) else {
+        return Ok(names);
+    };
+    let Some(list) = mcp.as_array() else {
+        bail!("workers.mcp in {} is not a list", path.display());
+    };
+    for name in list {
+        let Some(name) = name.as_str() else {
+            bail!(
+                "workers.mcp in {} holds a value that is not a name",
+                path.display()
+            );
+        };
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_owned());
+        }
+    }
+    Ok(names)
+}
+
+/// Sets `workers.mcp`. It keeps each other key.
+pub fn set_workers_mcp(path: &Path, names: &[String]) -> Result<()> {
+    let list: toml_edit::Array = names.iter().map(String::as_str).collect();
+    set(path, "workers", "mcp", value(list))
+}
+
+/// The MCP server of riff. Each worker loads it.
+pub const RIFF_MCP: &str = "riff";
 
 /// True when riff updates itself on this machine: `update.auto`. False
 /// when the file or the key is missing.
@@ -187,6 +236,26 @@ mod tests {
         set_update_auto(&path, false).unwrap();
         assert_eq!(workers_limit(&path).unwrap(), 2);
         assert!(!update_auto(&path).unwrap());
+    }
+
+    #[test]
+    fn workers_mcp_keeps_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        set_workers_limit(&path, 2).unwrap();
+        set_workers_mcp(&path, &["riff".into(), "unifi".into()]).unwrap();
+        assert_eq!(workers_limit(&path).unwrap(), 2);
+        assert_eq!(workers_mcp(&path).unwrap(), ["riff", "unifi"]);
+    }
+
+    #[test]
+    fn a_bad_workers_mcp_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[workers]\nmcp = \"riff\"\n").unwrap();
+        assert!(workers_mcp(&path).is_err());
+        std::fs::write(&path, "[workers]\nmcp = [1]\n").unwrap();
+        assert!(workers_mcp(&path).is_err());
     }
 
     #[test]

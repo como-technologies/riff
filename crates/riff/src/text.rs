@@ -864,6 +864,43 @@ pub fn workers_limit(limit: u16, path: &std::path::Path) -> String {
     )
 }
 
+/// The answer to `riff workers mcp` (01M3NB5R6X5AV79DQNKKJBH5J8).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::workers_mcp(&["riff".into(), "github".into()], "/h/.config/riff/config.toml".as_ref()),
+///     "Each new worker on this machine loads these MCP servers: riff, github (/h/.config/riff/config.toml)."
+/// );
+/// ```
+pub fn workers_mcp(names: &[String], path: &std::path::Path) -> String {
+    format!(
+        "Each new worker on this machine loads these MCP servers: {} ({}).",
+        names.join(", "),
+        path.display()
+    )
+}
+
+/// The refusal of `riff workers mcp remove riff`.
+pub const WORKERS_MCP_KEEPS_RIFF: &str =
+    "a worker needs the riff MCP server, so riff stays in workers.mcp";
+
+/// The warning of `riff workers start` for a name of `workers.mcp` that
+/// the MCP config of the person does not have.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::worker_mcp_missing("unifi"),
+///     "riff: no MCP server unifi in your Claude Code config, so the workers start without it. \
+/// `claude mcp list` shows the names."
+/// );
+/// ```
+pub fn worker_mcp_missing(name: &str) -> String {
+    format!(
+        "riff: no MCP server {name} in your Claude Code config, so the workers start without it. \
+`claude mcp list` shows the names."
+    )
+}
+
 /// The answer to `riff workers`: a line for each worker pane, with the
 /// short session ID, and a second line with its claims and its status
 /// in `sessions`. A worker that is not in `sessions` shows `not in riff
