@@ -532,6 +532,13 @@
   `RIFF_SERVER` or the default. For that server and for the server of
   the same machine, it shows if the server answers, its build, and the
   sign-in.
+- **01M3NTEMQAY1Z10H1GX2K6PEAH** `riff server` shows a short aligned
+  table, one fact on a line: the release of `riff` with its commit and
+  date short, the server with where it comes from, its release and the
+  sign-in. The server of the same machine shows only when it answers or
+  is the server of `riff`. When the person must act, the last line says
+  what to run: yellow when the versions can talk, red when they cannot
+  or when the person must sign in. `--color` works as in `riff tail`.
 - **01M3MRMB2M0RM1JFVJ0W695SHB** `riff server` shows the release of
   `riff`, and the release of each server that answers with a build.
 - **01M3MX598VTWZ02R7J6AYJB2E5** Only the network counts in the wait

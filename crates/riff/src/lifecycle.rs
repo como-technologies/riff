@@ -14,8 +14,10 @@
 //! and Ctrl-C stops it. So riff has no command to start or stop it.
 //!
 //! `riff server` asks the riff that `riff` uses and the riff of this
-//! machine about themselves, with [`Api::probe`]. It shows each one on
-//! one line (01M3K0Q854K18DGXJKQ427W586). See [`crate::text::server_view`].
+//! machine about themselves, with [`Api::probe`]
+//! (01M3K0Q854K18DGXJKQ427W586). It shows a short table, one fact on a
+//! line, and the action last (01M3NTEMQAY1Z10H1GX2K6PEAH). See
+//! [`crate::text::server_view`].
 //!
 //! Only the network counts in the wait of a probe
 //! (01M3MX598VTWZ02R7J6AYJB2E5). The two probes run at the same time.
@@ -101,8 +103,8 @@ pub struct Seen {
     pub url: String,
     /// What it told, or why it did not answer.
     pub answer: Result<Probe, String>,
-    /// True when this machine has a sign-in for it.
-    pub signed_in: bool,
+    /// The user of the sign-in of this machine at it, if any.
+    pub user: Option<String>,
 }
 
 /// What `riff server` shows.
@@ -128,7 +130,7 @@ fn seen(url: &str, answer: Result<Probe, String>) -> Seen {
     Seen {
         url: url.to_owned(),
         answer,
-        signed_in: login::stored(url).is_ok_and(|s| s.is_some()),
+        user: login::user(url).ok().flatten(),
     }
 }
 
@@ -144,7 +146,7 @@ fn seen(url: &str, answer: Result<Probe, String>) -> Seen {
 ///
 /// let view = view("http://127.0.0.1:9", "http://127.0.0.1:7878", Source::Flag).await;
 /// assert!(view.used.answer.is_err());
-/// assert!(!view.used.signed_in);
+/// assert_eq!(view.used.user, None);
 /// assert_eq!(view.local.unwrap().url, "http://127.0.0.1:7878");
 /// # }
 /// ```

@@ -304,14 +304,21 @@ enum Command {
     },
     /// Show the riff that riff uses
     ///
-    /// It says where that choice comes from: --server, RIFF_SERVER, or the
-    /// riff of this machine. For that riff and the riff of this machine,
-    /// it shows whether it answers, its build, and sign-in.
+    /// It shows one fact on a line: the release of riff, the riff that
+    /// riff uses and where that choice comes from (--server, RIFF_SERVER
+    /// or the default), its release and your sign-in. The riff of this
+    /// machine shows only when it answers. When you must act, the last
+    /// line says what to run.
     ///
     /// --server and RIFF_SERVER take a URL, HOST or HOST:PORT. With no
     /// scheme, riff uses http, and port 7878 when there is no port. With
     /// neither, riff uses the riff of this machine, http://127.0.0.1:7878.
-    Server,
+    Server {
+        /// When to use color. `auto` uses color only when stdout is a
+        /// terminal, and obeys NO_COLOR and CLICOLOR_FORCE.
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
+    },
     /// Update riff on this machine
     ///
     /// It installs riff and riff-server of a release with cargo, then
@@ -591,14 +598,15 @@ enum Tool {
 async fn main() -> Result<()> {
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
-    if let Command::Server = cli.command {
+    if let Command::Server { color } = cli.command {
+        use_color(color);
         let source = match matches.value_source("server") {
             Some(ValueSource::CommandLine) => lifecycle::Source::Flag,
             Some(ValueSource::EnvVariable) => lifecycle::Source::Env,
             _ => lifecycle::Source::Default,
         };
         let view = lifecycle::view(&cli.server, DEFAULT_SERVER, source).await;
-        println!("{}", text::server_view(&view));
+        anstream::println!("{}", text::server_view(&view));
         return Ok(());
     }
     if let Command::Update {
@@ -925,7 +933,7 @@ async fn main() -> Result<()> {
         Command::Hook { .. }
         | Command::Statusline
         | Command::Connect { .. }
-        | Command::Server
+        | Command::Server { .. }
         | Command::Update { .. }
         | Command::Workers { .. }
         | Command::Pr {
@@ -1490,7 +1498,7 @@ fn record_session(me: &SessionUri) -> Option<local::Held> {
         .flatten()
 }
 
-/// When `riff tail` and `riff who` use color
+/// When `riff tail`, `riff who` and `riff server` use color
 /// (01M3JDCA9070MY30AYHK3Y67EF, 01M3MEW75WC7Y4M1BKQ7SXRPNR).
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum ColorWhen {

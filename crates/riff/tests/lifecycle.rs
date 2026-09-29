@@ -77,38 +77,49 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
+/// True when a riff-server of this machine listens on 7878. Then
+/// `riff server` shows it in a `local` line.
+fn local_answers() -> bool {
+    std::net::TcpStream::connect_timeout(&"127.0.0.1:7878".parse().unwrap(), PROBE_WAIT).is_ok()
+}
+
+/// The first line of `riff server`: the release of this build, with its
+/// commit and date short.
+fn riff_line() -> String {
+    let this = Build::this();
+    format!(
+        "riff        {}  ({}, {})",
+        release(),
+        &this.commit[..7],
+        &this.time[..10]
+    )
+}
+
+/// 01M3NTEMQAY1Z10H1GX2K6PEAH: against a riff of the same release,
+/// `riff server` is a short table, with no local line when RIFF_SERVER
+/// is set and the riff of this machine does not answer.
 #[tokio::test]
-async fn server_shows_the_riff_that_riff_uses_from_riff_server_and_the_local_riff() {
+async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
     let addr = real().await;
     let mut cmd = riff(&["server"]);
     cmd.env("RIFF_SERVER", format!("http://{addr}"));
     let out = run(cmd).await;
     assert!(out.status.success());
-    let lines: Vec<String> = text(&out.stdout).lines().map(str::to_owned).collect();
-    assert_eq!(
-        lines[0],
-        format!(
-            "riff {}: the release {}.",
-            riff_core::build::VERSION,
-            release()
-        )
-    );
-    assert_eq!(
-        lines[1],
-        format!("riff uses http://{addr}: RIFF_SERVER names it.")
-    );
-    assert_eq!(
-        lines[2],
-        format!(
-            "http://{addr}: answers, the same build. It runs the release {}. \
-             It has no sign-in: it trusts its network.",
-            release()
-        )
-    );
-    assert!(
-        lines[3].starts_with("The riff of this machine, http://127.0.0.1:7878: "),
-        "{lines:?}"
-    );
+    let stdout = text(&out.stdout);
+    let table = [
+        riff_line(),
+        format!("server      http://{addr}  (from RIFF_SERVER)"),
+        format!("  release   {}  same build ✓", release()),
+        "  sign-in   none: the riff trusts its network".to_owned(),
+    ];
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines[..4], table, "{stdout}");
+    if local_answers() {
+        assert_eq!(lines[4], "local       http://127.0.0.1:7878", "{stdout}");
+        assert!(lines[5].starts_with("  release   "), "{stdout}");
+    } else {
+        assert_eq!(lines.len(), 4, "{stdout}");
+    }
 }
 
 #[tokio::test]
@@ -117,13 +128,10 @@ async fn server_takes_host_and_port_with_no_scheme_and_names_the_flag() {
     let out = run(riff(&["--server", &addr, "server"])).await;
     let stdout = text(&out.stdout);
     assert!(
-        stdout.contains(&format!("riff uses http://{addr}: --server names it.")),
+        stdout.contains(&format!("\nserver      http://{addr}  (from --server)\n")),
         "{stdout}"
     );
-    assert!(
-        stdout.contains(&format!("http://{addr}: answers, the same build.")),
-        "{stdout}"
-    );
+    assert!(stdout.contains("same build ✓"), "{stdout}");
 }
 
 #[tokio::test]
@@ -131,24 +139,38 @@ async fn server_with_no_server_set_uses_the_riff_of_this_machine() {
     let out = run(riff(&["server"])).await;
     let stdout = text(&out.stdout);
     assert!(
-        stdout.contains("riff uses http://127.0.0.1:7878: the riff of this machine."),
+        stdout.contains(
+            "\nserver      http://127.0.0.1:7878  (the default: the riff of this machine)\n"
+        ),
         "{stdout}"
     );
-    assert!(!stdout.contains("The riff of this machine,"), "{stdout}");
+    assert!(!stdout.contains("\nlocal "), "{stdout}");
 }
 
+/// 01M3NTEMQAY1Z10H1GX2K6PEAH: a newer server gives its release and
+/// build, and the last line says what to run. The fake server answers
+/// the sign-in call, and this machine has no sign-in, so it also asks
+/// for `riff login`.
 #[tokio::test]
-async fn server_names_another_build_and_a_riff_that_does_not_answer() {
+async fn server_names_another_build_and_what_to_run() {
     let url = fake(other()).await;
     let mut cmd = riff(&["server"]);
     cmd.env("RIFF_SERVER", &url);
     let stdout = text(&run(cmd).await.stdout);
     assert!(
         stdout.contains(&format!(
-            "{url}: answers, another build, {}; the versions can talk. Run riff update when \
-             you can.",
-            other()
+            "\n  release   {}  (0000dea, {})  another build; the versions can talk\n",
+            release(),
+            &Build::this().time[..10]
         )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\n  sign-in   yes, you are not signed in\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.ends_with("\nRun riff update, then riff login\n"),
         "{stdout}"
     );
     let this = Build::this().semver().unwrap();
@@ -162,17 +184,45 @@ async fn server_names_another_build_and_a_riff_that_does_not_answer() {
     let stdout = text(&run(cmd).await.stdout);
     assert!(
         stdout.contains(&format!(
-            "{url}: answers, a version that this riff cannot talk to, {other_line}."
+            "\n  release   v{}  (0000dea, {})  another build; this riff cannot talk to it\n",
+            other_line.version,
+            &other_line.time[..10]
         )),
         "{stdout}"
     );
+    assert!(stdout.contains("\nRun riff update"), "{stdout}");
+}
+
+#[tokio::test]
+async fn server_names_a_riff_that_does_not_answer() {
     let stdout = text(
         &run(riff(&["--server", "127.0.0.1:9", "server"]))
             .await
             .stdout,
     );
     assert!(
-        stdout.contains("http://127.0.0.1:9: no answer."),
+        stdout.contains("\nserver      http://127.0.0.1:9  (from --server)\n  answer    none"),
+        "{stdout}"
+    );
+}
+
+/// 01M3NTEMQAY1Z10H1GX2K6PEAH: `--color never` and a pipe print no
+/// escape codes; `--color always` prints them.
+#[tokio::test]
+async fn server_prints_color_only_when_asked_or_in_a_terminal() {
+    let url = fake(other()).await;
+    for args in [&["server"][..], &["server", "--color", "never"]] {
+        let mut cmd = riff(args);
+        cmd.env("RIFF_SERVER", &url).env_remove("CLICOLOR_FORCE");
+        let stdout = text(&run(cmd).await.stdout);
+        assert!(stdout.contains("Run riff update"), "{stdout}");
+        assert!(!stdout.contains('\x1b'), "{args:?}: {stdout}");
+    }
+    let mut cmd = riff(&["server", "--color", "always"]);
+    cmd.env("RIFF_SERVER", &url);
+    let stdout = text(&run(cmd).await.stdout);
+    assert!(
+        stdout.contains("\x1b[31mRun riff update, then riff login"),
         "{stdout}"
     );
 }
@@ -208,7 +258,10 @@ async fn server_shows_a_riff_that_answers_also_with_a_slow_keyring() {
         .env("DBUS_SESSION_BUS_ADDRESS", slow_bus(dir.path()));
     let stdout = text(&run(cmd).await.stdout);
     assert!(
-        stdout.contains(&format!("{url}: answers, the same build.")),
+        stdout.contains(&format!(
+            "{url}  (from RIFF_SERVER)\n  release   {}  same build",
+            release()
+        )),
         "{stdout}"
     );
 }
@@ -354,10 +407,10 @@ async fn server_shows_localhost_and_127_0_0_1_as_one_riff() {
     cmd.env("RIFF_SERVER", "http://localhost:7878");
     let stdout = text(&run(cmd).await.stdout);
     assert!(
-        stdout.contains("riff uses http://localhost:7878: RIFF_SERVER names it."),
+        stdout.contains("\nserver      http://localhost:7878  (from RIFF_SERVER)\n"),
         "{stdout}"
     );
-    assert!(!stdout.contains("The riff of this machine,"), "{stdout}");
+    assert!(!stdout.contains("\nlocal "), "{stdout}");
 }
 
 #[tokio::test]
@@ -370,10 +423,10 @@ async fn server_takes_a_bare_ipv6_address_and_one_with_brackets() {
         assert!(out.status.success(), "{}", text(&out.stderr));
         let stdout = text(&out.stdout);
         assert!(
-            stdout.contains(&format!("riff uses {url}: --server names it.")),
+            stdout.contains(&format!("\nserver      {url}  (from --server)\n")),
             "{stdout}"
         );
-        assert!(!stdout.contains("The riff of this machine,"), "{stdout}");
+        assert!(!stdout.contains("\nlocal "), "{stdout}");
     }
 }
 
