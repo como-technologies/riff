@@ -8,6 +8,7 @@ use std::process::ExitStatus;
 use chrono::{DateTime, NaiveDate, TimeZone};
 
 use crate::plugin::{Connected, Statusline};
+use crate::pr::{Reported, Verdict};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -2091,6 +2092,63 @@ pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str) -> Stri
         "riff on {host} cannot update itself from {old} to {new}: {error}. The old riff stays. \
          riff tries again at the next release. To try again now, run riff update --tag {new} \
          on {host}."
+    )
+}
+
+/// The note of `riff pr wait` on stderr when it starts
+/// (01M3NB6FWMGBQ9VTY6RCBPKBHK).
+pub fn pr_waits(number: u64) -> String {
+    format!("riff: waiting for the merge of pull request #{number}. Ctrl-C stops.")
+}
+
+/// The line of `riff pr open` (01M3NB6FTGPD0S5JTXXXNGNNDT).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::pr_opened(40, "https://github.com/o/r/pull/40"),
+///     "Opened pull request #40 with auto-merge on: https://github.com/o/r/pull/40"
+/// );
+/// ```
+pub fn pr_opened(number: u64, url: &str) -> String {
+    format!("Opened pull request #{number} with auto-merge on: {url}")
+}
+
+/// The line of `riff verify` after the comment and the status
+/// (01M3NB6FYXXKX80VHEVA5CV6RY).
+pub fn verify_reported(verdict: Verdict, number: u64, done: &Reported) -> String {
+    format!(
+        "Put {} for issue-{} on pull request #{number}: {}. Set riff/verify {} on commit {}.",
+        verdict.word(),
+        done.issue,
+        done.url,
+        verdict.state(),
+        done.commit
+    )
+}
+
+/// The post of `riff verify` to the session that holds the issue
+/// (01M3NB6FYXXKX80VHEVA5CV6RY).
+///
+/// ```
+/// use riff::pr::{Reported, Verdict};
+///
+/// let done = Reported { issue: 12, commit: "1a2b3c4".into(), url: "https://c".into() };
+/// assert_eq!(
+///     riff::text::verify_post(Verdict::Fail, 40, &done, "1. fails.\n"),
+///     "verify result: FAIL for issue-12, PR #40, commit 1a2b3c4. \
+///      PR comment https://c, riff/verify failure set.\n\n1. fails."
+/// );
+/// ```
+pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str) -> String {
+    format!(
+        "verify result: {} for issue-{}, PR #{number}, commit {}. PR comment {}, riff/verify {} \
+         set.\n\n{}",
+        verdict.word(),
+        done.issue,
+        done.commit,
+        done.url,
+        verdict.state(),
+        result.trim_end()
     )
 }
 

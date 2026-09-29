@@ -74,11 +74,8 @@ Milestone: Wave 3
 - Give the pull request the milestone of its issue. Do not end the
   title with `(#N)`. GitHub adds the number of the pull request.
 
-Write the body to a file, then open the pull request:
-
-```sh
-gh pr create --title "Pause and resume the riff" --milestone "Wave 3" --body-file pr.md
-```
+`riff pr open` writes this body and opens the pull request (see
+[Open a pull request](how-it-works.md#open-a-pull-request)).
 
 The job `Hygiene` checks each pull request. To check one yourself, give
 its number:
@@ -150,35 +147,12 @@ active.
 
 ### Turn on auto-merge
 
-Open the pull request as in
-[Check a pull request on GitHub](#check-a-pull-request-on-github).
-Then turn on auto-merge at once, before any other push:
-
-```sh
-gh pr merge --auto --squash
-```
-
-Do not run it again after a push. The pull request keeps auto-merge
-on.
-
-The pull request waits for `riff/verify`. To wait for the merge:
-
-```sh
-gh pr checks --watch
-```
-
-### Set the verify status
-
-After a verify, put the result on the pull request, then set the status
-on the commit that you checked. Use `state=failure` for a fail:
-
-```sh
-gh pr comment 40 --body-file result.md
-gh api repos/como-technologies/riff/statuses/1a2b3c4 -f state=success -f context=riff/verify -f description="PASS: verify-issue-12"
-```
-
-A new commit on the pull request has no status. It needs a new
-verify.
+`riff pr open` turns on auto-merge at once, before any other push. Do
+not run `gh pr merge` after a push. The pull request keeps auto-merge
+on. It waits for `riff/verify`: see
+[Wait for the merge](how-it-works.md#wait-for-the-merge) and
+[Report a verify](how-it-works.md#report-a-verify). A new commit on
+the pull request has no status. It needs a new verify.
 
 ## Sign in on this machine
 

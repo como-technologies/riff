@@ -306,12 +306,11 @@
   on its own commit. We accept this gap until the sessions act with
   their own GitHub identity (#97).
 - **01M3JFEXMPNFEV4HBZJQ15JD25** The author opens a pull request with
-  `gh pr create`, with the milestone of the issue and the body form of
-  the hygiene check, and turns on auto-merge with
-  `gh pr merge --auto --squash` at once, before any other push. No
-  session runs `gh pr merge` after a push. The last pull request of an
-  issue has `Closes #N`. Each other one, and one with a check after the
-  release left, has `Refs #N`.
+  `riff pr open`, with the milestone of the issue and the body form of
+  the hygiene check, and auto-merge with a squash on at once, before
+  any other push. No session runs `gh pr merge` after a push. The last
+  pull request of an issue has `Closes #N`. Each other one, and one
+  with a check after the release left, has `Refs #N`.
 - **01M3JFEXPXRTXYHCV0WSKEK07M** The verifier puts its result on the
   pull request as a comment that names the commit. It sets the commit
   status `riff/verify` on that commit: `success` on a pass, `failure`
@@ -319,6 +318,31 @@
 - **01M3JFEXS6M5549TC6MH0G2MS0** The workflow `Hygiene` also runs on
   each push to `main`. It checks the commit message with the commit
   rule of the hygiene check.
+- **01M3NB6FTGPD0S5JTXXXNGNNDT** `riff pr open --title TITLE` opens
+  the pull request of the current branch with `gh`. The issue is the
+  one claim `issue-N` of the session, or `--issue N`. The body is the
+  link line `Closes #N` (`Refs #N` with `--refs`), the summary of
+  `--file`, and the trailers `Issue: #N` and `Milestone: M` of the
+  issue. It refuses a pull request that breaks the hygiene check, and
+  opens nothing then. After the create, it runs
+  `gh pr merge N --auto --squash` at once.
+- **01M3NB6FWMGBQ9VTY6RCBPKBHK** `riff pr wait N` looks at pull
+  request N with `gh` each `--every` seconds (default 30), until it is
+  merged. Then it prints the merge commit and exits with status 0. It
+  exits with status 1 and the reason when the pull request is closed
+  and not merged, or when a required check fails.
+- **01M3NB6FYXXKX80VHEVA5CV6RY** `riff verify pass|fail N --file
+  RESULT` reports a verify with `gh`: one comment on pull request N
+  that names its head commit and holds the result, one status
+  `riff/verify` on that commit (`success` or `failure`) with the URL of
+  the comment, and one riff post of the result to
+  `[{"claim": "issue-M"}]`, where M is the `Issue:` trailer of the
+  pull request. The tested commit is `HEAD` of the directory, or
+  `--commit SHA`. When it is not the head of the pull request, it
+  makes no comment, no status and no post, and exits with status 1.
+- **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
+  for each step of a pull request: open it, wait for the merge, report
+  a verify. It has no `gh` recipe and no shell loop for these steps.
 
 ## Pause
 

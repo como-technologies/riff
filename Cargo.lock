@@ -2280,6 +2280,7 @@ dependencies = [
  "futures",
  "gethostname",
  "getrandom 0.4.3",
+ "hygiene",
  "isolated",
  "jsonwebtoken",
  "keyring",

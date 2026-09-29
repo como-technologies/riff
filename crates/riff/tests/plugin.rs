@@ -145,9 +145,9 @@ fn connect_writes_the_skill_with_the_verify_flow() {
         "A session never verifies its own work.",
         "`[{\"user\": \"USER\", \"repo\": \"OWNER/REPO\", \"lead\": true}]`",
         "No session merges and no session pushes to the default branch.",
-        "Open a pull request for the branch.",
-        "Turn on auto-merge with a squash at once, before any other push.",
-        "set the verify status of that commit: success on a pass, failure on a fail.",
+        "Open a pull request for the branch with one command:",
+        "turns on auto-merge with a squash at once, before any other push.",
+        "sets the verify status of that commit: success on a pass, failure on a fail.",
         "`verify-issue-12`",
         "Do not change the code.",
         "`[{\"claim\": \"issue-12\"}]`",
@@ -172,6 +172,76 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     assert!(enter < name && name < checkout && checkout < release && release < remove);
     assert!(!verifier.contains("worktree add"), "{verifier}");
     assert!(!verifier.contains("`keep`"), "{verifier}");
+}
+
+/// The skill names one `riff` command for each step of a pull request
+/// (01M3NB6G132QG4TAEJ5QPRJNAE), and no `gh` recipe for those steps.
+#[test]
+fn connect_writes_the_skill_with_the_pull_request_commands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    connect(&bin, tmp.path(), tmp.path()).success();
+    let skill = tmp
+        .path()
+        .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
+    let skill = std::fs::read_to_string(skill).unwrap();
+    let section = |from: &str, to: &str| {
+        let start = skill.find(from).unwrap_or_else(|| panic!("no {from:?}"));
+        let end = skill[start..]
+            .find(to)
+            .unwrap_or_else(|| panic!("no {to:?}"));
+        skill[start..start + end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let ask = section(
+        "### Ask for a verify",
+        "### Verify the work of another session",
+    );
+    let open = ask.find("`riff pr open --title \"TITLE\" --file summary.md`");
+    let request = ask.find("Post a verify request");
+    let wait = ask.find("`riff pr wait 40`, with `run_in_background` true.");
+    assert!(open.is_some() && open < request && request < wait, "{ask}");
+
+    let check = section(
+        "### Verify the work of another session",
+        "### Pull requests on GitHub",
+    );
+    for text in [
+        "`riff verify pass 40 --file result.md`",
+        "`riff verify fail 40 --file result.md`",
+    ] {
+        assert!(check.contains(text), "no {text:?} in {check}");
+    }
+
+    let github = section("### Pull requests on GitHub", "## Remove a stale worktree");
+    for text in [
+        "| `riff pr open --title \"TITLE\" --file summary.md` |",
+        "| `riff pr wait 40` |",
+        "| `riff verify pass 40 --file result.md` |",
+        "| `riff verify fail 40 --file result.md` |",
+        "Do not write a shell loop around `gh`.",
+    ] {
+        assert!(github.contains(text), "no {text:?} in {github}");
+    }
+    for recipe in [
+        "gh pr create",
+        "gh pr merge 40",
+        "gh pr comment",
+        "/statuses/",
+    ] {
+        assert!(!skill.contains(recipe), "the skill still has {recipe:?}");
+    }
+    // Each command in the skill is a real command.
+    for args in [&["pr", "open"][..], &["pr", "wait"], &["verify"]] {
+        Isolated::shared()
+            .assert_riff()
+            .args(args)
+            .arg("--help")
+            .assert()
+            .success();
+    }
 }
 
 #[test]

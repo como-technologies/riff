@@ -14,6 +14,7 @@ repository = "https://github.com/como-technologies/riff"
 # published version when you add or bump a dependency.
 [workspace.dependencies]
 riff-core = { path = "crates/riff-core" }
+hygiene = { path = "crates/hygiene" }
 
 # ── Server and client ──
 axum = "0.8.9"

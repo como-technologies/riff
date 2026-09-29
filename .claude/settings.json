@@ -4,7 +4,9 @@
       "Bash(gh pr create *)",
       "Bash(gh pr merge * --auto --squash)",
       "Bash(gh pr comment *)",
-      "Bash(gh api repos/como-technologies/riff/statuses/*)"
+      "Bash(gh api repos/como-technologies/riff/statuses/*)",
+      "Bash(riff pr *)",
+      "Bash(riff verify *)"
     ],
     "deny": [
       "Bash(git push * main)",

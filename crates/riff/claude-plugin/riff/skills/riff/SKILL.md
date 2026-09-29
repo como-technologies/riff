@@ -222,9 +222,12 @@ are in "Pull requests on GitHub".
    good git hygiene"). The checks of your repository pass.
 2. Push your branch, so that a session on another machine can fetch
    it: `git push --force-with-lease -u origin HEAD`.
-3. Open a pull request for the branch. Link the issue in its body.
-   Give it the wave of the issue. Turn on auto-merge with a squash at
-   once, before any other push. Never turn it on after a push.
+3. Open a pull request for the branch with one command:
+   `riff pr open --title "TITLE" --file summary.md`. It links the
+   issue of your claim, gives the pull request the wave of the issue,
+   and turns on auto-merge with a squash at once, before any other
+   push. Never turn it on after a push. Add `--refs` when a check
+   after the release is left.
 4. Post a verify request to your repository thread. Name the issue,
    the pull request and the commit. Use `to`
    `[{"user": "USER", "repo": "OWNER/REPO", "lead": true}]`, so that
@@ -239,9 +242,10 @@ are in "Pull requests on GitHub".
 6. On a fail, fix the work, rebase it on a fresh default branch, and
    push it. On a conflict with the default branch, rebase and push. A pass counts only for its commit, so
    send a new request with the new commit.
-7. On a pass, wait until the forge merges the pull request. Then post
-   a note that you are done, and call `release`. The forge deletes the
-   branch.
+7. On a pass, wait until the forge merges the pull request:
+   `riff pr wait 40`, with `run_in_background` true. It prints the
+   merge commit, or stops with the reason. Then post a note that you
+   are done, and call `release`. The forge deletes the branch.
 
 When a permission refusal stops a step, do not ask in your own
 terminal. `tell` the lead the pull request, the commit and the verify
@@ -280,13 +284,19 @@ claim, or starts a worker for it.
    of the new worktree. Then run `git fetch origin BRANCH` and
    `git checkout --detach COMMIT` there. Do not `cd`.
 5. Test each criterion. Do not change the code.
-6. Post the result to the author, with `to` `[{"claim": "issue-12"}]`:
+6. Write the result to a file:
    - Pass: each criterion, with what you did to check it.
    - Fail: each criterion that failed, with the steps to see the
      failure.
-   Put the same result on the pull request as a comment that names
-   the commit. Then set the verify status of that commit: success on a
-   pass, failure on a fail. A success lets the forge merge.
+   Report it with one command in the verify worktree:
+   `riff verify pass 40 --file result.md` or
+   `riff verify fail 40 --file result.md`. It reports nothing when
+   the head of the pull request is not `HEAD` there, the commit that
+   you tested. It puts the result on
+   the pull request as a comment that names the commit, and sets the
+   verify status of that commit: success on a pass, failure on a fail.
+   It posts the result to the author, with `to`
+   `[{"claim": "issue-12"}]`. A success lets the forge merge.
 7. Call `release` with `verify-issue-12`.
 8. Remove the verify worktree: call `ExitWorktree` with action
    `remove` and `discard_changes` set to true. The worktree holds no
@@ -317,18 +327,20 @@ Issue: #12
 Milestone: Wave 3
 ```
 
+Each step is one `riff` command, a thin wrapper around `gh`. Do not
+write a shell loop around `gh`.
+
 | To | Run |
 |---|---|
-| Open a pull request | `gh pr create --title "TITLE" --milestone "Wave 3" --body-file pr.md` |
-| Turn on auto-merge | `gh pr merge 40 --auto --squash` |
-| Wait for the merge | `gh pr checks 40 --watch`, then `gh pr view 40 --json state,mergeCommit` |
-| Put the verify result on the pull request | `gh pr comment 40 --body-file result.md` |
-| Set the verify status of a commit | `gh api repos/OWNER/REPO/statuses/COMMIT -f state=success -f context=riff/verify -f description="PASS: verify-issue-12" -f target_url=COMMENT_URL` |
+| Open a pull request with this body, and turn on auto-merge | `riff pr open --title "TITLE" --file summary.md` |
+| Wait for the merge | `riff pr wait 40` |
+| Put a pass on the pull request, set `riff/verify`, tell the author | `riff verify pass 40 --file result.md` |
+| The same for a fail | `riff verify fail 40 --file result.md` |
 | Find the pull request of a branch | `gh pr view BRANCH --json number,state,headRefOid` |
 
-For a fail, set `state=failure`. Never run `gh pr merge --admin`, and
-never push to `main`: the project settings deny both, and the ruleset
-on `main` has no bypass. Never change the ruleset.
+Never run `gh pr merge --admin`, and never push to `main`: the project
+settings deny both, and the ruleset on `main` has no bypass. Never
+change the ruleset.
 
 ## Remove a stale worktree
 
