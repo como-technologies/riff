@@ -65,6 +65,10 @@
 //! | `GET /v1/watch` | `uri=<session URI>` | [`Wake`] |
 //! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
 //!
+//! `GET /v1/me` with the query `uri=<session URI>` gives [`MeReply`]:
+//! only the session of the caller (01M3T5GFVS8NMA992KHZN4VE17). The
+//! status line calls it, not `who`.
+//!
 //! Each stream starts with the comment line `: ready`, so that it sends
 //! its first bytes when it opens. A reader skips each line that is not
 //! a `data:` line.
@@ -176,6 +180,27 @@ pub struct WhoReply {
     /// (01M3NT4M3A4E3K5S2NM7MS6PQD). A riff with no sign-in has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub people: Vec<Person>,
+}
+
+/// The reply to `GET /v1/me`: only the session of the caller, and the
+/// build of the server (01M3T5GFVS8NMA992KHZN4VE17). `session` is None
+/// when the server does not know the session.
+///
+/// ```
+/// use riff_core::wire::MeReply;
+///
+/// let reply: MeReply =
+///     serde_json::from_str(r#"{"session":null,"build":"0.8.0 e3cfe5a2919c 2026-09-29T21:12:48Z"}"#)?;
+/// assert!(reply.session.is_none());
+/// assert_eq!(reply.build, "0.8.0 e3cfe5a2919c 2026-09-29T21:12:48Z");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MeReply {
+    /// The session of the caller, as `who` shows it.
+    pub session: Option<SessionInfo>,
+    /// The build of the server, as the `riff-build` header gives it.
+    pub build: String,
 }
 
 /// A member of the riff in the reply to `who`: a person, not a session

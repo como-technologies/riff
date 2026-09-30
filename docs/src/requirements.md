@@ -906,6 +906,11 @@
   `statusLine` command in the Claude Code settings. A plugin cannot
   set it. It never fails, and it waits at most 2 seconds for
   riff-server.
+- **01M3T5GFVS8NMA992KHZN4VE17** `riff statusline` calls
+  `GET /v1/me`, not `who`. The reply holds only the session of the
+  caller: its state, claims and status, and the build of the server.
+  The call changes nothing: it is not a call of the session, and it
+  adds no session.
 - **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
   status line to the user settings of Claude Code
   (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)

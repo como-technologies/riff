@@ -76,7 +76,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     AdminSet, Alive, AliveReply, Claim, ClaimReply, DenyOwner, End, Freed, Idle, Invite, Invited,
-    Keys, Kind, Lead, LeadReply, Members, MembersReply, Membership, Message, OwnerAsked,
+    Keys, Kind, Lead, LeadReply, MeReply, Members, MembersReply, Membership, Message, OwnerAsked,
     OwnerDenied, OwnerPassed, PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed,
     Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetAdmin, SetIdle, SetStatus,
     SignInConfig, Start, Started, Status, Tailed, TakeOwner, ThreadInfo, Threads, ThreadsReply,
@@ -741,6 +741,13 @@ impl Api {
         self.call("who", &request).await
     }
 
+    /// Only the session `me` and the build of the server, for the
+    /// status line (01M3T5GFVS8NMA992KHZN4VE17). It is not a call of
+    /// `me`: the server changes nothing.
+    pub async fn me(&self, me: &SessionUri) -> Result<MeReply> {
+        self.fetch("me", &[("uri", me.to_string())]).await
+    }
+
     pub async fn threads(&self, me: &SessionUri) -> Result<Vec<ThreadInfo>> {
         let reply: ThreadsReply = self.call("threads", &Threads { me: me.clone() }).await?;
         Ok(reply.threads)
@@ -1106,6 +1113,25 @@ impl Api {
         let response = self
             .send(reqwest::Method::POST, &format!("/v1/{op}"), |r| {
                 r.json(request)
+            })
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            bail!("{op} failed ({status}): {text}");
+        }
+        Ok(response.json().await?)
+    }
+
+    /// `GET /v1/{op}` with `query`.
+    async fn fetch<Rep: DeserializeOwned>(
+        &self,
+        op: &str,
+        query: &[(&str, String)],
+    ) -> Result<Rep> {
+        let response = self
+            .send(reqwest::Method::GET, &format!("/v1/{op}"), |r| {
+                r.query(query)
             })
             .await?;
         let status = response.status();

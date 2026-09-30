@@ -1626,7 +1626,8 @@ fn setup(check: bool) -> Result<()> {
 
 /// The status line of the Claude Code session on stdin
 /// ([`text::statusline`]). It finds the session like a hook does, and
-/// looks for it in `riff who`. It never fails, and it waits at most
+/// asks riff-server for only that session with `GET /v1/me`, not `who`
+/// (01M3T5GFVS8NMA992KHZN4VE17). It never fails, and it waits at most
 /// [`STATUSLINE_WAIT`] for riff-server.
 async fn statusline(server: &str) -> String {
     let mut stdin = String::new();
@@ -1642,11 +1643,7 @@ async fn statusline(server: &str) -> String {
         let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
         let me = identity::agent(&here, &id, api.base())?;
-        let who = api.signed_in(me.who().session())?.who(&me, false).await?;
-        anyhow::Ok(
-            who.into_iter()
-                .find(|s| s.uri.who().session() == Some(id.as_str())),
-        )
+        anyhow::Ok(api.signed_in(me.who().session())?.me(&me).await?.session)
     };
     let found = tokio::time::timeout(STATUSLINE_WAIT, find).await;
     // The build of the server comes with its answer: no extra call

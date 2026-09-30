@@ -137,12 +137,12 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, AdminSet, Alive, AliveReply, Claim, ClaimReply, DenyOwner, End,
-    ID_TOKEN_TYPE, Idle, Invite, Invited, Keys, Kind, Lead, LeadReply, Members, MembersReply,
-    Membership, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Person, Post, Posted, Read,
-    ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff, RiffOwner,
-    RiffReply, ServerMetadata, SetAdmin, SetIdle, SetStatus, SignInConfig, Start, Started,
-    TOKEN_EXCHANGE, Tailed, TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest,
-    Wake, WhoReply, WhoRequest,
+    ID_TOKEN_TYPE, Idle, Invite, Invited, Keys, Kind, Lead, LeadReply, MeReply, Members,
+    MembersReply, Membership, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Person, Post,
+    Posted, Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff,
+    RiffOwner, RiffReply, ServerMetadata, SetAdmin, SetIdle, SetStatus, SignInConfig, Start,
+    Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads, ThreadsReply, TokenError, TokenReply,
+    TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -920,6 +920,7 @@ impl Service {
             .route("/v1/alive", post(alive))
             .route("/v1/end", post(end))
             .route("/v1/start", post(start))
+            .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
@@ -1054,6 +1055,21 @@ async fn who(
         sessions: state.who(now, now_ms, r.all),
         owner,
         people,
+    }))
+}
+
+/// Only the session of the caller, and the build of the server, for
+/// the status line (01M3T5GFVS8NMA992KHZN4VE17). It changes nothing,
+/// so it is not a call of the session.
+async fn me(
+    AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
+    Query(q): Query<WatchQuery>,
+) -> Reply<MeReply> {
+    let state = acts_as(&s, caller, &q.uri)?;
+    Ok(Json(MeReply {
+        session: state.me(q.uri.who(), Instant::now(), now_ms()),
+        build: build::VERSION.into(),
     }))
 }
 

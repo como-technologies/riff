@@ -74,6 +74,22 @@ async fn a_session_token_cannot_act_as_another_session() {
     };
     assert_eq!(watch(B).await.unwrap().status(), 403);
     assert_eq!(watch(A).await.unwrap().status(), 200);
+
+    // So does the call of the status line (01M3T5GFVS8NMA992KHZN4VE17).
+    let me = |uri: &str| {
+        let url = format!("{base}/v1/me");
+        common::client()
+            .get(&url)
+            .query(&[("uri", uri)])
+            .header("authorization", format!("DPoP {}", a.access_token))
+            .header(
+                "dpop",
+                key.proof("GET", &url, Some(&a.access_token), common::now()),
+            )
+            .send()
+    };
+    assert_eq!(me(B).await.unwrap().status(), 403);
+    assert_eq!(me(A).await.unwrap().status(), 200);
 }
 
 #[tokio::test]
