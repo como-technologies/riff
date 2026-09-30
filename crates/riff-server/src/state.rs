@@ -861,37 +861,69 @@ impl State {
         self.sessions
             .iter()
             .filter(|(_, session)| all || !session.gone(now))
-            .map(|(who, session)| {
-                let uri = self.uri(who, now);
-                let live = session.watchers > 0;
-                let status = session.status.as_ref().map(|s| StatusInfo {
-                    status: s.status.clone(),
-                    age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
-                    stale: s.before(Some(session.claims_changed)) || s.before(self.riff_changed),
-                });
-                let blocked = status
-                    .as_ref()
-                    .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
-                let state = SessionState::of(
-                    live,
-                    self.riff == RiffState::Paused,
-                    blocked,
-                    !uri.claims().is_empty(),
-                );
-                SessionInfo {
-                    uri,
-                    live,
-                    idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
-                    status,
-                    worker: session.worker,
-                    stopping: session.stopping,
-                    claims_secs: now
-                        .saturating_duration_since(session.claims_changed)
-                        .as_secs(),
-                    state: Some(state),
-                }
-            })
+            .map(|(who, session)| self.info(who, session, now, now_ms))
             .collect()
+    }
+
+    /// Only the session `who`, as [`State::who`] shows it with `all`,
+    /// or None when the state does not know it. It changes nothing: it
+    /// is not a call of `who` (01M3T5GFVS8NMA992KHZN4VE17).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let ada: SessionUri = "riff://ada@thelio/como-technologies/riff?session=b7d0".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// state.register(&ada, now);
+    ///
+    /// let me = state.me(mike.who(), now, 0).unwrap();
+    /// assert_eq!(me.uri.who(), mike.who());
+    /// assert!(me.uri.lead());
+    /// let bob: SessionUri = "riff://bob@thelio/como-technologies/riff?session=c8e1".parse()?;
+    /// assert!(state.me(bob.who(), now, 0).is_none());
+    /// assert_eq!(state.who(now, 0, true).len(), 2);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn me(&self, who: &Who, now: Instant, now_ms: u64) -> Option<SessionInfo> {
+        let session = self.sessions.get(who)?;
+        Some(self.info(who, session, now, now_ms))
+    }
+
+    /// The session `who` as `who` and `me` show it.
+    fn info(&self, who: &Who, session: &Session, now: Instant, now_ms: u64) -> SessionInfo {
+        let uri = self.uri(who, now);
+        let live = session.watchers > 0;
+        let status = session.status.as_ref().map(|s| StatusInfo {
+            status: s.status.clone(),
+            age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
+            stale: s.before(Some(session.claims_changed)) || s.before(self.riff_changed),
+        });
+        let blocked = status
+            .as_ref()
+            .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
+        let state = SessionState::of(
+            live,
+            self.riff == RiffState::Paused,
+            blocked,
+            !uri.claims().is_empty(),
+        );
+        SessionInfo {
+            uri,
+            live,
+            idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
+            status,
+            worker: session.worker,
+            stopping: session.stopping,
+            claims_secs: now
+                .saturating_duration_since(session.claims_changed)
+                .as_secs(),
+            state: Some(state),
+        }
     }
 
     /// Records whether the session `who` is a worker. A register call

@@ -1,7 +1,8 @@
 //! `riff statusline` shows the short session ID and the claims of the
 //! Claude Code session on stdin (01M3JDWA0WZWKF3JT3NYA2FV5Z). It never
 //! fails. It adds a tag when the riff runs a newer release
-//! (01M3NT6X22A4GNFTNKRYV8Z4N1, 01M3NJCWDN5APKZ3Z53XQR8P0B).
+//! (01M3NT6X22A4GNFTNKRYV8Z4N1, 01M3NJCWDN5APKZ3Z53XQR8P0B). It asks
+//! riff-server with `GET /v1/me`, not `who` (01M3T5GFVS8NMA992KHZN4VE17).
 
 use axum::http::HeaderValue;
 use axum::response::Response;
@@ -9,6 +10,7 @@ use isolated::Isolated;
 use riff_core::build::{Build, HEADER};
 use std::path::Path;
 use std::process::Command as Git;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const ID: &str = "a6cf2205-d54a-4c1e-9b1f-2e3d4c5b6a7f";
@@ -163,6 +165,39 @@ async fn join(server: &str, dir: &Path) {
     assert_eq!(code, 0);
     let (_, code) = riff(server, dir, Some(ID), "", &["status", "work"]).await;
     assert_eq!(code, 0);
+}
+
+/// A real riff-server that records the path of each call in `calls`.
+async fn counting_server(calls: Arc<Mutex<Vec<String>>>) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = riff_server::router().layer(axum::middleware::map_request(
+        move |r: axum::extract::Request| {
+            calls.lock().unwrap().push(r.uri().path().to_owned());
+            std::future::ready(r)
+        },
+    ));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn the_status_line_calls_me_and_not_who() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let server = counting_server(calls.clone()).await;
+    let dir = repo();
+    join(&server, dir.path()).await;
+    let (_, code) = riff(&server, dir.path(), Some(ID), "", &["claim", "issue-82"]).await;
+    assert_eq!(code, 0);
+    calls.lock().unwrap().clear();
+
+    assert_eq!(
+        line(&server, dir.path()).await,
+        "riff a6cf2205 lead issue-82\n"
+    );
+    let calls = calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c == "/v1/me"), "{calls:?}");
+    assert!(!calls.iter().any(|c| c == "/v1/who"), "{calls:?}");
 }
 
 #[tokio::test]

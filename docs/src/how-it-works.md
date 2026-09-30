@@ -1808,8 +1808,23 @@ place of your `statusLine`:
 }
 ```
 
-The status line changes after each answer of the session. Then find
-the session of `riff who` by its short ID:
+The status line changes after each answer of the session. Each time,
+it asks riff-server with the call `GET /v1/me`. The reply holds only
+this session and the build of the server, not the whole riff. The call
+changes nothing on the server.
+
+```mermaid
+sequenceDiagram
+    participant C as Claude Code
+    participant S as riff statusline
+    participant R as riff-server
+    C->>S: the session ID on stdin
+    S->>R: GET /v1/me
+    R-->>S: this session, the build
+    S-->>C: riff 2a880834 lead issue-82
+```
+
+Then find the session of `riff who` by its short ID:
 
 ```sh
 riff who
