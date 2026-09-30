@@ -7,6 +7,6 @@
 - [Join a Riff](join-a-riff.md)
 - [How It Works](how-it-works.md)
 - [Waves](waves.md)
-- [Design: the store and the wire (draft)](design-storage.md)
+- [Design: the store of riff-server](design-storage.md)
 - [Requirements](requirements.md)
 - [Development](development.md)
