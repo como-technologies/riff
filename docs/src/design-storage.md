@@ -93,10 +93,13 @@ flowchart LR
   never both pass.
 - A call that makes a record replies after its chunk is written. A
   call that makes no record (`who`, `read`, `top`) does not wait.
-- A wake and a read give only messages whose chunk is written. A view
-  can be ahead of the log by at most one chunk. When that chunk fails
-  for good, the instance stops, and the next instance replays without
-  it. Nobody got a reply for it.
+- The server keeps two copies of the state. `handle` checks against
+  the pending state, which has each record in the queue. Each read,
+  wake, view and reply uses the written state, which has only the
+  records whose chunk is written. After each chunk write, the server
+  applies its records to the written state. So nobody sees a record
+  that is not in the log. When a chunk fails for good, the instance
+  stops, and the next instance replays without it.
 - A view is a function of the state. It does not change the state.
 - The whole riff is one aggregate. So one check can see claims, leads,
   members and threads together.
@@ -198,7 +201,9 @@ The server checks each post:
 4. It keeps the payload bytes unchanged. It never encodes them again.
 
 A reader checks the signature over the kept bytes. Then it checks that
-the thumbprint of the key is a key of the user of the sender (R199).
+the thumbprint of the key is the key of a live sign-in of the user of
+the sender (R199). A message whose sender's sign-in ended shows as not
+verified.
 Then it decodes the bytes to use the fields. It takes the user and the
 lead mark only from the signed bytes. These are separate steps, and
 none changes the bytes. So a new field never stops a check. See
@@ -341,7 +346,7 @@ does not call `who` for the whole riff.
   waits, then serves. An instance that sees another ID stops.
 - Each start has a gap of about 15 s. The client waits through the gap,
   and shows a line that it waits. `riff top` and `riff chat` keep
-  their screen.
+  their screen. The client gives up after 60 s, as today.
 
 ## The wire
 
@@ -362,8 +367,10 @@ does not call `who` for the whole riff.
 - Each file marks the parts that the book shows with `// ANCHOR: name`
   and `// ANCHOR_END: name`.
 - `just book` fails on an `ERROR` line of mdbook. A test in the
-  `hygiene` crate reads `docs/book/*.html` and fails on `{{#include` or
-  on an empty code block.
+  `hygiene` crate reads `docs/book/*.html`. It fails on an include line
+  that mdbook left in the text, outside a code block, and on an empty
+  code block. An example of an include in a code block, as above, is
+  escaped, and the test skips it.
 
 ## Tools
 
