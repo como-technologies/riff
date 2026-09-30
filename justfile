@@ -54,10 +54,11 @@ test *ARGS:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
 
-# Build the book (installs the gitignored gruvbox theme if it is missing)
+# Build the book (installs the gitignored gruvbox theme if it is missing).
+# It fails on an ERROR line of mdbook, a missing include or an empty code block.
 book:
     @if [ ! -d docs/gruvbox ]; then mdbook-gruvbox install docs; fi
-    mdbook build docs
+    cargo run -q -p hygiene -- book docs
     @echo "Book built -> docs/book"
 
 # Serve the book locally with live reload
