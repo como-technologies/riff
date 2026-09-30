@@ -9,19 +9,23 @@
 //! storage of the server.
 //!
 //! The signature is a JWS with a detached payload (RFC 7515, appendix
-//! F). The reader makes the payload again from the message:
+//! F). The message carries the payload next to the signature:
 //!
 //! ```text
-//!  sig = <header>..<signature>
-//!        header  {"typ":"riff-message","alg":"ES256","jwk":{public key}}
-//!        payload the JSON of Content, not in the sig
+//!  sig     = <header>..<signature>
+//!            header  {"typ":"riff-message","alg":"ES256","jwk":{public key}}
+//!  payload = base64url of the JSON of Content
 //! ```
 //!
 //! [`Content`] is what the signature covers: the who and the lead mark
 //! of the sender, the thread of the post, the `to` selectors, the body,
 //! the kind and the time (R196).
-//! Its JSON has one form only, so the sender and each reader make the
-//! same bytes.
+//!
+//! The sender makes the payload one time. The server and each reader
+//! keep its bytes unchanged, and never encode them again. A check runs
+//! over the kept bytes ([`check`]), then decodes them ([`Signed`]). A
+//! build skips a field of the payload that it does not know, so a new
+//! field never stops a check (01M3T411N0HM699VJXW6RTVWKB).
 //!
 //! # Rules
 //!
@@ -34,6 +38,8 @@
 //!   valid, covers the message as the reader got it, and comes from a
 //!   key of the user of the sender (R199). See
 //!   [`crate::wire::Message::verified`].
+//! - ECDSA can give two valid signatures for the same bytes. So a copy
+//!   check compares [`payload_hash`], not the signature.
 //!
 //! # Example
 //!
@@ -61,6 +67,11 @@
 //! // A changed body does not verify.
 //! let changed = Content { body: "not ready", ..content };
 //! assert!(changed.verify(&sig).is_err());
+//!
+//! // The check of the kept payload gives the key and the fields.
+//! let (jkt, signed) = riff_core::signed::check(&content.payload(), &sig).unwrap();
+//! assert_eq!(jkt, key.thumbprint());
+//! assert!(signed.covers(&content));
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
@@ -71,6 +82,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use p256::ecdsa::Signature;
 use p256::ecdsa::signature::Verifier;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::dpop::{ALG, Jwk, Key, json_b64};
 use crate::name::{ThreadName, Who};
@@ -100,50 +112,142 @@ pub struct Content<'a> {
 }
 
 impl Content<'_> {
+    /// The payload of the signature: the base64url of the JSON of the
+    /// content. The sender makes it one time. Each other side keeps its
+    /// bytes.
+    pub fn payload(&self) -> String {
+        json_b64(self)
+    }
+
     /// The signature of the content by the device key `key`.
     pub fn sign(&self, key: &Key) -> String {
-        let header = json_b64(&Header {
-            typ: TYP.into(),
-            alg: ALG.into(),
-            jwk: key.jwk(),
-        });
-        let input = format!("{header}.{}", json_b64(self));
-        format!("{header}..{}", key.sign(input.as_bytes()))
+        sign_payload(&self.payload(), key)
     }
 
     /// Checks that `sig` signs this content. Gives the thumbprint of the
     /// key that signed it. The caller checks that the key belongs to the
     /// sender.
     pub fn verify(&self, sig: &str) -> Result<String, SignError> {
-        let Some((header, signature)) = sig.split_once("..") else {
-            return Err(SignError::new("the signature is not a detached JWS"));
-        };
-        let header_json: serde_json::Value = decode(header)?;
-        if header_json.pointer("/jwk/d").is_some() {
-            return Err(SignError::new("the signature jwk holds a private key"));
-        }
-        let header_json: Header = serde_json::from_value(header_json)
-            .map_err(|_| SignError::new("the signature header is not valid"))?;
-        if header_json.typ != TYP {
-            return Err(SignError::new("the signature typ is not riff-message"));
-        }
-        if header_json.alg != ALG {
-            return Err(SignError::new("the signature alg is not ES256"));
-        }
-        let key = header_json
-            .jwk
-            .verifying_key()
-            .map_err(|e| SignError(e.to_string()))?;
-        let signature = B64
-            .decode(signature)
-            .ok()
-            .and_then(|bytes| Signature::from_slice(&bytes).ok())
-            .ok_or_else(|| SignError::new("the signature is malformed"))?;
-        let input = format!("{header}.{}", json_b64(self));
-        key.verify(input.as_bytes(), &signature)
-            .map_err(|_| SignError::new("the signature is not valid for this message"))?;
-        Ok(header_json.jwk.thumbprint())
+        verify(&self.payload(), sig)
     }
+}
+
+/// The fields of a signed payload, as this build knows them. It skips
+/// each field that it does not know.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Signed {
+    pub from: Who,
+    pub lead: bool,
+    pub thread: Option<ThreadName>,
+    #[serde(default)]
+    pub to: Vec<Selector>,
+    pub body: String,
+    #[serde(default)]
+    pub kind: Kind,
+    pub at_ms: u64,
+}
+
+impl Signed {
+    /// True when the payload holds the fields of `content`.
+    pub fn covers(&self, content: &Content<'_>) -> bool {
+        self.from == *content.from
+            && self.lead == content.lead
+            && self.thread.as_ref() == content.thread
+            && self.to == content.to
+            && self.body == content.body
+            && self.kind == content.kind
+            && self.at_ms == content.at_ms
+    }
+}
+
+/// Checks that `sig` signs the kept bytes of `payload`, then decodes
+/// them. Gives the thumbprint of the key and the fields. It never
+/// encodes the payload again.
+///
+/// ```
+/// use base64::Engine;
+/// use riff_core::dpop::Key;
+/// use riff_core::signed::{check, sign_payload};
+///
+/// let key = Key::generate();
+/// // A payload with a field that this build does not know.
+/// let json = r#"{"from":{"user":"ann","session":"s1"},"lead":false,"thread":"design",
+///     "to":[],"body":"hi","kind":"message","at_ms":5,"reply_to":7}"#;
+/// let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json);
+/// let sig = sign_payload(&payload, &key);
+/// let (jkt, signed) = check(&payload, &sig).unwrap();
+/// assert_eq!(jkt, key.thumbprint());
+/// assert_eq!(signed.body, "hi");
+/// ```
+pub fn check(payload: &str, sig: &str) -> Result<(String, Signed), SignError> {
+    let jkt = verify(payload, sig)?;
+    let bytes = B64
+        .decode(payload)
+        .map_err(|_| SignError::new("the payload is not base64url"))?;
+    let signed = serde_json::from_slice(&bytes)
+        .map_err(|e| SignError(format!("the payload does not decode: {e}")))?;
+    Ok((jkt, signed))
+}
+
+/// The signature of the kept bytes `payload` by the device key `key`.
+pub fn sign_payload(payload: &str, key: &Key) -> String {
+    let header = json_b64(&Header {
+        typ: TYP.into(),
+        alg: ALG.into(),
+        jwk: key.jwk(),
+    });
+    let input = format!("{header}.{payload}");
+    format!("{header}..{}", key.sign(input.as_bytes()))
+}
+
+/// The hash of a payload, in hex. Two copies of one message have the
+/// same hash.
+///
+/// ```
+/// use riff_core::signed::payload_hash;
+///
+/// assert_eq!(payload_hash("abc"), payload_hash("abc"));
+/// assert_ne!(payload_hash("abc"), payload_hash("abd"));
+/// assert_eq!(payload_hash("abc").len(), 64);
+/// ```
+pub fn payload_hash(payload: &str) -> String {
+    Sha256::digest(payload.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Checks that `sig` signs `payload` as it is. Gives the thumbprint of
+/// the key.
+fn verify(payload: &str, sig: &str) -> Result<String, SignError> {
+    let Some((header, signature)) = sig.split_once("..") else {
+        return Err(SignError::new("the signature is not a detached JWS"));
+    };
+    let header_json: serde_json::Value = decode(header)?;
+    if header_json.pointer("/jwk/d").is_some() {
+        return Err(SignError::new("the signature jwk holds a private key"));
+    }
+    let header_json: Header = serde_json::from_value(header_json)
+        .map_err(|_| SignError::new("the signature header is not valid"))?;
+    if header_json.typ != TYP {
+        return Err(SignError::new("the signature typ is not riff-message"));
+    }
+    if header_json.alg != ALG {
+        return Err(SignError::new("the signature alg is not ES256"));
+    }
+    let key = header_json
+        .jwk
+        .verifying_key()
+        .map_err(|e| SignError(e.to_string()))?;
+    let signature = B64
+        .decode(signature)
+        .ok()
+        .and_then(|bytes| Signature::from_slice(&bytes).ok())
+        .ok_or_else(|| SignError::new("the signature is malformed"))?;
+    let input = format!("{header}.{payload}");
+    key.verify(input.as_bytes(), &signature)
+        .map_err(|_| SignError::new("the signature is not valid for this message"))?;
+    Ok(header_json.jwk.thumbprint())
 }
 
 /// Why a signature is not valid.

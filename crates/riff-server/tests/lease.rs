@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use futures::future::{BoxFuture, FutureExt};
 use riff_core::dpop::Key;
-use riff_server::store::{Loaded, Memory, SESSIONS, Store, StoreError, Version};
+use riff_server::store::{Loaded, Memory, Store, StoreError, Version};
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout};
 
@@ -27,8 +27,8 @@ async fn status(base: &str, op: &str, body: Value) -> u16 {
         .as_u16()
 }
 
-async fn version(store: &Memory) -> Version {
-    store.load(SESSIONS).await.unwrap().unwrap().version
+async fn chunks(store: &Memory) -> Vec<String> {
+    store.list("log/").await.unwrap()
 }
 
 #[tokio::test]
@@ -47,7 +47,7 @@ async fn a_new_server_stops_the_old_one() {
         .unwrap();
     assert_eq!(watch.status(), 200);
     old.save().await.unwrap();
-    let saved = version(&store).await;
+    let saved = chunks(&store).await;
 
     let (new, new_base) = common::start_on(Arc::new(store.clone())).await;
     timeout(Duration::from_secs(5), old.stopped())
@@ -65,13 +65,13 @@ async fn a_new_server_stops_the_old_one() {
     // The end of the stream changed the old state, but only the new
     // server saves.
     old.save().await.unwrap();
-    assert_eq!(version(&store).await, saved);
+    assert_eq!(chunks(&store).await, saved);
     assert_eq!(
         status(&new_base, "register", json!({ "me": BRETT })).await,
         200
     );
     new.save().await.unwrap();
-    assert_ne!(version(&store).await, saved);
+    assert_ne!(chunks(&store).await, saved);
 }
 
 #[tokio::test]

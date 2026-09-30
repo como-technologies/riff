@@ -6,14 +6,17 @@
 //!
 //! | Name | Holds |
 //! |---|---|
-//! | [`SESSIONS`] | The sessions, with their places, read cursors and claims. |
-//! | [`THREADS`] + the thread name | One thread, with its members and messages. See [`thread_object`]. |
+//! | [`crate::log::LOG`] and the first position | One chunk of the log. See [`crate::log`]. |
 //! | [`TOKENS`] | The token store. |
 //! | [`LEASE`] | The ID of the instance that may serve (R137). |
 //!
-//! The name of each thread object starts with [`THREADS`], and no other
-//! name does (R147). A lifecycle rule of the bucket selects the thread
-//! objects by that prefix (R46).
+//! # Stores
+//!
+//! | Store | For |
+//! |---|---|
+//! | [`Memory`] | Tests, and a `riff-server` with no bucket and no directory. |
+//! | [`Dir`] | Files in a directory (`--dir`, `RIFF_DIR`), for local development. |
+//! | [`crate::gcs::Gcs`] | A Cloud Storage bucket (`--bucket`). |
 //!
 //! # Versions
 //!
@@ -52,32 +55,28 @@
 //!
 //! let store = Memory::default();
 //! block_on(async {
-//!     let v1 = store.save("sessions", b"{}".to_vec(), None).await?;
-//!     let loaded = store.load("sessions").await?.unwrap();
+//!     let v1 = store.save("tokens", b"{}".to_vec(), None).await?;
+//!     let loaded = store.load("tokens").await?.unwrap();
 //!     assert_eq!(loaded.version, v1);
 //!
 //!     // A save that names an old version fails.
-//!     let v2 = store.save("sessions", b"[]".to_vec(), Some(v1)).await?;
-//!     let stale = store.save("sessions", b"{}".to_vec(), Some(v1)).await;
+//!     let v2 = store.save("tokens", b"[]".to_vec(), Some(v1)).await?;
+//!     let stale = store.save("tokens", b"{}".to_vec(), Some(v1)).await;
 //!     assert!(matches!(stale, Err(StoreError::Conflict(_))));
-//!     assert_eq!(store.load("sessions").await?.unwrap().version, v2);
+//!     assert_eq!(store.load("tokens").await?.unwrap().version, v2);
 //!     Ok::<(), StoreError>(())
 //! })?;
 //! # Ok::<(), StoreError>(())
 //! ```
 
 use std::collections::BTreeMap;
-use std::fmt::{self, Write as _};
+use std::fmt;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures::future::{BoxFuture, FutureExt};
-use riff_core::name::ThreadName;
-
-/// The name of the object that holds the sessions.
-pub const SESSIONS: &str = "sessions";
-
-/// The start of the name of each thread object.
-pub const THREADS: &str = "threads/";
+use sha2::{Digest, Sha256};
 
 /// The name of the object that holds the token store.
 pub const TOKENS: &str = "tokens";
@@ -188,29 +187,6 @@ pub trait Store: Send + Sync {
     }
 }
 
-/// The name of the object that holds a thread: [`THREADS`] and the
-/// thread name. Each byte of the thread name outside `A-Z a-z 0-9 - _ .
-/// ~` becomes `%XX`.
-///
-/// ```
-/// use riff_server::store::thread_object;
-///
-/// let thread = "como-technologies/riff".parse()?;
-/// assert_eq!(thread_object(&thread), "threads/como-technologies%2Friff");
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn thread_object(thread: &ThreadName) -> String {
-    let mut name = String::from(THREADS);
-    for byte in thread.to_string().bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            name.push(char::from(byte));
-        } else {
-            let _ = write!(name, "%{byte:02X}");
-        }
-    }
-    name
-}
-
 /// A store in memory, for tests. Clones share the same objects, so a
 /// test can start a new server on the store of an old one.
 #[derive(Clone, Default)]
@@ -267,11 +243,166 @@ impl Store for Memory {
     }
 }
 
+/// A store of files in a directory, for local development. The name of
+/// an object is its path in the directory: `log/…` is a file in the
+/// directory `log`. The version of an object is a hash of its bytes, so
+/// a second server on the same directory finds a change of the first.
+///
+/// ```
+/// use futures::executor::block_on;
+/// use riff_server::store::{Dir, Store, StoreError};
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let store = Dir::new(dir.path());
+/// block_on(async {
+///     let v1 = store.save("log/1.jsonl", b"a".to_vec(), None).await?;
+///     assert!(dir.path().join("log/1.jsonl").exists());
+///     assert_eq!(store.load("log/1.jsonl").await?.unwrap().version, v1);
+///     assert_eq!(store.list("log/").await?, ["log/1.jsonl"]);
+///     // An object is new only once.
+///     let again = store.save("log/1.jsonl", b"b".to_vec(), None).await;
+///     assert!(matches!(again, Err(StoreError::Conflict(_))));
+///     Ok::<(), StoreError>(())
+/// })?;
+/// # Ok::<(), StoreError>(())
+/// ```
+pub struct Dir {
+    root: PathBuf,
+}
+
+impl Dir {
+    pub fn new(root: impl Into<PathBuf>) -> Dir {
+        Dir { root: root.into() }
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.root.join(name)
+    }
+
+    fn read(&self, name: &str) -> Result<Option<Loaded>, StoreError> {
+        match std::fs::read(self.path(name)) {
+            Ok(bytes) => Ok(Some(Loaded {
+                version: version_of(&bytes),
+                bytes,
+            })),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(self.failed(name, &e)),
+        }
+    }
+
+    fn names(&self, prefix: &str) -> Result<Vec<String>, StoreError> {
+        let mut names = Vec::new();
+        walk(&self.root, &self.root, &mut names).map_err(|e| self.failed(prefix, &e))?;
+        names.retain(|name| name.starts_with(prefix));
+        names.sort();
+        Ok(names)
+    }
+
+    fn write(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        known: Option<Version>,
+    ) -> Result<Version, StoreError> {
+        let path = self.path(name);
+        let fail = |e: std::io::Error| self.failed(name, &e);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(fail)?;
+        }
+        let now = self.read(name)?.map(|loaded| loaded.version);
+        if now != known {
+            return Err(StoreError::Conflict(name.to_owned()));
+        }
+        let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::write(&temp, bytes).map_err(fail)?;
+        let done = match known {
+            // A hard link fails when the object exists, so a new object
+            // never replaces another.
+            None => std::fs::hard_link(&temp, &path).map_err(|e| {
+                if e.kind() == ErrorKind::AlreadyExists {
+                    StoreError::Conflict(name.to_owned())
+                } else {
+                    fail(e)
+                }
+            }),
+            Some(_) => std::fs::rename(&temp, &path).map_err(fail),
+        };
+        let _ = std::fs::remove_file(&temp);
+        done.map(|()| version_of(bytes))
+    }
+
+    fn failed(&self, name: &str, error: &std::io::Error) -> StoreError {
+        StoreError::Failed(format!("{}: {error}", self.locate(name)))
+    }
+}
+
+impl Store for Dir {
+    fn load<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+        futures::future::ready(self.read(name)).boxed()
+    }
+
+    fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+        futures::future::ready(self.names(prefix)).boxed()
+    }
+
+    fn save<'a>(
+        &'a self,
+        name: &'a str,
+        bytes: Vec<u8>,
+        known: Option<Version>,
+    ) -> BoxFuture<'a, Result<Version, StoreError>> {
+        futures::future::ready(self.write(name, &bytes, known)).boxed()
+    }
+
+    fn locate(&self, name: &str) -> String {
+        self.path(name).display().to_string()
+    }
+
+    fn empty_command(&self) -> Option<String> {
+        Some(format!("rm -r {}", self.root.display()))
+    }
+}
+
+/// The version of an object in a [`Dir`]: the first 8 bytes of the hash
+/// of its bytes.
+fn version_of(bytes: &[u8]) -> Version {
+    let hash = Sha256::digest(bytes);
+    let mut first = [0; 8];
+    first.copy_from_slice(&hash[..8]);
+    Version::from_be_bytes(first)
+}
+
+/// Adds the name of each file under `dir`, with `/` between the parts.
+/// It skips the temporary files of a write.
+fn walk(root: &Path, dir: &Path, names: &mut Vec<String>) -> std::io::Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    for entry in entries {
+        let path = entry?.path();
+        if path.is_dir() {
+            walk(root, &path, names)?;
+        } else if !path
+            .extension()
+            .is_some_and(|e| e.to_string_lossy().starts_with("tmp-"))
+        {
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            let parts: Vec<String> = relative
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            names.push(parts.join("/"));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use futures::executor::block_on;
-    use riff_core::name::Who;
 
     #[test]
     fn a_new_object_needs_no_version() {
@@ -315,13 +446,10 @@ mod tests {
     fn list_gives_the_names_with_a_prefix() {
         let store = Memory::default();
         block_on(async {
-            for name in [SESSIONS, TOKENS, "threads/a", "threads/b"] {
+            for name in [TOKENS, "log/a", "log/b"] {
                 store.save(name, vec![], None).await.unwrap();
             }
-            assert_eq!(
-                store.list(THREADS).await.unwrap(),
-                ["threads/a", "threads/b"]
-            );
+            assert_eq!(store.list("log/").await.unwrap(), ["log/a", "log/b"]);
         });
     }
 
@@ -336,26 +464,25 @@ mod tests {
     }
 
     #[test]
-    fn only_thread_objects_start_with_the_thread_prefix() {
-        for name in [SESSIONS, TOKENS, LEASE] {
-            assert!(!name.starts_with(THREADS), "{name}");
-        }
-        let a = Who::new("mike", Some("a6cf")).unwrap();
-        let b = Who::new("brett", Some("77e0")).unwrap();
-        let direct = thread_object(&ThreadName::direct(&a, &b));
-        assert!(direct.starts_with(THREADS));
-        assert!(
-            direct[THREADS.len()..]
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "-_.~%".contains(c)),
-            "{direct}"
-        );
+    fn a_dir_store_finds_a_change_of_another_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (Dir::new(dir.path()), Dir::new(dir.path()));
+        block_on(async {
+            let v1 = a.save(TOKENS, b"1".to_vec(), None).await.unwrap();
+            let v2 = b.save(TOKENS, b"2".to_vec(), Some(v1)).await.unwrap();
+            let stale = a.save(TOKENS, b"3".to_vec(), Some(v1)).await;
+            assert_eq!(stale, Err(StoreError::Conflict(TOKENS.into())));
+            assert_eq!(a.load(TOKENS).await.unwrap().unwrap().version, v2);
+            assert!(a.load("missing").await.unwrap().is_none());
+        });
     }
 
     #[test]
-    fn two_threads_never_share_an_object() {
-        let a: ThreadName = "a/b".parse().unwrap();
-        let b: ThreadName = "a%2Fb".parse().unwrap();
-        assert_ne!(thread_object(&a), thread_object(&b));
+    fn a_dir_store_lists_nothing_in_a_new_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Dir::new(dir.path().join("new"));
+        assert!(block_on(store.list("log/")).unwrap().is_empty());
+        assert!(block_on(store.save(LEASE, b"x".to_vec(), None)).is_ok());
+        assert_eq!(block_on(store.list("")).unwrap(), [LEASE]);
     }
 }

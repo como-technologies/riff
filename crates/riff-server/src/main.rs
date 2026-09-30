@@ -8,6 +8,7 @@ use clap::Parser;
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
+use riff_server::store::{Dir, Store};
 use riff_server::{Service, listen};
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -93,11 +94,23 @@ struct Cli {
     )]
     allowed_domains: Vec<String>,
 
-    /// The Cloud Storage bucket that holds the state. The server loads
-    /// the state at start and saves each change. Without it, the server
-    /// saves nothing.
-    #[arg(long, env = "RIFF_BUCKET", hide_env_values = true)]
+    /// The Cloud Storage bucket that holds the state. The server writes
+    /// each change to the log in the bucket, and replays the log at
+    /// start. Without a bucket or a directory, the server keeps its log in
+    /// memory, and a restart loses it.
+    #[arg(
+        long,
+        env = "RIFF_BUCKET",
+        hide_env_values = true,
+        conflicts_with = "dir"
+    )]
     bucket: Option<String>,
+
+    /// A directory that holds the state as files, for local development:
+    /// the log, the token store and the lease. The server replays the log
+    /// at start.
+    #[arg(long, env = "RIFF_DIR", hide_env_values = true)]
+    dir: Option<std::path::PathBuf>,
 
     /// The minutes that the owner has to answer `riff owner --take` of an
     /// admin. With no answer, the admin is the owner.
@@ -194,22 +207,29 @@ async fn run() -> std::io::Result<()> {
     } else {
         tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");
     }
-    let service = match &cli.bucket {
-        Some(bucket) => {
+    let store: Option<Arc<dyn Store>> = match (&cli.bucket, &cli.dir) {
+        (Some(bucket), _) => {
             tracing::info!("state in gs://{bucket}");
-            let store = Arc::new(Gcs::new(bucket));
-            match Service::load(config, store).await {
-                Ok(service) => service,
-                Err(e) => {
-                    // The text names the object and the fix
-                    // (01M3MMXYS1V8CA89D2XHKPR6C4).
-                    tracing::error!("riff-server stops: {e}");
-                    std::process::exit(1);
-                }
-            }
+            Some(Arc::new(Gcs::new(bucket)))
         }
+        (None, Some(dir)) => {
+            tracing::info!("state in {}", dir.display());
+            Some(Arc::new(Dir::new(dir)))
+        }
+        (None, None) => None,
+    };
+    let service = match store {
+        Some(store) => match Service::load(config, store).await {
+            Ok(service) => service,
+            Err(e) => {
+                // The text names the object and the fix
+                // (01M3MMXYS1V8CA89D2XHKPR6C4).
+                tracing::error!("riff-server stops: {e}");
+                std::process::exit(1);
+            }
+        },
         None => {
-            tracing::warn!("no RIFF_BUCKET: the state is not saved");
+            tracing::warn!("no RIFF_BUCKET and no RIFF_DIR: the log is in memory only");
             Service::new(config)
         }
     };

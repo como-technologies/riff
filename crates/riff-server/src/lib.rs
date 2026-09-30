@@ -72,24 +72,34 @@
 //! - A riff with no sign-in listens only on a loopback address, unless
 //!   it gets `--insecure`. See [`listen`].
 //!
-//! - [`Service::load`] loads the state from a [`store::Store`] (R30). A
-//!   task then saves the changed objects each [`SAVE_EVERY`] (R127).
-//!   [`Service::save`] saves them at once; `main` calls it on SIGTERM
-//!   (R129). A server from [`Service::new`] has no store and saves
-//!   nothing (R34).
-//! - The server knows the [`store::Version`] of each object. Each save
-//!   names it, so a save over the changes of another instance fails
-//!   (R141). A failed save marks its object as changed again.
-//! - The token store is the object [`store::TOKENS`]. A call that
-//!   changes it gets its reply only after the save (R128). When that
-//!   save fails, the reply is 503, and the task saves the tokens again.
+//! - Each change of the state is a record in the log (see [`state`] and
+//!   [`log`]). A call that makes a record puts it in the queue, and gets
+//!   its reply after the writer wrote its chunk. Its wakes and its `tail`
+//!   events go out after the write too. A call that makes no record does
+//!   not wait.
+//! - The writer is one task. It takes each record in the queue into one
+//!   chunk, and writes it outside the lock of the state. When a write
+//!   fails for good, the server stops for good: each waiting call gets
+//!   503, and `main` exits.
+//! - [`Service::load`] replays the log of a [`store::Store`] (R30).
+//!   [`Service::new`] keeps its log in memory, and saves nothing (R34).
+//!   [`Service::save`] waits until the queue is written, and saves the
+//!   token store; `main` calls it on SIGTERM (R129).
+//! - The token store is the object [`store::TOKENS`]. A task saves it
+//!   each [`SAVE_EVERY`] when it changed (R127). The server knows the
+//!   [`store::Version`] of the object. Each save names it, so a save over
+//!   the changes of another instance fails (R141). A call that changes
+//!   the token store gets its reply only after the save (R128). When
+//!   that save fails, the reply is 503, and the task saves the tokens
+//!   again.
 //! - A server with a store takes the [`lease`] before it loads, and
 //!   keeps reading it. A gate replies 503 to each call while the server
 //!   does not serve (R139). The server saves only while it holds the
 //!   lease (R155).
 //! - A server that reads another ID in the lease, or whose save finds
-//!   another version, stops for good (R140, R141): each stream closes,
-//!   each call gets 503, and it saves nothing more.
+//!   another version, or whose chunk has the name of another chunk, stops
+//!   for good (R140, R141): each stream closes, each call gets 503, and
+//!   it saves nothing more.
 //!   [`Service::stopped`] tells `main`, which exits after
 //!   [`lease::Timing::exit_after`].
 //! - A server refuses each proof issued before it started to serve
@@ -111,6 +121,7 @@ pub mod gcs;
 pub mod idle;
 pub mod lease;
 pub mod listen;
+pub mod log;
 pub mod oidc;
 pub mod owner;
 pub mod state;
@@ -152,14 +163,14 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::lease::Lease;
 use crate::owner::{Check, Checks};
-use crate::state::{Delivery, State};
-use crate::store::{SESSIONS, Store, StoreError, THREADS, TOKENS, Version};
+use crate::state::{Delivery, State, may_read};
+use crate::store::{Memory, Store, StoreError, TOKENS, Version};
 use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
 
-/// The server saves each changed object at most this often (R127).
+/// The server saves the changed token store at most this often (R127).
 pub const SAVE_EVERY: Duration = Duration::from_secs(1);
 
 type Shared = Arc<Server>;
@@ -179,6 +190,22 @@ struct Server {
     http: reqwest::Client,
     saved: Option<Saved>,
     gate: Gate,
+    /// The store of the log.
+    log: Arc<dyn Store>,
+    /// The position of the last written record.
+    written: tokio::sync::watch::Sender<u64>,
+    /// Wakes the writer when a record waits in the queue.
+    queued: Arc<tokio::sync::Notify>,
+    /// Each delivery that waits for the write of its record, with the
+    /// position of that record.
+    deliveries: Mutex<Vec<(u64, Delivery)>>,
+}
+
+impl Drop for Server {
+    /// Wakes the writer, so that its task ends.
+    fn drop(&mut self) {
+        self.queued.notify_one();
+    }
 }
 
 /// When a server serves. A server with no lease serves until it stops.
@@ -192,7 +219,7 @@ struct Gate {
     closing: AtomicBool,
 }
 
-/// Where a server saves its state.
+/// Where a server saves its token store.
 struct Saved {
     store: Arc<dyn Store>,
     /// The version of each object that the server knows. The lock lets
@@ -394,6 +421,89 @@ impl Server {
         let _ = self.tail.send(delivery.tailed);
     }
 
+    fn deliveries(&self) -> MutexGuard<'_, Vec<(u64, Delivery)>> {
+        self.deliveries
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Sends `delivery` when the record at `position` is written: now,
+    /// or after the write.
+    fn deliver_after(&self, position: u64, delivery: Delivery) {
+        let mut waiting = self.deliveries();
+        // The writer marks a position as written before it takes the
+        // deliveries, so no delivery waits for a written record.
+        if *self.written.borrow() >= position {
+            drop(waiting);
+            self.deliver(delivery);
+        } else {
+            waiting.push((position, delivery));
+        }
+    }
+
+    /// Sends each delivery whose record is written, up to `position`.
+    fn deliver_written(&self, position: u64) {
+        let ready: Vec<Delivery> = {
+            let mut waiting = self.deliveries();
+            let (ready, wait) = std::mem::take(&mut *waiting)
+                .into_iter()
+                .partition(|(at, _)| *at <= position);
+            *waiting = wait;
+            ready.into_iter().map(|(_, delivery)| delivery).collect()
+        };
+        for delivery in ready {
+            self.deliver(delivery);
+        }
+    }
+
+    /// The position that a call must wait for: the last record in the
+    /// queue, when the call made a record since `before`. It wakes the
+    /// writer.
+    fn made(&self, state: &State, before: u64) -> Option<u64> {
+        let after = state.position();
+        (after > before).then(|| {
+            self.queued.notify_one();
+            after
+        })
+    }
+
+    /// Waits until the record at `position` is written. When the server
+    /// stops first, the call gets 503.
+    async fn written(&self, position: Option<u64>) -> Result<(), (StatusCode, String)> {
+        let Some(position) = position else {
+            return Ok(());
+        };
+        let unavailable = || {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the server stopped before it wrote the change. Try again.".to_owned(),
+            )
+        };
+        let mut written = self.written.subscribe();
+        tokio::select! {
+            biased;
+            done = written.wait_for(|at| *at >= position) => done.map(drop).map_err(|_| unavailable()),
+            () = self.stopping() => Err(unavailable()),
+        }
+    }
+
+    /// Delivers each post of the server after the write of `position`.
+    /// A post that did not go is only logged.
+    fn deliver_all(&self, position: Option<u64>, deliveries: Vec<Result<Delivery, String>>) {
+        for delivery in deliveries {
+            match delivery {
+                Ok(mut delivery) => {
+                    delivery.tailed.trusted = self.config.trusted();
+                    match position {
+                        Some(position) => self.deliver_after(position, delivery),
+                        None => self.deliver(delivery),
+                    }
+                }
+                Err(error) => tracing::warn!("a note of the server did not go: {error}"),
+            }
+        }
+    }
+
     /// One look at the owner role at `now` (see [`owner`]): it grants a
     /// request whose time ended, then checks the owner when a check is
     /// due. It warns the owner one check before the owner is gone.
@@ -443,8 +553,9 @@ impl Server {
         let (now, at_ms) = (Instant::now(), now_ms());
         let me = owner::server_uri();
         let mut deliveries = Vec::new();
-        {
+        let position = {
             let mut state = self.state();
+            let before = state.position();
             if let Some(user) = user {
                 for thread in state.repositories() {
                     let to = vec![Selector {
@@ -472,8 +583,9 @@ impl Server {
                 now,
                 at_ms,
             ));
-        }
-        self.deliver_all(deliveries);
+            self.made(&state, before)
+        };
+        self.deliver_all(position, deliveries);
     }
 
     /// Saves a change of the owner role that no person made, and posts
@@ -498,8 +610,9 @@ impl Server {
         let (now, at_ms) = (Instant::now(), now_ms());
         let me = owner::server_uri();
         let mut deliveries = Vec::new();
-        {
+        let position = {
             let mut state = self.state();
+            let before = state.position();
             let settings = state.idle();
             for stopping in state.stop_idle_workers(now) {
                 let news = idle::news(&stopping, &settings);
@@ -512,16 +625,9 @@ impl Server {
                     state.announce(&me, Some(thread), vec![lead], &news, Kind::Note, now, at_ms);
                 deliveries.push(note);
             }
-        }
-        for delivery in deliveries {
-            match delivery {
-                Ok(mut delivery) => {
-                    delivery.tailed.trusted = self.config.trusted();
-                    self.deliver(delivery);
-                }
-                Err(error) => tracing::warn!("a note of the server did not go: {error}"),
-            }
-        }
+            self.made(&state, before)
+        };
+        self.deliver_all(position, deliveries);
     }
 
     /// Posts a note of the server to the thread of each repository of
@@ -531,8 +637,9 @@ impl Server {
         let (now, at_ms) = (Instant::now(), now_ms());
         let me = owner::server_uri();
         let mut deliveries = Vec::new();
-        {
+        let position = {
             let mut state = self.state();
+            let before = state.position();
             for thread in state.repositories() {
                 let to = vec![Selector {
                     repo: Some(thread.to_string()),
@@ -552,22 +659,9 @@ impl Server {
                     deliveries.push(message);
                 }
             }
-        }
-        self.deliver_all(deliveries);
-    }
-
-    /// Delivers each post of the server. A post that did not go is only
-    /// logged.
-    fn deliver_all(&self, deliveries: Vec<Result<Delivery, String>>) {
-        for delivery in deliveries {
-            match delivery {
-                Ok(mut delivery) => {
-                    delivery.tailed.trusted = self.config.trusted();
-                    self.deliver(delivery);
-                }
-                Err(error) => tracing::warn!("a note of the server did not go: {error}"),
-            }
-        }
+            self.made(&state, before)
+        };
+        self.deliver_all(position, deliveries);
     }
 }
 
@@ -597,24 +691,27 @@ impl Default for Service {
 }
 
 impl Service {
-    /// A new server with these settings. It saves nothing.
+    /// A new server with these settings. It keeps its log in memory, and
+    /// saves nothing (R34).
     pub fn new(config: Config) -> Self {
         Service::build(
             config,
-            State::default(),
+            State::with_writer(Instant::now(), now_ms()),
             Tokens::default(),
             oidc::client(oidc::FETCH_TIMEOUT),
             None,
+            Arc::new(Memory::default()),
             None,
             now_ms() / 1000,
         )
     }
 
     /// A server with the state that `store` holds. It takes the lease,
-    /// waits, loads the state, and serves from the next whole second
-    /// (R138, R142). It saves each change to `store` within
-    /// [`SAVE_EVERY`], while the service lives (R30). It fails when
-    /// another instance took the lease during the wait.
+    /// waits, replays the log, and serves from the next whole second
+    /// (R138, R142). It writes each change to the log of `store`, and
+    /// saves the token store within [`SAVE_EVERY`], while the service
+    /// lives (R30). It fails when another instance took the lease during
+    /// the wait, or when the log does not read (see [`log::replay`]).
     ///
     /// ```
     /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
@@ -649,17 +746,6 @@ impl Service {
         tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
         let start = now_ms() / 1000;
         let mut versions = HashMap::new();
-        let mut threads = Vec::new();
-        for name in store.list(THREADS).await? {
-            if let Some(loaded) = store.load(&name).await? {
-                versions.insert(name.clone(), loaded.version);
-                threads.push((name, loaded.bytes));
-            }
-        }
-        let sessions = store.load(SESSIONS).await?;
-        if let Some(loaded) = &sessions {
-            versions.insert(SESSIONS.into(), loaded.version);
-        }
         let tokens = match store.load(TOKENS).await? {
             Some(loaded) => {
                 versions.insert(TOKENS.into(), loaded.version);
@@ -668,26 +754,35 @@ impl Service {
             }
             None => Tokens::default(),
         };
-        let state = State::load(
-            sessions.as_ref().map(|loaded| loaded.bytes.as_slice()),
-            threads
-                .iter()
-                .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
-            Instant::now(),
-            now_ms(),
-        )
-        .map_err(|e| StoreError::not_valid(&*store, &e.name, e.why))?;
-        tracing::info!(threads = threads.len(), "loaded the state");
+        let replayed = Instant::now();
+        let records = log::replay(&*store).await?;
+        let count = records.len();
+        let state = State::replay(records, Instant::now(), now_ms());
+        tracing::info!(
+            records = count,
+            position = state.position(),
+            "replayed the log in {:?}",
+            replayed.elapsed()
+        );
         let asked = Instant::now();
         if !lease.held().await? {
             return Err(StoreError::Conflict(store::LEASE.into()));
         }
         let saved = Saved {
-            store,
+            store: store.clone(),
             versions: tokio::sync::Mutex::new(versions),
         };
         let until = asked + config.lease.valid_for;
-        let service = Service::build(config, state, tokens, http, Some(saved), Some(until), start);
+        let service = Service::build(
+            config,
+            state,
+            tokens,
+            http,
+            Some(saved),
+            store,
+            Some(until),
+            start,
+        );
         // Save the tokens once, so that a new riff ID stays
         // (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
         drop(service.0.tokens_change());
@@ -696,14 +791,17 @@ impl Service {
         Ok(service)
     }
 
-    /// `until` is the end of the first serve time of a server with a
-    /// lease. `start` is the second when it starts to serve.
+    /// `log` is the store of the log. `until` is the end of the first
+    /// serve time of a server with a lease. `start` is the second when it
+    /// starts to serve.
+    #[allow(clippy::too_many_arguments)]
     fn build(
         config: Config,
         state: State,
         tokens: Tokens,
         http: reqwest::Client,
         saved: Option<Saved>,
+        log: Arc<dyn Store>,
         until: Option<Instant>,
         start: u64,
     ) -> Self {
@@ -715,6 +813,7 @@ impl Service {
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         let mut replay = Replay::default();
         replay.refuse_before(start);
+        let written = tokio::sync::watch::Sender::new(state.written_position());
         let service = Service(Arc::new(Server {
             config,
             state: Mutex::new(state),
@@ -731,10 +830,67 @@ impl Service {
                 stopped: tokio::sync::watch::Sender::new(false),
                 closing: AtomicBool::new(false),
             },
+            log,
+            written,
+            queued: Arc::new(tokio::sync::Notify::new()),
+            deliveries: Mutex::new(Vec::new()),
         }));
+        service.write_log();
         service.watch_owner();
         service.watch_idle_workers();
         service
+    }
+
+    /// Starts the writer: the task that writes each record in the queue
+    /// as a chunk of the log (see [`log`]). After each chunk, it applies
+    /// its records to the written state, and sends the replies and the
+    /// wakes that wait for them. When a chunk fails for good, it stops
+    /// the server for good. A server with no async runtime, for example
+    /// in a doc test, starts no task. The task ends when the service
+    /// ends.
+    fn write_log(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        let queued = self.0.queued.clone();
+        runtime.spawn(async move {
+            loop {
+                let Some(s) = server.upgrade() else {
+                    break;
+                };
+                if s.is_stopped() {
+                    break;
+                }
+                // An instance writes only while it may serve (R155).
+                if !s.leased() {
+                    drop(s);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                let records = s.state().take_queue();
+                let Some(last) = records.last().map(|r| r.position) else {
+                    drop(s);
+                    queued.notified().await;
+                    continue;
+                };
+                let log = s.log.clone();
+                let timing = s.config.log;
+                match log::write(&*log, &records, &timing).await {
+                    Ok(()) => {
+                        s.state().written(&records);
+                        s.written.send_replace(last);
+                        s.deliver_written(last);
+                    }
+                    Err(error) => {
+                        let chunk = log::chunk_name(records[0].position);
+                        tracing::error!("the write of the chunk {chunk} failed for good: {error}");
+                        s.stop(&format!("the write of the chunk {chunk} failed"));
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     /// Starts the task that looks at the owner role each
@@ -796,46 +952,29 @@ impl Service {
         });
     }
 
-    /// Saves each changed object now. A server with no store does
-    /// nothing. A server that does not hold the lease now saves nothing
-    /// (R140, R155). When a save fails, the other objects are still
-    /// saved, and the first error is returned. A save that finds another
+    /// Waits until each record in the queue is written, then saves the
+    /// token store when it changed. A server with no store saves no
+    /// token store. A server that does not hold the lease now, or that
+    /// stopped, saves nothing (R140, R155). A save that finds another
     /// version stops the server for good (R141).
     pub async fn save(&self) -> Result<(), StoreError> {
+        if !self.0.leased() {
+            return Ok(());
+        }
+        let position = self.0.state().position();
+        if self.0.written(Some(position)).await.is_err() {
+            return Err(StoreError::Failed(
+                "the server stopped before it wrote the log".into(),
+            ));
+        }
         let Some(saved) = &self.0.saved else {
             return Ok(());
         };
         let mut versions = saved.versions.lock().await;
-        if !self.0.leased() {
+        if !self.0.leased() || !self.0.tokens_unsaved(0) {
             return Ok(());
         }
-        let mut result = if self.0.tokens_unsaved(0) {
-            self.0.save_tokens(saved, &mut versions).await
-        } else {
-            Ok(())
-        };
-        if self.0.is_stopped() {
-            return result;
-        }
-        let changes = self.0.state().changes(Instant::now(), now_ms());
-        for (object, bytes) in changes {
-            let name = object.name();
-            let known = versions.get(&name).copied();
-            match saved.store.save(&name, bytes, known).await {
-                Ok(version) => {
-                    versions.insert(name, version);
-                }
-                Err(error @ StoreError::Conflict(_)) => {
-                    self.0.stop(&error.to_string());
-                    return Err(error);
-                }
-                Err(error) => {
-                    self.0.state().mark_changed(object);
-                    result = result.and(Err(error));
-                }
-            }
-        }
-        result
+        self.0.save_tokens(saved, &mut versions).await
     }
 
     /// Stops taking calls, then saves each unsaved change (R129). The
@@ -880,8 +1019,8 @@ impl Service {
         });
     }
 
-    /// Starts the task that saves the changes each [`SAVE_EVERY`]. The
-    /// task ends when the service ends.
+    /// Starts the task that saves the changed token store each
+    /// [`SAVE_EVERY`]. The task ends when the service ends.
     fn save_each_second(&self) {
         let server = Arc::downgrade(&self.0);
         tokio::spawn(async move {
@@ -895,8 +1034,8 @@ impl Service {
                 if server.is_stopped() {
                     break;
                 }
-                if let Err(error) = Service(server).save().await {
-                    tracing::error!("save failed: {error}");
+                if let Err(error) = server.save_tokens_since(0).await {
+                    tracing::error!("the token store was not saved: {error}");
                 }
             }
         });
@@ -982,14 +1121,36 @@ pub fn router() -> Router {
     Service::default().router()
 }
 
+/// Runs `f` on the state as `me` (see [`acts_as`]). Then it waits until
+/// each record that `f` made is written, so the reply comes after the
+/// write. A call that makes no record does not wait.
+async fn change<T>(
+    s: &Server,
+    caller: Option<Extension<SignedIn>>,
+    me: &SessionUri,
+    f: impl FnOnce(&mut State) -> Result<T, (StatusCode, String)>,
+) -> Result<T, (StatusCode, String)> {
+    let (result, position) = {
+        let mut state = acts_as(s, caller, me)?;
+        let before = state.position();
+        let result = f(&mut state);
+        (result, s.made(&state, before))
+    };
+    s.written(position).await?;
+    result
+}
+
 async fn register(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Register>,
 ) -> Reply<()> {
-    let mut state = acts_as(&s, caller, &r.me)?;
-    state.register(&r.me, Instant::now());
-    state.worker(r.me.who(), r.worker);
+    change(&s, caller, &r.me, |state| {
+        state.register(&r.me, Instant::now());
+        state.worker(r.me.who(), r.worker);
+        Ok(())
+    })
+    .await?;
     Ok(Json(()))
 }
 
@@ -999,7 +1160,10 @@ async fn alive(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Alive>,
 ) -> Reply<AliveReply> {
-    let reply = acts_as(&s, caller, &r.me)?.alive(&r.me, Instant::now());
+    let reply = change(&s, caller, &r.me, |state| {
+        Ok(state.alive(&r.me, Instant::now()))
+    })
+    .await?;
     Ok(Json(reply))
 }
 
@@ -1009,7 +1173,11 @@ async fn end(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<End>,
 ) -> Reply<()> {
-    acts_as(&s, caller, &r.me)?.end(&r.me, Instant::now());
+    change(&s, caller, &r.me, |state| {
+        state.end(&r.me, Instant::now());
+        Ok(())
+    })
+    .await?;
     Ok(Json(()))
 }
 
@@ -1020,8 +1188,26 @@ async fn start(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Start>,
 ) -> Reply<Started> {
-    let freed = acts_as(&s, caller, &r.me)?.start(&r.me, Instant::now());
+    let freed = change(&s, caller, &r.me, |state| {
+        Ok(state.start(&r.me, Instant::now()))
+    })
+    .await?;
     Ok(Json(Started { freed }))
+}
+
+/// Records a call of `me`, and waits for the records that it made, if
+/// any: the first call of a new session joins it to the thread of its
+/// repository. A view that comes after it shows them.
+async fn called(
+    s: &Server,
+    caller: Option<Extension<SignedIn>>,
+    me: &SessionUri,
+) -> Result<(), (StatusCode, String)> {
+    change(s, caller, me, |state| {
+        state.called(me, Instant::now());
+        Ok(())
+    })
+    .await
 }
 
 async fn who(
@@ -1029,16 +1215,16 @@ async fn who(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<WhoRequest>,
 ) -> Reply<WhoReply> {
-    let now = Instant::now();
     let (owner, members) = if s.config.trusted() {
         (RiffOwner::NoSignIn, Vec::new())
     } else {
         let tokens = s.tokens();
         (tokens.riff_owner(), tokens.people(&s.config.admins))
     };
-    let mut state = acts_as(&s, caller, &r.me)?;
-    state.called(&r.me, now);
+    called(&s, caller, &r.me).await?;
+    let now = Instant::now();
     let now_ms = now_ms();
+    let state = s.state();
     let people = members
         .into_iter()
         .map(|(user, role)| {
@@ -1078,8 +1264,9 @@ async fn threads(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Threads>,
 ) -> Reply<ThreadsReply> {
+    called(&s, caller, &r.me).await?;
     Ok(Json(ThreadsReply {
-        threads: acts_as(&s, caller, &r.me)?.threads(&r.me, Instant::now()),
+        threads: s.state().threads(&r.me, Instant::now()),
     }))
 }
 
@@ -1088,7 +1275,11 @@ async fn join(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Membership>,
 ) -> Reply<()> {
-    acts_as(&s, caller, &r.me)?.join(&r.me, &r.thread, Instant::now());
+    change(&s, caller, &r.me, |state| {
+        state.join(&r.me, &r.thread, Instant::now());
+        Ok(())
+    })
+    .await?;
     Ok(Json(()))
 }
 
@@ -1097,13 +1288,19 @@ async fn leave(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Membership>,
 ) -> Reply<()> {
-    acts_as(&s, caller, &r.me)?.leave(&r.me, &r.thread, Instant::now());
+    change(&s, caller, &r.me, |state| {
+        state.leave(&r.me, &r.thread, Instant::now());
+        Ok(())
+    })
+    .await?;
     Ok(Json(()))
 }
 
 /// Adds a message. With sign-in, the post needs a valid signature from
-/// the key of its token (R197), and the message keeps it. Without
-/// sign-in, the message keeps no signature (R201).
+/// the key of its token over its payload (R197), and the message keeps
+/// the payload and the signature. Without sign-in, the message keeps no
+/// signature (R201). The reply, the wakes and the `tail` event come
+/// after the write of the message.
 async fn post_message(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
@@ -1116,19 +1313,38 @@ async fn post_message(
             .map_err(|message| (StatusCode::FORBIDDEN, message))?,
         None => {
             r.sig = None;
+            r.payload = None;
             now_ms
         }
     };
     let signed = caller.is_some();
     let me = r.me.clone();
-    let mut delivery = acts_as(&s, caller, &me)?
-        .post(r, Instant::now(), at_ms)
-        .map_err(bad_request)?;
-    if signed {
-        delivery.tailed.keys = s.keys([me.who().user()]);
+    let now = Instant::now();
+    let (delivery, position) = {
+        let mut state = acts_as(&s, caller, &me)?;
+        let before = state.position();
+        let delivery = state.post(r, now, at_ms);
+        (delivery, s.made(&state, before))
+    };
+    let delivery = delivery.map(|mut delivery| {
+        if signed {
+            delivery.tailed.keys = s.keys([me.who().user()]);
+        }
+        delivery.tailed.trusted = s.config.trusted();
+        delivery
+    });
+    if let (Ok(delivery), Some(position)) = (&delivery, position) {
+        s.deliver_after(position, delivery.clone());
     }
-    delivery.tailed.trusted = s.config.trusted();
-    Ok(Json(posted(&s, delivery)))
+    s.written(position).await?;
+    let delivery = delivery.map_err(bad_request)?;
+    let state = s.state();
+    Ok(Json(Posted {
+        thread: delivery.tailed.thread,
+        seq: delivery.tailed.message.seq,
+        woken: delivery.woken.iter().map(|w| state.uri(w, now)).collect(),
+        unmatched: delivery.unmatched,
+    }))
 }
 
 async fn status(
@@ -1136,22 +1352,28 @@ async fn status(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<SetStatus>,
 ) -> Reply<()> {
-    acts_as(&s, caller, &r.me)?
-        .set_status(&r.me, r.status, Instant::now(), now_ms())
-        .map_err(bad_request)?;
+    change(&s, caller, &r.me, |state| {
+        state
+            .set_status(&r.me, r.status, Instant::now(), now_ms())
+            .map_err(bad_request)
+    })
+    .await?;
     Ok(Json(()))
 }
 
 /// Gives the messages. With sign-in, the reply holds the keys of each
 /// sender, so the reader can verify each message (R199). A riff with
-/// no sign-in marks the reply as trusted (R211).
+/// no sign-in marks the reply as trusted (R211). A direct thread of two
+/// other sessions is not found ([`state::may_read`]).
 async fn read(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Read>,
 ) -> Reply<ReadReply> {
     let signed = caller.is_some();
-    let messages = acts_as(&s, caller, &r.me)?
+    called(&s, caller, &r.me).await?;
+    let messages = s
+        .state()
         .read(&r.me, &r.thread, r.all, Instant::now())
         .map_err(not_found)?;
     let keys = if signed {
@@ -1171,10 +1393,14 @@ async fn claim(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Claim>,
 ) -> Reply<ClaimReply> {
-    let reply = acts_as(&s, caller, &r.me)?
-        .claim(&r.me, &r.thread, &r.item, Instant::now())
-        .map_err(bad_request)?;
-    Ok(Json(reply))
+    let now = Instant::now();
+    let (granted, holder) = change(&s, caller, &r.me, |state| {
+        state
+            .claim(&r.me, &r.thread, &r.item, now)
+            .map_err(bad_request)
+    })
+    .await?;
+    Ok(Json(s.state().claim_reply(granted, &holder, now)))
 }
 
 async fn release(
@@ -1182,9 +1408,12 @@ async fn release(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Claim>,
 ) -> Reply<()> {
-    acts_as(&s, caller, &r.me)?
-        .release(&r.me, &r.thread, &r.item, Instant::now())
-        .map_err(bad_request)?;
+    change(&s, caller, &r.me, |state| {
+        state
+            .release(&r.me, &r.thread, &r.item, Instant::now())
+            .map_err(bad_request)
+    })
+    .await?;
     Ok(Json(()))
 }
 
@@ -1193,10 +1422,12 @@ async fn lead(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Lead>,
 ) -> Reply<LeadReply> {
-    let reply = acts_as(&s, caller, &r.me)?
-        .lead(&r.me, Instant::now())
-        .map_err(bad_request)?;
-    Ok(Json(reply))
+    let now = Instant::now();
+    let (me, old) = change(&s, caller, &r.me, |state| {
+        state.lead(&r.me, now).map_err(bad_request)
+    })
+    .await?;
+    Ok(Json(s.state().lead_reply(&me, old.as_ref(), now)))
 }
 
 /// Reads the state of the riff, or sets it for a person or a lead
@@ -1206,9 +1437,12 @@ async fn riff(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Riff>,
 ) -> Reply<RiffReply> {
-    let reply = acts_as(&s, caller, &r.me)?
-        .riff(&r.me, r.state, Instant::now())
-        .map_err(|message| (StatusCode::FORBIDDEN, message))?;
+    let reply = change(&s, caller, &r.me, |state| {
+        state
+            .riff(&r.me, r.state, Instant::now())
+            .map_err(|message| (StatusCode::FORBIDDEN, message))
+    })
+    .await?;
     Ok(Json(reply))
 }
 
@@ -1227,9 +1461,13 @@ async fn idle_workers(
     if r.after_secs == Some(0) {
         return Err(bad_request("the idle time is at least 1 second".into()));
     }
-    let mut state = acts_as(&s, caller, &r.me)?;
-    state.called(&r.me, Instant::now());
-    Ok(Json(state.set_idle(r.per_host, r.after_secs)))
+    let idle = change(&s, caller, &r.me, |state| {
+        let now = Instant::now();
+        state.called(&r.me, now);
+        Ok(state.set_idle(r.per_host, r.after_secs, now))
+    })
+    .await?;
+    Ok(Json(idle))
 }
 
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
@@ -1699,27 +1937,30 @@ struct WatchQuery {
 }
 
 /// Streams the wakes for one session. The session is live while the
-/// stream is open.
+/// stream is open. It gives only the wakes of the session, in threads
+/// that it may read ([`state::may_read`]).
 async fn watch(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
     Query(q): Query<WatchQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
     let rx = s.wakes.subscribe();
-    let missed = {
+    let position = {
         let mut state = acts_as(&s, caller, &q.uri)?;
-        let now = Instant::now();
-        state.watch_started(&q.uri, now);
-        state.missed(q.uri.who())
+        let before = state.position();
+        state.watch_started(&q.uri, Instant::now());
+        s.made(&state, before)
     };
     let guard = WatchGuard {
         server: s.clone(),
         who: q.uri.who().clone(),
     };
+    s.written(position).await?;
+    let missed = s.state().missed(q.uri.who());
     let live = BroadcastStream::new(rx).filter_map(move |event| {
         let _alive = &guard;
         let wake = match event {
-            Ok((to, wake)) if to == guard.who => Some(wake),
+            Ok((to, wake)) if to == guard.who && may_read(&to, &wake.thread) => Some(wake),
             _ => None,
         };
         std::future::ready(wake)
@@ -1745,14 +1986,23 @@ impl Drop for WatchGuard {
 
 #[derive(Deserialize)]
 struct TailQuery {
+    /// The caller: a session, or a person.
+    uri: SessionUri,
     thread: ThreadName,
 }
 
-/// Streams each new message in one thread (R27).
+/// Streams each new message in one thread (R27). The caller acts as its
+/// token, and gets no direct thread of two other sessions: 404
+/// ([`state::may_read`]).
 async fn tail_thread(
     AxumState(s): AxumState<Shared>,
+    caller: Option<Extension<SignedIn>>,
     Query(q): Query<TailQuery>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+    drop(acts_as(&s, caller, &q.uri)?);
+    if !may_read(q.uri.who(), &q.thread) {
+        return Err(not_found(format!("no thread named {}", q.thread)));
+    }
     let stream = BroadcastStream::new(s.tail.subscribe()).filter_map(move |event| {
         let event = match event {
             Ok(tailed) if tailed.thread == q.thread => Event::default().json_data(tailed).ok(),
@@ -1761,7 +2011,7 @@ async fn tail_thread(
         std::future::ready(event.map(Ok))
     });
     let stream = stream.take_until(s.stopping());
-    Sse::new(opened(stream)).keep_alive(KeepAlive::default())
+    Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
 }
 
 /// Puts the comment `: ready` first in an event stream, so that the
@@ -1784,17 +2034,6 @@ where
     futures::stream::once(std::future::ready(Ok(Event::default().comment("ready")))).chain(stream)
 }
 
-fn posted(s: &Server, delivery: Delivery) -> Posted {
-    let reply = Posted {
-        thread: delivery.tailed.thread.clone(),
-        seq: delivery.tailed.message.seq,
-        woken: delivery.woken.clone(),
-        unmatched: delivery.unmatched.clone(),
-    };
-    s.deliver(delivery);
-    reply
-}
-
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1814,28 +2053,56 @@ mod tests {
     use super::*;
     use crate::store::Memory;
     use futures::future::BoxFuture;
+    use riff_core::record::{Change, Line};
     use std::time::Duration;
     use tokio::time::sleep;
 
-    /// A memory store that counts the saves of each object.
+    /// A memory store whose chunk writes can wait, or fail.
     #[derive(Default)]
-    struct Counting {
+    struct Gated {
         store: Memory,
-        saves: Mutex<Vec<String>>,
+        /// True: each chunk write waits until it is false.
+        hold: AtomicBool,
+        open: tokio::sync::Notify,
+        /// The number of chunk writes that started.
+        tries: AtomicU64,
+        /// Each chunk write fails with this error.
+        fail: Mutex<Option<StoreError>>,
     }
 
-    impl Counting {
-        fn saves(&self, name: &str) -> usize {
-            self.saves
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|n| *n == name)
-                .count()
+    impl Gated {
+        fn release(&self) {
+            self.hold.store(false, Ordering::SeqCst);
+            self.open.notify_waiters();
+        }
+
+        /// Waits until `n` chunk writes started.
+        async fn tried(&self, n: u64) {
+            while self.tries.load(Ordering::SeqCst) < n {
+                sleep(Duration::from_millis(1)).await;
+            }
+        }
+
+        /// The records of each chunk, in order.
+        async fn chunks(&self) -> Vec<Vec<Change>> {
+            let mut chunks = Vec::new();
+            for name in self.store.list(log::LOG).await.unwrap() {
+                let bytes = self.store.load(&name).await.unwrap().unwrap().bytes;
+                let (_, lines) = log::decode(&bytes).unwrap();
+                let changes = lines
+                    .into_iter()
+                    .map(|line| match line {
+                        Line::Record(record) => record.change,
+                        Line::Unknown { .. } => panic!("a known kind"),
+                    })
+                    .collect();
+                chunks.push(changes);
+            }
+            chunks
         }
     }
 
-    impl Store for Counting {
+    impl Store for Gated {
         fn load<'a>(
             &'a self,
             name: &'a str,
@@ -1853,63 +2120,251 @@ mod tests {
             bytes: Vec<u8>,
             known: Option<Version>,
         ) -> BoxFuture<'a, Result<Version, StoreError>> {
-            self.saves.lock().unwrap().push(name.to_owned());
-            self.store.save(name, bytes, known)
+            Box::pin(async move {
+                if name.starts_with(log::LOG) {
+                    self.tries.fetch_add(1, Ordering::SeqCst);
+                    while self.hold.load(Ordering::SeqCst) {
+                        let open = self.open.notified();
+                        if !self.hold.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        open.await;
+                    }
+                    let fail = self.fail.lock().unwrap().clone();
+                    if let Some(error) = fail {
+                        return Err(error);
+                    }
+                }
+                self.store.save(name, bytes, known).await
+            })
         }
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn each_changed_object_is_saved_at_most_once_each_second() {
-        let store = Arc::new(Counting::default());
-        let service = Service::load(Config::default(), store.clone())
-            .await
-            .unwrap();
-        let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a"
+    fn mike() -> SessionUri {
+        "riff://mike@pangolin/como-technologies/riff?session=a"
             .parse()
-            .unwrap();
-        let thread = me.default_thread().unwrap();
-        let name = store::thread_object(&thread);
-        let post = |n: usize| {
-            for _ in 0..n {
-                let now = Instant::now();
-                service
-                    .0
-                    .state()
-                    .post(Post::new(&me, Some(thread.clone()), vec![], "x"), now, 0)
-                    .unwrap();
-            }
-        };
-        // The first tick comes at once, and nothing changed.
-        sleep(Duration::from_millis(10)).await;
-        post(5);
-        sleep(Duration::from_millis(500)).await;
-        assert_eq!(store.saves(&name), 0);
-        sleep(Duration::from_millis(600)).await;
-        assert_eq!(store.saves(&name), 1);
-        assert_eq!(store.saves(SESSIONS), 1);
-        post(5);
-        sleep(Duration::from_millis(100)).await;
-        assert_eq!(store.saves(&name), 1);
-        sleep(Duration::from_secs(1)).await;
-        assert_eq!(store.saves(&name), 2);
-        // Nothing changed, so nothing is saved.
-        sleep(Duration::from_secs(3)).await;
-        assert_eq!(store.saves(&name), 2);
+            .unwrap()
+    }
 
-        let loaded = Service::load(Config::default(), Arc::new(store.store.clone()))
+    fn brett() -> SessionUri {
+        "riff://brett@heron/como-technologies/riff?session=b"
+            .parse()
+            .unwrap()
+    }
+
+    fn config() -> Config {
+        let mut config = Config::default();
+        config.lease.wait = Duration::from_millis(10);
+        config
+    }
+
+    /// A server on `store` with mike and brett in a running riff.
+    async fn running(store: Arc<Gated>) -> Service {
+        let service = Service::load(config(), store).await.unwrap();
+        for me in [mike(), brett()] {
+            let _ = register(
+                AxumState(service.0.clone()),
+                None,
+                Json(Register {
+                    me: me.clone(),
+                    worker: false,
+                }),
+            )
             .await
             .unwrap();
-        let now = Instant::now();
-        let messages = loaded.0.state().read(&me, &thread, true, now).unwrap();
-        assert_eq!(messages.len(), 10);
+        }
+        let running = Riff {
+            me: mike(),
+            state: Some(riff_core::wire::RiffState::Running),
+        };
+        let _ = riff(AxumState(service.0.clone()), None, Json(running))
+            .await
+            .unwrap();
+        service
+    }
+
+    fn post_body(me: &SessionUri, body: &str) -> Post {
+        Post::new(me, me.default_thread(), vec![], body)
+    }
+
+    async fn claims(service: &Service, me: &SessionUri) -> Vec<String> {
+        let request = WhoRequest {
+            me: me.clone(),
+            all: false,
+        };
+        let who = who(AxumState(service.0.clone()), None, Json(request))
+            .await
+            .unwrap();
+        who.sessions
+            .iter()
+            .find(|s| s.uri.who() == mike().who())
+            .map(|s| s.uri.claims().to_vec())
+            .unwrap_or_default()
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_save_task_ends_with_the_service() {
-        let store = Arc::new(Counting::default());
-        let service = Service::load(Config::default(), store.clone())
+    async fn two_posts_that_wait_for_a_write_go_in_one_chunk() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let before = store.chunks().await.len();
+        store.hold.store(true, Ordering::SeqCst);
+        let s = service.0.clone();
+        let first = tokio::spawn(post_message(
+            AxumState(s),
+            None,
+            Json(post_body(&mike(), "one")),
+        ));
+        store.tried(before as u64 + 1).await;
+        let (s1, s2) = (service.0.clone(), service.0.clone());
+        let second = tokio::spawn(post_message(
+            AxumState(s1),
+            None,
+            Json(post_body(&mike(), "two")),
+        ));
+        let third = tokio::spawn(post_message(
+            AxumState(s2),
+            None,
+            Json(post_body(&brett(), "three")),
+        ));
+        sleep(Duration::from_millis(50)).await;
+        assert!(!first.is_finished(), "a reply comes after the write");
+        store.release();
+        for task in [first, second, third] {
+            let _ = task.await.unwrap().unwrap();
+        }
+        let chunks = store.chunks().await;
+        let posts = |chunk: &Vec<Change>| {
+            chunk
+                .iter()
+                .filter(|c| matches!(c, Change::Posted(_)))
+                .count()
+        };
+        assert_eq!(chunks.len(), before + 2);
+        assert_eq!(posts(&chunks[before]), 1);
+        assert_eq!(posts(&chunks[before + 1]), 2, "{:?}", chunks[before + 1]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn who_shows_a_claim_only_after_its_write() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let request = Claim {
+            me: mike(),
+            thread: mike().default_thread().unwrap(),
+            item: "issue-7".into(),
+        };
+        let task = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request)));
+        store.tried(tries + 1).await;
+        assert!(claims(&service, &brett()).await.is_empty());
+        store.release();
+        let reply = task.await.unwrap().unwrap();
+        assert!(reply.granted);
+        assert_eq!(reply.holder.claims(), ["issue-7"]);
+        assert_eq!(claims(&service, &brett()).await, ["issue-7"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_write_stops_the_instance_and_the_next_replays_without_it() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let _ = post_message(
+            AxumState(service.0.clone()),
+            None,
+            Json(post_body(&mike(), "kept")),
+        )
+        .await
+        .unwrap();
+        *store.fail.lock().unwrap() = Some(StoreError::Failed("503 from the bucket".into()));
+        let started = tokio::time::Instant::now();
+        let lost = post_message(
+            AxumState(service.0.clone()),
+            None,
+            Json(post_body(&mike(), "lost")),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(lost.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(started.elapsed() >= Duration::from_secs(9), "tried again");
+        service.stopped().await;
+        assert!(store.tries.load(Ordering::SeqCst) > 3);
+
+        *store.fail.lock().unwrap() = None;
+        let next = Service::load(config(), store.clone()).await.unwrap();
+        let read = Read {
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: true,
+        };
+        let messages = read_messages(&next, read).await;
+        assert_eq!(messages, ["kept"]);
+        // The next instance writes its own chunk after the kept ones.
+        let _ = post_message(
+            AxumState(next.0.clone()),
+            None,
+            Json(post_body(&mike(), "new")),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn read_messages(service: &Service, request: Read) -> Vec<String> {
+        let reply = read(AxumState(service.0.clone()), None, Json(request))
             .await
             .unwrap();
+        reply.messages.iter().map(|m| m.body.clone()).collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_chunk_that_another_instance_wrote_stops_the_instance_at_once() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let next = service.0.state().position() + 1;
+        store
+            .store
+            .save(&log::chunk_name(next), b"other".to_vec(), None)
+            .await
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        let lost = post_message(
+            AxumState(service.0.clone()),
+            None,
+            Json(post_body(&mike(), "lost")),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(lost.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(started.elapsed() < Duration::from_secs(1), "no retry");
+        service.stopped().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_wake_goes_out_after_the_write() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let mut wakes = service.0.wakes.subscribe();
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let to = vec![Selector::session("b")];
+        let post = Post::new(&mike(), mike().default_thread(), to, "wake up");
+        let task = tokio::spawn(post_message(AxumState(service.0.clone()), None, Json(post)));
+        store.tried(tries + 1).await;
+        sleep(Duration::from_millis(50)).await;
+        assert!(wakes.try_recv().is_err(), "no wake before the write");
+        store.release();
+        let posted = task.await.unwrap().unwrap();
+        assert_eq!(posted.woken[0].who(), brett().who());
+        let (to, _) = wakes.recv().await.unwrap();
+        assert_eq!(&to, brett().who());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_writer_ends_with_the_service() {
+        let store = Arc::new(Gated::default());
+        let service = Service::load(config(), store.clone()).await.unwrap();
         let server = Arc::downgrade(&service.0);
         drop(service);
         sleep(Duration::from_secs(2)).await;
@@ -1917,10 +2372,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_server_with_no_store_saves_nothing() {
+    async fn a_server_with_no_store_keeps_its_log_in_memory() {
         let service = Service::default();
         let me: SessionUri = "riff://mike@pangolin/-?session=a#x".parse().unwrap();
-        service.0.state().register(&me, Instant::now());
+        let _ = register(
+            AxumState(service.0.clone()),
+            None,
+            Json(Register {
+                me: me.clone(),
+                worker: false,
+            }),
+        )
+        .await
+        .unwrap();
+        let _ = post_message(
+            AxumState(service.0.clone()),
+            None,
+            Json(Post::new(&me, Some("t".parse().unwrap()), vec![], "hi")),
+        )
+        .await
+        .unwrap();
         assert!(service.save().await.is_ok());
+        assert_eq!(service.0.log.list(log::LOG).await.unwrap().len(), 1);
     }
 }

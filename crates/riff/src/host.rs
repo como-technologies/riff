@@ -272,6 +272,7 @@ impl fmt::Display for Request {
 ///         at_ms: 0,
 ///         kind: Default::default(),
 ///         sig: None,
+///         payload: None,
 ///     },
 ///     verified,
 /// };

@@ -559,6 +559,10 @@ pub struct Post {
     /// The signature of the sender (see [`crate::signed`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sig: Option<String>,
+    /// The bytes that `sig` signs: the base64url of the JSON of
+    /// [`Content`]. The server and each reader keep them unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<String>,
 }
 
 impl Post {
@@ -572,14 +576,19 @@ impl Post {
             kind: Kind::Message,
             at_ms: None,
             sig: None,
+            payload: None,
         }
     }
 
     /// Signs the post with the device key `key`, at the time `at_ms`
-    /// (R195, R196).
+    /// (R195, R196). The post carries the payload and the signature.
     pub fn sign(&mut self, key: &Key, at_ms: u64) {
         self.at_ms = Some(at_ms);
-        self.sig = self.content().map(|content| content.sign(key));
+        self.payload = self.content().map(|content| content.payload());
+        self.sig = self
+            .payload
+            .as_deref()
+            .map(|payload| crate::signed::sign_payload(payload, key));
     }
 
     /// What the signature covers. `None` when the post has no signed
@@ -704,13 +713,16 @@ pub struct Message {
     /// The signature of the sender (see [`crate::signed`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sig: Option<String>,
+    /// The bytes that `sig` signs, as the sender made them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<String>,
 }
 
 impl Message {
     /// True when the sender of the message in `thread` is proven (R199):
     ///
-    /// - The signature is valid, and covers the message as it is: also
-    ///   the lead mark of the sender.
+    /// - The signature is valid over the kept payload, and the payload
+    ///   holds the message as it is: also the lead mark of the sender.
     /// - The key is one of `keys` for the user of the sender.
     /// - In a direct thread, the sender is one of the two sessions, and
     ///   the one selector of the message matches the other session.
@@ -733,6 +745,7 @@ impl Message {
     ///     at_ms: 1_000,
     ///     kind: Kind::Message,
     ///     sig: post.sig.clone(),
+    ///     payload: post.payload.clone(),
     /// };
     /// let keys = Keys::from([("mike".to_owned(), vec![key.thumbprint()])]);
     /// assert!(message.verified(&thread, &keys));
@@ -745,7 +758,7 @@ impl Message {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn verified(&self, thread: &ThreadName, keys: &Keys) -> bool {
-        let Some(sig) = &self.sig else {
+        let (Some(sig), Some(payload)) = (&self.sig, &self.payload) else {
             return false;
         };
         let from = self.from.who();
@@ -778,7 +791,8 @@ impl Message {
         let Some(keys) = keys.get(from.user()) else {
             return false;
         };
-        content.verify(sig).is_ok_and(|jkt| keys.contains(&jkt))
+        crate::signed::check(payload, sig)
+            .is_ok_and(|(jkt, signed)| keys.contains(&jkt) && signed.covers(&content))
     }
 }
 
@@ -1274,6 +1288,7 @@ mod tests {
             at_ms: post.at_ms.unwrap(),
             kind: post.kind,
             sig: post.sig.clone(),
+            payload: post.payload.clone(),
         }
     }
 
@@ -1376,7 +1391,64 @@ mod tests {
             at_ms: 5,
             kind: Kind::Message,
             sig: None,
+            payload: None,
         };
         assert!(!message.verified(&thread, &keys("mike", &key)));
+    }
+
+    #[test]
+    fn a_signed_post_carries_the_payload_that_it_signs() {
+        let key = Key::generate();
+        let thread: ThreadName = "design".parse().unwrap();
+        let mut post = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "go");
+        post.sign(&key, 5);
+        let payload = post.payload.clone().unwrap();
+        assert_eq!(payload, post.content().unwrap().payload());
+        let (jkt, signed) = crate::signed::check(&payload, post.sig.as_ref().unwrap()).unwrap();
+        assert_eq!(jkt, key.thumbprint());
+        assert!(signed.covers(&post.content().unwrap()));
+    }
+
+    #[test]
+    fn a_message_needs_its_kept_payload() {
+        let key = Key::generate();
+        let thread: ThreadName = "design".parse().unwrap();
+        let keys = keys("mike", &key);
+        let mut post = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "go");
+        post.sign(&key, 5);
+
+        let mut message = stored(&post, uri(MIKE));
+        message.payload = None;
+        assert!(!message.verified(&thread, &keys), "no payload");
+
+        // The payload of another message, with its own signature.
+        let mut other = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "stop");
+        other.sign(&key, 5);
+        let mut message = stored(&post, uri(MIKE));
+        message.payload = other.payload.clone();
+        message.sig = other.sig.clone();
+        assert!(
+            !message.verified(&thread, &keys),
+            "the payload of another body"
+        );
+    }
+
+    #[test]
+    fn a_new_field_in_the_payload_does_not_stop_the_check() {
+        use base64::Engine;
+        let key = Key::generate();
+        let thread: ThreadName = "design".parse().unwrap();
+        let mut post = Post::new(&uri(MIKE), Some(thread.clone()), vec![], "go");
+        post.sign(&key, 5);
+        // A later build adds `reply_to` to the payload, and signs it.
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&b64.decode(post.payload.as_ref().unwrap()).unwrap()).unwrap();
+        json["reply_to"] = 7.into();
+        let payload = b64.encode(serde_json::to_vec(&json).unwrap());
+        let mut message = stored(&post, uri(MIKE));
+        message.sig = Some(crate::signed::sign_payload(&payload, &key));
+        message.payload = Some(payload);
+        assert!(message.verified(&thread, &keys("mike", &key)));
     }
 }

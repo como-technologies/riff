@@ -215,6 +215,7 @@ pub fn unknown(name: &str) -> String {
 ///         at_ms: 0,
 ///         kind: Kind::Message,
 ///         sig: None,
+///         payload: None,
 ///     },
 ///     verified,
 /// };
@@ -255,6 +256,7 @@ pub fn sender(c: &Checked) -> (String, bool) {
 ///     at_ms: 0,
 ///     kind: Kind::Message,
 ///     sig: None,
+///     payload: None,
 /// };
 /// let c = Checked { message, verified: true };
 /// let at = chrono::Utc.with_ymd_and_hms(2026, 9, 28, 14, 13, 0).unwrap();
@@ -328,7 +330,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     let thread = &thread;
     // Connected first, then read: no line falls between the two.
     let connect = || async move {
-        let tail = api.tail(thread).await?;
+        let tail = api.tail(me, thread).await?;
         let read = api.read(me, thread, true).await?;
         // A stream that fails ends: `follow` connects again.
         let tail = tail.take_while(|item| std::future::ready(item.is_ok()));

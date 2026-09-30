@@ -99,6 +99,8 @@ pub struct Config {
     pub lease: crate::lease::Timing,
     /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
     pub owner_role: crate::owner::Timing,
+    /// How long the writer tries a chunk of the log.
+    pub log: crate::log::Timing,
 }
 
 impl Default for Config {
@@ -119,6 +121,7 @@ impl Config {
             provider: None,
             lease: crate::lease::Timing::default(),
             owner_role: crate::owner::Timing::default(),
+            log: crate::log::Timing::default(),
         }
     }
 
@@ -233,11 +236,14 @@ impl SignedIn {
         ))
     }
 
-    /// Checks the signature of a post from this caller (R197). The post
-    /// needs a signature from the device key of the token, and a signed
-    /// time at most [`MAX_AGE`] seconds old and at most [`MAX_SKEW`]
-    /// seconds in the future. `now_ms` is the time of the server, in
-    /// milliseconds since the Unix epoch. Gives the signed time.
+    /// Checks the signature of a post from this caller (R197,
+    /// 01M3T411N0HM699VJXW6RTVWKB). The post needs its payload and a
+    /// signature over it from the device key of the token. The payload
+    /// must hold the fields of the post, and a signed time at most
+    /// [`MAX_AGE`] seconds old and at most [`MAX_SKEW`] seconds in the
+    /// future. It never encodes the payload again. `now_ms` is the time
+    /// of the server, in milliseconds since the Unix epoch. Gives the
+    /// signed time.
     ///
     /// ```
     /// use riff_core::dpop::Key;
@@ -254,23 +260,38 @@ impl SignedIn {
     /// post.sign(&key, 9_000);
     /// assert_eq!(caller.check_post(&post, 9_000), Ok(9_000));
     ///
+    /// // The call says another body than the payload.
+    /// let changed = Post { body: "do not look".into(), ..post.clone() };
+    /// assert!(caller.check_post(&changed, 9_000).unwrap_err().contains("payload"));
+    ///
     /// // A signature from another key than the key of the token.
     /// post.sign(&Key::generate(), 9_000);
     /// assert!(caller.check_post(&post, 9_000).is_err());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn check_post(&self, post: &Post, now_ms: u64) -> Result<u64, String> {
-        let (Some(sig), Some(content)) = (&post.sig, post.content()) else {
+        let (Some(sig), Some(payload)) = (&post.sig, &post.payload) else {
             return Err("this server needs a signature on each message. Update riff.".into());
         };
-        self.may_act_as(content.from)?;
-        let jkt = content
-            .verify(sig)
+        let (jkt, signed) = riff_core::signed::check(payload, sig)
             .map_err(|e| format!("the message signature is refused: {e}"))?;
+        let call = riff_core::signed::Content {
+            from: post.me.who(),
+            lead: post.me.lead(),
+            thread: post.thread.as_ref(),
+            to: &post.to,
+            body: &post.body,
+            kind: post.kind,
+            at_ms: signed.at_ms,
+        };
+        if !signed.covers(&call) {
+            return Err("the payload does not hold the fields of the post".into());
+        }
+        self.may_act_as(&signed.from)?;
         if jkt != self.jkt {
             return Err("the message is signed with another key than the key of the token".into());
         }
-        let at_ms = content.at_ms;
+        let at_ms = signed.at_ms;
         if now_ms.saturating_sub(at_ms) > MAX_AGE * 1000 {
             return Err("the message time is too old. Check the clock of this machine.".into());
         }
@@ -449,6 +470,18 @@ mod tests {
         let (caller, mut post) = signed(&key, 5);
         post.body = "stop".into();
         let error = caller.check_post(&post, 5).unwrap_err();
+        assert!(error.contains("does not hold the fields"), "{error}");
+        // A payload of another body under the old signature.
+        let (_, other) = signed(&key, 5);
+        let mut changed = other.clone();
+        changed.payload = Some(
+            riff_core::signed::Content {
+                body: "stop",
+                ..other.content().unwrap()
+            }
+            .payload(),
+        );
+        let error = caller.check_post(&changed, 5).unwrap_err();
         assert!(error.contains("not valid for this message"), "{error}");
         post.sig = None;
         let error = caller.check_post(&post, 5).unwrap_err();

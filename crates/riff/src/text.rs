@@ -1165,6 +1165,7 @@ pub fn released(thread: &ThreadName, item: &str) -> String {
 ///     at_ms: 0,
 ///     kind: Kind::Message,
 ///     sig: None,
+///     payload: None,
 /// };
 /// let mut m = Checked { message, verified: true };
 /// assert_eq!(
@@ -1282,6 +1283,7 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 ///     at_ms: 0,
 ///     kind: Default::default(),
 ///     sig: None,
+///     payload: None,
 /// };
 /// let inbox = Inbox {
 ///     thread: "como-technologies/riff".parse()?,
@@ -1650,6 +1652,7 @@ pub fn safe(text: &str) -> String {
 ///     at_ms: 1_790_000_000_000,
 ///     kind: Kind::Message,
 ///     sig: None,
+///     payload: None,
 /// };
 /// let c = Checked { message, verified: true };
 /// let utc = FixedOffset::east_opt(0).unwrap();
@@ -2221,6 +2224,7 @@ mod tests {
             at_ms: 0,
             kind: Kind::Status,
             sig: None,
+            payload: None,
         };
         let c = Checked {
             message,
@@ -2249,6 +2253,7 @@ mod tests {
             at_ms: 0,
             kind: Kind::Message,
             sig: None,
+            payload: None,
         };
         let c = Checked {
             message,

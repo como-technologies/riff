@@ -16,15 +16,6 @@
 //! Cloud Storage replies 412 and the save fails with
 //! [`StoreError::Conflict`].
 //!
-//! # A deleted thread object
-//!
-//! The lifecycle rule (R46) deletes a thread object 30 days after its
-//! last change. The server can still hold that thread in memory. Its next
-//! save names the old generation and gets 412. When the bucket holds no
-//! object with that name, the store saves the object again as new
-//! (R149). Only the lifecycle rule deletes objects, and it deletes only
-//! thread objects. So the store does this only for thread objects.
-//!
 //! # Access token
 //!
 //! The store gets its access token from the metadata server of Cloud
@@ -53,8 +44,8 @@
 //!
 //! # async fn run() -> Result<(), riff_server::store::StoreError> {
 //! let store = Gcs::new("como-riff-state");
-//! let version = store.save("sessions", b"{}".to_vec(), None).await?;
-//! assert_eq!(store.load("sessions").await?.unwrap().version, version);
+//! let version = store.save("tokens", b"{}".to_vec(), None).await?;
+//! assert_eq!(store.load("tokens").await?.unwrap().version, version);
 //! # Ok(())
 //! # }
 //! ```
@@ -67,7 +58,7 @@ use futures::future::{BoxFuture, FutureExt};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
-use crate::store::{Loaded, Store, StoreError, THREADS, Version};
+use crate::store::{Loaded, Store, StoreError, Version};
 
 /// The Cloud Storage API.
 pub const STORAGE: &str = "https://storage.googleapis.com";
@@ -271,26 +262,6 @@ impl Gcs {
             .parse()
             .map_err(|_| StoreError::Failed(format!("{url}: bad generation")))
     }
-
-    async fn save_object(
-        &self,
-        name: &str,
-        bytes: Vec<u8>,
-        known: Option<Version>,
-    ) -> Result<Version, StoreError> {
-        let retry = known.is_some() && name.starts_with(THREADS);
-        let again = retry.then(|| bytes.clone());
-        match self.put(name, bytes, known).await {
-            Err(StoreError::Conflict(_)) if retry => {
-                if self.get(name).await?.is_some() {
-                    return Err(StoreError::Conflict(name.to_owned()));
-                }
-                // The lifecycle rule deleted the object (R149).
-                self.put(name, again.unwrap_or_default(), None).await
-            }
-            result => result,
-        }
-    }
 }
 
 impl Store for Gcs {
@@ -308,7 +279,7 @@ impl Store for Gcs {
         bytes: Vec<u8>,
         known: Option<Version>,
     ) -> BoxFuture<'a, Result<Version, StoreError>> {
-        self.save_object(name, bytes, known).boxed()
+        self.put(name, bytes, known).boxed()
     }
 
     fn locate(&self, name: &str) -> String {
@@ -358,10 +329,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_thread_object_is_one_path_segment() {
+    fn a_chunk_is_one_path_segment() {
         assert_eq!(
-            encode("threads/como-technologies%2Friff"),
-            "threads%2Fcomo-technologies%252Friff"
+            encode("log/00000000000000000001.jsonl"),
+            "log%2F00000000000000000001.jsonl"
         );
     }
 

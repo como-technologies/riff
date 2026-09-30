@@ -472,43 +472,86 @@
 ## Saved state
 
 - **R30** `riff-server` keeps its state in memory. With `--bucket NAME`
-  (`RIFF_BUCKET`), it saves the state to that Cloud Storage bucket. It
-  loads the state at start.
-- **R34** Storage is behind one interface. Tests use an in-memory store.
-  Without `--bucket`, `riff-server` saves nothing.
-- **R124** The bucket holds one object for each thread, with its members
-  and its messages. One object holds the sessions, with their places,
-  read cursors, claims and leads. One object holds the token store.
-- **R31** A restart loses only the open streams, the proof IDs and the
-  changes that were not saved. A lost message is acceptable.
-- **R125** After a load, each session counts as stopped at the time of
-  the load. Its claims end after the grace period (R9), unless it comes
-  back.
-- **R154** A load drops each claim whose holder had stopped more than
-  the grace period (R9) before the last save. That claim had ended.
-- **R126** At load, `riff-server` drops each session with no sign of
-  life for 30 days. A session that was gone at the save stays gone.
-- **R127** `riff-server` saves each changed object at most once each
-  second.
+  (`RIFF_BUCKET`), it keeps its log and its token store in that Cloud
+  Storage bucket. With `--dir DIR` (`RIFF_DIR`), it keeps them as files
+  in that directory. It replays the log at start.
+- **R34** Storage is behind one interface. Tests use an in-memory store
+  or a temporary directory, never the real bucket. Without `--bucket`
+  and `--dir`, the log is in memory, and a restart loses it.
+- **R124** The bucket holds the chunks of the log, the token store and
+  the lease.
+- **R31** A restart loses the open streams, the proof IDs, the sessions
+  with their places and statuses, the read cursors, and each record
+  whose chunk was not written. The call of such a record got no
+  success.
+- **R125** After a replay, each session counts as stopped at the time
+  of the replay. Its claims and its lead end after the grace period
+  (R9), unless it comes back.
+- **R154** Replaced by R125.
+- **R126** After a replay, each session is gone until it calls again.
+  `who --all` shows it in the place of the last record that names it.
+- **R127** `riff-server` saves the changed token store at most once
+  each second.
 - **R128** `riff-server` replies to a call that changes the token store
   only after it saved the change.
 - **R150** When that save fails, `riff-server` replies 503. The next
   save tries the change again.
 - **R129** On SIGTERM, `riff-server` replies 503 to each new call,
-  saves each unsaved change, then exits. Ctrl-C does the same.
+  writes each record in the queue, saves the token store, then exits.
+  Ctrl-C does the same.
 - **R46** A lifecycle rule of the bucket deletes each thread object 30
   days after its last change.
-- **R147** The name of each thread object starts with `threads/`. The
-  sessions, the token store and the lease have names outside
-  `threads/`.
-- **R149** When the lifecycle rule (R46) deleted a thread object, the
-  next save of that thread saves it again as a new object. It is not a
-  failed save (R141).
+- **R147** The name of each chunk of the log starts with `log/`. The
+  token store and the lease have names outside `log/`.
+- **R149** Replaced by 01M3T411BZQB8N4D2S0JFVESMS.
 - **01M3MMXYS1V8CA89D2XHKPR6C4** When `riff-server` cannot read a saved
   object at start, for example state of an old format, it does not
   migrate it. It logs one error at the ERROR level and stops. The error
   names the object, for example `gs://BUCKET/tokens`, and the fix: stop
   each server of the store and remove the old state, with the command.
+
+## The log
+
+- **01M3T410XDD9W4EC0Y68FAA7XN** Each change that must not be lost is a
+  record in one log: a message with the sessions that it woke, a join
+  or a leave of a thread, a claim or a release, a lead, the state of
+  the riff, and a setting. Each record has a position: 1, 2, 3, and so
+  on. A record is one line of JSON. The name of its change says what
+  happened, in the past tense, for example `claimed`.
+- **01M3T4111PFM0C6KPREWFS9EQQ** A new field of a record has a default,
+  and the default means "as before". A build skips a field that it
+  does not know. A change of a record never changes the type or the
+  meaning of a field, and never uses the name of a removed field
+  again. A new kind of change gets a new name. A build that does not
+  know a kind skips the record, and logs a warning with its position.
+- **01M3T411QW1SQV12RJVATEJ8YD** A record names a session by its URI
+  with no lead mark and no claims: the user, the session ID and the
+  place at the time of the change.
+- **01M3T4115BF1F0JFHYMK0WRKCX** `riff-server` checks each call against
+  the pending state: the written state and each record in the queue.
+  Each read, wake, view and reply uses the written state: only the
+  records whose chunk is written. A call that makes a record replies
+  after its chunk is written. Its wakes and its `tail` events go out
+  after the write too. A call that makes no record does not wait.
+- **01M3T4118SDERYGJ25TAT1RGR2** The writer takes each record in the
+  queue into one chunk: a new object with the name `log/` and the
+  first position in 20 digits, for example
+  `log/00000000000000001234.jsonl`. The first line of a chunk is a
+  header with the format and the first position. The writer writes at
+  most one chunk at a time, outside the lock of the state.
+- **01M3T411BZQB8N4D2S0JFVESMS** Each write of a chunk is "only when
+  new" (`ifGenerationMatch=0`). On the first try, an object with the
+  same name stops the instance for good (R141). Each other error, for
+  example a 429, a 5xx, a timeout or a failed token, is tried again
+  with a backoff for 10 seconds. A later try that finds an object with
+  the same bytes is done. After 10 seconds, the instance logs one error
+  that names the chunk, and stops for good (R140). The next instance
+  replays without the chunk.
+- **01M3T411F3K6FD28R3Q3ZE4VCN** The replay reads each chunk in name
+  order, and checks the positions: each record is the last position
+  plus 1. A gap, a repeat, a line that does not read, or a chunk of a
+  later format stops the start. The error names the chunk
+  (01M3MMXYS1V8CA89D2XHKPR6C4).
 
 ## Cloud
 
@@ -984,9 +1027,10 @@
   claim is idle for this time.
 - **01M3Q551YHYZBFV2NDS1QCYXCD** A status is stale when the session set
   it before the last change of its state: a claim or a release of the
-  session, a pause or a resume of the riff, or a start of
-  `riff-server`. `who` marks a stale status. A claim that the session
-  holds already, and a set of the riff to its state, are no change.
+  session, or a pause or a resume of the riff. `who` marks a stale
+  status. A claim that the session holds already, and a set of the
+  riff to its state, are no change. A status is in memory: a start of
+  `riff-server` has no status.
 - **01M3Q555KC1RKNEC4ZA9HQYJG2** A stale step is dim and says `stale`.
   A stale block does not make a session `blocked`, and is not
   `blocked` in the status line.
@@ -1056,7 +1100,13 @@
 - **R48** A person can claim and release work from the command line.
   `riff claim` exits with status 1 when another session holds the item.
 - **R50** A session lists and reads by default only the threads that it
-  joined. It can read any other thread by name.
+  joined. It can read any other thread by name, except a direct thread
+  of two other sessions (01M3T411J3TN00FER230V3YX17).
+- **01M3T411J3TN00FER230V3YX17** `read`, `tail` and `watch` use one
+  rule. The caller acts as its token (R104), and gets a direct thread
+  only when it is one of its two sessions. Else `read` and `tail` reply
+  404, and `watch` gives no wake of it. `riff tail` sends the URI of the
+  caller.
 - **R51** A post has a `to` list of selectors. A selector names one or
   more of these fields: `user`, `session`, `host`, `repo`, `worktree`,
   `claim`, `lead`. A session matches a selector when each named field
@@ -1188,16 +1238,17 @@
   valid, when the key is not the key of the token, or when the signed
   time is more than 5 minutes old or more than 10 seconds in the
   future.
-- **R198** `riff-server` keeps the signature with the message, also in
-  storage. The time of a signed message is its signed time. The sender
-  of a signed message has `lead=true` only when the signature covers
-  it. `riff-server` refuses a signed post with the lead mark from a
-  session that is not the lead. A signed-in `riff` asks for its lead
-  mark before it signs.
+- **R198** `riff-server` keeps the payload and the signature with the
+  message, also in the log (01M3T411N0HM699VJXW6RTVWKB). The time of a
+  signed message is its signed time. The sender of a signed message
+  has `lead=true` only when the signature covers it. `riff-server`
+  refuses a signed post with the lead mark from a session that is not
+  the lead. A signed-in `riff` asks for its lead mark before it signs.
 - **R199** The reader verifies each message before it shows it. Each
   message shows `verified` or `not verified`. A message is verified
-  when its signature is valid for the message as the reader got it,
-  and its key is the key of a live sign-in of the user of the sender.
+  when its signature is valid over its kept payload, the payload holds
+  the message as the reader got it, and its key is the key of a live
+  sign-in of the user of the sender.
   `read` and `tail` give these keys. A message from a riff with no
   sign-in is verified too (R212).
 - **R200** A message that is not verified never counts as from the
@@ -1205,10 +1256,18 @@
 - **R201** Without sign-in, `riff-server` keeps no signature and gives
   no keys. So only a riff with no sign-in verifies such a message
   (R211).
+- **01M3T411N0HM699VJXW6RTVWKB** A signed post carries its payload:
+  the bytes that the signature covers, the base64url of the JSON of the
+  signed fields. `riff-server` checks the signature over the payload,
+  and checks that the payload holds the fields of the post. No build
+  encodes a payload again. A build skips a field of a payload that it
+  does not know.
 - **01M3JEJVXXEPPNGT3FY4ZSFCWZ** `riff-server` refuses a signed post
-  whose signature is the signature of a message in the same thread: a
-  copy. So a session gets each request of its lead once. With R197, a
-  copy older than 5 minutes fails the time check too.
+  whose payload is the payload of a message in the same thread: a
+  copy. It compares a hash of the payload, not the signature: ECDSA
+  gives a second valid signature for the same bytes. So a session gets
+  each request of its lead once. With R197, a copy older than 5 minutes
+  fails the time check too.
 - **R211** A `riff-server` with no sign-in provider and no
   `--require-sign-in` is a riff with no sign-in. It trusts each caller.
   A person runs it only on a network that they trust (R203). Each

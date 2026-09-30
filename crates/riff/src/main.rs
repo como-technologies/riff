@@ -1024,7 +1024,9 @@ async fn main() -> Result<()> {
                 .await?;
             println!("{}", text::posted(&posted));
         }
-        Command::Tail { thread } => tail(&api, &thread_or_default(thread, &here)?, &here).await,
+        Command::Tail { thread } => {
+            tail(&api, &me, &thread_or_default(thread, &here)?, &here).await;
+        }
         Command::Top { once } => top(&api, &me, here.default_thread(), once).await?,
         Command::Watch { once } => {
             let me = identity::session(&here, api.base())?;
@@ -1798,9 +1800,9 @@ fn use_color(color: ColorWhen) {
 /// Each message is a [`text::block`]. The status lines go to stderr
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). On a new binary, it runs it
 /// (01M3MNVTC248YYJJQKFD9H1WY9).
-async fn tail(api: &Api, thread: &ThreadName, here: &Place) {
+async fn tail(api: &Api, me: &SessionUri, thread: &ThreadName, here: &Place) {
     tokio::select! {
-        () = tail_each(api, thread) => {}
+        () = tail_each(api, me, thread) => {}
         () = binary::follow_update(here) => {}
     }
 }
@@ -1809,10 +1811,10 @@ async fn tail(api: &Api, thread: &ThreadName, here: &Place) {
 /// stream ends, and shows only a short dim line while a connect fails,
 /// or the error in red for a version that it cannot talk to
 /// (01M3MNVTC248YYJJQKFD9H1WY9, 01M3NK7VHXB0PAR8VH8GQQA06K).
-async fn tail_each(api: &Api, thread: &ThreadName) {
+async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
     let error = riff::style::ERROR;
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
-    let mut stream = Box::pin(follow(|| api.tail(thread), RETRY));
+    let mut stream = Box::pin(follow(|| api.tail(me, thread), RETRY));
     let mut link = Reconnect::default();
     let mut last_day = None;
     while let Some(item) = stream.next().await {
@@ -1864,7 +1866,7 @@ async fn draw_top(
     let mut fetched = Instant::now();
     let mut messages = thread
         .as_ref()
-        .map(|t| Box::pin(follow(|| api.tail(t), RETRY)));
+        .map(|t| Box::pin(follow(|| api.tail(me, t), RETRY)));
     let clear = !once && std::io::stdout().is_terminal();
     loop {
         let state = api.riff(me).await?;

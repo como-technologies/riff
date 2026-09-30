@@ -999,11 +999,15 @@ impl Api {
     }
 
     /// Each new message in one thread, on one connection, checked like
-    /// [`Api::read`]. [`follow`] connects again.
-    pub async fn tail(&self, thread: &ThreadName) -> Result<impl Stream<Item = Result<Checked>>> {
-        let events = self
-            .events::<Tailed>("tail", &[("thread", thread.to_string())])
-            .await?;
+    /// [`Api::read`]. `me` is the caller: the server gives a direct thread
+    /// only to its two sessions. [`follow`] connects again.
+    pub async fn tail(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+    ) -> Result<impl Stream<Item = Result<Checked>>> {
+        let query = [("uri", me.to_string()), ("thread", thread.to_string())];
+        let events = self.events::<Tailed>("tail", &query).await?;
         Ok(events
             .map(move |tailed| tailed.map(|t| checked(&t.thread, t.message, &t.keys, t.trusted))))
     }
@@ -1355,6 +1359,7 @@ pub struct Checked {
 ///     at_ms: 0,
 ///     kind: Default::default(),
 ///     sig: None,
+///     payload: None,
 /// };
 /// let thread = "como-technologies/riff".parse()?;
 /// assert!(!checked(&thread, message.clone(), &Keys::new(), false).verified);

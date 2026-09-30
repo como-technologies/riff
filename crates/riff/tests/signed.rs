@@ -11,7 +11,7 @@ use riff::text;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::{Memory, Store, thread_object};
+use riff_server::store::{Memory, Store};
 use serde_json::Value;
 
 static MOCK_KEYRING: Once = Once::new();
@@ -81,7 +81,8 @@ async fn a_message_from_a_signed_in_client_is_verified() {
     let lead = session(&api, LEAD).await;
     let reader = session(&api, READER).await;
     let thread = repo();
-    let tail = reader.tail(&thread).await.unwrap();
+    let me = uri(READER);
+    let tail = reader.tail(&me, &thread).await.unwrap();
 
     lead.post(
         &uri(LEAD),
@@ -150,21 +151,42 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
     // Someone with access to the storage makes the second and the third
     // message claim to come from the lead: the second gets the URI of the
     // lead, the third gets only the lead mark.
-    let name = thread_object(&repo());
-    let object = store.load(&name).await.unwrap().unwrap();
-    let mut thread: Value = serde_json::from_slice(&object.bytes).unwrap();
-    let messages = thread["messages"].as_array_mut().unwrap();
-    let from_lead = messages[0]["message"]["from"].clone();
+    let mut from_lead = Value::Null;
+    let mut seen = 0;
+    for name in store.list("log/").await.unwrap() {
+        let object = store.load(&name).await.unwrap().unwrap();
+        let mut lines = Vec::new();
+        for line in String::from_utf8(object.bytes).unwrap().lines() {
+            let mut record: Value = serde_json::from_str(line).unwrap();
+            if let Some(posted) = record.pointer_mut("/change/posted")
+                && posted["thread"] == REPO
+            {
+                let from = &mut posted["message"]["from"];
+                match seen {
+                    0 => from_lead = from.clone(),
+                    1 => *from = from_lead.clone(),
+                    2 => {
+                        let marked = from.as_str().unwrap().replacen(
+                            "session=c3",
+                            "session=c3&lead=true",
+                            1,
+                        );
+                        *from = marked.into();
+                    }
+                    _ => {}
+                }
+                seen += 1;
+            }
+            lines.push(serde_json::to_string(&record).unwrap() + "\n");
+        }
+        let bytes = lines.concat().into_bytes();
+        store
+            .save(&name, bytes, Some(object.version))
+            .await
+            .unwrap();
+    }
     assert!(from_lead.as_str().unwrap().contains("lead=true"));
-    messages[1]["message"]["from"] = from_lead;
-    let from_other = messages[2]["message"]["from"].as_str().unwrap();
-    let marked = from_other.replacen("session=c3", "session=c3&lead=true", 1);
-    messages[2]["message"]["from"] = marked.into();
-    let bytes = serde_json::to_vec(&thread).unwrap();
-    store
-        .save(&name, bytes, Some(object.version))
-        .await
-        .unwrap();
+    assert_eq!(seen, 3);
 
     let (_new, api) = start_on(Arc::new(store)).await;
     let reader = session(&api, READER).await;

@@ -72,7 +72,8 @@ async fn first_bytes(path: &str) -> String {
 
 #[tokio::test]
 async fn the_tail_connect_finishes_at_once() {
-    let first = first_bytes("/v1/tail?thread=chat").await;
+    let uri = "riff%3A%2F%2Fmike%40pangolin";
+    let first = first_bytes(&format!("/v1/tail?uri={uri}&thread=chat")).await;
     assert!(first.starts_with(": ready"), "{first:?}");
 }
 
