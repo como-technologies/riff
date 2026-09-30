@@ -755,9 +755,10 @@ impl Service {
             None => Tokens::default(),
         };
         let replayed = Instant::now();
-        let records = log::replay(&*store).await?;
+        let log::Replayed { records, last } = log::replay(&*store).await?;
         let count = records.len();
-        let state = State::replay(records, Instant::now(), now_ms());
+        let mut state = State::replay(records, Instant::now(), now_ms());
+        state.continue_after(last);
         tracing::info!(
             records = count,
             position = state.position(),
@@ -876,7 +877,7 @@ impl Service {
                 };
                 let log = s.log.clone();
                 let timing = s.config.log;
-                match log::write(&*log, &records, &timing).await {
+                match log::write(&*log, &records, &timing, || s.leased()).await {
                     Ok(()) => {
                         s.state().written(&records);
                         s.written.send_replace(last);
@@ -1140,6 +1141,32 @@ async fn change<T>(
     result
 }
 
+/// As [`change`], for a call whose reply comes from the pending state,
+/// for example a claim that another call of the same session queued. It
+/// waits until each record in the queue is written, also when it made
+/// none, so the reply never tells of a change that is not written
+/// (01M3T4115BF1F0JFHYMK0WRKCX).
+async fn settled<T>(
+    s: &Server,
+    caller: Option<Extension<SignedIn>>,
+    me: &SessionUri,
+    f: impl FnOnce(&mut State) -> Result<T, (StatusCode, String)>,
+) -> Result<T, (StatusCode, String)> {
+    let (result, position) = {
+        let mut state = acts_as(s, caller, me)?;
+        let before = state.position();
+        let result = f(&mut state);
+        s.made(&state, before);
+        let pending = state.position();
+        (
+            result,
+            (pending > state.written_position()).then_some(pending),
+        )
+    };
+    s.written(position).await?;
+    result
+}
+
 async fn register(
     AxumState(s): AxumState<Shared>,
     caller: Option<Extension<SignedIn>>,
@@ -1394,7 +1421,7 @@ async fn claim(
     Json(r): Json<Claim>,
 ) -> Reply<ClaimReply> {
     let now = Instant::now();
-    let (granted, holder) = change(&s, caller, &r.me, |state| {
+    let (granted, holder) = settled(&s, caller, &r.me, |state| {
         state
             .claim(&r.me, &r.thread, &r.item, now)
             .map_err(bad_request)
@@ -1423,7 +1450,7 @@ async fn lead(
     Json(r): Json<Lead>,
 ) -> Reply<LeadReply> {
     let now = Instant::now();
-    let (me, old) = change(&s, caller, &r.me, |state| {
+    let (me, old) = settled(&s, caller, &r.me, |state| {
         state.lead(&r.me, now).map_err(bad_request)
     })
     .await?;
@@ -1437,7 +1464,7 @@ async fn riff(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Riff>,
 ) -> Reply<RiffReply> {
-    let reply = change(&s, caller, &r.me, |state| {
+    let reply = settled(&s, caller, &r.me, |state| {
         state
             .riff(&r.me, r.state, Instant::now())
             .map_err(|message| (StatusCode::FORBIDDEN, message))
@@ -1461,7 +1488,7 @@ async fn idle_workers(
     if r.after_secs == Some(0) {
         return Err(bad_request("the idle time is at least 1 second".into()));
     }
-    let idle = change(&s, caller, &r.me, |state| {
+    let idle = settled(&s, caller, &r.me, |state| {
         let now = Instant::now();
         state.called(&r.me, now);
         Ok(state.set_idle(r.per_host, r.after_secs, now))
@@ -2263,6 +2290,68 @@ mod tests {
         assert!(reply.granted);
         assert_eq!(reply.holder.claims(), ["issue-7"]);
         assert_eq!(claims(&service, &brett()).await, ["issue-7"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_second_claim_waits_for_the_write_of_the_first() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let request = || Claim {
+            me: mike(),
+            thread: mike().default_thread().unwrap(),
+            item: "issue-7".into(),
+        };
+        let first = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request())));
+        store.tried(tries + 1).await;
+        // A retry of the client: it makes no record, and its reply comes
+        // from the queued claim.
+        let second = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request())));
+        sleep(Duration::from_millis(50)).await;
+        assert!(!second.is_finished(), "no reply before the write");
+        store.release();
+        assert!(first.await.unwrap().unwrap().granted);
+        let reply = second.await.unwrap().unwrap();
+        assert!(reply.granted);
+        assert_eq!(reply.holder.claims(), ["issue-7"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_skipped_record_at_the_end_of_the_log_keeps_its_position() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let last = service.0.state().position();
+        drop(service);
+        // A later build wrote a record of a kind that this build does not
+        // know.
+        let later = format!(
+            "{{\"format\":1,\"first\":{n}}}\n{{\"position\":{n},\"written_at_ms\":0,\"change\":{{\"reacted\":{{}}}}}}\n",
+            n = last + 1
+        );
+        store
+            .store
+            .save(&log::chunk_name(last + 1), later.into_bytes(), None)
+            .await
+            .unwrap();
+
+        let next = Service::load(config(), store.clone()).await.unwrap();
+        assert_eq!(next.0.state().position(), last + 1);
+        let _ = post_message(
+            AxumState(next.0.clone()),
+            None,
+            Json(post_body(&mike(), "after")),
+        )
+        .await
+        .unwrap();
+        drop(next);
+        let again = Service::load(config(), store).await.unwrap();
+        let read = Read {
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: true,
+        };
+        assert_eq!(read_messages(&again, read).await, ["after"]);
     }
 
     #[tokio::test(start_paused = true)]

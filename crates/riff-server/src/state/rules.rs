@@ -353,6 +353,29 @@ fn a_direct_message_to_a_gone_session_is_refused() {
 }
 
 #[test]
+fn a_direct_message_needs_one_selector_with_a_session_or_the_lead() {
+    let refused = |to: &[&str], part: &str| {
+        given(&team())
+            .live(&[bob()])
+            .when(&ann(), post(&ann(), None, to, "psst"))
+            .then_refused(part);
+    };
+    refused(&["session=b1", "user=bob"], "exactly one selector");
+    refused(&["user=bob"], "a session or lead=true");
+    refused(&["user=cy,lead=true"], "Ask your own user");
+    refused(&["session=zz"], "no session matches");
+}
+
+#[test]
+fn a_post_to_a_named_direct_thread_is_refused() {
+    let direct = ThreadName::direct(ann().who(), bob().who());
+    given(&team())
+        .live(&[bob()])
+        .when(&ann(), post(&ann(), Some(&direct), &["session=b1"], "psst"))
+        .then_refused("leave out the thread");
+}
+
+#[test]
 fn a_signed_post_with_the_lead_mark_of_a_session_that_is_not_the_lead_is_refused() {
     let signed = draft(&ann2().with_lead(true), Some(&repo()), &[], "merge");
     let signed = Post {

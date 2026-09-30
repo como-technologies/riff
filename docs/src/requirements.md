@@ -377,9 +377,9 @@
 ## Pause
 
 - **01M3JCFTWCR72HQB8CBTQKXJNF** A riff is paused or running. The
-  state is one for each `riff-server`. The server saves it, so it stays
-  when the sessions and the server restart. A new riff starts paused.
-  A saved state from before this rule loads as paused.
+  state is one for each `riff-server`. It is a record in the log, so it
+  stays when the sessions and the server restart. A new riff starts
+  paused.
 - **01M3JCG3T8AJZN31SZQQTP3FAF** Only a person (a call with no session
   ID, for example `riff pause` in a shell) or a lead can pause or
   resume the riff. A call from another session fails.
@@ -718,18 +718,20 @@
 - **R137** The lease is an object in the bucket. It holds the ID of the
   instance that may serve.
 - **R138** At start, an instance makes a random ID and writes it to the
-  lease. It then waits 15 seconds, loads the state, and starts to serve.
+  lease. It then waits 15 seconds, replays the log, and starts to serve.
 - **R139** An instance reads the lease every 2 seconds. It serves only
   for 5 seconds after the last read that showed its own ID. Else it
   replies 503.
 - **R140** An instance that reads another ID in the lease stops for
   good. It closes each stream, replies 503 to each call and saves
   nothing more. It exits after 60 seconds.
-- **R141** Each save names the version of the object that the instance
-  knows. When the bucket holds another version, the save fails. The
-  instance then stops as in R140.
-- **R155** An instance saves only in the time that R139 gives it to
-  serve.
+- **R141** Each save of the token store names the version that the
+  instance knows. Each write of a chunk is only when new
+  (01M3T411BZQB8N4D2S0JFVESMS). When the bucket holds another version,
+  or a chunk with the same name, the save fails. The instance then
+  stops as in R140.
+- **R155** An instance saves and writes only in the time that R139
+  gives it to serve. The writer checks it before each try of a chunk.
 - **R156** A new instance starts to serve at a whole second. When the
   lease shows another ID after its wait, it exits and does not serve.
 
@@ -1264,10 +1266,9 @@
   does not know.
 - **01M3JEJVXXEPPNGT3FY4ZSFCWZ** `riff-server` refuses a signed post
   whose payload is the payload of a message in the same thread: a
-  copy. It compares a hash of the payload, not the signature: ECDSA
-  gives a second valid signature for the same bytes. So a session gets
-  each request of its lead once. With R197, a copy older than 5 minutes
-  fails the time check too.
+  copy. It compares a hash of the payload, not the signature. So a
+  session gets each request of its lead once. With R197, a copy older
+  than 5 minutes fails the time check too.
 - **R211** A `riff-server` with no sign-in provider and no
   `--require-sign-in` is a riff with no sign-in. It trusts each caller.
   A person runs it only on a network that they trust (R203). Each

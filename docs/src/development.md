@@ -627,19 +627,6 @@ and then replays the log. Only one server serves from a bucket. When a
 new server takes the lease, the old one replies 503 and exits after 60
 seconds.
 
-## Keep the state in a directory
-
-For local work, `--dir` (`RIFF_DIR`) keeps the log, the token store and
-the lease as files in a directory. It works as a bucket: the server
-waits 15 seconds for the lease, then replays the log:
-
-```sh
-riff-server --dir ~/.local/state/riff-server
-```
-
-The log is in `log/` of the directory, one file for each chunk. To start
-again with an empty state, stop the server and remove the directory.
-
 ### Start again with an empty state
 
 `riff-server` does not migrate saved state of an old format. When it
@@ -660,6 +647,19 @@ just cloud up
 The new state has no threads, sessions, claims or members. The deploy
 names the owner again. Each person signs in again with `riff login`,
 and the owner invites each member again.
+
+## Keep the state in a directory
+
+For local work, `--dir` (`RIFF_DIR`) keeps the log, the token store and
+the lease as files in a directory. It works as a bucket: the server
+waits 15 seconds for the lease, then replays the log:
+
+```sh
+riff-server --dir ~/.local/state/riff-server
+```
+
+The log is in `log/` of the directory, one file for each chunk. To start
+again with an empty state, stop the server and remove the directory.
 
 ## Set up the cloud project
 

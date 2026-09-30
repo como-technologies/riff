@@ -50,7 +50,8 @@
 //! each record is the last position plus 1. A gap or a repeat, a line
 //! that does not read, or a header of a later format stops the load, and
 //! the error names the chunk. A record of a kind that this build does not
-//! know is skipped, with a warning.
+//! know is skipped, with a warning. It keeps its position: the next
+//! record comes after it ([`Replayed::last`]).
 //!
 //! # Example
 //!
@@ -67,10 +68,13 @@
 //!     written_at_ms: 0,
 //!     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
 //! };
-//! write(&store, &[record(1), record(2)], &Timing::default()).await?;
-//! write(&store, &[record(3)], &Timing::default()).await?;
-//! let records = replay(&store).await?;
-//! assert_eq!(records.iter().map(|r| r.position).collect::<Vec<_>>(), [1, 2, 3]);
+//! let serving = || true;
+//! write(&store, &[record(1), record(2)], &Timing::default(), serving).await?;
+//! write(&store, &[record(3)], &Timing::default(), serving).await?;
+//! let replayed = replay(&store).await?;
+//! let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
+//! assert_eq!(positions, [1, 2, 3]);
+//! assert_eq!(replayed.last, 3);
 //! # Ok(()) }
 //! ```
 
@@ -179,11 +183,16 @@ pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<Line>), String> {
 }
 
 /// Writes `records` as one new chunk. See "A failed write" in the module
-/// docs. An error means that the instance must stop for good.
+/// docs. Before each try, it asks `may_write` whether the instance still
+/// holds the lease (R155). A try without the lease counts as a failed
+/// try. So each try ends at most [`Timing::attempt`] after the lease
+/// ends, far less than the wait of a new instance. An error means that
+/// the instance must stop for good.
 pub async fn write(
     store: &dyn Store,
     records: &[Record],
     timing: &Timing,
+    may_write: impl Fn() -> bool,
 ) -> Result<(), StoreError> {
     let name = chunk_name(records[0].position);
     let bytes = encode(records);
@@ -191,8 +200,13 @@ pub async fn write(
     let mut backoff = timing.backoff;
     let mut first = true;
     loop {
-        let tried =
-            tokio::time::timeout(timing.attempt, store.save(&name, bytes.clone(), None)).await;
+        let tried = if may_write() {
+            tokio::time::timeout(timing.attempt, store.save(&name, bytes.clone(), None)).await
+        } else {
+            Ok(Err(StoreError::Failed(format!(
+                "the instance does not hold the lease, so it does not write {name}"
+            ))))
+        };
         let error = match tried {
             Ok(Ok(_)) => return Ok(()),
             Ok(Err(error @ StoreError::Conflict(_))) if first => return Err(error),
@@ -218,7 +232,7 @@ pub async fn write(
 
 /// Reads each record of the log, in order. See "The replay" in the
 /// module docs.
-pub async fn replay(store: &dyn Store) -> Result<Vec<Record>, StoreError> {
+pub async fn replay(store: &dyn Store) -> Result<Replayed, StoreError> {
     let mut names = store.list(LOG).await?;
     names.sort();
     let mut records = Vec::new();
@@ -254,7 +268,21 @@ pub async fn replay(store: &dyn Store) -> Result<Vec<Record>, StoreError> {
             }
         }
     }
-    Ok(records)
+    Ok(Replayed {
+        records,
+        last: next - 1,
+    })
+}
+
+/// The log as [`replay`] reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Replayed {
+    /// Each record of a kind that this build knows, in order.
+    pub records: Vec<Record>,
+    /// The position of the last record, also of a skipped one. The next
+    /// record comes after it, so it never takes the position of a skipped
+    /// record.
+    pub last: u64,
 }
 
 fn to_line(value: &impl Serialize) -> Vec<u8> {

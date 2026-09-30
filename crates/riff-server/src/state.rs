@@ -870,6 +870,25 @@ impl State {
         self.written == other.written
     }
 
+    /// Puts the next record after the position `last` of the log, also
+    /// when the last records of the log are of a kind that this build
+    /// skipped (01M3T4111PFM0C6KPREWFS9EQQ). So a new record never takes
+    /// the position of a skipped one.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::state::State;
+    ///
+    /// let mut state = State::replay([], Instant::now(), 0);
+    /// state.continue_after(7);
+    /// assert_eq!(state.position(), 7);
+    /// ```
+    pub fn continue_after(&mut self, last: u64) {
+        for riff in [&mut self.pending, &mut self.written] {
+            riff.position = riff.position.max(last);
+        }
+    }
+
     /// The position of the last record: in the queue, or written.
     pub fn position(&self) -> u64 {
         self.pending.position
