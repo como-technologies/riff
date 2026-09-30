@@ -663,7 +663,7 @@ pub fn instructions(user: &str, repo: &str, note: u64) -> String {
 ///     "riff://mike@thelio/como-technologies/riff?session=w1".parse().unwrap();
 /// let msg = |seq, from: &riff_core::name::SessionUri, body: &str| Message {
 ///     seq, from: from.clone(), to: vec![], body: body.into(), at_ms: 0,
-///     kind: Default::default(), sig: None,
+///     kind: Default::default(), sig: None, payload: None,
 /// };
 /// let messages = [
 ///     msg(3, &lead, "handoff: Wave 12. Old."),
@@ -920,6 +920,7 @@ mod tests {
             at_ms: 0,
             kind: Default::default(),
             sig: None,
+            payload: None,
         };
         let notes = [note];
         assert_eq!(handoff_note(&notes, lead.who(), "Wave 1"), None);

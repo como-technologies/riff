@@ -2,18 +2,44 @@
 //!
 //! # Model
 //!
-//! | Data | Key | Notes |
+//! | Data | Key | Where it comes from |
 //! |---|---|---|
-//! | Sessions | who | The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
-//! | Threads | thread name | Members, and messages with a sequence number that starts at 1. |
-//! | Read cursors | who and thread | The last sequence number that the session read. |
-//! | Claims | thread and item | The session that holds the item. |
-//! | Leads | user and repository thread | The lead session of the user. |
-//! | Riff state | none: one for the server | Paused or running, and the settings of idle workers. |
+//! | Threads | thread name | The log. Members, and messages with a sequence number that starts at 1. |
+//! | Claims | thread and item | The log. The session that holds the item. |
+//! | Leads | user and repository thread | The log. The lead session of the user. |
+//! | Riff state | none: one for the server | The log. Paused or running, and the settings of idle workers. |
+//! | Sessions | who | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
+//! | Read cursors | who and thread | Memory. The last sequence number that the session read. |
 //!
 //! The server keys each session by its [`Who`]: the user and the session
 //! ID. It builds the [`SessionUri`] of a session from the who, the place
 //! and the claims that the session holds now.
+//!
+//! # Event sourcing
+//!
+//! Each change that must not be lost is a [`Record`] in one log (see
+//! [`riff_core::record`] and [`crate::log`]):
+//!
+//! - [`State::handle`] checks a [`Command`] against the state, and gives
+//!   the changes, or the reason for a refusal. It changes nothing and
+//!   does no I/O.
+//! - [`apply`] changes a [`Riff`] for one record. It does no I/O, reads
+//!   no clock, and does not fail. A record that the state cannot take
+//!   changes nothing, and the server logs a warning. The live path and
+//!   the replay use the same `apply`.
+//! - Each call of the state runs `handle`, gives each change its
+//!   position and time, puts the records in the queue, and applies them
+//!   to the pending copy.
+//! - The state keeps two copies of the [`Riff`] (01M3T4115BF1F0JFHYMK0WRKCX).
+//!   `handle` checks against
+//!   the pending copy, which has each record in the queue. Each view
+//!   (`who`, `threads`, `read`, the wakes) uses the written copy, which
+//!   has only the records whose chunk is written. [`State::written`]
+//!   applies the records of a chunk after its write. So nobody sees a
+//!   record that is not in the log.
+//! - A [`State::default`] has no writer: each record counts as written
+//!   at once. Tests and examples use it. The server makes its state with
+//!   [`State::with_writer`] or [`State::replay`].
 //!
 //! # Rules
 //!
@@ -34,7 +60,8 @@
 //!   selector with a session ID or `lead=true`, and that selector must
 //!   match one session (R179). Other sessions cannot see its thread.
 //! - `threads` lists only the threads that the session joined. `read`
-//!   takes any thread by name, except a direct thread of others.
+//!   takes any thread by name, except a direct thread of others
+//!   ([`may_read`]).
 //! - `read` returns the messages after the cursor, then moves the cursor
 //!   to the end.
 //! - When a watch starts, [`State::missed`] gives one wake for the
@@ -96,37 +123,20 @@
 //!   worker takes it back (01M3Q5A0NKY1FCS0YH6N6YD3GN).
 //! - While the riff is paused, a claim fails. A held claim stays, and a
 //!   release works (01M3JCG3WBHDF0ZWM06XV94ZDC).
+//! - A signed post with the payload of a message in the thread is a
+//!   copy, and is refused. So a session gets each request of its lead
+//!   once (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
 //!
 //! The state does no I/O and reads no clock. The caller passes `now`.
 //!
-//! # Saved state
+//! # After a replay
 //!
-//! The state is a set of objects (R124): one [`Object::Sessions`] with
-//! the sessions, their places, statuses, read cursors, claims, leads
-//! and the riff state, and one
-//! [`Object::Thread`] for each thread, with its members and messages.
-//! [`crate::store`] names the objects in a store.
-//!
-//! - Each change marks the objects that it changes. [`State::changes`]
-//!   gives the marked objects as JSON, and clears the marks. The thread
-//!   objects come before the sessions object. So when only a part of a
-//!   save succeeds, a saved cursor is never after the end of its saved
-//!   thread.
-//! - The open watch streams are not saved. A saved session holds the
-//!   last time that it called and its last sign of life, in milliseconds
-//!   since the Unix epoch, and whether it ended.
-//! - [`State::load`] makes a state from the objects. Each session counts
-//!   as stopped at the time of the load, so its claims end after
-//!   [`CLAIM_GRACE`] unless it comes back (R125). A session that was
-//!   gone at the save stays gone. A session with no sign of life for
-//!   [`SESSION_EXPIRY`] is dropped, with its memberships, cursors and
-//!   claims (R126). A cursor of a thread with no object is
-//!   dropped too, so a new thread with the same name starts unread. A
-//!   cursor after the last message of its thread moves back to the last
-//!   message.
-//! - The sessions object holds the time of its save. A claim or a lead
-//!   whose session was stopped for more than [`CLAIM_GRACE`] at that
-//!   time ended before the load. The load drops it (R154).
+//! [`State::replay`] makes a state from the records of the log. The
+//! sessions, their statuses and the read cursors are in memory, so a
+//! replay has none of them. It makes each session that a record names,
+//! in the place of the last record that names it. Each such session is
+//! gone until it calls. Its claims and its lead hold for [`CLAIM_GRACE`]
+//! from the replay, unless it comes back (R125).
 //!
 //! # Example
 //!
@@ -162,8 +172,14 @@
 //! assert!(state.read(&brett, &thread, false, now).unwrap().is_empty());
 //!
 //! // The first claim wins.
-//! assert!(state.claim(&mike, &thread, "issue-12", now).unwrap().granted);
-//! assert!(!state.claim(&brett, &thread, "issue-12", now).unwrap().granted);
+//! assert!(state.claim(&mike, &thread, "issue-12", now).unwrap().0);
+//! assert!(!state.claim(&brett, &thread, "issue-12", now).unwrap().0);
+//!
+//! // Each change is a record. A replay of the records gives the same
+//! // state.
+//! let records = state.take_queue();
+//! let replayed = State::replay(records, now, 0);
+//! assert!(replayed.same_log_state(&state));
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
@@ -171,14 +187,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
+use riff_core::record::{Change, Claimed, Member, Posted, Record, RiffStateSet, SettingChanged};
 use riff_core::selector::Selector;
+use riff_core::signed::payload_hash;
 use riff_core::wire::{
     AliveReply, ClaimReply, Freed, Idle, Keys, Kind, LeadReply, Message, Post, RiffReply,
     RiffState, SessionInfo, SessionState, Status, StatusInfo, Tailed, ThreadInfo, Wake,
 };
-use serde::{Deserialize, Serialize};
-
-use crate::store::{self, Unreadable};
 
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
@@ -188,16 +203,55 @@ pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 /// [`riff_core::wire::ALIVE_EVERY`].
 pub const GONE: Duration = Duration::from_secs(3 * 60);
 
-/// A load drops each session with no sign of life for this long (R126).
+/// A session with no sign of life for this long is forgotten (R126).
 pub const SESSION_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// All state of one `riff-server`. See the module docs for the rules.
-#[derive(Default)]
 pub struct State {
+    /// The state of the records whose chunk is written.
+    written: Riff,
+    /// The written state and each record in the queue.
+    pending: Riff,
+    /// Each record that waits for its chunk.
+    queue: Vec<Record>,
+    /// False: each record counts as written at once.
+    writer: bool,
+    /// An instant and the same time in milliseconds since the Unix
+    /// epoch. A record gets its time from it.
+    clock: Option<(Instant, u64)>,
     sessions: BTreeMap<Who, Session>,
-    threads: BTreeMap<ThreadName, Thread>,
     /// The last sequence number that each session read in each thread.
     cursors: BTreeMap<(Who, ThreadName), u64>,
+    /// The last pause or resume of the riff, or the replay. A status
+    /// from before it is stale (01M3Q551YHYZBFV2NDS1QCYXCD).
+    riff_changed: Option<Instant>,
+    /// The time of the replay. A session that did not call since then
+    /// holds its claims and its lead until [`CLAIM_GRACE`] after it.
+    loaded: Option<Instant>,
+}
+
+impl Default for State {
+    /// An empty state with no writer: each record counts as written at
+    /// once.
+    fn default() -> Self {
+        State {
+            written: Riff::default(),
+            pending: Riff::default(),
+            queue: Vec::new(),
+            writer: false,
+            clock: None,
+            sessions: BTreeMap::new(),
+            cursors: BTreeMap::new(),
+            riff_changed: None,
+            loaded: None,
+        }
+    }
+}
+
+/// The state that the log gives. Only [`apply`] changes it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Riff {
+    threads: BTreeMap<ThreadName, Thread>,
     claims: BTreeMap<(ThreadName, String), Who>,
     /// The lead of each user in each repository thread (R175).
     leads: BTreeMap<(String, ThreadName), Who>,
@@ -205,11 +259,206 @@ pub struct State {
     riff: RiffState,
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     idle: Idle,
-    /// The last pause or resume of the riff, or the load of the state.
-    /// A status from before it is stale (01M3Q551YHYZBFV2NDS1QCYXCD).
-    riff_changed: Option<Instant>,
-    /// Each object that changed since the last [`State::changes`].
-    changed: BTreeSet<Object>,
+    /// The seq of each signed message, by thread and by the hash of its
+    /// payload.
+    copies: BTreeMap<(ThreadName, String), u64>,
+    /// The position of the last record.
+    position: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Thread {
+    members: BTreeSet<Who>,
+    messages: Vec<Stored>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Stored {
+    message: Message,
+    /// Each session that the message woke.
+    woken: BTreeSet<Who>,
+}
+
+impl Riff {
+    /// The position of the last record.
+    pub fn position(&self) -> u64 {
+        self.position
+    }
+
+    fn member(&self, who: &Who, thread: &ThreadName) -> bool {
+        self.threads
+            .get(thread)
+            .is_some_and(|t| t.members.contains(who))
+    }
+
+    fn last_seq(&self, thread: &ThreadName) -> u64 {
+        self.threads
+            .get(thread)
+            .and_then(|t| t.messages.last())
+            .map_or(0, |m| m.message.seq)
+    }
+}
+
+/// Changes `riff` for one record. It does no I/O, reads no clock, and
+/// does not fail. A record that the state cannot take changes nothing,
+/// and logs a warning with its position.
+///
+/// ```
+/// use riff_core::record::{Change, Claimed, Record};
+/// use riff_server::state::{Riff, apply};
+///
+/// let claimed = Claimed {
+///     session: "riff://ann@heron/acme/app?session=s1".parse()?,
+///     thread: "acme/app".parse()?,
+///     item: "issue-7".into(),
+/// };
+/// let mut riff = Riff::default();
+/// apply(&mut riff, &Record { position: 1, written_at_ms: 0, change: Change::Claimed(claimed.clone()) });
+/// assert_eq!(riff.position(), 1);
+///
+/// // A release of a claim that the session does not hold changes nothing
+/// // but the position.
+/// let other = Claimed { item: "issue-8".into(), ..claimed };
+/// let before = riff.clone();
+/// apply(&mut riff, &Record { position: 2, written_at_ms: 0, change: Change::Released(other) });
+/// assert_eq!(riff.position(), 2);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn apply(riff: &mut Riff, record: &Record) {
+    riff.position = record.position;
+    let warn = |what: &str| {
+        tracing::warn!(
+            position = record.position,
+            "a record changes nothing: {what}"
+        );
+    };
+    match &record.change {
+        Change::Posted(posted) => {
+            let Posted {
+                thread,
+                message,
+                woken,
+            } = &**posted;
+            if let Some(payload) = &message.payload {
+                riff.copies
+                    .insert((thread.clone(), payload_hash(payload)), message.seq);
+            }
+            riff.threads
+                .entry(thread.clone())
+                .or_default()
+                .messages
+                .push(Stored {
+                    message: message.clone(),
+                    woken: woken.clone(),
+                });
+        }
+        Change::JoinedThread(Member { session, thread }) => {
+            riff.threads
+                .entry(thread.clone())
+                .or_default()
+                .members
+                .insert(session.who().clone());
+        }
+        Change::LeftThread(Member { session, thread }) => {
+            let who = session.who();
+            let member = riff
+                .threads
+                .get_mut(thread)
+                .is_some_and(|t| t.members.remove(who));
+            let key = (who.user().to_owned(), thread.clone());
+            let lead = riff.leads.get(&key) == Some(who);
+            if lead {
+                riff.leads.remove(&key);
+            }
+            if !member && !lead {
+                warn("the session is not in the thread");
+            }
+        }
+        Change::Claimed(Claimed {
+            session,
+            thread,
+            item,
+        }) => {
+            riff.claims
+                .insert((thread.clone(), item.clone()), session.who().clone());
+        }
+        Change::Released(Claimed {
+            session,
+            thread,
+            item,
+        }) => {
+            let key = (thread.clone(), item.clone());
+            if riff.claims.get(&key) == Some(session.who()) {
+                riff.claims.remove(&key);
+            } else {
+                warn("the session does not hold the claim");
+            }
+        }
+        Change::LeadSet(Member { session, thread }) => {
+            let who = session.who();
+            riff.leads
+                .insert((who.user().to_owned(), thread.clone()), who.clone());
+        }
+        Change::RiffStateSet(RiffStateSet { state }) => riff.riff = *state,
+        Change::SettingChanged(SettingChanged { idle }) => riff.idle = *idle,
+    }
+}
+
+/// True when `who` may read the messages of `thread`: each thread but a
+/// direct thread of two other sessions. `read`, `tail` and `watch` use
+/// this one rule (01M3T411J3TN00FER230V3YX17).
+///
+/// ```
+/// use riff_core::name::{ThreadName, Who};
+/// use riff_server::state::may_read;
+///
+/// let (a, b, c) = (Who::new("ann", Some("a"))?, Who::new("bob", Some("b"))?, Who::new("cy", Some("c"))?);
+/// let direct = ThreadName::direct(&a, &b);
+/// assert!(may_read(&a, &direct) && may_read(&b, &direct));
+/// assert!(!may_read(&c, &direct));
+/// assert!(may_read(&c, &"acme/app".parse()?));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn may_read(who: &Who, thread: &ThreadName) -> bool {
+    !thread.is_direct() || thread.peer(who).is_some()
+}
+
+/// A call to the state, as `me`. [`State::handle`] checks it.
+#[derive(Clone, Debug)]
+pub enum Command {
+    /// A session registers, or arrives: it joins the thread of its
+    /// repository, and becomes the lead when it is the first.
+    Register,
+    Join(ThreadName),
+    Leave(ThreadName),
+    /// A post. Its `at_ms` is the time of the message.
+    Post(Box<Post>),
+    /// A post of the riff server itself. `me` is the URI of the server.
+    Announce {
+        thread: Option<ThreadName>,
+        to: Vec<Selector>,
+        body: String,
+        kind: Kind,
+        at_ms: u64,
+    },
+    Claim {
+        thread: ThreadName,
+        item: String,
+    },
+    Release {
+        thread: ThreadName,
+        item: String,
+    },
+    /// The session ended: each of its claims is free.
+    End,
+    /// A new start of the session: each of its claims is free.
+    Start,
+    Lead,
+    SetRiff(RiffState),
+    SetIdle {
+        per_host: Option<u16>,
+        after_secs: Option<u64>,
+    },
 }
 
 struct Session {
@@ -218,16 +467,14 @@ struct Session {
     watchers: usize,
     /// The last call.
     last_seen: Instant,
-    /// The last call before the load, in milliseconds since the Unix
-    /// epoch. `None` when the session called after the load.
+    /// The time of the last record that named the session before the
+    /// replay, in milliseconds since the Unix epoch. `None` when the
+    /// session called after the replay.
     seen_before_load: Option<u64>,
     /// The last sign of life: a call, a keep-alive or the end of a
-    /// watch. `None` when the session was gone at the load and has not
-    /// come back.
+    /// watch. `None` when the session did not show life since the
+    /// replay.
     alive: Option<Instant>,
-    /// The last sign of life before the load, in milliseconds since the
-    /// Unix epoch. `None` when the session showed life after the load.
-    alive_before_load: Option<u64>,
     /// True after an end call, until the session comes back.
     ended: bool,
     status: Option<SetStatus>,
@@ -235,7 +482,7 @@ struct Session {
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
     /// True when the server asked this idle worker to stop, and it made
-    /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN). It is not saved.
+    /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     stopping: bool,
     /// The last change of the claims of the session, or its arrival
     /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
@@ -243,26 +490,19 @@ struct Session {
 }
 
 /// A status with the time that the session set it.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 struct SetStatus {
-    #[serde(flatten)]
     status: Status,
     /// Milliseconds since the Unix epoch.
     set_ms: u64,
-    /// The time of the set. `None` for a status from before the load:
-    /// it is stale (01M3Q551YHYZBFV2NDS1QCYXCD).
-    #[serde(skip)]
-    set: Option<Instant>,
+    /// The time of the set.
+    set: Instant,
 }
 
 impl SetStatus {
     /// True when the session set the status before `changed`.
     fn before(&self, changed: Option<Instant>) -> bool {
-        match (self.set, changed) {
-            (None, _) => true,
-            (Some(set), Some(changed)) => set < changed,
-            (Some(_), None) => false,
-        }
+        changed.is_some_and(|changed| self.set < changed)
     }
 }
 
@@ -275,7 +515,6 @@ impl Session {
             last_seen: now,
             seen_before_load: None,
             alive: Some(now),
-            alive_before_load: None,
             ended: false,
             status: None,
             worker: false,
@@ -287,7 +526,6 @@ impl Session {
     /// Records a sign of life at `now`. A gone session comes back.
     fn live(&mut self, now: Instant) {
         self.alive = Some(now);
-        self.alive_before_load = None;
         self.ended = false;
     }
 
@@ -300,29 +538,17 @@ impl Session {
                     .is_none_or(|alive| now.saturating_duration_since(alive) >= GONE))
     }
 
-    /// True while the claims and the lead of the session hold.
-    fn holds(&self, now: Instant) -> bool {
+    /// True while the claims and the lead of the session hold. A session
+    /// with no sign of life since the replay at `loaded` holds until
+    /// [`CLAIM_GRACE`] after it.
+    fn holds(&self, now: Instant, loaded: Option<Instant>) -> bool {
+        let within = |since: Instant| now.saturating_duration_since(since) < CLAIM_GRACE;
         !self.ended
             && (self.watchers > 0
-                || self
-                    .alive
-                    .is_some_and(|alive| now.saturating_duration_since(alive) < CLAIM_GRACE))
-    }
-
-    /// The last sign of life, in milliseconds since the Unix epoch. A
-    /// load is not a sign of life.
-    fn alive_ms(&self, now: Instant, now_ms: u64) -> u64 {
-        if self.watchers > 0 {
-            return now_ms;
-        }
-        match (self.alive_before_load, self.alive) {
-            (Some(before), _) => before,
-            (None, Some(alive)) => {
-                let ago = now.saturating_duration_since(alive).as_millis();
-                now_ms.saturating_sub(u64::try_from(ago).unwrap_or(u64::MAX))
-            }
-            (None, None) => 0,
-        }
+                || match self.alive {
+                    Some(alive) => within(alive),
+                    None => loaded.is_some_and(within),
+                })
     }
 
     /// The last time that the session called, in milliseconds since the
@@ -338,115 +564,6 @@ impl Session {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
-struct Thread {
-    members: BTreeSet<Who>,
-    messages: Vec<Stored>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Stored {
-    message: Message,
-    /// Each session that the message woke.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    woken: BTreeSet<Who>,
-}
-
-/// An object of the saved state (R124). See the module docs. Each
-/// thread object sorts before the sessions object.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Object {
-    /// One thread, with its members and messages.
-    Thread(ThreadName),
-    /// The sessions, with their places, read cursors and claims.
-    Sessions,
-}
-
-impl Object {
-    /// The name of the object in a store.
-    ///
-    /// ```
-    /// use riff_server::state::Object;
-    ///
-    /// assert_eq!(Object::Sessions.name(), "sessions");
-    /// let thread = Object::Thread("como-technologies/riff".parse()?);
-    /// assert_eq!(thread.name(), "threads/como-technologies%2Friff");
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
-    pub fn name(&self) -> String {
-        match self {
-            Object::Sessions => store::SESSIONS.into(),
-            Object::Thread(thread) => store::thread_object(thread),
-        }
-    }
-}
-
-/// The JSON of the sessions object.
-#[derive(Default, Serialize, Deserialize)]
-struct SavedSessions {
-    /// The time of the save, in milliseconds since the Unix epoch.
-    #[serde(default)]
-    saved_ms: u64,
-    sessions: Vec<SavedSession>,
-    cursors: Vec<SavedCursor>,
-    claims: Vec<SavedClaim>,
-    #[serde(default)]
-    leads: Vec<SavedLead>,
-    /// A saved state from before the riff state loads as paused.
-    #[serde(default)]
-    riff: RiffState,
-    /// A saved state from before the settings of idle workers loads the
-    /// defaults.
-    #[serde(default)]
-    idle: Idle,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedSession {
-    /// The who and the place. It holds no claims.
-    uri: SessionUri,
-    /// The last call, in milliseconds since the Unix epoch.
-    seen_ms: u64,
-    /// The last sign of life, in milliseconds since the Unix epoch.
-    #[serde(default)]
-    alive_ms: u64,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    ended: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    status: Option<SetStatus>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    worker: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedCursor {
-    who: Who,
-    thread: ThreadName,
-    seq: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedClaim {
-    thread: ThreadName,
-    item: String,
-    who: Who,
-}
-
-/// The lead of `who`'s user in `thread`.
-#[derive(Serialize, Deserialize)]
-struct SavedLead {
-    thread: ThreadName,
-    who: Who,
-}
-
-/// The JSON of a thread object: the thread and its name.
-#[derive(Serialize, Deserialize)]
-struct Named<N, T> {
-    name: N,
-    #[serde(flatten)]
-    thread: T,
-}
-
 /// An idle worker that the server asks to stop
 /// ([`State::stop_idle_workers`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -460,148 +577,502 @@ pub struct Stopping {
 }
 
 /// What a new message causes: sessions to wake and a line for `tail`.
+/// The server sends it after the chunk of the message is written.
+#[derive(Clone, Debug)]
 pub struct Delivery {
     /// Each session to wake, with its event.
     pub wakes: Vec<(Who, Wake)>,
-    /// The URI of each woken session, for the sender.
-    pub woken: Vec<SessionUri>,
+    /// Each woken session, for the sender.
+    pub woken: Vec<Who>,
     /// Each selector that matched no session.
     pub unmatched: Vec<Selector>,
     /// The event for the `tail` streams of the thread.
     pub tailed: Tailed,
 }
 
+/// One copy of the state that the log gives, with the sessions in
+/// memory.
+struct View<'a> {
+    riff: &'a Riff,
+    sessions: &'a BTreeMap<Who, Session>,
+    loaded: Option<Instant>,
+}
+
+impl View<'_> {
+    /// The place of a session. The server is not a session: it has the
+    /// place of [`crate::owner::server_uri`].
+    fn place(&self, who: &Who) -> Place {
+        self.sessions.get(who).map_or_else(
+            || crate::owner::server_uri().place().clone(),
+            |s| s.place.clone(),
+        )
+    }
+
+    /// The URI of a session now: its place, whether it is the lead, and
+    /// the claims that it holds.
+    fn uri(&self, who: &Who, now: Instant) -> SessionUri {
+        let claims = self
+            .riff
+            .claims
+            .iter()
+            .filter(|(_, holder)| *holder == who)
+            .map(|((_, item), _)| item.clone())
+            .collect();
+        SessionUri::new(who.clone(), self.place(who))
+            .with_lead(self.is_lead(who, now))
+            .with_claims(claims)
+    }
+
+    /// The URI of a session in a record: its who and place only.
+    fn plain(&self, who: &Who) -> SessionUri {
+        SessionUri::new(who.clone(), self.place(who))
+    }
+
+    fn holds(&self, holder: &Who, now: Instant) -> bool {
+        self.sessions
+            .get(holder)
+            .is_some_and(|s| s.holds(now, self.loaded))
+    }
+
+    fn gone(&self, who: &Who, now: Instant) -> bool {
+        self.sessions.get(who).is_none_or(|s| s.gone(now))
+    }
+
+    /// The lead of a user in a repository thread, while it holds and
+    /// works in that repository.
+    fn lead_of(&self, key: &(String, ThreadName), now: Instant) -> Option<&Who> {
+        self.riff.leads.get(key).filter(|who| {
+            self.holds(who, now)
+                && self
+                    .sessions
+                    .get(*who)
+                    .is_some_and(|s| s.place.default_thread().as_ref() == Some(&key.1))
+        })
+    }
+
+    fn is_lead(&self, who: &Who, now: Instant) -> bool {
+        self.sessions
+            .get(who)
+            .and_then(|s| s.place.default_thread())
+            .and_then(|thread| self.lead_of(&(who.user().to_owned(), thread), now))
+            == Some(who)
+    }
+
+    fn holds_claim(&self, who: &Who) -> bool {
+        self.riff.claims.values().any(|holder| holder == who)
+    }
+
+    /// The lead change that makes `who` the lead, when its user has no
+    /// lead in its repository and no other session of the user there
+    /// holds (R176).
+    fn lead_if_first(&self, who: &Who, now: Instant) -> Option<Change> {
+        who.session()?;
+        let thread = self.sessions.get(who)?.place.default_thread()?;
+        let key = (who.user().to_owned(), thread);
+        if self.lead_of(&key, now).is_some() {
+            return None;
+        }
+        let others = self.sessions.iter().any(|(other, s)| {
+            other != who
+                && other.user() == who.user()
+                && other.session().is_some()
+                && s.place.default_thread().as_ref() == Some(&key.1)
+                && self.holds(other, now)
+        });
+        (!others).then(|| {
+            Change::LeadSet(Member {
+                session: self.plain(who),
+                thread: key.1,
+            })
+        })
+    }
+
+    /// Finds the one session that a direct message goes to (R179).
+    fn direct_target(&self, from: &Who, to: &[Selector], now: Instant) -> Result<Who, String> {
+        let [selector] = to else {
+            return Err("a direct message needs exactly one selector".into());
+        };
+        let to_lead = selector.lead == Some(true);
+        if selector.session.is_none() && !to_lead {
+            return Err("a direct message needs a selector with a session or lead=true".into());
+        }
+        let (matched, gone): (Vec<&Who>, Vec<&Who>) = self
+            .sessions
+            .keys()
+            .filter(|who| *who != from && selector.matches(&self.uri(who, now)))
+            .partition(|who| !self.gone(who, now));
+        match matched[..] {
+            [who] => Ok(who.clone()),
+            [] if !gone.is_empty() && !to_lead => Err(format!(
+                "the session {selector} is gone: it ended, or it stopped. \
+                 Use who to list the sessions."
+            )),
+            [] if to_lead => Err(format!(
+                "no other session is the lead for {selector}. Ask your own user."
+            )),
+            [] => Err(format!(
+                "no session matches {selector}. Use who to list the sessions."
+            )),
+            _ => Err(format!(
+                "{} sessions match {selector}. Name one session.",
+                matched.len()
+            )),
+        }
+    }
+
+    /// The thread of a post: `thread`, or the direct thread of `from` and
+    /// the one session that `to` names.
+    fn thread_of(
+        &self,
+        from: &Who,
+        thread: Option<&ThreadName>,
+        to: &[Selector],
+        now: Instant,
+    ) -> Result<ThreadName, String> {
+        if to.iter().any(Selector::is_empty) {
+            return Err("a selector needs one or more fields".into());
+        }
+        match thread {
+            Some(thread) if thread.is_direct() => {
+                Err("leave out the thread to send a direct message".into())
+            }
+            Some(thread) => Ok(thread.clone()),
+            None => Ok(ThreadName::direct(
+                from,
+                &self.direct_target(from, to, now)?,
+            )),
+        }
+    }
+
+    /// Each live session other than `from` that `to` selects, and each
+    /// selector that matched no session.
+    fn selected(
+        &self,
+        from: &Who,
+        to: &[Selector],
+        now: Instant,
+    ) -> (BTreeSet<Who>, Vec<Selector>) {
+        let mut woken = BTreeSet::new();
+        let mut unmatched = Vec::new();
+        let live = |who: &&Who| *who != from && !self.gone(who, now);
+        for selector in to {
+            let mut matched: Vec<Who> = self
+                .sessions
+                .keys()
+                .filter(live)
+                .filter(|who| selector.matches(&self.uri(who, now)))
+                .cloned()
+                .collect();
+            if matched.is_empty() && selector.lead == Some(true) {
+                let free = Selector {
+                    lead: None,
+                    ..selector.clone()
+                };
+                matched = self
+                    .sessions
+                    .keys()
+                    .filter(live)
+                    .filter(|who| {
+                        let uri = self.uri(who, now);
+                        uri.claims().is_empty() && free.matches(&uri)
+                    })
+                    .cloned()
+                    .collect();
+            }
+            if matched.is_empty() {
+                unmatched.push(selector.clone());
+            }
+            woken.extend(matched);
+        }
+        (woken, unmatched)
+    }
+}
+
+/// The changes of a post, and each selector that matched no session.
+struct PostChanges {
+    changes: Vec<Change>,
+    unmatched: Vec<Selector>,
+}
+
 impl State {
-    /// Makes a state from its saved objects: the sessions object, if
-    /// there is one, and each thread object with its name. `now_ms` is
-    /// `now` in milliseconds since the Unix epoch. See the module docs for
-    /// the rules (R125, R126).
+    /// An empty state whose records wait in the queue until
+    /// [`State::written`]. `now` and `now_ms` are the same time: an
+    /// instant, and milliseconds since the Unix epoch. A record gets its
+    /// time from them.
+    pub fn with_writer(now: Instant, now_ms: u64) -> State {
+        State {
+            writer: true,
+            clock: Some((now, now_ms)),
+            ..State::default()
+        }
+    }
+
+    /// Makes a state from the records of the log, with a writer. See
+    /// "After a replay" in the module docs.
     ///
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::{Object, State};
+    /// use riff_core::wire::RiffState;
+    /// use riff_server::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&mike, now);
+    /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
+    /// let thread = mike.default_thread().unwrap();
+    /// state.claim(&mike, &thread, "issue-12", now).unwrap();
     ///
-    /// let mut sessions = None;
-    /// let mut threads = Vec::new();
-    /// for (object, bytes) in state.changes(now, 1_000) {
-    ///     match object {
-    ///         Object::Sessions => sessions = Some(bytes),
-    ///         Object::Thread(_) => threads.push((object.name(), bytes)),
-    ///     }
-    /// }
-    /// let threads = threads.iter().map(|(name, bytes)| (name.as_str(), bytes.as_slice()));
-    /// let loaded = State::load(sessions.as_deref(), threads, now, 2_000).unwrap();
-    /// assert_eq!(loaded.who(now, 2_000, false)[0].uri.who(), mike.who());
+    /// let replayed = State::replay(state.take_queue(), now, 1_000);
+    /// // The session is gone until it calls, and it still holds its claim.
+    /// assert!(replayed.who(now, 1_000, false).is_empty());
+    /// assert_eq!(replayed.uri(mike.who(), now).claims(), ["issue-12"]);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn load<'a>(
-        sessions: Option<&[u8]>,
-        threads: impl IntoIterator<Item = (&'a str, &'a [u8])>,
-        now: Instant,
-        now_ms: u64,
-    ) -> Result<State, Unreadable> {
-        let unreadable = |name: &str, e: serde_json::Error| Unreadable {
-            name: name.to_owned(),
-            why: e.to_string(),
-        };
-        let saved: SavedSessions = match sessions {
-            Some(bytes) => {
-                serde_json::from_slice(bytes).map_err(|e| unreadable(store::SESSIONS, e))?
-            }
-            None => SavedSessions::default(),
-        };
-        let expiry = u64::try_from(SESSION_EXPIRY.as_millis()).unwrap_or(u64::MAX);
-        let grace = u64::try_from(CLAIM_GRACE.as_millis()).unwrap_or(u64::MAX);
-        let mut state = State {
-            riff: saved.riff,
-            idle: saved.idle,
-            riff_changed: Some(now),
-            ..State::default()
-        };
-        let mut lapsed = BTreeSet::new();
-        let gone = u64::try_from(GONE.as_millis()).unwrap_or(u64::MAX);
-        for s in saved.sessions {
-            let alive_ms = s.alive_ms.max(s.seen_ms);
-            if now_ms.saturating_sub(alive_ms) > expiry {
-                continue;
-            }
-            if s.ended || saved.saved_ms.saturating_sub(alive_ms) > grace {
-                lapsed.insert(s.uri.who().clone());
-            }
-            let was_gone = s.ended || saved.saved_ms.saturating_sub(alive_ms) >= gone;
-            let session = Session {
-                seen_before_load: Some(s.seen_ms),
-                alive: (!was_gone).then_some(now),
-                alive_before_load: Some(alive_ms),
-                ended: s.ended,
-                status: s.status,
-                worker: s.worker,
-                ..Session::new(s.uri.place().clone(), now)
+    pub fn replay(records: impl IntoIterator<Item = Record>, now: Instant, now_ms: u64) -> State {
+        let mut state = State::with_writer(now, now_ms);
+        let server = crate::owner::server_uri();
+        let mut seen: BTreeMap<Who, (SessionUri, u64)> = BTreeMap::new();
+        for record in records {
+            let named = match &record.change {
+                Change::Posted(posted) => Some(&posted.message.from),
+                Change::JoinedThread(m) | Change::LeftThread(m) | Change::LeadSet(m) => {
+                    Some(&m.session)
+                }
+                Change::Claimed(c) | Change::Released(c) => Some(&c.session),
+                Change::RiffStateSet(_) | Change::SettingChanged(_) => None,
             };
-            state.sessions.insert(s.uri.who().clone(), session);
-        }
-        for (object, bytes) in threads {
-            let Named::<ThreadName, Thread> { name, mut thread } =
-                serde_json::from_slice(bytes).map_err(|e| unreadable(object, e))?;
-            thread
-                .members
-                .retain(|who| state.sessions.contains_key(who));
-            state.threads.insert(name, thread);
-        }
-        for c in saved.cursors {
-            let last = state
-                .threads
-                .get(&c.thread)
-                .map(|t| t.messages.last().map_or(0, |m| m.message.seq));
-            if let Some(last) = last
-                && state.sessions.contains_key(&c.who)
+            if let Some(uri) = named
+                && uri.who() != server.who()
             {
-                state.cursors.insert((c.who, c.thread), c.seq.min(last));
+                seen.insert(uri.who().clone(), (uri.clone(), record.written_at_ms));
             }
+            apply(&mut state.pending, &record);
+            apply(&mut state.written, &record);
         }
-        for c in saved.claims {
-            if state.sessions.contains_key(&c.who) && !lapsed.contains(&c.who) {
-                state.claims.insert((c.thread, c.item), c.who);
-            }
+        for (who, (uri, at_ms)) in seen {
+            let session = Session {
+                seen_before_load: Some(at_ms),
+                alive: None,
+                ..Session::new(uri.place().clone(), now)
+            };
+            state.sessions.insert(who, session);
         }
-        for l in saved.leads {
-            if state.sessions.contains_key(&l.who) && !lapsed.contains(&l.who) {
-                state
-                    .leads
-                    .insert((l.who.user().to_owned(), l.thread), l.who);
-            }
-        }
-        Ok(state)
+        state.riff_changed = Some(now);
+        state.loaded = Some(now);
+        state
     }
 
-    /// Each object that changed since the last call, as JSON. The state
-    /// then counts them as saved. `now_ms` is `now` in milliseconds since
-    /// the Unix epoch.
-    pub fn changes(&mut self, now: Instant, now_ms: u64) -> Vec<(Object, Vec<u8>)> {
-        std::mem::take(&mut self.changed)
-            .into_iter()
-            .filter_map(|object| {
-                let bytes = match &object {
-                    Object::Sessions => to_json(&self.saved_sessions(now, now_ms)),
-                    Object::Thread(name) => to_json(&Named {
-                        name,
-                        thread: self.threads.get(name)?,
-                    }),
-                };
-                Some((object, bytes))
-            })
-            .collect()
+    /// True when the state that the log gives is the same in both
+    /// states: the written copies.
+    pub fn same_log_state(&self, other: &State) -> bool {
+        self.written == other.written
     }
 
-    /// Marks an object as changed again, for example after a failed save.
-    pub fn mark_changed(&mut self, object: Object) {
-        self.changed.insert(object);
+    /// Puts the next record after the position `last` of the log, also
+    /// when the last records of the log are of a kind that this build
+    /// skipped (01M3T4111PFM0C6KPREWFS9EQQ). So a new record never takes
+    /// the position of a skipped one.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::state::State;
+    ///
+    /// let mut state = State::replay([], Instant::now(), 0);
+    /// state.continue_after(7);
+    /// assert_eq!(state.position(), 7);
+    /// ```
+    pub fn continue_after(&mut self, last: u64) {
+        for riff in [&mut self.pending, &mut self.written] {
+            riff.position = riff.position.max(last);
+        }
+    }
+
+    /// The position of the last record: in the queue, or written.
+    pub fn position(&self) -> u64 {
+        self.pending.position
+    }
+
+    /// The position of the last written record.
+    pub fn written_position(&self) -> u64 {
+        self.written.position
+    }
+
+    /// Takes each record in the queue, for the writer.
+    pub fn take_queue(&mut self) -> Vec<Record> {
+        std::mem::take(&mut self.queue)
+    }
+
+    /// Applies the records of a written chunk to the written copy. A
+    /// state with no writer counts each record as written at once, so it
+    /// skips them.
+    pub fn written(&mut self, records: &[Record]) {
+        if self.writer {
+            for record in records {
+                apply(&mut self.written, record);
+            }
+        }
+    }
+
+    /// Checks a command of `me` against the pending copy. Gives the
+    /// changes, or why it is refused. It changes nothing.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::record::Change;
+    /// use riff_server::state::{Command, State};
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// let thread = mike.default_thread().unwrap();
+    /// let claim = Command::Claim { thread, item: "issue-12".into() };
+    ///
+    /// // A new riff is paused, so a claim is refused.
+    /// assert!(state.handle(&mike, &claim, now).unwrap_err().contains("paused"));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn handle(
+        &self,
+        me: &SessionUri,
+        command: &Command,
+        now: Instant,
+    ) -> Result<Vec<Change>, String> {
+        let view = self.pending_view();
+        let who = me.who();
+        let mut changes = Vec::new();
+        match command {
+            Command::Register => {
+                if let Some(thread) = view.place(who).default_thread()
+                    && !view.riff.member(who, &thread)
+                {
+                    changes.push(Change::JoinedThread(Member {
+                        session: view.plain(who),
+                        thread,
+                    }));
+                }
+                changes.extend(view.lead_if_first(who, now));
+            }
+            Command::Join(thread) => {
+                if !view.riff.member(who, thread) {
+                    changes.push(Change::JoinedThread(Member {
+                        session: view.plain(who),
+                        thread: thread.clone(),
+                    }));
+                }
+            }
+            Command::Leave(thread) => {
+                let key = (who.user().to_owned(), thread.clone());
+                if view.riff.member(who, thread) || view.riff.leads.get(&key) == Some(who) {
+                    changes.push(Change::LeftThread(Member {
+                        session: view.plain(who),
+                        thread: thread.clone(),
+                    }));
+                }
+            }
+            Command::Post(post) => changes = self.post_changes(me, post, now)?.changes,
+            Command::Announce {
+                thread,
+                to,
+                body,
+                kind,
+                at_ms,
+            } => {
+                changes = self
+                    .announce_changes(me, thread.as_ref(), to, body, *kind, *at_ms, now)?
+                    .changes;
+            }
+            Command::Claim { thread, item } => {
+                check("claim", item).map_err(|e| e.to_string())?;
+                if view.riff.riff == RiffState::Paused {
+                    return Err(format!(
+                        "the riff is paused, so nobody claims {item}. Wait until your user or \
+                         the lead resumes it."
+                    ));
+                }
+                match view.riff.claims.get(&(thread.clone(), item.clone())) {
+                    Some(holder) if holder == who => {}
+                    Some(holder) if view.holds(holder, now) => {}
+                    _ => changes.push(Change::Claimed(Claimed {
+                        session: view.plain(who),
+                        thread: thread.clone(),
+                        item: item.clone(),
+                    })),
+                }
+            }
+            Command::Release { thread, item } => {
+                match view.riff.claims.get(&(thread.clone(), item.clone())) {
+                    Some(holder) if holder == who => changes.push(Change::Released(Claimed {
+                        session: view.plain(who),
+                        thread: thread.clone(),
+                        item: item.clone(),
+                    })),
+                    Some(holder) => {
+                        return Err(format!(
+                            "{item} is held by {}",
+                            view.uri(holder, now).short()
+                        ));
+                    }
+                    None => return Err(format!("nobody holds {item}")),
+                }
+            }
+            Command::End | Command::Start => {
+                for ((thread, item), holder) in &view.riff.claims {
+                    if holder == who {
+                        changes.push(Change::Released(Claimed {
+                            session: view.plain(who),
+                            thread: thread.clone(),
+                            item: item.clone(),
+                        }));
+                    }
+                }
+            }
+            Command::Lead => {
+                if who.session().is_none() {
+                    return Err("only an agent session can be the lead".into());
+                }
+                let thread = view
+                    .place(who)
+                    .default_thread()
+                    .ok_or("the lead needs a git repository. Run it in a repository.")?;
+                let key = (who.user().to_owned(), thread.clone());
+                if view.lead_of(&key, now) != Some(who) {
+                    changes.push(Change::LeadSet(Member {
+                        session: view.plain(who),
+                        thread,
+                    }));
+                }
+            }
+            Command::SetRiff(set) => {
+                if who.session().is_some() && !view.is_lead(who, now) {
+                    return Err(format!(
+                        "only your user or the lead can make the riff {set}. Tell the lead."
+                    ));
+                }
+                if view.riff.riff != *set {
+                    changes.push(Change::RiffStateSet(RiffStateSet { state: *set }));
+                }
+            }
+            Command::SetIdle {
+                per_host,
+                after_secs,
+            } => {
+                let mut idle = view.riff.idle;
+                if let Some(per_host) = per_host {
+                    idle.per_host = *per_host;
+                }
+                if let Some(after_secs) = after_secs {
+                    idle.after_secs = *after_secs;
+                }
+                if idle != view.riff.idle {
+                    changes.push(Change::SettingChanged(SettingChanged { idle }));
+                }
+            }
+        }
+        Ok(changes)
     }
 
     /// Refuses `me` when the server knows its session ID under another
@@ -654,16 +1125,14 @@ impl State {
         if let Some(session) = self.sessions.get_mut(me.who()) {
             session.place = me.place().clone();
         }
-        if let Some(thread) = me.default_thread() {
-            self.join(me, &thread, now);
-        }
-        self.lead_if_first(me.who(), now);
+        self.run(me, &Command::Register, now)
+            .expect("a register is never refused");
     }
 
     /// Records that a watch stream opened. The session is live.
     pub fn watch_started(&mut self, me: &SessionUri, now: Instant) {
-        let who = self.arrive(me, now);
-        if let Some(session) = self.sessions.get_mut(&who) {
+        self.arrive(me, now);
+        if let Some(session) = self.sessions.get_mut(me.who()) {
             session.watchers += 1;
         }
     }
@@ -683,7 +1152,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&lead, now);
-    /// state.set_idle(Some(0), None);
+    /// state.set_idle(Some(0), None, now);
     /// state.watch_started(&w1, now);
     /// state.worker(w1.who(), true);
     ///
@@ -702,7 +1171,6 @@ impl State {
             if !session.ended {
                 session.live(now);
             }
-            self.changed.insert(Object::Sessions);
         }
     }
 
@@ -743,7 +1211,6 @@ impl State {
             return AliveReply::default();
         };
         session.live(now);
-        self.changed.insert(Object::Sessions);
         AliveReply {
             stop: session.stopping,
         }
@@ -772,20 +1239,22 @@ impl State {
     ///
     /// state.end(&mike, now);
     /// assert!(state.who(now, 0, false).is_empty());
-    /// assert!(state.claim(&brett, &thread, "issue-12", now).unwrap().granted);
+    /// assert!(state.claim(&brett, &thread, "issue-12", now).unwrap().0);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn end(&mut self, me: &SessionUri, now: Instant) {
         let who = me.who();
-        let Some(session) = self.sessions.get_mut(who) else {
+        if !self.sessions.contains_key(who) {
             return;
-        };
-        session.ended = true;
-        session.last_seen = now;
-        session.seen_before_load = None;
-        session.claims_changed = now;
-        self.claims.retain(|_, holder| holder != who);
-        self.changed.insert(Object::Sessions);
+        }
+        self.run(me, &Command::End, now)
+            .expect("an end is never refused");
+        if let Some(session) = self.sessions.get_mut(who) {
+            session.ended = true;
+            session.last_seen = now;
+            session.seen_before_load = None;
+            session.claims_changed = now;
+        }
     }
 
     /// A new start of `me`: a new agent process, a resume or a `/clear`
@@ -815,24 +1284,17 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn start(&mut self, me: &SessionUri, now: Instant) -> Vec<Freed> {
-        let who = self.arrive(me, now);
-        let mut freed = Vec::new();
-        self.claims.retain(|(thread, item), holder| {
-            let mine = *holder == who;
-            if mine {
-                freed.push(Freed {
-                    thread: thread.clone(),
-                    item: item.clone(),
-                });
-            }
-            !mine
-        });
-        if !freed.is_empty()
-            && let Some(session) = self.sessions.get_mut(&who)
-        {
-            session.claims_changed = now;
-        }
-        freed
+        self.arrive(me, now);
+        let changes = self
+            .run(me, &Command::Start, now)
+            .expect("a start is never refused");
+        changes
+            .into_iter()
+            .filter_map(|change| match change {
+                Change::Released(Claimed { thread, item, .. }) => Some(Freed { thread, item }),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Each known session with its URI now, whether it is live, and the
@@ -908,7 +1370,7 @@ impl State {
             .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
         let state = SessionState::of(
             live,
-            self.riff == RiffState::Paused,
+            self.written.riff == RiffState::Paused,
             blocked,
             !uri.claims().is_empty(),
         );
@@ -943,34 +1405,33 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn worker(&mut self, who: &Who, worker: bool) {
-        if let Some(session) = self.sessions.get_mut(who)
-            && session.worker != worker
-        {
+        if let Some(session) = self.sessions.get_mut(who) {
             session.worker = worker;
-            self.changed.insert(Object::Sessions);
         }
     }
 
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     pub fn idle(&self) -> Idle {
-        self.idle
+        self.written.idle
     }
 
     /// Sets the settings of idle workers: each value that is `Some`
     /// (01M3Q5A0TF9K49V8Z1ZY9NDF74). The caller checks who may set them.
-    /// It gives the settings now.
-    pub fn set_idle(&mut self, per_host: Option<u16>, after_secs: Option<u64>) -> Idle {
-        let old = self.idle;
-        if let Some(per_host) = per_host {
-            self.idle.per_host = per_host;
-        }
-        if let Some(after_secs) = after_secs {
-            self.idle.after_secs = after_secs;
-        }
-        if self.idle != old {
-            self.changed.insert(Object::Sessions);
-        }
-        self.idle
+    /// It gives the settings with the change.
+    pub fn set_idle(
+        &mut self,
+        per_host: Option<u16>,
+        after_secs: Option<u64>,
+        now: Instant,
+    ) -> Idle {
+        let command = Command::SetIdle {
+            per_host,
+            after_secs,
+        };
+        let server = crate::owner::server_uri();
+        self.run(&server, &command, now)
+            .expect("a change of the settings is never refused");
+        self.pending.idle
     }
 
     /// Asks each idle worker past the limit to stop, and gives each
@@ -1005,25 +1466,29 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn stop_idle_workers(&mut self, now: Instant) -> Vec<Stopping> {
-        let after = Duration::from_secs(self.idle.after_secs);
-        let mut idle: BTreeMap<(String, String), Vec<(Duration, Who)>> = BTreeMap::new();
-        for (who, session) in &self.sessions {
-            let free = session.worker
-                && session.watchers > 0
-                && !session.ended
-                && !session.stopping
-                && !self.claims.values().any(|holder| holder == who)
-                && !self.is_lead(who, now);
-            if free {
-                let key = (who.user().to_owned(), session.place.host().to_owned());
-                let time = now.saturating_duration_since(session.last_seen);
-                idle.entry(key).or_default().push((time, who.clone()));
+        let idle = self.written.idle;
+        let after = Duration::from_secs(idle.after_secs);
+        let mut workers: BTreeMap<(String, String), Vec<(Duration, Who)>> = BTreeMap::new();
+        {
+            let view = self.written_view();
+            for (who, session) in &self.sessions {
+                let free = session.worker
+                    && session.watchers > 0
+                    && !session.ended
+                    && !session.stopping
+                    && !view.holds_claim(who)
+                    && !view.is_lead(who, now);
+                if free {
+                    let key = (who.user().to_owned(), session.place.host().to_owned());
+                    let time = now.saturating_duration_since(session.last_seen);
+                    workers.entry(key).or_default().push((time, who.clone()));
+                }
             }
         }
         let mut stopping = Vec::new();
-        for ((_, host), mut workers) in idle {
-            workers.sort();
-            for (time, who) in workers.into_iter().skip(usize::from(self.idle.per_host)) {
+        for ((_, host), mut list) in workers {
+            list.sort();
+            for (time, who) in list.into_iter().skip(usize::from(idle.per_host)) {
                 if time < after {
                     continue;
                 }
@@ -1071,27 +1536,16 @@ impl State {
             .reduce(|(a_live, a_idle), (b_live, b_idle)| (a_live || b_live, a_idle.min(b_idle)))
     }
 
-    /// The URI of a session now: its place, whether it is the lead, and
-    /// the claims that it holds.
-    ///
-    /// # Panics
-    ///
-    /// When the server does not know the session.
+    /// The URI of a session now, in the written copy: its place, whether
+    /// it is the lead, and the claims that it holds.
     pub fn uri(&self, who: &Who, now: Instant) -> SessionUri {
-        let place = self.sessions[who].place.clone();
-        let claims = self
-            .claims
-            .iter()
-            .filter(|(_, holder)| *holder == who)
-            .map(|((_, item), _)| item.clone())
-            .collect();
-        SessionUri::new(who.clone(), place)
-            .with_lead(self.is_lead(who, now))
-            .with_claims(claims)
+        self.written_view().uri(who, now)
     }
 
     /// Makes `me` the lead of its user in its repository. It replaces
-    /// the old lead (R177).
+    /// the old lead (R177). It gives `me` and the old lead, if another
+    /// session was the lead. [`State::lead_reply`] makes the reply after
+    /// the write.
     ///
     /// ```
     /// use std::time::Instant;
@@ -1107,28 +1561,32 @@ impl State {
     /// assert!(state.uri(first.who(), now).lead());
     /// assert!(!state.uri(second.who(), now).lead());
     ///
-    /// let reply = state.lead(&second, now).unwrap();
+    /// let (me, old) = state.lead(&second, now).unwrap();
+    /// let reply = state.lead_reply(&me, old.as_ref(), now);
     /// assert!(reply.lead.lead());
     /// assert_eq!(reply.replaced.unwrap().who(), first.who());
     /// assert!(!state.uri(first.who(), now).lead());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn lead(&mut self, me: &SessionUri, now: Instant) -> Result<LeadReply, String> {
+    pub fn lead(&mut self, me: &SessionUri, now: Instant) -> Result<(Who, Option<Who>), String> {
         let who = self.arrive(me, now);
-        if who.session().is_none() {
-            return Err("only an agent session can be the lead".into());
+        let old = {
+            let view = self.pending_view();
+            view.place(&who)
+                .default_thread()
+                .and_then(|thread| view.lead_of(&(who.user().to_owned(), thread), now).cloned())
+                .filter(|old| *old != who)
+        };
+        self.run(me, &Command::Lead, now)?;
+        Ok((who, old))
+    }
+
+    /// The reply to [`State::lead`], from the written copy.
+    pub fn lead_reply(&self, me: &Who, old: Option<&Who>, now: Instant) -> LeadReply {
+        LeadReply {
+            lead: self.uri(me, now),
+            replaced: old.map(|old| self.uri(old, now)),
         }
-        let thread = self.sessions[&who]
-            .place
-            .default_thread()
-            .ok_or("the lead needs a git repository. Run it in a repository.")?;
-        let key = (who.user().to_owned(), thread);
-        let old = self.lead_of(&key, now).filter(|old| **old != who).cloned();
-        self.leads.insert(key, who.clone());
-        Ok(LeadReply {
-            lead: self.uri(&who, now),
-            replaced: old.map(|old| self.uri(&old, now)),
-        })
     }
 
     /// The state of the riff. With `set`, it sets the state first. Only
@@ -1163,20 +1621,14 @@ impl State {
         set: Option<RiffState>,
         now: Instant,
     ) -> Result<RiffReply, String> {
-        let who = self.arrive(me, now);
+        self.arrive(me, now);
         let Some(set) = set else {
             return Ok(RiffReply {
-                state: self.riff,
+                state: self.written.riff,
                 changed: false,
             });
         };
-        if who.session().is_some() && !self.is_lead(&who, now) {
-            return Err(format!(
-                "only your user or the lead can make the riff {set}. Tell the lead."
-            ));
-        }
-        let changed = self.riff != set;
-        self.riff = set;
+        let changed = !self.run(me, &Command::SetRiff(set), now)?.is_empty();
         if changed {
             self.riff_changed = Some(now);
         }
@@ -1220,7 +1672,7 @@ impl State {
             session.status = Some(SetStatus {
                 status,
                 set_ms: now_ms,
-                set: Some(now),
+                set: now,
             });
         }
         Ok(())
@@ -1231,14 +1683,16 @@ impl State {
     pub fn threads(&mut self, me: &SessionUri, now: Instant) -> Vec<ThreadInfo> {
         let who = self.arrive(me, now);
         let who = &who;
-        self.threads
+        let view = self.written_view();
+        view.riff
+            .threads
             .iter()
             .filter(|(_, t)| t.members.contains(who))
             .map(|(thread, t)| {
                 let read = self.cursor(who, thread);
                 ThreadInfo {
                     thread: thread.clone(),
-                    members: t.members.iter().map(|m| self.uri(m, now)).collect(),
+                    members: t.members.iter().map(|m| view.uri(m, now)).collect(),
                     unread: t
                         .messages
                         .iter()
@@ -1252,8 +1706,10 @@ impl State {
     /// The wake for the newest unread message that woke `who`, if there
     /// is one. A watch sends it when it starts.
     pub fn missed(&self, who: &Who) -> Option<Wake> {
-        self.threads
+        self.written
+            .threads
             .iter()
+            .filter(|(thread, _)| may_read(who, thread))
             .filter_map(|(thread, t)| {
                 let read = self.cursor(who, thread);
                 t.messages
@@ -1269,83 +1725,41 @@ impl State {
 
     /// Adds a session to a thread. It makes the thread if it is new.
     pub fn join(&mut self, me: &SessionUri, thread: &ThreadName, now: Instant) {
-        let who = self.arrive(me, now);
-        self.member(&who, thread);
+        self.arrive(me, now);
+        self.run(me, &Command::Join(thread.clone()), now)
+            .expect("a join is never refused");
     }
 
-    /// Removes a session from a thread.
+    /// Removes a session from a thread. It is no longer the lead there.
     pub fn leave(&mut self, me: &SessionUri, thread: &ThreadName, now: Instant) {
         self.arrive(me, now);
-        if let Some(t) = self.threads.get_mut(thread)
-            && t.members.remove(me.who())
-        {
-            self.changed.insert(Object::Thread(thread.clone()));
-        }
-        let key = (me.who().user().to_owned(), thread.clone());
-        if self.leads.get(&key) == Some(me.who()) {
-            self.leads.remove(&key);
-        }
+        self.run(me, &Command::Leave(thread.clone()), now)
+            .expect("a leave is never refused");
     }
 
     /// Adds a message to a thread and wakes each session that `to`
     /// selects (R51). With no thread, the post is a direct message (R62).
     /// `at_ms` is the time of the post, in milliseconds since the Unix
-    /// epoch. The message keeps the signature of the post (R198). The
-    /// caller checks the signature.
+    /// epoch. The message keeps the payload and the signature of the post
+    /// unchanged (R198). The caller checks the signature.
     ///
     /// The signature covers the lead mark of `me`. So the sender of a
     /// signed message has `lead=true` only when `me` has it, and a signed
     /// post with the lead mark from a session that is not the lead is
     /// refused (R198).
     ///
-    /// A signed post with the signature of a message in the thread is a
+    /// A signed post with the payload of a message in the thread is a
     /// copy, and is refused. So a session gets each request of its lead
     /// once (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
     pub fn post(&mut self, post: Post, now: Instant, at_ms: u64) -> Result<Delivery, String> {
-        let Post {
-            me,
-            thread,
-            to,
-            body,
-            kind,
-            sig,
-            ..
-        } = post;
-        let from = self.arrive(&me, now);
-        let signed = sig.is_some();
-        if signed && me.lead() && !self.is_lead(&from, now) {
-            return Err(
-                "the post has the lead mark, but this session is not the lead. Post again.".into(),
-            );
-        }
-        let thread = self.thread_of(&from, thread, &to, now)?;
-        if let Some(sig) = &sig
-            && let Some(copy) = self.threads.get(&thread).and_then(|t| {
-                t.messages
-                    .iter()
-                    .find(|m| m.message.sig.as_ref() == Some(sig))
-            })
-        {
-            return Err(format!(
-                "the post is a copy of message {}: each signed message comes once",
-                copy.message.seq
-            ));
-        }
-        self.member(&from, &thread);
-        let mut sender = self.uri(&from, now);
-        if signed {
-            sender = sender.with_lead(me.lead());
-        }
-        let message = Message {
-            seq: 0,
-            from: sender,
-            to,
-            body,
-            at_ms,
-            kind,
-            sig,
+        let me = post.me.clone();
+        self.arrive(&me, now);
+        let post = Post {
+            at_ms: Some(at_ms),
+            ..post
         };
-        Ok(self.put(&from, thread, message, now))
+        let PostChanges { changes, unmatched } = self.post_changes(&me, &post, now)?;
+        Ok(self.deliver(changes, unmatched, now))
     }
 
     /// Posts a note or a message of the riff server itself
@@ -1386,18 +1800,9 @@ impl State {
         now: Instant,
         at_ms: u64,
     ) -> Result<Delivery, String> {
-        let from = me.who().clone();
-        let thread = self.thread_of(&from, thread, &to, now)?;
-        let message = Message {
-            seq: 0,
-            from: me.clone(),
-            to,
-            body: body.to_owned(),
-            at_ms,
-            kind,
-            sig: None,
-        };
-        Ok(self.put(&from, thread, message, now))
+        let PostChanges { changes, unmatched } =
+            self.announce_changes(me, thread.as_ref(), &to, body, kind, at_ms, now)?;
+        Ok(self.deliver(changes, unmatched, now))
     }
 
     /// The live lead of `user` in each repository, sorted: a lead that
@@ -1418,12 +1823,14 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn live_leads(&self, user: &str, now: Instant) -> Vec<Who> {
-        let leads: BTreeSet<Who> = self
+        let view = self.written_view();
+        let leads: BTreeSet<Who> = view
+            .riff
             .leads
             .keys()
             .filter(|key| key.0 == user)
-            .filter_map(|key| self.lead_of(key, now))
-            .filter(|who| !self.sessions[*who].gone(now))
+            .filter_map(|key| view.lead_of(key, now))
+            .filter(|who| !view.gone(who, now))
             .cloned()
             .collect();
         leads.into_iter().collect()
@@ -1480,103 +1887,10 @@ impl State {
         threads.into_iter().collect()
     }
 
-    /// The thread of a post: `thread`, or the direct thread of `from` and
-    /// the one session that `to` names.
-    fn thread_of(
-        &self,
-        from: &Who,
-        thread: Option<ThreadName>,
-        to: &[Selector],
-        now: Instant,
-    ) -> Result<ThreadName, String> {
-        if to.iter().any(Selector::is_empty) {
-            return Err("a selector needs one or more fields".into());
-        }
-        match thread {
-            Some(thread) if thread.is_direct() => {
-                Err("leave out the thread to send a direct message".into())
-            }
-            Some(thread) => Ok(thread),
-            None => Ok(ThreadName::direct(
-                from,
-                &self.direct_target(from, to, now)?,
-            )),
-        }
-    }
-
-    /// Puts `message` in `thread` with the next sequence number, and
-    /// wakes each live session that its selectors match, except `from`.
-    fn put(&mut self, from: &Who, thread: ThreadName, message: Message, now: Instant) -> Delivery {
-        let Message { to, kind, .. } = &message;
-        let kind = *kind;
-        let mut woken = BTreeSet::new();
-        let mut unmatched = Vec::new();
-        for selector in to {
-            let live = |who: &&Who| *who != from && !self.sessions[*who].gone(now);
-            let mut matched: Vec<Who> = self
-                .sessions
-                .keys()
-                .filter(live)
-                .filter(|who| selector.matches(&self.uri(who, now)))
-                .cloned()
-                .collect();
-            if matched.is_empty() && selector.lead == Some(true) {
-                let free = Selector {
-                    lead: None,
-                    ..selector.clone()
-                };
-                matched = self
-                    .sessions
-                    .keys()
-                    .filter(live)
-                    .filter(|who| {
-                        let uri = self.uri(who, now);
-                        uri.claims().is_empty() && free.matches(&uri)
-                    })
-                    .cloned()
-                    .collect();
-            }
-            if matched.is_empty() {
-                unmatched.push(selector.clone());
-            }
-            woken.extend(matched);
-        }
-        for who in &woken {
-            self.member(who, &thread);
-        }
-        if kind == Kind::Note {
-            woken.clear();
-        }
-        let t = self.threads.entry(thread.clone()).or_default();
-        let message = Message {
-            seq: t.messages.last().map_or(1, |m| m.message.seq + 1),
-            ..message
-        };
-        t.messages.push(Stored {
-            message: message.clone(),
-            woken: woken.clone(),
-        });
-        self.changed.insert(Object::Thread(thread.clone()));
-        let wakes = woken
-            .iter()
-            .map(|who| (who.clone(), wake(&thread, &message)))
-            .collect();
-        Delivery {
-            wakes,
-            woken: woken.iter().map(|who| self.uri(who, now)).collect(),
-            unmatched,
-            tailed: Tailed {
-                thread,
-                message,
-                keys: Keys::new(),
-                trusted: false,
-            },
-        }
-    }
-
     /// Returns unread messages (or all of them) and marks them as read.
     /// The unread messages leave out the own posts of `me`; `all` gives
-    /// them (01M3JPK82PN4F706MCHDH771MW).
+    /// them (01M3JPK82PN4F706MCHDH771MW). A direct thread of two other
+    /// sessions is not found ([`may_read`]).
     pub fn read(
         &mut self,
         me: &SessionUri,
@@ -1585,13 +1899,11 @@ impl State {
         now: Instant,
     ) -> Result<Vec<Message>, String> {
         let who = self.arrive(me, now);
-        let t = self
-            .threads
-            .get(thread)
-            .ok_or_else(|| format!("no thread named {thread}"))?;
-        if thread.is_direct() && !t.members.contains(&who) {
-            return Err(format!("no thread named {thread}"));
+        let not_found = || format!("no thread named {thread}");
+        if !may_read(&who, thread) {
+            return Err(not_found());
         }
+        let t = self.written.threads.get(thread).ok_or_else(not_found)?;
         let from = if all { 0 } else { self.cursor(&who, thread) };
         let messages: Vec<Message> = t
             .messages
@@ -1600,50 +1912,38 @@ impl State {
             .map(|m| m.message.clone())
             .collect();
         if let Some(last) = t.messages.last() {
-            self.cursors.insert((who, thread.clone()), last.message.seq);
+            let seq = last.message.seq;
+            self.cursors.insert((who, thread.clone()), seq);
         }
         Ok(messages)
     }
 
     /// Takes a claim if nobody holds it, or if its holder stopped more than
-    /// [`CLAIM_GRACE`] ago.
+    /// [`CLAIM_GRACE`] ago. Gives whether the claim is granted, and the
+    /// holder. [`State::claim_reply`] makes the reply after the write.
     pub fn claim(
         &mut self,
         me: &SessionUri,
         thread: &ThreadName,
         item: &str,
         now: Instant,
-    ) -> Result<ClaimReply, String> {
-        check("claim", item).map_err(|e| e.to_string())?;
+    ) -> Result<(bool, Who), String> {
         let who = self.arrive(me, now);
-        if self.riff == RiffState::Paused {
-            return Err(format!(
-                "the riff is paused, so nobody claims {item}. Wait until your user or \
-                 the lead resumes it."
-            ));
+        let command = Command::Claim {
+            thread: thread.clone(),
+            item: item.to_owned(),
+        };
+        self.run(me, &command, now)?;
+        let holder = self.pending.claims[&(thread.clone(), item.to_owned())].clone();
+        Ok((holder == who, holder))
+    }
+
+    /// The reply to [`State::claim`], from the written copy.
+    pub fn claim_reply(&self, granted: bool, holder: &Who, now: Instant) -> ClaimReply {
+        ClaimReply {
+            granted,
+            holder: self.uri(holder, now),
         }
-        let key = (thread.clone(), item.to_owned());
-        if let Some(holder) = self.claims.get(&key)
-            && *holder != who
-            && self.holds(holder, now)
-        {
-            return Ok(ClaimReply {
-                granted: false,
-                holder: self.uri(holder, now),
-            });
-        }
-        let old = self.claims.insert(key, who.clone());
-        if old.as_ref() != Some(&who) {
-            for holder in old.iter().chain([&who]) {
-                if let Some(session) = self.sessions.get_mut(holder) {
-                    session.claims_changed = now;
-                }
-            }
-        }
-        Ok(ClaimReply {
-            granted: true,
-            holder: self.uri(&who, now),
-        })
     }
 
     /// Frees a claim. Only its holder can.
@@ -1654,111 +1954,244 @@ impl State {
         item: &str,
         now: Instant,
     ) -> Result<(), String> {
-        let who = self.arrive(me, now);
-        let key = (thread.clone(), item.to_owned());
-        match self.claims.get(&key) {
-            Some(holder) if *holder == who => {
-                self.claims.remove(&key);
-                if let Some(session) = self.sessions.get_mut(&who) {
+        self.arrive(me, now);
+        let command = Command::Release {
+            thread: thread.clone(),
+            item: item.to_owned(),
+        };
+        self.run(me, &command, now).map(drop)
+    }
+
+    fn written_view(&self) -> View<'_> {
+        View {
+            riff: &self.written,
+            sessions: &self.sessions,
+            loaded: self.loaded,
+        }
+    }
+
+    fn pending_view(&self) -> View<'_> {
+        View {
+            riff: &self.pending,
+            sessions: &self.sessions,
+            loaded: self.loaded,
+        }
+    }
+
+    /// Runs `handle`, then commits its changes. Gives the changes.
+    fn run(
+        &mut self,
+        me: &SessionUri,
+        command: &Command,
+        now: Instant,
+    ) -> Result<Vec<Change>, String> {
+        let changes = self.handle(me, command, now)?;
+        self.commit(&changes, now);
+        Ok(changes)
+    }
+
+    /// Gives each change its position and time, puts the records in the
+    /// queue, and applies them to the pending copy. A state with no
+    /// writer applies them to the written copy too.
+    fn commit(&mut self, changes: &[Change], now: Instant) {
+        for change in changes {
+            let holders: Vec<Who> = match change {
+                Change::Claimed(c) => self
+                    .pending
+                    .claims
+                    .get(&(c.thread.clone(), c.item.clone()))
+                    .into_iter()
+                    .chain([c.session.who()])
+                    .cloned()
+                    .collect(),
+                Change::Released(c) => vec![c.session.who().clone()],
+                _ => Vec::new(),
+            };
+            for holder in holders {
+                if let Some(session) = self.sessions.get_mut(&holder) {
                     session.claims_changed = now;
                 }
-                Ok(())
             }
-            Some(holder) => Err(format!(
-                "{item} is held by {}",
-                self.uri(holder, now).short()
-            )),
-            None => Err(format!("nobody holds {item}")),
+            let record = Record {
+                position: self.pending.position + 1,
+                written_at_ms: self.ms(now),
+                change: change.clone(),
+            };
+            apply(&mut self.pending, &record);
+            if !self.writer {
+                apply(&mut self.written, &record);
+            }
+            self.queue.push(record);
         }
     }
 
-    /// Finds the one session that a direct message goes to (R179).
-    fn direct_target(&self, from: &Who, to: &[Selector], now: Instant) -> Result<Who, String> {
-        let [selector] = to else {
-            return Err("a direct message needs exactly one selector".into());
-        };
-        let to_lead = selector.lead == Some(true);
-        if selector.session.is_none() && !to_lead {
-            return Err("a direct message needs a selector with a session or lead=true".into());
-        }
-        let (matched, gone): (Vec<&Who>, Vec<&Who>) = self
-            .sessions
-            .keys()
-            .filter(|who| *who != from && selector.matches(&self.uri(who, now)))
-            .partition(|who| !self.sessions[*who].gone(now));
-        match matched[..] {
-            [who] => Ok(who.clone()),
-            [] if !gone.is_empty() && !to_lead => Err(format!(
-                "the session {selector} is gone: it ended, or it stopped. \
-                 Use who to list the sessions."
-            )),
-            [] if to_lead => Err(format!(
-                "no other session is the lead for {selector}. Ask your own user."
-            )),
-            [] => Err(format!(
-                "no session matches {selector}. Use who to list the sessions."
-            )),
-            _ => Err(format!(
-                "{} sessions match {selector}. Name one session.",
-                matched.len()
-            )),
-        }
-    }
-
-    /// The lead of a user in a repository thread, while it holds and
-    /// works in that repository.
-    fn lead_of(&self, key: &(String, ThreadName), now: Instant) -> Option<&Who> {
-        self.leads.get(key).filter(|who| {
-            self.holds(who, now)
-                && self.sessions[*who].place.default_thread().as_ref() == Some(&key.1)
+    /// `now` in milliseconds since the Unix epoch, from the clock of the
+    /// state. A state with no clock gives 0.
+    fn ms(&self, now: Instant) -> u64 {
+        self.clock.map_or(0, |(at, at_ms)| {
+            let since = now.saturating_duration_since(at).as_millis();
+            at_ms.saturating_add(u64::try_from(since).unwrap_or(u64::MAX))
         })
     }
 
-    fn is_lead(&self, who: &Who, now: Instant) -> bool {
-        self.sessions[who]
-            .place
-            .default_thread()
-            .and_then(|thread| self.lead_of(&(who.user().to_owned(), thread), now))
-            == Some(who)
-    }
-
-    /// Makes `who` the lead when its user has no lead in its repository
-    /// and no other session of the user there holds (R176).
-    fn lead_if_first(&mut self, who: &Who, now: Instant) {
-        if who.session().is_none() {
-            return;
+    /// The changes of a post of the session `me`.
+    fn post_changes(
+        &self,
+        me: &SessionUri,
+        post: &Post,
+        now: Instant,
+    ) -> Result<PostChanges, String> {
+        let view = self.pending_view();
+        let from = me.who();
+        let signed = post.sig.is_some();
+        if signed && me.lead() && !view.is_lead(from, now) {
+            return Err(
+                "the post has the lead mark, but this session is not the lead. Post again.".into(),
+            );
         }
-        let Some(thread) = self.sessions[who].place.default_thread() else {
-            return;
+        let thread = view.thread_of(from, post.thread.as_ref(), &post.to, now)?;
+        if let Some(payload) = &post.payload
+            && let Some(seq) = view
+                .riff
+                .copies
+                .get(&(thread.clone(), payload_hash(payload)))
+        {
+            return Err(format!(
+                "the post is a copy of message {seq}: each signed message comes once"
+            ));
+        }
+        let mut sender = view.uri(from, now);
+        if signed {
+            sender = sender.with_lead(me.lead());
+        }
+        let mut changes = Vec::new();
+        if !view.riff.member(from, &thread) {
+            changes.push(Change::JoinedThread(Member {
+                session: view.plain(from),
+                thread: thread.clone(),
+            }));
+        }
+        let message = Message {
+            seq: 0,
+            from: sender,
+            to: post.to.clone(),
+            body: post.body.clone(),
+            at_ms: post.at_ms.unwrap_or(0),
+            kind: post.kind,
+            sig: post.sig.clone(),
+            payload: post.payload.clone(),
         };
-        let key = (who.user().to_owned(), thread);
-        if self.lead_of(&key, now).is_some() {
-            return;
-        }
-        let others = self.sessions.iter().any(|(other, s)| {
-            other != who
-                && other.user() == who.user()
-                && other.session().is_some()
-                && s.place.default_thread().as_ref() == Some(&key.1)
-                && self.holds(other, now)
-        });
-        if !others {
-            self.leads.insert(key, who.clone());
-            self.changed.insert(Object::Sessions);
-        }
+        let mut post = self.put(&view, from, thread, message, now);
+        changes.append(&mut post.changes);
+        post.changes = changes;
+        Ok(post)
     }
 
-    fn holds(&self, holder: &Who, now: Instant) -> bool {
-        self.sessions.get(holder).is_some_and(|s| s.holds(now))
+    /// The changes of a post of the riff server itself.
+    #[allow(clippy::too_many_arguments)]
+    fn announce_changes(
+        &self,
+        me: &SessionUri,
+        thread: Option<&ThreadName>,
+        to: &[Selector],
+        body: &str,
+        kind: Kind,
+        at_ms: u64,
+        now: Instant,
+    ) -> Result<PostChanges, String> {
+        let view = self.pending_view();
+        let from = me.who();
+        let thread = view.thread_of(from, thread, to, now)?;
+        let message = Message {
+            seq: 0,
+            from: me.clone(),
+            to: to.to_vec(),
+            body: body.to_owned(),
+            at_ms,
+            kind,
+            sig: None,
+            payload: None,
+        };
+        Ok(self.put(&view, from, thread, message, now))
+    }
+
+    /// The changes that put `message` in `thread` with the next sequence
+    /// number, and wake each live session that its selectors match,
+    /// except `from`. Each selected session joins the thread.
+    fn put(
+        &self,
+        view: &View<'_>,
+        from: &Who,
+        thread: ThreadName,
+        message: Message,
+        now: Instant,
+    ) -> PostChanges {
+        let (mut woken, unmatched) = view.selected(from, &message.to, now);
+        let mut changes: Vec<Change> = woken
+            .iter()
+            .filter(|who| !view.riff.member(who, &thread))
+            .map(|who| {
+                Change::JoinedThread(Member {
+                    session: view.plain(who),
+                    thread: thread.clone(),
+                })
+            })
+            .collect();
+        if message.kind == Kind::Note {
+            woken.clear();
+        }
+        let message = Message {
+            seq: view.riff.last_seq(&thread) + 1,
+            ..message
+        };
+        changes.push(Change::Posted(Box::new(Posted {
+            thread,
+            message,
+            woken,
+        })));
+        PostChanges { changes, unmatched }
+    }
+
+    /// Commits the changes of a post, and gives what the post causes.
+    fn deliver(
+        &mut self,
+        changes: Vec<Change>,
+        unmatched: Vec<Selector>,
+        now: Instant,
+    ) -> Delivery {
+        self.commit(&changes, now);
+        let Some(Change::Posted(posted)) = changes.into_iter().last() else {
+            unreachable!("the changes of a post end with the message");
+        };
+        let Posted {
+            thread,
+            message,
+            woken,
+        } = *posted;
+        let wakes = woken
+            .iter()
+            .map(|who| (who.clone(), wake(&thread, &message)))
+            .collect();
+        Delivery {
+            wakes,
+            woken: woken.into_iter().collect(),
+            unmatched,
+            tailed: Tailed {
+                thread,
+                message,
+                keys: Keys::new(),
+                trusted: false,
+            },
+        }
     }
 
     /// Records that a session called. A new session starts in the place
-    /// from its URI and joins the thread of its repository. A person has
+    /// from its URI, joins the thread of its repository, and becomes the
+    /// lead when it is the first ([`Command::Register`]). A person has
     /// one entry for all its hosts, so it takes the place of each call
     /// (01M3MWW8KYJ3ZV91X22RBSAF33).
     fn arrive(&mut self, me: &SessionUri, now: Instant) -> Who {
         let who = me.who().clone();
-        self.changed.insert(Object::Sessions);
         if let Some(session) = self.sessions.get_mut(&who) {
             if who.session().is_none() {
                 session.place = me.place().clone();
@@ -1771,68 +2204,9 @@ impl State {
         }
         self.sessions
             .insert(who.clone(), Session::new(me.place().clone(), now));
-        if let Some(thread) = me.default_thread() {
-            self.member(&who, &thread);
-        }
-        self.lead_if_first(&who, now);
+        self.run(me, &Command::Register, now)
+            .expect("a register is never refused");
         who
-    }
-
-    fn member(&mut self, who: &Who, thread: &ThreadName) {
-        let t = self.threads.entry(thread.clone()).or_default();
-        if t.members.insert(who.clone()) {
-            self.changed.insert(Object::Thread(thread.clone()));
-        }
-    }
-
-    fn saved_sessions(&self, now: Instant, now_ms: u64) -> SavedSessions {
-        let sessions = self
-            .sessions
-            .iter()
-            .map(|(who, s)| SavedSession {
-                uri: SessionUri::new(who.clone(), s.place.clone()),
-                seen_ms: s.seen_ms(now, now_ms),
-                alive_ms: s.alive_ms(now, now_ms),
-                ended: s.ended,
-                status: s.status.clone(),
-                worker: s.worker,
-            })
-            .collect();
-        let cursors = self
-            .cursors
-            .iter()
-            .map(|((who, thread), seq)| SavedCursor {
-                who: who.clone(),
-                thread: thread.clone(),
-                seq: *seq,
-            })
-            .collect();
-        let claims = self
-            .claims
-            .iter()
-            .map(|((thread, item), who)| SavedClaim {
-                thread: thread.clone(),
-                item: item.clone(),
-                who: who.clone(),
-            })
-            .collect();
-        let leads = self
-            .leads
-            .iter()
-            .map(|((_, thread), who)| SavedLead {
-                thread: thread.clone(),
-                who: who.clone(),
-            })
-            .collect();
-        SavedSessions {
-            saved_ms: now_ms,
-            sessions,
-            cursors,
-            claims,
-            leads,
-            riff: self.riff,
-            idle: self.idle,
-        }
     }
 
     fn cursor(&self, who: &Who, thread: &ThreadName) -> u64 {
@@ -1843,11 +2217,6 @@ impl State {
     }
 }
 
-fn to_json(value: &impl Serialize) -> Vec<u8> {
-    // Each key is a string and each value is plain data, so this cannot fail.
-    serde_json::to_vec(value).expect("the state is valid JSON")
-}
-
 fn wake(thread: &ThreadName, message: &Message) -> Wake {
     Wake {
         thread: thread.clone(),
@@ -1856,7 +2225,6 @@ fn wake(thread: &ThreadName, message: &Message) -> Wake {
         kind: message.kind,
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2031,7 +2399,7 @@ mod tests {
         let mut state = setup(now);
         let d = post(&mut state, &api(), "x", &["user=ghost", "user=brett"], "hi");
         assert_eq!(d.unmatched, to(&["user=ghost"]));
-        assert_eq!(d.woken, vec![lead(tests())]);
+        assert_eq!(d.woken, vec![tests().who().clone()]);
     }
 
     #[test]
@@ -2180,11 +2548,11 @@ mod tests {
         let mut state = setup(now);
         let t = repo();
         state.watch_started(&api(), now);
-        assert!(state.claim(&api(), &t, "issue-12", now).unwrap().granted);
+        assert!(state.claim(&api(), &t, "issue-12", now).unwrap().0);
         let later = now + CLAIM_GRACE * 2;
         let reply = state.claim(&tests(), &t, "issue-12", later).unwrap();
-        assert!(!reply.granted);
-        assert_eq!(reply.holder.who(), api().who());
+        assert!(!reply.0);
+        assert_eq!(&reply.1, api().who());
     }
 
     #[test]
@@ -2193,12 +2561,12 @@ mod tests {
         let mut state = setup(now);
         let t = repo();
         state.watch_started(&api(), now);
-        assert!(state.claim(&api(), &t, "issue-12", now).unwrap().granted);
+        assert!(state.claim(&api(), &t, "issue-12", now).unwrap().0);
         state.watch_ended(api().who(), now);
         let soon = now + Duration::from_secs(60);
-        assert!(!state.claim(&tests(), &t, "issue-12", soon).unwrap().granted);
+        assert!(!state.claim(&tests(), &t, "issue-12", soon).unwrap().0);
         let late = now + CLAIM_GRACE + Duration::from_secs(1);
-        assert!(state.claim(&tests(), &t, "issue-12", late).unwrap().granted);
+        assert!(state.claim(&tests(), &t, "issue-12", late).unwrap().0);
     }
 
     #[test]
@@ -2209,7 +2577,7 @@ mod tests {
         state.claim(&api(), &t, "issue-12", now).unwrap();
         assert!(state.release(&tests(), &t, "issue-12", now).is_err());
         assert!(state.release(&api(), &t, "issue-12", now).is_ok());
-        assert!(state.claim(&tests(), &t, "issue-12", now).unwrap().granted);
+        assert!(state.claim(&tests(), &t, "issue-12", now).unwrap().0);
     }
 
     #[test]
@@ -2248,36 +2616,14 @@ mod tests {
     }
 
     #[test]
-    fn a_loaded_session_keeps_its_idle_time() {
+    fn a_replayed_session_is_idle_since_its_last_record() {
         let now = Instant::now();
-        let mut state = setup(now);
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
+        let mut state = State::with_writer(now, T0);
+        state.register(&api(), now);
         let later = now + DAY;
-        let loaded = load(&saved, later, T0 + ms(DAY));
-        let shown = loaded.who(later, T0 + ms(DAY), false);
-        assert_eq!(shown[0].idle_secs, DAY.as_secs());
-        // A session that does not come back is gone after GONE.
-        assert!(loaded.who(later + GONE, T0 + ms(DAY), false).is_empty());
-    }
-
-    #[test]
-    fn a_session_gone_at_the_save_stays_gone_after_the_load() {
-        let now = Instant::now();
-        let mut state = setup(now);
-        state.end(&docs(), now);
-        let minute = Duration::from_secs(60);
-        state.alive(&api(), now + minute * 2);
-        let at = now + minute * 4;
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, at, T0 + ms(minute * 4));
-        let loaded = load(&saved, at, T0 + ms(minute * 4));
-        let shown: Vec<SessionUri> = loaded
-            .who(at, T0 + ms(minute * 4), false)
-            .into_iter()
-            .map(|s| s.uri)
-            .collect();
-        assert_eq!(shown, [lead(api())]);
+        let loaded = State::replay(state.take_queue(), later, T0 + ms(DAY));
+        let all = loaded.who(later, T0 + ms(DAY), true);
+        assert_eq!(all[0].idle_secs, DAY.as_secs());
     }
 
     const MINUTE: Duration = Duration::from_secs(60);
@@ -2302,7 +2648,7 @@ mod tests {
         assert!(state.uri(api().who(), now).claims().is_empty());
         assert!(!is_lead(&state, &api(), now));
         let taken = state.claim(&docs(), &repo(), "issue-12", now).unwrap();
-        assert!(taken.granted);
+        assert!(taken.0);
         // A resume brings the session back as the lead, with no claims.
         state.start(&api(), now);
         assert!(is_lead(&state, &api(), now));
@@ -2327,7 +2673,7 @@ mod tests {
         assert!(is_lead(&state, &api(), now));
         assert_eq!(state.read(&api(), &repo(), false, now).unwrap().len(), 1);
         let taken = state.claim(&docs(), &repo(), "issue-12", now).unwrap();
-        assert!(taken.granted, "the item is free at once");
+        assert!(taken.0, "the item is free at once");
         assert!(state.start(&api(), now).is_empty());
     }
 
@@ -2361,19 +2707,9 @@ mod tests {
         // The lead ends with the claims, not when the session is gone.
         assert!(is_lead(&state, &api(), soon));
         assert!(!is_lead(&state, &api(), now + CLAIM_GRACE));
-        assert!(
-            !state
-                .claim(&docs(), &repo(), "issue-12", soon)
-                .unwrap()
-                .granted
-        );
+        assert!(!state.claim(&docs(), &repo(), "issue-12", soon).unwrap().0);
         let late = now + CLAIM_GRACE;
-        assert!(
-            state
-                .claim(&docs(), &repo(), "issue-12", late)
-                .unwrap()
-                .granted
-        );
+        assert!(state.claim(&docs(), &repo(), "issue-12", late).unwrap().0);
     }
 
     #[test]
@@ -2390,12 +2726,7 @@ mod tests {
         assert_eq!(mike.idle_secs, 3600);
         assert!(!mike.live);
         assert_eq!(mike.uri.claims(), ["issue-12"]);
-        assert!(
-            !state
-                .claim(&docs(), &repo(), "issue-12", hour)
-                .unwrap()
-                .granted
-        );
+        assert!(!state.claim(&docs(), &repo(), "issue-12", hour).unwrap().0);
     }
 
     #[test]
@@ -2577,30 +2908,13 @@ mod tests {
         assert_eq!(state.missed(tests().who()).unwrap().kind, Kind::Message);
     }
 
-    const DAY: Duration = Duration::from_secs(24 * 60 * 60);
     /// A time in milliseconds since the Unix epoch.
     const T0: u64 = 1_800_000_000_000;
 
+    const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
     fn ms(d: Duration) -> u64 {
         u64::try_from(d.as_millis()).unwrap()
-    }
-
-    type Saved = BTreeMap<Object, Vec<u8>>;
-
-    /// Saves each changed object, as a store does.
-    fn save(state: &mut State, saved: &mut Saved, now: Instant, now_ms: u64) {
-        saved.extend(state.changes(now, now_ms));
-    }
-
-    fn load(saved: &Saved, now: Instant, now_ms: u64) -> State {
-        let sessions = saved.get(&Object::Sessions).map(Vec::as_slice);
-        let threads: Vec<(String, &[u8])> = saved
-            .iter()
-            .filter(|(object, _)| **object != Object::Sessions)
-            .map(|(object, bytes)| (object.name(), bytes.as_slice()))
-            .collect();
-        let threads = threads.iter().map(|(name, bytes)| (name.as_str(), *bytes));
-        State::load(sessions, threads, now, now_ms).unwrap()
     }
 
     /// Each session, gone or not.
@@ -2608,12 +2922,13 @@ mod tests {
         state.who(Instant::now(), T0, true)
     }
 
-    fn json(value: &impl Serialize) -> serde_json::Value {
-        serde_json::to_value(value).unwrap()
+    /// A replay of each record of `state` at `now`.
+    fn replayed(state: &mut State, now: Instant) -> State {
+        State::replay(state.take_queue(), now, T0)
     }
 
     #[test]
-    fn a_load_gives_back_the_saved_state() {
+    fn a_replay_gives_the_state_of_the_live_path() {
         let now = Instant::now();
         let mut state = setup(now);
         post(&mut state, &api(), "design", &["user=brett"], "look");
@@ -2623,52 +2938,42 @@ mod tests {
             .tailed
             .thread;
         post(&mut state, &api(), "como-technologies/riff", &[], "one");
-        state.read(&tests(), &repo(), false, now).unwrap();
+        let server = crate::owner::server_uri();
+        let to = to(&["user=brett"]);
+        let note = state.announce(
+            &server,
+            Some(thread("design")),
+            to,
+            "news",
+            Kind::Note,
+            now,
+            9,
+        );
+        assert!(note.unwrap().wakes.is_empty());
         state.leave(&docs(), &repo(), now);
         state.claim(&tests(), &repo(), "issue-6", now).unwrap();
-        let blocked = status("merge", Some("waits for a review"));
-        state
-            .set_status(&tests(), blocked, now, T0 - 5_000)
-            .unwrap();
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
+        state.claim(&api(), &repo(), "issue-7", now).unwrap();
+        state.release(&api(), &repo(), "issue-7", now).unwrap();
+        state.lead(&docs(), now).unwrap();
+        state.set_idle(Some(3), None, now);
+        let log: Vec<Record> = state.take_queue();
+        assert!(log.len() > 10, "{log:?}");
 
-        let later = now + Duration::from_secs(1);
-        let mut loaded = load(&saved, later, T0 + 1000);
-        let brett = listed(&loaded)
-            .into_iter()
-            .find(|s| s.uri.who() == tests().who());
-        let brett = brett.unwrap().status.unwrap();
-        assert_eq!(brett.age_secs, 5);
-        assert!(brett.stale, "a load is a change");
-        let mut before = listed(&state);
-        for s in &mut before {
-            if let Some(status) = &mut s.status {
-                status.stale = true;
-            }
-        }
-        assert_eq!(json(&listed(&loaded)), json(&before));
+        let mut loaded = State::replay(log, now, T0);
+        assert!(loaded.same_log_state(&state));
         for me in [api(), tests(), docs()] {
-            let threads = loaded.threads(&me, later);
-            assert_eq!(json(&threads), json(&state.threads(&me, later)));
+            let threads = loaded.threads(&me, now);
+            assert_eq!(threads.len(), state.threads(&me, now).len());
         }
         for (me, t) in [(docs(), thread("design")), (docs(), dm), (api(), repo())] {
-            let messages = loaded.read(&me, &t, true, later).unwrap();
-            assert_eq!(messages, state.read(&me, &t, true, later).unwrap());
+            let messages = loaded.read(&me, &t, true, now).unwrap();
+            assert_eq!(messages, state.read(&me, &t, true, now).unwrap());
             assert!(!messages.is_empty());
         }
-        // Brett read the repository thread, and holds a claim.
-        assert!(
-            loaded
-                .read(&tests(), &repo(), false, later)
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            loaded.uri(tests().who(), Instant::now()).claims(),
-            ["issue-6"]
-        );
-        // Brett did not read the message that woke him.
+        assert_eq!(loaded.uri(tests().who(), now).claims(), ["issue-6"]);
+        assert_eq!(loaded.idle().per_host, 3);
+        // The read cursors are in memory: Brett did not read the message
+        // that woke him.
         assert_eq!(
             loaded.missed(tests().who()).unwrap().thread,
             thread("design")
@@ -2676,240 +2981,116 @@ mod tests {
     }
 
     #[test]
-    fn a_claim_ends_after_the_grace_period_from_the_load() {
+    fn a_replayed_session_is_gone_until_it_calls_and_keeps_its_place() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let moved = uri("riff://mike@pangolin/como-technologies/riff?session=c3#other");
+        state.register(&moved, now);
+        state.claim(&moved, &repo(), "issue-9", now).unwrap();
+        let later = now + Duration::from_secs(60);
+        let mut loaded = replayed(&mut state, later);
+        assert!(loaded.who(later, T0, false).is_empty());
+        let all = listed(&loaded);
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().all(|s| !s.live && s.status.is_none()));
+        assert_eq!(
+            loaded.uri(docs().who(), later).place().worktree(),
+            Some("other")
+        );
+        loaded.register(&api(), later);
+        assert_eq!(loaded.who(later, T0, false).len(), 1);
+    }
+
+    #[test]
+    fn a_claim_ends_after_the_grace_period_from_the_replay() {
         let now = Instant::now();
         let mut state = setup(now);
         state.watch_started(&api(), now);
         state.claim(&api(), &repo(), "issue-12", now).unwrap();
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
 
         let start = now + Duration::from_secs(3600);
-        let mut loaded = load(&saved, start, T0 + 3_600_000);
-        assert!(listed(&loaded).iter().all(|s| !s.live));
+        let mut loaded = replayed(&mut state, start);
         let soon = start + CLAIM_GRACE - Duration::from_secs(1);
-        assert!(
-            !loaded
-                .claim(&tests(), &repo(), "issue-12", soon)
-                .unwrap()
-                .granted
-        );
+        assert!(!loaded.claim(&tests(), &repo(), "issue-12", soon).unwrap().0);
         let late = start + CLAIM_GRACE + Duration::from_secs(1);
-        assert!(
-            loaded
-                .claim(&tests(), &repo(), "issue-12", late)
-                .unwrap()
-                .granted
-        );
+        assert!(loaded.claim(&tests(), &repo(), "issue-12", late).unwrap().0);
     }
 
     #[test]
-    fn a_session_that_comes_back_keeps_its_claim() {
+    fn a_session_that_comes_back_after_a_replay_keeps_its_claim() {
         let now = Instant::now();
         let mut state = setup(now);
         state.claim(&api(), &repo(), "issue-12", now).unwrap();
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
 
-        let mut loaded = load(&saved, now, T0);
+        let mut loaded = replayed(&mut state, now);
         loaded.watch_started(&api(), now + Duration::from_secs(60));
         let late = now + CLAIM_GRACE * 2;
-        assert!(
-            !loaded
-                .claim(&tests(), &repo(), "issue-12", late)
-                .unwrap()
-                .granted
-        );
+        assert!(!loaded.claim(&tests(), &repo(), "issue-12", late).unwrap().0);
     }
 
     #[test]
-    fn a_load_drops_each_session_not_seen_for_30_days() {
+    fn a_lead_holds_after_a_replay_while_its_claims_hold() {
         let now = Instant::now();
         let mut state = setup(now);
-        state.claim(&tests(), &repo(), "issue-6", now).unwrap();
-        post(&mut state, &api(), "como-technologies/riff", &[], "one");
-        state.read(&tests(), &repo(), false, now).unwrap();
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        // Only mike's api session calls again, 20 days later.
-        let day20 = now + DAY * 20;
-        state.register(&api(), day20);
-        save(&mut state, &mut saved, day20, T0 + ms(DAY * 20));
-
-        let day31 = now + DAY * 31;
-        let mut loaded = load(&saved, day31, T0 + ms(DAY * 31));
-        let who: Vec<SessionUri> = listed(&loaded).into_iter().map(|s| s.uri).collect();
-        assert_eq!(who, [lead(api())]);
-        assert_eq!(loaded.threads(&api(), day31)[0].members, [lead(api())]);
-        assert!(
-            loaded
-                .claim(&api(), &repo(), "issue-6", day31)
-                .unwrap()
-                .granted
-        );
-        // Brett's cursor went with his session.
-        assert_eq!(
-            loaded.read(&tests(), &repo(), false, day31).unwrap().len(),
-            1
-        );
+        state.lead(&docs(), now).unwrap();
+        let loaded = replayed(&mut state, now);
+        assert!(is_lead(&loaded, &docs(), now));
+        assert!(!is_lead(&loaded, &api(), now));
+        let late = now + CLAIM_GRACE;
+        assert!(!is_lead(&loaded, &docs(), late), "it did not come back");
     }
 
     #[test]
-    fn a_load_keeps_a_session_seen_30_days_ago() {
+    fn a_state_with_a_writer_shows_a_record_only_after_its_write() {
         let now = Instant::now();
-        let mut state = setup(now);
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        let loaded = load(&saved, now + DAY * 30, T0 + ms(DAY * 30));
-        assert_eq!(listed(&loaded).len(), 3);
+        let mut state = State::with_writer(now, T0);
+        state.register(&api(), now);
+        state.riff(&api(), Some(RiffState::Running), now).unwrap();
+        let first = state.take_queue();
+        state.written(&first);
+        assert_eq!(state.written_position(), state.position());
+
+        let (granted, _) = state.claim(&api(), &repo(), "issue-6", now).unwrap();
+        assert!(granted);
+        assert!(state.written_position() < state.position());
+        // The claim waits for its chunk: views do not show it yet, and a
+        // second claim sees it.
+        assert!(state.uri(api().who(), now).claims().is_empty());
+        assert!(!state.claim(&tests(), &repo(), "issue-6", now).unwrap().0);
+        let chunk = state.take_queue();
+        assert_eq!(chunk.len(), 3, "the claim, and the arrival of brett");
+        assert!(chunk.iter().all(|r| r.written_at_ms == T0));
+        state.written(&chunk);
+        assert_eq!(state.uri(api().who(), now).claims(), ["issue-6"]);
+        assert_eq!(state.written_position(), state.position());
     }
 
     #[test]
-    fn a_live_session_counts_as_seen_at_each_save() {
+    fn a_post_of_a_state_with_a_writer_is_read_only_after_its_write() {
         let now = Instant::now();
-        let mut state = setup(now);
-        state.watch_started(&tests(), now);
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        // Another session calls 31 days later; brett's watch is still open.
-        let day31 = now + DAY * 31;
-        state.register(&api(), day31);
-        save(&mut state, &mut saved, day31, T0 + ms(DAY * 31));
-        let loaded = load(&saved, day31, T0 + ms(DAY * 31));
-        let who: Vec<SessionUri> = listed(&loaded).into_iter().map(|s| s.uri).collect();
-        assert_eq!(who, [lead(tests()), lead(api())]);
-    }
-
-    #[test]
-    fn a_session_keeps_its_last_call_across_loads() {
-        let now = Instant::now();
-        let mut state = setup(now);
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        // A load 20 days later does not count as a call.
-        let day20 = now + DAY * 20;
-        let mut loaded = load(&saved, day20, T0 + ms(DAY * 20));
-        loaded.register(&api(), day20);
-        let mut saved = Saved::new();
-        save(&mut loaded, &mut saved, day20, T0 + ms(DAY * 20));
-        let again = load(&saved, day20 + DAY * 11, T0 + ms(DAY * 31));
-        let who: Vec<SessionUri> = listed(&again).into_iter().map(|s| s.uri).collect();
-        assert_eq!(who, [lead(api())]);
-    }
-
-    #[test]
-    fn a_cursor_of_a_deleted_thread_object_is_dropped() {
-        let now = Instant::now();
-        let mut state = setup(now);
-        post(&mut state, &api(), "design", &[], "a");
-        post(&mut state, &api(), "design", &[], "b");
-        state.read(&tests(), &thread("design"), false, now).unwrap();
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        // The lifecycle rule deleted the thread object (R46).
-        saved.remove(&Object::Thread(thread("design")));
-
-        let mut loaded = load(&saved, now, T0);
-        post(&mut loaded, &api(), "design", &[], "new");
-        let unread = loaded
-            .read(&tests(), &thread("design"), false, now)
-            .unwrap();
-        assert_eq!(unread.len(), 1);
-    }
-
-    #[test]
-    fn a_cursor_after_the_end_of_its_saved_thread_moves_back() {
-        let now = Instant::now();
-        let mut state = setup(now);
-        post(&mut state, &api(), "design", &[], "a");
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        let design = Object::Thread(thread("design"));
-        let old_thread = saved[&design].clone();
-        post(&mut state, &api(), "design", &[], "b");
-        state.read(&tests(), &thread("design"), false, now).unwrap();
-        save(&mut state, &mut saved, now, T0);
-        // Only the sessions object of the second save reached the store.
-        saved.insert(design, old_thread);
-
-        let mut loaded = load(&saved, now, T0);
-        post(&mut loaded, &api(), "design", &[], "new");
-        let unread = loaded
-            .read(&tests(), &thread("design"), false, now)
-            .unwrap();
-        let bodies: Vec<&str> = unread.iter().map(|m| m.body.as_str()).collect();
-        assert_eq!(bodies, ["new"]);
-    }
-
-    #[test]
-    fn a_load_drops_a_claim_that_ended_before_the_save() {
-        let now = Instant::now();
-        let mut state = setup(now);
-        state.claim(&api(), &repo(), "issue-6", now).unwrap();
-        state.claim(&docs(), &repo(), "issue-7", now).unwrap();
-        // The save is 6 minutes later. The api claim has ended. The docs
-        // session called 1 minute before the save.
-        let minute = Duration::from_secs(60);
-        state.register(&docs(), now + minute * 5);
-        state.register(&tests(), now + minute * 6);
-        let mut saved = Saved::new();
-        save(
+        let mut state = State::with_writer(now, T0);
+        state.register(&api(), now);
+        state.register(&tests(), now);
+        let written = state.take_queue();
+        state.written(&written);
+        post(
             &mut state,
-            &mut saved,
-            now + minute * 6,
-            T0 + ms(minute * 6),
+            &api(),
+            "como-technologies/riff",
+            &["user=brett"],
+            "hi",
         );
-
-        let start = now + minute * 60;
-        let mut loaded = load(&saved, start, T0 + ms(minute * 60));
-        assert!(loaded.uri(api().who(), Instant::now()).claims().is_empty());
-        assert_eq!(
-            loaded.uri(docs().who(), Instant::now()).claims(),
-            ["issue-7"]
+        assert!(
+            state
+                .read(&tests(), &repo(), false, now)
+                .unwrap()
+                .is_empty()
         );
-        let taken = loaded.claim(&tests(), &repo(), "issue-7", start).unwrap();
-        assert!(!taken.granted);
+        assert!(state.missed(tests().who()).is_none());
+        let chunk = state.take_queue();
+        state.written(&chunk);
+        assert_eq!(state.read(&tests(), &repo(), false, now).unwrap().len(), 1);
     }
-
-    #[test]
-    fn changes_gives_each_changed_object_once() {
-        let now = Instant::now();
-        let mut state = setup(now);
-        let objects = |state: &mut State| -> Vec<Object> {
-            state.changes(now, T0).into_iter().map(|(o, _)| o).collect()
-        };
-        assert_eq!(
-            objects(&mut state),
-            [Object::Thread(repo()), Object::Sessions]
-        );
-        assert!(objects(&mut state).is_empty());
-        post(&mut state, &api(), "design", &[], "x");
-        let design = Object::Thread(thread("design"));
-        assert_eq!(objects(&mut state), [design.clone(), Object::Sessions]);
-        // A call that only looks changes nothing.
-        listed(&state);
-        state.missed(tests().who());
-        assert!(objects(&mut state).is_empty());
-        // A second join changes only the sessions.
-        state.join(&api(), &thread("design"), now);
-        assert_eq!(objects(&mut state), [Object::Sessions]);
-        state.leave(&api(), &thread("design"), now);
-        assert_eq!(objects(&mut state), [design, Object::Sessions]);
-    }
-
-    #[test]
-    fn a_load_refuses_an_object_that_is_not_valid() {
-        let now = Instant::now();
-        let error = State::load(Some(b"{".as_slice()), [], now, T0)
-            .err()
-            .unwrap();
-        assert_eq!(error.name, "sessions");
-        assert!(error.why.contains("EOF"), "{error:?}");
-        let threads = [("threads/x", b"[]".as_slice())];
-        let error = State::load(None, threads, now, T0).err().unwrap();
-        assert_eq!(error.name, "threads/x");
-    }
-
     fn is_lead(state: &State, u: &SessionUri, now: Instant) -> bool {
         state.uri(u.who(), now).lead()
     }
@@ -2968,6 +3149,7 @@ mod tests {
         let repo = Some(thread("como-technologies/riff"));
         let request = Post {
             sig: Some("the signature of the lead".into()),
+            payload: Some("the payload of the lead".into()),
             ..Post::new(
                 &lead(api()),
                 repo.clone(),
@@ -2976,23 +3158,30 @@ mod tests {
             )
         };
         let first = state.post(request.clone(), now, 0).unwrap();
-        let error = state.post(request, now, 0).err().unwrap();
+        let error = state.post(request.clone(), now, 0).err().unwrap();
         assert!(
             error.contains(&format!("a copy of message {}", first.tailed.message.seq)),
             "{error}"
         );
-        // A new message with its own signature goes through.
+        // ECDSA gives a second valid signature for the same payload: it is
+        // still a copy.
+        let resigned = Post {
+            sig: Some("a second signature".into()),
+            ..request.clone()
+        };
+        assert!(state.post(resigned, now, 0).is_err());
+        // A new message has its own payload, and goes through.
         let again = Post {
-            sig: Some("a new signature".into()),
-            ..Post::new(
-                &lead(api()),
-                repo.clone(),
-                vec![],
-                "request: claim issue-12",
-            )
+            payload: Some("a new payload".into()),
+            ..request
         };
         let second = state.post(again, now, 0).unwrap();
         assert_eq!(second.tailed.message.seq, first.tailed.message.seq + 1);
+        assert_eq!(
+            second.tailed.message.payload.as_deref(),
+            Some("a new payload"),
+            "the message keeps the payload"
+        );
     }
 
     #[test]
@@ -3031,7 +3220,8 @@ mod tests {
     fn a_marked_lead_replaces_the_old_lead() {
         let now = Instant::now();
         let mut state = setup(now);
-        let reply = state.lead(&docs(), now).unwrap();
+        let (me, old) = state.lead(&docs(), now).unwrap();
+        let reply = state.lead_reply(&me, old.as_ref(), now);
         assert_eq!(reply.lead, lead(docs()));
         assert_eq!(reply.replaced, Some(api()));
         assert!(!is_lead(&state, &api(), now));
@@ -3039,8 +3229,8 @@ mod tests {
             is_lead(&state, &tests(), now),
             "another user keeps its lead"
         );
-        let again = state.lead(&docs(), now).unwrap();
-        assert_eq!(again.replaced, None);
+        let (_, old) = state.lead(&docs(), now).unwrap();
+        assert_eq!(old, None);
     }
 
     #[test]
@@ -3168,27 +3358,6 @@ mod tests {
         assert!(d.contains("Ask your own user"), "{d}");
     }
 
-    #[test]
-    fn a_lead_stays_across_a_load_unless_it_had_stopped() {
-        let now = Instant::now();
-        let mut state = setup(now);
-        state.lead(&docs(), now).unwrap();
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        let loaded = load(&saved, now, T0);
-        assert!(is_lead(&loaded, &docs(), now));
-        assert!(!is_lead(&loaded, &api(), now));
-
-        // brett stopped long before this save.
-        let later = now + CLAIM_GRACE * 2;
-        state.register(&docs(), later);
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, later, T0 + ms(CLAIM_GRACE * 2));
-        let loaded = load(&saved, later, T0 + ms(CLAIM_GRACE * 2));
-        assert!(is_lead(&loaded, &docs(), later));
-        assert!(!is_lead(&loaded, &tests(), later));
-    }
-
     /// A live worker `id` of mike on `host`, with its last call at `at`.
     fn idle_worker(state: &mut State, host: &str, id: &str, at: Instant) -> SessionUri {
         let w = uri(&format!(
@@ -3298,7 +3467,7 @@ mod tests {
         let now = Instant::now();
         let mut state = State::default();
         state.register(&lead(api()), now);
-        state.set_idle(Some(0), None);
+        state.set_idle(Some(0), None, now);
         let w1 = idle_worker(&mut state, "pangolin", "w1", now);
         let later = now + Duration::from_secs(80);
         assert_eq!(stopped(&mut state, later), ["w1"]);
@@ -3308,7 +3477,7 @@ mod tests {
     }
 
     /// 01M3Q5A0TF9K49V8Z1ZY9NDF74: the settings change the numbers, and
-    /// the save keeps them.
+    /// the log keeps them.
     #[test]
     fn the_settings_change_the_numbers() {
         let now = Instant::now();
@@ -3317,10 +3486,10 @@ mod tests {
         for id in ["w1", "w2", "w3"] {
             idle_worker(&mut state, "pangolin", id, now);
         }
-        assert_eq!(state.set_idle(None, Some(120)).after_secs, 120);
+        assert_eq!(state.set_idle(None, Some(120), now).after_secs, 120);
         assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
 
-        let idle = state.set_idle(Some(2), None);
+        let idle = state.set_idle(Some(2), None, now);
         assert_eq!(
             idle,
             Idle {
@@ -3330,12 +3499,7 @@ mod tests {
         );
         assert_eq!(stopped(&mut state, now + Duration::from_secs(130)).len(), 1);
 
-        let changes = state.changes(now, 0);
-        let sessions = changes
-            .iter()
-            .find(|(o, _)| *o == Object::Sessions)
-            .map(|(_, b)| b.as_slice());
-        let loaded = State::load(sessions, [], now, 0).unwrap();
+        let loaded = State::replay(state.take_queue(), now, 0);
         assert_eq!(loaded.idle(), idle);
         assert_eq!(State::default().idle(), Idle::default());
     }
@@ -3347,7 +3511,7 @@ mod tests {
         let now = Instant::now();
         let mut state = State::default();
         state.register(&lead(api()), now);
-        state.set_idle(Some(0), None);
+        state.set_idle(Some(0), None, now);
         let w1 = idle_worker(&mut state, "pangolin", "w1", now);
         state.watch_ended(w1.who(), now);
         let agent = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
@@ -3443,17 +3607,13 @@ mod tests {
     }
 
     #[test]
-    fn a_status_from_before_a_load_is_stale() {
+    fn a_status_is_in_memory_and_a_replay_has_none() {
         let now = Instant::now();
         let mut state = setup(now);
         set_step(&mut state, &docs(), "tests", now);
-        state.mark_changed(Object::Sessions);
-        let mut saved = Saved::new();
-        save(&mut state, &mut saved, now, T0);
-        let loaded = load(&saved, now, T0);
-        let status = info(&loaded, &docs(), now).status.unwrap();
-        assert_eq!(status.status.step, "tests");
-        assert!(status.stale, "a new start of riff-server is a change");
+        let mut loaded = State::replay(state.take_queue(), now, T0);
+        loaded.register(&docs(), now);
+        assert!(info(&loaded, &docs(), now).status.is_none());
     }
 
     #[test]
@@ -3472,3 +3632,6 @@ mod tests {
         assert_eq!(info(&state, &docs(), t(230)).claims_secs, 30);
     }
 }
+
+#[cfg(test)]
+mod rules;

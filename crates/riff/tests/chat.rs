@@ -271,7 +271,7 @@ async fn a_person_who_is_not_a_member_cannot_read_or_post_the_chat() {
             .await
             .is_err()
     );
-    assert!(api.tail(&chat).await.is_err());
+    assert!(api.tail(&eve, &chat).await.is_err());
 
     // `riff chat` says so, and stops.
     let dir = tempfile::tempdir().unwrap();

@@ -68,7 +68,8 @@ async fn ask_and_answer(api: &Api) -> String {
 async fn on_a_riff_with_no_sign_in_the_answer_of_the_lead_is_verified() {
     let api = start(false).await;
     let repo: ThreadName = REPO.parse().unwrap();
-    let tail = api.tail(&repo).await.unwrap();
+    let person: SessionUri = "riff://mike@pangolin".parse().unwrap();
+    let tail = api.tail(&person, &repo).await.unwrap();
 
     let out = ask_and_answer(&api).await;
     assert!(
@@ -96,7 +97,8 @@ async fn on_a_riff_with_no_sign_in_the_answer_of_the_lead_is_verified() {
 async fn on_a_riff_with_sign_in_an_answer_with_no_signature_is_not_verified() {
     let api = start(true).await;
     let repo: ThreadName = REPO.parse().unwrap();
-    let tail = api.tail(&repo).await.unwrap();
+    let person: SessionUri = "riff://mike@pangolin".parse().unwrap();
+    let tail = api.tail(&person, &repo).await.unwrap();
 
     let out = ask_and_answer(&api).await;
     assert!(

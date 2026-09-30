@@ -11,7 +11,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Post, ReadReply, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::{Memory, Store, thread_object};
+use riff_server::store::{Memory, Store};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -175,7 +175,17 @@ async fn the_server_refuses_a_post_that_its_caller_did_not_sign() {
     post.sign(&a.key, now_ms());
     assert_eq!(refused(post).await.0, 403);
 
+    // The call says another body than the signed payload.
     let mut post = a.post(REPO, "ready");
+    post.body = "not ready".into();
+    let (status, text) = refused(post).await;
+    assert_eq!(status, 403);
+    assert!(text.contains("does not hold the fields"), "{text}");
+
+    // The payload of another body under the signature of the first.
+    let mut post = a.post(REPO, "ready");
+    let other = a.post(REPO, "not ready");
+    post.payload = other.payload;
     post.body = "not ready".into();
     let (status, text) = refused(post).await;
     assert_eq!(status, 403);
@@ -285,18 +295,33 @@ async fn a_message_changed_in_storage_is_not_verified() {
     // Someone with access to the storage changes three messages: a new
     // body, a sender that claims to be the lead, and a lead mark that
     // the sender did not sign.
-    let name = thread_object(&REPO.parse().unwrap());
-    let object = store.load(&name).await.unwrap().unwrap();
-    let mut thread: Value = serde_json::from_slice(&object.bytes).unwrap();
-    let messages = thread["messages"].as_array_mut().unwrap();
-    messages[1]["message"]["body"] = "claim issue-99".into();
-    messages[2]["message"]["from"] = format!("{LEAD}&lead=true").into();
-    messages[3]["message"]["from"] = format!("{A}&lead=true").into();
-    let bytes = serde_json::to_vec(&thread).unwrap();
-    store
-        .save(&name, bytes, Some(object.version))
-        .await
-        .unwrap();
+    let mut seen = 0;
+    for name in store.list("log/").await.unwrap() {
+        let object = store.load(&name).await.unwrap().unwrap();
+        let mut lines = Vec::new();
+        for line in String::from_utf8(object.bytes).unwrap().lines() {
+            let mut record: Value = serde_json::from_str(line).unwrap();
+            if let Some(posted) = record.pointer_mut("/change/posted")
+                && posted["thread"] == REPO
+            {
+                let message = &mut posted["message"];
+                match seen {
+                    1 => message["body"] = "claim issue-99".into(),
+                    2 => message["from"] = format!("{LEAD}&lead=true").into(),
+                    3 => message["from"] = format!("{A}&lead=true").into(),
+                    _ => {}
+                }
+                seen += 1;
+            }
+            lines.push(serde_json::to_string(&record).unwrap() + "\n");
+        }
+        let bytes = lines.concat().into_bytes();
+        store
+            .save(&name, bytes, Some(object.version))
+            .await
+            .unwrap();
+    }
+    assert_eq!(seen, 4);
 
     let (_new, base) = start_on(Arc::new(store)).await;
     let reply = brett.read(&base, REPO).await;
@@ -304,4 +329,26 @@ async fn a_message_changed_in_storage_is_not_verified() {
     assert!(reply.messages[2].from.lead());
     assert!(reply.messages[3].from.lead());
     assert_eq!(verified(&reply, REPO), [true, false, false, false]);
+}
+
+#[tokio::test]
+async fn a_tail_acts_only_as_the_caller_of_its_token() {
+    let (service, base) = common::start(true, &[]).await;
+    let brett = Caller::new(&service, &base, BRETT).await;
+    let url = format!("{base}/v1/tail");
+    let tail = |uri: &str| {
+        common::client()
+            .get(&url)
+            .query(&[("uri", uri), ("thread", REPO)])
+            .header(
+                "dpop",
+                brett
+                    .key
+                    .proof("GET", &url, Some(&brett.token), common::now()),
+            )
+            .header("authorization", format!("DPoP {}", brett.token))
+            .send()
+    };
+    assert_eq!(tail(A).await.unwrap().status(), 403);
+    assert_eq!(tail(BRETT).await.unwrap().status(), 200);
 }

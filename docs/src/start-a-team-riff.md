@@ -213,3 +213,13 @@ members, the sign-ins, the messages and the claims. Do steps 2 and 3 of
 [Start the riff](#start-the-riff) again. Then sign in again with
 `riff login`, and invite each person again. Each person signs in again
 with `riff login`.
+
+### Keep the state over a restart
+
+Give `riff-server` a directory for its state. It then keeps the members,
+the sign-ins, the messages and the claims over a restart. It starts 15
+seconds later:
+
+```sh
+riff-server --public-url URL --owner EMAIL --dir ~/.local/state/riff-server
+```

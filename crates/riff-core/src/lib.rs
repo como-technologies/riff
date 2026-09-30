@@ -18,6 +18,7 @@
 //! - [`wire`]: the requests, replies and events on the HTTP API.
 //! - [`dpop`]: device keys and the proofs that bind tokens to them.
 //! - [`signed`]: the signature that each message carries.
+//! - [`record`]: the records of the log of `riff-server`.
 //! - [`build`]: the build of each side, and the check that they match.
 //!
 //! ## Sessions
@@ -76,6 +77,7 @@
 pub mod build;
 pub mod dpop;
 pub mod name;
+pub mod record;
 pub mod selector;
 pub mod signed;
 pub mod wire;

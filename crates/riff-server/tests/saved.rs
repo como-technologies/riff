@@ -1,11 +1,12 @@
-//! The state after a restart (R30, R124, R125, R141), over HTTP.
+//! The state after a restart: a replay of the log (R30, R125, R141),
+//! over HTTP.
 
 mod common;
 
 use std::sync::Arc;
 
-use futures::FutureExt;
-use riff_server::store::{Memory, SESSIONS, Store, StoreError};
+use riff_server::log::chunk_name;
+use riff_server::store::{Dir, Memory, Store, StoreError};
 use serde_json::{Value, json};
 
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a#api";
@@ -24,48 +25,62 @@ async fn call(base: &str, op: &str, body: Value) -> Value {
     reply.json().await.unwrap()
 }
 
-/// The URI and the live flag of each session in a `who` reply. The idle
-/// time can change over a restart.
-fn uris(who: serde_json::Value) -> Vec<(serde_json::Value, serde_json::Value)> {
-    let sessions = who["sessions"].as_array().unwrap();
-    sessions
-        .iter()
-        .map(|s| (s["uri"].clone(), s["live"].clone()))
-        .collect()
+/// Calls `op` and returns the status.
+async fn status(base: &str, op: &str, body: Value) -> u16 {
+    common::client()
+        .post(format!("{base}/v1/{op}"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
 }
 
-#[tokio::test]
-async fn a_new_server_on_the_same_store_has_the_same_state() {
-    let store = Memory::default();
-    let (old, base) = common::start_on(Arc::new(store.clone())).await;
-    call(&base, "register", json!({ "me": MIKE })).await;
-    call(&base, "register", json!({ "me": BRETT })).await;
+/// The URI of each session in a `who` reply, gone sessions too. The idle
+/// time can change over a restart.
+async fn sessions(base: &str) -> Vec<Value> {
+    let who = call(base, "who", json!({ "me": MIKE, "all": true })).await;
+    let sessions = who["sessions"].as_array().unwrap();
+    sessions.iter().map(|s| s["uri"].clone()).collect()
+}
+
+/// Makes a state with a post, a direct message, a read and a claim.
+async fn fill(base: &str) {
+    call(base, "register", json!({ "me": MIKE })).await;
+    call(base, "register", json!({ "me": BRETT })).await;
     // A new riff is paused. Mike, a person, resumes it.
     let mike = "riff://mike@pangolin/como-technologies/riff";
-    call(&base, "riff", json!({ "me": mike, "state": "running" })).await;
+    call(base, "riff", json!({ "me": mike, "state": "running" })).await;
     let to_brett = json!([{ "user": "brett" }]);
     let post = json!({ "me": MIKE, "thread": "design", "to": to_brett, "body": "look" });
-    call(&base, "post", post).await;
+    call(base, "post", post).await;
     let post = json!({ "me": MIKE, "thread": REPO, "body": "one" });
-    call(&base, "post", post).await;
-    call(&base, "read", json!({ "me": BRETT, "thread": REPO })).await;
+    call(base, "post", post).await;
+    call(base, "read", json!({ "me": BRETT, "thread": REPO })).await;
     let claim = json!({ "me": BRETT, "thread": REPO, "item": "issue-6" });
-    call(&base, "claim", claim).await;
-    let who = uris(call(&base, "who", json!({ "me": MIKE })).await);
+    call(base, "claim", claim).await;
+}
+
+async fn the_same_state_after_a_restart(store: Arc<dyn Store>) {
+    let (old, base) = common::start_on(store.clone()).await;
+    fill(&base).await;
+    let before = sessions(&base).await;
     let threads = call(&base, "threads", json!({ "me": BRETT })).await;
     old.save().await.unwrap();
 
-    let (_new, base) = common::start_on(Arc::new(store)).await;
-    assert_eq!(uris(call(&base, "who", json!({ "me": MIKE })).await), who);
+    let (_new, base) = common::start_on(store).await;
+    assert_eq!(sessions(&base).await, before);
     assert_eq!(
-        call(&base, "threads", json!({ "me": BRETT })).await,
-        threads
+        call(&base, "threads", json!({ "me": BRETT })).await["threads"][0]["thread"],
+        threads["threads"][0]["thread"]
     );
     let read = call(&base, "read", json!({ "me": BRETT, "thread": "design" })).await;
     assert_eq!(read["messages"][0]["body"], "look");
-    // Brett read the repository thread before the restart.
+    // The read cursors are in memory: a replay reads a message again, but
+    // never misses one.
     let read = call(&base, "read", json!({ "me": BRETT, "thread": REPO })).await;
-    assert_eq!(read["messages"], json!([]));
+    assert_eq!(read["messages"][0]["body"], "one");
     // The riff still runs, and Brett still holds the claim.
     let state = call(&base, "riff", json!({ "me": MIKE })).await;
     assert_eq!(state["state"], "running");
@@ -81,60 +96,77 @@ async fn a_new_server_on_the_same_store_has_the_same_state() {
 }
 
 #[tokio::test]
-async fn a_save_that_finds_another_version_stops_the_server() {
+async fn a_new_server_on_the_same_store_has_the_same_state() {
+    the_same_state_after_a_restart(Arc::new(Memory::default())).await;
+}
+
+#[tokio::test]
+async fn a_new_server_on_the_same_directory_has_the_same_state() {
+    let dir = tempfile::tempdir().unwrap();
+    the_same_state_after_a_restart(Arc::new(Dir::new(dir.path()))).await;
+    assert!(dir.path().join(chunk_name(1)).exists());
+}
+
+#[tokio::test]
+async fn a_chunk_of_another_instance_stops_the_server() {
     let store = Memory::default();
     let (server, base) = common::start_on(Arc::new(store.clone())).await;
     call(&base, "register", json!({ "me": MIKE })).await;
     server.save().await.unwrap();
-    // Another instance writes the sessions object.
-    let known = store.load(SESSIONS).await.unwrap().unwrap().version;
-    store
-        .save(SESSIONS, b"{}".to_vec(), Some(known))
-        .await
-        .unwrap();
+    // Another instance wrote the next chunk.
+    let mut records = 0;
+    for name in store.list("log/").await.unwrap() {
+        let bytes = store.load(&name).await.unwrap().unwrap().bytes;
+        records += riff_server::log::decode(&bytes).unwrap().1.len();
+    }
+    let next = chunk_name(u64::try_from(records).unwrap() + 1);
+    store.save(&next, b"other".to_vec(), None).await.unwrap();
 
     let post = json!({ "me": MIKE, "thread": REPO, "body": "lost" });
-    call(&base, "post", post).await;
-    // This save finds the other version. Or the save of each second
-    // found it first: then the server stopped, and this save does
-    // nothing.
-    match server.save().await {
-        Err(error) => assert!(matches!(error, StoreError::Conflict(_)), "{error}"),
-        Ok(()) => assert!(server.stopped().now_or_never().is_some()),
-    }
-    // The server stopped for good (R141): 503, and no more saves.
+    assert_eq!(status(&base, "post", post).await, 503);
+    // The server stopped for good (R141): 503, and no more writes.
     server.stopped().await;
-    let reply = common::client()
-        .post(format!("{base}/v1/who"))
-        .json(&json!({ "me": MIKE }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(reply.status(), 503);
+    assert_eq!(status(&base, "who", json!({ "me": MIKE })).await, 503);
+    let chunks = store.list("log/").await.unwrap().len();
     let post = json!({ "me": MIKE, "thread": REPO, "body": "also lost" });
-    let _ = common::client()
-        .post(format!("{base}/v1/post"))
-        .json(&post)
-        .send()
-        .await;
-    server.save().await.unwrap();
-    assert_eq!(store.load(SESSIONS).await.unwrap().unwrap().bytes, b"{}");
+    let _ = status(&base, "post", post).await;
+    assert!(server.save().await.is_ok());
+    assert_eq!(store.list("log/").await.unwrap().len(), chunks);
 }
 
 #[tokio::test]
-async fn a_saved_object_that_is_not_valid_stops_the_load_and_names_the_object() {
-    for name in [SESSIONS, "threads/como-technologies%2Friff"] {
-        let store = Memory::default();
-        store.save(name, b"[]".to_vec(), None).await.unwrap();
-        let error = common::load_on(Arc::new(store)).await.err().unwrap();
-        let StoreError::NotValid { object, fix, .. } = &error else {
-            panic!("{error:?}");
-        };
-        assert_eq!(object, name);
-        assert_eq!(fix, &None);
-        assert!(
-            error.to_string().ends_with("remove the old state."),
-            "{error}"
-        );
+async fn a_chunk_that_does_not_read_stops_the_load_and_names_the_chunk() {
+    let store = Memory::default();
+    let name = chunk_name(1);
+    store.save(&name, b"[]".to_vec(), None).await.unwrap();
+    let error = common::load_on(Arc::new(store)).await.err().unwrap();
+    let StoreError::NotValid { object, fix, .. } = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(object, &name);
+    assert_eq!(fix, &None);
+    assert!(
+        error.to_string().ends_with("remove the old state."),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_gap_in_the_log_stops_the_load() {
+    let store = Memory::default();
+    let (server, base) = common::start_on(Arc::new(store.clone())).await;
+    call(&base, "register", json!({ "me": MIKE })).await;
+    call(&base, "register", json!({ "me": BRETT })).await;
+    server.save().await.unwrap();
+    drop(server);
+    let names = store.list("log/").await.unwrap();
+    assert!(names.len() >= 2, "{names:?}");
+    let gap = Memory::default();
+    for name in names.iter().skip(1) {
+        let bytes = store.load(name).await.unwrap().unwrap().bytes;
+        gap.save(name, bytes, None).await.unwrap();
     }
+    let error = common::load_on(Arc::new(gap)).await.err().unwrap();
+    assert!(error.to_string().contains("the log needs 1"), "{error}");
+    assert!(error.to_string().contains(&names[1]), "{error}");
 }

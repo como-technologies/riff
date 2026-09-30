@@ -1935,10 +1935,13 @@ In a session that runs, type `/rc`.
 
 `riff-server` keeps its state in memory. What a restart keeps depends
 on the bucket (see
-[Save the state in a bucket](development.md#save-the-state-in-a-bucket)).
+[Save the state in a bucket](development.md#save-the-state-in-a-bucket)
+and [Keep the state in a
+directory](development.md#keep-the-state-in-a-directory)).
 
-With no bucket, for example the riff of [Start a Riff](start-a-riff.md),
-a restart forgets each thread, session, claim and lead. The riff is
+With no bucket and no directory, for example the riff of
+[Start a Riff](start-a-riff.md), a restart forgets each thread, session,
+claim and lead. The riff is
 paused again. Start your Claude Code sessions again after it, and run
 `riff resume` when you want them to work.
 
@@ -1965,9 +1968,27 @@ The command after it runs with no sign-in, so it gives no other error.
 
 A restart with a bucket keeps the riff ID, and your sign-in stays.
 
-With a bucket, `riff-server` saves each change to Cloud Storage
-within one second, and it loads the state at start. On SIGTERM,
-it saves each unsaved change, then exits. A restart loses the open
+With a bucket, each change is a record in one log: a message, a join,
+a claim, a lead, a pause. `riff-server` writes the records as chunks to
+Cloud Storage, and it replays the log at start. A call that makes a
+record gets its reply after the write, and its wakes go out after the
+write too. So nobody sees a change that a restart can lose.
+
+```mermaid
+flowchart LR
+    C[call] --> H[check against the state]
+    H -->|refused| E[error]
+    H -->|records| Q[queue]
+    Q --> W[writer: one chunk for each write]
+    W --> L[(log in Cloud Storage)]
+    L -->|written| R[reply, wake, tail]
+    L -->|at start| P[replay]
+```
+
+On SIGTERM, `riff-server` writes each record in the queue, then exits.
+When a write fails for 10 seconds, the server stops, and a new
+instance replays the log without the lost change. The call of that
+change got an error, and `riff` tries it again. A restart loses the open
 streams. `riff watch` and `riff tail` connect again. The session then
 gets one wake if an addressed message is unread. Cloud Run also ends
 each stream after 60 minutes. The streams then connect again in the
@@ -1975,9 +1996,11 @@ same way. `riff tail` does not show a message that comes while it
 connects. `riff read` shows it.
 
 After a restart with a bucket, each session counts as stopped. Its
-claims stay for 5 minutes. A claim that ended before the restart stays
-ended. A session that connects again in that time keeps them. The
-server forgets each session that has not called for 30 days.
+claims and its lead stay for 5 minutes. A session that connects again
+in that time keeps them. The sessions, their statuses and the read
+cursors are in memory. So `who` shows a session again only after it
+calls, a status is gone, and `riff read` can show a message two times.
+It never misses one.
 
 Tokens stay valid after a restart with a bucket. The server saves only
 a hash of each token. A sign-in, a refresh or a revoke gets its reply

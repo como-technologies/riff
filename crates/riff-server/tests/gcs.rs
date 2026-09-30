@@ -13,7 +13,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use riff_server::gcs::{Gcs, TOKEN_PATH};
-use riff_server::store::{SESSIONS, Store, StoreError, TOKENS, thread_object};
+use riff_server::log::chunk_name;
+use riff_server::store::{LEASE, Store, StoreError, TOKENS};
 use serde_json::{Value, json};
 
 const BUCKET: &str = "riff-test";
@@ -156,26 +157,23 @@ fn store(url: &str) -> Gcs {
 #[tokio::test]
 async fn a_new_store_on_the_same_bucket_loads_the_saved_objects() {
     let (_fake, url) = start().await;
-    let thread = thread_object(&"como-technologies/riff".parse().unwrap());
+    let chunk = chunk_name(1);
     let first = store(&url);
-    let sessions = first
-        .save(SESSIONS, b"{\"s\":1}".to_vec(), None)
+    let lease = first
+        .save(LEASE, b"{\"s\":1}".to_vec(), None)
         .await
         .unwrap();
     let saved = first
-        .save(&thread, b"{\"t\":1}".to_vec(), None)
+        .save(&chunk, b"{\"t\":1}".to_vec(), None)
         .await
         .unwrap();
 
     let second = store(&url);
-    let loaded = second.load(&thread).await.unwrap().unwrap();
+    let loaded = second.load(&chunk).await.unwrap().unwrap();
     assert_eq!(loaded.bytes, b"{\"t\":1}");
     assert_eq!(loaded.version, saved);
-    assert_eq!(
-        second.load(SESSIONS).await.unwrap().unwrap().version,
-        sessions
-    );
-    assert_eq!(second.list("threads/").await.unwrap(), [thread]);
+    assert_eq!(second.load(LEASE).await.unwrap().unwrap().version, lease);
+    assert_eq!(second.list("log/").await.unwrap(), [chunk]);
     assert!(second.load(TOKENS).await.unwrap().is_none());
 }
 
@@ -183,72 +181,48 @@ async fn a_new_store_on_the_same_bucket_loads_the_saved_objects() {
 async fn a_save_with_an_old_version_fails() {
     let (_fake, url) = start().await;
     let store = store(&url);
-    let v1 = store.save(SESSIONS, b"1".to_vec(), None).await.unwrap();
-    let v2 = store.save(SESSIONS, b"2".to_vec(), Some(v1)).await.unwrap();
+    let v1 = store.save(TOKENS, b"1".to_vec(), None).await.unwrap();
+    let v2 = store.save(TOKENS, b"2".to_vec(), Some(v1)).await.unwrap();
     assert!(v2 > v1);
 
-    let stale = store.save(SESSIONS, b"3".to_vec(), Some(v1)).await;
-    assert_eq!(stale, Err(StoreError::Conflict(SESSIONS.into())));
+    let stale = store.save(TOKENS, b"3".to_vec(), Some(v1)).await;
+    assert_eq!(stale, Err(StoreError::Conflict(TOKENS.into())));
     // A save as new fails too: the object exists.
-    let new = store.save(SESSIONS, b"3".to_vec(), None).await;
-    assert_eq!(new, Err(StoreError::Conflict(SESSIONS.into())));
-    assert_eq!(store.load(SESSIONS).await.unwrap().unwrap().bytes, b"2");
+    let new = store.save(TOKENS, b"3".to_vec(), None).await;
+    assert_eq!(new, Err(StoreError::Conflict(TOKENS.into())));
+    assert_eq!(store.load(TOKENS).await.unwrap().unwrap().bytes, b"2");
 }
 
 #[tokio::test]
-async fn a_thread_object_that_the_lifecycle_rule_deleted_is_saved_again() {
+async fn a_chunk_never_replaces_a_chunk() {
     let (fake, url) = start().await;
     let store = store(&url);
-    let thread = thread_object(&"a/b".parse().unwrap());
-    let v1 = store.save(&thread, b"old".to_vec(), None).await.unwrap();
-    fake.lock().unwrap().objects.remove(&thread);
-
-    let v2 = store
-        .save(&thread, b"new".to_vec(), Some(v1))
-        .await
-        .unwrap();
-    let loaded = store.load(&thread).await.unwrap().unwrap();
-    assert_eq!((loaded.bytes, loaded.version), (b"new".to_vec(), v2));
-}
-
-#[tokio::test]
-async fn a_changed_thread_object_still_fails() {
-    let (_fake, url) = start().await;
-    let store = store(&url);
-    let thread = thread_object(&"a/b".parse().unwrap());
-    let v1 = store.save(&thread, b"1".to_vec(), None).await.unwrap();
-    store.save(&thread, b"2".to_vec(), Some(v1)).await.unwrap();
-
-    let stale = store.save(&thread, b"3".to_vec(), Some(v1)).await;
-    assert_eq!(stale, Err(StoreError::Conflict(thread.clone())));
-    assert_eq!(store.load(&thread).await.unwrap().unwrap().bytes, b"2");
-}
-
-#[tokio::test]
-async fn only_thread_objects_are_saved_again() {
-    let (fake, url) = start().await;
-    let store = store(&url);
-    let v1 = store.save(SESSIONS, b"1".to_vec(), None).await.unwrap();
-    fake.lock().unwrap().objects.remove(SESSIONS);
-
-    let result = store.save(SESSIONS, b"2".to_vec(), Some(v1)).await;
-    assert_eq!(result, Err(StoreError::Conflict(SESSIONS.into())));
-    assert!(store.load(SESSIONS).await.unwrap().is_none());
+    let chunk = chunk_name(7);
+    store.save(&chunk, b"first".to_vec(), None).await.unwrap();
+    let again = store.save(&chunk, b"second".to_vec(), None).await;
+    assert_eq!(again, Err(StoreError::Conflict(chunk.clone())));
+    assert_eq!(store.load(&chunk).await.unwrap().unwrap().bytes, b"first");
+    // A deleted object is not written again as a side effect.
+    fake.lock().unwrap().objects.remove(TOKENS);
+    let v1 = store.save(TOKENS, b"1".to_vec(), None).await.unwrap();
+    fake.lock().unwrap().objects.remove(TOKENS);
+    let result = store.save(TOKENS, b"2".to_vec(), Some(v1)).await;
+    assert_eq!(result, Err(StoreError::Conflict(TOKENS.into())));
 }
 
 #[tokio::test]
 async fn list_reads_each_page() {
     let (_fake, url) = start().await;
     let store = store(&url);
-    let mut threads = Vec::new();
-    for i in 0..5 {
-        let name = thread_object(&format!("t/{i}").parse().unwrap());
+    let mut chunks = Vec::new();
+    for i in 1..=5 {
+        let name = chunk_name(i);
         store.save(&name, vec![], None).await.unwrap();
-        threads.push(name);
+        chunks.push(name);
     }
-    store.save(SESSIONS, vec![], None).await.unwrap();
+    store.save(TOKENS, vec![], None).await.unwrap();
 
-    assert_eq!(store.list("threads/").await.unwrap(), threads);
+    assert_eq!(store.list("log/").await.unwrap(), chunks);
     assert!(store.list("none/").await.unwrap().is_empty());
 }
 
@@ -257,8 +231,8 @@ async fn the_store_keeps_its_access_token() {
     let (fake, url) = start().await;
     let store = store(&url);
     for _ in 0..3 {
-        store.save(SESSIONS, vec![], None).await.ok();
-        store.load(SESSIONS).await.unwrap();
+        store.save(LEASE, vec![], None).await.ok();
+        store.load(LEASE).await.unwrap();
     }
     assert_eq!(fake.lock().unwrap().token_calls, 1);
 }
@@ -270,8 +244,8 @@ async fn a_failed_call_is_a_failure_not_a_conflict() {
     fake.lock().unwrap().broken = Some(StatusCode::SERVICE_UNAVAILABLE);
 
     for result in [
-        store.save(SESSIONS, vec![], None).await.map(|_| ()),
-        store.load(SESSIONS).await.map(|_| ()),
+        store.save(LEASE, vec![], None).await.map(|_| ()),
+        store.load(LEASE).await.map(|_| ()),
         store.list("").await.map(|_| ()),
     ] {
         assert!(matches!(result, Err(StoreError::Failed(m)) if m.contains("503")));
@@ -282,7 +256,7 @@ async fn a_failed_call_is_a_failure_not_a_conflict() {
 async fn no_metadata_server_is_a_failure() {
     let (_fake, url) = start().await;
     let store = Gcs::with_urls(BUCKET, &url, "http://127.0.0.1:1");
-    let result = store.load(SESSIONS).await;
+    let result = store.load(LEASE).await;
     assert!(matches!(result, Err(StoreError::Failed(_))), "{result:?}");
 }
 
@@ -322,13 +296,13 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     call(&base, "post", post).await;
     let claim = json!({ "me": brett, "thread": repo, "item": "issue-44" });
     call(&base, "claim", claim).await;
-    let who = uris(call(&base, "who", json!({ "me": mike })).await);
+    let all = json!({ "me": mike, "all": true });
+    let who = uris(call(&base, "who", all.clone()).await);
     old.save().await.unwrap();
-    let thread = thread_object(&repo.parse().unwrap());
-    assert!(fake.lock().unwrap().objects.contains_key(&thread));
+    assert!(fake.lock().unwrap().objects.contains_key(&chunk_name(1)));
 
     let (_new, base) = common::start_on(Arc::new(store(&url))).await;
-    assert_eq!(uris(call(&base, "who", json!({ "me": mike })).await), who);
+    assert_eq!(uris(call(&base, "who", all).await), who);
     let state = call(&base, "riff", json!({ "me": mike })).await;
     assert_eq!(state["state"], "running", "the riff state stays");
     let read = call(&base, "read", json!({ "me": brett, "thread": repo })).await;

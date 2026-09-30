@@ -71,6 +71,7 @@ async fn tail(State(calls): State<Shared>) -> impl IntoResponse {
         at_ms: 0,
         kind: Kind::Message,
         sig: None,
+        payload: None,
     };
     once(Tailed {
         thread: repo(),

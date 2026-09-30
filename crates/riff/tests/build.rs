@@ -95,6 +95,7 @@ fn one_message() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
         at_ms: 0,
         kind: Kind::Message,
         sig: None,
+        payload: None,
     };
     let event = Event::default()
         .json_data(Tailed {
