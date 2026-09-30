@@ -246,7 +246,7 @@ a scheme that it does not know shows the message as not verified.
 
 ## The checkpoint
 
-- From time to time (each 1,000 records, or each 10 minutes when records
+- From time to time (each 1,000 records, or each 60 minutes when records
   came), the server writes a checkpoint:
   `checkpoint/00000000000000001234.json`. It holds the state that the
   log gives up to that position, the read cursors, the last N messages
@@ -399,10 +399,32 @@ nothing.
 
 ### Cost
 
-Build item 1 measures the load of today, and writes the cost table
-here. The writes, the reads and the storage cost some dollars each
-month. The Cloud Run instance, which always runs, stays the largest
-cost. Make sure of the prices when you set up.
+The numbers come from `design/measures.md`: the load of 2026-09-29, 2
+people, scaled to 36 people with 8 live sessions and 20 new session IDs
+each day for each person. The prices are the list prices of GCS
+Standard in `us-central1`: $0.005 for each 1,000 writes, $0.020 for
+each GB each month. Make sure of the prices when you set up.
+
+| Item | Today | At 36 people | Each month |
+|---|---:|---:|---:|
+| Records each day | 950 | 27,700 | |
+| Records each second, peak hour | 0.06 | 1.7 | |
+| Chunk writes | 29,000 a month | 830,000 a month | $4.20 |
+| Log kept (about 31 days of chunks) | 30 MB | 0.9 GB | $0.02 |
+| A checkpoint | 1.6 MB | 160 MB | |
+| Checkpoints kept (3, and 1 each day for 30 days) | 53 MB | 5.3 GB | $0.11 |
+| Older versions of deleted checkpoints (7 days, a checkpoint each hour) | 0.15 GB | 56 GB | $1.12 |
+| Sign-ins | 4.8 MB | not scaled | $0 |
+| **GCS** | | | **about $5.50** |
+
+- The GCS write time is not measured. `riff server` shows the time of
+  the last chunk write.
+- The direct threads are most of the checkpoint: about 24,800 of them
+  at 36 people.
+- The checkpoint settings: keep "each 1,000 records". Change "each 10
+  minutes" to "each 60 minutes". At 36 people, a checkpoint each 10
+  minutes keeps about 170 GB of older versions, for $3.40 each month.
+- The Cloud Run instance, which always runs, stays the largest cost.
 
 ### Monitoring
 
@@ -501,9 +523,8 @@ one after another, in this order. They change the same code.
 3. A standard bucket. No zonal bucket, and no compaction.
 4. The log keeps each chunk that a kept checkpoint needs. No rule
    deletes chunks by age.
-5. The server writes a checkpoint each 1,000 records, or each 10
-   minutes when records came (settings). We change them after the
-   measures.
+5. The server writes a checkpoint each 1,000 records, or each 60
+   minutes when records came (settings). See "Cost".
 6. The default rule for a new field is a requirement.
 7. We go live with an empty log at a wave end, and import the members
    one time.
