@@ -1,6 +1,6 @@
 [package]
 name = "hygiene"
-description = "Issue hygiene of this repository: check the form of a pull request and of a commit on main"
+description = "Hygiene of this repository: check the form of a pull request and of a commit on main, and check the book"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

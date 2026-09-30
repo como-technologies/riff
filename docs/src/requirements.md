@@ -1962,6 +1962,12 @@
   requirements is at most 72 characters. A line with one link or one
   code span and nothing to break is longer when it must be. A test
   checks it.
+- **01M3T5MG7VVYG4A8YBM75FGSMB** `just book` runs `hygiene book docs`.
+  It builds the book with mdbook, and fails on an `ERROR` line of
+  mdbook (`mdbook`), on an include line that mdbook left in the text
+  of a page outside a code block (`include`), and on an empty code
+  block (`empty-code`). It skips an escaped include example in a code
+  block.
 
 ## Open
 

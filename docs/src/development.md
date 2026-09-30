@@ -52,6 +52,26 @@ It fails when two requirements have the same ID, or when a file cites an
 ID that no requirement has. It warns when a new ID does not have that
 form, for example the next `R` number.
 
+## Check the book
+
+`just ci` builds the book and checks it. To run only this step:
+
+```sh
+just book
+```
+
+It fails on a missing include file, a missing anchor, or an empty code
+block. Each error names its rule and the page:
+
+| Rule | Finds |
+|---|---|
+| `mdbook` | An `ERROR` line of mdbook, for example a missing file. |
+| `include` | An include line that mdbook left in the text. |
+| `empty-code` | A code block with no text, for example a missing anchor. |
+
+To show an include line as an example, put it in a code block and
+escape it: `\{{#include file.rs:name}}`. The check skips it.
+
 ## Check a pull request on GitHub
 
 Each pull request has the same form. The form links the pull request to

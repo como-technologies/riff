@@ -1,5 +1,5 @@
 //! Issue hygiene of this repository: the form of a pull request, and of
-//! a commit on `main`.
+//! a commit on `main`. The module [`book`] checks the book.
 //!
 //! # Design
 //!
@@ -56,6 +56,8 @@
 use std::fmt;
 
 use serde::Deserialize;
+
+pub mod book;
 
 /// A milestone, as `gh --json milestone` gives it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
