@@ -128,7 +128,7 @@ async fn two_processes_of_one_session_keep_their_tokens() {
     }
     let calls = take_all(&replies);
     let refused: Vec<_> = calls.iter().filter(|(_, status)| *status != 200).collect();
-    assert_eq!(refused, [&(String::new(), 0); 0], "{calls:?}");
+    assert!(refused.is_empty(), "{refused:?}");
     let swaps = calls.iter().filter(|(path, _)| path == TOKEN_PATH).count();
     assert_eq!(swaps, 10, "one swap for each short process: {calls:?}");
     let who = calls.iter().filter(|(path, _)| path == "/v1/who").count();
