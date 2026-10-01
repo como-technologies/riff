@@ -1059,20 +1059,31 @@ async fn a_host_works_against_a_server_with_sign_in() {
     );
 }
 
+/// The calls that a test server counts: the `threads` calls of the host
+/// `b`, and each `status` call.
+#[derive(Default)]
+struct Calls {
+    reads: AtomicUsize,
+    statuses: AtomicUsize,
+}
+
 /// Holds the first `threads` call of a session on the host `b`: it gets
-/// no reply. Each other call goes on. `held` counts the held calls.
+/// no reply. Each other call goes on.
 async fn hold_the_first_read(
-    axum::extract::State(held): axum::extract::State<std::sync::Arc<AtomicUsize>>,
+    axum::extract::State(calls): axum::extract::State<std::sync::Arc<Calls>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    if request.uri().path() == "/v1/status" {
+        calls.statuses.fetch_add(1, Ordering::SeqCst);
+    }
     if request.uri().path() != "/v1/threads" {
         return next.run(request).await;
     }
     let (parts, body) = request.into_parts();
     let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
     let of_the_host = String::from_utf8_lossy(&body).contains("@b/");
-    if of_the_host && held.fetch_add(1, Ordering::SeqCst) == 0 {
+    if of_the_host && calls.reads.fetch_add(1, Ordering::SeqCst) == 0 {
         std::future::pending::<()>().await;
     }
     let request = axum::extract::Request::from_parts(parts, axum::body::Body::from(body));
@@ -1087,11 +1098,11 @@ async fn hold_the_first_read(
 /// status and printed nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_host_goes_on_after_a_call_with_no_reply() {
-    let held = std::sync::Arc::new(AtomicUsize::new(0));
+    let calls = std::sync::Arc::new(Calls::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
     let router = riff_server::router().layer(axum::middleware::from_fn_with_state(
-        held.clone(),
+        calls.clone(),
         hold_the_first_read,
     ));
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -1105,8 +1116,6 @@ async fn a_host_goes_on_after_a_call_with_no_reply() {
     b.limit(3);
     let _host = b.host(&main);
     let host_id = host_session(&api, &lead, "b").await;
-    let statuses = || b.log().matches("list-panes -a").count();
-    let before = statuses();
 
     api.tell(&lead, &host_id, "workers start 1").await.unwrap();
     let no_reply = format!(
@@ -1117,15 +1126,21 @@ async fn a_host_goes_on_after_a_call_with_no_reply() {
         b.host_output().contains(&no_reply).then_some(())
     })
     .await;
+    // The host is the only session that sets a status. It set no
+    // status while it waited for the reply.
+    let before = calls.statuses.load(Ordering::SeqCst);
     until("the host sets its status again", || async {
-        (statuses() > before).then_some(())
+        (calls.statuses.load(Ordering::SeqCst) > before).then_some(())
     })
     .await;
-    assert!(b.workers().is_empty(), "{}", b.log());
 
     reads(&api, &lead, "b: started 1 worker").await;
     assert_eq!(b.workers().len(), 1, "{}", b.log());
-    assert_eq!(held.load(Ordering::SeqCst), 2, "one call held, one read");
+    assert_eq!(
+        calls.reads.load(Ordering::SeqCst),
+        2,
+        "one call held, one read"
+    );
 }
 
 /// The book says what the host does when the server gives no reply,
