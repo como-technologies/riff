@@ -156,9 +156,9 @@ async fn three_sessions(server: &str, dir: &Path, path: &Path) {
 }
 
 /// A session `id` of mike on pangolin at `place`, `OWNER/REPO` or
-/// `OWNER/REPO#WORKTREE`, with the claim `issue-12` in the thread of its
+/// `OWNER/REPO#WORKTREE`, with the claim `item` in the thread of its
 /// repository. It is live until the test ends.
-async fn session_at(server: &str, place: &str, id: &str) {
+async fn session_at(server: &str, place: &str, id: &str, item: Option<&str>) {
     let (repo, worktree) = place.split_once('#').unwrap_or((place, ""));
     let fragment = if worktree.is_empty() {
         String::new()
@@ -170,8 +170,10 @@ async fn session_at(server: &str, place: &str, id: &str) {
         .unwrap();
     let api = Api::new(server);
     api.register(&uri).await.unwrap();
-    let thread = uri.default_thread().unwrap();
-    api.claim(&uri, &thread, "issue-12").await.unwrap();
+    if let Some(item) = item {
+        let thread = uri.default_thread().unwrap();
+        api.claim(&uri, &thread, item).await.unwrap();
+    }
     live_at(server, uri).await;
 }
 
@@ -436,6 +438,47 @@ fn the_book_shows_real_top_commands() {
     }
 }
 
+/// The example table of "See what each session does" in How It Works
+/// has the form of the output: the wave line names its repository, and
+/// each session line names its place after the session ID. It shows
+/// two repositories and a worktree (01M3WNHCD659FH3Z5VYYH69WWR).
+#[test]
+fn the_book_example_names_the_place_of_each_session() {
+    let page = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let part = page
+        .split("\n## See what each session does\n")
+        .nth(1)
+        .unwrap();
+    let example = part.split("```text\n").nth(1).unwrap();
+    let example = example.split("```").next().unwrap();
+    assert!(
+        example.contains("\nWave 3 (como-technologies/riff)\n"),
+        "{example}"
+    );
+    let mut places = Vec::new();
+    for line in example.lines().filter(|l| l.contains("─ ")) {
+        let words: Vec<&str> = line.split("─ ").nth(1).unwrap().split("  ").collect();
+        // A host line has one word. A session line starts with its ID.
+        if words.len() > 1 {
+            assert_eq!(words[0].len(), 8, "{line}");
+            let repo = words[1].split('#').next().unwrap();
+            assert!(["riff", "strata"].contains(&repo), "{line}");
+            places.push(words[1]);
+        }
+        assert!(line.chars().count() <= 80, "{line}");
+    }
+    for want in ["riff", "riff#issue-7", "strata#issue-88"] {
+        assert!(places.contains(&want), "{want}: {places:?}");
+    }
+    assert!(
+        example.contains("  strata#issue-88  lead  "),
+        "a lead line names its repository: {example}"
+    );
+}
+
 /// A pause makes each live session `paused`, with the step it stopped
 /// at. A stale block does not come first (01M3QB6CJ1XCQG5B1BVR8AF3B4).
 #[tokio::test(flavor = "multi_thread")]
@@ -502,10 +545,10 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     let release = ["release", "issue-12"];
     output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
     // The first session of mike in strata is its lead.
-    session_at(&server, "como-technologies/strata", "d4").await;
-    session_at(&server, "como-technologies/strata#issue-88", "e5").await;
-    session_at(&server, "como-technologies/riff#issue-12", "f6").await;
-    output(riff(&server, dir, Some("f6"), bin.path(), &release)).await;
+    let strata = "como-technologies/strata";
+    session_at(&server, strata, "d4", Some("issue-12")).await;
+    session_at(&server, &format!("{strata}#issue-88"), "e5", Some("issue-88")).await;
+    session_at(&server, "como-technologies/riff#issue-12", "f6", None).await;
 
     let top = ["top", "--once", "--color", "never"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
@@ -534,7 +577,7 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
         "the claims of strata are not on the board of riff: {top}"
     );
     assert_eq!(
-        detail(&top, "e5"),
+        detail(&top, "d4"),
         ["working on #12"],
         "no title of riff for an issue of strata: {top}"
     );
@@ -560,7 +603,7 @@ async fn two_owners_show_the_owner_of_each_repository() {
     let dir = dir.path();
     let bin = bin(true);
     three_sessions(&server, dir, bin.path()).await;
-    session_at(&server, "acme/strata#issue-88", "d4").await;
+    session_at(&server, "acme/strata#issue-88", "d4", Some("issue-88")).await;
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
