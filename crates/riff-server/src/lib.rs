@@ -2457,8 +2457,8 @@ struct WatchQuery {
     uri: SessionUri,
 }
 
-/// Streams the wakes for one session. The session is live while the
-/// stream is open. It gives only the wakes of the session, in threads
+/// Streams the wakes for one session. The open stream is no sign of life
+/// (01M3WG240PNMQYZ7TX6Z7ZF6M9). It gives only the wakes of the session, in threads
 /// that it may read ([`state::may_read`]).
 async fn watch(
     AxumState(s): AxumState<Shared>,

@@ -1202,8 +1202,8 @@ impl Api {
         Changed { done, news }
     }
 
-    /// The wakes for one session, on one connection. The session is
-    /// live while the stream is open. [`follow`] connects again.
+    /// The wakes for one session, on one connection. The open stream is
+    /// no sign of life: see [`keep_alive`]. [`follow`] connects again.
     pub async fn watch(&self, me: &SessionUri) -> Result<impl Stream<Item = Result<Wake>>> {
         self.events("watch", &[("uri", me.to_string())]).await
     }
