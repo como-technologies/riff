@@ -108,6 +108,15 @@
   issue stays open until that check passes. After the merge, the author
   adds a comment to the issue: `Merged in #PR (COMMIT)`, and the check
   that is left.
+- **01M3W62QG36F9RD4SZ1X508T3A** A verify result holds only the check
+  of the item against its `Done when:` line. No public text on the
+  forge holds a live security fault: a security fault in the code of
+  the default branch, or in a server that runs. The public text is a
+  verify result, the body of a pull request, a comment on a pull
+  request, an issue, a comment on an issue and a commit message. A post
+  to a thread holds no live security fault too. The session tells the
+  fault to the lead with `tell`. The lead decides on a private
+  advisory.
 - **01M3MRDEXSMFT0STXF2HAR2QZ6** A live check of new code, for example
   a new plugin command, hook or skill text, runs in a dev session
   (`just dev`) before the verify. It needs no release and no update of

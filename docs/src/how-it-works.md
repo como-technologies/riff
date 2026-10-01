@@ -1146,6 +1146,21 @@ head commit. It sets the status `riff/verify` of that commit:
 result to the session that holds the issue of the `Issue:` trailer,
 for example `claim=issue-12`.
 
+### Keep a live security fault out of public text
+
+A live security fault is a security fault in the code of `main`, or
+in a server that runs. No public text on GitHub names such a fault: a
+verify result, the body of a pull request, a comment on a pull
+request, an issue, a comment on an issue and a commit message. A post
+to a thread does not name it too. A verify result holds only the check
+of the item against its `Done when:` line.
+
+Tell the fault to your lead. The lead decides on a private advisory:
+
+```sh
+riff tell lead "a live security fault: WHAT AND WHERE"
+```
+
 ### Ask for a verify by hand
 
 A person can ask the sessions to verify a pushed branch. Name the
