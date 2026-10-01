@@ -11,6 +11,7 @@ use isolated::Isolated;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use riff::api::Api;
@@ -64,9 +65,8 @@ exit 0
 /// hangs.
 const WAIT: Duration = Duration::from_secs(60);
 
-/// The bound of a stop after a signal. A host that is not under load
-/// stops in under 2 seconds (01M3NBV405PVYHKTMQ5VN87FYN). The test
-/// checks the intent: the stop does not wait for the step that runs. A
+/// The bound of a stop after a signal. A host stops at once
+/// (01M3NBV405PVYHKTMQ5VN87FYN). The test checks the intent: the stop does not wait for the step that runs. A
 /// slow call of the fake `tmux` takes 30 seconds, and a wake or a
 /// keyring that does not answer never comes.
 const STOPS: Duration = Duration::from_secs(15);
@@ -1057,4 +1057,113 @@ async fn a_host_works_against_a_server_with_sign_in() {
         "{}",
         b.host_output()
     );
+}
+
+/// The calls that a test server counts: the `threads` calls of the host
+/// `b`, and each `status` call.
+#[derive(Default)]
+struct Calls {
+    reads: AtomicUsize,
+    statuses: AtomicUsize,
+}
+
+/// Holds the first `threads` call of a session on the host `b`: it gets
+/// no reply. Each other call goes on.
+async fn hold_the_first_read(
+    axum::extract::State(calls): axum::extract::State<std::sync::Arc<Calls>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if request.uri().path() == "/v1/status" {
+        calls.statuses.fetch_add(1, Ordering::SeqCst);
+    }
+    if request.uri().path() != "/v1/threads" {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    let of_the_host = String::from_utf8_lossy(&body).contains("@b/");
+    if of_the_host && calls.reads.fetch_add(1, Ordering::SeqCst) == 0 {
+        std::future::pending::<()>().await;
+    }
+    let request = axum::extract::Request::from_parts(parts, axum::body::Body::from(body));
+    next.run(request).await
+}
+
+/// A call of the host that gets no reply ends after
+/// [`riff::host::CALL_WAIT`]. The host says so on its output and goes
+/// on: it sets its status again, and it reads the request of the lead at
+/// its next refresh (01M3WN72M02P3J24ACCHTMNSFY). Before, the host
+/// waited for the reply with no end: it started no worker, set no
+/// status and printed nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_goes_on_after_a_call_with_no_reply() {
+    let calls = std::sync::Arc::new(Calls::default());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let router = riff_server::router().layer(axum::middleware::from_fn_with_state(
+        calls.clone(),
+        hold_the_first_read,
+    ));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    api.register(&lead).await.unwrap();
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let b = Machine::new("b", api.base());
+    b.limit(3);
+    let _host = b.host(&main);
+    let host_id = host_session(&api, &lead, "b").await;
+
+    api.tell(&lead, &host_id, "workers start 1").await.unwrap();
+    let no_reply = format!(
+        "riff: cannot read the requests: {}",
+        riff::text::no_reply(api.base(), riff::host::CALL_WAIT)
+    );
+    until("the host says that it got no reply", || async {
+        b.host_output().contains(&no_reply).then_some(())
+    })
+    .await;
+    // The host is the only session that sets a status. It set no
+    // status while it waited for the reply.
+    let before = calls.statuses.load(Ordering::SeqCst);
+    until("the host sets its status again", || async {
+        (calls.statuses.load(Ordering::SeqCst) > before).then_some(())
+    })
+    .await;
+
+    reads(&api, &lead, "b: started 1 worker").await;
+    assert_eq!(b.workers().len(), 1, "{}", b.log());
+    assert_eq!(
+        calls.reads.load(Ordering::SeqCst),
+        2,
+        "one call held, one read"
+    );
+}
+
+/// The book says what the host does when the server gives no reply,
+/// with the real line and the real times (01M3WN72M02P3J24ACCHTMNSFY).
+#[test]
+fn the_book_says_what_a_host_does_with_no_reply() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let book = std::fs::read_to_string(root.join("../../docs/src/how-it-works.md")).unwrap();
+    let how = &book[book
+        .find("### When the server gives a workers host no reply")
+        .unwrap()..];
+    let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+    let line = format!(
+        "riff: cannot read the requests: {}",
+        riff::text::no_reply("https://riff.example.com", riff::host::CALL_WAIT)
+    );
+    let refresh = format!("Each {} seconds", riff::host::REFRESH.as_secs());
+    for words in [
+        line.as_str(),
+        refresh.as_str(),
+        "```sh\nriff workers\n```",
+        "```mermaid",
+    ] {
+        assert!(how.contains(words), "the book has no {words:?}");
+    }
 }

@@ -88,6 +88,28 @@
 //!   (01M3QCMJ9F1GRTRRSB4AW9TC3D). See [`outage`].
 //! - [`follow`] opens a stream again each time it ends (R131). `riff
 //!   watch` and `riff tail` use it.
+//!
+//! # Streams
+//!
+//! A call uses a connection from the pool of the client. A stream
+//! (`watch`, `tail`) never does: each stream opens a connection of its
+//! own, and that connection never goes to the pool
+//! (01M3WN72ECF0WKR4M7M6ZYAF9J). So no call can get the connection of an
+//! open stream.
+//!
+//! A process with a stream and calls on one pool can lose a call. The
+//! pool can give a stream a connection at the moment a call gives it
+//! back, and then take it back as idle while the stream is open. The
+//! next call goes on that connection, and waits for the end of the
+//! stream: it gets no reply.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C[a call] --> P[the pool: connections for calls]
+//!     P --> S[riff-server]
+//!     W[a stream: watch, tail] --> O[a connection of its own, never in the pool]
+//!     O --> S
+//! ```
 
 use std::future::Future;
 use std::sync::Arc;
@@ -431,6 +453,9 @@ pub struct Probe {
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,
+    /// The client of the streams. It has no pool: see "Streams" in the
+    /// module doc.
+    streams: reqwest::Client,
     base: String,
     auth: Option<Arc<Auth>>,
     /// Where the client shows [`WAITING`]. `None` is stderr.
@@ -460,6 +485,12 @@ impl Api {
     pub fn new(base: &str) -> Self {
         Self {
             http: reqwest::Client::new(),
+            // No idle connection is kept, so the client has no pool.
+            // `Client::new` stops the process on the same error.
+            streams: reqwest::Client::builder()
+                .pool_max_idle_per_host(0)
+                .build()
+                .expect("the HTTP client of the streams"),
             base: base.trim_end_matches('/').to_owned(),
             auth: None,
             waits: None,
@@ -607,6 +638,15 @@ impl Api {
             riff_checked: tokio::sync::OnceCell::new(),
         }));
         Ok(self)
+    }
+
+    /// The same caller for a stream: each request opens a connection of
+    /// its own (01M3WN72ECF0WKR4M7M6ZYAF9J).
+    fn for_stream(&self) -> Api {
+        Api {
+            http: self.streams.clone(),
+            ..self.clone()
+        }
     }
 
     /// The same server with no token.
@@ -1357,12 +1397,15 @@ impl Api {
     }
 
     /// Reads a server-sent event stream and parses each `data:` line.
+    /// The stream has a connection of its own
+    /// (01M3WN72ECF0WKR4M7M6ZYAF9J).
     async fn events<T: DeserializeOwned>(
         &self,
         op: &str,
         query: &[(&str, String)],
     ) -> Result<impl Stream<Item = Result<T>> + use<T>> {
         let response = self
+            .for_stream()
             .send(reqwest::Method::GET, &format!("/v1/{op}"), |r| {
                 r.query(query)
             })

@@ -2030,9 +2030,10 @@
   room: on each host first, on the machine of the lead last. This
   applies only while the rollout is off (01M3Q5QE9H42FQKEDC5G9GKCWD).
 - **01M3NBV405PVYHKTMQ5VN87FYN** Ctrl-C, SIGTERM and SIGHUP stop
-  `riff workers host` in under 2 seconds in each state: at start,
-  waiting for a wake, answering a request, setting its status, and
-  retrying after an error. It ends its session first.
+  `riff workers host` at once in each state: at start, waiting for a
+  wake, answering a request, setting its status, and retrying after an
+  error. The stop does not wait for a step that blocks. It ends its
+  session first.
 - **01M3NBV4294DS3WZFEKR7M3PNF** At start, `riff workers host` prints
   one line: the host, its limit, the lead that it serves and the
   repository.
@@ -2041,6 +2042,14 @@
   the process and the session of the first.
 - **01M3NBV46R0VB0JQNQ1ERG16J6** `riff workers host` reads no input
   and leaves the mode of the terminal as it is.
+- **01M3WN72M02P3J24ACCHTMNSFY** Each call of `riff workers host` to
+  the server has a time limit of 20 seconds. When no reply comes in
+  time, the host says so on its output and goes on. At its next
+  refresh, it sets its status again, and it reads the requests that it
+  did not read.
+- **01M3WN72ECF0WKR4M7M6ZYAF9J** Each stream of the client (`watch`,
+  `tail`) has a connection of its own. That connection is never in the
+  pool of the client, so no call uses the connection of an open stream.
 - **01M3Q5QE01DB0FJQJWFKR450KQ** `riff mcp` of the lead runs the
   rollout of workers. Once each interval, while the session is the lead
   and the riff runs, it looks at the free work and the idle workers.
