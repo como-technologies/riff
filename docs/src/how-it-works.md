@@ -536,20 +536,32 @@ Each agent session then gets its own short-lived token from `riff`.
 The token acts only as that session. `riff` keeps it in memory, not
 in the keyring.
 
-A refresh token works once. A refresh token that comes back after the
-next refresh ends the sign-in: somebody copied it. A lost reply is not
-a copy. When the pair of the last refresh is still unused, the reply
-did not come back, for example after a 503. `riff-server` then gives a
-new pair, and the sign-in stays.
+A refresh token works once. It names its chain and its generation:
+`chain.generation.secret`. A sign-in has one chain for the person, and
+one for each session. Each refresh gives the next generation of the
+chain. `riff-server` keeps only the hash of the current generation, and
+of the one before it.
+
+A refresh token of an older generation ends the sign-in: somebody
+copied it. A lost reply is not a copy. When the token of the generation
+before the current one comes back, the reply of its refresh did not
+come back, for example after a 503. `riff-server` then gives a new
+pair, and the sign-in stays. Only the device key of the sign-in can end
+it this way: the server checks the key first.
 
 ```mermaid
 flowchart TD
-    R[refresh token R1 comes back] --> U{R1 used before?}
-    U -- no --> N[new pair P2]
-    U -- yes --> L{P2 of the last use unused?}
-    L -- yes --> G[end P2, give a new pair: the reply was lost]
-    L -- no --> E[end the sign-in]
+    R[refresh token of generation G comes back] --> K{the device key of the sign-in?}
+    K -- no --> W[refuse; the sign-in stays]
+    K -- yes --> C{G is the current generation?}
+    C -- yes --> N[new pair, generation G+1]
+    C -- no --> L{G is the generation before it?}
+    L -- yes --> P[end the current pair, give a new pair: the reply was lost]
+    L -- no --> E[G is older: end the sign-in]
 ```
+
+A session chain ends after 24 hours with no refresh. `riff` then gets a
+new session token with the person token.
 
 ### Get back into the riff
 
@@ -2022,10 +2034,34 @@ The server forgets a session after 30 days with no sign of life. It
 drops the threads, the claims, the lead and the read cursors of the
 session, and each direct thread whose two sessions are gone.
 
-Tokens stay valid after a restart with a bucket. The server saves only
-a hash of each token. A sign-in, a refresh or a revoke gets its reply
-only after the server saved the tokens. So a restart never forgets a
-token that a person already has.
+A sign-in stays valid after a restart with a bucket. The server saves
+the people, the sign-ins and their chains in the object `signins.json`,
+with only a hash of each refresh token. It writes the object at most one
+time each second. The access tokens are only in memory: after a
+restart, `riff` refreshes one time by itself.
+
+A sign-in or a revoke gets its reply only after the server wrote the
+object. A refresh gets its reply before the write. So after a crash,
+the object can be one generation behind. The first refresh of each
+chain after a start takes the saved generation, or the next one, as
+good. While a write of the object fails, a refresh gets 503, and `riff`
+tries again.
+
+```mermaid
+sequenceDiagram
+    participant C as riff
+    participant E as riff-server
+    participant S as signins.json
+    C->>E: refresh, generation 7
+    E-->>C: pair of generation 8
+    Note over E: crash before the write
+    Note over S: holds generation 7
+    E->>S: new instance: load
+    C->>E: refresh, generation 8
+    Note over E: 8 is the next one after 7: good
+    E-->>C: pair of generation 9
+    E->>S: write generation 9
+```
 
 During a deploy, Cloud Run starts the new instance before it stops the
 old one. A lease in Cloud Storage makes sure that only one instance

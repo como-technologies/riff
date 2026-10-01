@@ -90,13 +90,19 @@
 //!   [`Service::new`] keeps its log in memory, and saves nothing (R34).
 //!   [`Service::save`] waits until the queue is written, and saves the
 //!   token store; `main` calls it on SIGTERM (R129).
-//! - The token store is the object [`store::TOKENS`]. A task saves it
-//!   each [`SAVE_EVERY`] when it changed (R127). The server knows the
-//!   [`store::Version`] of the object. Each save names it, so a save over
-//!   the changes of another instance fails (R141). A call that changes
-//!   the token store gets its reply only after the save (R128). When
-//!   that save fails, the reply is 503, and the task saves the tokens
-//!   again.
+//! - The token store is the object [`store::SIGN_INS`]. The server
+//!   writes it when it changed, at most one time each
+//!   [`auth::Config::save_every`] (R127). The server knows the
+//!   [`store::Version`] of the object. Each write names it, so a write
+//!   over the changes of another instance fails (R141). A sign-in, a
+//!   revoke and a change of the people get their reply only after the
+//!   write (R128). When that write fails, the reply is 503, and a task
+//!   writes the store again.
+//! - A refresh and a new session pair get their reply before the write
+//!   (01M3TFG527M04TA7ESM970X3B8). So after a crash, the object can be
+//!   one generation behind, and [`token::Tokens::refresh`] takes the next
+//!   generation as good. While the last write failed, a refresh first
+//!   writes the store again, and gets 503 when that write fails too.
 //! - A server with a store takes the [`lease`] before it loads, and
 //!   keeps reading it. A gate replies 503 to each call while the server
 //!   does not serve (R139). The server saves only while it holds the
@@ -134,7 +140,6 @@ pub mod state;
 pub mod store;
 pub mod token;
 
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -170,13 +175,14 @@ use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::lease::Lease;
 use crate::owner::{Check, Checks};
 use crate::state::{Delivery, State, may_read};
-use crate::store::{Memory, Store, StoreError, TOKENS, Version};
+use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
 
-/// The server saves the changed token store at most this often (R127).
+/// The least time between two writes of the token store (R127): the
+/// default of [`auth::Config::save_every`].
 pub const SAVE_EVERY: Duration = Duration::from_secs(1);
 
 /// The server looks for sessions to forget this often
@@ -194,6 +200,9 @@ struct Server {
     tokens_changes: AtomicU64,
     /// The number of changes to the token store that are saved.
     tokens_saved: AtomicU64,
+    /// True while the last write of the token store failed
+    /// (01M3TFG527M04TA7ESM970X3B8).
+    tokens_failed: AtomicBool,
     replay: Mutex<Replay>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
@@ -257,9 +266,18 @@ struct Gate {
 /// Where a server saves its token store.
 struct Saved {
     store: Arc<dyn Store>,
-    /// The version of each object that the server knows. The lock lets
-    /// only one save run at a time.
-    versions: tokio::sync::Mutex<HashMap<String, Version>>,
+    /// The last write of the token store. The lock lets only one write
+    /// run at a time.
+    written: tokio::sync::Mutex<Written>,
+}
+
+/// The last write of the token store.
+#[derive(Default)]
+struct Written {
+    /// The version of the object that the server knows (R141).
+    version: Option<Version>,
+    /// The start of the last write (R127).
+    at: Option<tokio::time::Instant>,
 }
 
 impl Server {
@@ -363,8 +381,10 @@ impl Server {
         self.tokens_changes.load(Ordering::SeqCst) > saved
     }
 
-    /// Saves the token store now, when a change after the first `mark`
-    /// changes is not saved (R128). A server with no store does nothing.
+    /// Writes the token store, when a change after the first `mark`
+    /// changes is not saved (R128). It waits until the last write is
+    /// [`Config::save_every`] old (R127). A server with no store does
+    /// nothing.
     async fn save_tokens_since(&self, mark: u64) -> Result<(), StoreError> {
         let Some(saved) = &self.saved else {
             return Ok(());
@@ -372,20 +392,21 @@ impl Server {
         if !self.tokens_unsaved(mark) {
             return Ok(());
         }
-        let mut versions = saved.versions.lock().await;
-        // A save that ran while this call waited for the lock can hold
+        let mut written = saved.written.lock().await;
+        // A write that ran while this call waited for the lock can hold
         // the change already.
         if !self.tokens_unsaved(mark) {
             return Ok(());
         }
-        self.save_tokens(saved, &mut versions).await
+        self.save_tokens(saved, &mut written).await
     }
 
-    async fn save_tokens(
-        &self,
-        saved: &Saved,
-        versions: &mut HashMap<String, Version>,
-    ) -> Result<(), StoreError> {
+    async fn save_tokens(&self, saved: &Saved, written: &mut Written) -> Result<(), StoreError> {
+        // At most one write each `save_every` (R127). Each call that
+        // waits for the lock finds its change in this write.
+        if let Some(at) = written.at {
+            tokio::time::sleep_until(at + self.config.save_every).await;
+        }
         let (bytes, changes) = {
             let tokens = self.tokens();
             let changes = self.tokens_changes.load(Ordering::SeqCst);
@@ -394,8 +415,10 @@ impl Server {
         if !self.leased() {
             return Err(StoreError::Failed("the server does not serve now".into()));
         }
-        let known = versions.get(TOKENS).copied();
-        let version = match saved.store.save(TOKENS, bytes, known).await {
+        written.at = Some(tokio::time::Instant::now());
+        let result = saved.store.save(SIGN_INS, bytes, written.version).await;
+        self.tokens_failed.store(result.is_err(), Ordering::SeqCst);
+        let version = match result {
             Ok(version) => version,
             Err(error) => {
                 if let StoreError::Conflict(_) = error {
@@ -404,9 +427,24 @@ impl Server {
                 return Err(error);
             }
         };
-        versions.insert(TOKENS.into(), version);
+        written.version = Some(version);
         self.tokens_saved.fetch_max(changes, Ordering::SeqCst);
         Ok(())
+    }
+
+    /// Lets a refresh go on, which gets its reply before the write of
+    /// the token store (01M3TFG527M04TA7ESM970X3B8). While the last write
+    /// failed, it writes the store again first, and refuses when that
+    /// write fails too. So the saved store does not fall more and more
+    /// generations behind.
+    async fn tokens_written(&self) -> Result<(), TokenError> {
+        if !self.tokens_failed.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        self.save_tokens_since(0).await.map_err(|error| {
+            tracing::error!("the token store was not saved: {error}");
+            no(UNAVAILABLE)
+        })
     }
 
     fn until(&self) -> MutexGuard<'_, Option<Instant>> {
@@ -791,7 +829,7 @@ impl Service {
     /// A server with the state that `store` holds. It takes the lease,
     /// waits, replays the log, and serves from the next whole second
     /// (R138, R142). It writes each change to the log of `store`, and
-    /// saves the token store within [`SAVE_EVERY`], while the service
+    /// saves the token store within [`Config::save_every`], while the service
     /// lives (R30). It fails when another instance took the lease during
     /// the wait, or when the log does not read (see [`log::replay`]).
     ///
@@ -827,12 +865,12 @@ impl Service {
         // before it (R142). See the lease module for the argument.
         tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
         let start = now_ms() / 1000;
-        let mut versions = HashMap::new();
-        let tokens = match store.load(TOKENS).await? {
+        let mut written = Written::default();
+        let tokens = match store.load(SIGN_INS).await? {
             Some(loaded) => {
-                versions.insert(TOKENS.into(), loaded.version);
+                written.version = Some(loaded.version);
                 Tokens::from_bytes(&loaded.bytes, Instant::now(), SystemTime::now())
-                    .map_err(|e| StoreError::not_valid(&*store, TOKENS, e))?
+                    .map_err(|e| StoreError::not_valid(&*store, SIGN_INS, e))?
             }
             None => Tokens::default(),
         };
@@ -865,7 +903,7 @@ impl Service {
         }
         let saved = Saved {
             store: store.clone(),
-            versions: tokio::sync::Mutex::new(versions),
+            written: tokio::sync::Mutex::new(written),
         };
         let until = asked + config.lease.valid_for;
         let service = Service::build(
@@ -882,6 +920,9 @@ impl Service {
         // Save the tokens once, so that a new riff ID stays
         // (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
         drop(service.0.tokens_change());
+        if let Err(error) = service.0.save_tokens_since(0).await {
+            tracing::error!("the token store was not saved: {error}");
+        }
         service.keep_lease(lease);
         service.save_each_second();
         Ok(service)
@@ -917,6 +958,7 @@ impl Service {
             tokens: Mutex::new(tokens),
             tokens_changes: AtomicU64::new(0),
             tokens_saved: AtomicU64::new(0),
+            tokens_failed: AtomicBool::new(false),
             replay: Mutex::new(replay),
             wakes,
             tail,
@@ -1137,11 +1179,11 @@ impl Service {
         let Some(saved) = &self.0.saved else {
             return Ok(());
         };
-        let mut versions = saved.versions.lock().await;
+        let mut written = saved.written.lock().await;
         if !self.0.leased() || !self.0.tokens_unsaved(0) {
             return Ok(());
         }
-        self.0.save_tokens(saved, &mut versions).await
+        self.0.save_tokens(saved, &mut written).await
     }
 
     /// Stops taking calls, then saves each unsaved change (R129). The
@@ -1187,11 +1229,12 @@ impl Service {
     }
 
     /// Starts the task that saves the changed token store each
-    /// [`SAVE_EVERY`]. The task ends when the service ends.
+    /// [`Config::save_every`]. The task ends when the service ends.
     fn save_each_second(&self) {
         let server = Arc::downgrade(&self.0);
+        let every = self.0.config.save_every;
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(SAVE_EVERY);
+            let mut tick = tokio::time::interval(every);
             tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
@@ -1671,15 +1714,26 @@ async fn idle_workers(
     Ok(Json(idle))
 }
 
+/// The OAuth error code of a 503 of the token endpoint.
+const UNAVAILABLE: &str = "temporarily_unavailable";
+
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
+/// A sign-in gets its reply after the write of the token store (R128).
+/// A refresh and a session pair do not wait for it
+/// (01M3TFG527M04TA7ESM970X3B8).
 async fn token(
     AxumState(s): AxumState<Shared>,
     headers: HeaderMap,
     Form(r): Form<TokenRequest>,
 ) -> impl IntoResponse {
     let no_store = || [(header::CACHE_CONTROL, "no-store")];
-    let refuse =
-        |error: TokenError| (StatusCode::BAD_REQUEST, no_store(), Json(error)).into_response();
+    let refuse = |error: TokenError| {
+        let status = match error.error.as_str() {
+            UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        (status, no_store(), Json(error)).into_response()
+    };
     if r.resource
         .as_ref()
         .is_some_and(|resource| !s.config.is_resource(resource))
@@ -1689,21 +1743,25 @@ async fn token(
     let Ok(proof) = s.proof(&headers, "POST", auth::TOKEN_PATH, None) else {
         return refuse(no("invalid_dpop_proof"));
     };
-    let mark = s.tokens_changes.load(Ordering::SeqCst);
     let reply = match r.grant_type.as_str() {
-        "refresh_token" => refresh(&s, &r, &proof),
+        "refresh_token" => refresh(&s, &r, &proof).await,
         TOKEN_EXCHANGE => match r.subject_token_type.as_deref() {
-            Some(ID_TOKEN_TYPE) => exchange(&s, &r, &proof).await,
-            Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof),
+            Some(ID_TOKEN_TYPE) => {
+                let mark = s.tokens_changes.load(Ordering::SeqCst);
+                let reply = exchange(&s, &r, &proof).await;
+                match s.save_tokens_since(mark).await {
+                    Ok(()) => reply,
+                    Err(error) => {
+                        tracing::error!("the token store was not saved: {error}");
+                        Err(no(UNAVAILABLE))
+                    }
+                }
+            }
+            Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof).await,
             _ => Err(no("invalid_request")),
         },
         _ => Err(no("unsupported_grant_type")),
     };
-    if let Err(error) = s.save_tokens_since(mark).await {
-        tracing::error!("the token store was not saved: {error}");
-        let error = no("temporarily_unavailable");
-        return (StatusCode::SERVICE_UNAVAILABLE, no_store(), Json(error)).into_response();
-    }
     match reply {
         Ok(pair) => (no_store(), Json(pair)).into_response(),
         Err(error) => refuse(error),
@@ -2029,11 +2087,16 @@ fn no(error: &str) -> TokenError {
 }
 
 /// Swaps a refresh token for a new pair.
-fn refresh(s: &Server, r: &TokenRequest, proof: &dpop::Proof) -> Result<TokenReply, TokenError> {
+async fn refresh(
+    s: &Server,
+    r: &TokenRequest,
+    proof: &dpop::Proof,
+) -> Result<TokenReply, TokenError> {
     let token = r.refresh_token.as_deref().unwrap_or_default();
     if !s.tokens().knows_refresh(token, &proof.jkt) {
         return Err(no("invalid_grant"));
     }
+    s.tokens_written().await?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
     s.tokens_change()
         .refresh(token, &proof.jkt, Instant::now())
@@ -2084,7 +2147,7 @@ async fn exchange(
 }
 
 /// Swaps a person access token for a session pair (R19).
-fn for_session(
+async fn for_session(
     s: &Server,
     r: &TokenRequest,
     proof: &dpop::Proof,
@@ -2096,6 +2159,7 @@ fn for_session(
     if s.tokens().caller(token, &proof.jkt, now).is_err() {
         return Err(no("invalid_grant"));
     }
+    s.tokens_written().await?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
     s.tokens_change()
         .for_session(token, &proof.jkt, session, now)

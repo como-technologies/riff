@@ -31,6 +31,7 @@ fn now_ms() -> u64 {
 struct Caller {
     key: Key,
     token: String,
+    refresh: String,
     me: SessionUri,
 }
 
@@ -50,6 +51,7 @@ impl Caller {
             return Caller {
                 key,
                 token: person.access_token,
+                refresh: person.refresh_token,
                 me,
             };
         };
@@ -65,8 +67,21 @@ impl Caller {
         Caller {
             key,
             token: pair.access_token,
+            refresh: pair.refresh_token,
             me,
         }
+    }
+
+    /// Gets a new access token with the refresh token, as `riff` does
+    /// after a restart of the server.
+    async fn refreshed(mut self, base: &str) -> Caller {
+        let form = format!("grant_type=refresh_token&refresh_token={}", self.refresh);
+        let reply = common::refresh(base, &self.key, &form).await;
+        assert_eq!(reply.status(), 200);
+        let pair: TokenReply = reply.json().await.unwrap();
+        self.token = pair.access_token;
+        self.refresh = pair.refresh_token;
+        self
     }
 
     async fn call(&self, base: &str, op: &str, body: &impl Serialize) -> reqwest::Response {
@@ -105,6 +120,7 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
     let config = Config {
         require_sign_in: true,
         lease: common::LEASE,
+        save_every: common::SAVE_EVERY,
         ..Config::new(&url)
     };
     let service = Service::load(config, store).await.unwrap();
@@ -324,6 +340,7 @@ async fn a_message_changed_in_storage_is_not_verified() {
     assert_eq!(seen, 4);
 
     let (_new, base) = start_on(Arc::new(store)).await;
+    let brett = brett.refreshed(&base).await;
     let reply = brett.read(&base, REPO).await;
     assert_eq!(reply.messages[1].body, "claim issue-99");
     assert!(reply.messages[2].from.lead());

@@ -103,6 +103,8 @@ pub struct Config {
     pub log: crate::log::Timing,
     /// When the server writes checkpoints, and which it keeps.
     pub checkpoint: crate::checkpoint::Settings,
+    /// The least time between two writes of the token store (R127).
+    pub save_every: std::time::Duration,
 }
 
 impl Default for Config {
@@ -125,6 +127,7 @@ impl Config {
             owner_role: crate::owner::Timing::default(),
             log: crate::log::Timing::default(),
             checkpoint: crate::checkpoint::Settings::default(),
+            save_every: crate::SAVE_EVERY,
         }
     }
 

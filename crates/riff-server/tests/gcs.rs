@@ -14,7 +14,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use riff_server::gcs::{Gcs, TOKEN_PATH};
 use riff_server::log::chunk_name;
-use riff_server::store::{LEASE, Store, StoreError, TOKENS};
+use riff_server::store::{LEASE, SIGN_INS, Store, StoreError};
 use serde_json::{Value, json};
 
 const BUCKET: &str = "riff-test";
@@ -174,23 +174,23 @@ async fn a_new_store_on_the_same_bucket_loads_the_saved_objects() {
     assert_eq!(loaded.version, saved);
     assert_eq!(second.load(LEASE).await.unwrap().unwrap().version, lease);
     assert_eq!(second.list("log/").await.unwrap(), [chunk]);
-    assert!(second.load(TOKENS).await.unwrap().is_none());
+    assert!(second.load(SIGN_INS).await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn a_save_with_an_old_version_fails() {
     let (_fake, url) = start().await;
     let store = store(&url);
-    let v1 = store.save(TOKENS, b"1".to_vec(), None).await.unwrap();
-    let v2 = store.save(TOKENS, b"2".to_vec(), Some(v1)).await.unwrap();
+    let v1 = store.save(SIGN_INS, b"1".to_vec(), None).await.unwrap();
+    let v2 = store.save(SIGN_INS, b"2".to_vec(), Some(v1)).await.unwrap();
     assert!(v2 > v1);
 
-    let stale = store.save(TOKENS, b"3".to_vec(), Some(v1)).await;
-    assert_eq!(stale, Err(StoreError::Conflict(TOKENS.into())));
+    let stale = store.save(SIGN_INS, b"3".to_vec(), Some(v1)).await;
+    assert_eq!(stale, Err(StoreError::Conflict(SIGN_INS.into())));
     // A save as new fails too: the object exists.
-    let new = store.save(TOKENS, b"3".to_vec(), None).await;
-    assert_eq!(new, Err(StoreError::Conflict(TOKENS.into())));
-    assert_eq!(store.load(TOKENS).await.unwrap().unwrap().bytes, b"2");
+    let new = store.save(SIGN_INS, b"3".to_vec(), None).await;
+    assert_eq!(new, Err(StoreError::Conflict(SIGN_INS.into())));
+    assert_eq!(store.load(SIGN_INS).await.unwrap().unwrap().bytes, b"2");
 }
 
 #[tokio::test]
@@ -203,11 +203,11 @@ async fn a_chunk_never_replaces_a_chunk() {
     assert_eq!(again, Err(StoreError::Conflict(chunk.clone())));
     assert_eq!(store.load(&chunk).await.unwrap().unwrap().bytes, b"first");
     // A deleted object is not written again as a side effect.
-    fake.lock().unwrap().objects.remove(TOKENS);
-    let v1 = store.save(TOKENS, b"1".to_vec(), None).await.unwrap();
-    fake.lock().unwrap().objects.remove(TOKENS);
-    let result = store.save(TOKENS, b"2".to_vec(), Some(v1)).await;
-    assert_eq!(result, Err(StoreError::Conflict(TOKENS.into())));
+    fake.lock().unwrap().objects.remove(SIGN_INS);
+    let v1 = store.save(SIGN_INS, b"1".to_vec(), None).await.unwrap();
+    fake.lock().unwrap().objects.remove(SIGN_INS);
+    let result = store.save(SIGN_INS, b"2".to_vec(), Some(v1)).await;
+    assert_eq!(result, Err(StoreError::Conflict(SIGN_INS.into())));
 }
 
 #[tokio::test]
@@ -220,7 +220,7 @@ async fn list_reads_each_page() {
         store.save(&name, vec![], None).await.unwrap();
         chunks.push(name);
     }
-    store.save(TOKENS, vec![], None).await.unwrap();
+    store.save(SIGN_INS, vec![], None).await.unwrap();
 
     assert_eq!(store.list("log/").await.unwrap(), chunks);
     assert!(store.list("none/").await.unwrap().is_empty());
@@ -311,22 +311,21 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     assert_eq!(call(&base, "claim", claim).await["granted"], false);
 }
 
-/// A token store from before the owner and members change: it has no
-/// `users` field.
-const OLD_TOKENS: &str = r#"{"next_sign_in":0,"sign_ins":[],"access":[],"refresh":[]}"#;
+/// A token store of an old format: it has no `chains` field.
+const OLD_TOKENS: &str = r#"{"next_sign_in":0,"users":{},"sign_ins":[]}"#;
 
 #[tokio::test]
 async fn a_token_store_of_an_old_format_stops_the_load_with_the_fix() {
     let (_fake, url) = start().await;
     let old = store(&url);
-    old.save(TOKENS, OLD_TOKENS.into(), None).await.unwrap();
+    old.save(SIGN_INS, OLD_TOKENS.into(), None).await.unwrap();
 
     let error = common::load_on(Arc::new(store(&url))).await.err().unwrap();
     assert!(matches!(error, StoreError::NotValid { .. }), "{error:?}");
     assert_eq!(
         error.to_string(),
-        "cannot read the saved object gs://riff-test/tokens: missing field `users` \
-         at line 1 column 57. It can be state of an old format. To start again with an \
+        "cannot read the saved object gs://riff-test/signins.json: missing field `chains` \
+         at line 1 column 43. It can be state of an old format. To start again with an \
          empty state, stop each server of this store and remove the old state: \
          gcloud storage rm 'gs://riff-test/**'"
     );

@@ -3,54 +3,90 @@
 //! # Model
 //!
 //! ```text
-//!  sign-in (user, last use)
-//!    ├─ access 1    expires after ACCESS_TTL
-//!    ├─ refresh 1   used: it gave pair 2
-//!    ├─ access 2
-//!    └─ refresh 2   not used yet
+//!  sign-in (user, device key, last use)
+//!    ├─ person chain        generation 7
+//!    │    └─ access tokens  each expires after ACCESS_TTL
+//!    └─ session chain a6cf  generation 3
+//!         └─ access tokens
 //! ```
 //!
 //! A sign-in holds the user and the thumbprint of the device key (R18).
-//! Each pair of tokens belongs to one sign-in. A person signs in with a
-//! verified email. The USER comes from the email (R208), and the store
-//! keeps the email of each USER: the first email that signs in with a
-//! USER holds it (R209, see [`Tokens::sign_in`]).
+//! A person signs in with a verified email. The USER comes from the
+//! email (R208), and the store keeps the email of each USER: the first
+//! email that signs in with a USER holds it (R209, see
+//! [`Tokens::sign_in`]).
 //!
 //! A pair is a *person* pair or a *session* pair (R19). `riff login`
 //! gets a person pair. [`Tokens::for_session`] swaps a live person
-//! access token for a session pair. A session pair has its own refresh
-//! chain in the same sign-in. So [`Tokens::caller`] gives a [`Who`]
-//! with the user and, for a session pair, the session ID.
-//! A token is 32 random bytes in URL-safe base64. The server keeps only
-//! the SHA-256 hash of each token, never the token.
+//! access token for a session pair. So [`Tokens::caller`] gives a
+//! [`Who`] with the user and, for a session pair, the session ID.
+//!
+//! Each pair belongs to a *chain* of its sign-in: the person chain, or
+//! the chain of one session. A sign-in has at most one live chain for
+//! the person and for each session (01M3TFG4PN1DWY1FXX0SVB3H3R). A
+//! refresh token names its chain and its generation:
+//! `chain.generation.secret`. The chain ID and the secret are random
+//! bytes in URL-safe base64. Each refresh gives the next generation.
+//!
+//! The server keeps only SHA-256 hashes, never a token (R81). For each
+//! chain, it keeps the hash of the refresh token of the current
+//! generation, and the hash of the one before it, for a lost reply. It
+//! keeps nothing for an older generation.
 //!
 //! # Rules
 //!
 //! - Each token works only with the device key of its sign-in. The
 //!   caller checks the DPoP proof and passes the thumbprint of its key
-//!   (see [`riff_core::dpop`]).
-//! - An access token expires [`ACCESS_TTL`] after it is issued.
-//! - A refresh token works once. It gives a new pair, and the server
-//!   marks it as used.
-//! - A used refresh token that comes back revokes the sign-in: each of
-//!   its access and refresh tokens stops working. The server keeps a
-//!   used refresh token for [`REUSE_WINDOW`]. After that, it is not
-//!   known (R116).
-//! - A lost reply is not a reuse (01M3MX4TG7PNNETZ986DQS10JJ). When the
-//!   refresh token of the pair that the last use gave is still unused,
-//!   the reply of that use never came back: for example a 503 after a
-//!   failed save, or a process that stopped. The server then ends that
-//!   pair and gives a new one. Only a reuse after the next refresh
-//!   revokes the sign-in.
+//!   (see [`riff_core::dpop`]). [`Tokens::refresh`] checks the key
+//!   before the generation, so only the device key ends a sign-in by
+//!   reuse (R110).
+//! - An access token expires [`ACCESS_TTL`] after it is issued. The
+//!   access tokens are only in memory: the saved form has none. After a
+//!   restart, each client refreshes one time.
+//! - The refresh token of the current generation gives the next
+//!   generation.
+//! - A refresh token of an older generation that comes back revokes the
+//!   sign-in: each of its access and refresh tokens stops working
+//!   (01M3TFG4SJ5C96NH8W7XRXJG6Z).
+//! - A lost reply is not a reuse (01M3MX4TG7PNNETZ986DQS10JJ). The
+//!   refresh token of the generation before the current one comes back
+//!   when the reply of its use never came: for example a 503, or a
+//!   process that stopped. The server then ends the pair of the current
+//!   generation, and gives a new pair with the same generation. Only a
+//!   reuse after the next refresh revokes the sign-in.
+//! - After a load, the saved form can be one generation behind: the
+//!   server saves it after the reply of a refresh. So the first refresh
+//!   of a loaded chain also takes the next generation as good
+//!   (01M3TFG4WE7CZQ4TCJE2NTC52E). The server has no hash of that
+//!   token. The device key of the sign-in is the check.
 //! - A sign-in expires when no refresh token of it is used for
-//!   [`REFRESH_IDLE`].
-//! - A refresh gives a pair of the same kind: a session pair stays for
+//!   [`REFRESH_IDLE`]. A session chain ends when its refresh token is
+//!   not used for [`SESSION_IDLE`]. The session then swaps the person
+//!   token again.
+//! - A refresh gives a pair of the same chain: a session pair stays for
 //!   its session.
-//! - Only a person access token gives a session pair (R105).
+//! - Only a person access token gives a session pair (R105). A new
+//!   session pair ends the old chain of that session.
 //! - [`Tokens::revoke_user`] ends each sign-in of one person at once
 //!   (R20). This ends the session pairs too. It leaves the USER of the
 //!   person: only that email signs in as that USER again.
-//! - A token that the server does not know is refused.
+//! - A token that the server does not know is refused. A refresh token
+//!   with a wrong secret is not known, and changes nothing.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     T[refresh token chain.G.secret] --> K{device key of the sign-in?}
+//!     K -- no --> W[refuse: wrong key]
+//!     K -- yes --> C{G is the current generation, and the hash matches?}
+//!     C -- yes --> N[give generation G+1]
+//!     C -- no --> B{G is the one before, and the hash matches?}
+//!     B -- yes --> L[lost reply: end the current pair, give a new one]
+//!     B -- no --> A{G is the next one, on a chain not used since the load?}
+//!     A -- yes --> M[the saved form was behind: give generation G+1]
+//!     A -- no --> O{G is older than the one before?}
+//!     O -- yes --> E[reuse: end the sign-in]
+//!     O -- no --> U[refuse: not known]
+//! ```
 //!
 //! The store does no I/O and reads no clock. The caller passes `now`.
 //!
@@ -122,23 +158,30 @@
 //! # Saved form
 //!
 //! [`Tokens::to_bytes`] gives the store as JSON, and [`Tokens::from_bytes`]
-//! loads it again (R124). The JSON holds only the hash of each token
-//! (R81). Each time in it is a wall-clock time, so the time that the
-//! server was down counts. The store keeps each time as a deadline in the
-//! future, so a new process can always hold it.
+//! loads it again (R124). The JSON holds the people, the sign-ins and
+//! the chains, with only the hashes of the refresh tokens (R81). It holds
+//! no access token (01M3TFG551C76BP4TRA32P7VC3). Each time in it is a
+//! wall-clock time, so the time that the server was down counts. The
+//! store keeps each time as a deadline in the future, so a new process
+//! can always hold it.
 //!
 //! ```
 //! use std::time::{Instant, SystemTime};
-//! use riff_server::token::Tokens;
+//! use riff_server::token::{Refused, Tokens};
 //!
 //! let (now, wall) = (Instant::now(), SystemTime::now());
 //! let mut tokens = Tokens::default();
 //! let pair = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
 //! let bytes = tokens.to_bytes(now, wall);
-//! assert!(!String::from_utf8_lossy(&bytes).contains(&pair.access_token));
+//! let secret = pair.refresh_token.rsplit('.').next().unwrap();
+//! assert!(!String::from_utf8_lossy(&bytes).contains(secret));
 //!
-//! let loaded = Tokens::from_bytes(&bytes, Instant::now(), SystemTime::now()).unwrap();
-//! assert_eq!(loaded.check(&pair.access_token, "k", Instant::now()).unwrap(), "mike");
+//! // After a load, the refresh token works. The access token does not.
+//! let now = Instant::now();
+//! let mut loaded = Tokens::from_bytes(&bytes, now, SystemTime::now()).unwrap();
+//! assert_eq!(loaded.check(&pair.access_token, "k", now), Err(Refused::Unknown));
+//! let next = loaded.refresh(&pair.refresh_token, "k", now).unwrap();
+//! assert_eq!(loaded.check(&next.access_token, "k", now).unwrap(), "mike");
 //! ```
 //!
 //! # Example
@@ -155,8 +198,14 @@
 //! // Another device key cannot use the token.
 //! assert_eq!(tokens.check(&first.access_token, "jkt-thief", now), Err(Refused::WrongKey));
 //!
-//! // A refresh token gives a new pair once.
+//! // A refresh token names its chain and its generation.
+//! let part = |token: &str, n: usize| token.split('.').nth(n).unwrap().to_owned();
+//! assert_eq!(part(&first.refresh_token, 1), "1");
+//!
+//! // A refresh token gives the next generation of its chain.
 //! let second = tokens.refresh(&first.refresh_token, "jkt-laptop", now).unwrap();
+//! assert_eq!(part(&second.refresh_token, 0), part(&first.refresh_token, 0));
+//! assert_eq!(part(&second.refresh_token, 1), "2");
 //! assert_eq!(tokens.check(&second.access_token, "jkt-laptop", now).unwrap(), "mike");
 //!
 //! // A session pair acts only as its session.
@@ -194,9 +243,9 @@ pub const ACCESS_TTL: Duration = Duration::from_secs(10 * 60);
 /// A sign-in ends when no refresh token of it is used this long (R80).
 pub const REFRESH_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
-/// The server keeps a used refresh token this long, to find reuse
-/// (R116).
-pub const REUSE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+/// A session chain ends when its refresh token is not used this long
+/// (01M3TFG4ZCWS98R7W6RYZFWZXF).
+pub const SESSION_IDLE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The USER of the riff server itself. The server posts its own notes as
 /// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
@@ -271,8 +320,10 @@ type Hash = [u8; 32];
 #[derive(Default)]
 pub struct Tokens {
     sign_ins: HashMap<u64, SignIn>,
+    /// The live access tokens. They are only in memory.
     access: HashMap<Hash, Access>,
-    refresh: HashMap<Hash, Refresh>,
+    /// The chains of refresh tokens, by chain ID.
+    chains: HashMap<String, Chain>,
     next_sign_in: u64,
     /// The verified email of each USER, in lower case (R209).
     users: BTreeMap<String, String>,
@@ -348,20 +399,63 @@ struct Access {
     expires: Instant,
 }
 
-struct Refresh {
+/// One chain of refresh tokens: the person chain of a sign-in, or the
+/// chain of one session (01M3TFG4SJ5C96NH8W7XRXJG6Z).
+struct Chain {
     sign_in: u64,
+    /// The session of a session chain. `None` for the person chain.
     session: Option<String>,
-    /// For a used token: the server forgets it at this time.
-    used: Option<Instant>,
-    /// For a used token: the pair that its last use gave.
-    gave: Option<Gave>,
+    /// The current generation. The first pair has generation 1.
+    generation: u64,
+    /// The hash of the refresh token of the current generation.
+    hash: Hash,
+    /// The hash of the refresh token of the generation before: the token
+    /// whose use gave the current one. `None` for the first generation.
+    before: Option<Hash>,
+    /// The hash of the access token of the current pair, to end it after
+    /// a lost reply. It is only in memory.
+    access: Option<Hash>,
+    /// True from the load until the first refresh: the saved form can be
+    /// one generation behind (01M3TFG4WE7CZQ4TCJE2NTC52E).
+    loaded: bool,
+    /// A session chain ends at this time, unless a refresh comes first.
+    /// `None` for the person chain: it ends with its sign-in.
+    idle_until: Option<Instant>,
 }
 
-/// The hashes of the pair that one refresh gave.
-#[derive(Clone, Copy)]
-struct Gave {
-    access: Hash,
-    refresh: Hash,
+/// A refresh token in its parts. The hash is of the whole token.
+struct Presented<'a> {
+    chain: &'a str,
+    generation: u64,
+    hash: Hash,
+}
+
+impl<'a> Presented<'a> {
+    /// `None` when `token` is not `chain.generation.secret`.
+    fn parse(token: &'a str) -> Option<Self> {
+        let mut parts = token.split('.');
+        let (chain, generation, secret) = (parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some() || chain.is_empty() || secret.is_empty() {
+            return None;
+        }
+        Some(Presented {
+            chain,
+            generation: generation.parse().ok()?,
+            hash: hash(token),
+        })
+    }
+}
+
+/// What a refresh token is for its chain.
+enum Step {
+    /// The current generation: give the next one.
+    Next,
+    /// The generation before, while the current one is not used: the
+    /// reply was lost.
+    Lost,
+    /// The generation after the saved one, on a chain not used since the
+    /// load.
+    Ahead,
 }
 
 impl Tokens {
@@ -419,7 +513,7 @@ impl Tokens {
                 idle_until: now + REFRESH_IDLE,
             },
         );
-        Ok(self.issue(id, None, now))
+        Ok(self.start_chain(id, None, now))
     }
 
     /// Signs in a person from the provider, when the person may join the
@@ -999,59 +1093,95 @@ impl Tokens {
         Ok((email, sign_ins))
     }
 
-    /// True when `token` is a refresh token of a live sign-in on the
-    /// device key `jkt`, used or not. It changes nothing.
+    /// True when `token` names a chain of a live sign-in on the device
+    /// key `jkt`. It checks no generation and no secret, and it changes
+    /// nothing.
     pub fn knows_refresh(&self, token: &str, jkt: &str) -> bool {
-        self.refresh
-            .get(&hash(token))
-            .and_then(|r| self.sign_ins.get(&r.sign_in))
+        Presented::parse(token)
+            .and_then(|t| self.chains.get(t.chain))
+            .and_then(|c| self.sign_ins.get(&c.sign_in))
             .is_some_and(|s| s.jkt == jkt)
     }
 
-    /// Swaps a refresh token for a new pair. A refresh token works once,
-    /// and only with the device key `jkt` of its sign-in.
+    /// Swaps a refresh token for the next pair of its chain. It works
+    /// only with the device key `jkt` of its sign-in. See the rules and
+    /// the diagram in the module docs.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let g1 = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
+    /// let g2 = tokens.refresh(&g1.refresh_token, "k", now).unwrap();
+    /// let g3 = tokens.refresh(&g2.refresh_token, "k", now).unwrap();
+    ///
+    /// // Another key does not end the sign-in with an old generation.
+    /// assert_eq!(tokens.refresh(&g1.refresh_token, "thief", now), Err(Refused::WrongKey));
+    /// assert!(tokens.check(&g3.access_token, "k", now).is_ok());
+    ///
+    /// // The device key with an old generation ends it.
+    /// assert_eq!(tokens.refresh(&g1.refresh_token, "k", now), Err(Refused::Reused));
+    /// assert_eq!(tokens.check(&g3.access_token, "k", now), Err(Refused::Unknown));
+    /// ```
     pub fn refresh(&mut self, token: &str, jkt: &str, now: Instant) -> Result<TokenReply, Refused> {
         self.sweep(now);
-        let refresh = self.refresh.get_mut(&hash(token)).ok_or(Refused::Unknown)?;
-        let id = refresh.sign_in;
+        let presented = Presented::parse(token).ok_or(Refused::Unknown)?;
+        let chain = self.chains.get(presented.chain).ok_or(Refused::Unknown)?;
+        let id = chain.sign_in;
         let sign_in = self.sign_ins.get_mut(&id).ok_or(Refused::Unknown)?;
-        // Only the device key can end the sign-in by reuse (R110).
+        // The device key comes before the generation: only it can end
+        // the sign-in by reuse (R110).
         if sign_in.jkt != jkt {
             return Err(Refused::WrongKey);
         }
-        sign_in.idle_until = now + REFRESH_IDLE;
-        let session = refresh.session.clone();
-        let gave = refresh.gave;
-        if refresh.used.is_some() {
-            // The reply of the last use never came back when its pair is
-            // unused: a lost reply, not a theft (01M3MX4TG7PNNETZ986DQS10JJ).
-            let lost = gave.filter(|g| {
-                self.refresh
-                    .get(&g.refresh)
-                    .is_some_and(|r| r.used.is_none())
-            });
-            let Some(lost) = lost else {
-                self.revoke(id);
-                return Err(Refused::Reused);
-            };
-            self.access.remove(&lost.access);
-            self.refresh.remove(&lost.refresh);
+        let current = chain.generation;
+        let step = if presented.generation == current && presented.hash == chain.hash {
+            Step::Next
+        } else if presented.generation + 1 == current && chain.before == Some(presented.hash) {
+            Step::Lost
+        } else if presented.generation == current + 1 && chain.loaded {
+            Step::Ahead
+        } else if presented.generation + 1 < current {
+            self.revoke(id);
+            return Err(Refused::Reused);
         } else {
-            refresh.used = Some(now + REUSE_WINDOW);
+            return Err(Refused::Unknown);
+        };
+        sign_in.idle_until = now + REFRESH_IDLE;
+        let (generation, before) = match step {
+            Step::Next => (current + 1, Some(chain.hash)),
+            // The pair of the lost reply ends. The new pair takes its
+            // generation, so the token of the lost reply is not known.
+            Step::Lost => (current, chain.before),
+            Step::Ahead => (presented.generation + 1, Some(presented.hash)),
+        };
+        if let (Step::Lost, Some(lost)) = (&step, chain.access) {
+            self.access.remove(&lost);
         }
-        let pair = self.issue(id, session, now);
-        if let Some(refresh) = self.refresh.get_mut(&hash(token)) {
-            refresh.gave = Some(Gave {
-                access: hash(&pair.access_token),
-                refresh: hash(&pair.refresh_token),
-            });
-        }
-        Ok(pair)
+        let chain_id = presented.chain.to_owned();
+        Ok(self.issue(&chain_id, generation, before, now))
     }
 
     /// Swaps a live person access token for a session pair in the same
     /// sign-in (R19). The session pair works only for `session`, and
-    /// only with the device key `jkt`.
+    /// only with the device key `jkt`. It starts a new chain, and ends
+    /// the old chain of that session in the sign-in
+    /// (01M3TFG4PN1DWY1FXX0SVB3H3R).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let person = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
+    /// let old = tokens.for_session(&person.access_token, "k", "a6cf", now).unwrap();
+    /// let new = tokens.for_session(&person.access_token, "k", "a6cf", now).unwrap();
+    /// assert_eq!(tokens.refresh(&old.refresh_token, "k", now), Err(Refused::Unknown));
+    /// assert!(tokens.refresh(&new.refresh_token, "k", now).is_ok());
+    /// ```
     pub fn for_session(
         &mut self,
         token: &str,
@@ -1066,7 +1196,20 @@ impl Tokens {
         Who::new(who.user(), Some(session)).map_err(|_| Refused::Unknown)?;
         self.sweep(now);
         let id = self.access[&hash(token)].sign_in;
-        Ok(self.issue(id, Some(session.to_owned()), now))
+        let old = |c: &Chain| c.sign_in == id && c.session.as_deref() == Some(session);
+        for chain in self.chains.values().filter(|c| old(c)) {
+            if let Some(access) = chain.access {
+                self.access.remove(&access);
+            }
+        }
+        self.chains.retain(|_, c| !old(c));
+        Ok(self.start_chain(id, Some(session.to_owned()), now))
+    }
+
+    /// The number of live chains: one for each sign-in, and one for each
+    /// session with a live session pair.
+    pub fn chains(&self) -> usize {
+        self.chains.len()
     }
 
     /// Returns the user of a live access token, used with the device key
@@ -1164,8 +1307,9 @@ impl Tokens {
         keys.into_iter().map(str::to_owned).collect()
     }
 
-    /// The store as JSON, with only the hash of each token (R81). `now`
-    /// and `wall` are the same time on the two clocks.
+    /// The store as JSON, with only the hashes of the refresh tokens, and
+    /// with no access token (R81, 01M3TFG551C76BP4TRA32P7VC3). `now` and
+    /// `wall` are the same time on the two clocks.
     pub fn to_bytes(&self, now: Instant, wall: SystemTime) -> Vec<u8> {
         let clock = Clock { now, wall };
         let live = |t: Instant| (now < t).then(|| clock.save(t));
@@ -1193,34 +1337,21 @@ impl Tokens {
                     })
                 })
                 .collect(),
-            access: self
-                .access
+            chains: self
+                .chains
                 .iter()
-                .filter_map(|(hash, a)| {
-                    Some(SavedAccess {
-                        hash: URL_SAFE_NO_PAD.encode(hash),
-                        sign_in: a.sign_in,
-                        session: a.session.clone(),
-                        expires: live(a.expires)?,
-                    })
-                })
-                .collect(),
-            refresh: self
-                .refresh
-                .iter()
-                .filter_map(|(hash, r)| {
-                    Some(SavedRefresh {
-                        hash: URL_SAFE_NO_PAD.encode(hash),
-                        sign_in: r.sign_in,
-                        session: r.session.clone(),
-                        used: match r.used {
-                            Some(forget) => Some(live(forget)?),
+                .filter_map(|(id, c)| {
+                    Some(SavedChain {
+                        id: id.clone(),
+                        sign_in: c.sign_in,
+                        session: c.session.clone(),
+                        generation: c.generation,
+                        hash: URL_SAFE_NO_PAD.encode(c.hash),
+                        before: c.before.map(|h| URL_SAFE_NO_PAD.encode(h)),
+                        idle_until: match c.idle_until {
+                            Some(idle) => Some(live(idle)?),
                             None => None,
                         },
-                        gave: r.gave.map(|g| SavedGave {
-                            access: URL_SAFE_NO_PAD.encode(g.access),
-                            refresh: URL_SAFE_NO_PAD.encode(g.refresh),
-                        }),
                     })
                 })
                 .collect(),
@@ -1228,8 +1359,10 @@ impl Tokens {
         serde_json::to_vec(&saved).expect("the saved form is JSON")
     }
 
-    /// Loads a store from [`Tokens::to_bytes`]. It drops each token and
-    /// sign-in that ended while the server was down.
+    /// Loads a store from [`Tokens::to_bytes`]. It drops each chain and
+    /// sign-in that ended while the server was down. The first refresh
+    /// of each loaded chain takes the next generation as good too
+    /// (01M3TFG4WE7CZQ4TCJE2NTC52E).
     pub fn from_bytes(bytes: &[u8], now: Instant, wall: SystemTime) -> Result<Tokens, LoadError> {
         let saved: Saved = serde_json::from_slice(bytes).map_err(|e| LoadError(e.to_string()))?;
         let clock = Clock { now, wall };
@@ -1265,65 +1398,85 @@ impl Tokens {
                 tokens.sign_ins.insert(s.id, sign_in);
             }
         }
-        for a in saved.access {
-            if let Some(expires) = clock.load(a.expires) {
-                let access = Access {
-                    sign_in: a.sign_in,
-                    session: a.session,
-                    expires,
-                };
-                tokens.access.insert(unhash(&a.hash)?, access);
-            }
-        }
-        for r in saved.refresh {
-            let used = match r.used {
+        for c in saved.chains {
+            let idle_until = match c.idle_until {
                 None => None,
-                Some(forget) => match clock.load(forget) {
-                    Some(forget) => Some(forget),
+                Some(idle) => match clock.load(idle) {
+                    Some(idle) => Some(idle),
                     None => continue,
                 },
             };
-            let gave = match r.gave {
-                Some(g) => Some(Gave {
-                    access: unhash(&g.access)?,
-                    refresh: unhash(&g.refresh)?,
-                }),
-                None => None,
+            let chain = Chain {
+                sign_in: c.sign_in,
+                session: c.session,
+                generation: c.generation,
+                hash: unhash(&c.hash)?,
+                before: c.before.as_deref().map(unhash).transpose()?,
+                access: None,
+                loaded: true,
+                idle_until,
             };
-            let refresh = Refresh {
-                sign_in: r.sign_in,
-                session: r.session,
-                used,
-                gave,
-            };
-            tokens.refresh.insert(unhash(&r.hash)?, refresh);
+            tokens.chains.insert(c.id, chain);
         }
         tokens.sweep(now);
         Ok(tokens)
     }
 
-    fn issue(&mut self, sign_in: u64, session: Option<String>, now: Instant) -> TokenReply {
+    /// Starts a chain of `sign_in` and gives its first pair. `session`
+    /// is `None` for the person chain.
+    fn start_chain(&mut self, sign_in: u64, session: Option<String>, now: Instant) -> TokenReply {
+        let id = random_id();
+        let idle_until = session.is_some().then(|| now + SESSION_IDLE);
+        self.chains.insert(
+            id.clone(),
+            Chain {
+                sign_in,
+                session,
+                generation: 0,
+                hash: Hash::default(),
+                before: None,
+                access: None,
+                loaded: false,
+                idle_until,
+            },
+        );
+        self.issue(&id, 1, None, now)
+    }
+
+    /// Gives the pair of `generation` of a chain. `before` is the hash
+    /// of the refresh token of the generation before it.
+    fn issue(
+        &mut self,
+        chain_id: &str,
+        generation: u64,
+        before: Option<Hash>,
+        now: Instant,
+    ) -> TokenReply {
+        let access_token = random_token();
+        let refresh_token = format!("{chain_id}.{generation}.{}", random_token());
+        let access = hash(&access_token);
+        let Some(chain) = self.chains.get_mut(chain_id) else {
+            unreachable!("the caller found the chain")
+        };
+        chain.generation = generation;
+        chain.hash = hash(&refresh_token);
+        chain.before = before;
+        chain.access = Some(access);
+        chain.loaded = false;
+        if chain.session.is_some() {
+            chain.idle_until = Some(now + SESSION_IDLE);
+        }
+        let (sign_in, session) = (chain.sign_in, chain.session.clone());
         let user = self
             .sign_ins
             .get(&sign_in)
             .map_or_else(String::new, |s| s.user.clone());
-        let access_token = random_token();
-        let refresh_token = random_token();
         self.access.insert(
-            hash(&access_token),
+            access,
             Access {
                 sign_in,
-                session: session.clone(),
-                expires: now + ACCESS_TTL,
-            },
-        );
-        self.refresh.insert(
-            hash(&refresh_token),
-            Refresh {
-                sign_in,
                 session,
-                used: None,
-                gave: None,
+                expires: now + ACCESS_TTL,
             },
         );
         TokenReply {
@@ -1339,17 +1492,18 @@ impl Tokens {
     fn revoke(&mut self, sign_in: u64) {
         self.sign_ins.remove(&sign_in);
         self.access.retain(|_, a| a.sign_in != sign_in);
-        self.refresh.retain(|_, r| r.sign_in != sign_in);
+        self.chains.retain(|_, c| c.sign_in != sign_in);
     }
 
-    /// Forgets expired access tokens and idle sign-ins.
+    /// Forgets expired access tokens, idle sign-ins and idle session
+    /// chains.
     fn sweep(&mut self, now: Instant) {
         self.sign_ins.retain(|_, s| now < s.idle_until);
         let live = &self.sign_ins;
         self.access
             .retain(|_, a| now < a.expires && live.contains_key(&a.sign_in));
-        self.refresh.retain(|_, r| {
-            live.contains_key(&r.sign_in) && r.used.is_none_or(|forget| now < forget)
+        self.chains.retain(|_, c| {
+            live.contains_key(&c.sign_in) && c.idle_until.is_none_or(|idle| now < idle)
         });
     }
 }
@@ -1394,8 +1548,7 @@ struct Saved {
     #[serde(default)]
     take: Option<SavedTake>,
     sign_ins: Vec<SavedSignIn>,
-    access: Vec<SavedAccess>,
-    refresh: Vec<SavedRefresh>,
+    chains: Vec<SavedChain>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1412,29 +1565,18 @@ struct SavedSignIn {
     idle_until: u64,
 }
 
+/// One chain: the hash of the refresh token of its current generation,
+/// and of the one before it.
 #[derive(Serialize, Deserialize)]
-struct SavedAccess {
-    hash: String,
+struct SavedChain {
+    id: String,
     sign_in: u64,
     session: Option<String>,
-    expires: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedRefresh {
+    generation: u64,
     hash: String,
-    sign_in: u64,
-    session: Option<String>,
-    used: Option<u64>,
-    /// A saved form from before it has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    gave: Option<SavedGave>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedGave {
-    access: String,
-    refresh: String,
+    before: Option<String>,
+    /// For a session chain: it ends at this time.
+    idle_until: Option<u64>,
 }
 
 /// One time on the two clocks. It turns a deadline into a wall-clock
@@ -1467,6 +1609,13 @@ fn unhash(text: &str) -> Result<Hash, LoadError> {
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
         .ok_or_else(|| LoadError(format!("{text} is not a token hash")))
+}
+
+/// A new chain ID: 16 random bytes in URL-safe base64.
+fn random_id() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("the OS gives random bytes");
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 fn random_token() -> String {
@@ -1743,20 +1892,234 @@ mod tests {
         assert_eq!(tokens.sign_ins.len(), 2);
     }
 
+    /// The parts of a refresh token: the chain, the generation and the
+    /// secret.
+    fn parts(token: &str) -> (String, u64, String) {
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3, "{token}");
+        (parts[0].into(), parts[1].parse().unwrap(), parts[2].into())
+    }
+
     #[test]
-    fn sweep_forgets_old_used_refresh_tokens() {
+    fn a_refresh_token_names_its_chain_and_its_generation() {
+        let (mut tokens, first, now) = signed_in();
+        let (chain, generation, secret) = parts(&first.refresh_token);
+        assert_eq!(generation, 1);
+        assert_eq!(secret.len(), 43);
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (same, next, other) = parts(&second.refresh_token);
+        assert_eq!((same, next), (chain, 2));
+        assert_ne!(other, secret);
+    }
+
+    #[test]
+    fn the_server_keeps_only_the_hash_of_the_current_generation_and_the_one_before() {
         let (mut tokens, first, now) = signed_in();
         let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
-        assert_eq!(tokens.refresh.len(), 2);
-        let later = now + REUSE_WINDOW;
+        let third = tokens.refresh(&second.refresh_token, "k", now).unwrap();
+        assert_eq!(tokens.chains(), 1);
+        let text = String::from_utf8(tokens.to_bytes(now, SystemTime::now())).unwrap();
+        let saved = |token: &str| text.contains(&URL_SAFE_NO_PAD.encode(hash(token)));
+        assert!(saved(&third.refresh_token), "{text}");
+        assert!(saved(&second.refresh_token), "{text}");
+        assert!(!saved(&first.refresh_token), "{text}");
+        assert!(text.contains(r#""generation":3"#), "{text}");
+    }
+
+    #[test]
+    fn an_older_generation_is_reuse_at_any_time() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let later = now + REFRESH_IDLE / 2;
         let third = tokens.refresh(&second.refresh_token, "k", later).unwrap();
-        // The first token is gone. The second is used but new enough.
-        assert_eq!(tokens.refresh.len(), 2);
         assert_eq!(
             tokens.refresh(&first.refresh_token, "k", later),
+            Err(Refused::Reused)
+        );
+        assert_eq!(
+            tokens.refresh(&third.refresh_token, "k", later),
             Err(Refused::Unknown)
         );
-        assert!(tokens.refresh(&third.refresh_token, "k", later).is_ok());
+        assert_eq!(tokens.chains(), 0);
+    }
+
+    #[test]
+    fn the_key_is_checked_before_the_generation() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let third = tokens.refresh(&second.refresh_token, "k", now).unwrap();
+        // An old generation, and a generation that the server never
+        // gave, with another key: refused, and the sign-in stays.
+        let (chain, _, _) = parts(&first.refresh_token);
+        for token in [first.refresh_token.clone(), format!("{chain}.0.x")] {
+            assert_eq!(tokens.refresh(&token, "thief", now), Err(Refused::WrongKey));
+        }
+        assert_eq!(
+            tokens.check(&third.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
+        assert!(tokens.refresh(&third.refresh_token, "k", now).is_ok());
+    }
+
+    #[test]
+    fn a_wrong_secret_is_not_known_and_changes_nothing() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (chain, _, _) = parts(&second.refresh_token);
+        // The current generation, the one before and the next one.
+        for generation in [2, 1, 3] {
+            let forged = format!("{chain}.{generation}.{}", random_token());
+            assert_eq!(
+                tokens.refresh(&forged, "k", now),
+                Err(Refused::Unknown),
+                "generation {generation}"
+            );
+        }
+        for token in ["a.b", "a.1.b.c", ".1.b", "a.1.", "a.x.b", "a.-1.b"] {
+            assert_eq!(tokens.refresh(token, "k", now), Err(Refused::Unknown));
+        }
+        assert_eq!(
+            tokens.check(&second.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
+        assert!(tokens.refresh(&second.refresh_token, "k", now).is_ok());
+    }
+
+    #[test]
+    fn a_sign_in_has_one_chain_for_the_person_and_one_for_each_session() {
+        let (mut tokens, person, now) = signed_in();
+        let a = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        let b = tokens
+            .for_session(&person.access_token, "k", "b", now)
+            .unwrap();
+        assert_eq!(tokens.chains(), 3);
+        // A new pair for the session `a` ends its old chain.
+        let again = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        assert_eq!(tokens.chains(), 3);
+        assert_ne!(parts(&again.refresh_token).0, parts(&a.refresh_token).0);
+        assert_eq!(
+            tokens.refresh(&a.refresh_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(
+            tokens.check(&a.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        // The other chains go on, and a refresh makes no new chain.
+        for pair in [&person, &b, &again] {
+            assert!(tokens.refresh(&pair.refresh_token, "k", now).is_ok());
+        }
+        assert_eq!(tokens.chains(), 3);
+        // A second sign-in of the person has its own chains.
+        let other = tokens
+            .sign_in("mike@comotechnologies.io", "k", now)
+            .unwrap();
+        tokens
+            .for_session(&other.access_token, "k", "a", now)
+            .unwrap();
+        assert_eq!(tokens.chains(), 5);
+    }
+
+    #[test]
+    fn an_idle_session_chain_ends_and_the_sign_in_stays() {
+        let (mut tokens, person, now) = signed_in();
+        let a = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        let almost = now + SESSION_IDLE - Duration::from_secs(1);
+        let second = tokens.refresh(&a.refresh_token, "k", almost).unwrap();
+        let idle = almost + SESSION_IDLE;
+        assert_eq!(
+            tokens.refresh(&second.refresh_token, "k", idle),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(tokens.chains(), 1);
+        // The person token still works, and gives a new session pair.
+        let person = tokens.refresh(&person.refresh_token, "k", idle).unwrap();
+        assert!(
+            tokens
+                .for_session(&person.access_token, "k", "a", idle)
+                .is_ok()
+        );
+    }
+
+    /// The server stopped after a refresh and before it saved the
+    /// sign-ins. The saved form is one generation behind, and the
+    /// sign-in stays (01M3TFG4WE7CZQ4TCJE2NTC52E).
+    #[test]
+    fn a_crash_after_a_refresh_and_before_the_save_does_not_end_the_sign_in() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let wall = SystemTime::now();
+        let saved = tokens.to_bytes(now, wall);
+        // The client has the third pair. The saved form has the second.
+        let third = tokens.refresh(&second.refresh_token, "k", now).unwrap();
+        drop(tokens);
+
+        let mut loaded = Tokens::from_bytes(&saved, now, wall).unwrap();
+        let fourth = loaded.refresh(&third.refresh_token, "k", now).unwrap();
+        assert_eq!(parts(&fourth.refresh_token).1, 4);
+        assert_eq!(
+            loaded.check(&fourth.access_token, "k", now),
+            Ok("mike".to_owned())
+        );
+        // The chain goes on as before the crash: a lost reply, the next
+        // refresh, and a reuse.
+        let again = loaded.refresh(&third.refresh_token, "k", now).unwrap();
+        loaded.refresh(&again.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            loaded.refresh(&second.refresh_token, "k", now),
+            Err(Refused::Reused)
+        );
+    }
+
+    #[test]
+    fn after_a_load_the_current_generation_is_good() {
+        let (mut tokens, first, now) = signed_in();
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        let third = loaded.refresh(&second.refresh_token, "k", now).unwrap();
+        assert_eq!(parts(&third.refresh_token).1, 3);
+    }
+
+    #[test]
+    fn the_next_generation_is_good_only_for_the_first_refresh_after_a_load() {
+        let (mut tokens, first, now) = signed_in();
+        let (chain, _, _) = parts(&first.refresh_token);
+        let next = |generation: u64| format!("{chain}.{generation}.{}", random_token());
+        // On a chain that the server did not load, the next generation is
+        // not known.
+        assert_eq!(tokens.refresh(&next(2), "k", now), Err(Refused::Unknown));
+
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        // Two generations after the saved one: not known.
+        assert_eq!(loaded.refresh(&next(3), "k", now), Err(Refused::Unknown));
+        // Another key: refused.
+        assert_eq!(
+            loaded.refresh(&next(2), "thief", now),
+            Err(Refused::WrongKey)
+        );
+        let third = loaded.refresh(&next(2), "k", now).unwrap();
+        assert_eq!(parts(&third.refresh_token).1, 3);
+        // The chain was used since the load: the next generation is not
+        // known again.
+        assert_eq!(loaded.refresh(&next(4), "k", now), Err(Refused::Unknown));
+        assert!(loaded.refresh(&third.refresh_token, "k", now).is_ok());
+    }
+
+    #[test]
+    fn a_refresh_with_the_current_generation_ends_the_rule_for_the_next_one() {
+        let (tokens, first, now) = signed_in();
+        let (chain, _, _) = parts(&first.refresh_token);
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        let second = loaded.refresh(&first.refresh_token, "k", now).unwrap();
+        let forged = format!("{chain}.3.{}", random_token());
+        assert_eq!(loaded.refresh(&forged, "k", now), Err(Refused::Unknown));
+        assert!(loaded.refresh(&second.refresh_token, "k", now).is_ok());
     }
 
     #[test]
@@ -2018,20 +2381,23 @@ mod tests {
     }
 
     #[test]
-    fn tokens_work_after_a_restart() {
+    fn refresh_tokens_work_after_a_restart_and_access_tokens_do_not() {
         let (mut tokens, first, now) = signed_in();
         let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
         let session = tokens
             .for_session(&second.access_token, "k", "a", now)
             .unwrap();
         let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        for token in [&second.access_token, &session.access_token] {
+            assert_eq!(loaded.check(token, "k", now), Err(Refused::Unknown));
+        }
         let who = |t: &Tokens, token: &str| t.caller(token, "k", now).unwrap().to_string();
-        assert_eq!(who(&loaded, &second.access_token), "mike");
-        assert_eq!(who(&loaded, &session.access_token), "mike/a");
-        let third = loaded.refresh(&session.refresh_token, "k", now).unwrap();
-        assert_eq!(who(&loaded, &third.access_token), "mike/a");
+        let third = loaded.refresh(&second.refresh_token, "k", now).unwrap();
+        assert_eq!(who(&loaded, &third.access_token), "mike");
+        let next = loaded.refresh(&session.refresh_token, "k", now).unwrap();
+        assert_eq!(who(&loaded, &next.access_token), "mike/a");
         assert_eq!(
-            loaded.check(&second.access_token, "thief", now),
+            loaded.check(&third.access_token, "thief", now),
             Err(Refused::WrongKey)
         );
     }
@@ -2064,8 +2430,13 @@ mod tests {
             &second.refresh_token,
         ] {
             assert!(!text.contains(token.as_str()), "{text}");
+            let secret = token.rsplit('.').next().unwrap();
+            assert!(!text.contains(secret), "{text}");
         }
-        assert!(text.contains(&URL_SAFE_NO_PAD.encode(hash(&second.access_token))));
+        // It holds the hash of the refresh token, and no access token.
+        let saved = |token: &str| text.contains(&URL_SAFE_NO_PAD.encode(hash(token)));
+        assert!(saved(&second.refresh_token), "{text}");
+        assert!(!saved(&second.access_token), "{text}");
     }
 
     #[test]
@@ -2079,7 +2450,7 @@ mod tests {
             Err(Refused::Unknown)
         );
         assert_eq!(loaded.access.len(), 0);
-        // The used refresh token is still known.
+        // The old generation is still a reuse.
         assert_eq!(
             loaded.refresh(&first.refresh_token, "k", later),
             Err(Refused::Reused)
@@ -2088,12 +2459,14 @@ mod tests {
 
     #[test]
     fn a_restart_forgets_what_ended_while_the_server_was_down() {
-        let (mut tokens, first, now) = signed_in();
-        tokens.refresh(&first.refresh_token, "k", now).unwrap();
-        let (loaded, _) = restart(&tokens, now, REUSE_WINDOW);
-        assert_eq!(loaded.refresh.len(), 1, "only the unused refresh token");
+        let (mut tokens, person, now) = signed_in();
+        tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        let (loaded, _) = restart(&tokens, now, SESSION_IDLE);
+        assert_eq!(loaded.chains(), 1, "only the person chain");
         let (loaded, _) = restart(&tokens, now, REFRESH_IDLE);
-        assert!(loaded.sign_ins.is_empty() && loaded.refresh.is_empty());
+        assert!(loaded.sign_ins.is_empty() && loaded.chains.is_empty());
     }
 
     #[test]
@@ -2116,12 +2489,15 @@ mod tests {
     fn a_bad_saved_form_does_not_load() {
         let (now, wall) = (Instant::now(), SystemTime::now());
         assert!(Tokens::from_bytes(b"{", now, wall).is_err());
-        let bad_hash = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"access":[],
-            "refresh":[{"hash":"abc","sign_in":0,"session":null,"used":null}]}"#;
+        let empty = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"chains":[]}"#;
+        assert!(Tokens::from_bytes(empty, now, wall).is_ok());
+        let bad_hash = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"chains":[
+            {"id":"c","sign_in":0,"session":null,"generation":1,"hash":"abc",
+             "before":null,"idle_until":null}]}"#;
         assert!(Tokens::from_bytes(bad_hash, now, wall).is_err());
         let bad_id = br#"{"next_sign_in":0,"users":{},"sign_ins":[
             {"id":0,"user":"mike","jkt":"k","idle_until":18446744073709551615}],
-            "access":[],"refresh":[]}"#;
+            "chains":[]}"#;
         assert!(Tokens::from_bytes(bad_id, now, wall).is_err());
     }
 

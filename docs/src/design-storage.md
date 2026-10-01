@@ -322,15 +322,22 @@ does not call `who` for the whole riff.
 
 - A refresh token names its chain and a generation:
   `chain.generation.secret`. The server keeps the hash of the current
-  generation of each chain, and nothing for older generations.
+  generation of each chain, and of the generation before it for a lost
+  reply. It keeps nothing for older generations.
 - A refresh with the current generation gives the next generation. A
   refresh with an older generation is reuse: the server ends the
   sign-in. The server checks the DPoP key before the generation.
-- Each (sign-in, session) has at most one live chain.
+- Each (sign-in, session) has at most one live chain. A session chain
+  ends after 24 hours with no refresh.
 - The server writes `signins.json` at most one time each second, when
-  something changed. After a crash, the snapshot can be one generation
-  behind. So the server takes the current generation, or the next one,
-  as good.
+  something changed. A sign-in and a revoke wait for the write. A
+  refresh does not. After a crash, the snapshot can be one generation
+  behind. So the first refresh of each chain after a start takes the
+  current generation, or the next one, as good.
+- While a write of `signins.json` fails, a refresh gets 503. So the
+  snapshot does not fall more generations behind.
+- Until go-live, `signins.json` also holds the people: the owner, the
+  admins, the members and the riff ID.
 - Access tokens and DPoP replay IDs are in memory. After a start, each
   client refreshes one time. A new instance refuses each DPoP proof from
   before its start.
