@@ -11,6 +11,7 @@ use isolated::Isolated;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use riff::api::Api;
@@ -1057,4 +1058,161 @@ async fn a_host_works_against_a_server_with_sign_in() {
         "{}",
         b.host_output()
     );
+}
+
+/// Holds the first `threads` call of a session on the host `b`: it gets
+/// no reply. Each other call goes on. `held` counts the held calls.
+async fn hold_the_first_read(
+    axum::extract::State(held): axum::extract::State<std::sync::Arc<AtomicUsize>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if request.uri().path() != "/v1/threads" {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    let of_the_host = String::from_utf8_lossy(&body).contains("@b/");
+    if of_the_host && held.fetch_add(1, Ordering::SeqCst) == 0 {
+        std::future::pending::<()>().await;
+    }
+    let request = axum::extract::Request::from_parts(parts, axum::body::Body::from(body));
+    next.run(request).await
+}
+
+/// A call of the host that gets no reply ends after
+/// [`riff::host::CALL_WAIT`]. The host says so on its output and goes
+/// on: it sets its status again, and it reads the request of the lead at
+/// its next refresh (01M3WN72M02P3J24ACCHTMNSFY). Before, the host
+/// waited for the reply with no end: it started no worker, set no
+/// status and printed nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_goes_on_after_a_call_with_no_reply() {
+    let held = std::sync::Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let router = riff_server::router().layer(axum::middleware::from_fn_with_state(
+        held.clone(),
+        hold_the_first_read,
+    ));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    api.register(&lead).await.unwrap();
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let b = Machine::new("b", api.base());
+    b.limit(3);
+    let _host = b.host(&main);
+    let host_id = host_session(&api, &lead, "b").await;
+    let statuses = || b.log().matches("list-panes -a").count();
+    let before = statuses();
+
+    api.tell(&lead, &host_id, "workers start 1").await.unwrap();
+    let no_reply = format!(
+        "riff: cannot read the requests: {}",
+        riff::text::no_reply(api.base(), riff::host::CALL_WAIT)
+    );
+    until("the host says that it got no reply", || async {
+        b.host_output().contains(&no_reply).then_some(())
+    })
+    .await;
+    until("the host sets its status again", || async {
+        (statuses() > before).then_some(())
+    })
+    .await;
+    assert!(b.workers().is_empty(), "{}", b.log());
+
+    reads(&api, &lead, "b: started 1 worker").await;
+    assert_eq!(b.workers().len(), 1, "{}", b.log());
+    assert_eq!(held.load(Ordering::SeqCst), 2, "one call held, one read");
+}
+
+// TEMP(#379): not for the commit. Runs the host (under strace with
+// TRACE=1), and shows what a host that does not answer does.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn repro_379() {
+    let rounds: usize = std::env::var("ROUNDS")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(50);
+    let out_file = std::env::var("REPRO_OUT").unwrap();
+    for round in 0..rounds {
+        let api = start_server().await;
+        let root = tempfile::tempdir().unwrap();
+        let main = repository(root.path());
+        let lead = session(&main, "mike", "a", "l1");
+        api.register(&lead).await.unwrap();
+        api.set_riff(&lead, RiffState::Running).await.unwrap();
+        let b = Machine::new("b", api.base());
+        b.limit(3);
+        let traced = b.fake.path().join("riff-traced");
+        std::fs::write(
+            &traced,
+            format!(
+                "#!/bin/sh\nif [ \"$TRACE\" = gdb ]; then exec gdb -q -batch -ex 'set logging file {0}' -ex 'set logging enabled on' -ex 'handle SIGCHLD nostop noprint pass' -ex run -ex 'thread apply all bt' --args \"{1}\" \"$@\"; fi\nexec strace -f -tt -s 120 -o \"{0}\" \"{1}\" \"$@\"\n",
+                b.fake.path().join("strace.out").display(),
+                Isolated::shared().riff_path().display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&traced, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let host = if std::env::var("TRACE").is_ok() {
+            b.host_with(b.riff_at(&traced, &main, &["host", "--claude", "true"], None))
+        } else {
+            b.host(&main)
+        };
+        let host_id = host_session(&api, &lead, "b").await;
+        let before = b.log().lines().count();
+        let told = Instant::now();
+        api.tell(&lead, &host_id, "workers start 1").await.unwrap();
+        let limit = Duration::from_secs(20);
+        let pid = host.0.id();
+        while !b.log().lines().skip(before).any(|l| l.contains("-window")) {
+            if told.elapsed() > limit {
+                let who = tokio::time::timeout(STOPS, api.who(&lead, true)).await;
+                let sh = |script: &str| {
+                    let out = Command::new("sh").arg("-c").arg(script).output().unwrap();
+                    String::from_utf8_lossy(&out.stdout).into_owned()
+                        + &String::from_utf8_lossy(&out.stderr)
+                };
+                let ps = sh(&format!(
+                    "ps -e -o pid,ppid,stat,wchan:32,etime,args --forest | grep -A12 -w {pid} | head -40; \
+                     for p in {pid} $(pgrep -P {pid}); do for t in /proc/$p/task/*; do echo $t $(cat $t/comm) $(cat $t/wchan 2>/dev/null) $(grep State $t/status); done; \
+                     ls -l /proc/$p/fd; done; ss -tnp 2>/dev/null | grep riff"
+                ));
+                let strace = sh(&format!(
+                    "tail -n 200 {}",
+                    b.fake.path().join("strace.out").display()
+                ));
+                let dump = format!(
+                    "round {round}: no -window call in {limit:?}\nhost {host_id} pid {pid}\ntmux calls:\n{}\nhost output:\n{}\nwho:\n{who:#?}\nps:\n{ps}\nstrace:\n{strace}",
+                    b.log(),
+                    b.host_output(),
+                );
+                std::fs::write(&out_file, &dump).unwrap();
+                if std::env::var("TRACE").as_deref() == Ok("gdb") {
+                    // The host is the child of gdb: gdb stops it and
+                    // prints each stack.
+                    sh(&format!("kill -INT $(pgrep -P {pid}); sleep 20"));
+                }
+                let _ = std::fs::copy(
+                    b.fake.path().join("strace.out"),
+                    format!("{out_file}.strace"),
+                );
+                let _ = Command::new("pkill")
+                    .args(["-KILL", "-P", &pid.to_string()])
+                    .status();
+                panic!("{dump}");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        eprintln!("round {round}: ok after {:?}", told.elapsed());
+        let _ = Command::new("pkill")
+            .args(["-KILL", "-P", &pid.to_string()])
+            .status();
+        drop(host);
+    }
 }

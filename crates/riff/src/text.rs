@@ -2362,6 +2362,28 @@ offers no workers. Set a limit first, for example: riff workers limit 2";
 pub const HOST_STOPPED: &str =
     "riff workers host stopped. Its workers still run. riff workers stop ends them.";
 
+/// The error of a call that got no reply from the server at `base` in
+/// `wait` (01M3WN72M02P3J24ACCHTMNSFY).
+///
+/// ```
+/// use std::time::Duration;
+///
+/// assert_eq!(
+///     riff::text::no_reply("http://127.0.0.1:7878", Duration::from_secs(20)),
+///     "riff-server at http://127.0.0.1:7878 gave no reply in 20 seconds"
+/// );
+/// assert_eq!(
+///     riff::text::no_reply("http://127.0.0.1:7878", Duration::from_millis(10)),
+///     "riff-server at http://127.0.0.1:7878 gave no reply in 0.01 seconds"
+/// );
+/// ```
+pub fn no_reply(base: &str, wait: std::time::Duration) -> String {
+    format!(
+        "riff-server at {base} gave no reply in {} seconds",
+        wait.as_secs_f64()
+    )
+}
+
 /// The first line of `riff workers host` (01M3NBV4294DS3WZFEKR7M3PNF).
 ///
 /// ```

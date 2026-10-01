@@ -292,8 +292,13 @@ pub async fn reap(
         };
         let claims = info.uri.claims().to_vec();
         let session = SessionUri::new(info.uri.who().clone(), info.uri.place().clone());
+        // The end call has a time limit, so a server that gives no reply
+        // does not hold the caller (01M3WN72M02P3J24ACCHTMNSFY).
         let ended = match api.clone().signed_in(Some(id)) {
-            Ok(api) => api.end(&session).await,
+            Ok(api) => {
+                let end = api.end(&session);
+                crate::host::in_time(api.base(), crate::host::CALL_WAIT, end).await
+            }
             Err(e) => Err(e),
         };
         let cause = worker.scope.as_deref().and_then(|scope| {
