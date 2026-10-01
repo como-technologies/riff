@@ -2,19 +2,48 @@
 //!
 //! # Model
 //!
-//! | Data | Key | Where it comes from |
-//! |---|---|---|
-//! | Threads | thread name | The log. Members, and the last [`KEEP_MESSAGES`] messages with a sequence number that starts at 1. |
-//! | Claims | thread and item | The log. The session that holds the item. |
-//! | Leads | user and repository thread | The log. The lead session of the user. |
-//! | Riff state | none: one for the server | The log. Paused or running, and the settings of idle workers. |
-//! | Sessions | who | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
-//! | Known sessions | who | The log. The URI and the time of the last record that names the session. |
-//! | Read cursors | who and thread | Memory and the checkpoint. The last sequence number that the session read. |
+//! The state has two types (01M3WNQRCBP0PHSA0H3THDH5NJ): the [`Riff`]
+//! is the state that the log gives, and the [`Presence`] is memory.
+//!
+//! | Data | Key | Type | Where it comes from |
+//! |---|---|---|---|
+//! | Threads | thread name | [`Riff`] | The log. Members, and the last [`KEEP_MESSAGES`] messages with a sequence number that starts at 1. |
+//! | Claims | thread and item | [`Riff`] | The log. The session that holds the item. |
+//! | Leads | user and repository thread | [`Riff`] | The log. The lead session of the user. |
+//! | Riff state | none: one for the server | [`Riff`] | The log. Paused or running, and the settings of idle workers. |
+//! | Known sessions | who | [`Riff`] | The log. The URI and the time of the last record that names the session. |
+//! | Sessions | who | [`Presence`] | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
+//! | Read cursors | who and thread | [`Presence`] | Memory and the checkpoint. The last sequence number that the session read. |
 //!
 //! The server keys each session by its [`Who`]: the user and the session
 //! ID. It builds the [`SessionUri`] of a session from the who, the place
 //! and the claims that the session holds now.
+//!
+//! # Where each part lives
+//!
+//! | File | What it holds |
+//! |---|---|
+//! | `state.rs` | [`State`]: the two copies of the [`Riff`], the queue, the [`Presence`] and the clock. Its methods are the calls of the server. Each one that changes the riff runs one command type. The signals and the queries are here too: a keep-alive, a status, a watch, `who`, `read`. |
+//! | [`riff`] | [`Riff`] and [`apply`]: the one function that changes a riff, with one arm for each kind of record. |
+//! | [`presence`] | [`Presence`], the session in memory, and `Presence::applied`: what a record changes in memory. |
+//! | [`view`] | [`View`]: one copy of the riff with the presence, read only. `handle` and each query read it. |
+//! | [`command`] | The trait [`Command`] with `handle`, and [`Now`]. |
+//! | [`snapshot`] | [`Snapshot`]: the parts of each group in one checkpoint. |
+//! | `state/rules.rs` | The given/when/then tests of `handle` and `apply`. |
+//!
+//! Each group of commands has one file with its part of the riff, its
+//! `apply` arms, its part of the checkpoint and its command types:
+//!
+//! | Group | File | Part of the riff | Commands |
+//! |---|---|---|---|
+//! | sessions | [`sessions`] | [`Sessions`](sessions::Sessions) | [`Register`], [`Start`], [`End`] |
+//! | threads | [`threads`] | [`Threads`](threads::Threads) | [`Join`], [`Leave`], [`Post`], [`Announce`] |
+//! | work | [`work`] | [`Work`](work::Work) | [`Claim`], [`Release`], [`ReleaseFor`], [`Lead`] |
+//! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`SetRiff`], [`SetIdle`], [`Forget`] |
+//!
+//! A new command is a type in the file of its group. A new kind of
+//! record is one arm in [`apply`] and one method of the part that it
+//! changes.
 //!
 //! # Event sourcing
 //!
@@ -245,6 +274,11 @@ pub const SESSION_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// Memory and the checkpoint keep the last this many messages of each
 /// thread. Nobody reads an older message (01M3TBZBT7MME9BG1RWX5SZAZ6).
+///
+/// The number is a constant of the format: [`apply`] uses it, so a
+/// change of it changes the state that a replay gives. Such a change
+/// follows the rules for a change of a record
+/// (01M3T4111PFM0C6KPREWFS9EQQ, 01M3WNQQWA7XGK4Y9ET8HJZ8NN).
 pub const KEEP_MESSAGES: usize = 200;
 
 /// `read` gives at most this many messages, and a cursor for the next

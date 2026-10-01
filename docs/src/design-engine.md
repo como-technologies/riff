@@ -731,6 +731,11 @@ gives the state of a full replay.
 | E5 | The two pauses (#364): `pause_set`, the roles, the views, the rollout, the idle workers for each repository. | E2 |
 | E6 | The format of 1.0.0: the enum and the kinds from one place, the value `other` and its checkpoint rule, the list of the command kinds, a fixture with one record of each kind, the replay of each fixture in CI, the test of the checkpoint, the command `import`. | E3, E4, E5 |
 
+E1a is built. Its fixture
+`crates/riff-server/tests/fixtures/main-a2e9c98/` holds a log and a
+checkpoint that `main` wrote before the engine build. Each later item
+reads them with no change (01M3WNQR41K41TV832GRQZ2CQS).
+
 Other items:
 
 - #353 (riff clears a worker) needs E4. It changes the skill: the

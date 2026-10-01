@@ -21,6 +21,30 @@ use super::riff::Riff;
 use super::{CLAIM_GRACE, GONE};
 
 /// The state in memory. See the module docs.
+///
+/// A status and a keep-alive change only the presence. They make no
+/// record:
+///
+/// ```
+/// use std::time::Instant;
+/// use riff_core::name::SessionUri;
+/// use riff_core::wire::Status;
+/// use riff_server::state::State;
+///
+/// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let now = Instant::now();
+/// let mut state = State::default();
+/// // The first call of a session makes records: it joins its thread.
+/// state.register(&mike, now);
+/// assert!(!state.take_queue().is_empty());
+///
+/// let status = Status { step: "the tests run".into(), blocked: None };
+/// state.set_status(&mike, status, now, 0).unwrap();
+/// state.alive(&mike, now);
+/// assert!(state.take_queue().is_empty());
+/// assert!(state.who(now, 0, false)[0].status.is_some());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 #[derive(Default)]
 pub struct Presence {
     pub(super) sessions: BTreeMap<Who, Session>,
@@ -236,5 +260,175 @@ impl Session {
             let ago = now.saturating_duration_since(self.last_seen).as_millis();
             now_ms.saturating_sub(u64::try_from(ago).unwrap_or(u64::MAX))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use riff_core::name::SessionUri;
+    use riff_core::record::{Claimed, Forgotten, Member, RiffStateSet};
+    use riff_core::wire::RiffState;
+
+    use super::super::riff::apply;
+    use super::*;
+
+    fn ann() -> SessionUri {
+        "riff://ann@heron/acme/app?session=a1".parse().unwrap()
+    }
+
+    fn bob() -> SessionUri {
+        "riff://bob@kite/acme/app?session=b1".parse().unwrap()
+    }
+
+    fn repo() -> ThreadName {
+        "acme/app".parse().unwrap()
+    }
+
+    fn design() -> ThreadName {
+        "design".parse().unwrap()
+    }
+
+    fn claim_of(me: &SessionUri) -> Claimed {
+        Claimed {
+            session: me.clone(),
+            thread: repo(),
+            item: "issue-7".into(),
+        }
+    }
+
+    fn joined(me: &SessionUri, thread: &ThreadName) -> Change {
+        Change::JoinedThread(Member {
+            session: me.clone(),
+            thread: thread.clone(),
+        })
+    }
+
+    fn record(change: Change) -> Record {
+        Record {
+            position: 1,
+            written_at_ms: 0,
+            change,
+        }
+    }
+
+    /// Ann and bob in memory since `since`.
+    fn presence(since: Instant) -> Presence {
+        let mut presence = Presence::default();
+        for me in [ann(), bob()] {
+            let session = Session::new(me.place().clone(), since);
+            presence.sessions.insert(me.who().clone(), session);
+        }
+        presence
+    }
+
+    fn claims_changed(presence: &Presence, me: &SessionUri) -> Instant {
+        presence.sessions[me.who()].claims_changed
+    }
+
+    #[test]
+    fn a_claimed_record_sets_the_time_of_the_new_holder_and_of_the_old_one() {
+        let since = Instant::now();
+        let at = since + Duration::from_secs(9);
+        let mut presence = presence(since);
+        let record = record(Change::Claimed(claim_of(&bob())));
+        presence.applied(&record, &Riff::default(), Some(ann().who()), Some(at));
+        assert_eq!(claims_changed(&presence, &bob()), at);
+        assert_eq!(claims_changed(&presence, &ann()), at);
+    }
+
+    #[test]
+    fn a_claimed_record_with_no_old_holder_sets_only_the_time_of_its_session() {
+        let since = Instant::now();
+        let at = since + Duration::from_secs(9);
+        let mut presence = presence(since);
+        let record = record(Change::Claimed(claim_of(&bob())));
+        presence.applied(&record, &Riff::default(), None, Some(at));
+        assert_eq!(claims_changed(&presence, &bob()), at);
+        assert_eq!(claims_changed(&presence, &ann()), since);
+    }
+
+    #[test]
+    fn a_released_record_sets_the_time_of_its_session() {
+        let since = Instant::now();
+        let at = since + Duration::from_secs(9);
+        let mut presence = presence(since);
+        let record = record(Change::Released(claim_of(&ann())));
+        presence.applied(&record, &Riff::default(), None, Some(at));
+        assert_eq!(claims_changed(&presence, &ann()), at);
+        assert_eq!(claims_changed(&presence, &bob()), since);
+    }
+
+    #[test]
+    fn a_riff_state_set_record_sets_the_time_for_a_stale_status() {
+        let since = Instant::now();
+        let at = since + Duration::from_secs(9);
+        let mut presence = presence(since);
+        let record = record(Change::RiffStateSet(RiffStateSet {
+            state: RiffState::Running,
+        }));
+        presence.applied(&record, &Riff::default(), None, Some(at));
+        assert_eq!(presence.riff_changed, Some(at));
+    }
+
+    #[test]
+    fn a_record_of_a_replay_sets_no_time() {
+        let since = Instant::now();
+        let mut presence = presence(since);
+        presence.riff_changed = Some(since);
+        let changes = [
+            Change::Claimed(claim_of(&bob())),
+            Change::Released(claim_of(&bob())),
+            Change::RiffStateSet(RiffStateSet {
+                state: RiffState::Running,
+            }),
+        ];
+        for change in changes {
+            presence.applied(&record(change), &Riff::default(), Some(ann().who()), None);
+        }
+        assert_eq!(claims_changed(&presence, &ann()), since);
+        assert_eq!(claims_changed(&presence, &bob()), since);
+        assert_eq!(presence.riff_changed, Some(since));
+    }
+
+    #[test]
+    fn a_session_forgotten_record_drops_the_session_its_cursors_and_the_cursors_of_a_thread_that_is_gone()
+     {
+        let now = Instant::now();
+        let mut presence = presence(now);
+        for (me, thread) in [(ann(), repo()), (bob(), repo()), (bob(), design())] {
+            presence.cursors.insert((me.who().clone(), thread), 3);
+        }
+        // The riff after the record has the repository thread, and no
+        // thread `design`.
+        let mut riff = Riff::default();
+        apply(&mut riff, &record(joined(&bob(), &repo())));
+        let forgotten = record(Change::SessionForgotten(Forgotten { session: ann() }));
+        presence.applied(&forgotten, &riff, None, Some(now));
+        assert!(!presence.sessions.contains_key(ann().who()));
+        assert!(presence.sessions.contains_key(bob().who()));
+        let cursors: Vec<_> = presence.cursors.keys().cloned().collect();
+        assert_eq!(cursors, [(bob().who().clone(), repo())]);
+        assert_eq!(presence.cursor(bob().who(), &repo()), 3);
+        assert_eq!(presence.cursor(ann().who(), &repo()), 0);
+    }
+
+    #[test]
+    fn a_record_of_a_thread_changes_nothing_in_memory() {
+        let since = Instant::now();
+        let at = since + Duration::from_secs(9);
+        let mut presence = presence(since);
+        presence.cursors.insert((ann().who().clone(), repo()), 3);
+        presence.applied(
+            &record(joined(&ann(), &design())),
+            &Riff::default(),
+            None,
+            Some(at),
+        );
+        assert_eq!(presence.sessions.len(), 2);
+        assert_eq!(claims_changed(&presence, &ann()), since);
+        assert_eq!(presence.riff_changed, None);
+        assert_eq!(presence.cursor(ann().who(), &repo()), 3);
     }
 }
