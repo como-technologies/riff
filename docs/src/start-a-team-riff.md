@@ -149,6 +149,13 @@ answer, you are the owner. The old owner stays an admin. One request
 waits at a time. A second request is refused, and the refusal names
 the admin that asked first.
 
+When you are the owner already, the command says so and changes
+nothing. It is not an error:
+
+```text
+You are the owner already. Nothing changed.
+```
+
 ### Answer a request
 
 To pass the role, the owner names the admin that asked:

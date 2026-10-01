@@ -657,11 +657,20 @@ pub fn owner_passed(done: &OwnerPassed) -> String {
 ///     riff::text::owner_asked(&took),
 ///     "The riff had no owner. bob@gmail.com is now the owner."
 /// );
+/// // The owner asked (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
+/// let same = OwnerAsked { owner: Some("bob@gmail.com".into()), ..took };
+/// assert_eq!(
+///     riff::text::owner_asked(&same),
+///     "You are the owner already. Nothing changed."
+/// );
 /// ```
 pub fn owner_asked(asked: &OwnerAsked) -> String {
     let Some(owner) = &asked.owner else {
         return format!("The riff had no owner. {} is now the owner.", asked.admin);
     };
+    if asked.already() {
+        return "You are the owner already. Nothing changed.".to_owned();
+    }
     let minutes = match asked.answer_secs / 60 {
         0 => "less than a minute".to_owned(),
         1 => "1 minute".to_owned(),

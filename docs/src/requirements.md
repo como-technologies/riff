@@ -1674,6 +1674,9 @@
   at once: a direct message to each live lead of the owner, and a note.
   One request waits at a time. A second request is refused, and the
   refusal names the admin that asked first.
+- **01M3WRJAFS6W3J2ZRJ6XSW3SB5** `riff owner --take` by the owner is
+  not an error. It says that the user is the owner already, and exits
+  with 0. It changes nothing: no request, no note and no message.
 - **01M3N7K41N03P26BEFFNX5617K** The owner answers a request in N
   minutes. `riff owner EMAIL` passes the role and ends the request.
   `riff owner --deny` keeps the role: the riff tells the admin with a
