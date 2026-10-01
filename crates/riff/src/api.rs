@@ -14,7 +14,10 @@
 //!
 //! A session token comes from a token exchange the first time that the
 //! client needs it. After that, the client refreshes it with its own
-//! refresh token. When the refresh fails, it does a new exchange.
+//! refresh token. When the refresh fails, it does a new exchange. When
+//! the server refuses the refresh, the client drops the pair, so it
+//! sends a refused refresh token one time only
+//! (01M3W947QF6PFBWR28ZVXCVQHG). See [`login`] for the person pair.
 //!
 //! When the server replies 401 to a call with a token, the client drops
 //! that token, gets a new one, and sends the call once more
@@ -660,7 +663,16 @@ impl Api {
                     refresh_token: Some(old.refresh_token.clone()),
                     ..TokenRequest::default()
                 };
-                self.token(&request, &auth.key).await.ok()
+                let refreshed = self.token(&request, &auth.key).await;
+                // The server refused the pair: never send it again
+                // (01M3W947QF6PFBWR28ZVXCVQHG).
+                if refreshed
+                    .as_ref()
+                    .is_err_and(|e| e.downcast_ref::<TokenRefused>().is_some())
+                {
+                    *pair = None;
+                }
+                refreshed.ok()
             }
             None => None,
         };

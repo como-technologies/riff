@@ -42,6 +42,24 @@
 //! refresh keeps its own text: for example a server that is down, or
 //! another version.
 //!
+//! A refused refresh is not sent again (01M3W947QF6PFBWR28ZVXCVQHG). The
+//! client keeps the sign-in with no refresh token: [`SignIn::ended`].
+//! From then on, [`access_token`] gives [`ENDED`] with no call to the
+//! server, in each process of the machine, until `riff login` keeps a
+//! new sign-in.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     A[access_token] --> L{access token live?}
+//!     L -- yes --> T[give it]
+//!     L -- no --> E{kept sign-in ended?}
+//!     E -- yes --> X[ENDED, no call]
+//!     E -- no --> R[POST /v1/token refresh]
+//!     R -- pair --> K[keep the new pair] --> T
+//!     R -- invalid_grant --> M[keep the sign-in as ended] --> X
+//!     R -- other error --> O[the error, the sign-in stays]
+//! ```
+//!
 //! [`session_token`] swaps the person access token for a session pair
 //! (R19). The session pair stays in the memory of the process
 //! (see [`crate::api::Api::signed_in`]); it never goes to the keyring.
@@ -111,6 +129,41 @@ pub struct SignIn {
     pub riff_id: Option<String>,
 }
 
+impl SignIn {
+    /// True when the server refused the refresh token of this sign-in:
+    /// the sign-in ended (01M3W947QF6PFBWR28ZVXCVQHG). It keeps its user,
+    /// and has no refresh token.
+    ///
+    /// ```
+    /// use riff::login::SignIn;
+    ///
+    /// let sign_in = SignIn {
+    ///     user: "mike".into(),
+    ///     access_token: "a-1".into(),
+    ///     refresh_token: "r-1".into(),
+    ///     expires_at: 0,
+    ///     riff_id: None,
+    /// };
+    /// assert!(!sign_in.ended());
+    /// let ended = sign_in.end();
+    /// assert!(ended.ended());
+    /// assert_eq!(ended.user, "mike");
+    /// ```
+    pub fn ended(&self) -> bool {
+        self.refresh_token.is_empty()
+    }
+
+    /// This sign-in, ended: with no token that the server takes.
+    pub fn end(self) -> SignIn {
+        SignIn {
+            access_token: String::new(),
+            refresh_token: String::new(),
+            expires_at: 0,
+            ..self
+        }
+    }
+}
+
 /// The keyring name of the sign-in at `server`.
 ///
 /// ```
@@ -160,15 +213,15 @@ pub async fn logout_all(api: &Api, user: Option<&str>) -> Result<Revoked> {
 /// device has no sign-in there (01M3JZN1ZZED3FXQEFNJ4KVCN5). A sign-in of
 /// a riff that is gone does not count: it is removed first
 /// (01M3JNVBRS35B3CD67367JF7SJ). Returns the new sign-in, or `None` when
-/// the riff has no sign-in or this device has one. `riff connect claude`
-/// runs it.
+/// the riff has no sign-in or this device has one. A sign-in that ended
+/// ([`SignIn::ended`]) does not count. `riff connect claude` runs it.
 pub async fn ensure(api: &Api, open: impl FnOnce(&str)) -> Result<Option<SignIn>> {
     if !api.has_sign_in().await? {
         return Ok(None);
     }
     // An error here says that the old sign-in is gone: sign in again.
     let _ = api.check_riff().await;
-    if stored(api.base())?.is_some() {
+    if stored(api.base())?.is_some_and(|s| !s.ended()) {
         return Ok(None);
     }
     login(api, open).await.map(Some)
@@ -227,7 +280,10 @@ pub async fn login(api: &Api, open: impl FnOnce(&str)) -> Result<SignIn> {
 }
 
 /// A live person access token for the server of `api`. It refreshes
-/// the pair when needed, and keeps the new pair.
+/// the pair when needed, and keeps the new pair. When the server
+/// refuses the refresh token, it keeps the sign-in as ended, and each
+/// later call gives [`ENDED`] with no call to the server
+/// (01M3W947QF6PFBWR28ZVXCVQHG).
 pub async fn access_token(api: &Api) -> Result<String> {
     if let Some(live) = live(api.base())? {
         return Ok(live.access_token);
@@ -240,20 +296,34 @@ pub async fn access_token(api: &Api) -> Result<String> {
     let Some(sign_in) = stored(api.base())? else {
         bail!("no sign-in for {}: run riff login", api.base());
     };
-    let pair = api
+    if sign_in.ended() {
+        bail!(ENDED);
+    }
+    let refreshed = api
         .token(
             &TokenRequest {
                 grant_type: "refresh_token".into(),
-                refresh_token: Some(sign_in.refresh_token),
+                refresh_token: Some(sign_in.refresh_token.clone()),
                 ..TokenRequest::default()
             },
             &device::key(api.base())?,
         )
-        .await
-        .map_err(|e| match e.downcast_ref::<TokenRefused>() {
-            Some(refused) if refused.ended() => e.context(ENDED),
-            _ => e,
-        })?;
+        .await;
+    let pair = match refreshed {
+        Ok(pair) => pair,
+        Err(e)
+            if e.downcast_ref::<TokenRefused>()
+                .is_some_and(TokenRefused::ended) =>
+        {
+            // `riff login` takes no lock: keep a sign-in that came
+            // during the call.
+            if stored(api.base())?.as_ref() == Some(&sign_in) {
+                store(api.base(), &sign_in.end())?;
+            }
+            return Err(e.context(ENDED));
+        }
+        Err(e) => return Err(e),
+    };
     let fresh = SignIn {
         expires_at: now() + pair.expires_in,
         user: pair.user,
@@ -523,6 +593,25 @@ mod tests {
         assert_ne!(a, random());
         // RFC 7636: 43 to 128 characters.
         assert_eq!(a.len(), 43);
+    }
+
+    #[test]
+    fn an_ended_sign_in_keeps_its_user_and_its_riff_and_no_token() {
+        let sign_in = SignIn {
+            user: "ada".into(),
+            access_token: "a-1".into(),
+            refresh_token: "r-1".into(),
+            expires_at: now() + 600,
+            riff_id: Some("riff-1".into()),
+        };
+        assert!(!sign_in.ended());
+        let ended = sign_in.end();
+        assert!(ended.ended());
+        assert_eq!(ended.user, "ada");
+        assert_eq!(ended.riff_id.as_deref(), Some("riff-1"));
+        assert_eq!((ended.access_token.as_str(), ended.expires_at), ("", 0));
+        let kept: SignIn = serde_json::from_str(&serde_json::to_string(&ended).unwrap()).unwrap();
+        assert!(kept.ended());
     }
 
     #[tokio::test]
