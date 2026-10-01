@@ -48,7 +48,8 @@ jobs:
           tool: just,mdbook,mdbook-gruvbox,mdbook-mermaid
 
       - name: CI gate
-        run: just ci
+        # Each check, for each diff (01M3WNN7VQJKN5MJH7JN50VF4D).
+        run: just ci-full
 
   release:
     # A pushed tag v* fails when its version is not the version of the

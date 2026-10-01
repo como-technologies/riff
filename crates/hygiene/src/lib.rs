@@ -1,5 +1,7 @@
 //! Issue hygiene of this repository: the form of a pull request, and of
-//! a commit on `main`. The module [`book`] checks the book.
+//! a commit on `main`. The module [`book`] checks the book, [`wrap`]
+//! checks the wrap of its pages, and [`ci`] picks the checks that
+//! `just ci` runs.
 //!
 //! # Design
 //!
@@ -58,6 +60,8 @@ use std::fmt;
 use serde::Deserialize;
 
 pub mod book;
+pub mod ci;
+pub mod wrap;
 
 /// A milestone, as `gh --json milestone` gives it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

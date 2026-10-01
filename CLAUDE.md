@@ -7,7 +7,8 @@ The book in `docs/src/` holds the requirements and the big picture.
 
 - Mantra: **GEN;SET**, Good Enough for Now; Safe Enough to Try. Decide,
   record the requirement, move on.
-- `just ci` passes before each push. Zero warnings.
+- `just ci` passes before each push. Zero warnings. For a diff of only
+  text it runs only the text checks. `just ci-full` runs each check.
 - Design docs live in the code as rustdoc, with doc tests. The book
   stays for people: what riff is, how to join, the big picture.
 - Each change has unit tests, integration tests and doc tests.

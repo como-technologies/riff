@@ -1,6 +1,8 @@
 //! `hygiene pr N` checks pull request N with `gh`. `hygiene commit [REV]`
 //! checks the message of a commit with `git`. `hygiene book [DIR]` builds
-//! the book in DIR with `mdbook` and checks it. See the library docs.
+//! the book in DIR with `mdbook` and checks it. `hygiene wrap [DIR]`
+//! checks the wrap of each Markdown file in DIR. `hygiene ci [BASE]`
+//! prints the recipe that `just ci` runs. See the library docs.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -9,7 +11,8 @@ use std::process::{Command, ExitCode};
 use hygiene::{Issue, PullRequest};
 use serde::de::DeserializeOwned;
 
-const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR]";
+const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
+                     | hygiene wrap [DIR] | hygiene ci [BASE]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -19,6 +22,10 @@ fn main() -> ExitCode {
         ["commit", rev] => commit(rev),
         ["book"] => book("docs"),
         ["book", dir] => book(dir),
+        ["wrap"] => wrap("docs/src"),
+        ["wrap", dir] => wrap(dir),
+        ["ci"] => ci("origin/main"),
+        ["ci", base] => ci(base),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -123,6 +130,67 @@ fn book(dir: &str) -> ExitCode {
     report(&format!("the book in {dir}"), &errors, BOOK)
 }
 
+/// Checks the wrap of each `.md` file in `dir`.
+fn wrap(dir: &str) -> ExitCode {
+    let mut pages = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "md"))
+            .collect::<Vec<_>>(),
+        Err(e) => return tool_error(&format!("{dir}: {e}")),
+    };
+    pages.sort();
+    let mut errors = Vec::new();
+    for page in pages {
+        match std::fs::read_to_string(&page) {
+            Ok(text) => errors.extend(hygiene::wrap::check(&page.display().to_string(), &text)),
+            Err(e) => return tool_error(&format!("{}: {e}", page.display())),
+        }
+    }
+    report(&format!("the wrap of the pages in {dir}"), &errors, WRAP)
+}
+
+/// Prints the recipe that `just ci` runs for the diff from the merge
+/// base with `base` to stdout, and the set and the reason to stderr.
+fn ci(base: &str) -> ExitCode {
+    let changed = changed(base);
+    let choice = hygiene::ci::choose(base, changed.as_deref());
+    eprintln!("{choice}");
+    println!("{}", choice.checks.recipe());
+    ExitCode::SUCCESS
+}
+
+/// The files of this repository that differ from the merge base of
+/// `HEAD` and `base`: committed, not committed and not tracked. Each
+/// path is from the top of the repository. A rename gives its two
+/// paths. `None` when git cannot compare.
+fn changed(base: &str) -> Option<Vec<String>> {
+    let git = |at: &Path, args: &[&str]| {
+        let out = Command::new("git").arg("-C").arg(at).args(args).output();
+        out.ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let top = git(Path::new("."), &["rev-parse", "--show-toplevel"])?;
+    let top = PathBuf::from(top.trim_end_matches('\n'));
+    let fork = git(&top, &["merge-base", "HEAD", base])?;
+    let diff = git(
+        &top,
+        &["diff", "--name-only", "--no-renames", "-z", fork.trim()],
+    )?;
+    let new = git(&top, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    let mut names: Vec<String> = diff
+        .split('\0')
+        .chain(new.split('\0'))
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    names.sort();
+    names.dedup();
+    Some(names)
+}
+
 /// Installs the theme in `dir/gruvbox` with `mdbook-gruvbox install`,
 /// when `dir/book.toml` names the theme and the directory is missing.
 /// The install can write `book.toml`, so this puts its bytes back
@@ -213,6 +281,9 @@ const HYGIENE: &str =
 
 /// The end of the report of a broken rule of the book check.
 const BOOK: &str = "rule(s) of the book check. See \"Check the book\" in the book.";
+
+/// The end of the report of a broken rule of the wrap check.
+const WRAP: &str = "rule(s) of the wrap check. See \"Check the wrap of the book\" in the book.";
 
 /// Prints each error, and then how many rules `what` breaks and where to
 /// read about them (`rules`). Exit status 1 when there is one.

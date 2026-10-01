@@ -9,9 +9,27 @@ init:
     rustup component add clippy rustfmt
     cargo install --locked mdbook mdbook-gruvbox mdbook-mermaid cargo-audit
 
-# Run all CI checks. crate-audit is not part of the gate: CI runs it as a
-# separate job (and weekly), so a new advisory cannot hide a code failure.
-ci: fmt-check lint test doc book reqs
+# hygiene ci prints the recipe, ci-text or ci-full, and one line that says
+# which set runs and why (01M3WNMKB6PAP6J0QXX4A684HH).
+# Run the checks that the diff from origin/main can break
+ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    recipe=$(cargo run -q -p hygiene -- ci)
+    exec {{just_executable()}} "$recipe"
+
+# The Gate on GitHub runs this recipe (01M3WNN7VQJKN5MJH7JN50VF4D).
+# crate-audit is not part of the gate: CI runs it as a separate job (and
+# weekly), so a new advisory cannot hide a code failure.
+# Run all CI checks
+ci-full: fmt-check lint test doc book reqs wrap
+
+# Run only the checks for text: the book, the requirement IDs, the wrap
+ci-text: book reqs wrap
+
+# Check that each prose line of the book is at most 72 characters
+wrap:
+    @cargo run -q -p hygiene -- wrap docs/src
 
 # Check the requirement IDs: no duplicate, and each cited ID exists
 reqs:
@@ -26,7 +44,7 @@ hygiene *ARGS:
     @cargo run -q -p hygiene -- {{ARGS}}
 
 # House vocabulary for the full local gate
-alias gate := ci
+alias gate := ci-full
 
 # Format code
 fmt:
