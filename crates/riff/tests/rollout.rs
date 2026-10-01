@@ -308,8 +308,7 @@ async fn an_idle_worker_in_another_repository_does_not_stop_the_rollout() {
     lead.api.register_as(&same, true).await.unwrap();
     let _same = lead.api.watch(&same).await.unwrap();
     lead.issues(r#"[{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(lead.workers(), 1, "brett's worker can take the item");
+    assert_eq!(lead.settled().await, 1, "brett's worker can take the item");
 }
 
 /// The rollout never starts more workers than the limit of the machine.
