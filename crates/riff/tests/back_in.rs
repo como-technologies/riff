@@ -495,10 +495,13 @@ fn the_book_says_how_to_get_back_in() {
             description: None
         }
     );
+    // The error of each later call (01M3W947QF6PFBWR28ZVXCVQHG).
+    let ended_before = format!("| `{}` |", login::ENDED);
     let new_riff = riff::text::new_riff("URL");
     let new_riff = new_riff.split(" (").next().unwrap();
     for text in [
         ended.as_str(),
+        ended_before.as_str(),
         "no sign-in for URL: run riff login",
         new_riff,
         "do not match",

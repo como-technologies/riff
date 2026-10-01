@@ -1629,6 +1629,11 @@
 - **01M3MX4TSEH18FSNQ28GEH2GFJ** `riff` says that the sign-in ended
   only when `riff-server` refuses the grant with `invalid_grant`. Each
   other error of a refresh keeps its own text.
+- **01M3W947QF6PFBWR28ZVXCVQHG** `riff` sends a refresh token that
+  `riff-server` refused one time only. It keeps the sign-in of the
+  machine as ended, with its user and with no token. Then each `riff`
+  process says that the sign-in ended with no call to `/v1/token`,
+  until `riff login`. `riff connect claude` signs in again.
 - **01M3MX4V43SF2XFCZWANHD19WV** `riff-server` checks no version on
   `/v1/token` and `/v1/sign-in`, and `riff` checks none on their
   replies. So `riff login` and a refresh work when the versions do not
