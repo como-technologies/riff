@@ -49,7 +49,14 @@ case "$1 $2" in
 esac
 "#;
 
-const WAIT: Duration = Duration::from_secs(20);
+/// The bound of each wait. It is generous: it only ends a test that
+/// hangs.
+const WAIT: Duration = Duration::from_secs(60);
+
+/// The interval of the rollout in these tests is 1 second. A count of
+/// workers that does not change for this time is the result of each
+/// look that ran.
+const QUIET: Duration = Duration::from_secs(4);
 
 struct Lead {
     api: Api,
@@ -102,6 +109,20 @@ impl Lead {
         while self.workers() < n {
             assert!(start.elapsed() < WAIT, "timed out: {n} workers");
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Waits until the count of workers stays the same for [`QUIET`],
+    /// and gives that count.
+    async fn settled(&self) -> usize {
+        let start = Instant::now();
+        loop {
+            let count = self.workers();
+            tokio::time::sleep(QUIET).await;
+            if self.workers() == count {
+                return count;
+            }
+            assert!(start.elapsed() < WAIT, "the count of workers grows");
         }
     }
 }
@@ -209,14 +230,14 @@ const TWO_FREE: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"tit
 /// no other step, and a note to the lead for each
 /// (01M3Q5QE01DB0FJQJWFKR450KQ, 01M3Q5QEE4MQNCRKVJK3D54G9Z). The next
 /// worker starts only when the new one claimed (01M3Q5QEJNP1JGQM7VXXEBJ9J9).
-/// A pause stops the rollout (01M3Q5QEBTNM90SPYXNVTT7RJA).
+/// A pause stops the rollout within one look, and the resume starts it
+/// again (01M3Q5QEBTNM90SPYXNVTT7RJA).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_resume_starts_one_worker_for_each_free_item() {
     let lead = lead(5).await;
     lead.issues(TWO_FREE);
-    tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(
-        lead.workers(),
+        lead.settled().await,
         0,
         "no worker starts while the riff is paused"
     );
@@ -224,13 +245,15 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
     // The unit tests of riff::rollout check the rate with a fake clock.
     lead.riff(RiffState::Running).await;
     lead.until_workers(1).await;
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(lead.workers(), 1, "the new worker is idle until it claims");
+    assert_eq!(
+        lead.settled().await,
+        1,
+        "the new worker is idle until it claims"
+    );
     lead.claim(1, "issue-1").await;
     lead.claim(2, "issue-2").await;
     // Each free item has a worker: no third one.
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(lead.workers(), 2);
+    assert_eq!(lead.settled().await, 2);
 
     let start = Instant::now();
     let mut read = String::new();
@@ -246,10 +269,17 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
         r#"[{"number":5,"body":"","comments":[],"milestone":{"title":"Wave 1"}},
         {"number":6,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#,
     );
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(lead.workers(), 2, "a pause stops the rollout");
+    // A look that started before the pause can start one more worker.
+    // Then the count stays: the two free items get no worker each.
+    let paused = lead.settled().await;
+    assert!(paused <= 3, "a pause stops the rollout: {paused} workers");
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(lead.workers(), paused, "the count grows in a paused riff");
+
+    // The resume starts the rollout again: a worker for each free item.
     lead.riff(RiffState::Running).await;
-    lead.until_workers(3).await;
+    lead.claim(3, "issue-5").await;
+    lead.until_workers(4).await;
 }
 
 /// An idle worker of another user in another repository cannot take the

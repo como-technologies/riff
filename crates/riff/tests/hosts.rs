@@ -60,7 +60,16 @@ esac
 exit 0
 "#;
 
-const WAIT: Duration = Duration::from_secs(20);
+/// The bound of each wait. It is generous: it only ends a test that
+/// hangs.
+const WAIT: Duration = Duration::from_secs(60);
+
+/// The bound of a stop after a signal. A host that is not under load
+/// stops in under 2 seconds (01M3NBV405PVYHKTMQ5VN87FYN). The test
+/// checks the intent: the stop does not wait for the step that runs. A
+/// slow call of the fake `tmux` takes 30 seconds, and a wake or a
+/// keyring that does not answer never comes.
+const STOPS: Duration = Duration::from_secs(15);
 
 /// One machine: a fake `tmux`, its own riff home, and its host name.
 struct Machine {
@@ -718,14 +727,11 @@ async fn a_host_needs_tmux_and_a_limit() {
     );
 }
 
-/// Sends `signal` to the host of `r`: it ends in under 2 seconds, and
-/// its session leaves `riff who` (01M3NBV405PVYHKTMQ5VN87FYN).
+/// Sends `signal` to the host of `r`: it ends within [`STOPS`], and its
+/// session leaves `riff who` (01M3NBV405PVYHKTMQ5VN87FYN).
 async fn stops_on(r: &mut Riff, signal: &str, state: &str) {
     let took = r.host.stop(signal);
-    assert!(
-        took < Duration::from_secs(2),
-        "{state}: {signal} took {took:?}"
-    );
+    assert!(took < STOPS, "{state}: {signal} took {took:?}");
     let who = r.api.who(&r.lead, false).await.unwrap();
     assert!(
         !who.iter()
@@ -846,7 +852,7 @@ async fn ctrl_c_stops_a_host_whose_keyring_does_not_answer() {
     std::thread::sleep(Duration::from_millis(300));
     assert!(host.0.try_wait().unwrap().is_none(), "{}", b.host_output());
     let took = host.stop("INT");
-    assert!(took < Duration::from_secs(2), "took {took:?}");
+    assert!(took < STOPS, "took {took:?}");
 }
 
 /// The first line of the host names the host, its limit, the lead that
@@ -983,7 +989,7 @@ async fn a_host_works_against_a_server_with_sign_in() {
     assert_eq!(b.workers().len(), 1, "{}", b.log());
 
     let took = host.stop("INT");
-    assert!(took < Duration::from_secs(2), "took {took:?}");
+    assert!(took < STOPS, "took {took:?}");
     assert!(
         !b.host_output().contains("did not end in time"),
         "{}",

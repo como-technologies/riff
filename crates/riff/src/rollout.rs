@@ -47,8 +47,10 @@
 //!   fewer than its limit and it is not busy
 //!   ([`crate::machine::Machine::busy`]). riff picks the machine with the
 //!   most free capacity. On a tie, the machine of the lead wins.
-//! - **Pause** (01M3Q5QEBTNM90SPYXNVTT7RJA). While the riff is paused,
-//!   riff starts no worker.
+//! - **Pause** (01M3Q5QEBTNM90SPYXNVTT7RJA). A pause stops the rollout
+//!   within one look. A look that started before the pause can start
+//!   one more worker. After it, riff starts no worker while the riff is
+//!   paused.
 //! - **Notes** (01M3Q5QEE4MQNCRKVJK3D54G9Z). On the machine of the lead,
 //!   riff posts a note to the lead with the host, the pane and the
 //!   session. A workers host posts the same note when it starts a

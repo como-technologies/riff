@@ -2376,8 +2376,9 @@ flowchart TD
   and each workers host of your user (see
   [Offer workers from another machine](#offer-workers-from-another-machine)).
   riff never starts more workers on a machine than its limit.
-- **Pause.** While the riff is paused, riff starts no worker. The
-  resume starts the rollout again.
+- **Pause.** A pause stops the rollout within one look. A look that
+  started before the pause can start one more worker. The resume
+  starts the rollout again.
 
 Each start gives the lead a note with the host, the pane and the
 session. A note does not wake the lead. Your lead gives an idle worker

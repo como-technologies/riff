@@ -284,13 +284,23 @@ fn dev_runs_with_no_env() {
     assert!(dev.log.contains("client none\n"), "{}", dev.log);
 }
 
+/// The `just dev` of another tree on the machine can listen at the
+/// picked port. Then `just dev` goes on, as in
+/// `dev_runs_when_another_process_takes_the_picked_port`. So the test
+/// runs `just dev` again, until nothing else listens at its port.
 #[test]
 fn dev_shows_the_server_log_and_starts_no_claude_when_the_server_fails() {
-    let dev = dev(&[], "echo 'no port' >&2\nexit 3", None);
-    assert!(!dev.out.status.success(), "{:?}", dev.out);
-    let stdout = String::from_utf8_lossy(&dev.out.stdout);
-    assert!(stdout.contains("no port"), "{stdout}");
-    assert!(!dev.log.contains("claude"), "{}", dev.log);
+    for _ in 0..20 {
+        let dev = dev(&[], "echo 'no port' >&2\nexit 3", None);
+        if dev.out.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&dev.out.stdout);
+        assert!(stdout.contains("no port"), "{stdout}");
+        assert!(!dev.log.contains("claude"), "{}", dev.log);
+        return;
+    }
+    panic!("just dev ran Claude Code each time, and the server failed each time");
 }
 
 #[test]
