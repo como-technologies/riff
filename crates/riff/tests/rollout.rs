@@ -90,14 +90,21 @@ impl Lead {
         self.api.set_riff(&self.me, state).await.unwrap();
     }
 
+    /// The pane and the session of the worker `n` (from 1) of the fake
+    /// tmux.
+    fn worker(&self, n: usize) -> (String, SessionUri) {
+        let workers = std::fs::read_to_string(self.fake.path().join("workers")).unwrap();
+        let line = workers.lines().nth(n - 1).unwrap();
+        let (pane, id) = line.split_once(' ').unwrap();
+        let worker = SessionUri::new(Who::new("mike", Some(id)).unwrap(), self.me.place().clone());
+        (pane.to_owned(), worker)
+    }
+
     /// The worker `n` (from 1) of the fake tmux joins the riff and
     /// claims `item`, as a real worker does.
     async fn claim(&self, n: usize, item: &str) {
         self.until_workers(n).await;
-        let workers = std::fs::read_to_string(self.fake.path().join("workers")).unwrap();
-        let line = workers.lines().nth(n - 1).unwrap();
-        let (_, id) = line.split_once(' ').unwrap();
-        let worker = SessionUri::new(Who::new("mike", Some(id)).unwrap(), self.me.place().clone());
+        let (_, worker) = self.worker(n);
         self.api.register_as(&worker, true).await.unwrap();
         let thread = self.me.default_thread().unwrap();
         self.api.claim(&worker, &thread, item).await.unwrap();
@@ -322,6 +329,103 @@ async fn the_limit_caps_the_rollout() {
     lead.riff(RiffState::Running).await;
     lead.claim(1, "issue-1").await;
     assert_eq!(lead.settled().await, 1);
+}
+
+/// A worker with a claim is killed: its pane is gone, with no end call,
+/// and its watch stream stays open on the server, as behind a front
+/// end. With no call of the lead, `riff mcp` of the lead ends the
+/// session, the item is free at once, the rollout starts a new worker,
+/// and the new worker holds the item. The lead gets one note
+/// (01M3WG2460P4GF7GEVBY92Q33W).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_worker_takes_the_item_of_a_killed_worker() {
+    let lead = lead(5).await;
+    lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
+    lead.riff(RiffState::Running).await;
+    lead.claim(1, "issue-1").await;
+    let (pane, dead) = lead.worker(1);
+    let _stream = lead.api.watch(&dead).await.unwrap();
+    assert_eq!(lead.settled().await, 1, "the item has its worker");
+    // riff looked at the pane one time or more.
+    tokio::time::sleep(riff::reap::EVERY * 2).await;
+
+    // The kill of the whole pane: no process of the worker is left.
+    std::fs::write(lead.fake.path().join("workers"), "").unwrap();
+
+    let start = Instant::now();
+    while lead.workers() < 1 {
+        assert!(start.elapsed() < WAIT, "no new worker for the free item");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let (_, new) = lead.worker(1);
+    assert_ne!(new.who(), dead.who());
+    let who = lead.api.who(&lead.me, false).await.unwrap();
+    assert!(
+        !who.iter().any(|s| s.uri.who() == dead.who()),
+        "the session of the killed worker is gone at once"
+    );
+    lead.api.register_as(&new, true).await.unwrap();
+    let thread = lead.me.default_thread().unwrap();
+    let reply = lead.api.claim(&new, &thread, "issue-1").await.unwrap();
+    assert!(reply.granted, "{reply:?}");
+
+    let id = dead.who().session().unwrap();
+    let note = format!(
+        "worker stopped: pane {pane}, session {id}, on a. The pane ended with no end call, \
+         so riff ended the session. It held issue-1: free now. riff found no cause."
+    );
+    let start = Instant::now();
+    let mut read = String::new();
+    while !read.contains(&note) {
+        let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+        read.push_str(&riff::text::inbox(&inbox, &lead.me));
+        assert!(start.elapsed() < WAIT, "no note: {read}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(read.matches("worker stopped").count(), 1, "{read}");
+}
+
+/// The lead gets no note for a worker that `riff workers stop` stopped:
+/// the stop kills the pane, and sends the end call after it. And riff
+/// never ends the worker of another repository on the same machine: it
+/// keeps its claim, and the lead gets no note for it
+/// (01M3WG2460P4GF7GEVBY92Q33W).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_worker_and_a_worker_of_another_repository_give_no_note() {
+    let lead = lead(5).await;
+    lead.issues("[]");
+    lead.riff(RiffState::Running).await;
+    let workers = lead.fake.path().join("workers");
+    std::fs::write(&workers, "%7 stop1\n%8 other1\n").unwrap();
+    let (_, stopped) = lead.worker(1);
+    lead.api.register_as(&stopped, true).await.unwrap();
+    let _stopped = lead.api.watch(&stopped).await.unwrap();
+    // A worker of the same user on the same machine, in o/strata.
+    let other: SessionUri = "riff://mike@a/o/strata?session=other1".parse().unwrap();
+    lead.api.register_as(&other, true).await.unwrap();
+    let strata = other.default_thread().unwrap();
+    let held = lead.api.claim(&other, &strata, "issue-7").await.unwrap();
+    assert!(held.granted);
+    let _other = lead.api.watch(&other).await.unwrap();
+    // riff looked at the panes one time or more.
+    tokio::time::sleep(riff::reap::EVERY * 2).await;
+
+    // The two panes end. The stop sends its end call a moment later.
+    std::fs::write(&workers, "").unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    lead.api.end(&stopped).await.unwrap();
+
+    tokio::time::sleep(riff::reap::EVERY * 3).await;
+    let who = lead.api.who(&lead.me, false).await.unwrap();
+    let kept = who.iter().find(|s| s.uri.who() == other.who());
+    assert_eq!(
+        kept.map(|s| s.uri.claims().to_vec()),
+        Some(vec!["issue-7".to_owned()]),
+        "riff ended the worker of another repository: {who:?}"
+    );
+    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+    let read = riff::text::inbox(&inbox, &lead.me);
+    assert!(!read.contains("worker stopped"), "{read}");
 }
 
 /// `riff workers interval` shows and sets the interval

@@ -312,6 +312,17 @@ impl Tmux {
         Self::new("tmux", "")
     }
 
+    /// The process ID of the program of `pane`, or `None` when tmux
+    /// does not give one. [`crate::reap`] finds the systemd scope of a
+    /// worker pane from it.
+    pub fn pane_pid(&self, pane: &str) -> Option<u32> {
+        self.try_run(&["display-message", "-p", "-t", pane, "#{pane_pid}"])
+            .ok()?
+            .ok()?
+            .parse()
+            .ok()
+    }
+
     fn run(&self, args: &[&str]) -> Result<String> {
         self.try_run(args)?.map_err(|stderr| {
             anyhow::anyhow!("tmux {} failed: {stderr}", args.first().unwrap_or(&""))

@@ -1106,6 +1106,23 @@ impl Api {
         self.call("release", &claim(me, thread, item)).await
     }
 
+    /// Frees the claim of the session `holder` (its session ID, or the
+    /// start of it) for it. Only the lead of the user of the holder can
+    /// (01M3WG243BW7P6E1ME0DFNQF8C).
+    pub async fn release_for(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        item: &str,
+        holder: &str,
+    ) -> Result<()> {
+        let request = Claim {
+            session: Some(holder.to_owned()),
+            ..claim(me, thread, item)
+        };
+        self.call("release", &request).await
+    }
+
     /// Makes `me` the lead of its user in its repository. It replaces
     /// the old lead (R177).
     pub async fn lead(&self, me: &SessionUri) -> Result<LeadReply> {
@@ -1185,8 +1202,8 @@ impl Api {
         Changed { done, news }
     }
 
-    /// The wakes for one session, on one connection. The session is
-    /// live while the stream is open. [`follow`] connects again.
+    /// The wakes for one session, on one connection. The open stream is
+    /// no sign of life: see [`keep_alive`]. [`follow`] connects again.
     pub async fn watch(&self, me: &SessionUri) -> Result<impl Stream<Item = Result<Wake>>> {
         self.events("watch", &[("uri", me.to_string())]).await
     }
@@ -1575,11 +1592,43 @@ fn membership(me: &SessionUri, thread: &ThreadName) -> Membership {
     }
 }
 
+/// Sends a keep-alive for `me` each `every`, and never ends
+/// (01M3WG240PNMQYZ7TX6Z7ZF6M9). `riff watch` runs it while it watches:
+/// an open watch stream is no sign of life for the server, because a
+/// front end can hold the stream of a dead client open. A failed
+/// keep-alive is not reported: the next one tries again.
+///
+/// ```mermaid
+/// sequenceDiagram
+///     participant W as riff watch
+///     participant F as front end
+///     participant S as riff-server
+///     W->>S: watch (a call: a sign of life)
+///     loop each 60 s
+///         W->>S: keep-alive
+///     end
+///     Note over W: the process is killed
+///     F-->>S: the stream stays open
+///     S->>S: no keep-alive for 3 minutes: gone
+///     S->>S: 5 minutes: the claims are free
+/// ```
+pub async fn keep_alive(api: &Api, me: &SessionUri, every: Duration) {
+    let mut tick = tokio::time::interval(every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick.tick().await;
+    loop {
+        tick.tick().await;
+        // A hung request must not stop the next keep-alive.
+        let _ = tokio::time::timeout(every, api.alive(me)).await;
+    }
+}
+
 fn claim(me: &SessionUri, thread: &ThreadName, item: &str) -> Claim {
     Claim {
         me: me.clone(),
         thread: thread.clone(),
         item: item.to_owned(),
+        session: None,
     }
 }
 

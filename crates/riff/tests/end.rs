@@ -64,6 +64,22 @@ fn uri(text: &str) -> SessionUri {
     text.parse().unwrap()
 }
 
+/// `riff watch` sends a keep-alive while it runs: an open watch stream
+/// is no sign of life (01M3WG240PNMQYZ7TX6Z7ZF6M9). A keep-alive brings
+/// a gone session back (R207), so the test sees it in `riff who`.
+#[tokio::test]
+async fn the_keep_alive_of_a_watch_is_a_sign_of_life() {
+    let api = start_server().await;
+    let me = uri("riff://mike@pangolin/como-technologies/riff?session=e5");
+    api.register(&me).await.unwrap();
+    api.end(&me).await.unwrap();
+    assert!(!shown(&api).await.contains(&"e5".to_owned()));
+
+    let alive = riff::api::keep_alive(&api, &me, Duration::from_millis(100));
+    let _ = tokio::time::timeout(Duration::from_millis(1_000), alive).await;
+    assert!(shown(&api).await.contains(&"e5".to_owned()));
+}
+
 fn brett() -> SessionUri {
     uri("riff://brett@heron/como-technologies/riff?session=b2")
 }

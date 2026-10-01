@@ -862,6 +862,9 @@ sequenceDiagram
 - A session that stops with no end, for example after `kill -9` or a
   network fault, is gone after 3 minutes. Its claims and its lead end
   together, 5 minutes after its last sign of life.
+- A sign of life is a call or a keep-alive. `riff mcp` and `riff watch`
+  each send a keep-alive each minute. An open watch is no sign of life:
+  the server cannot see that the process of a watch died.
 - A gone session gets no messages. A `tell` to it fails.
 - When a gone session calls again, it comes back with the same ID and
   threads. After a stop with no end, it also gets back each claim that
@@ -990,6 +993,38 @@ Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 
 - The start hook lists the earlier work of the clone that no live
   session owns, at most 8 items. So a new session sees it before it
   picks an item.
+
+### Free the claim of another session
+
+A session can hold an item and not work on it: its process died and
+the server did not see it yet, or it does not answer. Then no other
+session can claim the item. The lead of your user frees the claim for
+that session. Find the session ID in `riff who --all`:
+
+```sh
+riff who --all
+```
+
+Then run this in the lead session, for example `! riff release ...`
+in Claude Code. The start of the session ID is enough, from 4
+characters:
+
+```sh
+riff release issue-12 --session 068a2cc2
+```
+
+```text
+You released issue-12 in como-technologies/riff for the session 068a2cc2. The item is free.
+```
+
+- Only the lead can do it, and only for a session of its own user in
+  its repository. riff refuses each other session, and a person in a
+  shell.
+- The server posts a note in the thread. The note names the lead, the
+  item and the session.
+- The next session claims the item, and goes on from the pushed
+  branch. See
+  [See the earlier work on an item](#see-the-earlier-work-on-an-item).
 
 ## Leave and join the riff
 
@@ -2993,6 +3028,8 @@ flowchart TD
     I -- "idle too long, and another idle worker on its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
     Q -- "riff workers stop" --> S[the pane closes, no message]
     Q -- "it waits for a verify" --> K[it keeps its claim and waits]
+    Q -- "the pane dies: a memory kill, a crash, a closed pane" --> D["riff ends its session:<br/>its claims are free at once,<br/>the lead gets a note"]
+    D --> R[riff starts a new worker for the free item]
 ```
 
 When `claude` exits on its own, your lead gets a direct message:
@@ -3016,6 +3053,57 @@ A worker never ends itself. The server stops idle workers (see
 [The server stops idle workers](#the-server-stops-idle-workers)). The
 lead or you end the other workers with `riff workers stop` (see
 [Stop the workers](#stop-the-workers)).
+
+### A worker that dies
+
+A worker can die at each moment: the system kills it for memory, it
+crashes, or its pane closes. Then no process of the worker is left to
+tell the server. You and your lead do nothing: the work goes on.
+
+`riff workers host` looks at the worker panes of its machine each 5
+seconds. On the machine of your lead, the lead session does the same.
+Each looks after the workers of its own repository only. It acts at
+the second look after the end of a pane, so 5 to 10 seconds after it.
+
+```mermaid
+sequenceDiagram
+    participant T as worker pane
+    participant H as riff workers host, or the lead session
+    participant S as riff-server
+    participant L as lead
+    participant N as new worker
+    Note over T: the pane dies
+    H->>H: the pane is gone
+    H->>S: end the session of the worker
+    Note over S: its claims are free at once
+    H->>S: a note to the lead
+    S-->>L: at its next read
+    H->>N: riff starts a worker for the free item
+    N->>S: claim the item
+    N->>N: goes on from the pushed branch
+```
+
+The note does not wake your lead. It names the pane, the session, the
+item, and the cause when riff finds it. riff finds a kill by
+`systemd-oomd` in the journal:
+
+```text
+worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, on pangolin.
+The pane ended with no end call, so riff ended the session. It held issue-12: free now.
+Cause: systemd-oomd killed the pane: memory pressure for /user.slice/user-1000.slice/user@1000.service being 66.21% > 50.00% for > 20s with reclaim activity.
+```
+
+To see why the system killed a pane, read the journal:
+
+```sh
+journalctl -u systemd-oomd --since "-10min"
+```
+
+On a machine with no `riff workers host` and no lead session in tmux,
+nobody looks at the panes. There the server frees the claims 5 minutes
+after the last sign of life of the worker, or your lead frees a
+claim. See
+[Free the claim of another session](#free-the-claim-of-another-session).
 
 ### A worker with no work waits idle
 

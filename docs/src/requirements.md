@@ -1176,7 +1176,8 @@
   `SessionEnd` hook `riff hook session-end` sends the same call, except
   for the reason `clear` (R168).
 - **R206** A session is gone when it ended (R205), or when the server
-  got no call, no keep-alive and no watch from it for 3 minutes. A gone
+  got no call and no keep-alive from it for 3 minutes
+  (01M3WG240PNMQYZ7TX6Z7ZF6M9). A gone
   session matches no selector. A direct message to it fails and says
   that the session is gone. An end frees the claims of the session at
   once. Its lead does not count while it is gone. After a stop with no
@@ -1187,6 +1188,19 @@
   no end, it gets back each claim that no other session took. After an
   end, it has no claims. A lead is the lead again, unless another
   session became the lead (R178).
+- **01M3WG240PNMQYZ7TX6Z7ZF6M9** An open watch stream is no sign of
+  life. The start of a watch is a call. The close of a watch stream is
+  no sign of life. `riff watch` sends a keep-alive each 60 seconds
+  while it runs. So a session whose process is killed with no end call
+  is gone after 3 minutes, and its claims are free after 5 minutes,
+  also when a front end holds its watch stream open.
+- **01M3WG243BW7P6E1ME0DFNQF8C** The lead of a user frees the claim of
+  another session of that user in its repository, live or gone:
+  `riff release ITEM --session ID`, or the `release` tool with
+  `session`. ID is the session ID of the holder, or a start of it of 4
+  or more characters. The server refuses each other caller. It posts a
+  note in the thread of the claim that names the lead, the item and
+  the holder.
 - **R182** A session sets its status with `riff status` or the `status`
   tool. A status is the current step of the session, and a reason when
   the session is blocked (`--blocked REASON`). A new status replaces the
@@ -2098,6 +2112,18 @@
   workers by itself. The lead gives free work to an idle worker with a
   request. It starts workers by hand only while the rollout is off. It
   never changes `workers.interval`.
+- **01M3WG2460P4GF7GEVBY92Q33W** A worker can die at each moment.
+  `riff workers host`, and `riff mcp` of the lead on the machine of the
+  lead, look at the worker panes of the machine each 5 seconds. When a
+  pane is gone and its session is live, riff ends the session, so its
+  claims are free at once. It posts one note to the lead with the pane,
+  the session, the items and the cause when it finds it: a kill by
+  `systemd-oomd` of the scope of the pane. The note wakes nobody. The
+  rollout starts a worker for the free item. riff acts at the second
+  look after the end of a pane, so `riff workers stop`, which kills
+  the pane and then sends the end call, gives no note. riff ends only
+  a session of its user in its repository, and posts no note for
+  another one.
 
 ## Builds
 

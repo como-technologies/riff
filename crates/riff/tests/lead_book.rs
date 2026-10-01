@@ -104,6 +104,48 @@ fn no_other_page_repeats_the_rules_of_the_lead() {
     }
 }
 
+/// 01M3WG243BW7P6E1ME0DFNQF8C, 01M3WG2460P4GF7GEVBY92Q33W: the book has
+/// the how-to for the release by the lead, and says what riff does for
+/// a worker that dies. The skill tells the lead. The book shows the
+/// words that riff gives.
+#[test]
+fn the_book_and_the_skill_say_how_the_lead_frees_a_claim() {
+    use riff::terminal::WorkerPane;
+    let page = read("how-it-works.md");
+    let thread = "como-technologies/riff".parse().unwrap();
+    for part in [
+        "### Free the claim of another session",
+        "```sh\nriff release issue-12 --session 068a2cc2\n```",
+        &riff::text::released_for(&thread, "issue-12", "068a2cc2"),
+        "### A worker that dies",
+        "```sh\njournalctl -u systemd-oomd --since \"-10min\"\n```",
+    ] {
+        assert!(page.contains(part), "how-it-works.md has no {part:?}");
+    }
+    let pane = WorkerPane {
+        pane: "%5".into(),
+        session: "6072f384-d57d-463c-a837-6df28bc9bc8a".into(),
+    };
+    let cause = "systemd-oomd killed the pane: memory pressure for \
+                 /user.slice/user-1000.slice/user@1000.service being 66.21% > 50.00% for > 20s \
+                 with reclaim activity";
+    let note = riff::text::worker_gone("pangolin", &pane, &["issue-12".into()], Some(cause));
+    let flat = page.replace('\n', " ");
+    assert!(flat.contains(&note), "how-it-works.md has no {note:?}");
+
+    let skill = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
+    )
+    .unwrap();
+    for part in [
+        "`riff release ITEM --session ID`",
+        "The pane ended with no end call",
+        "Only the lead frees the\n  claim of another session",
+    ] {
+        assert!(skill.contains(part), "the skill has no {part:?}");
+    }
+}
+
 /// 01M3W8AYDFPZNZ898WAJS7JEZA: the skill and the book name the
 /// automatic step of the lead.
 #[test]

@@ -12,6 +12,7 @@
 //! | `claude` exits on its own, for example after a crash | the wrapper | a direct message with the pane, the session ID and the exit code |
 //! | `riff workers stop` | the command | nothing: the person or the lead asked for it |
 //! | the server stops an idle worker | `riff mcp` of the worker sends SIGTERM to the wrapper | a note of the server |
+//! | the pane dies with the wrapper, for example a memory kill | `riff workers host`, or `riff mcp` of the lead ([`crate::reap`]) | a note with the pane, the session, the item and the cause |
 //!
 //! The wrapper never starts `claude` again: a crash loop costs tokens.
 //! The lead decides.

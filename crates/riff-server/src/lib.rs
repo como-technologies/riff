@@ -1878,12 +1878,40 @@ async fn release(
     caller: Option<Extension<SignedIn>>,
     Json(r): Json<Claim>,
 ) -> Reply<()> {
-    change(&s, caller, &r.me, |state| {
-        state
-            .release(&r.me, &r.thread, &r.item, Instant::now())
-            .map_err(bad_request)
-    })
-    .await?;
+    let Some(holder) = &r.session else {
+        change(&s, caller, &r.me, |state| {
+            state
+                .release(&r.me, &r.thread, &r.item, Instant::now())
+                .map_err(bad_request)
+        })
+        .await?;
+        return Ok(Json(()));
+    };
+    // The lead frees the claim of another session. A note of the server
+    // in the thread of the claim names the lead, the item and the
+    // holder (01M3WG243BW7P6E1ME0DFNQF8C).
+    let (now, at_ms) = (Instant::now(), now_ms());
+    let (note, position) = {
+        let mut state = acts_as(&s, caller, &r.me)?;
+        let before = state.position();
+        let note = state
+            .release_for(&r.me, &r.thread, &r.item, holder, now)
+            .map(|holder| {
+                let news = state::released_for(
+                    &state.uri(r.me.who(), now),
+                    &r.item,
+                    &state.uri(&holder, now),
+                );
+                tracing::info!("{news}");
+                let me = owner::server_uri();
+                let thread = Some(r.thread.clone());
+                state.announce(&me, thread, Vec::new(), &news, Kind::Note, now, at_ms)
+            });
+        (note, s.made(&state, before))
+    };
+    let note = note.map_err(bad_request)?;
+    s.deliver_all(position, vec![note]);
+    s.written(position).await?;
     Ok(Json(()))
 }
 
@@ -2429,8 +2457,8 @@ struct WatchQuery {
     uri: SessionUri,
 }
 
-/// Streams the wakes for one session. The session is live while the
-/// stream is open. It gives only the wakes of the session, in threads
+/// Streams the wakes for one session. The open stream is no sign of life
+/// (01M3WG240PNMQYZ7TX6Z7ZF6M9). It gives only the wakes of the session, in threads
 /// that it may read ([`state::may_read`]).
 async fn watch(
     AxumState(s): AxumState<Shared>,
@@ -2821,6 +2849,7 @@ mod tests {
             me: mike(),
             thread: mike().default_thread().unwrap(),
             item: "issue-7".into(),
+            session: None,
         };
         let task = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request)));
         store.tried(tries + 1).await;
@@ -2842,6 +2871,7 @@ mod tests {
             me: mike(),
             thread: mike().default_thread().unwrap(),
             item: "issue-7".into(),
+            session: None,
         };
         let first = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request())));
         store.tried(tries + 1).await;
@@ -2947,6 +2977,7 @@ mod tests {
                 me: brett(),
                 thread: mike().default_thread().unwrap(),
                 item: "issue-9".into(),
+                session: None,
             }),
         )
         .await
@@ -3046,6 +3077,7 @@ mod tests {
             me: mike(),
             thread: mike().default_thread().unwrap(),
             item: "issue-7".into(),
+            session: None,
         };
         let task = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request)));
         store.tried(tries + 1).await;

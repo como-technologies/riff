@@ -22,7 +22,8 @@
 //! ```
 //!
 //! The `riff mcp` of the lead also starts workers by itself when the
-//! wave has free work (see [`crate::rollout`]).
+//! wave has free work (see [`crate::rollout`]). It ends the session of a
+//! worker of its machine whose pane is gone (see [`crate::reap`]).
 //!
 //! A keep-alive is not a call: `who` still shows the time since the
 //! last call (R204). After the end call, the session leaves `who`, and
@@ -181,6 +182,17 @@ pub struct ClaimArgs {
     thread: Option<String>,
     /// The work item, for example issue-12.
     item: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReleaseArgs {
+    /// The thread. Leave it out to use your repository thread.
+    thread: Option<String>,
+    /// The work item, for example issue-12.
+    item: String,
+    /// Only the lead: the session that holds the item, by its session ID
+    /// or the start of it. Leave it out to release your own claim.
+    session: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -452,14 +464,26 @@ names the pushed branch and the worktree of an earlier session on the item, when
         Ok(out)
     }
 
-    #[tool(description = "Release a work item that you claimed.")]
-    async fn release(&self, Parameters(a): Parameters<ClaimArgs>) -> ToolResult {
+    #[tool(
+        description = "Release a work item that you claimed. Only the lead: with `session`, free \
+the claim of another session of your user, for example one that is gone or that does not answer."
+    )]
+    async fn release(&self, Parameters(a): Parameters<ReleaseArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
-        self.api
-            .release(&self.here()?, &thread, &a.item)
-            .await
-            .map_err(err)?;
-        Ok(text::released(&thread, &a.item))
+        let me = self.here()?;
+        match a.session {
+            Some(holder) => {
+                self.api
+                    .release_for(&me, &thread, &a.item, &holder)
+                    .await
+                    .map_err(err)?;
+                Ok(text::released_for(&thread, &a.item, &holder))
+            }
+            None => {
+                self.api.release(&me, &thread, &a.item).await.map_err(err)?;
+                Ok(text::released(&thread, &a.item))
+            }
+        }
     }
 
     #[tool(
@@ -652,6 +676,62 @@ impl Tools {
         tokio::spawn(crate::rollout::run(env))
     }
 
+    /// Looks at the worker panes of this machine each
+    /// [`crate::reap::EVERY`], for as long as the tools run. While this
+    /// session is the lead, it ends the session of a worker whose pane
+    /// is gone, and posts a note to the lead
+    /// (01M3WG2460P4GF7GEVBY92Q33W). So the claims of a killed worker
+    /// are free at once, and the rollout starts a worker for the item.
+    /// A session outside tmux looks at nothing. See [`crate::reap`].
+    pub fn reap(&self) -> tokio::task::JoinHandle<()> {
+        use crate::reap::{self, Reaper};
+        let tools = self.clone();
+        let tmux = crate::terminal::Tmux::from_env();
+        tokio::spawn(async move {
+            let Some(tmux) = tmux else { return };
+            let mut reaper = Reaper::default();
+            let mut tick = tokio::time::interval(reap::EVERY);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                // tmux and /proc: keep them off the runtime.
+                let looked = {
+                    let tmux = tmux.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let lost = reap::lost(&mut reaper, &tmux);
+                        (reaper, lost)
+                    })
+                    .await
+                };
+                let Ok((kept, lost)) = looked else { return };
+                reaper = kept;
+                if lost.is_empty() || tools.left() {
+                    continue;
+                }
+                let me = tools.me();
+                let sessions = match tools.api.who(&me, false).await {
+                    Ok(sessions) => sessions,
+                    Err(e) => {
+                        eprintln!("riff: cannot end the session of a lost worker: {e:#}");
+                        continue;
+                    }
+                };
+                let lead = sessions
+                    .iter()
+                    .any(|s| s.uri.who() == me.who() && s.uri.lead());
+                if !lead {
+                    continue;
+                }
+                let notes = reap::reap(&tools.api, &me, &sessions, &lost, reap::journal).await;
+                for note in notes {
+                    if let Err(e) = crate::rollout::note_lead(tools.api.base(), &me, &note).await {
+                        eprintln!("riff: cannot post the note of a lost worker: {e:#}");
+                    }
+                }
+            }
+        })
+    }
+
     /// Tells the server that the session ended (R205). It waits at most
     /// [`END_WAIT`].
     pub async fn end(&self) {
@@ -694,6 +774,7 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
     let alive = tools.keep_alive();
     // A worker is never the lead.
     let rollout = (!worker).then(|| tools.rollout());
+    let reap = (!worker).then(|| tools.reap());
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
@@ -750,6 +831,9 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
         if let Some(rollout) = &rollout {
             rollout.abort();
         }
+        if let Some(reap) = &reap {
+            reap.abort();
+        }
         let args = with_place(std::env::args_os().skip(1), tools.me().place());
         let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let _ = std::env::set_current_dir(dir);
@@ -759,6 +843,9 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
     alive.abort();
     if let Some(rollout) = rollout {
         rollout.abort();
+    }
+    if let Some(reap) = reap {
+        reap.abort();
     }
     tools.end().await;
     result

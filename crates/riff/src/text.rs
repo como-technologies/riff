@@ -1076,6 +1076,64 @@ pub fn no_systemd(why: &str) -> String {
     )
 }
 
+/// The note to the lead for a worker whose pane ended with no end call
+/// of its session (01M3WG2460P4GF7GEVBY92Q33W): the pane, the session,
+/// the items that it held, and the cause when riff found it.
+///
+/// ```
+/// use riff::terminal::WorkerPane;
+///
+/// let pane = WorkerPane { pane: "%3".into(), session: "068a2cc2-11aa".into() };
+/// assert_eq!(
+///     riff::text::worker_gone("pangolin", &pane, &["issue-347".into()], None),
+///     "worker stopped: pane %3, session 068a2cc2-11aa, on pangolin. The pane ended with no \
+///      end call, so riff ended the session. It held issue-347: free now. riff found no cause."
+/// );
+/// assert_eq!(
+///     riff::text::worker_gone("pangolin", &pane, &[], Some("systemd-oomd killed the pane: memory")),
+///     "worker stopped: pane %3, session 068a2cc2-11aa, on pangolin. The pane ended with no \
+///      end call, so riff ended the session. It held no item. Cause: systemd-oomd killed the \
+///      pane: memory."
+/// );
+/// ```
+pub fn worker_gone(
+    host: &str,
+    pane: &crate::terminal::WorkerPane,
+    claims: &[String],
+    cause: Option<&str>,
+) -> String {
+    let held = if claims.is_empty() {
+        "It held no item.".to_owned()
+    } else {
+        format!("It held {}: free now.", claims.join(", "))
+    };
+    let cause = match cause {
+        Some(cause) => format!("Cause: {cause}."),
+        None => "riff found no cause.".to_owned(),
+    };
+    format!(
+        "worker stopped: pane {}, session {}, on {host}. The pane ended with no end call, so \
+         riff ended the session. {held} {cause}",
+        pane.pane, pane.session
+    )
+}
+
+/// The end of the note of [`worker_gone`] when the end call failed.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::worker_gone_not_ended("no sign-in"),
+///     " The end call failed (no sign-in): the server frees its claims after 5 minutes, or \
+///      the lead frees one with riff release ITEM --session ID."
+/// );
+/// ```
+pub fn worker_gone_not_ended(error: &str) -> String {
+    format!(
+        " The end call failed ({error}): the server frees its claims after 5 minutes, or the \
+         lead frees one with riff release ITEM --session ID."
+    )
+}
+
 /// The answer to `riff logout --all`.
 ///
 /// ```
@@ -1205,6 +1263,22 @@ pub fn connect_no_sign_in(server: &str, error: &anyhow::Error) -> String {
 /// The answer to a release.
 pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")
+}
+
+/// The answer to a release by the lead for the session `holder`
+/// (01M3WG243BW7P6E1ME0DFNQF8C).
+///
+/// ```
+/// let thread = "como-technologies/riff".parse()?;
+/// assert_eq!(
+///     riff::text::released_for(&thread, "issue-347", "068a2cc2"),
+///     "You released issue-347 in como-technologies/riff for the session 068a2cc2. \
+///      The item is free."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
+    format!("You released {item} in {thread} for the session {holder}. The item is free.")
 }
 
 /// One message of `thread`. The sender is short: its [`name`], and

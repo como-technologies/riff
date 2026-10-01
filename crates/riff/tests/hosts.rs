@@ -469,6 +469,60 @@ async fn workers_stop_on_a_host_stops_only_its_workers() {
     assert!(!r.a.log().contains("kill-pane"), "{}", r.a.log());
 }
 
+/// A worker pane of a host ends with no end call, and its watch stream
+/// stays open on the server. The host ends the session, so its claim is
+/// free at once, and posts one note to the lead with the pane, the
+/// session and the item (01M3WG2460P4GF7GEVBY92Q33W). A worker that the
+/// host stops on a request gives no such note.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_ends_the_session_of_a_killed_worker_and_tells_the_lead() {
+    let r = riff().await;
+    r.api
+        .tell(&r.lead, &r.host_id, "workers start 2")
+        .await
+        .unwrap();
+    reads(&r.api, &r.lead, "b: started 2 workers").await;
+    let workers = r.b.workers();
+    let (pane, id) = workers[0].clone();
+    let worker = session(&r.main, "mike", "b", &id);
+    r.api.register_as(&worker, true).await.unwrap();
+    let thread = r.lead.default_thread().unwrap();
+    let held = r.api.claim(&worker, &thread, "issue-12").await.unwrap();
+    assert!(held.granted);
+    let _stream = r.api.watch(&worker).await.unwrap();
+    let other = session(&r.main, "mike", "b", &workers[1].1);
+    r.api.register_as(&other, true).await.unwrap();
+    // The host looked at the panes one time or more.
+    tokio::time::sleep(riff::reap::EVERY * 2).await;
+
+    // The kill of the whole pane: only the other pane is left.
+    let left = format!("{} {}\n", workers[1].0, workers[1].1);
+    std::fs::write(r.b.fake.path().join("workers"), left).unwrap();
+
+    let note = format!(
+        "worker stopped: pane {pane}, session {id}, on b. The pane ended with no end call, \
+         so riff ended the session. It held issue-12: free now. riff found no cause."
+    );
+    reads(&r.api, &r.lead, &note).await;
+    let who = r.api.who(&r.lead, false).await.unwrap();
+    assert!(!who.iter().any(|s| s.uri.who() == worker.who()), "{who:?}");
+    assert!(who.iter().any(|s| s.uri.who() == other.who()), "{who:?}");
+    let next = session(&r.main, "mike", "a", "w9");
+    let taken = r.api.claim(&next, &thread, "issue-12").await.unwrap();
+    assert!(taken.granted, "{taken:?}");
+
+    // A stop on a request has its end call: no note of a lost worker.
+    r.api
+        .tell(&r.lead, &r.host_id, "workers stop")
+        .await
+        .unwrap();
+    let read = reads(&r.api, &r.lead, "b: Stopped 1 worker.").await;
+    tokio::time::sleep(riff::reap::EVERY * 2).await;
+    let inbox = r.api.inbox(&r.lead, None, false).await.unwrap();
+    let read = read + &riff::text::inbox(&inbox, &r.lead);
+    assert!(!read.contains("worker stopped"), "{read}");
+}
+
 /// `riff workers stop PANE --host b` stops that one worker on `b`; the
 /// other workers there go on. The start of a session ID works as PANE
 /// too (01M3Q5A0Z5DK0YV1MWTM4AQD5Z).
