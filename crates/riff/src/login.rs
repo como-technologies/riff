@@ -60,9 +60,11 @@
 //!     R -- other error --> O[the error, the sign-in stays]
 //! ```
 //!
-//! [`session_token`] swaps the person access token for a session pair
-//! (R19). The session pair stays in the memory of the process
-//! (see [`crate::api::Api::signed_in`]); it never goes to the keyring.
+//! [`session_token`] swaps the person access token for a session
+//! access token (R19). It has no refresh token
+//! (01M3WFVAB44T8EP4QZD4KS7DRF). The session token stays in the memory
+//! of the process (see [`crate::api::Api::signed_in`]); it never goes
+//! to the keyring.
 //!
 //! # Example
 //!
@@ -352,8 +354,9 @@ pub async fn forget(server: &str, token: &str) -> Result<()> {
     Ok(())
 }
 
-/// A new session pair for `session`, from the person access token of
-/// the server of `api` (R19). The pair works only for that session.
+/// A new session access token for `session`, from the person access
+/// token of the server of `api` (R19). It works only for that session,
+/// and its reply has no refresh token.
 /// When the server does not take the person access token, it refreshes
 /// the person pair once and asks again (01M3MX4VCEBTY0DN4JMF624WYE).
 pub async fn session_token(api: &Api, session: &str) -> Result<TokenReply> {
@@ -371,7 +374,7 @@ pub async fn session_token(api: &Api, session: &str) -> Result<TokenReply> {
     }
 }
 
-/// Swaps the person access token `person` for a session pair.
+/// Swaps the person access token `person` for a session access token.
 async fn exchange(api: &Api, session: &str, person: &str) -> Result<TokenReply> {
     api.token(
         &TokenRequest {
