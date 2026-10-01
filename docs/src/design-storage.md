@@ -38,11 +38,11 @@ flowchart LR
 
 | Class | Data | When it is lost |
 |---|---|---|
-| **The log** | messages (posts, notes, direct messages, chat, with the sessions that each one woke), claims, people (members, admins, owner, riff ID), riff state (paused, running), leads, thread members, settings, forgotten sessions | never: each change is a record, and a start replays the records |
+| **The log** | messages (posts, notes, direct messages, chat, with the sessions that each one woke), claims, people (members, admins, owner, riff ID), the pause of the riff and of each repository, leads, thread members, settings, the life cycle of each session (its starts, the worker mark, MustClear), forgotten sessions | never: each change is a record, and a start replays the records |
 | **The checkpoint** | the state that the log gives, up to a log position; the read cursors; the last N messages of each thread | a start replays more of the log; a session can read a message two times, but never misses one |
 | **The sign-ins** | sign-ins and their token chains | each person signs in again |
 | **Memory** | sessions (each session sends its place again on its next call), presence, access tokens, DPoP replay IDs, timers, the lease, the wake channels | nothing |
-| **Computed** | the state of each session, stale, the board, idle times | nothing |
+| **Computed** | live and gone, stale, the board, idle times | nothing |
 
 Each person who can write the bucket controls the riff. The records of
 people and settings are not signed. The service account of riff-server
@@ -78,6 +78,8 @@ flowchart LR
 - `handle(&State, Command) -> Result<Vec<Change>, Refused>` checks a
   command against the state. It does not change the state, and it does
   no I/O. A `Change` has no position and no time: the log adds them.
+  [The command engine](design-engine.md) gives the full form: each
+  command is a type, and `handle` gets the caller and a view.
 - `apply(&mut State, &Record)` changes the state for one record. It
   does no I/O, reads no clock, and does not fail. A record that the
   state cannot take (for example, a release of a claim that is not
@@ -91,8 +93,10 @@ flowchart LR
   commit. It writes outside the lock. So each call runs `handle`
   against the state of each call before it, and two claims of one item
   never both pass.
-- A call that makes a record replies after its chunk is written. A
-  call that makes no record (`who`, `read`, `top`) does not wait.
+- A command replies after the writer is done with it: its chunk is
+  written, and each chunk before it. This is also the rule for a
+  command that makes no record, and for one that is refused. A query
+  (`who`, `read`, `top`) does not wait.
 - The server keeps two copies of the state. `handle` checks against
   the pending state, which has each record in the queue. Each read,
   wake, view and reply uses the written state, which has only the
@@ -150,7 +154,7 @@ schema. This is an example; see [The book shows the real
 code](#the-book-shows-the-real-code):
 
 ```json
-{"position":1234,"written_at_ms":1790000000000,"change":{"claimed":{"session":"ann/s1","thread":"repo","item":"issue-7"}}}
+{"position":1234,"written_at_ms":1790000000000,"by":{"session":"ann/s1"},"command":"claim","change":{"claimed":{"session":"riff://ann@host/o/repo?session=s1","thread":"o/repo","item":"issue-7"}}}
 ```
 
 - The change names say what happened, in the past tense, for example
@@ -266,9 +270,11 @@ a scheme that it does not know shows the message as not verified.
 ## Forget a session
 
 A timer writes a `session_forgotten` record for each session with no
-sign of life for `SESSION_EXPIRY` (30 days). `apply` drops its read
-cursors, its memberships, and each direct thread whose two sessions are
-gone. `apply` reads the time from the record, not from a clock.
+sign of life for `SESSION_EXPIRY` (30 days), after one `released`
+record for each claim that the session holds. `apply` drops the
+session, its memberships, its lead, and each direct thread whose two
+sessions are gone. The presence drops its read cursors. `apply` reads
+the time from the record, not from a clock.
 
 ## The start and the replay
 
@@ -501,8 +507,8 @@ goes to the owner.
 
 ### Go live
 
-Go live is one release at a wave end: the riff is paused, and no item is
-claimed.
+Go live is one release at a wave end of the riff repository. The riff
+is paused. Another repository can hold claims: they stay.
 
 1. The lead writes its handoff in the release issue on GitHub, not in
    the riff.
@@ -515,8 +521,8 @@ claimed.
 4. Each machine updates itself: the old riff sees the new build in the
    `riff-build` header of each reply.
 5. Each person signs in again with `riff login`, on each machine.
-6. The lead runs `lead` again, and reads its handoff from the release
-   issue.
+6. Each lead is the lead as before. It reads its handoff from the
+   release issue. The owner or an admin resumes the riff.
 7. The old objects (`sessions`, `tokens`, `threads/`) stay until the
    first wave after go-live ends, for a rollback. Then the lead deletes
    them. The new server uses the same `lease` object, so an old and a
@@ -558,8 +564,9 @@ one after another, in this order. They change the same code.
 5. The server writes a checkpoint each 1,000 records, or each 60
    minutes when records came (settings). See "Cost".
 6. The default rule for a new field is a requirement.
-7. We go live with an empty log at a wave end, and import the members
-   one time.
+7. We go live at a wave end, and import the state of today one time:
+   the people, the sessions, the claims, the leads, the settings and
+   the messages.
 
 ## Appendix A: position and seq
 
