@@ -77,10 +77,13 @@
 //! - `who` lists each session with the time since its last call. A
 //!   keep-alive is not a call (R163).
 //! - A session is gone when it ended ([`State::end`]), or when it had no
-//!   call, no keep-alive ([`State::alive`]) and no watch for [`GONE`]
-//!   (R164, R206). `who` hides a gone session, unless the caller asks
-//!   for all sessions. A gone session matches no selector, and a direct
-//!   message to it fails (R206).
+//!   call and no keep-alive ([`State::alive`]) for [`GONE`] (R164,
+//!   R206). An open watch stream is no sign of life: a front end can
+//!   hold the stream of a dead client open, and the server does not see
+//!   the death (01M3WG240PNMQYZ7TX6Z7ZF6M9). `riff watch` sends a
+//!   keep-alive while it runs. `who` hides a gone session, unless the
+//!   caller asks for all sessions. A gone session matches no selector,
+//!   and a direct message to it fails (R206).
 //! - An end frees the claims of the session at once. Its lead does not
 //!   count while it is gone. A session that stops with no end holds its
 //!   claims and its lead for [`CLAIM_GRACE`] after its last sign of
@@ -111,9 +114,10 @@
 //!   fields match. So a verify request to the lead of the author reaches
 //!   a free session when the lead is gone (01M3JY1TBPQHH6WPPBTF42T64H).
 //! - A claim is free, or held. A held claim goes back to free when its
-//!   holder releases it or ends, or when the holder has no watch stream
-//!   and its last sign of life is more than [`CLAIM_GRACE`] ago. A claim
-//!   of a free item succeeds.
+//!   holder releases it or ends, when the lead of its user releases it
+//!   ([`State::release_for`], 01M3WG243BW7P6E1ME0DFNQF8C), or when the
+//!   last sign of life of the holder is more than [`CLAIM_GRACE`] ago.
+//!   A claim of a free item succeeds.
 //! - Each user has at most one lead in each repository thread. Its URI
 //!   has `lead=true` (R175).
 //! - A session with a session ID becomes the lead when it arrives in a
@@ -211,8 +215,8 @@ use serde::{Deserialize, Serialize};
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 
-/// A session with no call, no keep-alive and no watch for this long is
-/// gone (R206). `riff mcp` sends a keep-alive each
+/// A session with no call and no keep-alive for this long is gone
+/// (R206). `riff mcp` and `riff watch` send a keep-alive each
 /// [`riff_core::wire::ALIVE_EVERY`].
 pub const GONE: Duration = Duration::from_secs(3 * 60);
 
@@ -538,6 +542,14 @@ pub enum Command {
         thread: ThreadName,
         item: String,
     },
+    /// The lead of a user frees the claim of another session of that
+    /// user (01M3WG243BW7P6E1ME0DFNQF8C). `holder` is the session ID of
+    /// the holder, or the start of it.
+    ReleaseFor {
+        thread: ThreadName,
+        item: String,
+        holder: String,
+    },
     /// The session ended: each of its claims is free.
     End,
     /// A new start of the session: each of its claims is free.
@@ -563,9 +575,9 @@ struct Session {
     /// replay, in milliseconds since the Unix epoch. `None` when the
     /// session called after the replay.
     seen_before_load: Option<u64>,
-    /// The last sign of life: a call, a keep-alive or the end of a
-    /// watch. `None` when the session did not show life since the
-    /// replay.
+    /// The last sign of life: a call or a keep-alive. The start of a
+    /// watch is a call. `None` when the session did not show life since
+    /// the replay.
     alive: Option<Instant>,
     /// True after an end call, until the session comes back.
     ended: bool,
@@ -622,12 +634,18 @@ impl Session {
     }
 
     /// True when the session ended, or had no sign of life for [`GONE`].
+    /// An open watch stream is no sign of life: a front end can hold the
+    /// stream of a dead client open (01M3WG240PNMQYZ7TX6Z7ZF6M9).
     fn gone(&self, now: Instant) -> bool {
         self.ended
-            || (self.watchers == 0
-                && self
-                    .alive
-                    .is_none_or(|alive| now.saturating_duration_since(alive) >= GONE))
+            || self
+                .alive
+                .is_none_or(|alive| now.saturating_duration_since(alive) >= GONE)
+    }
+
+    /// True while the session has an open watch stream and is not gone.
+    fn watching(&self, now: Instant) -> bool {
+        self.watchers > 0 && !self.gone(now)
     }
 
     /// True while the claims and the lead of the session hold. A session
@@ -636,17 +654,16 @@ impl Session {
     fn holds(&self, now: Instant, loaded: Option<Instant>) -> bool {
         let within = |since: Instant| now.saturating_duration_since(since) < CLAIM_GRACE;
         !self.ended
-            && (self.watchers > 0
-                || match self.alive {
-                    Some(alive) => within(alive),
-                    None => loaded.is_some_and(within),
-                })
+            && match self.alive {
+                Some(alive) => within(alive),
+                None => loaded.is_some_and(within),
+            }
     }
 
     /// The last time that the session called, in milliseconds since the
     /// Unix epoch. A live session calls now.
     fn seen_ms(&self, now: Instant, now_ms: u64) -> u64 {
-        if self.watchers > 0 {
+        if self.watching(now) {
             return now_ms;
         }
         self.seen_before_load.unwrap_or_else(|| {
@@ -1444,6 +1461,39 @@ impl State {
                     None => return Err(format!("nobody holds {item}")),
                 }
             }
+            Command::ReleaseFor {
+                thread,
+                item,
+                holder: id,
+            } => {
+                let Some(holder) = view.riff.claims.get(&(thread.clone(), item.clone())) else {
+                    return Err(format!("nobody holds {item}"));
+                };
+                let held_by = view.uri(holder, now).short();
+                if !holder.session().is_some_and(|s| names(id, s)) {
+                    return Err(format!(
+                        "{item} is held by {held_by}, not by the session {id}"
+                    ));
+                }
+                let repo = |who: &Who| view.sessions.get(who).map(|s| s.place.default_thread());
+                if holder.user() != who.user() || repo(holder) != repo(who) {
+                    return Err(format!(
+                        "{item} is held by {held_by}. Only the lead of its user in its \
+                         repository frees it."
+                    ));
+                }
+                if holder != who && !view.is_lead(who, now) {
+                    return Err(format!(
+                        "{item} is held by {held_by}. Only the lead of your user frees the \
+                         claim of another session. Tell the lead."
+                    ));
+                }
+                changes.push(Change::Released(Claimed {
+                    session: view.plain(holder),
+                    thread: thread.clone(),
+                    item: item.clone(),
+                }));
+            }
             Command::End | Command::Start => {
                 for ((thread, item), holder) in &view.riff.claims {
                     if holder == who {
@@ -1590,7 +1640,9 @@ impl State {
     /// Records that a watch stream closed. The session is idle when it
     /// has no open stream. A wake ends the watch of a worker, so the end
     /// takes back an ask to stop, as a call does
-    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
+    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN). The close is no sign of life: the
+    /// stream of a dead client can close a long time after its death
+    /// (01M3WG240PNMQYZ7TX6Z7ZF6M9).
     ///
     /// ```
     /// use std::time::{Duration, Instant};
@@ -1615,11 +1667,10 @@ impl State {
     pub fn watch_ended(&mut self, who: &Who, now: Instant) {
         if let Some(session) = self.sessions.get_mut(who) {
             session.watchers = session.watchers.saturating_sub(1);
-            session.last_seen = now;
-            session.seen_before_load = None;
             session.stopping = false;
-            if !session.ended {
-                session.live(now);
+            if !session.gone(now) {
+                session.last_seen = now;
+                session.seen_before_load = None;
             }
         }
     }
@@ -1809,7 +1860,7 @@ impl State {
     /// The session `who` as `who` and `me` show it.
     fn info(&self, who: &Who, session: &Session, now: Instant, now_ms: u64) -> SessionInfo {
         let uri = self.uri(who, now);
-        let live = session.watchers > 0;
+        let live = session.watching(now);
         let status = session.status.as_ref().map(|s| StatusInfo {
             status: s.status.clone(),
             age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
@@ -1923,8 +1974,7 @@ impl State {
             let view = self.written_view();
             for (who, session) in &self.sessions {
                 let free = session.worker
-                    && session.watchers > 0
-                    && !session.ended
+                    && session.watching(now)
                     && !session.stopping
                     && !view.holds_claim(who)
                     && !view.is_lead(who, now);
@@ -1979,7 +2029,7 @@ impl State {
             .filter(|(who, _)| who.user() == user)
             .map(|(_, s)| {
                 (
-                    s.watchers > 0,
+                    s.watching(now),
                     now_ms.saturating_sub(s.seen_ms(now, now_ms)) / 1000,
                 )
             })
@@ -2473,6 +2523,57 @@ impl State {
         self.run(me, &command, now).map(drop)
     }
 
+    /// Frees the claim of `holder` for it: the session with this session
+    /// ID, or this start of it. Only the lead of the user of the holder
+    /// in the repository of the holder can
+    /// (01M3WG243BW7P6E1ME0DFNQF8C). The holder can be live, gone or
+    /// ended. It gives the holder.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::RiffState;
+    /// use riff_server::state::State;
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=1ead".parse()?;
+    /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=068a2cc2".parse()?;
+    /// let w2: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=fb118b5d".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
+    /// let thread = lead.default_thread().unwrap();
+    /// state.claim(&w1, &thread, "issue-347", now).unwrap();
+    ///
+    /// // A session that is not the lead is refused.
+    /// assert!(state.release_for(&w2, &thread, "issue-347", "068a", now).is_err());
+    /// // The lead frees the claim, and the next session takes it.
+    /// let holder = state.release_for(&lead, &thread, "issue-347", "068a", now).unwrap();
+    /// assert_eq!(&holder, w1.who());
+    /// assert!(state.claim(&w2, &thread, "issue-347", now).unwrap().0);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn release_for(
+        &mut self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        item: &str,
+        holder: &str,
+        now: Instant,
+    ) -> Result<Who, String> {
+        self.arrive(me, now);
+        let command = Command::ReleaseFor {
+            thread: thread.clone(),
+            item: item.to_owned(),
+            holder: holder.to_owned(),
+        };
+        let changes = self.run(me, &command, now)?;
+        match changes.first() {
+            Some(Change::Released(freed)) => Ok(freed.session.who().clone()),
+            _ => Err(format!("nobody holds {item}")),
+        }
+    }
+
     fn written_view(&self) -> View<'_> {
         View {
             riff: &self.written,
@@ -2726,6 +2827,12 @@ impl State {
             .copied()
             .unwrap_or(0)
     }
+}
+
+/// True when `id` names the session `session`: the whole session ID, or
+/// a start of it of 4 or more characters.
+fn names(id: &str, session: &str) -> bool {
+    id == session || (id.len() >= 4 && session.starts_with(id))
 }
 
 fn wake(thread: &ThreadName, message: &Message) -> Wake {
