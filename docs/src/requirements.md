@@ -474,6 +474,12 @@
   that fails each call. `riff server` and `riff update` still ask the
   riff of the machine for its build, by design. `just dev` sets
   `RIFF_HOME` to `target/dev-home` of its tree.
+- **01M3W98PMDPZW1CR3KJYMPHVQZ** A test server starts with no old
+  sign-in at its URL. The tests of one file share one mock keyring,
+  and the OS can give the port of an earlier test to a later test. A
+  test in process that puts a new riff at its URL keeps its listener.
+  A test that needs a URL where nothing listens holds the port with a
+  socket that does not listen.
 - **01M3MY2KSV73WS8D902YCH2PRX** With `RIFF_HOME=DIR`, `riff` keeps its
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.
