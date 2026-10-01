@@ -1608,6 +1608,98 @@ pub fn status_set(status: &riff_core::wire::Status) -> String {
     }
 }
 
+/// The most characters of the text of a message in an automatic step
+/// of the lead (01M3W8AYDFPZNZ898WAJS7JEZA).
+pub const STEP_TEXT_CHARS: usize = 80;
+
+/// `text` in one short line: each run of white space is one space, and
+/// a text of more than [`STEP_TEXT_CHARS`] characters ends with `…`.
+fn one_line(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= STEP_TEXT_CHARS {
+        return line;
+    }
+    let cut: String = line.chars().take(STEP_TEXT_CHARS - 1).collect();
+    format!("{}…", cut.trim_end())
+}
+
+/// An action and the text of its message, as one step. An empty text
+/// gives the action only.
+fn step_of(action: &str, body: &str) -> String {
+    match one_line(body) {
+        line if line.is_empty() => action.to_owned(),
+        line => format!("{action}: {line}"),
+    }
+}
+
+/// The automatic step of the lead after a `tell` to `session`
+/// (01M3W8AYDFPZNZ898WAJS7JEZA). It shows the start of the session ID,
+/// as [`name`] does, and the message in one short line.
+///
+/// ```
+/// use riff::text::{STEP_TEXT_CHARS, told_step};
+///
+/// assert_eq!(
+///     told_step("075ff6a7-0000-4000-8000-000000000000", "request: claim issue-302"),
+///     "told 075ff6a7: request: claim issue-302"
+/// );
+/// // A long message, or one with more than one line, is one short line.
+/// let step = told_step("b2", &format!("request:\n  stop\n{}", "x".repeat(200)));
+/// assert!(step.starts_with("told b2: request: stop xxx"), "{step}");
+/// assert!(step.ends_with('…'), "{step}");
+/// assert_eq!(step.chars().count(), "told b2: ".len() + STEP_TEXT_CHARS);
+/// ```
+pub fn told_step(session: &str, body: &str) -> String {
+    let short: String = session.chars().take(ID_CHARS).collect();
+    step_of(&format!("told {short}"), body)
+}
+
+/// The automatic step of the lead after a `post` of `kind`
+/// (01M3W8AYDFPZNZ898WAJS7JEZA).
+///
+/// ```
+/// use riff::text::posted_step;
+/// use riff_core::wire::Kind;
+///
+/// assert_eq!(
+///     posted_step(Kind::Note, "Waves: new item #314"),
+///     "posted a note: Waves: new item #314"
+/// );
+/// assert_eq!(posted_step(Kind::Message, "the board"), "posted a message: the board");
+/// // A status request needs no text.
+/// assert_eq!(posted_step(Kind::Status, ""), "asked for status");
+/// assert_eq!(posted_step(Kind::Status, "now"), "asked for status: now");
+/// ```
+pub fn posted_step(kind: riff_core::wire::Kind, body: &str) -> String {
+    use riff_core::wire::Kind;
+    let action = match kind {
+        Kind::Message => "posted a message",
+        Kind::Status => "asked for status",
+        Kind::Note => "posted a note",
+    };
+    step_of(action, body)
+}
+
+/// The automatic step of the lead after a `pause` or a `resume`
+/// (01M3W8AYDFPZNZ898WAJS7JEZA).
+///
+/// ```
+/// use riff_core::wire::RiffState;
+///
+/// assert_eq!(riff::text::riff_step(RiffState::Paused), "paused the riff");
+/// assert_eq!(riff::text::riff_step(RiffState::Running), "resumed the riff");
+/// ```
+pub fn riff_step(state: RiffState) -> &'static str {
+    match state {
+        RiffState::Paused => "paused the riff",
+        RiffState::Running => "resumed the riff",
+    }
+}
+
+/// The automatic step of the lead after the `lead` tool
+/// (01M3W8AYDFPZNZ898WAJS7JEZA).
+pub const LEAD_STEP: &str = "became the lead";
+
 /// A time in seconds, short, in its largest whole unit: `12s`, `2m`,
 /// `3h` or `5d`.
 pub(crate) fn ago(secs: u64) -> String {

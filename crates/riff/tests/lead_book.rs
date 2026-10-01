@@ -103,3 +103,54 @@ fn no_other_page_repeats_the_rules_of_the_lead() {
         }
     }
 }
+
+/// 01M3W8AYDFPZNZ898WAJS7JEZA: the skill and the book name the
+/// automatic step of the lead.
+#[test]
+fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
+    let skill = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
+    )
+    .unwrap();
+    let start = skill
+        .find("\n## Status\n")
+        .expect("the skill has \"## Status\"");
+    let status = &skill[start..];
+    let status = &status[..status[3..].find("\n## ").map_or(status.len(), |i| i + 3)];
+    for part in [
+        "riff sets your step by itself",
+        "`tell`, `post`, `pause`, `resume` and `lead`",
+        "told 075ff6a7: request: claim issue-302",
+        "Set your status for\nwork that riff cannot see",
+    ] {
+        assert!(
+            status.contains(part),
+            "\"Status\" of the skill has no {part:?}"
+        );
+    }
+    let book = section("how-it-works.md", "A status");
+    for part in [
+        "### See what the lead does",
+        "```sh\nriff who\n```",
+        "told 075ff6a7: request: claim issue-302",
+        "posted a note: Waves: new item #314",
+        "asked for status",
+        "paused the riff",
+        "resumed the riff",
+        "became the lead",
+    ] {
+        assert!(book.contains(part), "\"A status\" has no {part:?}");
+    }
+    // The book shows the words that the tools give.
+    use riff_core::wire::{Kind, RiffState};
+    for step in [
+        riff::text::told_step("075ff6a7-aaaa", "request: claim issue-302"),
+        riff::text::posted_step(Kind::Note, "Waves: new item #314"),
+        riff::text::posted_step(Kind::Status, ""),
+        riff::text::riff_step(RiffState::Paused).to_owned(),
+        riff::text::riff_step(RiffState::Running).to_owned(),
+        riff::text::LEAD_STEP.to_owned(),
+    ] {
+        assert!(book.contains(&step), "\"A status\" has no {step:?}");
+    }
+}

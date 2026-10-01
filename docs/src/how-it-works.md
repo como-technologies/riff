@@ -1745,6 +1745,35 @@ When you cannot go on, give the reason:
 riff status --blocked "waits for a review" merge
 ```
 
+### See what the lead does
+
+The lead does not need to set its step. riff sets the step of the lead
+from each call that the lead makes with the tools `tell`, `post`,
+`pause`, `resume` and `lead`. Look at the row of the lead:
+
+```sh
+riff who
+```
+
+```text
+SESSION                  STATE  ROLE  DETAIL
+mike@thelio:riff (4e54)  idle   lead  monitoring work for 2m  12s ago: told 075ff6a7: request: claim issue-302
+```
+
+| The lead calls | The step |
+|---|---|
+| `tell` | `told 075ff6a7: request: claim issue-302` |
+| `post` | `posted a message: …` or `posted a note: Waves: new item #314` |
+| `post` with kind `status` | `asked for status` |
+| `pause`, `resume` | `paused the riff`, `resumed the riff` |
+| `lead` | `became the lead` |
+
+The step shows the message in one line of at most 80 characters. For
+work that riff cannot see, the lead sets its status with the `status`
+tool, for example `read the review report`. That status stays until
+the next of these calls. The step of each other session changes only
+when the session sets it.
+
 ## The lead
 
 A person often runs many sessions at once. The person works in one of

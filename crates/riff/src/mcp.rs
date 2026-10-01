@@ -37,6 +37,34 @@
 //! the claims of the session stay. Claude Code keeps its connection: the
 //! new process answers the next request with no new handshake
 //! (01M3NT6WZTKAFKGDWGCFKC8TB5). See [`crate::relay`].
+//!
+//! # The step of the lead
+//!
+//! A person sees in `riff who` what the lead does, with no `status`
+//! call of the lead (01M3W8AYDFPZNZ898WAJS7JEZA). After each `tell`,
+//! `post`, `pause`, `resume` or `lead` call that the server accepts,
+//! the tools set the step of the lead from that call:
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C["tell, post, pause, resume or lead"] --> O{"the call is OK?"}
+//!     O -- yes --> L{"this session is the lead?"}
+//!     L -- yes --> S["status: the step of the call"]
+//!     O -- no --> N["no change"]
+//!     L -- no --> N
+//! ```
+//!
+//! | Call | Step |
+//! |---|---|
+//! | `tell` | `told 075ff6a7: request: claim issue-302` |
+//! | `post` | `posted a note: Waves: new item #314`, `posted a message: …` or `asked for status` |
+//! | `pause`, `resume` | `paused the riff`, `resumed the riff` |
+//! | `lead` | `became the lead` |
+//!
+//! The step is a status like each other one: a later `status` call of
+//! the lead replaces it, and the next of these calls replaces that. The
+//! words come from [`text::told_step`], [`text::posted_step`],
+//! [`text::riff_step`] and [`text::LEAD_STEP`].
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -328,11 +356,13 @@ matches."
         let thread = self.thread(a.thread)?;
         let to = a.to.unwrap_or_default();
         let kind = a.kind.unwrap_or_default();
+        let me = self.here()?;
         let posted = self
             .api
-            .post(&self.here()?, Some(&thread), &to, &a.body, kind)
+            .post(&me, Some(&thread), &to, &a.body, kind)
             .await
             .map_err(err)?;
+        self.lead_step(&me, text::posted_step(kind, &a.body)).await;
         Ok(text::posted(&posted))
     }
 
@@ -356,11 +386,14 @@ request wakes you, answer with this tool. Do not post a reply."
 `lead` to ask the lead of your user in your repository."
     )]
     async fn tell(&self, Parameters(a): Parameters<TellArgs>) -> ToolResult {
-        let posted = self
-            .api
-            .tell(&self.here()?, &a.session, &a.body)
-            .await
-            .map_err(err)?;
+        let me = self.here()?;
+        let posted = self.api.tell(&me, &a.session, &a.body).await.map_err(err)?;
+        let to = posted
+            .woken
+            .first()
+            .and_then(|s| s.who().session())
+            .unwrap_or(&a.session);
+        self.lead_step(&me, text::told_step(to, &a.body)).await;
         Ok(text::posted(&posted))
     }
 
@@ -403,7 +436,9 @@ sessions of your user send their questions to the lead. It replaces the old lead
 your user says so."
     )]
     async fn lead(&self) -> ToolResult {
-        let reply = self.api.lead(&self.here()?).await.map_err(err)?;
+        let me = self.here()?;
+        let reply = self.api.lead(&me).await.map_err(err)?;
+        self.lead_step(&me, text::LEAD_STEP.into()).await;
         Ok(text::led(&reply))
     }
 
@@ -466,8 +501,29 @@ impl ServerHandler for Tools {}
 
 impl Tools {
     async fn set_riff(&self, state: RiffState) -> ToolResult {
-        let (reply, posted) = self.api.set_riff(&self.here()?, state).await.map_err(err)?;
+        let me = self.here()?;
+        let (reply, posted) = self.api.set_riff(&me, state).await.map_err(err)?;
+        self.lead_step(&me, text::riff_step(state).into()).await;
         Ok(text::riff_set(&reply, &posted))
+    }
+
+    /// Sets the step of `me` to `step`, when `me` is the lead: the
+    /// automatic step of the call that the lead made
+    /// (01M3W8AYDFPZNZ898WAJS7JEZA). The step of each other session
+    /// stays. A failure is not reported: the call of the lead is done.
+    async fn lead_step(&self, me: &SessionUri, step: String) {
+        let lead = self
+            .api
+            .who(me, false)
+            .await
+            .is_ok_and(|list| list.iter().any(|s| s.uri.who() == me.who() && s.uri.lead()));
+        if lead {
+            let status = Status {
+                step,
+                blocked: None,
+            };
+            let _ = self.api.status(me, &status).await;
+        }
     }
 
     fn me(&self) -> SessionUri {

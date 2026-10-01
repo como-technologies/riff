@@ -830,6 +830,13 @@ before the last change of your state is stale: a claim, a release, a
 pause, a resume, or a new start of `riff-server`. `who` shows it dim,
 with `stale`.
 
+When you are the lead, riff sets your step by itself from each
+`tell`, `post`, `pause`, `resume` and `lead` call that you make, for
+example `told 075ff6a7: request: claim issue-302`. Set your status for
+work that riff cannot see, for example `file an issue for Mike` or
+`read the review report`. Your status stays until your next of these
+calls.
+
 A status request is a post of kind `status`. When one wakes you, call
 `read`, then answer with `status`. Do not post a reply.
 
