@@ -5,14 +5,63 @@ Then:
 
 ```sh
 just init   # once: installs the book and audit tools
-just ci     # the gate: fmt, clippy, tests, API docs, book, requirement IDs
+just ci     # the checks that your change can break
 ```
 
-CI runs the same gate on each push. It publishes this book to GitHub
-Pages.
+The Gate on GitHub runs each check on each pull request. CI publishes
+this book to GitHub Pages.
 
 The design docs are in the code. Read them in the
 [API docs](api/riff_core/index.html).
+
+## Run the checks before a push
+
+Run this command before each push:
+
+```sh
+just ci
+```
+
+It compares your tree with `origin/main` and runs only the checks that
+your change can break. It first prints one line that says which checks
+it runs, and why:
+
+```text
+just ci runs each check: crates/riff/src/main.rs is not a text file
+```
+
+```mermaid
+flowchart TD
+    D["just ci: the files that differ<br/>from origin/main"] --> T{"Is each file text?"}
+    T -- yes --> X["the text checks:<br/>book, reqs, wrap"]
+    T -- no --> F["each check: fmt-check, lint,<br/>test, doc, book, reqs, wrap"]
+    N["no file differs, or git<br/>cannot compare"] --> F
+```
+
+A file is text when it is in `docs/` or `design/`, or when it is a
+`.md` file outside `crates/`. The files that differ are the commits of
+your branch, the changes that are not committed, and the new files
+that are not in git. The text checks build no test and run no clippy.
+
+`just ci` uses the `origin/main` of your clone. To compare with the
+newest `main`, fetch first:
+
+```sh
+git fetch origin
+```
+
+## Run each check
+
+To run each check for each change, for example before a release:
+
+```sh
+just ci-full
+```
+
+It runs `fmt-check`, `lint`, `test`, `doc`, `book`, `reqs` and `wrap`.
+The Gate on GitHub runs the same command. Tests read the pages of the
+book. So a change of only text that passes `just ci` can still fail a
+test in the Gate.
 
 ## Build riff from your clone
 
@@ -89,6 +138,20 @@ file:
 ```sh
 git diff
 ```
+
+## Check the wrap of the book
+
+Each prose line of a page in `docs/src` is at most 72 characters.
+`just ci` checks it. To run only this check:
+
+```sh
+just wrap
+```
+
+Each error has the rule `wrap`. It names the page, the line and its
+length. The check skips a code block, a row of a table and a heading.
+It also skips a line with only one link or one code span: a wrap
+cannot make that line shorter.
 
 ## Check a pull request on GitHub
 

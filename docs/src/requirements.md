@@ -2321,8 +2321,11 @@
   requirement ID is not an old ID (R1 to R232) and not a ULID.
 - **01M3MNT28NXA9VRST119QR8AQK** Each prose line of the book and the
   requirements is at most 72 characters. A line with one link or one
-  code span and nothing to break is longer when it must be. A test
-  checks it.
+  code span and nothing to break is longer when it must be.
+- **01M3WNN836EFG7GJQKZRTSK5FT** `just wrap` runs `hygiene wrap
+  docs/src`. It fails on each line that breaks
+  01M3MNT28NXA9VRST119QR8AQK (`wrap`). No test of a crate checks the
+  wrap.
 - **01M3T5MG7VVYG4A8YBM75FGSMB** `just book` runs `hygiene book docs`.
   It builds the book with mdbook, and fails on an `ERROR` line of
   mdbook (`mdbook`), on an include line that mdbook left in the text
@@ -2333,6 +2336,18 @@
   `hygiene book` installs the theme of the book when it is missing,
   and keeps `book.toml` as it is. It fails when the install or the
   build of the book changed a tracked file (`tracked`).
+- **01M3WNMKB6PAP6J0QXX4A684HH** `just ci` runs only the checks that
+  the diff can break. The diff is each file that differs from the
+  merge base of `HEAD` and `origin/main`: committed, not committed, or
+  not tracked. When each file of the diff is text, `just ci` runs only
+  `book`, `reqs` and `wrap`. In each other case it runs each check,
+  also when no file differs and when git cannot compare. A file is
+  text when it is in `docs/` or `design/`, or when it is a `.md` file
+  outside `crates/`. `just ci` prints one line that names the set and
+  the reason.
+- **01M3WNN7VQJKN5MJH7JN50VF4D** `just ci-full` runs each check for
+  each diff: `fmt-check`, `lint`, `test`, `doc`, `book`, `reqs` and
+  `wrap`. The Gate on GitHub runs `just ci-full`.
 
 ## Open
 
