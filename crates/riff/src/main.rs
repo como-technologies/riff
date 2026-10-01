@@ -436,7 +436,9 @@ enum Pr {
         /// The title. Do not end it with (#N).
         #[arg(long)]
         title: String,
-        /// A file with the summary of the change, for the body.
+        /// A file with the summary of the change, for the body. It can
+        /// hold the link line and the trailers: riff adds only the ones
+        /// that are missing.
         #[arg(long)]
         file: Option<std::path::PathBuf>,
         /// Link with Refs #N, not Closes #N: the merge leaves the issue

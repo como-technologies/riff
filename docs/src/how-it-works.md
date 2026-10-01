@@ -1094,6 +1094,11 @@ turns on auto-merge with a squash at once. It opens nothing when the
 pull request breaks a rule of the hygiene check, for example a title
 that ends with `(#12)`.
 
+`summary.md` can also hold the link line and the trailers. Then
+`riff pr open` adds only the lines that are missing. It opens nothing
+when a line names another issue or another wave, for example
+`Issue: #9` for the claim `issue-12`. The message names the line.
+
 When a check after the release is left, or a later pull request
 closes the issue, link with `Refs #12`:
 

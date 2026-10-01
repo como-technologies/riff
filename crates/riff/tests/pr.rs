@@ -390,6 +390,69 @@ async fn pr_open_with_refs_links_with_refs() {
     assert_eq!(body, "Refs #12\n\nIssue: #12\nMilestone: Wave 3\n");
 }
 
+/// A body that has the link line and the trailers gets none of them a
+/// second time (01M3W2627GYXR8CFW76KB6CB9W).
+#[tokio::test]
+async fn pr_open_adds_no_line_that_the_body_has() {
+    let full = "Closes #12\n\nShow the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\n";
+    for content in [
+        full,
+        "Show the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\n",
+        "Closes #12\n\nShow the wave in riff who.\n\nIssue: #12\n",
+    ] {
+        let machine = Machine::new(OPEN).await;
+        machine.claim("author", "issue-12").await;
+        let summary = machine.write("summary.md", content);
+        machine
+            .ok(
+                "author",
+                &["pr", "open", "--title", "Show the wave", "--file", &summary],
+            )
+            .await;
+        let (_, body) = created(machine.bin.path());
+        assert_eq!(body, full, "{content}");
+        for line in ["Closes #12\n", "Issue: #12\n", "Milestone: Wave 3\n"] {
+            assert_eq!(body.matches(line).count(), 1, "{line} in {body}");
+        }
+    }
+}
+
+/// A body with a line for another issue or another milestone is
+/// refused: the message names the line, and riff opens nothing
+/// (01M3W2627GYXR8CFW76KB6CB9W).
+#[tokio::test]
+async fn pr_open_refuses_a_body_with_a_line_that_is_not_of_the_claim() {
+    for (content, refs, line, need) in [
+        ("Text.\n\nIssue: #9\n", false, "`Issue: #9`", "`Issue: #12`"),
+        (
+            "Text.\n\nIssue: #12\nMilestone: Wave 4\n",
+            false,
+            "`Milestone: Wave 4`",
+            "`Milestone: Wave 3`",
+        ),
+        ("Closes #9\n\nText.\n", false, "`Closes #9`", "`Closes #12`"),
+        ("Closes #12\n\nText.\n", true, "`Closes #12`", "`Refs #12`"),
+    ] {
+        let machine = Machine::new(OPEN).await;
+        machine.claim("author", "issue-12").await;
+        let summary = machine.write("summary.md", content);
+        let mut args = vec!["pr", "open", "--title", "Show the wave", "--file", &summary];
+        if refs {
+            args.push("--refs");
+        }
+        let out = machine.run("author", &args).await;
+        assert_eq!(out.status.code(), Some(1), "{content}");
+        let err = text(&out.stderr);
+        assert!(
+            err.contains(&format!(
+                "the body has the line {line}, but this pull request needs {need}."
+            )),
+            "{err}"
+        );
+        assert!(!log(machine.bin.path()).contains("gh pr create"));
+    }
+}
+
 #[tokio::test]
 async fn pr_open_refuses_a_title_that_breaks_the_hygiene_check() {
     let machine = Machine::new(OPEN).await;
