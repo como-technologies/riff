@@ -540,11 +540,16 @@ impl Engine {
     /// `Checked` holds the guard of a `std::sync::Mutex`, which is not
     /// `Send`. Only this function can hold it over an `await`, and then
     /// the future of [`command`] is not `Send`, so the one handler does
-    /// not build. The error is at each `.route(C::PATH, post(command::<C>))`
-    /// line of the router:
+    /// not build. The error is at each line of the router. It does not
+    /// name the lock. A test build with one `await` between the check
+    /// and the queue gave it:
     ///
     /// ```text
-    /// error[E0277]: the trait bound `fn(State<Engine>, Authenticated<_>) -> ... {command::<_>}: Handler<_, _>` is not satisfied
+    /// error[E0277]: the trait bound `fn(State<Engine>, ...) -> ... {command::<...>}: Handler<_, _>` is not satisfied
+    ///     --> crates/riff-server/src/lib.rs:1465:41
+    ///      |
+    /// 1465 |             .route(Register::PATH, post(command::<Register>))
+    ///      |                                    ---- ^^^^^^^^^^^^^^^^^^^ the trait `Handler<_, _>` is not implemented for fn item `fn(State<Engine>, Authenticated<Register>) -> ... {command::<...>}`
     /// ```
     pub async fn dispatch<C: Command>(&self, call: Authenticated<C>) -> Result<C::Reply, Failed> {
         let checked: Checked<'_, C> = self.check(call); // lock, permits, handle, signal
