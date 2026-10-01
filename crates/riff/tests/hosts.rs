@@ -65,9 +65,8 @@ exit 0
 /// hangs.
 const WAIT: Duration = Duration::from_secs(60);
 
-/// The bound of a stop after a signal. A host that is not under load
-/// stops in under 2 seconds (01M3NBV405PVYHKTMQ5VN87FYN). The test
-/// checks the intent: the stop does not wait for the step that runs. A
+/// The bound of a stop after a signal. A host stops at once
+/// (01M3NBV405PVYHKTMQ5VN87FYN). The test checks the intent: the stop does not wait for the step that runs. A
 /// slow call of the fake `tmux` takes 30 seconds, and a wake or a
 /// keyring that does not answer never comes.
 const STOPS: Duration = Duration::from_secs(15);
@@ -1129,90 +1128,27 @@ async fn a_host_goes_on_after_a_call_with_no_reply() {
     assert_eq!(held.load(Ordering::SeqCst), 2, "one call held, one read");
 }
 
-// TEMP(#379): not for the commit. Runs the host (under strace with
-// TRACE=1), and shows what a host that does not answer does.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore]
-async fn repro_379() {
-    let rounds: usize = std::env::var("ROUNDS")
-        .ok()
-        .and_then(|r| r.parse().ok())
-        .unwrap_or(50);
-    let out_file = std::env::var("REPRO_OUT").unwrap();
-    for round in 0..rounds {
-        let api = start_server().await;
-        let root = tempfile::tempdir().unwrap();
-        let main = repository(root.path());
-        let lead = session(&main, "mike", "a", "l1");
-        api.register(&lead).await.unwrap();
-        api.set_riff(&lead, RiffState::Running).await.unwrap();
-        let b = Machine::new("b", api.base());
-        b.limit(3);
-        let traced = b.fake.path().join("riff-traced");
-        std::fs::write(
-            &traced,
-            format!(
-                "#!/bin/sh\nif [ \"$TRACE\" = gdb ]; then exec gdb -q -batch -ex 'set logging file {0}' -ex 'set logging enabled on' -ex 'handle SIGCHLD nostop noprint pass' -ex run -ex 'thread apply all bt' --args \"{1}\" \"$@\"; fi\nexec strace -f -tt -s 120 -o \"{0}\" \"{1}\" \"$@\"\n",
-                b.fake.path().join("strace.out").display(),
-                Isolated::shared().riff_path().display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&traced, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let host = if std::env::var("TRACE").is_ok() {
-            b.host_with(b.riff_at(&traced, &main, &["host", "--claude", "true"], None))
-        } else {
-            b.host(&main)
-        };
-        let host_id = host_session(&api, &lead, "b").await;
-        let before = b.log().lines().count();
-        let told = Instant::now();
-        api.tell(&lead, &host_id, "workers start 1").await.unwrap();
-        let limit = Duration::from_secs(20);
-        let pid = host.0.id();
-        while !b.log().lines().skip(before).any(|l| l.contains("-window")) {
-            if told.elapsed() > limit {
-                let who = tokio::time::timeout(STOPS, api.who(&lead, true)).await;
-                let sh = |script: &str| {
-                    let out = Command::new("sh").arg("-c").arg(script).output().unwrap();
-                    String::from_utf8_lossy(&out.stdout).into_owned()
-                        + &String::from_utf8_lossy(&out.stderr)
-                };
-                let ps = sh(&format!(
-                    "ps -e -o pid,ppid,stat,wchan:32,etime,args --forest | grep -A12 -w {pid} | head -40; \
-                     for p in {pid} $(pgrep -P {pid}); do for t in /proc/$p/task/*; do echo $t $(cat $t/comm) $(cat $t/wchan 2>/dev/null) $(grep State $t/status); done; \
-                     ls -l /proc/$p/fd; done; ss -tnp 2>/dev/null | grep riff"
-                ));
-                let strace = sh(&format!(
-                    "tail -n 200 {}",
-                    b.fake.path().join("strace.out").display()
-                ));
-                let dump = format!(
-                    "round {round}: no -window call in {limit:?}\nhost {host_id} pid {pid}\ntmux calls:\n{}\nhost output:\n{}\nwho:\n{who:#?}\nps:\n{ps}\nstrace:\n{strace}",
-                    b.log(),
-                    b.host_output(),
-                );
-                std::fs::write(&out_file, &dump).unwrap();
-                if std::env::var("TRACE").as_deref() == Ok("gdb") {
-                    // The host is the child of gdb: gdb stops it and
-                    // prints each stack.
-                    sh(&format!("kill -INT $(pgrep -P {pid}); sleep 20"));
-                }
-                let _ = std::fs::copy(
-                    b.fake.path().join("strace.out"),
-                    format!("{out_file}.strace"),
-                );
-                let _ = Command::new("pkill")
-                    .args(["-KILL", "-P", &pid.to_string()])
-                    .status();
-                panic!("{dump}");
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        eprintln!("round {round}: ok after {:?}", told.elapsed());
-        let _ = Command::new("pkill")
-            .args(["-KILL", "-P", &pid.to_string()])
-            .status();
-        drop(host);
+/// The book says what the host does when the server gives no reply,
+/// with the real line and the real times (01M3WN72M02P3J24ACCHTMNSFY).
+#[test]
+fn the_book_says_what_a_host_does_with_no_reply() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let book = std::fs::read_to_string(root.join("../../docs/src/how-it-works.md")).unwrap();
+    let how = &book[book
+        .find("### When the server gives a workers host no reply")
+        .unwrap()..];
+    let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+    let line = format!(
+        "riff: cannot read the requests: {}",
+        riff::text::no_reply("https://riff.example.com", riff::host::CALL_WAIT)
+    );
+    let refresh = format!("Each {} seconds", riff::host::REFRESH.as_secs());
+    for words in [
+        line.as_str(),
+        refresh.as_str(),
+        "```sh\nriff workers\n```",
+        "```mermaid",
+    ] {
+        assert!(how.contains(words), "the book has no {words:?}");
     }
 }

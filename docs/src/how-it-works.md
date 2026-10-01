@@ -2844,7 +2844,7 @@ refuses each other request, and each request that is not verified. One
 host of your user runs on a machine for a repository. A second one
 refuses to start and names the process of the first.
 
-`Ctrl-C` stops the host in under 2 seconds, in each state. Its
+`Ctrl-C` stops the host at once, in each state. Its
 workers keep running. After `riff update`, the host runs the new
 `riff` by itself (see "When the builds differ"). You do not start it
 again. The host reads no keys, so tmux keys work in its
@@ -2882,6 +2882,45 @@ pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, 24GB available, load 0.40  
 PANE  ID        STATE  DETAIL
 %3    2a880834  idle   ready for work for 1m
 ```
+
+### When the server gives a workers host no reply
+
+Each call of the host to the server has a time limit of 20 seconds.
+When no reply comes in time, the host prints a line in its pane and
+goes on:
+
+```text
+riff: cannot read the requests: riff-server at https://riff.example.com gave no reply in 20 seconds
+```
+
+You do not start the host again. Each 30 seconds, the host sets its
+status again, and it reads the requests that it did not read. So a
+start request of the lead is not lost: the workers start when the
+server gives a reply again.
+
+```mermaid
+sequenceDiagram
+    participant L as lead
+    participant S as riff-server
+    participant H as riff workers host
+    L->>S: riff workers start 1 --host pangolin
+    S->>H: wake
+    H->>S: read the requests
+    Note over H,S: no reply in 20 seconds
+    H->>H: print "gave no reply", go on
+    H->>S: after 30 seconds: status, read the requests
+    S-->>H: workers start 1
+    H->>S: a note to the lead: 1 worker started
+```
+
+To see that the host answers again, list the hosts in the lead:
+
+```sh
+riff workers
+```
+
+The watch of the host has a connection of its own. So a call of the
+host never waits behind its watch.
 
 ### A worker goes to its next item
 
