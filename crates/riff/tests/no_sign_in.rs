@@ -3,31 +3,43 @@
 //! error says `riff logout`, and after it each call works. The keyring
 //! is the mock store of `keyring-core`.
 
-use std::net::SocketAddr;
-use std::sync::Once;
+mod common;
+
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use axum::Router;
 use riff::api::Api;
 use riff::login::{self, SignIn};
 use riff::text;
 use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
-use tokio::task::JoinHandle;
 
-static MOCK_KEYRING: Once = Once::new();
-
-fn mock_keyring() {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
+/// A server at a URL, whose riff a test can replace. The listener stays
+/// open, so no other test gets the port between the two riffs.
+struct Front {
+    url: String,
+    current: Arc<Mutex<Router>>,
 }
 
-/// Serves `service` at `addr`.
-async fn serve(service: &Service, addr: SocketAddr) -> JoinHandle<()> {
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    let router = service.router();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() })
+impl Front {
+    async fn start() -> Front {
+        let (listener, url) = common::listen().await;
+        let current = Arc::new(Mutex::new(Router::new()));
+        let serve = current.clone();
+        let router = Router::new().fallback(move |request: axum::extract::Request| {
+            let router = serve.lock().unwrap().clone();
+            async move { tower::ServiceExt::oneshot(router, request).await }
+        });
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        Front { url, current }
+    }
+
+    /// Serves `service` from now on.
+    fn serve(&self, service: &Service) {
+        *self.current.lock().unwrap() = service.router();
+    }
 }
 
 fn me(user: &str) -> SessionUri {
@@ -41,13 +53,10 @@ fn me(user: &str) -> SessionUri {
 /// The old sign-in stays in the keyring. `expired` makes its access
 /// token old, so the next person call needs a refresh.
 async fn restart_with_no_sign_in(expired: bool) -> String {
-    mock_keyring();
-    let free = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = free.local_addr().unwrap();
-    drop(free);
-    let url = format!("http://{addr}");
+    let front = Front::start().await;
+    let url = front.url.clone();
     let first = Service::new(Config::new(&url));
-    let running = serve(&first, addr).await;
+    front.serve(&first);
     let jkt = riff::device::key(&url).unwrap().thumbprint();
     let pair = first
         .tokens()
@@ -71,12 +80,10 @@ async fn restart_with_no_sign_in(expired: bool) -> String {
         };
         login::store(&url, &old).unwrap();
     }
-    running.abort();
-    let _ = running.await;
 
     let second = Service::default();
     assert!(!second.config().require_sign_in);
-    serve(&second, addr).await;
+    front.serve(&second);
     url
 }
 
@@ -116,10 +123,12 @@ async fn a_person_whose_token_needs_a_refresh_is_told_to_run_riff_logout() {
 
 #[tokio::test]
 async fn a_riff_that_cannot_be_reached_keeps_the_first_error() {
-    mock_keyring();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    drop(listener);
+    common::mock_keyring();
+    // A socket that holds its port and does not listen: each connection
+    // is refused, and no other test gets the port.
+    let held = tokio::net::TcpSocket::new_v4().unwrap();
+    held.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let url = format!("http://{}", held.local_addr().unwrap());
     login::store(
         &url,
         &SignIn {

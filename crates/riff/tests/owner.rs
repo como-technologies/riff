@@ -7,8 +7,8 @@
 //! is in the mock store of `keyring-core`, so the tests run in process.
 
 mod book;
+mod common;
 
-use std::sync::Once;
 use std::time::{Duration, Instant};
 
 use book::{commands_of_part, each_is_real, page};
@@ -22,8 +22,6 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::owner::{Timing, server_uri};
 
-static MOCK_KEYRING: Once = Once::new();
-
 /// A long time: no request ends, and no check runs, in a test.
 const LONG: Duration = Duration::from_secs(3600);
 
@@ -31,11 +29,7 @@ const LONG: Duration = Duration::from_secs(3600);
 /// and carol are admins. Each of them has a live lead session in the
 /// repository.
 async fn start(timing: Timing) -> (Service, Api, Vec<TokenReply>) {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (listener, url) = common::listen().await;
     let service = Service::new(Config {
         owner_role: timing,
         ..Config::new(&url)

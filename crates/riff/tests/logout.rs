@@ -1,7 +1,8 @@
 //! `riff logout --all` against a real server (R20, R101). The sign-in
 //! is in the mock store of `keyring-core`, so the tests run in process.
 
-use std::sync::Once;
+mod common;
+
 use std::time::Instant;
 
 use riff::api::Api;
@@ -12,14 +13,8 @@ use riff_core::wire::TokenReply;
 use riff_server::Service;
 use riff_server::auth::Config;
 
-static MOCK_KEYRING: Once = Once::new();
-
 async fn start(admins: &[&str]) -> (Service, Api) {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (listener, url) = common::listen().await;
     let service = Service::new(Config {
         admins: admins.iter().map(|a| a.to_string()).collect(),
         ..Config::new(&url)

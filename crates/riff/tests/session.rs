@@ -2,7 +2,8 @@
 //! sign-in (R19, R104, R107). The sign-in is in the mock store of
 //! `keyring-core`.
 
-use std::sync::Once;
+mod common;
+
 use std::time::Instant;
 
 use riff::api::Api;
@@ -11,16 +12,10 @@ use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
 
-static MOCK_KEYRING: Once = Once::new();
-
 /// A server that needs sign-in, and a sign-in of mike on this device.
 /// `expires_at` is when the kept access token expires.
 async fn start(expires_at: u64) -> (Service, Api) {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (listener, url) = common::listen().await;
     let service = Service::new(Config {
         require_sign_in: true,
         ..Config::new(&url)
