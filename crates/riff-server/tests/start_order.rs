@@ -132,7 +132,7 @@ async fn a_good_start_applies_the_chunks_written_between_the_load_and_the_lease(
     call(&old_base, "register", json!({ "me": MIKE })).await;
     // A new riff is paused. Mike, a person, resumes it.
     let mike = "riff://mike@pangolin/como-technologies/riff";
-    call(&old_base, "riff", json!({ "me": mike, "state": "running" })).await;
+    call(&old_base, "resume", json!({ "me": mike })).await;
     old.save().await.unwrap();
     let chunks = store.list("log/").await.unwrap().len();
 
@@ -145,7 +145,13 @@ async fn a_good_start_applies_the_chunks_written_between_the_load_and_the_lease(
     // The new instance loaded. The old one still serves, and writes.
     call(&old_base, "register", json!({ "me": BRETT })).await;
     let claim = json!({ "me": BRETT, "thread": REPO, "item": "issue-339" });
-    assert_eq!(call(&old_base, "claim", claim).await["granted"], true);
+    let reply = call(&old_base, "claim", claim).await;
+    assert!(
+        reply["holder"]
+            .as_str()
+            .unwrap()
+            .contains("claim=issue-339")
+    );
     assert!(store.list("log/").await.unwrap().len() > chunks);
 
     store.go.notify_one();
@@ -161,7 +167,8 @@ async fn a_good_start_applies_the_chunks_written_between_the_load_and_the_lease(
     );
     // The claim holds for the grace period: no other session gets it.
     let claim = json!({ "me": MIKE, "thread": REPO, "item": "issue-339" });
-    assert_eq!(call(&new_base, "claim", claim).await["granted"], false);
+    let held = common::held(&new_base, claim).await;
+    assert!(held.contains("holds issue-339"), "{held}");
 }
 
 /// A `riff-server` process that stops when the test ends.

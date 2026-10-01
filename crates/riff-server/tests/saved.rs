@@ -51,7 +51,7 @@ async fn fill(base: &str) {
     call(base, "register", json!({ "me": BRETT })).await;
     // A new riff is paused. Mike, a person, resumes it.
     let mike = "riff://mike@pangolin/como-technologies/riff";
-    call(base, "riff", json!({ "me": mike, "state": "running" })).await;
+    call(base, "resume", json!({ "me": mike })).await;
     let to_brett = json!([{ "user": "brett" }]);
     let post = json!({ "me": MIKE, "thread": "design", "to": to_brett, "body": "look" });
     call(base, "post", post).await;
@@ -85,14 +85,8 @@ async fn the_same_state_after_a_restart(store: Arc<dyn Store>) {
     let state = call(&base, "riff", json!({ "me": MIKE })).await;
     assert_eq!(state["state"], "running");
     let claim = json!({ "me": MIKE, "thread": REPO, "item": "issue-6" });
-    let reply = call(&base, "claim", claim).await;
-    assert_eq!(reply["granted"], false);
-    assert!(
-        reply["holder"]
-            .as_str()
-            .unwrap()
-            .starts_with("riff://brett@")
-    );
+    let held = common::held(&base, claim).await;
+    assert!(held.starts_with("brett@"), "{held}");
 }
 
 #[tokio::test]

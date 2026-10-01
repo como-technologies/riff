@@ -159,8 +159,10 @@ async fn a_claim_blocks_a_second_session_and_is_addressable() {
     assert!(api.claim(&mike, &thread, "issue-12").await.unwrap().granted);
     let reply = api.claim(&brett, &thread, "issue-12").await.unwrap();
     assert!(!reply.granted);
-    assert_eq!(reply.holder.who(), mike.who());
-    assert_eq!(reply.holder.claims(), ["issue-12"]);
+    // The refusal of the server names the holder.
+    let held = reply.held.expect("the refusal names the holder");
+    assert!(held.starts_with(&mike.short()), "{held}");
+    assert!(held.contains("holds issue-12"), "{held}");
 
     let posted = api
         .post(

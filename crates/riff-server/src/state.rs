@@ -23,11 +23,11 @@
 //!
 //! | File | What it holds |
 //! |---|---|
-//! | `state.rs` | [`State`]: the two copies of the [`Riff`], the queue, the [`Presence`] and the clock. Its methods are the calls of the server. Each one that changes the riff runs one command type. The signals and the queries are here too: a keep-alive, a status, a watch, `who`, `read`. |
+//! | `state.rs` | [`State`]: the two copies of the [`Riff`], the [`Presence`] and the clock. The steps of a command are here: [`State::check`], [`State::queue`], [`State::written`] and [`State::reply`]. The queries are here too: `who`, `read`, `threads`. The sync forms ([`State::run`], [`State::claim`] and the others) run the same steps for a state with no writer. |
 //! | [`riff`] | [`Riff`] and [`apply`]: the one function that changes a riff, with one arm for each kind of record. |
-//! | [`presence`] | [`Presence`], the session in memory, and `Presence::applied`: what a record changes in memory. |
+//! | [`presence`] | [`Presence`], the session in memory, [`Signal`]: a change of the presence only, and `Presence::applied`: what a record changes in memory. |
 //! | [`view`] | [`View`]: one copy of the riff with the presence, read only. `handle` and each query read it. |
-//! | [`command`] | The trait [`Command`] with `handle`, and [`Now`]. |
+//! | [`command`] | The trait [`Command`] with `handle` and `reply`, the [`Caller`], [`permits`], and the [`Refused`] of a refusal. |
 //! | [`snapshot`] | [`Snapshot`]: the parts of each group in one checkpoint. |
 //! | `state/rules.rs` | The given/when/then tests of `handle` and `apply`. |
 //!
@@ -39,27 +39,31 @@
 //! | sessions | [`sessions`] | [`Sessions`](sessions::Sessions) | [`Register`], [`Start`], [`End`] |
 //! | threads | [`threads`] | [`Threads`](threads::Threads) | [`Join`], [`Leave`], [`Post`], [`Announce`] |
 //! | work | [`work`] | [`Work`](work::Work) | [`Claim`], [`Release`], [`ReleaseFor`], [`Lead`] |
-//! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`SetRiff`], [`SetIdle`], [`Forget`] |
+//! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`MakeRiff`], [`Pause`], [`Resume`], [`SetIdle`], [`Forget`] |
 //!
-//! A new command is a type in the file of its group. A new kind of
-//! record is one arm in [`apply`] and one method of the part that it
-//! changes.
+//! The wire type of a command that a client can send is its command
+//! type (01M3WRD8TBDPA4JNEZY6J4N2EX). A new command is a type with
+//! [`Command`], a kind in [`CommandKind`] and a row in [`permits`]. A
+//! new kind of record is one arm in [`apply`] and one method of the
+//! part that it changes.
+//!
+//! The server runs each command through [`crate::engine`]: the engine
+//! owns the state and its lock, and the writer finishes each command.
 //!
 //! # Event sourcing
 //!
 //! Each change that must not be lost is a [`Record`] in one log (see
 //! [`riff_core::record`] and [`crate::log`]):
 //!
-//! - [`State::handle`] checks a [`Command`] against the state, and gives
-//!   the changes, or the reason for a refusal. It changes nothing and
-//!   does no I/O.
+//! - [`State::check`] checks a [`Command`] against the state
+//!   ([`permits`], then [`Command::handle`]), and gives the changes, or
+//!   the reason for a refusal. `handle` changes nothing and does no I/O.
 //! - [`apply`] changes a [`Riff`] for one record. It does no I/O, reads
 //!   no clock, and does not fail. A record that the state cannot take
 //!   changes nothing, and the server logs a warning. The live path and
 //!   the replay use the same `apply`.
-//! - Each call of the state runs `handle`, gives each change its
-//!   position and time, puts the records in the queue, and applies them
-//!   to the pending copy.
+//! - [`State::queue`] gives each change its position and time, and
+//!   applies the records to the pending copy.
 //! - The state keeps two copies of the [`Riff`] (01M3T4115BF1F0JFHYMK0WRKCX).
 //!   `handle` checks against
 //!   the pending copy, which has each record in the queue. Each view
@@ -67,16 +71,20 @@
 //!   has only the records whose chunk is written. [`State::written`]
 //!   applies the records of a chunk after its write. So nobody sees a
 //!   record that is not in the log.
+//! - [`State::reply`] makes the reply to a command from the written
+//!   copy.
 //! - A [`State::default`] has no writer: each record counts as written
-//!   at once. Tests and examples use it. The server makes its state with
-//!   [`State::with_writer`] or [`State::replay`].
+//!   at once. Tests and examples use it, with the sync forms
+//!   ([`State::run`]). The server makes its state with
+//!   [`State::with_writer`] or [`State::replay`], and gives it to its
+//!   engine.
 //!
 //! # Rules
 //!
 //! - Each call records the session as seen at `now`. A call from a
-//!   session that the server does not know makes it, in the place from
-//!   its URI. Only [`State::register`] changes the place of a known
-//!   session (R55, R64). A person has no session ID, so each call of a
+//!   session that the server does not know registers it first, in the
+//!   place from its URI ([`State::check`]). Only a `register` changes
+//!   the place of a known session (R55, R64). A person has no session ID, so each call of a
 //!   person gives it the place of that call (01M3MWW8KYJ3ZV91X22RBSAF33).
 //! - A session keeps the user of its first call. [`State::check_user`]
 //!   refuses its session ID under another user (R159).
@@ -230,7 +238,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use riff_core::name::{SessionUri, ThreadName, Who};
-use riff_core::record::{Change, Claimed, Posted, Record};
+use riff_core::record::{Change, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     AliveReply, Claim, End, Freed, Idle, Join, Keys, Kind, Lead, LeadReply, Leave, Message, Pause,
@@ -2027,7 +2035,12 @@ mod tests {
         let mike = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
         let sandman = uri("riff://sandman@pangolin/como-technologies/riff?session=a1");
         state.register(&mike, now);
-        state.register(&sandman, now);
+        // The second entry comes from before the rule: no command made it.
+        let place = Signal::Place {
+            place: sandman.place().clone(),
+            worker: None,
+        };
+        state.signal(sandman.who(), place, now);
         assert!(state.check_user(&mike).is_ok());
         assert!(state.check_user(&sandman).is_ok());
     }
@@ -2735,7 +2748,7 @@ mod tests {
         state.claim(&api(), &repo(), "issue-7", now).unwrap();
         state.release(&api(), &repo(), "issue-7", now).unwrap();
         state.lead(&docs(), now).unwrap();
-        state.set_idle(Some(3), None, now);
+        state.set_idle(&docs(), Some(3), None, now).unwrap();
         let log: Vec<Record> = state.take_queue();
         assert!(log.len() > 10, "{log:?}");
 
@@ -2786,11 +2799,12 @@ mod tests {
             .unwrap();
         state.claim(&tests(), &repo(), "issue-6", now).unwrap();
         state.lead(&docs(), now).unwrap();
-        state.set_idle(Some(3), None, now);
-        state.commit(
+        state.set_idle(&docs(), Some(3), None, now).unwrap();
+        let forgotten = state.queue(
             &[Change::SessionForgotten(Forgotten { session: docs() })],
             now,
         );
+        state.queue.extend(forgotten);
         post(&mut state, &tests(), "design", &[], "after");
         let log: Vec<Record> = state.take_queue();
         let full = State::replay(log.clone(), now, T0);
@@ -3151,8 +3165,7 @@ mod tests {
     fn a_marked_lead_replaces_the_old_lead() {
         let now = Instant::now();
         let mut state = setup(now);
-        let (me, old) = state.lead(&docs(), now).unwrap();
-        let reply = state.lead_reply(&me, old.as_ref(), now);
+        let reply = state.lead(&docs(), now).unwrap();
         assert_eq!(reply.lead, lead(docs()));
         assert_eq!(reply.replaced, Some(api()));
         assert!(!is_lead(&state, &api(), now));
@@ -3160,8 +3173,7 @@ mod tests {
             is_lead(&state, &tests(), now),
             "another user keeps its lead"
         );
-        let (_, old) = state.lead(&docs(), now).unwrap();
-        assert_eq!(old, None);
+        assert_eq!(state.lead(&docs(), now).unwrap().replaced, None);
     }
 
     #[test]
@@ -3398,7 +3410,7 @@ mod tests {
         let now = Instant::now();
         let mut state = State::default();
         state.register(&lead(api()), now);
-        state.set_idle(Some(0), None, now);
+        state.set_idle(&lead(api()), Some(0), None, now).unwrap();
         let w1 = idle_worker(&mut state, "pangolin", "w1", now);
         let later = now + Duration::from_secs(80);
         assert_eq!(stopped(&mut state, later), ["w1"]);
@@ -3417,10 +3429,11 @@ mod tests {
         for id in ["w1", "w2", "w3"] {
             idle_worker(&mut state, "pangolin", id, now);
         }
-        assert_eq!(state.set_idle(None, Some(120), now).after_secs, 120);
+        let set = state.set_idle(&lead(api()), None, Some(120), now);
+        assert_eq!(set.unwrap().after_secs, 120);
         assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
 
-        let idle = state.set_idle(Some(2), None, now);
+        let idle = state.set_idle(&lead(api()), Some(2), None, now).unwrap();
         assert_eq!(
             idle,
             Idle {
@@ -3442,7 +3455,7 @@ mod tests {
         let now = Instant::now();
         let mut state = State::default();
         state.register(&lead(api()), now);
-        state.set_idle(Some(0), None, now);
+        state.set_idle(&lead(api()), Some(0), None, now).unwrap();
         let w1 = idle_worker(&mut state, "pangolin", "w1", now);
         state.watch_ended(w1.who(), now);
         let agent = uri("riff://mike@pangolin/como-technologies/riff?session=a1");

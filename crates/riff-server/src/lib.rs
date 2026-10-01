@@ -3,20 +3,27 @@
 //! # Design
 //!
 //! ```text
-//!  HTTP handlers ──lock──▶ State (Mutex)       see [`state`]
-//!        │
-//!        ├─ Delivery ──▶ wakes channel ──▶ GET /v1/watch streams
-//!        │           └─▶ tail channel  ──▶ GET /v1/tail streams
+//!  HTTP handlers ──▶ Engine ──lock──▶ State    see [`engine`], [`state`]
+//!        │             │
+//!        │             └─ the writer ──▶ wakes channel ──▶ GET /v1/watch streams
+//!        │                           └─▶ tail channel  ──▶ GET /v1/tail streams
 //!        └──lock──▶ Tokens (Mutex)      see [`token`]
 //! ```
 //!
-//! - One process holds all state in memory, behind one mutex. Each
-//!   handler holds the lock for a short time and does no I/O under it.
-//! - [`state::State`] does not know about HTTP or clocks. Handlers pass
-//!   the time in, so tests control it.
-//! - A post returns a [`state::Delivery`]. The handler sends its wakes
-//!   and its tail event to two broadcast channels. Each open stream
-//!   filters the channel for its own session or thread.
+//! - One process holds all state in memory, behind one mutex. The
+//!   [`engine::Engine`] owns the state and its lock: no handler locks
+//!   the state (01M3WRD8WJ2JF9077PRDX04T9A). The engine holds the lock
+//!   for a short time and does no I/O under it.
+//! - Each call that changes the state of the log is a command. One
+//!   handler, [`engine::command`], serves each, and
+//!   [`engine::Engine::dispatch`] is its one path. A call that changes
+//!   only the presence is a signal ([`engine::Engine::signal`]). Each
+//!   other call is a query: it reads the written copy.
+//! - [`state::State`] does not know about HTTP or clocks. The engine
+//!   passes the time in, so tests control it.
+//! - The writer sends the wakes and the `tail` event of a message to
+//!   two broadcast channels, after the write of its record. Each open
+//!   stream filters the channel for its own session or thread.
 //! - Each stream starts with the comment `: ready`, see [`opened`].
 //! - A watch stream then gives the wake from [`state::State::missed`],
 //!   if there is one. It subscribes to the wakes channel first, so no
@@ -73,14 +80,21 @@
 //!   it gets `--insecure`. See [`listen`].
 //!
 //! - Each change of the state is a record in the log (see [`state`] and
-//!   [`log`]). A call that makes a record puts it in the queue, and gets
-//!   its reply after the writer wrote its chunk. Its wakes and its `tail`
-//!   events go out after the write too. A call that makes no record does
-//!   not wait.
-//! - The writer is one task. It takes each record in the queue into one
-//!   chunk, and writes it outside the lock of the state. When a write
-//!   fails for good, the server stops for good: each waiting call gets
-//!   503, and `main` exits.
+//!   [`log`]). A command puts its entry in the queue of the engine, and
+//!   gets its reply after the writer is done with the entry. Its wakes
+//!   and its `tail` events go out after the write too. A command that
+//!   makes no record, and a command that is refused, wait as each
+//!   command does (01M3WRD933ESXF33WDEDFCRFB8).
+//! - The writer is one task. It takes each entry in the queue into one
+//!   chunk, writes it outside the lock of the state, and then the engine
+//!   finishes each command of the chunk
+//!   ([`engine::Engine::finish`]). When a write fails for good, the
+//!   server stops for good: each waiting call gets 503, and `main`
+//!   exits.
+//! - The first start of a riff sends the command `make_riff`
+//!   (01M3WRD99M99PNGP8ME50KC6WS). A store with the objects of a
+//!   riff-server from before the log, and no log, is refused
+//!   (01M3WRD9DYJWVN1QRBAC3ZVVZD).
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
 //!   deletes the old checkpoints and the chunks that no kept checkpoint
@@ -141,6 +155,7 @@
 
 pub mod auth;
 pub mod checkpoint;
+pub mod engine;
 pub mod gcs;
 pub mod idle;
 pub mod lease;
@@ -159,7 +174,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Form, Query, Request, State as AxumState};
+use axum::extract::{Form, FromRef, Query, Request, State as AxumState};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -172,28 +187,25 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, AdminSet, Alive, AliveReply, CheckpointFacts, Claim, ClaimReply, DenyOwner,
-    End, FactError, ID_TOKEN_TYPE, Idle, Invite, Invited, Keys, Kind, Lead, LeadReply, MeReply,
-    Members, MembersReply, Membership, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Person,
-    Post, Posted, Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked,
-    Riff, RiffOwner, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetIdle, SetStatus,
-    SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads, ThreadsReply,
-    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, AdminSet, Alive, AliveReply, Call, CheckpointFacts, Claim, DenyOwner, End,
+    FactError, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, Invited, Join, Keys, Kind, Lead, Leave,
+    MeReply, Members, MembersReply, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Person,
+    Post, Read, ReadReply, Register, Release, ReleaseFor, Remove, Removed, ResourceMetadata,
+    Resume, Revoke, Revoked, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata,
+    SetAdmin, SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
-use tokio::sync::broadcast;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
+use crate::engine::{Admitted, Engine, Failed, People, command};
 use crate::lease::Lease;
 use crate::owner::{Check, Checks};
-use crate::state::{Delivery, State, may_read};
+use crate::state::{Announce, Role, Signal, State, may_read};
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
-
-/// Events that a slow stream may miss before it drops them.
-const EVENT_BUFFER: usize = 1024;
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -217,10 +229,87 @@ async fn load_tokens(store: &dyn Store) -> Result<(Tokens, Option<Version>), Sto
     Ok((tokens, Some(loaded.version)))
 }
 
+/// Refuses a store of a riff-server from before the log
+/// (01M3WRD9DYJWVN1QRBAC3ZVVZD): it has the old objects `sessions`,
+/// `tokens` or `threads/`, and no log. This build does not read them:
+/// go-live (#341) imports them.
+async fn refuse_old_objects(store: &dyn Store) -> Result<(), StoreError> {
+    let has_log = !store.list(log::LOG).await?.is_empty()
+        || !store.list(checkpoint::CHECKPOINT).await?.is_empty();
+    if has_log {
+        return Ok(());
+    }
+    let mut old = Vec::new();
+    for name in ["sessions", "tokens"] {
+        if store.load(name).await?.is_some() {
+            old.push(format!("`{name}`"));
+        }
+    }
+    if !store.list("threads/").await?.is_empty() {
+        old.push("`threads/`".to_owned());
+    }
+    if old.is_empty() {
+        return Ok(());
+    }
+    Err(StoreError::Failed(format!(
+        "the store has the objects of a riff-server from before the log ({}), and no log. \
+         This build does not import them, so it does not start. Use the release that \
+         imports them, or an empty store.",
+        old.join(", ")
+    )))
+}
+
+/// The roles and the keys of the people, for the engine. Until E3
+/// (#393), they come from the token store.
+struct Roles {
+    tokens: Arc<Mutex<Tokens>>,
+    /// The admins of the settings (R210).
+    admins: Vec<String>,
+    needs_sign_in: bool,
+    trusted: bool,
+}
+
+impl Roles {
+    fn tokens(&self) -> MutexGuard<'_, Tokens> {
+        self.tokens
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+impl People for Roles {
+    fn needs_sign_in(&self) -> bool {
+        self.needs_sign_in
+    }
+
+    fn trusted(&self) -> bool {
+        self.trusted
+    }
+
+    fn role(&self, user: &str) -> Role {
+        if self.trusted {
+            return Role::Admin;
+        }
+        let tokens = self.tokens();
+        if tokens.is_owner(user) {
+            Role::Owner
+        } else if tokens.is_admin(user, &self.admins) {
+            Role::Admin
+        } else {
+            Role::Member
+        }
+    }
+
+    fn keys(&self, user: &str) -> Vec<String> {
+        self.tokens().keys(user, Instant::now())
+    }
+}
+
 struct Server {
     config: Config,
-    state: Mutex<State>,
-    tokens: Mutex<Tokens>,
+    /// The command engine. It owns the state and its lock.
+    engine: Engine,
+    tokens: Arc<Mutex<Tokens>>,
     /// The number of changes to the token store.
     tokens_changes: AtomicU64,
     /// The number of changes to the token store that are saved.
@@ -229,20 +318,11 @@ struct Server {
     /// (01M3TFG527M04TA7ESM970X3B8).
     tokens_failed: AtomicBool,
     replay: Mutex<Replay>,
-    wakes: broadcast::Sender<(Who, Wake)>,
-    tail: broadcast::Sender<Tailed>,
     http: reqwest::Client,
     saved: Option<Saved>,
     gate: Gate,
     /// The store of the log.
     log: Arc<dyn Store>,
-    /// The position of the last written record.
-    written: tokio::sync::watch::Sender<u64>,
-    /// Wakes the writer when a record waits in the queue.
-    queued: Arc<tokio::sync::Notify>,
-    /// Each delivery that waits for the write of its record, with the
-    /// position of that record.
-    deliveries: Mutex<Vec<(u64, Delivery)>>,
     /// The checkpoints of this server.
     checkpoints: Mutex<Checkpoints>,
     /// What `GET /v1/server` tells about this instance.
@@ -311,7 +391,13 @@ impl Facts {
 impl Drop for Server {
     /// Wakes the writer, so that its task ends.
     fn drop(&mut self) {
-        self.queued.notify_one();
+        self.engine.queued().notify_one();
+    }
+}
+
+impl FromRef<Shared> for Engine {
+    fn from_ref(server: &Shared) -> Engine {
+        server.engine.clone()
     }
 }
 
@@ -344,14 +430,8 @@ struct Written {
 }
 
 impl Server {
-    fn state(&self) -> MutexGuard<'_, State> {
-        // A panic while the lock is held leaves plain data behind; keep going.
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
-
     fn tokens(&self) -> MutexGuard<'_, Tokens> {
+        // A panic while the lock is held leaves plain data behind; keep going.
         self.tokens
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -533,12 +613,14 @@ impl Server {
         *self.gate.stopped.borrow()
     }
 
-    /// Stops for good (R140).
+    /// Stops for good (R140). Each command that waits for the writer
+    /// fails.
     fn stop(&self, why: &str) {
         if !self.gate.stopped.send_replace(true) {
             tracing::warn!("stopped for good: {why}");
             self.facts().stopped = Some(why.to_owned());
         }
+        self.engine.stop();
     }
 
     fn facts(&self) -> MutexGuard<'_, Facts> {
@@ -574,10 +656,9 @@ impl Server {
     fn server_facts(&self) -> ServerFacts {
         let not_serving = self.not_serving();
         let sign_ins = self.tokens().chains() as u64;
-        let (position, counts) = {
-            let state = self.state();
-            (state.written_position(), state.counts())
-        };
+        let (position, counts) = self
+            .engine
+            .read(|state| (state.written_position(), state.counts()));
         let (checkpoint, no_checkpoint) = {
             let marks = self.checkpoints();
             (marks.newest.clone(), marks.blocked.clone())
@@ -615,75 +696,23 @@ impl Server {
         }
     }
 
-    fn deliver(&self, delivery: Delivery) {
-        // A send fails only when nobody listens. That is not an error.
-        for wake in delivery.wakes {
-            let _ = self.wakes.send(wake);
-        }
-        let _ = self.tail.send(delivery.tailed);
-    }
-
-    fn deliveries(&self) -> MutexGuard<'_, Vec<(u64, Delivery)>> {
-        self.deliveries
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
-
-    /// Sends `delivery` when the record at `position` is written: now,
-    /// or after the write.
-    fn deliver_after(&self, position: u64, delivery: Delivery) {
-        let mut waiting = self.deliveries();
-        // The writer marks a position as written before it takes the
-        // deliveries, so no delivery waits for a written record.
-        if *self.written.borrow() >= position {
-            drop(waiting);
-            self.deliver(delivery);
-        } else {
-            waiting.push((position, delivery));
-        }
-    }
-
-    /// Sends each delivery whose record is written, up to `position`.
-    fn deliver_written(&self, position: u64) {
-        let ready: Vec<Delivery> = {
-            let mut waiting = self.deliveries();
-            let (ready, wait) = std::mem::take(&mut *waiting)
-                .into_iter()
-                .partition(|(at, _)| *at <= position);
-            *waiting = wait;
-            ready.into_iter().map(|(_, delivery)| delivery).collect()
-        };
-        for delivery in ready {
-            self.deliver(delivery);
-        }
-    }
-
-    /// The position that a call must wait for: the last record in the
-    /// queue, when the call made a record since `before`. It wakes the
-    /// writer.
-    fn made(&self, state: &State, before: u64) -> Option<u64> {
-        let after = state.position();
-        (after > before).then(|| {
-            self.queued.notify_one();
-            after
-        })
-    }
-
     /// Writes a checkpoint when one is due, then prunes. See
     /// [`Service::keep_checkpoints`].
     async fn checkpoint(&self, settings: &checkpoint::Settings) {
-        let snapshot = {
+        let (last, at) = {
             let marks = self.checkpoints();
             if marks.blocked.is_some() {
                 return;
             }
-            let state = self.state();
-            let written = state.written_position();
-            let came = written.saturating_sub(marks.position);
-            if came == 0 || (came < settings.every_records && marks.at.elapsed() < settings.every) {
-                return;
-            }
-            state.snapshot(Instant::now(), now_ms())
+            (marks.position, marks.at)
+        };
+        let snapshot = self.engine.read(|state| {
+            let came = state.written_position().saturating_sub(last);
+            let due = came >= settings.every_records || at.elapsed() >= settings.every;
+            (came > 0 && due).then(|| state.snapshot(Instant::now(), now_ms()))
+        });
+        let Some(snapshot) = snapshot else {
+            return;
         };
         let position = snapshot.position;
         let checkpoint = checkpoint::Checkpoint::new(&settings.build, now_ms(), snapshot);
@@ -726,48 +755,11 @@ impl Server {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// Waits until the record at `position` is written. When the server
-    /// stops first, the call gets 503.
-    async fn written(&self, position: Option<u64>) -> Result<(), (StatusCode, String)> {
-        let Some(position) = position else {
-            return Ok(());
-        };
-        let unavailable = || {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "the server stopped before it wrote the change. Try again.".to_owned(),
-            )
-        };
-        let mut written = self.written.subscribe();
-        tokio::select! {
-            biased;
-            done = written.wait_for(|at| *at >= position) => done.map(drop).map_err(|_| unavailable()),
-            () = self.stopping() => Err(unavailable()),
-        }
-    }
-
-    /// Delivers each post of the server after the write of `position`.
-    /// A post that did not go is only logged.
-    fn deliver_all(&self, position: Option<u64>, deliveries: Vec<Result<Delivery, String>>) {
-        for delivery in deliveries {
-            match delivery {
-                Ok(mut delivery) => {
-                    delivery.tailed.trusted = self.config.trusted();
-                    match position {
-                        Some(position) => self.deliver_after(position, delivery),
-                        None => self.deliver(delivery),
-                    }
-                }
-                Err(error) => tracing::warn!("a note of the server did not go: {error}"),
-            }
-        }
-    }
-
     /// One look at the owner role at `now` (see [`owner`]): it grants a
     /// request whose time ended, then checks the owner when a check is
     /// due. It warns the owner one check before the owner is gone.
     /// Returns the change that it made.
-    fn owner_tick(&self, checks: &mut Checks, now: Instant) -> Option<OwnerChange> {
+    async fn owner_tick(&self, checks: &mut Checks, now: Instant) -> Option<OwnerChange> {
         let timing = &self.config.owner_role;
         if self.tokens().is_due(now) {
             return self.tokens_change().owner_due(now);
@@ -793,58 +785,59 @@ impl Server {
         let since = checks.since(timing);
         let seen = user
             .as_deref()
-            .is_some_and(|user| self.state().present(user, since, now));
+            .is_some_and(|user| self.engine.read(|state| state.present(user, since, now)));
         match checks.record(now, seen, timing) {
             Check::Seen | Check::Missed => None,
             Check::Warn => {
-                self.warn_owner(&owner::warn_news(&email, timing), user.as_deref());
+                self.warn_owner(&owner::warn_news(&email, timing), user.as_deref())
+                    .await;
                 None
             }
             Check::Gone => self.tokens_change().owner_gone(),
         }
     }
 
+    /// A note or a message of the server, for [`Server::announce_each`].
+    fn news(thread: Option<ThreadName>, to: Vec<Selector>, body: &str, kind: Kind) -> Announce {
+        Announce {
+            thread,
+            to,
+            body: body.to_owned(),
+            kind,
+            at_ms: now_ms(),
+        }
+    }
+
+    /// Sends each post of the server: one command `announce` for each
+    /// (01M3N7K4BC1RPZKQ1XNDTBRPGF). They go to the engine together, so
+    /// they wait for one write. A post that did not go is only logged.
+    async fn announce_each(&self, posts: Vec<Announce>) {
+        let sent = posts.into_iter().map(|post| self.engine.announce(post));
+        for result in futures::future::join_all(sent).await {
+            if let Err(failed) = result {
+                tracing::warn!("a note of the server did not go: {}", failed.text());
+            }
+        }
+    }
+
     /// Warns the owner that the next check can drop the owner
     /// (01M3Q546335NBTKG5BHQ27QC93): a note to each session of `user` in
     /// the thread of each repository, and one line in the chat.
-    fn warn_owner(&self, news: &str, user: Option<&str>) {
+    async fn warn_owner(&self, news: &str, user: Option<&str>) {
         tracing::info!("{news}");
-        let (now, at_ms) = (Instant::now(), now_ms());
-        let me = owner::server_uri();
-        let mut deliveries = Vec::new();
-        let position = {
-            let mut state = self.state();
-            let before = state.position();
-            if let Some(user) = user {
-                for thread in state.repositories() {
-                    let to = vec![Selector {
-                        user: Some(user.to_owned()),
-                        ..Selector::default()
-                    }];
-                    deliveries.push(state.announce(
-                        &me,
-                        Some(thread),
-                        to,
-                        news,
-                        Kind::Note,
-                        now,
-                        at_ms,
-                    ));
-                }
+        let mut posts = Vec::new();
+        if let Some(user) = user {
+            for thread in self.engine.read(State::repositories) {
+                let to = vec![Selector {
+                    user: Some(user.to_owned()),
+                    ..Selector::default()
+                }];
+                posts.push(Server::news(Some(thread), to, news, Kind::Note));
             }
-            let chat = ThreadName::chat();
-            deliveries.push(state.announce(
-                &me,
-                Some(chat),
-                Vec::new(),
-                news,
-                Kind::Message,
-                now,
-                at_ms,
-            ));
-            self.made(&state, before)
-        };
-        self.deliver_all(position, deliveries);
+        }
+        let chat = ThreadName::chat();
+        posts.push(Server::news(Some(chat), Vec::new(), news, Kind::Message));
+        self.announce_each(posts).await;
     }
 
     /// Saves a change of the owner role that no person made, and posts
@@ -860,67 +853,55 @@ impl Server {
             OwnerChange::Gone { owner: None, .. } => self.tokens().admin_users(&self.config.admins),
             _ => Vec::new(),
         };
-        self.announce(&news, &admins);
+        self.announce(&news, &admins).await;
     }
 
     /// Asks each idle worker past the limit to stop, and posts a note to
     /// the lead of its user for each (see [`idle`]).
-    fn stop_idle_workers(&self) {
-        let (now, at_ms) = (Instant::now(), now_ms());
-        let me = owner::server_uri();
-        let mut deliveries = Vec::new();
-        let position = {
-            let mut state = self.state();
-            let before = state.position();
-            let settings = state.idle();
-            for stopping in state.stop_idle_workers(now) {
-                let news = idle::news(&stopping, &settings);
-                tracing::info!("{news}");
-                let Some(thread) = stopping.worker.default_thread() else {
-                    continue;
-                };
-                let lead = Selector::lead(stopping.worker.who().user(), &thread.to_string());
-                let note =
-                    state.announce(&me, Some(thread), vec![lead], &news, Kind::Note, now, at_ms);
-                deliveries.push(note);
-            }
-            self.made(&state, before)
-        };
-        self.deliver_all(position, deliveries);
+    async fn stop_idle_workers(&self) {
+        let settings = self.engine.read(State::idle);
+        let mut posts = Vec::new();
+        for stopping in self.engine.stop_idle_workers() {
+            let news = idle::news(&stopping, &settings);
+            tracing::info!("{news}");
+            let Some(thread) = stopping.worker.default_thread() else {
+                continue;
+            };
+            let lead = Selector::lead(stopping.worker.who().user(), &thread.to_string());
+            posts.push(Server::news(Some(thread), vec![lead], &news, Kind::Note));
+        }
+        self.announce_each(posts).await;
     }
 
     /// Posts a note of the server to the thread of each repository of
     /// the riff. It sends the same text to each live lead of `users` as a
     /// direct message (see [`owner`]).
-    fn announce(&self, news: &str, users: &[String]) {
-        let (now, at_ms) = (Instant::now(), now_ms());
-        let me = owner::server_uri();
-        let mut deliveries = Vec::new();
-        let position = {
-            let mut state = self.state();
-            let before = state.position();
-            for thread in state.repositories() {
-                let to = vec![Selector {
-                    repo: Some(thread.to_string()),
-                    ..Selector::default()
-                }];
-                let note = state.announce(&me, Some(thread), to, news, Kind::Note, now, at_ms);
-                deliveries.push(note);
-            }
-            let direct = owner::to_lead(news);
-            for user in users {
-                for lead in state.live_leads(user, now) {
-                    let Some(id) = lead.session() else {
-                        continue;
-                    };
-                    let to = vec![Selector::session(id)];
-                    let message = state.announce(&me, None, to, &direct, Kind::Message, now, at_ms);
-                    deliveries.push(message);
-                }
-            }
-            self.made(&state, before)
-        };
-        self.deliver_all(position, deliveries);
+    async fn announce(&self, news: &str, users: &[String]) {
+        let now = Instant::now();
+        let (repositories, leads) = self.engine.read(|state| {
+            let leads: Vec<Who> = users
+                .iter()
+                .flat_map(|user| state.live_leads(user, now))
+                .collect();
+            (state.repositories(), leads)
+        });
+        let mut posts = Vec::new();
+        for thread in repositories {
+            let to = vec![Selector {
+                repo: Some(thread.to_string()),
+                ..Selector::default()
+            }];
+            posts.push(Server::news(Some(thread), to, news, Kind::Note));
+        }
+        let direct = owner::to_lead(news);
+        for lead in leads {
+            let Some(id) = lead.session() else {
+                continue;
+            };
+            let to = vec![Selector::session(id)];
+            posts.push(Server::news(None, to, &direct, Kind::Message));
+        }
+        self.announce_each(posts).await;
     }
 }
 
@@ -1029,6 +1010,7 @@ impl Service {
         // is, and the old instance serves on.
         let mut facts = Facts::start();
         let replayed = Instant::now();
+        refuse_old_objects(&*store).await?;
         load_tokens(&*store).await?;
         let build = config.checkpoint.build.clone();
         let found = checkpoint::load(&*store, &build).await?;
@@ -1147,21 +1129,30 @@ impl Service {
         if let Some(owner) = &config.owner {
             tokens.name_owner(owner);
         }
-        let (wakes, _) = broadcast::channel(EVENT_BUFFER);
-        let (tail, _) = broadcast::channel(EVENT_BUFFER);
         let mut replay = Replay::default();
         replay.refuse_before(start);
-        let written = tokio::sync::watch::Sender::new(state.written_position());
+        // A log with no record is the first start of a riff
+        // (01M3WRD99M99PNGP8ME50KC6WS).
+        let first = state.position() == 0;
+        let tokens = Arc::new(Mutex::new(tokens));
+        let roles = Roles {
+            tokens: tokens.clone(),
+            admins: config.admins.clone(),
+            needs_sign_in: config.require_sign_in,
+            trusted: config.trusted(),
+        };
+        let engine = Engine::new(state, roles);
+        if first {
+            engine.make_riff();
+        }
         let service = Service(Arc::new(Server {
             config,
-            state: Mutex::new(state),
-            tokens: Mutex::new(tokens),
+            engine,
+            tokens,
             tokens_changes: AtomicU64::new(0),
             tokens_saved: AtomicU64::new(0),
             tokens_failed: AtomicBool::new(false),
             replay: Mutex::new(replay),
-            wakes,
-            tail,
             http,
             saved,
             gate: Gate {
@@ -1170,9 +1161,6 @@ impl Service {
                 closing: AtomicBool::new(false),
             },
             log,
-            written,
-            queued: Arc::new(tokio::sync::Notify::new()),
-            deliveries: Mutex::new(Vec::new()),
             checkpoints: Mutex::new(checkpoints),
             facts: Mutex::new(facts),
         }));
@@ -1184,19 +1172,20 @@ impl Service {
         service
     }
 
-    /// Starts the writer: the task that writes each record in the queue
-    /// as a chunk of the log (see [`log`]). After each chunk, it applies
-    /// its records to the written state, and sends the replies and the
-    /// wakes that wait for them. When a chunk fails for good, it stops
-    /// the server for good. A server with no async runtime, for example
-    /// in a doc test, starts no task. The task ends when the service
-    /// ends.
+    /// Starts the writer: the task that writes the records of each entry
+    /// in the queue of the engine as a chunk of the log (see [`log`]).
+    /// After each chunk, the engine finishes each command of the chunk
+    /// ([`Engine::finish`], 01M3WRD90WBBCWTDGVQCBR6MNT): it applies the
+    /// records to the written state, sends the wakes, and tells each
+    /// call. When a chunk fails for good, it stops the server for good.
+    /// A server with no async runtime, for example in a doc test, starts
+    /// no task. The task ends when the service ends.
     fn write_log(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
         let server = Arc::downgrade(&self.0);
-        let queued = self.0.queued.clone();
+        let queued = self.0.engine.queued();
         runtime.spawn(async move {
             loop {
                 let Some(s) = server.upgrade() else {
@@ -1211,12 +1200,17 @@ impl Service {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
-                let records = s.state().take_queue();
-                let Some(last) = records.last().map(|r| r.position) else {
+                let Some(chunk) = s.engine.take() else {
                     drop(s);
                     queued.notified().await;
                     continue;
                 };
+                let records = chunk.records();
+                // A chunk of commands with no record needs no write.
+                if records.is_empty() {
+                    s.engine.finish(chunk);
+                    continue;
+                }
                 let log = s.log.clone();
                 let timing = s.config.log;
                 let began = Instant::now();
@@ -1226,15 +1220,15 @@ impl Service {
                 s.facts().write_errors += failed.into_inner();
                 match wrote {
                     Ok(()) => {
-                        s.state().written(&records);
-                        s.written.send_replace(last);
-                        s.deliver_written(last);
+                        s.engine.finish(chunk);
                         let mut facts = s.facts();
                         facts.chunks += 1;
                         facts.chunk_written_at_ms = Some(now_ms());
                         facts.chunk_write = Some(began.elapsed());
                     }
                     Err(error) => {
+                        // The calls of the chunk fail: the server stopped.
+                        drop(chunk);
                         let chunk = log::chunk_name(records[0].position);
                         s.error(format!(
                             "the write of the chunk {chunk} failed for good: {error}"
@@ -1299,16 +1293,16 @@ impl Service {
                     break;
                 }
                 if s.serving() {
-                    let before = s.state().position();
-                    let forgotten = s.state().forget_expired(Instant::now());
-                    if forgotten > 0 {
-                        tracing::info!(
+                    match s.engine.forget().await {
+                        Ok(0) => {}
+                        Ok(forgotten) => tracing::info!(
                             sessions = forgotten,
                             "forgot the sessions with no sign of life"
-                        );
+                        ),
+                        Err(failed) => {
+                            tracing::warn!("the sessions were not forgotten: {}", failed.text());
+                        }
                     }
-                    let state = s.state();
-                    s.made(&state, before);
                 }
             }
         });
@@ -1340,7 +1334,7 @@ impl Service {
                 if !server.serving() {
                     continue;
                 }
-                if let Some(change) = server.owner_tick(&mut checks, Instant::now()) {
+                if let Some(change) = server.owner_tick(&mut checks, Instant::now()).await {
                     server.owner_changed(&change).await;
                 }
             }
@@ -1367,7 +1361,7 @@ impl Service {
                     break;
                 }
                 if server.serving() {
-                    server.stop_idle_workers();
+                    server.stop_idle_workers().await;
                 }
             }
         });
@@ -1382,8 +1376,7 @@ impl Service {
         if !self.0.leased() {
             return Ok(());
         }
-        let position = self.0.state().position();
-        if self.0.written(Some(position)).await.is_err() {
+        if self.0.engine.settle().await.is_err() {
             return Err(StoreError::Failed(
                 "the server stopped before it wrote the log".into(),
             ));
@@ -1465,38 +1458,54 @@ impl Service {
 
     /// The HTTP routes of this server.
     pub fn router(&self) -> Router {
-        let mut routes = Router::new()
-            .route("/v1/register", post(register))
-            .route("/v1/who", post(who))
-            .route("/v1/threads", post(threads))
-            .route("/v1/join", post(join))
-            .route("/v1/leave", post(leave))
-            .route("/v1/post", post(post_message))
-            .route("/v1/read", post(read))
-            .route("/v1/claim", post(claim))
-            .route("/v1/release", post(release))
-            .route("/v1/lead", post(lead))
-            .route("/v1/riff", post(riff))
-            .route("/v1/status", post(status))
-            .route("/v1/alive", post(alive))
-            .route("/v1/end", post(end))
-            .route("/v1/start", post(start))
+        // ANCHOR: routes
+        // The commands: one line for each, and one handler for all
+        // (01M3WRD8TBDPA4JNEZY6J4N2EX).
+        let commands = Router::new()
+            .route(Register::PATH, post(command::<Register>))
+            .route(Start::PATH, post(command::<Start>))
+            .route(End::PATH, post(command::<End>))
+            .route(Join::PATH, post(command::<Join>))
+            .route(Leave::PATH, post(command::<Leave>))
+            .route(Post::PATH, post(command::<Post>))
+            .route(Claim::PATH, post(command::<Claim>))
+            .route(Release::PATH, post(command::<Release>))
+            .route(ReleaseFor::PATH, post(command::<ReleaseFor>))
+            .route(Lead::PATH, post(command::<Lead>))
+            .route(Pause::PATH, post(command::<Pause>))
+            .route(Resume::PATH, post(command::<Resume>));
+        // ANCHOR_END: routes
+        // The signals and the queries.
+        let mut routes = commands
+            .route(SetStatus::PATH, post(status))
+            .route(Alive::PATH, post(alive))
+            .route(WhoRequest::PATH, post(who))
+            .route(Threads::PATH, post(threads))
+            .route(Read::PATH, post(read))
+            .route(RiffQuery::PATH, post(riff))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
+        // The settings of idle workers: the query, and the command
+        // `set_idle` on a path of its own (01M3WRD9BSBKS9TN66H29TGTBV).
+        let idle = |routes: Router<Shared>| {
+            routes
+                .route(IdleQuery::PATH, post(idle_workers))
+                .route(SetIdle::PATH, post(command::<SetIdle>))
+        };
         // A riff with sign-in knows who changes the idle workers
         // (01M3Q5A0TF9K49V8Z1ZY9NDF74).
         let trusted = self.0.config.trusted();
         if trusted {
-            routes = routes.route("/v1/idle", post(idle_workers));
+            routes = idle(routes);
         }
         if self.0.config.require_sign_in {
             routes = routes.route_layer(guard());
         }
         let mut admin_routes = Router::new();
         if !trusted {
-            admin_routes = admin_routes.route("/v1/idle", post(idle_workers));
+            admin_routes = idle(admin_routes);
         }
         let admin_routes = admin_routes
             .route("/v1/revoke", post(revoke))
@@ -1550,124 +1559,48 @@ pub fn router() -> Router {
     Service::default().router()
 }
 
-/// Runs `f` on the state as `me` (see [`acts_as`]). Then it waits until
-/// each record that `f` made is written, so the reply comes after the
-/// write. A call that makes no record does not wait.
-async fn change<T>(
-    s: &Server,
-    caller: Option<Extension<SignedIn>>,
-    me: &SessionUri,
-    f: impl FnOnce(&mut State) -> Result<T, (StatusCode, String)>,
-) -> Result<T, (StatusCode, String)> {
-    let (result, position) = {
-        let mut state = acts_as(s, caller, me)?;
-        let before = state.position();
-        let result = f(&mut state);
-        (result, s.made(&state, before))
-    };
-    s.written(position).await?;
-    result
+/// The proof of the token layer in a request, when the route has the
+/// token check.
+type Proof = Option<Extension<SignedIn>>;
+
+/// Admits the caller of a signal or of a query that acts as `me`
+/// ([`Engine::admit`]).
+fn admit(s: &Server, proof: &Proof, me: &SessionUri) -> Result<Admitted, Failed> {
+    let proof = proof.as_ref().map(|Extension(proof)| proof);
+    s.engine.admit(proof, me)
 }
 
-/// As [`change`], for a call whose reply comes from the pending state,
-/// for example a claim that another call of the same session queued. It
-/// waits until each record in the queue is written, also when it made
-/// none, so the reply never tells of a change that is not written
-/// (01M3T4115BF1F0JFHYMK0WRKCX).
-async fn settled<T>(
-    s: &Server,
-    caller: Option<Extension<SignedIn>>,
-    me: &SessionUri,
-    f: impl FnOnce(&mut State) -> Result<T, (StatusCode, String)>,
-) -> Result<T, (StatusCode, String)> {
-    let (result, position) = {
-        let mut state = acts_as(s, caller, me)?;
-        let before = state.position();
-        let result = f(&mut state);
-        s.made(&state, before);
-        let pending = state.position();
-        (
-            result,
-            (pending > state.written_position()).then_some(pending),
-        )
-    };
-    s.written(position).await?;
-    result
-}
-
-async fn register(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Register>,
-) -> Reply<()> {
-    change(&s, caller, &r.me, |state| {
-        state.register(&r.me, Instant::now());
-        state.worker(r.me.who(), r.worker);
-        Ok(())
-    })
-    .await?;
-    Ok(Json(()))
-}
-
-/// A keep-alive: a sign of life that is not a call (R204).
+/// A keep-alive: a sign of life that is not a call (R204). It is a
+/// signal.
 async fn alive(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
+    proof: Proof,
     Json(r): Json<Alive>,
 ) -> Reply<AliveReply> {
-    let reply = change(&s, caller, &r.me, |state| {
-        Ok(state.alive(&r.me, Instant::now()))
-    })
-    .await?;
-    Ok(Json(reply))
+    let caller = admit(&s, &proof, &r.me)?;
+    Ok(Json(s.engine.signal(&caller, Signal::Alive).await?))
 }
 
-/// The session ended: it is gone, and its claims are free (R205).
-async fn end(
+/// Sets the status of a session. It is a signal: it makes no record,
+/// and it does not wait for the writer (01M3WRD97EZJK3AABXECXEY133).
+async fn status(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<End>,
+    proof: Proof,
+    Json(r): Json<SetStatus>,
 ) -> Reply<()> {
-    change(&s, caller, &r.me, |state| {
-        state.end(&r.me, Instant::now());
-        Ok(())
-    })
-    .await?;
+    let caller = admit(&s, &proof, &r.me)?;
+    r.status.check().map_err(bad_request)?;
+    let status = Signal::Status {
+        status: r.status,
+        at_ms: now_ms(),
+    };
+    s.engine.signal(&caller, status).await?;
     Ok(Json(()))
-}
-
-/// A new start of the session: its claims are free at once, and its
-/// lead stays (01M3JEE1QQCFS5TMZW5N2DAD2D).
-async fn start(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Start>,
-) -> Reply<Started> {
-    let freed = change(&s, caller, &r.me, |state| {
-        Ok(state.start(&r.me, Instant::now()))
-    })
-    .await?;
-    Ok(Json(Started { freed }))
-}
-
-/// Records a call of `me`, and waits for the records that it made, if
-/// any: the first call of a new session joins it to the thread of its
-/// repository. A view that comes after it shows them.
-async fn called(
-    s: &Server,
-    caller: Option<Extension<SignedIn>>,
-    me: &SessionUri,
-) -> Result<(), (StatusCode, String)> {
-    change(s, caller, me, |state| {
-        state.called(me, Instant::now());
-        Ok(())
-    })
-    .await
 }
 
 async fn who(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
+    proof: Proof,
     Json(r): Json<WhoRequest>,
 ) -> Reply<WhoReply> {
     let (owner, members) = if s.config.trusted() {
@@ -1676,27 +1609,32 @@ async fn who(
         let tokens = s.tokens();
         (tokens.riff_owner(), tokens.people(&s.config.admins))
     };
-    called(&s, caller, &r.me).await?;
-    let now = Instant::now();
-    let now_ms = now_ms();
-    let state = s.state();
-    let people = members
-        .into_iter()
-        .map(|(user, role)| {
-            let seen = state.seen(&user, now, now_ms);
-            Person {
-                live: seen.is_some_and(|(live, _)| live),
-                seen_secs: seen.map(|(_, secs)| secs),
-                user,
-                role,
+    let caller = admit(&s, &proof, &r.me)?;
+    let reply = s
+        .engine
+        .query(&caller, |state| {
+            let now = Instant::now();
+            let now_ms = now_ms();
+            let people = members
+                .into_iter()
+                .map(|(user, role)| {
+                    let seen = state.seen(&user, now, now_ms);
+                    Person {
+                        live: seen.is_some_and(|(live, _)| live),
+                        seen_secs: seen.map(|(_, secs)| secs),
+                        user,
+                        role,
+                    }
+                })
+                .collect();
+            WhoReply {
+                sessions: state.who(now, now_ms, r.all),
+                owner,
+                people,
             }
         })
-        .collect();
-    Ok(Json(WhoReply {
-        sessions: state.who(now, now_ms, r.all),
-        owner,
-        people,
-    }))
+        .await?;
+    Ok(Json(reply))
 }
 
 /// Only the session of the caller, and the build of the server, for
@@ -1704,12 +1642,15 @@ async fn who(
 /// so it is not a call of the session.
 async fn me(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
+    proof: Proof,
     Query(q): Query<WatchQuery>,
 ) -> Reply<MeReply> {
-    let state = acts_as(&s, caller, &q.uri)?;
+    let caller = admit(&s, &proof, &q.uri)?;
+    let session = s.engine.peek(&caller, |state| {
+        state.me(q.uri.who(), Instant::now(), now_ms())
+    })?;
     Ok(Json(MeReply {
-        session: state.me(q.uri.who(), Instant::now(), now_ms()),
+        session,
         build: build::VERSION.into(),
     }))
 }
@@ -1723,128 +1664,41 @@ async fn server_facts(AxumState(s): AxumState<Shared>) -> Json<ServerFacts> {
 
 async fn threads(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
+    proof: Proof,
     Json(r): Json<Threads>,
 ) -> Reply<ThreadsReply> {
-    called(&s, caller, &r.me).await?;
-    Ok(Json(ThreadsReply {
-        threads: s.state().threads(&r.me, Instant::now()),
-    }))
-}
-
-async fn join(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Membership>,
-) -> Reply<()> {
-    change(&s, caller, &r.me, |state| {
-        state.join(&r.me, &r.thread, Instant::now());
-        Ok(())
-    })
-    .await?;
-    Ok(Json(()))
-}
-
-async fn leave(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Membership>,
-) -> Reply<()> {
-    change(&s, caller, &r.me, |state| {
-        state.leave(&r.me, &r.thread, Instant::now());
-        Ok(())
-    })
-    .await?;
-    Ok(Json(()))
-}
-
-/// Adds a message. With sign-in, the post needs a valid signature from
-/// the key of its token over its payload (R197), and the message keeps
-/// the payload and the signature. Without sign-in, the message keeps no
-/// signature (R201). The reply, the wakes and the `tail` event come
-/// after the write of the message.
-async fn post_message(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(mut r): Json<Post>,
-) -> Reply<Posted> {
-    let now_ms = now_ms();
-    let at_ms = match &caller {
-        Some(Extension(caller)) => caller
-            .check_post(&r, now_ms)
-            .map_err(|message| (StatusCode::FORBIDDEN, message))?,
-        None => {
-            r.sig = None;
-            r.payload = None;
-            now_ms
-        }
-    };
-    let signed = caller.is_some();
-    let me = r.me.clone();
-    let now = Instant::now();
-    let (delivery, position) = {
-        let mut state = acts_as(&s, caller, &me)?;
-        let before = state.position();
-        let delivery = state.post(r, now, at_ms);
-        (delivery, s.made(&state, before))
-    };
-    let delivery = delivery.map(|mut delivery| {
-        if signed {
-            delivery.tailed.keys = s.keys([me.who().user()]);
-        }
-        delivery.tailed.trusted = s.config.trusted();
-        delivery
-    });
-    if let (Ok(delivery), Some(position)) = (&delivery, position) {
-        s.deliver_after(position, delivery.clone());
-    }
-    s.written(position).await?;
-    let delivery = delivery.map_err(bad_request)?;
-    let state = s.state();
-    Ok(Json(Posted {
-        thread: delivery.tailed.thread,
-        seq: delivery.tailed.message.seq,
-        woken: delivery.woken.iter().map(|w| state.uri(w, now)).collect(),
-        unmatched: delivery.unmatched,
-    }))
-}
-
-async fn status(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<SetStatus>,
-) -> Reply<()> {
-    change(&s, caller, &r.me, |state| {
-        state
-            .set_status(&r.me, r.status, Instant::now(), now_ms())
-            .map_err(bad_request)
-    })
-    .await?;
-    Ok(Json(()))
+    let caller = admit(&s, &proof, &r.me)?;
+    let threads = s
+        .engine
+        .query(&caller, |state| {
+            state.threads_of(r.me.who(), Instant::now())
+        })
+        .await?;
+    Ok(Json(ThreadsReply { threads }))
 }
 
 /// Gives the messages. With sign-in, the reply holds the keys of each
 /// sender, so the reader can verify each message (R199). A riff with
 /// no sign-in marks the reply as trusted (R211). A direct thread of two
-/// other sessions is not found ([`state::may_read`]).
+/// other sessions is not found ([`state::may_read`]). The read moves
+/// the cursor of the caller: a signal.
 async fn read(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
+    proof: Proof,
     Json(r): Json<Read>,
 ) -> Reply<ReadReply> {
-    let signed = caller.is_some();
-    called(&s, caller, &r.me).await?;
-    let page = s
-        .state()
-        .read_page(
-            &r.me,
-            &r.thread,
-            r.all,
-            r.after,
-            state::PAGE,
-            Instant::now(),
-        )
+    let signed = proof.is_some();
+    let caller = admit(&s, &proof, &r.me)?;
+    let (page, read) = s
+        .engine
+        .query(&caller, |state| {
+            state.page(r.me.who(), &r.thread, r.all, r.after, state::PAGE)
+        })
+        .await?
         .map_err(not_found)?;
+    if let Some(read) = read {
+        s.engine.signal(&caller, read).await?;
+    }
     let keys = if signed {
         s.keys(page.messages.iter().map(|m| m.from.who().user()))
     } else {
@@ -1858,114 +1712,30 @@ async fn read(
     }))
 }
 
-async fn claim(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Claim>,
-) -> Reply<ClaimReply> {
-    let now = Instant::now();
-    let (granted, holder) = settled(&s, caller, &r.me, |state| {
-        state
-            .claim(&r.me, &r.thread, &r.item, now)
-            .map_err(bad_request)
-    })
-    .await?;
-    Ok(Json(s.state().claim_reply(granted, &holder, now)))
-}
-
-async fn release(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Claim>,
-) -> Reply<()> {
-    let Some(holder) = &r.session else {
-        change(&s, caller, &r.me, |state| {
-            state
-                .release(&r.me, &r.thread, &r.item, Instant::now())
-                .map_err(bad_request)
-        })
-        .await?;
-        return Ok(Json(()));
-    };
-    // The lead frees the claim of another session. A note of the server
-    // in the thread of the claim names the lead, the item and the
-    // holder (01M3WG243BW7P6E1ME0DFNQF8C).
-    let (now, at_ms) = (Instant::now(), now_ms());
-    let (note, position) = {
-        let mut state = acts_as(&s, caller, &r.me)?;
-        let before = state.position();
-        let note = state
-            .release_for(&r.me, &r.thread, &r.item, holder, now)
-            .map(|holder| {
-                let news = state::released_for(
-                    &state.uri(r.me.who(), now),
-                    &r.item,
-                    &state.uri(&holder, now),
-                );
-                tracing::info!("{news}");
-                let me = owner::server_uri();
-                let thread = Some(r.thread.clone());
-                state.announce(&me, thread, Vec::new(), &news, Kind::Note, now, at_ms)
-            });
-        (note, s.made(&state, before))
-    };
-    let note = note.map_err(bad_request)?;
-    s.deliver_all(position, vec![note]);
-    s.written(position).await?;
-    Ok(Json(()))
-}
-
-async fn lead(
-    AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Lead>,
-) -> Reply<LeadReply> {
-    let now = Instant::now();
-    let (me, old) = settled(&s, caller, &r.me, |state| {
-        state.lead(&r.me, now).map_err(bad_request)
-    })
-    .await?;
-    Ok(Json(s.state().lead_reply(&me, old.as_ref(), now)))
-}
-
-/// Reads the state of the riff, or sets it for a person or a lead
-/// (01M3JCG3T8AJZN31SZQQTP3FAF). A refused set gets 403.
+/// Reads the state of the riff: a query (01M3WRD9BSBKS9TN66H29TGTBV).
+/// The commands `pause` and `resume` change it.
 async fn riff(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<Riff>,
+    proof: Proof,
+    Json(r): Json<RiffQuery>,
 ) -> Reply<RiffReply> {
-    let reply = settled(&s, caller, &r.me, |state| {
-        state
-            .riff(&r.me, r.state, Instant::now())
-            .map_err(|message| (StatusCode::FORBIDDEN, message))
-    })
-    .await?;
-    Ok(Json(reply))
+    let caller = admit(&s, &proof, &r.me)?;
+    let state = s.engine.query(&caller, State::riff_state).await?;
+    Ok(Json(RiffReply {
+        state,
+        changed: false,
+    }))
 }
 
-/// Reads the settings of idle workers, and sets each given value
-/// (01M3Q5A0TF9K49V8Z1ZY9NDF74). With sign-in, only the owner or an
-/// admin can set them.
+/// Reads the settings of idle workers: a query
+/// (01M3Q5A0TF9K49V8Z1ZY9NDF74). The command `set_idle` changes them.
 async fn idle_workers(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
-    Json(r): Json<SetIdle>,
+    proof: Proof,
+    Json(r): Json<IdleQuery>,
 ) -> Reply<Idle> {
-    let sets = r.per_host.is_some() || r.after_secs.is_some();
-    if sets && let Some(Extension(SignedIn { who, .. })) = &caller {
-        admin_only(&s, who, "change the settings of idle workers")?;
-    }
-    if r.after_secs == Some(0) {
-        return Err(bad_request("the idle time is at least 1 second".into()));
-    }
-    let idle = settled(&s, caller, &r.me, |state| {
-        let now = Instant::now();
-        state.called(&r.me, now);
-        Ok(state.set_idle(r.per_host, r.after_secs, now))
-    })
-    .await?;
-    Ok(Json(idle))
+    let caller = admit(&s, &proof, &r.me)?;
+    Ok(Json(s.engine.query(&caller, State::idle).await?))
 }
 
 /// The OAuth error code of a 503 of the token endpoint.
@@ -2183,7 +1953,7 @@ async fn take_owner(
         }
     };
     tracing::info!(%caller, "{news}");
-    s.announce(&news, tell.as_slice());
+    s.announce(&news, tell.as_slice()).await;
     Ok(Json(reply))
 }
 
@@ -2208,7 +1978,7 @@ async fn deny_owner(
     let news = owner::denied_news(caller.user(), &owner, &admin);
     tracing::info!(%caller, "{news}");
     let tell = s.tokens().user_of_email(&admin).map(str::to_owned);
-    s.announce(&news, tell.as_slice());
+    s.announce(&news, tell.as_slice()).await;
     Ok(Json(OwnerDenied { owner, admin }))
 }
 
@@ -2422,28 +2192,6 @@ async fn for_session(
         .map_err(|_| no("invalid_grant"))
 }
 
-/// Refuses a request that acts as another user or session than its
-/// token (R104), with 403. Without a token check, that part passes.
-/// Refuses a known session ID under a new user (R159), with 409. Gives
-/// the state, locked, so no other call comes between the check and the
-/// change.
-fn acts_as<'a>(
-    s: &'a Server,
-    caller: Option<Extension<SignedIn>>,
-    me: &SessionUri,
-) -> Result<MutexGuard<'a, State>, (StatusCode, String)> {
-    if let Some(Extension(caller)) = caller {
-        caller
-            .may_act_as(me.who())
-            .map_err(|message| (StatusCode::FORBIDDEN, message))?;
-    }
-    let state = s.state();
-    state
-        .check_user(me)
-        .map_err(|message| (StatusCode::CONFLICT, message))?;
-    Ok(state)
-}
-
 /// Names the sign-in provider, for `riff login`.
 async fn sign_in_config(AxumState(s): AxumState<Shared>) -> Reply<SignInConfig> {
     match &s.config.provider {
@@ -2459,25 +2207,21 @@ struct WatchQuery {
 
 /// Streams the wakes for one session. The open stream is no sign of life
 /// (01M3WG240PNMQYZ7TX6Z7ZF6M9). It gives only the wakes of the session, in threads
-/// that it may read ([`state::may_read`]).
+/// that it may read ([`state::may_read`]). The start and the end of the
+/// stream are signals.
 async fn watch(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
+    proof: Proof,
     Query(q): Query<WatchQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
-    let rx = s.wakes.subscribe();
-    let position = {
-        let mut state = acts_as(&s, caller, &q.uri)?;
-        let before = state.position();
-        state.watch_started(&q.uri, Instant::now());
-        s.made(&state, before)
-    };
+    let rx = s.engine.wakes();
+    let caller = admit(&s, &proof, &q.uri)?;
+    s.engine.signal(&caller, Signal::WatchStarted).await?;
     let guard = WatchGuard {
-        server: s.clone(),
+        engine: s.engine.clone(),
         who: q.uri.who().clone(),
     };
-    s.written(position).await?;
-    let missed = s.state().missed(q.uri.who());
+    let missed = s.engine.read(|state| state.missed(q.uri.who()));
     let live = BroadcastStream::new(rx).filter_map(move |event| {
         let _alive = &guard;
         let wake = match event {
@@ -2495,13 +2239,13 @@ async fn watch(
 
 /// Marks the session as stopped when its watch stream closes.
 struct WatchGuard {
-    server: Shared,
+    engine: Engine,
     who: Who,
 }
 
 impl Drop for WatchGuard {
     fn drop(&mut self) {
-        self.server.state().watch_ended(&self.who, Instant::now());
+        self.engine.watch_ended(&self.who);
     }
 }
 
@@ -2517,14 +2261,15 @@ struct TailQuery {
 /// ([`state::may_read`]).
 async fn tail_thread(
     AxumState(s): AxumState<Shared>,
-    caller: Option<Extension<SignedIn>>,
+    proof: Proof,
     Query(q): Query<TailQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
-    drop(acts_as(&s, caller, &q.uri)?);
+    let caller = admit(&s, &proof, &q.uri)?;
+    s.engine.peek(&caller, |_| ())?;
     if !may_read(q.uri.who(), &q.thread) {
         return Err(not_found(format!("no thread named {}", q.thread)));
     }
-    let stream = BroadcastStream::new(s.tail.subscribe()).filter_map(move |event| {
+    let stream = BroadcastStream::new(s.engine.tail()).filter_map(move |event| {
         let event = match event {
             Ok(tailed) if tailed.thread == q.thread => Event::default().json_data(tailed).ok(),
             _ => None,
@@ -2590,6 +2335,7 @@ fn not_found(message: String) -> (StatusCode, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Routed;
     use crate::store::Memory;
     use futures::future::BoxFuture;
     use riff_core::record::{Change, Line};
@@ -2727,24 +2473,51 @@ mod tests {
         store.store.list(checkpoint::CHECKPOINT).await.unwrap()
     }
 
+    /// Sends a command as a client with no token does: through the one
+    /// path. The future owns its engine, so a test can spawn it, and
+    /// drop it.
+    fn send<C: Routed>(
+        service: &Service,
+        command: C,
+    ) -> impl Future<Output = Result<<C as Call>::Reply, Failed>> + use<C> {
+        let engine = service.0.engine.clone();
+        async move {
+            let call = engine.authenticate(None, command)?;
+            engine.dispatch(call).await
+        }
+    }
+
     /// Posts `n` messages of mike, and waits until they are written.
     async fn post_n(service: &Service, n: usize, prefix: &str) {
         for i in 0..n {
-            let _ = post_message(
-                AxumState(service.0.clone()),
-                None,
-                Json(post_body(&mike(), &format!("{prefix}{i}"))),
-            )
-            .await
-            .unwrap();
+            send(service, post_body(&mike(), &format!("{prefix}{i}")))
+                .await
+                .unwrap();
         }
     }
 
     /// The state that the log gives in `service`, as a state with no
     /// sessions.
     fn log_state(service: &Service) -> State {
-        let snapshot = service.0.state().snapshot(Instant::now(), 0);
+        let snapshot = service
+            .0
+            .engine
+            .read(|state| state.snapshot(Instant::now(), 0));
         State::load(Some(snapshot), [], Instant::now(), 0)
+    }
+
+    /// The position of the last record of `service`: in the queue, or
+    /// written.
+    fn position(service: &Service) -> u64 {
+        service.0.engine.read(State::position)
+    }
+
+    fn claim_of(me: &SessionUri, item: &str) -> Claim {
+        Claim {
+            me: me.clone(),
+            thread: mike().default_thread().unwrap(),
+            item: item.into(),
+        }
     }
 
     /// A server on `store` with mike and brett in a running riff.
@@ -2757,24 +2530,10 @@ mod tests {
     async fn running_with(config: Config, store: Arc<Gated>) -> Service {
         let service = Service::load(config, store).await.unwrap();
         for me in [mike(), brett()] {
-            let _ = register(
-                AxumState(service.0.clone()),
-                None,
-                Json(Register {
-                    me: me.clone(),
-                    worker: false,
-                }),
-            )
-            .await
-            .unwrap();
+            let register = Register { me, worker: false };
+            send(&service, register).await.unwrap();
         }
-        let running = Riff {
-            me: mike(),
-            state: Some(riff_core::wire::RiffState::Running),
-        };
-        let _ = riff(AxumState(service.0.clone()), None, Json(running))
-            .await
-            .unwrap();
+        send(&service, Resume { me: mike() }).await.unwrap();
         service
     }
 
@@ -2803,24 +2562,10 @@ mod tests {
         let service = running(store.clone()).await;
         let before = store.chunks().await.len();
         store.hold.store(true, Ordering::SeqCst);
-        let s = service.0.clone();
-        let first = tokio::spawn(post_message(
-            AxumState(s),
-            None,
-            Json(post_body(&mike(), "one")),
-        ));
+        let first = tokio::spawn(send(&service, post_body(&mike(), "one")));
         store.tried(before as u64 + 1).await;
-        let (s1, s2) = (service.0.clone(), service.0.clone());
-        let second = tokio::spawn(post_message(
-            AxumState(s1),
-            None,
-            Json(post_body(&mike(), "two")),
-        ));
-        let third = tokio::spawn(post_message(
-            AxumState(s2),
-            None,
-            Json(post_body(&brett(), "three")),
-        ));
+        let second = tokio::spawn(send(&service, post_body(&mike(), "two")));
+        let third = tokio::spawn(send(&service, post_body(&brett(), "three")));
         sleep(Duration::from_millis(50)).await;
         assert!(!first.is_finished(), "a reply comes after the write");
         store.release();
@@ -2845,18 +2590,11 @@ mod tests {
         let service = running(store.clone()).await;
         let tries = store.tries.load(Ordering::SeqCst);
         store.hold.store(true, Ordering::SeqCst);
-        let request = Claim {
-            me: mike(),
-            thread: mike().default_thread().unwrap(),
-            item: "issue-7".into(),
-            session: None,
-        };
-        let task = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request)));
+        let task = tokio::spawn(send(&service, claim_of(&mike(), "issue-7")));
         store.tried(tries + 1).await;
         assert!(claims(&service, &brett()).await.is_empty());
         store.release();
         let reply = task.await.unwrap().unwrap();
-        assert!(reply.granted);
         assert_eq!(reply.holder.claims(), ["issue-7"]);
         assert_eq!(claims(&service, &brett()).await, ["issue-7"]);
     }
@@ -2867,23 +2605,16 @@ mod tests {
         let service = running(store.clone()).await;
         let tries = store.tries.load(Ordering::SeqCst);
         store.hold.store(true, Ordering::SeqCst);
-        let request = || Claim {
-            me: mike(),
-            thread: mike().default_thread().unwrap(),
-            item: "issue-7".into(),
-            session: None,
-        };
-        let first = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request())));
+        let first = tokio::spawn(send(&service, claim_of(&mike(), "issue-7")));
         store.tried(tries + 1).await;
         // A retry of the client: it makes no record, and its reply comes
-        // from the queued claim.
-        let second = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request())));
+        // after the write of the queued claim.
+        let second = tokio::spawn(send(&service, claim_of(&mike(), "issue-7")));
         sleep(Duration::from_millis(50)).await;
         assert!(!second.is_finished(), "no reply before the write");
         store.release();
-        assert!(first.await.unwrap().unwrap().granted);
+        first.await.unwrap().unwrap();
         let reply = second.await.unwrap().unwrap();
-        assert!(reply.granted);
         assert_eq!(reply.holder.claims(), ["issue-7"]);
     }
 
@@ -2891,7 +2622,7 @@ mod tests {
     async fn a_skipped_record_at_the_end_of_the_log_keeps_its_position() {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
-        let last = service.0.state().position();
+        let last = position(&service);
         drop(service);
         // A later build wrote a record of a kind that this build does not
         // know.
@@ -2906,14 +2637,8 @@ mod tests {
             .unwrap();
 
         let next = Service::load(config(), store.clone()).await.unwrap();
-        assert_eq!(next.0.state().position(), last + 1);
-        let _ = post_message(
-            AxumState(next.0.clone()),
-            None,
-            Json(post_body(&mike(), "after")),
-        )
-        .await
-        .unwrap();
+        assert_eq!(position(&next), last + 1);
+        send(&next, post_body(&mike(), "after")).await.unwrap();
         drop(next);
         let again = Service::load(config(), store).await.unwrap();
         let read = Read {
@@ -2941,7 +2666,7 @@ mod tests {
         // start is not possible: the start uses the checkpoint.
         assert!(log::replay(&store.store).await.is_err());
         let next = Service::load(config, store.clone()).await.unwrap();
-        assert!(next.0.state().same_log_state(&before));
+        assert!(next.0.engine.read(|state| state.same_log_state(&before)));
         let read = Read {
             after: None,
             me: brett(),
@@ -2970,18 +2695,7 @@ mod tests {
             .await
             .unwrap();
         post_n(&old, 6, "old").await;
-        let _ = claim(
-            AxumState(old.0.clone()),
-            None,
-            Json(Claim {
-                me: brett(),
-                thread: mike().default_thread().unwrap(),
-                item: "issue-9".into(),
-                session: None,
-            }),
-        )
-        .await
-        .unwrap();
+        send(&old, claim_of(&brett(), "issue-9")).await.unwrap();
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_eq!(checkpoints(&store).await, written);
         let before = log_state(&old);
@@ -2989,11 +2703,12 @@ mod tests {
 
         // The new build again: each record of the old build is there.
         let again = Service::load(new, store.clone()).await.unwrap();
-        assert!(again.0.state().same_log_state(&before));
-        assert_eq!(
-            again.0.state().uri(brett().who(), Instant::now()).claims(),
-            ["issue-9"]
-        );
+        assert!(again.0.engine.read(|state| state.same_log_state(&before)));
+        let claims = again
+            .0
+            .engine
+            .read(|state| state.uri(brett().who(), Instant::now()).claims().to_vec());
+        assert_eq!(claims, ["issue-9"]);
         // The new build writes checkpoints again.
         post_n(&again, 3, "again").await;
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -3004,7 +2719,7 @@ mod tests {
     async fn a_build_that_skipped_a_record_writes_no_checkpoint_past_it() {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
-        let last = service.0.state().position();
+        let last = position(&service);
         drop(service);
         let later = format!(
             "{{\"format\":1,\"first\":{n}}}\n{{\"position\":{n},\"written_at_ms\":0,\"change\":{{\"reacted\":{{}}}}}}\n",
@@ -3042,7 +2757,10 @@ mod tests {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
         post_n(&service, 2, "new").await;
-        let snapshot = service.0.state().snapshot(Instant::now(), 0);
+        let snapshot = service
+            .0
+            .engine
+            .read(|state| state.snapshot(Instant::now(), 0));
         drop(service);
         assert!(checkpoints(&store).await.is_empty());
         let later = checkpoint::Checkpoint::new("0.9.0", 5, snapshot);
@@ -3073,13 +2791,7 @@ mod tests {
         let service = running(store.clone()).await;
         let tries = store.tries.load(Ordering::SeqCst);
         store.hold.store(true, Ordering::SeqCst);
-        let request = Claim {
-            me: mike(),
-            thread: mike().default_thread().unwrap(),
-            item: "issue-7".into(),
-            session: None,
-        };
-        let task = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request)));
+        let task = tokio::spawn(send(&service, claim_of(&mike(), "issue-7")));
         store.tried(tries + 1).await;
         let claims = || async {
             let query = Query(WatchQuery { uri: mike() });
@@ -3089,7 +2801,7 @@ mod tests {
         };
         assert!(claims().await.is_empty(), "no claim before the write");
         store.release();
-        assert!(task.await.unwrap().unwrap().granted);
+        task.await.unwrap().unwrap();
         assert_eq!(claims().await, ["issue-7"]);
     }
 
@@ -3103,7 +2815,10 @@ mod tests {
 
         let facts = service.0.server_facts();
         assert_eq!((&facts.not_serving, &facts.last_error), (&None, &None));
-        assert_eq!(facts.position, service.0.state().written_position());
+        assert_eq!(
+            facts.position,
+            service.0.engine.read(State::written_position)
+        );
         assert!(facts.position > 4);
         assert!(
             facts
@@ -3140,12 +2855,8 @@ mod tests {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
         *store.fail.lock().unwrap() = Some(StoreError::Failed("503 from the bucket".into()));
-        let post = Json(post_body(&mike(), "lost"));
-        assert!(
-            post_message(AxumState(service.0.clone()), None, post)
-                .await
-                .is_err()
-        );
+        let lost = send(&service, post_body(&mike(), "lost")).await;
+        assert_eq!(lost.unwrap_err(), Failed::Stopped);
         service.stopped().await;
         let facts = service.0.server_facts();
         let why = facts.not_serving.unwrap();
@@ -3160,24 +2871,14 @@ mod tests {
     async fn a_failed_write_stops_the_instance_and_the_next_replays_without_it() {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
-        let _ = post_message(
-            AxumState(service.0.clone()),
-            None,
-            Json(post_body(&mike(), "kept")),
-        )
-        .await
-        .unwrap();
+        send(&service, post_body(&mike(), "kept")).await.unwrap();
         *store.fail.lock().unwrap() = Some(StoreError::Failed("503 from the bucket".into()));
         let started = tokio::time::Instant::now();
-        let lost = post_message(
-            AxumState(service.0.clone()),
-            None,
-            Json(post_body(&mike(), "lost")),
-        )
-        .await
-        .err()
-        .unwrap();
-        assert_eq!(lost.0, StatusCode::SERVICE_UNAVAILABLE);
+        let lost = send(&service, post_body(&mike(), "lost"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(lost.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert!(started.elapsed() >= Duration::from_secs(9), "tried again");
         service.stopped().await;
         assert!(store.tries.load(Ordering::SeqCst) > 3);
@@ -3193,13 +2894,7 @@ mod tests {
         let messages = read_messages(&next, read).await;
         assert_eq!(messages, ["kept"]);
         // The next instance writes its own chunk after the kept ones.
-        let _ = post_message(
-            AxumState(next.0.clone()),
-            None,
-            Json(post_body(&mike(), "new")),
-        )
-        .await
-        .unwrap();
+        send(&next, post_body(&mike(), "new")).await.unwrap();
     }
 
     async fn read_messages(service: &Service, request: Read) -> Vec<String> {
@@ -3213,22 +2908,18 @@ mod tests {
     async fn a_chunk_that_another_instance_wrote_stops_the_instance_at_once() {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
-        let next = service.0.state().position() + 1;
+        let next = position(&service) + 1;
         store
             .store
             .save(&log::chunk_name(next), b"other".to_vec(), None)
             .await
             .unwrap();
         let started = tokio::time::Instant::now();
-        let lost = post_message(
-            AxumState(service.0.clone()),
-            None,
-            Json(post_body(&mike(), "lost")),
-        )
-        .await
-        .err()
-        .unwrap();
-        assert_eq!(lost.0, StatusCode::SERVICE_UNAVAILABLE);
+        let lost = send(&service, post_body(&mike(), "lost"))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(lost.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert!(started.elapsed() < Duration::from_secs(1), "no retry");
         service.stopped().await;
     }
@@ -3237,12 +2928,12 @@ mod tests {
     async fn a_wake_goes_out_after_the_write() {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
-        let mut wakes = service.0.wakes.subscribe();
+        let mut wakes = service.0.engine.wakes();
         let tries = store.tries.load(Ordering::SeqCst);
         store.hold.store(true, Ordering::SeqCst);
         let to = vec![Selector::session("b")];
         let post = Post::new(&mike(), mike().default_thread(), to, "wake up");
-        let task = tokio::spawn(post_message(AxumState(service.0.clone()), None, Json(post)));
+        let task = tokio::spawn(send(&service, post));
         store.tried(tries + 1).await;
         sleep(Duration::from_millis(50)).await;
         assert!(wakes.try_recv().is_err(), "no wake before the write");
@@ -3267,24 +2958,315 @@ mod tests {
     async fn a_server_with_no_store_keeps_its_log_in_memory() {
         let service = Service::default();
         let me: SessionUri = "riff://mike@pangolin/-?session=a#x".parse().unwrap();
-        let _ = register(
-            AxumState(service.0.clone()),
-            None,
-            Json(Register {
-                me: me.clone(),
-                worker: false,
-            }),
-        )
-        .await
-        .unwrap();
-        let _ = post_message(
-            AxumState(service.0.clone()),
-            None,
-            Json(Post::new(&me, Some("t".parse().unwrap()), vec![], "hi")),
-        )
-        .await
-        .unwrap();
+        let register = Register {
+            me: me.clone(),
+            worker: false,
+        };
+        send(&service, register).await.unwrap();
+        let post = Post::new(&me, Some("t".parse().unwrap()), vec![], "hi");
+        send(&service, post).await.unwrap();
         assert!(service.save().await.is_ok());
-        assert_eq!(service.0.log.list(log::LOG).await.unwrap().len(), 1);
+        let chunks = service.0.log.list(log::LOG).await.unwrap();
+        assert!(!chunks.is_empty());
+        // The pause of `make_riff`, the join of the thread, the message.
+        assert_eq!(position(&service), 3);
+    }
+
+    /// The claims of mike, as `who` shows them: the written copy.
+    async fn written_claims(service: &Service) -> Vec<String> {
+        claims(service, &brett()).await
+    }
+
+    /// A call that the client drops loses only its reply: the writer
+    /// finishes the command (01M3WRD90WBBCWTDGVQCBR6MNT).
+    #[tokio::test(start_paused = true)]
+    async fn a_dropped_call_is_in_the_written_copy_and_its_wake_goes_out() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let mut wakes = service.0.engine.wakes();
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let to = vec![Selector::session("b")];
+        let post = Post::new(&mike(), mike().default_thread(), to, "wake up");
+        let posting = tokio::spawn(send(&service, post));
+        store.tried(tries + 1).await;
+        // This claim waits in the queue, behind the chunk of the post.
+        let claiming = tokio::spawn(send(&service, claim_of(&mike(), "issue-7")));
+        sleep(Duration::from_millis(50)).await;
+
+        // The client drops the two calls while the write waits.
+        posting.abort();
+        claiming.abort();
+        assert!(posting.await.unwrap_err().is_cancelled());
+        assert!(claiming.await.unwrap_err().is_cancelled());
+        assert!(wakes.try_recv().is_err(), "no wake before the write");
+        assert!(written_claims(&service).await.is_empty());
+
+        store.release();
+        service.save().await.unwrap();
+        // The records are in the written copy.
+        assert_eq!(written_claims(&service).await, ["issue-7"]);
+        let read = Read {
+            after: None,
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: true,
+        };
+        assert_eq!(read_messages(&service, read).await, ["wake up"]);
+        // The wake went out.
+        let (to, wake) = wakes.recv().await.unwrap();
+        assert_eq!(&to, brett().who());
+        assert_eq!(wake.from.who(), mike().who());
+    }
+
+    /// The writer applies the records of a chunk in the order of their
+    /// positions, so the written copy is the replay of the log
+    /// (01M3WRD90WBBCWTDGVQCBR6MNT).
+    #[tokio::test(start_paused = true)]
+    async fn a_claim_and_a_release_in_one_chunk_give_the_replay_of_the_log() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let before = store.chunks().await.len();
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let first = tokio::spawn(send(&service, post_body(&mike(), "one")));
+        store.tried(tries + 1).await;
+        let release = Release {
+            me: mike(),
+            thread: mike().default_thread().unwrap(),
+            item: "issue-7".into(),
+        };
+        let claim = tokio::spawn(send(&service, claim_of(&mike(), "issue-7")));
+        let release = tokio::spawn(send(&service, release));
+        sleep(Duration::from_millis(50)).await;
+        store.release();
+        first.await.unwrap().unwrap();
+        claim.await.unwrap().unwrap();
+        release.await.unwrap().unwrap();
+
+        // The claim and the release are in one chunk.
+        let chunks = store.chunks().await;
+        assert_eq!(chunks.len(), before + 2);
+        let kinds: Vec<&str> = chunks[before + 1]
+            .iter()
+            .map(|change| match change {
+                Change::Claimed(_) => "claimed",
+                Change::Released(_) => "released",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["claimed", "released"]);
+
+        // The written copy is the replay of the log.
+        let records = log::replay(&store.store).await.unwrap().records;
+        let replayed = State::replay(records, Instant::now(), 0);
+        assert!(
+            service
+                .0
+                .engine
+                .read(|state| state.same_log_state(&replayed))
+        );
+        assert!(written_claims(&service).await.is_empty());
+    }
+
+    /// A refused command has an entry in the queue, and waits as each
+    /// command does (01M3WRD933ESXF33WDEDFCRFB8). So no refusal tells of
+    /// a change that is not in the log.
+    #[tokio::test(start_paused = true)]
+    async fn a_refusal_as_held_comes_only_after_the_write_of_the_claim_that_holds() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let before = store.chunks().await.len();
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let first = tokio::spawn(send(&service, claim_of(&mike(), "issue-7")));
+        store.tried(tries + 1).await;
+        // The claim of mike is only in the pending copy. It refuses brett.
+        let second = tokio::spawn(send(&service, claim_of(&brett(), "issue-7")));
+        sleep(Duration::from_millis(50)).await;
+        assert!(!second.is_finished(), "no refusal before the write");
+        assert!(written_claims(&service).await.is_empty());
+
+        store.release();
+        first.await.unwrap().unwrap();
+        let failed = second.await.unwrap().unwrap_err();
+        assert_eq!(failed.status(), StatusCode::CONFLICT);
+        let Failed::Refused(refused) = failed else {
+            panic!("not a refusal: {failed:?}");
+        };
+        assert_eq!(refused.code, state::Code::Held);
+        assert_eq!(
+            refused.reason,
+            "mike@pangolin:riff (a) holds issue-7 in como-technologies/riff."
+        );
+        assert_eq!(written_claims(&service).await, ["issue-7"]);
+        // The refused claim made no record.
+        let chunks = store.chunks().await;
+        assert_eq!(chunks.len(), before + 1);
+        assert_eq!(chunks[before].len(), 1);
+    }
+
+    /// A status is a signal (01M3WRD97EZJK3AABXECXEY133): it makes no
+    /// entry in the queue, so it does not wait for the writer.
+    #[tokio::test(start_paused = true)]
+    async fn a_status_makes_no_entry_and_does_not_wait_for_the_writer() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let posting = tokio::spawn(send(&service, post_body(&mike(), "one")));
+        store.tried(tries + 1).await;
+        let last = position(&service);
+
+        let step = riff_core::wire::Status {
+            step: "the tests run".into(),
+            blocked: None,
+        };
+        let set = SetStatus {
+            me: brett(),
+            status: step.clone(),
+        };
+        // The reply comes while the write of the post waits.
+        let _ = status(AxumState(service.0.clone()), None, Json(set))
+            .await
+            .unwrap();
+        assert!(!posting.is_finished());
+        assert_eq!(position(&service), last);
+        assert!(service.0.engine.take().is_none(), "no entry in the queue");
+        let shown = service.0.engine.read(|state| {
+            let me = state.me(brett().who(), Instant::now(), now_ms());
+            me.unwrap().status.unwrap().status
+        });
+        assert_eq!(shown, step);
+
+        store.release();
+        posting.await.unwrap().unwrap();
+    }
+
+    /// A signal of a session that the state does not know first sends
+    /// `register` through the one path, and waits for its write
+    /// (01M3WRD97EZJK3AABXECXEY133).
+    #[tokio::test(start_paused = true)]
+    async fn a_signal_of_a_new_session_registers_it_first() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let before = store.chunks().await.len();
+        let new: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=c#api"
+            .parse()
+            .unwrap();
+        let reply = alive(
+            AxumState(service.0.clone()),
+            None,
+            Json(Alive { me: new.clone() }),
+        )
+        .await
+        .unwrap();
+        assert!(!reply.stop);
+        // The join of the repository thread is written.
+        let chunks = store.chunks().await;
+        assert_eq!(chunks.len(), before + 1);
+        assert!(matches!(chunks[before][..], [Change::JoinedThread(_)]));
+        let known = service
+            .0
+            .engine
+            .read(|state| state.me(new.who(), Instant::now(), now_ms()));
+        assert_eq!(known.unwrap().uri.place(), new.place());
+    }
+
+    /// The signal of a `register` sets the place and the worker mark of
+    /// the session, also when the command makes no record
+    /// (01M3WRD97EZJK3AABXECXEY133).
+    #[tokio::test(start_paused = true)]
+    async fn a_register_sets_the_place_and_the_worker_mark() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let last = position(&service);
+        let moved: SessionUri = "riff://brett@heron/como-technologies/riff?session=b#api"
+            .parse()
+            .unwrap();
+        let register = Register {
+            me: moved.clone(),
+            worker: true,
+        };
+        send(&service, register).await.unwrap();
+        assert_eq!(position(&service), last, "no record");
+        let shown = service
+            .0
+            .engine
+            .read(|state| state.me(brett().who(), Instant::now(), now_ms()))
+            .unwrap();
+        assert!(shown.worker);
+        assert_eq!(shown.uri.place(), moved.place());
+    }
+
+    /// A worker is never the lead: `permits` refuses the command with
+    /// the code `not_allowed`. The engine adds the worker mark of the
+    /// caller under the lock (01M3WRD959DYNZHDKP5ZT9Q1C7).
+    #[tokio::test(start_paused = true)]
+    async fn a_lead_call_of_a_worker_is_refused_as_not_allowed() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1"
+            .parse()
+            .unwrap();
+        let register = Register {
+            me: worker.clone(),
+            worker: true,
+        };
+        send(&service, register).await.unwrap();
+        let failed = send(&service, Lead { me: worker }).await.unwrap_err();
+        assert_eq!(failed.status(), StatusCode::FORBIDDEN);
+        let Failed::Refused(refused) = failed else {
+            panic!("not a refusal: {failed:?}");
+        };
+        assert_eq!(refused.code, state::Code::NotAllowed);
+        assert!(refused.reason.contains("a worker cannot be the lead"));
+    }
+
+    /// The first start of a riff sends `make_riff`: the first record of
+    /// the log pauses the riff. A later start adds no record
+    /// (01M3WRD99M99PNGP8ME50KC6WS).
+    #[tokio::test(start_paused = true)]
+    async fn the_first_start_of_a_riff_sends_make_riff() {
+        let store = Arc::new(Gated::default());
+        let service = Service::load(config(), store.clone()).await.unwrap();
+        service.save().await.unwrap();
+        let paused = Change::RiffStateSet(riff_core::record::RiffStateSet {
+            state: riff_core::wire::RiffState::Paused,
+        });
+        assert_eq!(store.chunks().await, [[paused]]);
+        drop(service);
+
+        let next = Service::load(config(), store.clone()).await.unwrap();
+        next.save().await.unwrap();
+        assert_eq!(store.chunks().await.len(), 1);
+        assert_eq!(position(&next), 1);
+    }
+
+    /// A store of a riff-server from before the log is refused, and the
+    /// error says why (01M3WRD9DYJWVN1QRBAC3ZVVZD). The server takes no
+    /// lease.
+    #[tokio::test(start_paused = true)]
+    async fn a_store_with_the_old_objects_and_no_log_is_refused() {
+        for name in ["sessions", "tokens", "threads/acme%2Fapp"] {
+            let store = Memory::default();
+            store.save(name, b"{}".to_vec(), None).await.unwrap();
+            let loaded = Service::load(config(), Arc::new(store.clone())).await;
+            let error = loaded.err().expect("the load fails").to_string();
+            assert!(error.contains("from before the log"), "{error}");
+            assert!(error.contains("no log"), "{error}");
+            assert!(store.load(store::LEASE).await.unwrap().is_none());
+        }
+
+        // A store with a log starts, also with an old object next to it.
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        drop(service);
+        store
+            .store
+            .save("sessions", b"{}".to_vec(), None)
+            .await
+            .unwrap();
+        assert!(Service::load(config(), store).await.is_ok());
     }
 }

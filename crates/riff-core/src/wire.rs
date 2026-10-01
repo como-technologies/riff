@@ -125,6 +125,11 @@ use crate::name::{SessionUri, ThreadName};
 use crate::selector::Selector;
 use crate::signed::Content;
 
+/// The HTTP header of a refused command: the code of the refusal, for
+/// example `held` (01M3WRD9JBQMNN96TXJH8EAJ3W). The text of the reply
+/// is the reason, for a person.
+pub const REFUSED_HEADER: &str = "riff-refused";
+
 // ANCHOR: call
 /// A call: one wire type with its path and the type of its reply
 /// (01M3WRD8TBDPA4JNEZY6J4N2EX). The client sends each call with one

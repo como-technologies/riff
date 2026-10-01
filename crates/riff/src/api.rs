@@ -123,14 +123,14 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    AdminSet, Alive, AliveReply, Claim, ClaimReply, DenyOwner, End, Freed, Idle, Invite, Invited,
-    Keys, Kind, Lead, LeadReply, MeReply, Members, MembersReply, Membership, Message, OwnerAsked,
-    OwnerDenied, OwnerPassed, PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed,
-    Revoke, Revoked, Riff, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetIdle,
-    SetStatus, SignInConfig, Start, Started, Status, Tailed, TakeOwner, ThreadInfo, Threads,
-    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    AdminSet, Alive, AliveReply, Call, Claim, DenyOwner, End, Freed, Idle, IdleQuery, Invite,
+    Invited, Join, Keys, Kind, Lead, LeadReply, Leave, MeReply, Members, MembersReply, Message,
+    OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER, Read,
+    Register, Release, ReleaseFor, Remove, Removed, Resume, Revoke, Revoked, RiffQuery, RiffReply,
+    RiffState, ServerFacts, SessionInfo, SetAdmin, SetIdle, SetStatus, SignInConfig, Start, Status,
+    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
+    WhoRequest,
 };
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
@@ -858,40 +858,44 @@ impl Api {
             me: me.clone(),
             worker,
         };
-        self.call("register", &register).await
+        self.call(&register).await
     }
 
     /// A keep-alive: the session still runs (R204).
     pub async fn alive(&self, me: &SessionUri) -> Result<AliveReply> {
-        self.call("alive", &Alive { me: me.clone() }).await
+        self.call(&Alive { me: me.clone() }).await
     }
 
-    /// Reads the settings of idle workers, and sets each given value
-    /// (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+    /// Reads the settings of idle workers. With a value, it sets each
+    /// given value first: the command `set_idle`, on a path of its own
+    /// (01M3Q5A0TF9K49V8Z1ZY9NDF74, 01M3WRD9BSBKS9TN66H29TGTBV).
     pub async fn idle(
         &self,
         me: &SessionUri,
         per_host: Option<u16>,
         after_secs: Option<u64>,
     ) -> Result<Idle> {
+        let me = me.clone();
+        if per_host.is_none() && after_secs.is_none() {
+            return self.call(&IdleQuery { me }).await;
+        }
         let request = SetIdle {
-            me: me.clone(),
+            me,
             per_host,
             after_secs,
         };
-        self.call("idle", &request).await
+        self.call(&request).await
     }
 
     /// The session ended (R205).
     pub async fn end(&self, me: &SessionUri) -> Result<()> {
-        self.call("end", &End { me: me.clone() }).await
+        self.call(&End { me: me.clone() }).await
     }
 
     /// A new start of the session: a new agent process, a resume or a
     /// `/clear`. Its claims are free at once (01M3JEE1QQCFS5TMZW5N2DAD2D).
     pub async fn start(&self, me: &SessionUri) -> Result<Vec<Freed>> {
-        let reply: Started = self.call("start", &Start { me: me.clone() }).await?;
-        Ok(reply.freed)
+        Ok(self.call(&Start { me: me.clone() }).await?.freed)
     }
 
     /// Lists the sessions. `all` lists gone sessions too.
@@ -906,7 +910,7 @@ impl Api {
             me: me.clone(),
             all,
         };
-        self.call("who", &request).await
+        self.call(&request).await
     }
 
     /// Only the session `me` and the build of the server, for the
@@ -929,16 +933,23 @@ impl Api {
     }
 
     pub async fn threads(&self, me: &SessionUri) -> Result<Vec<ThreadInfo>> {
-        let reply: ThreadsReply = self.call("threads", &Threads { me: me.clone() }).await?;
-        Ok(reply.threads)
+        Ok(self.call(&Threads { me: me.clone() }).await?.threads)
     }
 
     pub async fn join(&self, me: &SessionUri, thread: &ThreadName) -> Result<()> {
-        self.call("join", &membership(me, thread)).await
+        let join = Join {
+            me: me.clone(),
+            thread: thread.clone(),
+        };
+        self.call(&join).await
     }
 
     pub async fn leave(&self, me: &SessionUri, thread: &ThreadName) -> Result<()> {
-        self.call("leave", &membership(me, thread)).await
+        let leave = Leave {
+            me: me.clone(),
+            thread: thread.clone(),
+        };
+        self.call(&leave).await
     }
 
     /// Posts to a thread and wakes each session that `to` selects. With
@@ -969,7 +980,7 @@ impl Api {
             request.me = request.me.with_lead(lead);
             request.sign(&auth.key, now_ms());
         }
-        self.call("post", &request).await
+        self.call(&request).await
     }
 
     /// Sets the status of `me`. It replaces the old status (R182).
@@ -979,7 +990,7 @@ impl Api {
             me: me.clone(),
             status: status.clone(),
         };
-        self.call("status", &request).await
+        self.call(&request).await
     }
 
     /// Sends a direct message (R62). `session` is a session ID, a full
@@ -1124,7 +1135,7 @@ impl Api {
             all,
             after: after.filter(|_| all),
         };
-        let reply: ReadReply = self.call("read", &request).await?;
+        let reply = self.call(&request).await?;
         let messages = reply
             .messages
             .into_iter()
@@ -1133,17 +1144,41 @@ impl Api {
         Ok((messages, reply.next))
     }
 
-    pub async fn claim(
-        &self,
-        me: &SessionUri,
-        thread: &ThreadName,
-        item: &str,
-    ) -> Result<ClaimReply> {
-        self.call("claim", &claim(me, thread, item)).await
+    /// Claims a work item. The server refuses a claim of an item that
+    /// another session holds with the code `held`, and a text that names
+    /// the holder (01M3WRD9JBQMNN96TXJH8EAJ3W). That refusal is not an
+    /// error here: the answer is not granted, and it has the text.
+    pub async fn claim(&self, me: &SessionUri, thread: &ThreadName, item: &str) -> Result<Claimed> {
+        let claim = Claim {
+            me: me.clone(),
+            thread: thread.clone(),
+            item: item.to_owned(),
+        };
+        match self.call(&claim).await {
+            Ok(reply) => Ok(Claimed {
+                granted: true,
+                holder: Some(reply.holder),
+                held: None,
+            }),
+            Err(error) => match error.downcast::<Refusal>() {
+                Ok(refusal) if refusal.code.as_deref() == Some("held") => Ok(Claimed {
+                    granted: false,
+                    holder: None,
+                    held: Some(refusal.text),
+                }),
+                Ok(refusal) => Err(refusal.into()),
+                Err(error) => Err(error),
+            },
+        }
     }
 
     pub async fn release(&self, me: &SessionUri, thread: &ThreadName, item: &str) -> Result<()> {
-        self.call("release", &claim(me, thread, item)).await
+        let release = Release {
+            me: me.clone(),
+            thread: thread.clone(),
+            item: item.to_owned(),
+        };
+        self.call(&release).await
     }
 
     /// Frees the claim of the session `holder` (its session ID, or the
@@ -1156,27 +1191,24 @@ impl Api {
         item: &str,
         holder: &str,
     ) -> Result<()> {
-        let request = Claim {
-            session: Some(holder.to_owned()),
-            ..claim(me, thread, item)
+        let request = ReleaseFor {
+            me: me.clone(),
+            thread: thread.clone(),
+            item: item.to_owned(),
+            session: holder.to_owned(),
         };
-        self.call("release", &request).await
+        self.call(&request).await
     }
 
     /// Makes `me` the lead of its user in its repository. It replaces
     /// the old lead (R177).
     pub async fn lead(&self, me: &SessionUri) -> Result<LeadReply> {
-        self.call("lead", &Lead { me: me.clone() }).await
+        self.call(&Lead { me: me.clone() }).await
     }
 
     /// The state of the riff (01M3JCFTWCR72HQB8CBTQKXJNF).
     pub async fn riff(&self, me: &SessionUri) -> Result<RiffState> {
-        let request = Riff {
-            me: me.clone(),
-            state: None,
-        };
-        let reply: RiffReply = self.call("riff", &request).await?;
-        Ok(reply.state)
+        Ok(self.call(&RiffQuery { me: me.clone() }).await?.state)
     }
 
     /// Pauses or resumes the riff. Only a person or a lead can
@@ -1190,11 +1222,13 @@ impl Api {
         me: &SessionUri,
         state: RiffState,
     ) -> Result<(RiffReply, Vec<Posted>)> {
-        let request = Riff {
-            me: me.clone(),
-            state: Some(state),
+        // A pause and a resume are two commands, each on a path of its
+        // own (01M3WRD9BSBKS9TN66H29TGTBV).
+        let me_now = me.clone();
+        let reply: RiffReply = match state {
+            RiffState::Paused => self.call(&Pause { me: me_now }).await?,
+            RiffState::Running => self.call(&Resume { me: me_now }).await?,
         };
-        let reply: RiffReply = self.call("riff", &request).await?;
         if !reply.changed {
             return Ok((reply, Vec::new()));
         }
@@ -1269,7 +1303,7 @@ impl Api {
         let request = Revoke {
             user: user.map(str::to_owned),
         };
-        self.call("revoke", &request).await
+        self.call(&request).await
     }
 
     /// Adds a member of the riff, by verified email. Only an admin can.
@@ -1279,7 +1313,7 @@ impl Api {
         let request = Invite {
             email: email.to_owned(),
         };
-        let done: Invited = self.call("invite", &request).await?;
+        let done = self.call(&request).await?;
         let body = text::invited_news(me.who().user(), &done);
         Ok(self.members_news(me, done, &body).await)
     }
@@ -1292,7 +1326,7 @@ impl Api {
         let request = Remove {
             email: email.to_owned(),
         };
-        let done: Removed = self.call("remove", &request).await?;
+        let done = self.call(&request).await?;
         let body = text::removed_news(me.who().user(), &done);
         Ok(self.members_news(me, done, &body).await)
     }
@@ -1310,7 +1344,7 @@ impl Api {
             email: email.to_owned(),
             admin,
         };
-        let done: AdminSet = self.call("admin", &request).await?;
+        let done = self.call(&request).await?;
         let body = text::admin_news(me.who().user(), &done);
         Ok(self.members_news(me, done, &body).await)
     }
@@ -1322,7 +1356,7 @@ impl Api {
         let request = PassOwner {
             email: email.to_owned(),
         };
-        let done: OwnerPassed = self.call("owner", &request).await?;
+        let done = self.call(&request).await?;
         let body = text::owner_news(me.who().user(), &done);
         Ok(self.members_news(me, done, &body).await)
     }
@@ -1331,7 +1365,7 @@ impl Api {
     /// admin can. The server posts the note of the change.
     pub async fn take_owner(&self) -> Result<OwnerAsked> {
         self.need_sign_in().await?;
-        self.call("owner/take", &TakeOwner {}).await
+        self.call(&TakeOwner {}).await
     }
 
     /// Keeps the owner role that an admin asks for
@@ -1339,13 +1373,13 @@ impl Api {
     /// the note of the change.
     pub async fn deny_owner(&self) -> Result<OwnerDenied> {
         self.need_sign_in().await?;
-        self.call("owner/deny", &DenyOwner {}).await
+        self.call(&DenyOwner {}).await
     }
 
     /// Who may join the riff.
     pub async fn members(&self) -> Result<MembersReply> {
         self.need_sign_in().await?;
-        self.call("members", &Members {}).await
+        self.call(&Members {}).await
     }
 
     /// Fails with what to do when this device has no sign-in.
@@ -1359,20 +1393,30 @@ impl Api {
         bail!("no sign-in for {}: run riff login", self.base);
     }
 
-    async fn call<Req: Serialize, Rep: DeserializeOwned>(
-        &self,
-        op: &str,
-        request: &Req,
-    ) -> Result<Rep> {
+    /// Sends one call, and gives its reply: the one function for each
+    /// call (01M3WRD8TBDPA4JNEZY6J4N2EX). The type of the call gives the
+    /// path and the type of the reply ([`Call`]). A call that the server
+    /// refuses gives a [`Refusal`].
+    async fn call<C: Call>(&self, call: &C) -> Result<C::Reply> {
         let response = self
-            .send(reqwest::Method::POST, &format!("/v1/{op}"), |r| {
-                r.json(request)
-            })
+            .send(reqwest::Method::POST, C::PATH, |r| r.json(call))
             .await?;
         let status = response.status();
         if !status.is_success() {
+            let code = response
+                .headers()
+                .get(REFUSED_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
             let text = response.text().await.unwrap_or_default();
-            bail!("{op} failed ({status}): {text}");
+            let op = C::PATH.trim_start_matches("/v1/").to_owned();
+            return Err(Refusal {
+                op,
+                status,
+                code,
+                text,
+            }
+            .into());
         }
         Ok(response.json().await?)
     }
@@ -1628,11 +1672,46 @@ pub fn checked(thread: &ThreadName, message: Message, keys: &Keys, trusted: bool
     }
 }
 
-fn membership(me: &SessionUri, thread: &ThreadName) -> Membership {
-    Membership {
-        me: me.clone(),
-        thread: thread.clone(),
+/// A call that the server refused: the status and the text of the
+/// reply, and the code of the refusal when the server names one.
+///
+/// ```
+/// let refusal = riff::api::Refusal {
+///     op: "claim".into(),
+///     status: reqwest::StatusCode::CONFLICT,
+///     code: Some("paused".into()),
+///     text: "the riff is paused".into(),
+/// };
+/// assert_eq!(refusal.to_string(), "claim failed (409 Conflict): the riff is paused");
+/// ```
+#[derive(Clone, Debug)]
+pub struct Refusal {
+    /// The call, for example `claim`.
+    pub op: String,
+    pub status: reqwest::StatusCode,
+    /// The code of the refusal, for example `held`.
+    pub code: Option<String>,
+    pub text: String,
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} failed ({}): {}", self.op, self.status, self.text)
     }
+}
+
+impl std::error::Error for Refusal {}
+
+/// The answer to a claim ([`Api::claim`]).
+#[derive(Clone, Debug)]
+pub struct Claimed {
+    /// True when the caller holds the item now.
+    pub granted: bool,
+    /// The URI of the caller now, when the claim is granted.
+    pub holder: Option<SessionUri>,
+    /// The text of the server that names the holder, when another
+    /// session holds the item.
+    pub held: Option<String>,
 }
 
 /// Sends a keep-alive for `me` each `every`, and never ends
@@ -1663,15 +1742,6 @@ pub async fn keep_alive(api: &Api, me: &SessionUri, every: Duration) {
         tick.tick().await;
         // A hung request must not stop the next keep-alive.
         let _ = tokio::time::timeout(every, api.alive(me)).await;
-    }
-}
-
-fn claim(me: &SessionUri, thread: &ThreadName, item: &str) -> Claim {
-    Claim {
-        me: me.clone(),
-        thread: thread.clone(),
-        item: item.to_owned(),
-        session: None,
     }
 }
 

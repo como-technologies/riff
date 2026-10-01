@@ -12,7 +12,7 @@
 //!
 //! The tests do no I/O.
 
-use riff_core::record::{Forgotten, Member, RiffStateSet, SettingChanged};
+use riff_core::record::{Claimed, Forgotten, Member, RiffStateSet, SettingChanged};
 use riff_core::wire;
 
 use super::*;
@@ -356,6 +356,14 @@ impl Given {
         let command = ask.of(&me);
         let check = this.state.check(caller, &command, now);
         assert!(check.registered.is_none(), "the caller is live");
+        When(check.result.map(|(changes, _)| changes))
+    }
+
+    /// As `when`, for a caller that the state does not know: it is not
+    /// made live first.
+    fn when_new<A: Ask>(mut self, me: &SessionUri, ask: A) -> When {
+        let command = ask.of(me);
+        let check = self.state.check(&Given::caller(me), &command, self.now);
         When(check.result.map(|(changes, _)| changes))
     }
 }
@@ -754,7 +762,10 @@ fn a_session_that_is_not_the_lead_releases_no_claim_of_another_session() {
     // A person is no lead: `permits` refuses it.
     given(&records)
         .when(&person(), release_for("a2"))
-        .then_refused_as(Code::NotAllowed, "a person cannot send the command release_for");
+        .then_refused_as(
+            Code::NotAllowed,
+            "a person cannot send the command release_for",
+        );
 }
 
 #[test]
@@ -932,4 +943,112 @@ fn a_forgotten_session_loses_its_claims_and_its_lead() {
         state.written.work().leads.values().collect::<Vec<_>>(),
         [bob().who()]
     );
+}
+
+#[test]
+fn make_riff_pauses_only_a_riff_with_no_record() {
+    let server = crate::owner::server_uri();
+    given(&[])
+        .when(&server, MakeRiff)
+        .then(&[riff_set(RiffState::Paused)]);
+    given(&team()).when(&server, MakeRiff).then(&[]);
+}
+
+/// Only the server sends a command of the server
+/// (01M3WRD959DYNZHDKP5ZT9Q1C7).
+#[test]
+fn a_session_cannot_send_a_command_of_the_server() {
+    given(&team())
+        .when(&ann(), Forget)
+        .then_refused_as(Code::NotAllowed, "a session cannot send the command forget");
+    given(&team())
+        .when(&person(), MakeRiff)
+        .then_refused_as(Code::NotAllowed, "a person cannot send");
+}
+
+/// A change of the idle settings needs an admin
+/// (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+#[test]
+fn a_member_cannot_change_the_idle_settings() {
+    let set = SetIdle {
+        per_host: Some(2),
+        after_secs: None,
+    };
+    given(&team())
+        .when_as(&Caller::of(&person()), set)
+        .then_refused_as(Code::NotAllowed, "ann is not an admin");
+    let zero = SetIdle {
+        per_host: None,
+        after_secs: Some(0),
+    };
+    given(&team())
+        .when(&person(), zero)
+        .then_refused_as(Code::BadRequest, "at least 1 second");
+}
+
+/// A worker is never the lead (01M3WRD959DYNZHDKP5ZT9Q1C7). The state
+/// adds the worker mark of the caller before `permits`.
+#[test]
+fn a_worker_cannot_send_lead() {
+    let mut given = given(&team()).live(&[ann(), ann2()]);
+    let sessions = &mut given.state.presence.sessions;
+    sessions.get_mut(ann2().who()).unwrap().worker = true;
+    given
+        .when(&ann2(), Lead)
+        .then_refused_as(Code::NotAllowed, "a worker cannot be the lead");
+}
+
+/// A command that is not refused sets its signal. A refused command
+/// sets none (01M3WRD97EZJK3AABXECXEY133).
+#[test]
+fn a_refused_command_sets_no_signal() {
+    let Given { mut state, now } = given(&team()).live(&[ann(), person()]);
+    // `permits` refuses the end of a person.
+    let end = wire::End { me: person() };
+    let check = state.check(&Caller::of(&person()), &end, now);
+    assert_eq!(check.result.unwrap_err().code, Code::NotAllowed);
+    assert!(!state.presence.sessions[person().who()].ended);
+
+    let end = wire::End { me: ann() };
+    assert!(state.check(&Caller::of(&ann()), &end, now).result.is_ok());
+    assert!(state.presence.sessions[ann().who()].ended);
+}
+
+/// A call of a session that the state does not know runs `register`
+/// first, as a command of its own. An `end` registers nothing.
+#[test]
+fn a_call_of_a_new_session_registers_it_first_but_an_end_does_not() {
+    let now = Instant::now();
+    let mut state = State::default();
+    let end = wire::End { me: ann() };
+    let check = state.check(&Caller::of(&ann()), &end, now);
+    assert!(check.registered.is_none());
+    assert_eq!(check.result.unwrap().0, []);
+    assert!(!state.knows(ann().who()));
+
+    let join = wire::Join {
+        me: ann(),
+        thread: design(),
+    };
+    let check = state.check(&Caller::of(&ann()), &join, now);
+    let registered: Vec<Change> = check
+        .registered
+        .unwrap()
+        .into_iter()
+        .map(|record| record.change)
+        .collect();
+    assert_eq!(registered, [joined(&ann(), &repo()), lead_set(&ann())]);
+    assert_eq!(check.result.unwrap().0, [joined(&ann(), &design())]);
+    assert!(state.knows(ann().who()));
+}
+
+/// A session ID that the state knows under another user is refused
+/// with the code `other_user` (R159).
+#[test]
+fn a_known_session_id_under_another_user_is_refused_as_other_user() {
+    let other: SessionUri = "riff://bob@kite/acme/app?session=a1".parse().unwrap();
+    given(&team())
+        .live(&[ann()])
+        .when_new(&other, Register)
+        .then_refused_as(Code::OtherUser, "known as user ann");
 }

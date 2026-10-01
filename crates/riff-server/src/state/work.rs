@@ -280,7 +280,14 @@ impl Command for Claim {
         Ok((changes, ()))
     }
 
-    fn reply(&self, caller: &Caller, view: &View<'_>, _: &[Record], (): (), now: Now) -> ClaimReply {
+    fn reply(
+        &self,
+        caller: &Caller,
+        view: &View<'_>,
+        _: &[Record],
+        (): (),
+        now: Now,
+    ) -> ClaimReply {
         ClaimReply {
             holder: view.uri(caller.who(), now.at),
         }
@@ -466,7 +473,11 @@ impl Command for Lead {
 /// its session ID.
 fn label(uri: &SessionUri) -> String {
     match uri.who().session() {
-        Some(id) => format!("{} ({})", uri.short(), id.chars().take(8).collect::<String>()),
+        Some(id) => format!(
+            "{} ({})",
+            uri.short(),
+            id.chars().take(8).collect::<String>()
+        ),
         None => uri.short(),
     }
 }

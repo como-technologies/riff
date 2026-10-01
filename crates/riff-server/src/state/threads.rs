@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Instant;
 
-use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::name::{ThreadName, Who};
 use riff_core::record::{Change, Member, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::signed::payload_hash;
@@ -25,7 +25,7 @@ use riff_core::wire::{self, Join, Kind, Leave, Message, Post, Wake};
 use serde::{Deserialize, Serialize};
 
 use super::KEEP_MESSAGES;
-use super::command::{Caller, Code, Command, CommandKind, Now, Refused};
+use super::command::{Caller, Command, CommandKind, Now, Refused};
 use super::sessions::Sessions;
 use super::view::View;
 
@@ -471,10 +471,9 @@ impl Command for Post {
         let from = caller.who();
         let signed = post.sig.is_some();
         if signed && me.lead() && !view.is_lead(from, now) {
-            return Err(Refused::new(
-                Code::NotAllowed,
-                "the post has the lead mark, but this session is not the lead. Post again.",
-            ));
+            return Err(
+                "the post has the lead mark, but this session is not the lead. Post again.".into(),
+            );
         }
         let thread = view.thread_of(from, post.thread.as_ref(), &post.to, now)?;
         if let Some(payload) = &post.payload

@@ -640,7 +640,7 @@ async fn workers_stop_ends_each_worker() {
     let thread = "como-technologies/riff".parse().unwrap();
     for item in ["issue-12", "issue-13"] {
         let reply = api.claim(&person, &thread, item).await.unwrap();
-        assert!(reply.granted, "{item} is held by {}", reply.holder);
+        assert!(reply.granted, "{item}: {:?}", reply.held);
     }
 }
 
