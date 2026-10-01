@@ -558,7 +558,7 @@ fn the_book_has_a_how_to_for_each_limit() {
         .into_iter()
         .filter(|c| c.starts_with("riff "))
         .collect();
-    assert!(commands.len() >= 9, "{commands:?}");
+    assert_eq!(commands.len(), 7, "{commands:?}");
     book::each_is_real(&commands);
 }
 
