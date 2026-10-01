@@ -1186,6 +1186,16 @@
   yellow. A `blocked` session comes first in `riff top`. A person is
   `online` when a session of the person is live, else `offline` with
   `seen` and the time since the last call.
+- **01M3W8AYDFPZNZ898WAJS7JEZA** `riff mcp` sets the step of the lead
+  from each `tell`, `post`, `pause`, `resume` and `lead` call of the
+  lead that `riff-server` accepts: `told SESSION: TEXT` with the short
+  session ID, `posted a message: TEXT`, `posted a note: TEXT`, `asked
+  for status`, `paused the riff`, `resumed the riff` and `became the
+  lead`. TEXT is the message in one line, cut to 80 characters with
+  `…`. The step replaces the status of the lead. A `status` call of
+  the lead replaces the step until the next of these calls. The step
+  of a session that is not the lead does not change. The skill tells
+  the lead to set its status for work that riff cannot see.
 - **01M3Q555NV8ZCQ8PVPBXQ7J82C** The skill, the start hook and the
   `status` tool do not tell a session to set its status for a fact
   that riff derives: a claim, a release, a pause, or an idle worker.
