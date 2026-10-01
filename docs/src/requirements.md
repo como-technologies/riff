@@ -2114,7 +2114,11 @@
   claims are free at once. It posts one note to the lead with the pane,
   the session, the items and the cause when it finds it: a kill by
   `systemd-oomd` of the scope of the pane. The note wakes nobody. The
-  rollout starts a worker for the free item.
+  rollout starts a worker for the free item. riff acts at the second
+  look after the end of a pane, so `riff workers stop`, which kills
+  the pane and then sends the end call, gives no note. riff ends only
+  a session of its user in its repository, and posts no note for
+  another one.
 
 ## Builds
 

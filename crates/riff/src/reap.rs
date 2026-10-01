@@ -37,6 +37,13 @@
 //!   stop`, the stop of an idle worker by the server, or the wrapper
 //!   after an exit of `claude`. riff does nothing for it, so the lead
 //!   gets one message for one worker.
+//! - riff acts on a lost pane at the second look after its end
+//!   ([`Reaper`]). `riff workers stop` kills the pane first and sends
+//!   the end call after it, from another process. So a stop gives no
+//!   note.
+//! - riff looks after the workers of its own repository only
+//!   ([`looked_after`]). A machine can hold the workers of more than
+//!   one repository.
 //! - The note wakes nobody. The death of a worker is not an event for
 //!   the lead: the rollout starts a worker for the free item, as for
 //!   each free item ([`crate::rollout`]).
@@ -69,7 +76,15 @@ pub struct Watched {
     pub scope: Option<String>,
 }
 
-/// Remembers the worker panes of the last look.
+/// Remembers the worker panes of the last look, and the panes that
+/// were gone at that look.
+///
+/// It gives a lost pane at the second look after its end, one
+/// [`EVERY`] later. `riff workers stop` kills a pane and then sends
+/// the end call of its session. A look between the two sees a pane
+/// that is gone and a session that is live. At the second look the
+/// session has its end, so the lead gets no note for a worker that it
+/// stopped.
 ///
 /// ```
 /// use riff::reap::Reaper;
@@ -81,24 +96,30 @@ pub struct Watched {
 /// // The first look only remembers.
 /// assert!(reaper.look(&[pane("%1", "s1"), pane("%2", "s2")], scope).is_empty());
 /// assert!(reaper.look(&[pane("%1", "s1"), pane("%2", "s2")], scope).is_empty());
-/// // The pane %2 is gone. riff kept its scope from the first look.
-/// let lost = reaper.look(&[pane("%1", "s1"), pane("%3", "s3")], scope);
+/// // The pane %2 is gone. This look only remembers it.
+/// let after = [pane("%1", "s1"), pane("%3", "s3")];
+/// assert!(reaper.look(&after, scope).is_empty());
+/// // The second look gives it. riff kept its scope from the first look.
+/// let lost = reaper.look(&after, scope);
 /// assert_eq!(lost.len(), 1);
 /// assert_eq!(lost[0].pane, pane("%2", "s2"));
 /// assert_eq!(lost[0].scope.as_deref(), Some("/scope-of-%2"));
 /// // It tells of a lost pane one time.
-/// assert!(reaper.look(&[pane("%1", "s1"), pane("%3", "s3")], scope).is_empty());
+/// assert!(reaper.look(&after, scope).is_empty());
 /// ```
 #[derive(Debug, Default)]
 pub struct Reaper {
     seen: Vec<Watched>,
+    /// The panes that were gone at the last look.
+    gone: Vec<Watched>,
 }
 
 impl Reaper {
     /// One look: `now` are the worker panes of the machine. It gives
-    /// each worker whose pane was there at the last look and is not
-    /// there now. `scope` finds the scope of a new pane; it runs one
-    /// time for each pane.
+    /// each worker whose pane was gone at the last look. It remembers
+    /// each pane that was there at the last look and is not there now,
+    /// for the next look. `scope` finds the scope of a new pane; it
+    /// runs one time for each pane.
     pub fn look(
         &mut self,
         now: &[WorkerPane],
@@ -107,6 +128,7 @@ impl Reaper {
         let (stay, lost): (Vec<Watched>, Vec<Watched>) = std::mem::take(&mut self.seen)
             .into_iter()
             .partition(|w| now.contains(&w.pane));
+        let lost = std::mem::replace(&mut self.gone, lost);
         self.seen = stay;
         for pane in now {
             if !self.seen.iter().any(|w| &w.pane == pane) {
@@ -200,8 +222,56 @@ pub fn lost(reaper: &mut Reaper, tmux: &Tmux) -> Vec<Watched> {
     }
 }
 
+/// The live session `id` in `sessions` (`riff who`) that the caller
+/// `me` looks after: a session of the user of `me` in the repository
+/// of `me`. The worker panes of a machine can belong to more than one
+/// repository. riff never ends the worker of another repository, and
+/// posts no note for it: the lead or the host of that repository does
+/// (01M3WG2460P4GF7GEVBY92Q33W).
+///
+/// ```
+/// use riff::reap::looked_after;
+/// use riff_core::name::SessionUri;
+/// use riff_core::wire::SessionInfo;
+///
+/// let info = |uri: &str| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+///     worker: true,
+///     stopping: false,
+///     claims_secs: 0,
+///     state: None,
+/// };
+/// let sessions = [
+///     info("riff://brett@kadomony/o/riff?session=w1aa"),
+///     info("riff://brett@kadomony/o/strata?session=w2bb&claim=issue-7"),
+///     info("riff://mike@kadomony/o/riff?session=w3cc"),
+/// ];
+/// let me: SessionUri = "riff://brett@kadomony/o/riff?session=l1&lead=true".parse().unwrap();
+/// assert!(looked_after(&me, &sessions, "w1aa").is_some());
+/// // A worker in another repository, and a worker of another user.
+/// assert!(looked_after(&me, &sessions, "w2bb").is_none());
+/// assert!(looked_after(&me, &sessions, "w3cc").is_none());
+/// // A session that is not in `riff who` has its end, or never joined.
+/// assert!(looked_after(&me, &sessions, "w4dd").is_none());
+/// ```
+pub fn looked_after<'a>(
+    me: &SessionUri,
+    sessions: &'a [SessionInfo],
+    id: &str,
+) -> Option<&'a SessionInfo> {
+    sessions.iter().find(|s| {
+        s.uri.who().session() == Some(id)
+            && s.uri.who().user() == me.who().user()
+            && s.uri.place().repo() == me.place().repo()
+    })
+}
+
 /// Ends the session of each worker in `lost` that is still live in
-/// `sessions` (`riff who`), and gives one note for the lead for each
+/// `sessions` (`riff who`) and that `me` looks after
+/// ([`looked_after`]), and gives one note for the lead for each
 /// (01M3WG2460P4GF7GEVBY92Q33W). `me` is the caller: the host, or the
 /// lead. An end frees the claims of the session at once (R206).
 /// `journal` reads the journal one time, only when a lost pane has a
@@ -217,11 +287,7 @@ pub async fn reap(
     let mut lines: Option<Option<String>> = None;
     for worker in lost {
         let id = worker.pane.session.as_str();
-        let Some(info) = sessions
-            .iter()
-            .find(|s| s.uri.who().user() == me.who().user() && s.uri.who().session() == Some(id))
-        else {
-            // The session has its end, or it never joined.
+        let Some(info) = looked_after(me, sessions, id) else {
             continue;
         };
         let claims = info.uri.claims().to_vec();

@@ -385,6 +385,49 @@ async fn a_new_worker_takes_the_item_of_a_killed_worker() {
     assert_eq!(read.matches("worker stopped").count(), 1, "{read}");
 }
 
+/// The lead gets no note for a worker that `riff workers stop` stopped:
+/// the stop kills the pane, and sends the end call after it. And riff
+/// never ends the worker of another repository on the same machine: it
+/// keeps its claim, and the lead gets no note for it
+/// (01M3WG2460P4GF7GEVBY92Q33W).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_worker_and_a_worker_of_another_repository_give_no_note() {
+    let lead = lead(5).await;
+    lead.issues("[]");
+    lead.riff(RiffState::Running).await;
+    let workers = lead.fake.path().join("workers");
+    std::fs::write(&workers, "%7 stop1\n%8 other1\n").unwrap();
+    let (_, stopped) = lead.worker(1);
+    lead.api.register_as(&stopped, true).await.unwrap();
+    let _stopped = lead.api.watch(&stopped).await.unwrap();
+    // A worker of the same user on the same machine, in o/strata.
+    let other: SessionUri = "riff://mike@a/o/strata?session=other1".parse().unwrap();
+    lead.api.register_as(&other, true).await.unwrap();
+    let strata = other.default_thread().unwrap();
+    let held = lead.api.claim(&other, &strata, "issue-7").await.unwrap();
+    assert!(held.granted);
+    let _other = lead.api.watch(&other).await.unwrap();
+    // riff looked at the panes one time or more.
+    tokio::time::sleep(riff::reap::EVERY * 2).await;
+
+    // The two panes end. The stop sends its end call a moment later.
+    std::fs::write(&workers, "").unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    lead.api.end(&stopped).await.unwrap();
+
+    tokio::time::sleep(riff::reap::EVERY * 3).await;
+    let who = lead.api.who(&lead.me, false).await.unwrap();
+    let kept = who.iter().find(|s| s.uri.who() == other.who());
+    assert_eq!(
+        kept.map(|s| s.uri.claims().to_vec()),
+        Some(vec!["issue-7".to_owned()]),
+        "riff ended the worker of another repository: {who:?}"
+    );
+    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+    let read = riff::text::inbox(&inbox, &lead.me);
+    assert!(!read.contains("worker stopped"), "{read}");
+}
+
 /// `riff workers interval` shows and sets the interval
 /// (01M3Q5QE9H42FQKEDC5G9GKCWD).
 #[test]

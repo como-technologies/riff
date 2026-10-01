@@ -1022,8 +1022,9 @@ You released issue-12 in como-technologies/riff for the session 068a2cc2. The it
   shell.
 - The server posts a note in the thread. The note names the lead, the
   item and the session.
-- The next session claims the item, and goes on from the pushed branch
-  (see [See the earlier work on an item](#see-the-earlier-work-on-an-item)).
+- The next session claims the item, and goes on from the pushed
+  branch. See
+  [See the earlier work on an item](#see-the-earlier-work-on-an-item).
 
 ## Leave and join the riff
 
@@ -3056,6 +3057,8 @@ tell the server. You and your lead do nothing: the work goes on.
 
 `riff workers host` looks at the worker panes of its machine each 5
 seconds. On the machine of your lead, the lead session does the same.
+Each looks after the workers of its own repository only. It acts at
+the second look after the end of a pane, so 5 to 10 seconds after it.
 
 ```mermaid
 sequenceDiagram
