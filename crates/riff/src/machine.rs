@@ -2,9 +2,10 @@
 //!
 //! # Design
 //!
-//! Each machine that runs workers tells four numbers
+//! Each machine that runs workers tells five numbers
 //! (01M3Q5QE4SQ8VYN2PSF42KB3QJ): its CPU cores, its CPU speed, its
-//! memory and its 1-minute load average. A workers host puts them in
+//! memory, the memory that is available now, and its 1-minute load
+//! average. A workers host puts them in
 //! its status ([`crate::host::HostStatus`]). The lead reads its own
 //! machine with [`Machine::here`].
 //!
@@ -19,16 +20,21 @@
 //!
 //! The score less the workers that run there is the free capacity
 //! ([`Machine::free`]). A machine whose load average is more than its
-//! cores is busy ([`Machine::busy`]): riff starts no worker there.
+//! cores is busy ([`Machine::busy`]): riff starts no worker there. A
+//! machine whose available memory is less than its floor is low
+//! ([`Machine::low`], see [`crate::limits`]): riff starts no worker
+//! there too.
 //!
 //! ```
 //! use riff::machine::Machine;
 //!
-//! let thelio = Machine { cores: 32, mhz: 5800, mem_gb: 128, load: 3.0 };
-//! let pangolin = Machine { cores: 16, mhz: 4500, mem_gb: 32, load: 0.5 };
+//! let thelio = Machine { cores: 32, mhz: 5800, mem_gb: 128, avail_gb: 100, load: 3.0 };
+//! let pangolin = Machine { cores: 16, mhz: 4500, mem_gb: 32, avail_gb: 3, load: 0.5 };
 //! assert!(thelio.free(0) > pangolin.free(0));
 //! assert!(!thelio.busy());
 //! assert!(Machine { load: 33.0, ..thelio }.busy());
+//! assert!(pangolin.low(4));
+//! assert!(!thelio.low(4));
 //! ```
 
 use std::fmt;
@@ -48,6 +54,8 @@ pub struct Machine {
     pub mhz: u32,
     /// The total memory, in GB.
     pub mem_gb: u32,
+    /// The memory that is available now, in GB.
+    pub avail_gb: u32,
     /// The 1-minute load average.
     pub load: f32,
 }
@@ -55,8 +63,8 @@ pub struct Machine {
 impl Machine {
     /// The numbers of this machine. On Linux, riff reads `/proc` and
     /// `/sys`. A number that riff cannot read gets a safe value: the
-    /// cores that Rust sees, [`BASE_MHZ`], 2 GB for each core, and no
-    /// load. The variable [`MACHINE`] replaces them, in the form of
+    /// cores that Rust sees, [`BASE_MHZ`], 2 GB for each core, all of the
+    /// memory available, and no load. The variable [`MACHINE`] replaces them, in the form of
     /// [`Machine::parse`], so that a test does not depend on the load of
     /// the machine that runs it.
     pub fn here() -> Machine {
@@ -86,13 +94,13 @@ impl Machine {
     ///     32,
     ///     "5883197\n",
     ///     "cpu MHz\t\t: 3694.638\n",
-    ///     "MemTotal:       131015912 kB\n",
+    ///     "MemTotal:       131015912 kB\nMemAvailable:   104857600 kB\n",
     ///     "18.96 15.63 8.79 2/3145 201397\n",
     /// );
-    /// assert_eq!(m, Machine { cores: 32, mhz: 5883, mem_gb: 124, load: 18.96 });
+    /// assert_eq!(m, Machine { cores: 32, mhz: 5883, mem_gb: 124, avail_gb: 100, load: 18.96 });
     ///
     /// let m = Machine::from_proc(8, "", "cpu MHz\t: 2400.0\ncpu MHz\t: 3100.5\n", "", "");
-    /// assert_eq!(m, Machine { cores: 8, mhz: 3100, mem_gb: 16, load: 0.0 });
+    /// assert_eq!(m, Machine { cores: 8, mhz: 3100, mem_gb: 16, avail_gb: 16, load: 0.0 });
     /// assert_eq!(Machine::from_proc(4, "", "", "", "").mhz, riff::machine::BASE_MHZ);
     /// ```
     pub fn from_proc(
@@ -109,11 +117,14 @@ impl Machine {
             .filter_map(|l| l.split(':').nth(1)?.trim().parse::<f64>().ok())
             .map(|mhz| mhz as u32)
             .max();
-        let mem_gb = meminfo
-            .lines()
-            .find_map(|l| l.strip_prefix("MemTotal:"))
-            .and_then(|kb| kb.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
-            .map(|kb| u32::try_from(kb / 1024 / 1024).unwrap_or(u32::MAX));
+        let gb = |key: &str| {
+            meminfo
+                .lines()
+                .find_map(|l| l.strip_prefix(key))
+                .and_then(|kb| kb.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+                .map(|kb| u32::try_from(kb / 1024 / 1024).unwrap_or(u32::MAX))
+        };
+        let mem_gb = gb("MemTotal:").unwrap_or(u32::from(cores) * 2);
         let load = loadavg
             .split_whitespace()
             .next()
@@ -121,7 +132,8 @@ impl Machine {
         Machine {
             cores,
             mhz: max.or(seen).filter(|&m| m > 0).unwrap_or(BASE_MHZ),
-            mem_gb: mem_gb.unwrap_or(u32::from(cores) * 2),
+            mem_gb,
+            avail_gb: gb("MemAvailable:").unwrap_or(mem_gb),
             load: load.unwrap_or(0.0),
         }
     }
@@ -131,7 +143,7 @@ impl Machine {
     /// ```
     /// use riff::machine::Machine;
     ///
-    /// let m = Machine { cores: 8, mhz: 3000, mem_gb: 64, load: 0.0 };
+    /// let m = Machine { cores: 8, mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 };
     /// assert_eq!(m.score(), 8.0);
     /// assert_eq!(Machine { mem_gb: 8, ..m }.score(), 4.0);
     /// assert_eq!(Machine { mhz: 6000, ..m }.score(), 16.0);
@@ -151,14 +163,21 @@ impl Machine {
         f64::from(self.load) > f64::from(self.cores)
     }
 
-    /// The numbers in a status: `cpu 32x5883MHz, mem 124GB, load 18.96`.
+    /// True when the available memory is less than `floor_gb`
+    /// (01M3WFZ01PTAYYKG3T5CFA2W4D): riff starts no worker on the machine.
+    pub fn low(&self, floor_gb: u32) -> bool {
+        self.avail_gb < floor_gb
+    }
+
+    /// The numbers in a status:
+    /// `cpu 32x5883MHz, mem 124GB, 100GB available, load 18.96`.
     /// [`Machine::parse`] reads it back.
     ///
     /// ```
     /// use riff::machine::Machine;
     ///
-    /// let m = Machine { cores: 32, mhz: 5883, mem_gb: 124, load: 18.96 };
-    /// assert_eq!(m.to_string(), "cpu 32x5883MHz, mem 124GB, load 18.96");
+    /// let m = Machine { cores: 32, mhz: 5883, mem_gb: 124, avail_gb: 100, load: 18.96 };
+    /// assert_eq!(m.to_string(), "cpu 32x5883MHz, mem 124GB, 100GB available, load 18.96");
     /// assert_eq!(Machine::parse(&m.to_string()), Some(m));
     /// assert_eq!(Machine::parse("limit 2"), None);
     /// ```
@@ -166,11 +185,13 @@ impl Machine {
         let rest = text.strip_prefix("cpu ")?;
         let (cores, rest) = rest.split_once('x')?;
         let (mhz, rest) = rest.split_once("MHz, mem ")?;
-        let (mem, load) = rest.split_once("GB, load ")?;
+        let (mem, rest) = rest.split_once("GB, ")?;
+        let (avail, load) = rest.split_once("GB available, load ")?;
         Some(Machine {
             cores: cores.parse().ok()?,
             mhz: mhz.parse().ok()?,
             mem_gb: mem.parse().ok()?,
+            avail_gb: avail.parse().ok()?,
             load: load.parse().ok()?,
         })
     }
@@ -180,8 +201,8 @@ impl fmt::Display for Machine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "cpu {}x{}MHz, mem {}GB, load {:.2}",
-            self.cores, self.mhz, self.mem_gb, self.load
+            "cpu {}x{}MHz, mem {}GB, {}GB available, load {:.2}",
+            self.cores, self.mhz, self.mem_gb, self.avail_gb, self.load
         )
     }
 }
@@ -196,12 +217,14 @@ mod tests {
             cores: 32,
             mhz: 4000,
             mem_gb: 128,
+            avail_gb: 128,
             load: 0.0,
         };
         let small = Machine {
             cores: 4,
             mhz: 6000,
             mem_gb: 16,
+            avail_gb: 16,
             load: 0.0,
         };
         assert!(big.free(0) > small.free(0));
@@ -215,6 +238,7 @@ mod tests {
             cores: 16,
             mhz: 3000,
             mem_gb: 4,
+            avail_gb: 4,
             load: 0.0,
         };
         assert_eq!(m.score(), 2.0);
@@ -226,6 +250,7 @@ mod tests {
         assert!(m.cores >= 1);
         assert!(m.mhz > 0);
         assert!(m.mem_gb > 0);
+        assert!(m.avail_gb <= m.mem_gb);
         assert!(m.load >= 0.0);
     }
 }

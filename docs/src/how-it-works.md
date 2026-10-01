@@ -2384,6 +2384,157 @@ workers.limit  3  (/home/mike/.config/riff/config.toml)
 Set it with: riff workers limit N
 ```
 
+### Limit the workers of a machine
+
+Each worker builds and tests. Too many compile jobs at one time fill
+the memory of the machine. The OS then kills a worker with its work.
+So riff limits the workers of a machine. No worker and no lead has to
+remember a limit. Only you set the limits: the lead never changes
+them.
+
+```mermaid
+flowchart TD
+    S["riff workers start"] --> F{"available memory<br/>less than the floor?"}
+    F -- yes --> N["start no worker, say why"]
+    F -- no --> M["give the slice riff-workers.slice<br/>its memory limit and CPU weight"]
+    M --> W["each worker: claude in a scope of the slice,<br/>with nice 10, CARGO_BUILD_JOBS and RUST_TEST_THREADS"]
+    W --> K{"the workers take<br/>too much memory?"}
+    K -- yes --> L["the OS stops work of the workers only.<br/>The lead gets a message"]
+```
+
+| Limit | Default | Command |
+|---|---|---|
+| The most workers | 0 | `riff workers limit` |
+| The compile jobs and test threads of one worker | cores / limit, 2 or more | `riff workers jobs` |
+| The priority of the workers | nice 10 | `riff workers nice` |
+| The memory of all workers | three quarters of the memory | `riff workers memory` |
+| The available memory that a new worker needs | 4 GB | `riff workers floor` |
+
+riff sets the limits when a worker starts. It does not change them
+while the workers run.
+
+#### Choose the limit from the memory
+
+riff gives each worker the cores of the machine divided by the limit
+of workers as its number of compile jobs. So all workers together use
+at most each core. Plan 1 GB of memory for each compile job, and 1 GB
+for each worker:
+
+```text
+memory of the workers in GB = cores + limit
+```
+
+This number must be less than the memory of the workers: three
+quarters of the memory of the machine. Leave the last quarter for your
+own work. For example, pangolin has 16 cores and 30 GB. With 3
+workers, the workers need 19 GB of the 23 GB that they get:
+
+```sh
+riff workers limit 3
+```
+
+`riff workers` shows the cores, the memory and the available memory of
+the machine. When the number does not fit, set fewer jobs (see
+[Set the jobs of a worker](#set-the-jobs-of-a-worker)). Each worker
+also has a worktree with its own build files. In the riff repository,
+they take 23 to 44 GB of disk for each worker.
+
+#### Set the jobs of a worker
+
+Each worker gets one number in `CARGO_BUILD_JOBS` and
+`RUST_TEST_THREADS`: its compile jobs and its test threads. The
+default is the cores of the machine divided by the limit of workers,
+and 2 or more. Set another number:
+
+```sh
+riff workers jobs 4
+```
+
+`riff workers jobs` with no number shows the setting, and the number
+that each worker gets:
+
+```text
+workers.jobs  0  (/home/mike/.config/riff/config.toml)
+Each worker builds with 4 jobs and tests with 4 threads: the cores divided by the limit of workers. Set it with: riff workers jobs N (0: riff makes the number)
+```
+
+With 0, riff makes the number again:
+
+```sh
+riff workers jobs 0
+```
+
+The next worker that starts gets the new number. A worker that runs
+keeps its number until you stop it.
+
+#### Set the nice value of the workers
+
+Each worker runs with nice 10. So its builds give way to your own
+work on the machine. Set another value from 0 to 19. A higher value
+gives way more. 0 turns it off:
+
+```sh
+riff workers nice 15
+```
+
+`riff workers nice` with no number shows the value. The next worker
+that starts gets the new value.
+
+#### Set the memory of the workers
+
+On a machine with systemd, all workers of the machine run in one
+slice of your systemd user manager, `riff-workers.slice`. The slice
+has a memory limit and half of the CPU weight of other work. When the
+workers take too much memory, the OS slows them, then stops a build or
+a worker. It does not stop your desktop. The default limit is three
+quarters of the memory of the machine. Set another limit in GB:
+
+```sh
+riff workers memory 20
+```
+
+`riff workers memory` with no number shows the setting and the limit.
+With 0, riff makes the limit from the machine again:
+
+```sh
+riff workers memory 0
+```
+
+The next `riff workers start` gives the slice the new limit. To see
+the slice, its memory and its workers:
+
+```sh
+systemctl --user status riff-workers.slice
+```
+
+On a machine with no systemd, the first `riff workers start` says that
+the workers run with no memory limit. The other limits still apply.
+
+When a kill ends a worker, your lead gets a direct message with the
+signal (see [How a worker ends](#how-a-worker-ends)). The work of
+the worker that is not committed stays in its worktree.
+
+#### Set the memory that a new worker needs
+
+riff starts no new worker on a machine while less than 4 GB of its
+memory is available. `riff workers start` then says why, and
+`riff workers` shows it:
+
+```text
+pangolin  limit 4  runs 3  cpu 16x4500MHz, mem 30GB, 3GB available, load 9.20  score 22.5
+Starts no worker: 3 GB of memory is available, and the floor of this machine is 4 GB.
+```
+
+Set another floor in GB. 0 turns it off:
+
+```sh
+riff workers floor 8
+```
+
+`riff workers floor` with no number shows the floor and the memory
+that is available now. riff starts workers again when enough memory is
+available.
+
 ### Start workers
 
 Ask your lead to start workers, or run the command yourself in the
@@ -2504,10 +2655,11 @@ a free item with a request. The server stops idle workers.
 
 #### Which machine gets a worker
 
-Each machine tells four numbers: its CPU cores, its CPU speed, its
-memory and its 1-minute load average. From them riff makes a score:
-the number of workers that the machine runs well. One worker needs one
-core and 2 GB of memory. A core at 3000 MHz counts 1:
+Each machine tells five numbers: its CPU cores, its CPU speed, its
+memory, its available memory and its 1-minute load average. From them
+riff makes a score: the number of workers that the machine runs well.
+One worker needs one core and 2 GB of memory. A core at 3000 MHz
+counts 1:
 
 ```text
 score = min(cores, memory GB / 2) × MHz / 3000
@@ -2517,8 +2669,10 @@ The score less the workers that run there is the free capacity. riff
 starts the next worker on the machine with the most free capacity. A
 small machine gets workers only when a big machine has less room. riff
 starts no worker on a machine whose load average is more than its
-cores. `riff workers` shows the numbers and the score of each machine
-(see [List the workers](#list-the-workers)).
+cores, or whose available memory is less than its floor (see
+[Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs)).
+`riff workers` shows the numbers and the score of each machine (see
+[List the workers](#list-the-workers)).
 
 #### Change the rate of the rollout
 
@@ -2563,7 +2717,7 @@ riff workers
 ```
 
 ```text
-thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
+thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, 100GB available, load 2.10  score 62.8
 PANE  ID        STATE  DETAIL
 %3    2a880834  busy   working on #12  1m ago: tests of issue-12
 ```
@@ -2623,8 +2777,9 @@ your lead:
 riff workers host: pangolin offers 2 workers to the lead of mike in como-technologies/riff. Ctrl-C stops it.
 ```
 
-The host is a riff session with the status `workers host: limit 2, cpu
-16x4500MHz, mem 32GB, load 0.40, no workers`. It starts and stops
+The host is a riff session with the status `workers host: limit 2,
+floor 4GB, cpu 16x4500MHz, mem 32GB, 24GB available, load 0.40, no
+workers`. It starts and stops
 workers only when the lead of your user asks, at most its own limit. It
 refuses each other request, and each request that is not verified. One
 host of your user runs on a machine for a repository. A second one
@@ -2662,9 +2817,9 @@ the lead lists each host after the workers of its own machine, with
 the numbers and the score of the host:
 
 ```text
-thelio  limit 3  runs 0  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
+thelio  limit 3  runs 0  cpu 32x5883MHz, mem 124GB, 100GB available, load 2.10  score 62.8
 
-pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, load 0.40  score 24.0
+pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, 24GB available, load 0.40  score 24.0
 PANE  ID        STATE  DETAIL
 %3    2a880834  idle   ready for work for 1m
 ```
@@ -2823,6 +2978,16 @@ worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, exit code
 riff does not start it again. Look at the pane, then start a worker again with riff workers start 1.
 ```
 
+When a kill ends `claude`, for example when the workers took too much
+memory, the message names the signal and says where the work is:
+
+```text
+worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, signal 9.
+A kill ended it, for example when the workers took too much memory.
+Its work that is not committed is in its worktree: the next worker of its item goes on from there.
+riff does not start it again. Look at the pane, then start a worker again with riff workers start 1.
+```
+
 A worker never ends itself. The server stops idle workers (see
 [The server stops idle workers](#the-server-stops-idle-workers)). The
 lead or you end the other workers with `riff workers stop` (see
@@ -2840,7 +3005,7 @@ riff workers
 ```
 
 ```text
-thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, load 2.10  score 62.8
+thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, 100GB available, load 2.10  score 62.8
 PANE  ID        STATE  DETAIL
 %3    2a880834  idle   ready for work for 2m
 ```

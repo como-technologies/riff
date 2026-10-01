@@ -100,24 +100,27 @@ const RETRY: Duration = Duration::from_secs(5);
 /// a signal.
 pub const END_WAIT: Duration = Duration::from_secs(1);
 
-/// What the status of a host tells: its limit, the numbers of its
-/// machine (01M3Q5QE4SQ8VYN2PSF42KB3QJ), and the pane and short session
-/// ID of each worker.
+/// What the status of a host tells: its limit, its floor of available
+/// memory (01M3WFZ01PTAYYKG3T5CFA2W4D), the numbers of its machine
+/// (01M3Q5QE4SQ8VYN2PSF42KB3QJ), and the pane and short session ID of
+/// each worker.
 ///
 /// ```
 /// use riff::host::HostStatus;
 /// use riff::machine::Machine;
 ///
-/// let none = HostStatus { limit: 2, machine: None, workers: vec![] };
-/// assert_eq!(none.line(), "workers host: limit 2, no workers");
+/// let none = HostStatus { limit: 2, floor: 4, machine: None, workers: vec![] };
+/// assert_eq!(none.line(), "workers host: limit 2, floor 4GB, no workers");
 /// let two = HostStatus {
 ///     limit: 3,
-///     machine: Some(Machine { cores: 16, mhz: 4500, mem_gb: 32, load: 1.5 }),
+///     floor: 4,
+///     machine: Some(Machine { cores: 16, mhz: 4500, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()), ("%4".into(), "5e6f7a8b".into())],
 /// };
 /// assert_eq!(
 ///     two.line(),
-///     "workers host: limit 3, cpu 16x4500MHz, mem 32GB, load 1.50, workers: %3 1a2b3c4d, %4 5e6f7a8b",
+///     "workers host: limit 3, floor 4GB, cpu 16x4500MHz, mem 32GB, 24GB available, load 1.50, \
+///      workers: %3 1a2b3c4d, %4 5e6f7a8b",
 /// );
 /// assert_eq!(HostStatus::parse(&two.line()), Some(two));
 /// assert_eq!(HostStatus::parse(&none.line()), Some(none));
@@ -126,6 +129,9 @@ pub const END_WAIT: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostStatus {
     pub limit: u16,
+    /// The available memory in GB under which the host starts no
+    /// worker.
+    pub floor: u32,
     /// The numbers of the machine. `None` from a host that does not
     /// tell them.
     pub machine: Option<Machine>,
@@ -136,9 +142,10 @@ pub struct HostStatus {
 
 impl HostStatus {
     /// The status of a host with `panes` on `machine`.
-    pub fn of(limit: u16, machine: Machine, panes: &[WorkerPane]) -> Self {
+    pub fn of(limit: u16, floor: u32, machine: Machine, panes: &[WorkerPane]) -> Self {
         HostStatus {
             limit,
+            floor,
             machine: Some(machine),
             workers: panes
                 .iter()
@@ -150,6 +157,7 @@ impl HostStatus {
     /// The status line. It fits in a status for 10 workers.
     pub fn line(&self) -> String {
         let machine = self.machine.map(|m| format!("{m}, ")).unwrap_or_default();
+        let machine = format!("floor {}GB, {machine}", self.floor);
         if self.workers.is_empty() {
             return format!("{MARK}: limit {}, {machine}no workers", self.limit);
         }
@@ -168,8 +176,10 @@ impl HostStatus {
     /// The host status in a status step, or `None` for another status.
     pub fn parse(step: &str) -> Option<Self> {
         let rest = step.strip_prefix(MARK)?.strip_prefix(": limit ")?;
-        let (limit, mut rest) = rest.split_once(", ")?;
+        let (limit, rest) = rest.split_once(", ")?;
         let limit = limit.parse().ok()?;
+        let (floor, mut rest) = rest.strip_prefix("floor ")?.split_once("GB, ")?;
+        let floor = floor.parse().ok()?;
         let mut machine = None;
         if rest.starts_with("cpu ") {
             let end = rest
@@ -181,6 +191,7 @@ impl HostStatus {
         if rest == "no workers" {
             return Some(HostStatus {
                 limit,
+                floor,
                 machine,
                 workers: Vec::new(),
             });
@@ -195,6 +206,7 @@ impl HostStatus {
             .collect::<Option<Vec<_>>>()?;
         Some(HostStatus {
             limit,
+            floor,
             machine,
             workers,
         })
@@ -450,8 +462,13 @@ fn stop_on_signal(session: Arc<OnceLock<(Api, SessionUri)>>) -> Result<()> {
 impl Host {
     /// Sets the status: the limit and the workers of the machine.
     async fn set_status(&self) -> Result<()> {
-        let limit = settings::workers_limit(&settings::path()?)?;
-        let status = HostStatus::of(limit, Machine::here(), &self.tmux.worker_panes()?);
+        let settings = settings::path()?;
+        let status = HostStatus::of(
+            settings::workers_limit(&settings)?,
+            settings::workers_floor(&settings)?,
+            Machine::here(),
+            &self.tmux.worker_panes()?,
+        );
         let status = Status {
             step: status.line(),
             blocked: None,

@@ -504,6 +504,22 @@ git worktree list
 git branch --list 'worktree-*'
 ```
 
+## Build and test
+
+A build takes memory and each core that it gets. The sessions of a
+machine share them. Too many builds at one time make the OS kill a
+session, with its work that is not committed.
+
+- Run one build or test command at a time. Wait until it ends before
+  you start the next one. Do not start a build in the background while
+  a build or a test runs.
+- To run a test many times, for example to find a test that fails only
+  sometimes, run that test by its name in a loop, not the full `just ci`
+  or the full check of your repository.
+- In a worker, riff sets `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`:
+  the number of compile jobs and test threads for one worker. Do not
+  change them, and do not give a build a higher number of jobs.
+
 ## Threads
 
 - Your repository thread `OWNER/REPO` is your default thread. Leave out
@@ -758,6 +774,10 @@ a scope, or a new item joins the current wave.
 - Never change the limit of workers (`riff workers limit`) or the
   interval (`riff workers interval`). Only your user sets them. When
   the limit stops a worker, tell your user.
+- Never change the limits of the workers of a machine
+  (`riff workers jobs`, `riff workers nice`, `riff workers memory`,
+  `riff workers floor`). Only your user sets them. When `riff workers`
+  shows that a machine starts no worker, tell your user.
 - Never change the MCP servers of the workers (`riff workers mcp`).
   Only your user sets them. A worker has only the riff MCP server by
   default.
@@ -775,7 +795,11 @@ cannot: `riff workers start` refuses.
 
 When the `claude` of a worker exits on its own, you get a direct
 message `worker stopped`. riff does not start it again. Tell your
-user, and start a new worker only on their word.
+user, and start a new worker only on their word. When the message
+names a signal, a kill ended the worker, for example when the workers
+took too much memory. Its work that is not committed is in its
+worktree. The next worker of the item goes on from there (see "Pick up
+dropped work").
 
 ### When you are a worker
 

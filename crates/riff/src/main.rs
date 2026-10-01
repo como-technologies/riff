@@ -533,6 +533,48 @@ enum Workers {
         /// The new interval in seconds. Leave it out to show it.
         seconds: Option<u16>,
     },
+    /// Show or set the compile jobs and test threads of each worker
+    ///
+    /// Each worker gets the number in CARGO_BUILD_JOBS and
+    /// RUST_TEST_THREADS. The default is 0: the cores of this machine
+    /// divided by the limit of workers, and 2 or more. The next worker
+    /// that starts gets the new number. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.jobs.
+    Jobs {
+        /// The new number of jobs. Leave it out to show it.
+        jobs: Option<u16>,
+    },
+    /// Show or set the nice value of each worker
+    ///
+    /// Each worker runs with this nice value, so its builds give way to
+    /// your other work. The default is 10. 0 turns it off. The next
+    /// worker that starts gets the new value. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.nice.
+    Nice {
+        /// The new nice value, 0 to 19. Leave it out to show it.
+        #[arg(value_parser = clap::value_parser!(u8).range(..=19))]
+        nice: Option<u8>,
+    },
+    /// Show or set the most memory of all workers of this machine
+    ///
+    /// On a machine with systemd, all workers run in the slice
+    /// riff-workers.slice with this memory limit. The default is 0:
+    /// three quarters of the memory of this machine. The next
+    /// `riff workers start` sets the new limit. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.memory.
+    Memory {
+        /// The new limit in GB. Leave it out to show it.
+        gb: Option<u32>,
+    },
+    /// Show or set the available memory that a new worker needs
+    ///
+    /// riff starts no new worker on this machine while less than GB of
+    /// memory is available. The default is 4. 0 turns it off. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.floor.
+    Floor {
+        /// The new floor in GB. Leave it out to show it.
+        gb: Option<u32>,
+    },
     /// Show or change the MCP servers of each worker
     ///
     /// These are the MCP servers that each worker of this machine loads.
@@ -1159,6 +1201,65 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             );
             Ok(())
         }
+        Some(Workers::Jobs { jobs }) => {
+            let path = settings::path()?;
+            if let Some(jobs) = jobs {
+                settings::set_workers_jobs(&path, *jobs)?;
+            }
+            let machine = riff::machine::Machine::here();
+            anstream::println!(
+                "{}",
+                view::workers_jobs(
+                    settings::workers_jobs(&path)?,
+                    riff::limits::Limits::of(&path, &machine)?.jobs,
+                    &path
+                )
+            );
+            Ok(())
+        }
+        Some(Workers::Nice { nice }) => {
+            let path = settings::path()?;
+            if let Some(nice) = nice {
+                settings::set_workers_nice(&path, *nice)?;
+            }
+            anstream::println!(
+                "{}",
+                view::workers_nice(settings::workers_nice(&path)?, &path)
+            );
+            Ok(())
+        }
+        Some(Workers::Memory { gb }) => {
+            let path = settings::path()?;
+            if let Some(gb) = gb {
+                settings::set_workers_memory(&path, *gb)?;
+            }
+            let setting = settings::workers_memory(&path)?;
+            let machine = riff::machine::Machine::here();
+            anstream::println!(
+                "{}",
+                view::workers_memory(
+                    setting,
+                    riff::limits::memory(machine.mem_gb, setting),
+                    &path
+                )
+            );
+            Ok(())
+        }
+        Some(Workers::Floor { gb }) => {
+            let path = settings::path()?;
+            if let Some(gb) = gb {
+                settings::set_workers_floor(&path, *gb)?;
+            }
+            anstream::println!(
+                "{}",
+                view::workers_floor(
+                    settings::workers_floor(&path)?,
+                    riff::machine::Machine::here().avail_gb,
+                    &path
+                )
+            );
+            Ok(())
+        }
         Some(Workers::Mcp { command }) => {
             let path = settings::path()?;
             let mut names = settings::workers_mcp(&path)?;
@@ -1218,7 +1319,7 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         "{}",
         text::workers_started(n, &started.window, &started.main)
     );
-    if let Some(line) = &started.limited {
+    for line in [&started.limited, &started.no_scope].into_iter().flatten() {
         println!("{line}");
     }
     Ok(())
@@ -1366,7 +1467,9 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
         }
         Vec::new()
     });
-    let limit = settings::workers_limit(&settings::path()?)?;
+    let settings = settings::path()?;
+    let limit = settings::workers_limit(&settings)?;
+    let floor = settings::workers_floor(&settings)?;
     let me =
         identity::place(&identity::working_dir()?).and_then(|here| identity::me(&here, server));
     let host = me
@@ -1375,7 +1478,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     let machine = riff::machine::Machine::here();
     anstream::println!(
         "{}",
-        view::host_heading(&host, limit, panes.len(), Some(&machine))
+        view::host_heading(&host, limit, panes.len(), Some(&machine), floor)
     );
     anstream::print!("{}", view::workers(&panes, &sessions, long));
     let Ok(me) = me else {
@@ -1393,7 +1496,8 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
                 host,
                 status.limit,
                 status.workers.len(),
-                status.machine.as_ref()
+                status.machine.as_ref(),
+                status.floor
             )
         );
         anstream::print!("{}", view::workers(&panes, &sessions, long));

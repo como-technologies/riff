@@ -12,6 +12,7 @@
 //! |---|---|
 //! | Each `RIFF_…` and `CLAUDE_…` variable, `TMUX`, `TMUX_PANE` | removed |
 //! | `RIFF_SERVER` | [`DEAD_SERVER`]: nothing listens there |
+//! | `RIFF_MACHINE` | [`MACHINE`]: the numbers of a machine with free memory and no load, so no test depends on the machine that runs it (01M3WFZ08D8VT9KD6HXY09NHSE) |
 //! | `RIFF_HOME` | a dir of its own: riff keeps its settings, local files and secrets there, and never opens the OS keyring |
 //! | `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`, `TMPDIR` | dirs of its own |
 //! | `DBUS_SESSION_BUS_ADDRESS` | a bus that does not exist, so each call to the OS keyring fails |
@@ -49,6 +50,10 @@ pub const REMOVED_PREFIXES: [&str; 2] = ["RIFF_", "CLAUDE_"];
 /// listens there (the discard port). So a test never reaches the riff of
 /// the machine on 127.0.0.1:7878, or the shared riff.
 pub const DEAD_SERVER: &str = "http://127.0.0.1:9";
+
+/// The numbers of the machine of each test that gives no numbers of its
+/// own: 8 cores, 32 GB of memory, all of it available, and no load.
+pub const MACHINE: &str = "cpu 8x3000MHz, mem 32GB, 32GB available, load 0.00";
 
 /// The other variables that the helper removes: the tmux of the person.
 pub const REMOVED: [&str; 2] = ["TMUX", "TMUX_PANE"];
@@ -133,6 +138,7 @@ impl Isolated {
         let home = self.home();
         vars.extend([
             ("RIFF_SERVER".into(), Some(DEAD_SERVER.into())),
+            ("RIFF_MACHINE".into(), Some(MACHINE.into())),
             ("RIFF_HOME".into(), path(self.riff_home())),
             ("HOME".into(), path(home.clone())),
             ("XDG_CONFIG_HOME".into(), path(home.join(".config"))),

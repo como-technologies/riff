@@ -76,6 +76,7 @@ pub mod hygiene;
 pub mod identity;
 pub mod leave;
 pub mod lifecycle;
+pub mod limits;
 pub mod local;
 pub mod login;
 pub mod machine;

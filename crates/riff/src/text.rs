@@ -4,6 +4,7 @@
 //! in [`crate::style`].
 
 use std::fmt::Write;
+use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 
 use chrono::{DateTime, NaiveDate, TimeZone};
@@ -1002,14 +1003,76 @@ pub fn next_holds_claims(claims: &[String]) -> String {
 /// assert!(riff::text::worker_stopped(None, None, &status).starts_with(
 ///     "worker stopped: pane unknown, session unknown, exit code 1."
 /// ));
+/// // A kill, for example for the memory of the workers
+/// // (01M3WFZ03Z9Y60HPHJJ9ZE6AQZ).
+/// assert_eq!(
+///     riff::text::worker_stopped(Some("%3"), Some("a6cf"), &ExitStatus::from_raw(9)),
+///     "worker stopped: pane %3, session a6cf, signal 9. A kill ended it, for example when \
+///      the workers took too much memory. Its work that is not committed is in its worktree: \
+///      the next worker of its item goes on from there. riff does not start it again. Look at \
+///      the pane, then start a worker again with riff workers start 1."
+/// );
 /// ```
 pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitStatus) -> String {
+    let killed = if status.signal().is_some() {
+        " A kill ended it, for example when the workers took too much memory. Its work that \
+         is not committed is in its worktree: the next worker of its item goes on from there."
+    } else {
+        ""
+    };
     format!(
-        "worker stopped: pane {}, session {}, {}. riff does not start it again. Look at the \
-         pane, then start a worker again with riff workers start 1.",
+        "worker stopped: pane {}, session {}, {}.{killed} riff does not start it again. Look \
+         at the pane, then start a worker again with riff workers start 1.",
         pane.unwrap_or("unknown"),
         session.unwrap_or("unknown"),
         crate::worker::exit_words(status)
+    )
+}
+
+/// The refusal of `riff workers start` while the available memory of
+/// the machine is less than the floor (01M3WFZ01PTAYYKG3T5CFA2W4D).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::workers_low(3, 4),
+///     "riff: 3 GB of memory is available, and the floor of this machine is 4 GB. riff \
+///      workers start started nothing. riff workers floor shows the floor."
+/// );
+/// ```
+pub fn workers_low(avail_gb: u32, floor_gb: u32) -> String {
+    format!(
+        "riff: {} riff workers start started nothing. riff workers floor shows the floor.",
+        low_memory(avail_gb, floor_gb)
+    )
+}
+
+/// Why a machine starts no worker: its available memory and its floor
+/// (01M3WFZ01PTAYYKG3T5CFA2W4D).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::low_memory(3, 4),
+///     "3 GB of memory is available, and the floor of this machine is 4 GB."
+/// );
+/// ```
+pub fn low_memory(avail_gb: u32, floor_gb: u32) -> String {
+    format!("{avail_gb} GB of memory is available, and the floor of this machine is {floor_gb} GB.")
+}
+
+/// What `riff workers start` says one time on a machine with no systemd
+/// (01M3WFYZZENNHVH8Z2BAFSR6TS). `why` is the error of `systemctl`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_systemd("cannot run systemctl: not found"),
+///     "This machine has no systemd user manager (cannot run systemctl: not found), so the \
+///      workers run with no memory limit."
+/// );
+/// ```
+pub fn no_systemd(why: &str) -> String {
+    format!(
+        "This machine has no systemd user manager ({why}), so the workers run with no memory \
+         limit."
     )
 }
 
@@ -2271,6 +2334,7 @@ pub fn host_runs(me: &SessionUri, first: &str) -> String {
 ///     main: "/src/riff".into(),
 ///     fresh: None,
 ///     limited: Some("The limit of this machine is 1.".into()),
+///     no_scope: None,
 /// };
 /// assert_eq!(
 ///     riff::text::host_started("pangolin", &started),
@@ -2289,9 +2353,9 @@ pub fn host_started(host: &str, started: &crate::worker::Started) -> String {
         started.main.display(),
         panes.join(", ")
     );
-    if let Some(limited) = &started.limited {
+    for more in [&started.limited, &started.no_scope].into_iter().flatten() {
         line.push(' ');
-        line.push_str(limited);
+        line.push_str(more);
     }
     line
 }
