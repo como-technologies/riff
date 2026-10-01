@@ -1130,6 +1130,15 @@
   `gh issue list`, kept for one minute. With no `gh`, the rows still
   print. `--color` works as in
   `riff who`.
+- **01M3WNHCD659FH3Z5VYYH69WWR** The first line of a session in
+  `riff top` names the place of the session after the short session
+  ID, in the form of `riff who`: `REPO#WORKTREE`, or `REPO` in the main
+  worktree. The repository is its short name when the repositories of
+  the sessions have one owner, else `OWNER/REPO`. So a lead line names
+  the repository of its lead. The wave line names the repository of its
+  board: `Wave N (OWNER/REPO)`, the repository of the working
+  directory. Only a claim in that repository is on the board, and only
+  a session of that repository shows the title of its item.
 - **01M3QA8EZHX5B8C9CKF8Q3154X** `riff top` grows down, not across. No
   line is wider than the terminal: the real width when riff knows it,
   else 80 columns. riff cuts a wider line with `…`. A session with no

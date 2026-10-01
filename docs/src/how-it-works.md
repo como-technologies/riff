@@ -772,35 +772,37 @@ riff top
 ```
 
 The header shows the state of the riff, the owner and the build, as in
-`riff who`. The board of the current wave comes next: one line for the
-`free` items, one for the `claimed` items, and one for the items in
-`verify`. Under it, a tree shows each person, the hosts of the person,
-and the sessions on each host:
+`riff who`. The board of the current wave comes next: the wave with
+its repository, one line for the `free` items, one for the `claimed`
+items, and one for the items in `verify`. Under it, a tree shows each
+person, the hosts of the person, and the sessions on each host:
 
 ```text
 riff   running
 owner  mike (mike@example.com)
 build  v0.7.0  (10df8a4, 2026-09-29)
 
-Wave 3
+Wave 3 (como-technologies/riff)
   free: #9
   claimed: #7
 
 ann  admin  offline  seen 1h ago
 mike  owner  online
 ├─ pangolin
-│  ├─ 5b1e2a90  worker  busy
+│  ├─ 5b1e2a90  riff#issue-7  worker  busy
 │  │    working on #7 Fix the help
 │  │    2m ago: tests
-│  └─ 9c0d1e2f  worker  idle
+│  └─ 9c0d1e2f  riff  worker  idle
 │       ready for work for 6m
 └─ thelio
-   ├─ 3a3f8d5d  blocked
+   ├─ 3a3f8d5d  riff  blocked
    │    waits for a review (step: merge, 1m ago)
-   ├─ 4e54d4e5  lead  idle
+   ├─ 4e54d4e5  riff  lead  idle
    │    monitoring work for 2h
    │    5m ago: plan the next wave
-   └─ 8f1c2d3e  offline
+   ├─ 6d2b7c1a  strata#issue-88  lead  busy
+   │    working on #88
+   └─ 8f1c2d3e  riff  offline
         seen 4m ago
 ```
 
@@ -808,11 +810,18 @@ mike  owner  online
   and `online` when a session of the person is online. Else `offline`,
   with the time since the last call. Each member of the riff has a
   line, also when away.
-- A session: the first line has the short session ID, the tag `lead`
-  or `worker`, and the state of the session in its color. Under it
-  comes one line for each fact of the detail of the state, with the
-  title of each issue. See
-  [The state of a session](#the-state-of-a-session).
+- A session: the first line has the short session ID, the place of the
+  session, the tag `lead` or `worker`, and the state of the session in
+  its color. Under it comes one line for each fact of the detail of the
+  state. See [The state of a session](#the-state-of-a-session).
+- The place is the repository and the worktree of the session, as in
+  `riff who`: `riff`, or `riff#issue-7` in the worktree `issue-7`. A
+  lead is the lead of the repository on its line. When the
+  repositories have more than one owner, each place has the owner too:
+  `como-technologies/riff`.
+- The board and the titles of the issues are those of one repository:
+  the repository where you run `riff top`. The wave line names it. A
+  session of another repository shows its item with no title.
 
 The tree grows down, not across. No line is wider than your terminal,
 or 80 columns in a pipe. riff cuts a longer line with `…`.
