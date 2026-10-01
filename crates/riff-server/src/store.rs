@@ -7,7 +7,7 @@
 //! | Name | Holds |
 //! |---|---|
 //! | [`crate::log::LOG`] and the first position | One chunk of the log. See [`crate::log`]. |
-//! | [`TOKENS`] | The token store. |
+//! | [`SIGN_INS`] | The token store: the people, the sign-ins and their chains. See [`crate::token`]. |
 //! | [`LEASE`] | The ID of the instance that may serve (R137). |
 //!
 //! # Stores
@@ -36,12 +36,12 @@
 //! (01M3MMXYS1V8CA89D2XHKPR6C4).
 //!
 //! ```
-//! use riff_server::store::{Memory, StoreError, TOKENS};
+//! use riff_server::store::{Memory, SIGN_INS, StoreError};
 //!
-//! let error = StoreError::not_valid(&Memory::default(), TOKENS, "missing field `users`");
+//! let error = StoreError::not_valid(&Memory::default(), SIGN_INS, "missing field `users`");
 //! assert_eq!(
 //!     error.to_string(),
-//!     "cannot read the saved object tokens: missing field `users`. \
+//!     "cannot read the saved object signins.json: missing field `users`. \
 //!      It can be state of an old format. To start again with an empty state, \
 //!      stop each server of this store and remove the old state."
 //! );
@@ -55,15 +55,15 @@
 //!
 //! let store = Memory::default();
 //! block_on(async {
-//!     let v1 = store.save("tokens", b"{}".to_vec(), None).await?;
-//!     let loaded = store.load("tokens").await?.unwrap();
+//!     let v1 = store.save("signins.json", b"{}".to_vec(), None).await?;
+//!     let loaded = store.load("signins.json").await?.unwrap();
 //!     assert_eq!(loaded.version, v1);
 //!
 //!     // A save that names an old version fails.
-//!     let v2 = store.save("tokens", b"[]".to_vec(), Some(v1)).await?;
-//!     let stale = store.save("tokens", b"{}".to_vec(), Some(v1)).await;
+//!     let v2 = store.save("signins.json", b"[]".to_vec(), Some(v1)).await?;
+//!     let stale = store.save("signins.json", b"{}".to_vec(), Some(v1)).await;
 //!     assert!(matches!(stale, Err(StoreError::Conflict(_))));
-//!     assert_eq!(store.load("tokens").await?.unwrap().version, v2);
+//!     assert_eq!(store.load("signins.json").await?.unwrap().version, v2);
 //!     Ok::<(), StoreError>(())
 //! })?;
 //! # Ok::<(), StoreError>(())
@@ -79,7 +79,7 @@ use futures::future::{BoxFuture, FutureExt};
 use sha2::{Digest, Sha256};
 
 /// The name of the object that holds the token store.
-pub const TOKENS: &str = "tokens";
+pub const SIGN_INS: &str = "signins.json";
 
 /// The name of the lease object.
 pub const LEASE: &str = "lease";
@@ -180,7 +180,7 @@ pub trait Store: Send + Sync {
     fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>>;
 
     /// The full name of the object `name`, for a person, for example
-    /// `gs://BUCKET/tokens`.
+    /// `gs://BUCKET/signins.json`.
     fn locate(&self, name: &str) -> String {
         name.to_owned()
     }
@@ -464,7 +464,7 @@ mod tests {
     fn list_gives_the_names_with_a_prefix() {
         let store = Memory::default();
         block_on(async {
-            for name in [TOKENS, "log/a", "log/b"] {
+            for name in [SIGN_INS, "log/a", "log/b"] {
                 store.save(name, vec![], None).await.unwrap();
             }
             assert_eq!(store.list("log/").await.unwrap(), ["log/a", "log/b"]);
@@ -486,11 +486,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = (Dir::new(dir.path()), Dir::new(dir.path()));
         block_on(async {
-            let v1 = a.save(TOKENS, b"1".to_vec(), None).await.unwrap();
-            let v2 = b.save(TOKENS, b"2".to_vec(), Some(v1)).await.unwrap();
-            let stale = a.save(TOKENS, b"3".to_vec(), Some(v1)).await;
-            assert_eq!(stale, Err(StoreError::Conflict(TOKENS.into())));
-            assert_eq!(a.load(TOKENS).await.unwrap().unwrap().version, v2);
+            let v1 = a.save(SIGN_INS, b"1".to_vec(), None).await.unwrap();
+            let v2 = b.save(SIGN_INS, b"2".to_vec(), Some(v1)).await.unwrap();
+            let stale = a.save(SIGN_INS, b"3".to_vec(), Some(v1)).await;
+            assert_eq!(stale, Err(StoreError::Conflict(SIGN_INS.into())));
+            assert_eq!(a.load(SIGN_INS).await.unwrap().unwrap().version, v2);
             assert!(a.load("missing").await.unwrap().is_none());
         });
     }

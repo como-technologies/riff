@@ -480,7 +480,8 @@
   or a temporary directory, never the real bucket. Without `--bucket`
   and `--dir`, the log is in memory, and a restart loses it.
 - **R124** The bucket holds the chunks of the log, the checkpoints, the
-  token store and the lease.
+  token store and the lease. The token store is the object
+  `signins.json`.
 - **R31** A restart loses the open streams, the proof IDs, the sessions
   with their places and statuses, each change of a read cursor since
   the last checkpoint, and each record whose chunk was not written.
@@ -493,8 +494,12 @@
   `who --all` shows it in the place of the last record that names it.
 - **R127** `riff-server` saves the changed token store at most once
   each second.
-- **R128** `riff-server` replies to a call that changes the token store
-  only after it saved the change.
+- **R128** `riff-server` replies to a sign-in, a revoke and a change of
+  the people only after it saved the token store.
+- **01M3TFG527M04TA7ESM970X3B8** `riff-server` replies to a refresh and
+  to a swap for a session token before it saves the token store. While
+  the last save of the token store failed, a refresh or a swap first
+  saves it again, and gets 503 when that save fails too.
 - **R150** When that save fails, `riff-server` replies 503. The next
   save tries the change again.
 - **R129** On SIGTERM, `riff-server` replies 503 to each new call,
@@ -509,8 +514,9 @@
 - **01M3MMXYS1V8CA89D2XHKPR6C4** When `riff-server` cannot read a saved
   object at start, for example state of an old format, it does not
   migrate it. It logs one error at the ERROR level and stops. The error
-  names the object, for example `gs://BUCKET/tokens`, and the fix: stop
-  each server of the store and remove the old state, with the command.
+  names the object, for example `gs://BUCKET/signins.json`, and the
+  fix: stop each server of the store and remove the old state, with the
+  command.
 
 ## The log
 
@@ -1479,8 +1485,27 @@
   (01M3MX4TG7PNNETZ986DQS10JJ).
 - **R110** Only the device key of a sign-in can revoke it by reuse. A
   reused refresh token with another key is refused and changes nothing.
-- **R116** `riff-server` keeps a used refresh token for 24 hours, to
-  find reuse. After that, the token is not known.
+- **R116** Replaced by 01M3TFG4SJ5C96NH8W7XRXJG6Z.
+- **01M3TFG4SJ5C96NH8W7XRXJG6Z** A refresh token names its chain and
+  its generation: `chain.generation.secret`. A refresh with the current
+  generation gives the next generation. `riff-server` keeps the hash of
+  the refresh token of the current generation of each chain, and of the
+  generation before it. A refresh token of an older generation is
+  reused (R17), at any time. A refresh token with a wrong secret is not
+  known, and changes nothing.
+- **01M3TFG4PN1DWY1FXX0SVB3H3R** A sign-in has at most one live chain
+  for the person, and one for each session. A new session token for a
+  session ends the old chain of that session.
+- **01M3TFG4WE7CZQ4TCJE2NTC52E** After a start, the saved token store
+  can be one generation behind. So the first refresh of each chain
+  after a start takes the current generation of the saved store, or
+  the next one, as good. `riff-server` checks the device key first
+  (R110).
+- **01M3TFG4ZCWS98R7W6RYZFWZXF** A session chain ends when its refresh
+  token is not used for 24 hours. `riff` then swaps the person token
+  for a new session token (R103).
+- **01M3TFG551C76BP4TRA32P7VC3** `riff-server` keeps each access token
+  only in memory. After a restart, each client refreshes one time.
 - **01M3MX4TG7PNNETZ986DQS10JJ** A used refresh token counts as
   reused only after the refresh token of the pair that its last use
   gave was used. Before that, the reply of the last use was lost: when

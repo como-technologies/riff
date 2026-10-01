@@ -29,7 +29,7 @@ use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
-use riff_server::store::{Loaded, Memory, Store, StoreError, TOKENS, Version};
+use riff_server::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
 
 /// The environment of each `riff` of this test. The secrets of this
 /// test process go to its secret files too.
@@ -145,7 +145,7 @@ impl Store for Busy {
         known: Option<Version>,
     ) -> BoxFuture<'a, Result<Version, StoreError>> {
         let n = self.saves.fetch_add(1, Ordering::SeqCst);
-        if name == TOKENS && n.is_multiple_of(self.every) {
+        if name == SIGN_INS && n.is_multiple_of(self.every) {
             return Box::pin(async { Err(StoreError::Failed("the store is busy".into())) });
         }
         self.store.save(name, bytes, known)

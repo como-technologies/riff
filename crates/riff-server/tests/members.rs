@@ -30,6 +30,7 @@ fn config(url: &str, issuer: &str, admins: &[&str]) -> Config {
         }),
         admins: admins.iter().map(|a| a.to_string()).collect(),
         lease: common::LEASE,
+        save_every: common::SAVE_EVERY,
         ..Config::new(url)
     }
 }

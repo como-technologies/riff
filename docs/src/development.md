@@ -652,10 +652,10 @@ and the owner invites each member again.
 
 ## Keep the state in a directory
 
-For local work, `--dir` (`RIFF_DIR`) keeps the log, the token store and
-the lease as files in a directory. It works as a bucket: the server
-waits 15 seconds for the lease, then loads the checkpoint and replays
-the log:
+For local work, `--dir` (`RIFF_DIR`) keeps the log, the checkpoints,
+the sign-ins (`signins.json`) and the lease as files in a directory. It
+works as a bucket: the server waits 15 seconds for the lease, then
+loads the checkpoint and replays the log:
 
 ```sh
 riff-server --dir ~/.local/state/riff-server

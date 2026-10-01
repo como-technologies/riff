@@ -67,14 +67,25 @@ pub const LEASE: Timing = Timing {
     exit_after: Duration::from_secs(1),
 };
 
+/// A short time between two writes of the token store, so that a test
+/// does not wait a second for each write.
+pub const SAVE_EVERY: Duration = Duration::from_millis(20);
+
 /// Starts a server that loads its state from `store` and saves to it.
-/// It uses the [`LEASE`] times.
+/// It uses the [`LEASE`] times and the [`SAVE_EVERY`] time.
 pub async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
+    start_on_every(store, SAVE_EVERY).await
+}
+
+/// As [`start_on`], with `save_every` between two writes of the token
+/// store.
+pub async fn start_on_every(store: Arc<dyn Store>, save_every: Duration) -> (Service, String) {
     client();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
         lease: LEASE,
+        save_every,
         ..Config::new(&url)
     };
     let service = Service::load(config, store).await.unwrap();
@@ -88,6 +99,7 @@ pub async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
 pub async fn load_on(store: Arc<dyn Store>) -> Result<Service, StoreError> {
     let config = Config {
         lease: LEASE,
+        save_every: SAVE_EVERY,
         ..Config::new("http://127.0.0.1:7878")
     };
     Service::load(config, store).await
