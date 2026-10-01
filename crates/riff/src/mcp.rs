@@ -56,13 +56,20 @@
 //!
 //! | Call | Step |
 //! |---|---|
-//! | `tell` | `told 075ff6a7: request: claim issue-302` |
+//! | `tell` | `told 075ff6a7` |
 //! | `post` | `posted a note: Waves: new item #314`, `posted a message: …` or `asked for status` |
 //! | `pause`, `resume` | `paused the riff`, `resumed the riff` |
 //! | `lead` | `became the lead` |
 //!
+//! Each member of the riff reads the step, and a direct thread is
+//! private to its two sessions. So the step of a `tell` has no text of
+//! the message (01M3WKCYM623M66ATHCH3QGMKP). A `post` cannot go to a
+//! direct thread: the server refuses it. The text of a post is one line
+//! with no control character.
+//!
 //! The step is a status like each other one: a later `status` call of
-//! the lead replaces it, and the next of these calls replaces that. The
+//! the lead replaces it, and the next of these calls replaces that. An
+//! automatic step keeps the `blocked` reason that the lead set. The
 //! words come from [`text::told_step`], [`text::posted_step`],
 //! [`text::riff_step`] and [`text::LEAD_STEP`].
 
@@ -407,7 +414,7 @@ request wakes you, answer with this tool. Do not post a reply."
             .first()
             .and_then(|s| s.who().session())
             .unwrap_or(&a.session);
-        self.lead_step(&me, text::told_step(to, &a.body)).await;
+        self.lead_step(&me, text::told_step(to)).await;
         Ok(text::posted(&posted))
     }
 
@@ -535,19 +542,19 @@ impl Tools {
     /// Sets the step of `me` to `step`, when `me` is the lead: the
     /// automatic step of the call that the lead made
     /// (01M3W8AYDFPZNZ898WAJS7JEZA). The step of each other session
-    /// stays. A failure is not reported: the call of the lead is done.
+    /// stays. The step keeps the `blocked` reason that the lead set
+    /// (01M3WKCYM623M66ATHCH3QGMKP). A failure is not reported: the
+    /// call of the lead is done.
     async fn lead_step(&self, me: &SessionUri, step: String) {
-        let lead = self
-            .api
-            .who(me, false)
-            .await
-            .is_ok_and(|list| list.iter().any(|s| s.uri.who() == me.who() && s.uri.lead()));
-        if lead {
-            let status = Status {
-                step,
-                blocked: None,
-            };
-            let _ = self.api.status(me, &status).await;
+        let Ok(list) = self.api.who(me, false).await else {
+            return;
+        };
+        let lead = list
+            .into_iter()
+            .find(|s| s.uri.who() == me.who() && s.uri.lead());
+        if let Some(lead) = lead {
+            let blocked = lead.status.and_then(|s| s.status.blocked);
+            let _ = self.api.status(me, &Status { step, blocked }).await;
         }
     }
 
