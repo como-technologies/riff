@@ -64,6 +64,7 @@ pub mod binary;
 pub mod chat;
 pub mod compact;
 pub mod device;
+pub mod dropped;
 pub mod help;
 pub mod home;
 pub mod hook;

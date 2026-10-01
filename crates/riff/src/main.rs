@@ -10,13 +10,13 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    auto_update, binary, help, hook, hygiene, identity, lifecycle, local, login, mcp, next,
+    auto_update, binary, dropped, help, hook, hygiene, identity, lifecycle, local, login, mcp, next,
     permissions, plugin, pr, settings, terminal, text, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Freed, Kind, RiffState, Status};
+use riff_core::wire::{Freed, Kind, RiffState, SessionInfo, Status};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
@@ -964,6 +964,9 @@ async fn main() -> Result<()> {
             if !reply.granted {
                 std::process::exit(1);
             }
+            if let Some(line) = dropped::at_claim(&identity::working_dir()?, &item).await {
+                println!("{line}");
+            }
         }
         Command::Release { thread, item } => {
             let thread = thread_or_default(thread, &here)?;
@@ -1517,11 +1520,11 @@ async fn session_start(server: &str) -> String {
             Some(uri) => {
                 let facts = start_facts(api, &uri, input.source.is_new_start());
                 match tokio::time::timeout(hook::STATE_WAIT, facts).await {
-                    Ok(Ok((lead, riff, freed, others))) => (
+                    Ok(Ok((lead, riff, freed, who))) => (
                         Some(uri.with_lead(lead)),
                         Some(riff),
                         freed,
-                        Some(others),
+                        Some(who),
                         None,
                     ),
                     Ok(Err(e)) => (
@@ -1549,8 +1552,11 @@ async fn session_start(server: &str) -> String {
             _ => None,
         }
     };
-    let ((uri, riff, freed, others, mismatch), behind, linked) =
-        tokio::join!(facts, behind, linked);
+    let ((uri, riff, freed, who, mismatch), behind, linked) = tokio::join!(facts, behind, linked);
+    let others = uri
+        .as_ref()
+        .zip(who.as_ref())
+        .map(|(me, who)| hook::others_here(me, who));
     let watching = id
         .as_deref()
         .zip(local::dir())
@@ -1565,6 +1571,17 @@ async fn session_start(server: &str) -> String {
     }
     if let Some(linked) = linked.filter(|_| mismatch_free) {
         context.push_str(&linked.line(others.as_deref()));
+    }
+    // After the fetch of `behind`, so the list has the pushed branches
+    // of now (01M3WFYETKXPWWE0R0EAKGCD1E).
+    if let (Some(cwd), Some(me), Some(who)) = (&cwd, &uri, &who)
+        && input.source.is_new_start()
+        && mismatch_free
+    {
+        let free = dropped::without_owner(dropped::all(cwd), me, who);
+        if let Some(lines) = dropped::start_lines(&free) {
+            context.push_str(&lines);
+        }
     }
     if worker::is_worker() {
         context.push_str(hook::WORKER_LINE);
@@ -1587,13 +1604,12 @@ async fn session_start(server: &str) -> String {
 
 /// Whether the server names `me` as the lead, the state of the riff
 /// (01M3JCG48QPCNNTKW34FTR0AMR), the claims that a new start freed
-/// (01M3JEE1QQCFS5TMZW5N2DAD2D), and the other live sessions in the
-/// place of `me` ([`hook::others_here`]).
+/// (01M3JEE1QQCFS5TMZW5N2DAD2D), and the sessions of the riff.
 async fn start_facts(
     api: Api,
     me: &SessionUri,
     new_start: bool,
-) -> Result<(bool, RiffState, Vec<Freed>, Vec<SessionUri>)> {
+) -> Result<(bool, RiffState, Vec<Freed>, Vec<SessionInfo>)> {
     let api = api.signed_in(me.who().session())?;
     let freed = if new_start {
         api.start(me).await?
@@ -1603,7 +1619,7 @@ async fn start_facts(
     let riff = api.riff(me).await?;
     let who = api.who(me, false).await?;
     let lead = who.iter().any(|s| s.uri.who() == me.who() && s.uri.lead());
-    Ok((lead, riff, freed, hook::others_here(me, &who)))
+    Ok((lead, riff, freed, who))
 }
 
 /// `riff setup`: adds the missing permission rules of riff to the

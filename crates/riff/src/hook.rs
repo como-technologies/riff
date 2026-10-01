@@ -87,6 +87,15 @@
 //! context has no such line (01M3JN21WDXWTHDKXKQ80ZPYPK). See
 //! [`behind`].
 //!
+//! # Earlier work
+//!
+//! A session can end with no notice, and its work stays on its pushed
+//! branch and in its worktree. After the fetch, at a new start, the
+//! context lists the earlier work of the clone that no live session
+//! owns (01M3WFYETKXPWWE0R0EAKGCD1E). So the session does not have to
+//! look for it. The fetch prunes, so a branch that the forge deleted
+//! after its merge is not in the list. See [`crate::dropped`].
+//!
 //! # A session in a linked worktree
 //!
 //! tmux opens a new pane in the directory of the current pane. So a
@@ -167,7 +176,8 @@ impl Behind {
     }
 }
 
-/// Fetches `origin` in the clone of `dir` for at most `wait`, and tells
+/// Fetches `origin` in the clone of `dir` for at most `wait`
+/// ([`crate::dropped::fetch`]), and tells
 /// whether its default branch is behind (01M3JN21T9C5GX6VX8N032JYWE).
 /// It is `None` when the branch is up to date, and when `dir` is not in
 /// git, has no `origin`, or the fetch fails or takes longer than `wait`
@@ -182,19 +192,7 @@ pub async fn behind(dir: &Path, wait: Duration) -> Option<Behind> {
     )
     .await?;
     let branch = head.strip_prefix("origin/")?.to_owned();
-    let mut fetch = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["fetch", "--quiet", "origin"])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .ok()?;
-    let fetched = tokio::time::timeout(wait, fetch.wait()).await.ok()?.ok()?;
-    if !fetched.success() {
+    if !crate::dropped::fetch(dir, wait).await {
         return None;
     }
     let range = format!("refs/heads/{branch}..refs/remotes/{head}");

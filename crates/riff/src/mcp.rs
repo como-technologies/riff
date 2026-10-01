@@ -81,7 +81,7 @@ use serde::Deserialize;
 
 use crate::api::Api;
 use crate::binary::{Follow, with_last, with_place};
-use crate::{identity, leave, local, relay, text};
+use crate::{dropped, identity, leave, local, relay, text};
 
 /// The hidden option that gives a new `riff mcp` the initialize request
 /// of its client, as JSON, after an update (01M3NT6WZTKAFKGDWGCFKC8TB5).
@@ -91,7 +91,8 @@ pub const CLIENT: &str = "--client";
 pub struct Tools {
     api: Api,
     me: Arc<Mutex<SessionUri>>,
-    /// Where the session works: the directory of the WIP push of `leave`.
+    /// Where the session works: the directory of the WIP push of `leave`,
+    /// and of the look for earlier work at a claim.
     dir: Arc<Mutex<PathBuf>>,
     /// The directory of the files of [`local`], for the record of a leave.
     local: Option<PathBuf>,
@@ -409,7 +410,10 @@ request wakes you, answer with this tool. Do not post a reply."
         Ok(text::inbox(&inbox, &me))
     }
 
-    #[tool(description = "Claim a work item so that no other session does the same work.")]
+    #[tool(
+        description = "Claim a work item so that no other session does the same work. The result \
+names the pushed branch and the worktree of an earlier session on the item, when there is one."
+    )]
     async fn claim(&self, Parameters(a): Parameters<ClaimArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
         let reply = self
@@ -417,7 +421,15 @@ request wakes you, answer with this tool. Do not post a reply."
             .claim(&self.here()?, &thread, &a.item)
             .await
             .map_err(err)?;
-        Ok(text::claimed(&reply, &thread, &a.item))
+        let mut out = text::claimed(&reply, &thread, &a.item);
+        if reply.granted {
+            let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            if let Some(line) = dropped::at_claim(&dir, &a.item).await {
+                out.push('\n');
+                out.push_str(&line);
+            }
+        }
+        Ok(out)
     }
 
     #[tool(description = "Release a work item that you claimed.")]
