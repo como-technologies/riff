@@ -26,8 +26,9 @@ fn now_ms() -> u64 {
     u64::try_from(since.as_millis()).unwrap()
 }
 
-/// A caller that is signed in: its device key, its access token and its
-/// URI. A URI with a session ID gets a session token (R19).
+/// A caller that is signed in: its device key, its access token, the
+/// refresh token of its person pair, and its URI. A URI with a session
+/// ID gets a session token (R19).
 struct Caller {
     key: Key,
     token: String,
@@ -47,40 +48,41 @@ impl Caller {
                 Instant::now(),
             )
             .unwrap();
-        let Some(session) = me.who().session() else {
-            return Caller {
-                key,
-                token: person.access_token,
-                refresh: person.refresh_token,
-                me,
-            };
+        let caller = Caller {
+            key,
+            token: person.access_token,
+            refresh: person.refresh_token,
+            me,
+        };
+        // The refresh makes the server save the sign-in, as after a real
+        // sign-in. A swap for a session token saves nothing
+        // (01M3WFVAB44T8EP4QZD4KS7DRF).
+        caller.refreshed(base).await
+    }
+
+    /// Gets a new access token, as `riff` does after a restart of the
+    /// server: it refreshes the person pair, and a session swaps the new
+    /// person token for a session token (01M3WFVADCDZM8XX590KAEMEYG).
+    async fn refreshed(mut self, base: &str) -> Caller {
+        let form = format!("grant_type=refresh_token&refresh_token={}", self.refresh);
+        let reply = common::refresh(base, &self.key, &form).await;
+        assert_eq!(reply.status(), 200);
+        let person: TokenReply = reply.json().await.unwrap();
+        self.token = person.access_token;
+        self.refresh = person.refresh_token;
+        let Some(session) = self.me.who().session() else {
+            return self;
         };
         let form = format!(
             "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange\
              &subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token\
              &subject_token={}&session={session}",
-            person.access_token
+            self.token
         );
-        let reply = common::refresh(base, &key, &form).await;
-        assert_eq!(reply.status(), 200);
-        let pair: TokenReply = reply.json().await.unwrap();
-        Caller {
-            key,
-            token: pair.access_token,
-            refresh: pair.refresh_token,
-            me,
-        }
-    }
-
-    /// Gets a new access token with the refresh token, as `riff` does
-    /// after a restart of the server.
-    async fn refreshed(mut self, base: &str) -> Caller {
-        let form = format!("grant_type=refresh_token&refresh_token={}", self.refresh);
         let reply = common::refresh(base, &self.key, &form).await;
         assert_eq!(reply.status(), 200);
-        let pair: TokenReply = reply.json().await.unwrap();
-        self.token = pair.access_token;
-        self.refresh = pair.refresh_token;
+        let session: TokenReply = reply.json().await.unwrap();
+        self.token = session.access_token;
         self
     }
 
