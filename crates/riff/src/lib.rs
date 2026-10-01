@@ -85,6 +85,7 @@ pub mod next;
 pub mod permissions;
 pub mod plugin;
 pub mod pr;
+pub mod reap;
 pub mod relay;
 pub mod rollout;
 pub mod secrets;

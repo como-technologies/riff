@@ -56,6 +56,15 @@
 //! (01M3NBV44GKAX6WS391PN6R72W). It reads no input, and its children get
 //! no input from it (01M3NBV46R0VB0JQNQ1ERG16J6).
 //!
+//! # A worker that dies
+//!
+//! A worker can die at each moment: a memory kill, a crash, a closed
+//! pane. Each [`reap::EVERY`] the host looks at its worker panes. When
+//! a pane is gone and its session is still live, the host ends the
+//! session, so its claims are free at once, and posts one note to the
+//! lead: the pane, the session, the item and the cause
+//! (01M3WG2460P4GF7GEVBY92Q33W). See [`crate::reap`].
+//!
 //! # A new binary
 //!
 //! When a new `riff` is on disk, the host runs it in its place, as
@@ -83,6 +92,7 @@ use riff_core::wire::{Kind, SessionInfo, Status};
 use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
 use crate::machine::Machine;
+use crate::reap::{self, Reaper, Watched};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
 use crate::{identity, local, settings, text, worker};
 
@@ -405,7 +415,11 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     let mut link = Reconnect::default();
     let mut update = std::pin::pin!(binary.new_one());
     let mut following = true;
+    let mut reaper = Reaper::default();
+    let mut look = tokio::time::interval(reap::EVERY);
+    look.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        let mut changed = true;
         tokio::select! {
             () = &mut update, if following => {
                 binary.run(with_last(std::env::args_os().skip(1), SESSION_ARG, &id));
@@ -423,8 +437,14 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
                 }
             }
             _ = refresh.tick() => {}
+            _ = look.tick() => changed = false,
         }
-        if let Err(e) = host.set_status().await {
+        let lost = reap::lost(&mut reaper, &host.tmux);
+        if !lost.is_empty() {
+            host.reap(&lost).await;
+            changed = true;
+        }
+        if changed && let Err(e) = host.set_status().await {
             eprintln!("riff: cannot set the status of the host: {e:#}");
         }
     }
@@ -515,6 +535,39 @@ impl Host {
         let thread = self.me.default_thread();
         self.api
             .post(&self.me, thread.as_ref(), &[to], reply, Kind::Note)
+            .await?;
+        Ok(())
+    }
+
+    /// Ends the session of each worker in `lost` that is still live,
+    /// and posts one note to the lead for each
+    /// (01M3WG2460P4GF7GEVBY92Q33W). The pane of the worker ended with
+    /// no end call. A pane that the host stopped itself has its end.
+    async fn reap(&self, lost: &[Watched]) {
+        let sessions = match self.api.who(&self.me, false).await {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                eprintln!("riff: cannot end the session of a lost worker: {e:#}");
+                return;
+            }
+        };
+        for note in reap::reap(&self.api, &self.me, &sessions, lost, reap::journal).await {
+            println!("{note}");
+            if let Err(e) = self.note_lead(&note).await {
+                eprintln!("riff: cannot tell the lead: {e:#}");
+            }
+        }
+    }
+
+    /// Posts `note` to the lead of the user in the repository, as a
+    /// note in the repository thread. It wakes nobody.
+    async fn note_lead(&self, note: &str) -> Result<()> {
+        let Some(thread) = self.me.default_thread() else {
+            bail!("the host is not in a repository");
+        };
+        let to = Selector::lead(self.me.who().user(), &thread.to_string());
+        self.api
+            .post(&self.me, Some(&thread), &[to], note, Kind::Note)
             .await?;
         Ok(())
     }
