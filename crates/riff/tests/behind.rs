@@ -159,7 +159,8 @@ fn a_remote_that_is_gone_gets_no_line() {
 }
 
 /// The remote does not answer: the ssh command of git sleeps. The hook
-/// stops the fetch at its time limit.
+/// stops the fetch at its time limit. The test lets git use ssh: the
+/// helper keeps git off the network (01M3WG82ZMQYG1TGHE4ET0BDDW).
 #[test]
 fn a_remote_that_does_not_answer_gets_no_line_in_time() {
     let root = tempfile::tempdir().unwrap();
@@ -175,7 +176,13 @@ fn a_remote_that_does_not_answer_gets_no_line_in_time() {
             "ssh://nowhere.invalid/origin.git",
         ],
     );
-    let (context, took) = context(&clone, &[("GIT_SSH_COMMAND", "sleep 30; :")]);
+    let (context, took) = context(
+        &clone,
+        &[
+            ("GIT_SSH_COMMAND", "sleep 30; :"),
+            ("GIT_ALLOW_PROTOCOL", "file:ssh"),
+        ],
+    );
     assert!(!context.contains("behind origin"), "{context}");
     assert!(took >= FETCH_WAIT, "the fetch did not wait: {took:?}");
     within_limits(took);

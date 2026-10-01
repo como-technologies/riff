@@ -22,6 +22,9 @@
 //! A session can leave the riff and join it again with the tools
 //! `leave` and `join` (see [`leave`]).
 //!
+//! A granted claim and a new start show the earlier work on an item:
+//! its pushed branch and its worktree (see [`dropped`]).
+//!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
 //! `riff hook session-start` (see [`hook`]).
 //!

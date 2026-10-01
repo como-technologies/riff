@@ -749,7 +749,8 @@ mod tests {
             assert!(flat.contains(word), "the skill does not say {word:?}");
         }
         // The rule is in the start routine and in the hygiene steps.
-        let start = &skill[skill.find("## Start routine").unwrap()..skill.find("## Waves").unwrap()];
+        let start =
+            &skill[skill.find("## Start routine").unwrap()..skill.find("## Waves").unwrap()];
         assert!(start.contains("Push your work as WIP"));
         let hygiene = &skill[skill.find("## Keep good git hygiene").unwrap()
             ..skill.find("### Rebase before each push").unwrap()];

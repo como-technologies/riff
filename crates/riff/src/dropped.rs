@@ -332,8 +332,8 @@ pub fn all(dir: &Path) -> Vec<Earlier> {
 /// ```
 pub fn without_owner(all: Vec<Earlier>, me: &SessionUri, who: &[SessionInfo]) -> Vec<Earlier> {
     let owns = |s: &SessionInfo, earlier: &Earlier| {
-        let here = s.uri.place().host() == me.place().host()
-            && s.uri.place().repo() == me.place().repo();
+        let here =
+            s.uri.place().host() == me.place().host() && s.uri.place().repo() == me.place().repo();
         let in_worktree = || {
             s.uri.place().worktree().is_some_and(|worktree| {
                 earlier
@@ -415,7 +415,8 @@ impl Worktree {
 
 /// Each branch of `origin` that the clone of `dir` knows.
 fn pushed(dir: &Path) -> Vec<Pushed> {
-    let format = "--format=%(refname:short)%09%(objectname:short)%09%(committerdate:relative)%09%(subject)";
+    let format =
+        "--format=%(refname:short)%09%(objectname:short)%09%(committerdate:relative)%09%(subject)";
     let Some(out) = git(dir, &["for-each-ref", format, "refs/remotes/origin"]) else {
         return Vec::new();
     };

@@ -9,8 +9,11 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use riff::api::Api;
+use riff::mcp::Tools;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::RiffState;
+use rmcp::ServiceExt;
+use rmcp::model::CallToolRequestParams;
 use tokio::io::AsyncWriteExt;
 
 async fn start_server() -> Api {
@@ -202,7 +205,12 @@ async fn a_session_on_another_clone_finds_the_wip_commit_of_a_killed_session() {
     // with the steps of the skill before a long run.
     let first = session("pangolin", "a1");
     api.register(&first).await.unwrap();
-    assert!(api.claim(&first, &repo(), "issue-12").await.unwrap().granted);
+    assert!(
+        api.claim(&first, &repo(), "issue-12")
+            .await
+            .unwrap()
+            .granted
+    );
     let work = worktree(&pangolin, "issue-12");
     std::fs::write(work.join("work.txt"), "half of the work\n").unwrap();
     sh(&work, &skill_block("### Push your work as WIP"));
@@ -244,7 +252,10 @@ async fn a_session_on_another_clone_finds_the_wip_commit_of_a_killed_session() {
 
     // It goes on from the branch, with the step of the skill.
     let next = worktree(&thelio, "issue-12");
-    git(&next, &["reset", "-q", "--hard", "origin/worktree-issue-12"]);
+    git(
+        &next,
+        &["reset", "-q", "--hard", "origin/worktree-issue-12"],
+    );
     assert_eq!(
         std::fs::read_to_string(next.join("work.txt")).unwrap(),
         "half of the work\n"
@@ -277,10 +288,70 @@ async fn a_claim_names_the_worktree_of_an_earlier_session_and_its_files() {
 
     // An item with no earlier work, and a verify claim, get no line.
     let (out, code) = claim(&api, &home, &pangolin, "pangolin", "b2", "issue-7").await;
-    assert_eq!((out.as_str(), code), ("You hold issue-7 in como-technologies/riff.\n", 0));
+    assert_eq!(
+        (out.as_str(), code),
+        ("You hold issue-7 in como-technologies/riff.\n", 0)
+    );
     let (out, code) = claim(&api, &home, &pangolin, "pangolin", "c3", "verify-issue-12").await;
     assert_eq!(code, 0);
     assert_eq!(out, "You hold verify-issue-12 in como-technologies/riff.\n");
+}
+
+/// Calls the `claim` tool of `tools` through a real MCP client.
+async fn claim_tool(tools: Tools, item: &str) -> String {
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        tools
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let client = ().serve(client_io).await.unwrap();
+    let args = serde_json::json!({ "item": item });
+    let params = CallToolRequestParams::new("claim".to_owned())
+        .with_arguments(args.as_object().unwrap().clone());
+    let result = client.call_tool(params).await.unwrap();
+    result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn the_claim_tool_names_the_earlier_work() {
+    let api = running_riff().await;
+    let root = tempfile::tempdir().unwrap();
+    origin(root.path());
+    let pangolin = clone(root.path(), "pangolin");
+    let work = worktree(&pangolin, "issue-12");
+    std::fs::write(work.join("work.txt"), "not committed\n").unwrap();
+    let tools = |id: &str| {
+        let me = session("pangolin", id);
+        Tools::new(api.clone(), me).in_dir(pangolin.clone())
+    };
+    for id in ["b2", "c3"] {
+        api.register(&session("pangolin", id)).await.unwrap();
+    }
+
+    let out = claim_tool(tools("b2").with_earlier_work(), "issue-12").await;
+    assert_eq!(
+        out,
+        format!(
+            "You hold issue-12 in como-technologies/riff.\nEarlier work on issue-12: the \
+             worktree {} (1 file not committed). Go on from it, and do not start again: see \
+             \"Pick up dropped work\" in the riff skill.",
+            work.display()
+        )
+    );
+    // A claim that fails names no work.
+    let out = claim_tool(tools("c3").with_earlier_work(), "issue-12").await;
+    assert!(out.contains("holds issue-12"), "{out}");
+    assert!(!out.contains("Earlier work"), "{out}");
 }
 
 #[tokio::test]
@@ -299,7 +370,12 @@ async fn a_new_start_lists_the_earlier_work_that_no_live_session_owns() {
     // A live session holds issue-13. No session holds issue-12.
     let owner = session("pangolin", "b2");
     api.register(&owner).await.unwrap();
-    assert!(api.claim(&owner, &repo(), "issue-13").await.unwrap().granted);
+    assert!(
+        api.claim(&owner, &repo(), "issue-13")
+            .await
+            .unwrap()
+            .granted
+    );
     let _live = Box::pin(api.watch(&owner).await.unwrap());
 
     // On the same machine, the context names the branch and the

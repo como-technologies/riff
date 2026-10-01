@@ -94,6 +94,9 @@ pub struct Tools {
     /// Where the session works: the directory of the WIP push of `leave`,
     /// and of the look for earlier work at a claim.
     dir: Arc<Mutex<PathBuf>>,
+    /// True when a granted claim looks for the earlier work on its item
+    /// (01M3WFYER9QWA698KY2E1HNTCW).
+    earlier: bool,
     /// The directory of the files of [`local`], for the record of a leave.
     local: Option<PathBuf>,
     /// True while the session is out of the riff.
@@ -191,6 +194,7 @@ impl Tools {
             api,
             me: Arc::new(Mutex::new(me)),
             dir: Arc::new(Mutex::new(std::env::current_dir().unwrap_or_default())),
+            earlier: false,
             local: None,
             left: Arc::new(AtomicBool::new(false)),
             worker: false,
@@ -228,6 +232,15 @@ impl Tools {
     /// Sets the directory where the session works.
     pub fn in_dir(self, dir: PathBuf) -> Self {
         *self.dir.lock().unwrap_or_else(|p| p.into_inner()) = dir;
+        self
+    }
+
+    /// Makes a granted claim name the earlier work on its item in the
+    /// clone where the session works (01M3WFYER9QWA698KY2E1HNTCW). It
+    /// fetches from `origin`, so `riff mcp` turns it on, and a test
+    /// only for a clone of its own.
+    pub fn with_earlier_work(mut self) -> Self {
+        self.earlier = true;
         self
     }
 
@@ -422,7 +435,7 @@ names the pushed branch and the worktree of an earlier session on the item, when
             .await
             .map_err(err)?;
         let mut out = text::claimed(&reply, &thread, &a.item);
-        if reply.granted {
+        if reply.granted && self.earlier {
             let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
             if let Some(line) = dropped::at_claim(&dir, &a.item).await {
                 out.push('\n');
@@ -661,6 +674,7 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
     use tokio::signal::unix::{SignalKind, signal};
     let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
+        .with_earlier_work()
         .in_local(local::dir())
         .as_worker(worker)
         .in_wrapper(crate::worker::wrapper());
