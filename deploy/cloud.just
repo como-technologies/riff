@@ -57,3 +57,11 @@ log *ARGS='--limit 50':
     set -euo pipefail
     . ./cloud.env
     gcloud run services logs read "$CLOUD_SERVICE" --project "$CLOUD_PROJECT" --region "$CLOUD_REGION" {{ARGS}}
+
+# Show the log lines of the service with the severity ERROR or more
+errors LIMIT='50':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . ./cloud.env
+    gcloud run services logs read "$CLOUD_SERVICE" --project "$CLOUD_PROJECT" --region "$CLOUD_REGION" \
+        --limit {{LIMIT}} --log-filter 'severity>=ERROR'

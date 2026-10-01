@@ -4,20 +4,23 @@ use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use clap::Parser;
-use riff_server::Service;
+use clap::{Args, Parser, Subcommand};
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
 use riff_server::listen::{self, Port};
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
 use riff_server::store::{Dir, Store};
+use riff_server::{Service, logline, tools};
 use tokio::signal::unix::{SignalKind, signal};
 
-/// The central service that sessions connect to. It runs in the
-/// foreground (R118).
+/// The central service that sessions connect to. With no command, it
+/// runs in the foreground (R118).
 #[derive(Parser)]
 #[command(version = riff_core::build::VERSION, about, max_term_width = 80)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// The address to listen on.
     #[arg(
         long,
@@ -103,14 +106,15 @@ struct Cli {
         long,
         env = "RIFF_BUCKET",
         hide_env_values = true,
-        conflicts_with = "dir"
+        conflicts_with = "dir",
+        global = true
     )]
     bucket: Option<String>,
 
     /// A directory that holds the state as files, for local development:
     /// the log, the token store and the lease. The server replays the log
     /// at start.
-    #[arg(long, env = "RIFF_DIR", hide_env_values = true)]
+    #[arg(long, env = "RIFF_DIR", hide_env_values = true, global = true)]
     dir: Option<std::path::PathBuf>,
 
     /// The minutes that the owner has to answer `riff owner --take` of an
@@ -134,6 +138,43 @@ struct Cli {
     owner_pings: u32,
 }
 
+/// The commands of `riff-server`. It runs no server for them.
+#[derive(Subcommand)]
+enum Command {
+    /// Print the records of the log as text, one record on a line. Name
+    /// the store with --bucket or --dir. With a bucket, the token comes
+    /// from the metadata server of Cloud Run, or from your Google sign-in
+    /// (gcloud auth login).
+    Log(LogArgs),
+}
+
+#[derive(Args)]
+#[command(args_conflicts_with_subcommands = true)]
+struct LogArgs {
+    /// Print the records from this position.
+    #[arg(long, default_value_t = 1, value_name = "POSITION")]
+    from: u64,
+
+    #[command(subcommand)]
+    action: Option<LogAction>,
+}
+
+#[derive(Subcommand)]
+enum LogAction {
+    /// Read each checkpoint, and each chunk of the log from the oldest
+    /// kept checkpoint. Name each line that does not read, and each gap in
+    /// the positions. Exit with 1 when it finds a problem.
+    Verify,
+    /// Delete each record and each checkpoint after a position, and print
+    /// what it removes. Stop the server first. It refuses a position
+    /// before the oldest kept checkpoint.
+    Cut {
+        /// The last position that stays.
+        #[arg(long, value_name = "POSITION")]
+        after: u64,
+    },
+}
+
 impl Cli {
     /// True for a riff with no sign-in (R211).
     fn trusted(&self) -> bool {
@@ -141,38 +182,104 @@ impl Cli {
     }
 }
 
+/// Why `riff-server` stops with a failure.
+enum Stop {
+    /// An error before the log starts, or of a command: `main` prints
+    /// it.
+    Told(String),
+    /// The log has the error, or the command printed it.
+    Logged,
+}
+
+impl From<std::io::Error> for Stop {
+    fn from(error: std::io::Error) -> Self {
+        Stop::Told(error.to_string())
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    match run().await {
+    let cli = Cli::parse();
+    let run = match &cli.command {
+        Some(Command::Log(args)) => log_tool(&cli, args).await,
+        None => run(cli).await,
+    };
+    match run {
         Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(e) => {
+        Err(Stop::Told(e)) => {
             eprintln!("riff-server: {e}");
             std::process::ExitCode::FAILURE
+        }
+        Err(Stop::Logged) => std::process::ExitCode::FAILURE,
+    }
+}
+
+/// Runs a tool of the log on the store that the options name
+/// (01M3TJWHNYRCA7RTPFNYM5ZNQS). See [`tools`].
+async fn log_tool(cli: &Cli, args: &LogArgs) -> Result<(), Stop> {
+    let store: Box<dyn Store> = match (&cli.bucket, &cli.dir) {
+        (Some(bucket), _) => Box::new(Gcs::for_person(bucket)),
+        (None, Some(dir)) => Box::new(Dir::new(dir)),
+        (None, None) => {
+            return Err(Stop::Told(
+                "name the store of the log: --bucket BUCKET or --dir DIR".into(),
+            ));
+        }
+    };
+    let told = |e: tools::ToolError| Stop::Told(e.to_string());
+    match &args.action {
+        None => {
+            tools::print(&*store, args.from, &mut |line| println!("{line}"))
+                .await
+                .map_err(told)?;
+            Ok(())
+        }
+        Some(LogAction::Verify) => {
+            let verified = tools::verify(&*store).await.map_err(told)?;
+            for problem in &verified.problems {
+                println!("{problem}");
+            }
+            println!("{}", tools::verified_text(&verified));
+            if verified.problems.is_empty() {
+                Ok(())
+            } else {
+                Err(Stop::Logged)
+            }
+        }
+        Some(LogAction::Cut { after }) => {
+            let removed = tools::cut(&*store, *after).await.map_err(told)?;
+            for line in &removed.records {
+                println!("{line}");
+            }
+            println!("{}", tools::cut_text(&removed, *after));
+            Ok(())
         }
     }
 }
 
-async fn run() -> std::io::Result<()> {
-    let cli = Cli::parse();
+/// Runs the server until it stops.
+async fn run(cli: Cli) -> Result<(), Stop> {
     if let Some(owner) = cli.owner.as_deref().filter(|o| !o.contains('@')) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("the owner {owner} is not an email"),
-        ));
+        return Err(Stop::Told(format!("the owner {owner} is not an email")));
     }
     // The bucket can hold an owner: check again after the load.
     let trusted = cli.trusted();
     let owned = cli.owner.is_some() || cli.bucket.is_some();
-    let warning = listen::check(cli.listen, trusted, cli.insecure, owned)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    let warning = listen::check(cli.listen, trusted, cli.insecure, owned).map_err(Stop::Told)?;
+    // Each line of the log is JSON with a severity
+    // (01M3TJWJ3VK671T9NM95F3ES82).
+    logline::init();
     if let Some(warning) = warning {
         tracing::warn!("{warning}");
     }
+    serve(cli, trusted).await.map_err(|error| {
+        tracing::error!("riff-server stops: {error}");
+        Stop::Logged
+    })
+}
+
+/// Loads the state, opens the port and serves. The log runs.
+async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     // Catch SIGTERM before the server says that it listens.
     let mut terminate = signal(SignalKind::terminate())?;
     // The port opens only after the load (01M3THEE31H5QVV3JAFC4ZRGFR).
@@ -311,8 +418,33 @@ mod tests {
         assert!(Cli::try_parse_from(["riff-server", "--owner-pings", "0"]).is_err());
     }
 
+    /// 01M3K0QM5HY852J4E5M2YQDYEM: the only command is `log`, with its
+    /// tools `verify` and `cut`.
     #[test]
-    fn the_cli_has_no_subcommand() {
-        assert_eq!(Cli::command().get_subcommands().count(), 0);
+    fn the_only_command_is_log_with_verify_and_cut() {
+        let cli = Cli::command();
+        let names = |c: &clap::Command| -> Vec<String> {
+            c.get_subcommands()
+                .map(|s| s.get_name().to_owned())
+                .collect()
+        };
+        assert_eq!(names(&cli), ["log"]);
+        let log = cli.find_subcommand("log").unwrap();
+        assert_eq!(names(log), ["verify", "cut"]);
+    }
+
+    #[test]
+    fn the_log_tools_take_the_store_before_or_after_the_command() {
+        use clap::Parser;
+        for args in [
+            &["riff-server", "--dir", "d", "log", "verify"][..],
+            &["riff-server", "log", "verify", "--dir", "d"][..],
+            &["riff-server", "log", "--from", "7", "--bucket", "b"][..],
+            &["riff-server", "log", "cut", "--after", "7", "--dir", "d"][..],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
+        }
+        // A cut names its position.
+        assert!(Cli::try_parse_from(["riff-server", "log", "cut", "--dir", "d"]).is_err());
     }
 }

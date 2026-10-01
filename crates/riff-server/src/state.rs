@@ -682,6 +682,15 @@ pub struct Delivery {
     pub tailed: Tailed,
 }
 
+/// The sizes of the state, from [`State::counts`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub sessions: u64,
+    /// The number of read cursors.
+    pub cursors: u64,
+    pub threads: u64,
+}
+
 /// One page of messages from [`State::read_page`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Page {
@@ -1289,6 +1298,30 @@ impl State {
     /// The position of the last written record.
     pub fn written_position(&self) -> u64 {
         self.written.position
+    }
+
+    /// The numbers of sessions, read cursors and threads of the written
+    /// state, for the facts of `riff server`
+    /// (01M3TJWJ12WEDCXW3W0529KRP2).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let a: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a".parse()?;
+    /// let mut state = State::default();
+    /// state.register(&a, Instant::now());
+    /// let counts = state.counts();
+    /// assert_eq!((counts.sessions, counts.threads), (1, 1));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn counts(&self) -> Counts {
+        Counts {
+            sessions: self.sessions.len() as u64,
+            cursors: self.cursors.len() as u64,
+            threads: self.written.threads.len() as u64,
+        }
     }
 
     /// Takes each record in the queue, for the writer.

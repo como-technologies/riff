@@ -61,6 +61,13 @@
 //!   for [`WAIT_LINE_AFTER`], the client shows the line [`WAITING`]
 //!   (01M3THEE5V3RFHF9QTA8MA8QDF): on stderr, or where
 //!   [`Api::waits_to`] says. It shows the line one time for each gap.
+//! - `riff-server` opens its port only after its load, so in the gap of
+//!   a start on one machine each connect is refused. When this process
+//!   got a reply from the server before, the client tries a refused
+//!   connect again in the same way (01M3TJWJ9914B7Z5EQJF310REK). So
+//!   `riff mcp`, `riff watch`, `riff chat` and `riff top` wait through a
+//!   restart. A process that got no reply yet fails at once: riff cannot
+//!   tell a server that starts from no server.
 //! - A 5xx or 429 reply with no build header comes from the front end, not
 //!   from `riff-server`. The client sends the request again in the same
 //!   way, and never reads it as another build
@@ -83,9 +90,9 @@ use riff_core::wire::{
     AdminSet, Alive, AliveReply, Claim, ClaimReply, DenyOwner, End, Freed, Idle, Invite, Invited,
     Keys, Kind, Lead, LeadReply, MeReply, Members, MembersReply, Membership, Message, OwnerAsked,
     OwnerDenied, OwnerPassed, PassOwner, Post, Posted, Read, ReadReply, Register, Remove, Removed,
-    Revoke, Revoked, Riff, RiffReply, RiffState, SessionInfo, SetAdmin, SetIdle, SetStatus,
-    SignInConfig, Start, Started, Status, Tailed, TakeOwner, ThreadInfo, Threads, ThreadsReply,
-    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Revoke, Revoked, Riff, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetIdle,
+    SetStatus, SignInConfig, Start, Started, Status, Tailed, TakeOwner, ThreadInfo, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -231,6 +238,32 @@ pub fn shows_wait_line(waited: Duration) -> bool {
 
 /// Where an [`Api`] shows [`WAITING`].
 type WaitLine = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Each server that gave a reply to this process
+/// (01M3TJWJ9914B7Z5EQJF310REK).
+static REPLIED: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// True when the server at `base` gave a reply to this process before.
+/// Then a refused connect is a restart, and the client tries again.
+///
+/// ```
+/// assert!(!riff::api::replied("http://127.0.0.1:9"));
+/// ```
+pub fn replied(base: &str) -> bool {
+    REPLIED
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .contains(base)
+}
+
+/// Records that the server at `base` gave a reply.
+fn note_reply(base: &str) {
+    let mut replied = REPLIED.lock().unwrap_or_else(|poison| poison.into_inner());
+    if !replied.contains(base) {
+        replied.insert(base.to_owned());
+    }
+}
 
 /// Follows a stream across connections (R131, R148). `connect` opens the
 /// stream. When the stream ends or fails, `follow` connects again at
@@ -698,7 +731,9 @@ impl Api {
 
     /// Sends a request to one path. `body` adds the rest to the request.
     /// While the server replies 503, it waits and sends a new request,
-    /// with a new proof (R132). See [`busy_waits`]. An outage of the
+    /// with a new proof (R132). See [`busy_waits`]. It waits in the same
+    /// way while a server that replied before refuses the connect
+    /// (01M3TJWJ9914B7Z5EQJF310REK). An outage of the
     /// front end ([`is_outage`]) waits the same way, before the check of
     /// the build (01M3QCMJ9F1GRTRRSB4AW9TC3D). After a 401 to a
     /// token, it sends the request once more with a new token
@@ -716,10 +751,24 @@ impl Api {
         loop {
             // A box: a request may need a token, and a token is a request.
             let (request, token) = Box::pin(self.request(method.clone(), path)).await?;
-            let response = body(request)
-                .send()
-                .await
-                .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            let response = match body(request).send().await {
+                Ok(response) => response,
+                // The server of this process starts again: its port is
+                // closed until its load is done (01M3TJWJ9914B7Z5EQJF310REK).
+                Err(error) if error.is_connect() && replied(&self.base) => {
+                    let Some(wait) = waits.next() else {
+                        return Err(error)
+                            .with_context(|| format!("cannot reach riff-server at {}", self.base));
+                    };
+                    self.busy(wait, &mut waited).await;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("cannot reach riff-server at {}", self.base));
+                }
+            };
+            note_reply(&self.base);
             if is_outage(&response) {
                 let Some(wait) = waits.next() else {
                     bail!(
@@ -823,6 +872,18 @@ impl Api {
     /// `me`: the server changes nothing.
     pub async fn me(&self, me: &SessionUri) -> Result<MeReply> {
         self.fetch("me", &[("uri", me.to_string())]).await
+    }
+
+    /// The facts of the server, for `riff server`
+    /// (01M3TJWJ12WEDCXW3W0529KRP2). The server answers also while it
+    /// replies 503 to each other call, and to a `riff` of each version.
+    /// An error when the server has no facts, for example an old server,
+    /// or when the caller has no sign-in at a riff with sign-in.
+    pub async fn facts(&self) -> Result<ServerFacts> {
+        let response = self
+            .send_with(reqwest::Method::GET, "/v1/server", |r| r, Check::None)
+            .await?;
+        Ok(response.error_for_status()?.json().await?)
     }
 
     pub async fn threads(&self, me: &SessionUri) -> Result<Vec<ThreadInfo>> {

@@ -83,6 +83,7 @@
 //! # Ok(()) }
 //! ```
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use riff_core::record::{Line, Record};
@@ -199,6 +200,41 @@ pub async fn write(
     timing: &Timing,
     may_write: impl Fn() -> bool,
 ) -> Result<(), StoreError> {
+    write_counted(store, records, timing, may_write, &AtomicU64::new(0)).await
+}
+
+/// As [`write()`]. It adds 1 to `failed` for each try that failed, for the
+/// facts of `riff server` (01M3TJWJ12WEDCXW3W0529KRP2).
+///
+/// ```
+/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// use std::sync::atomic::{AtomicU64, Ordering};
+/// use riff_core::record::{Change, Record, RiffStateSet};
+/// use riff_core::wire::RiffState;
+/// use riff_server::log::{Timing, write_counted};
+/// use riff_server::store::Memory;
+///
+/// let record = Record {
+///     position: 1,
+///     written_at_ms: 0,
+///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
+/// };
+/// let (store, failed) = (Memory::default(), AtomicU64::new(0));
+/// write_counted(&store, &[record.clone()], &Timing::default(), || true, &failed).await?;
+/// assert_eq!(failed.load(Ordering::SeqCst), 0);
+/// // Another object has the name: the first try fails for good.
+/// let again = write_counted(&store, &[record], &Timing::default(), || true, &failed).await;
+/// assert!(again.is_err());
+/// assert_eq!(failed.load(Ordering::SeqCst), 1);
+/// # Ok(()) }
+/// ```
+pub async fn write_counted(
+    store: &dyn Store,
+    records: &[Record],
+    timing: &Timing,
+    may_write: impl Fn() -> bool,
+    failed: &AtomicU64,
+) -> Result<(), StoreError> {
     let name = chunk_name(records[0].position);
     let bytes = encode(records);
     let start = tokio::time::Instant::now();
@@ -214,18 +250,28 @@ pub async fn write(
         };
         let error = match tried {
             Ok(Ok(_)) => return Ok(()),
-            Ok(Err(error @ StoreError::Conflict(_))) if first => return Err(error),
+            Ok(Err(error @ StoreError::Conflict(_))) if first => {
+                failed.fetch_add(1, Ordering::SeqCst);
+                return Err(error);
+            }
             Ok(Err(StoreError::Conflict(_))) => {
                 return match store.load(&name).await {
                     Ok(Some(loaded)) if loaded.bytes == bytes => Ok(()),
-                    Ok(_) => Err(StoreError::Conflict(name)),
-                    Err(error) => Err(error),
+                    Ok(_) => {
+                        failed.fetch_add(1, Ordering::SeqCst);
+                        Err(StoreError::Conflict(name))
+                    }
+                    Err(error) => {
+                        failed.fetch_add(1, Ordering::SeqCst);
+                        Err(error)
+                    }
                 };
             }
             Ok(Err(error)) => error,
             Err(_) => StoreError::Failed(format!("the write of {name} timed out")),
         };
         first = false;
+        failed.fetch_add(1, Ordering::SeqCst);
         if start.elapsed() + backoff > timing.retry_for {
             return Err(error);
         }
@@ -298,6 +344,7 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
         .unwrap_or(0);
     let mut records = Vec::new();
     let mut skipped = None;
+    let mut skips = 0;
     let mut next = None;
     let mut last_name = None;
     for (_, name) in &chunks[from..] {
@@ -338,6 +385,7 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
                 Line::Unknown { position, kind } => {
                     tracing::warn!(position, "skipped a record of the unknown kind {kind}");
                     skipped = skipped.or(Some(position));
+                    skips += 1;
                 }
             }
         }
@@ -358,6 +406,8 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
         records,
         last,
         skipped,
+        skips,
+        chunks: chunks.len() as u64,
     })
 }
 
@@ -372,6 +422,11 @@ pub struct Replayed {
     pub last: u64,
     /// The position of the first record that this build skipped.
     pub skipped: Option<u64>,
+    /// The number of records that this build skipped.
+    pub skips: u64,
+    /// The number of chunks in the store, also the ones that the replay
+    /// did not read.
+    pub chunks: u64,
 }
 
 fn to_line(value: &impl Serialize) -> Vec<u8> {

@@ -288,6 +288,10 @@ sequenceDiagram
     else the load worked
         S->>G: take the lease, wait
         S->>G: read the chunks that came since, apply them
+        S->>G: list checkpoint/ again
+        opt a checkpoint came since
+            S->>G: read the newest one: its position and its version
+        end
         S->>G: load the sign-ins again
         S->>S: open the port, serve
     end
@@ -302,6 +306,10 @@ sequenceDiagram
   before it.
 - The claims of a session come back with the log. The 5-minute claim
   timer of each session starts at the load.
+- The old instance can write a checkpoint until it reads the new lease.
+  So the new instance lists the checkpoints again after the wait. When
+  the newest one comes from a later version, it writes no checkpoint
+  past it.
 
 ## Reads
 
@@ -357,6 +365,11 @@ does not call `who` for the whole riff.
   When a call waits for more than 1 s, the client shows one line that
   it waits. `riff top` and `riff chat` keep their screen. The client
   gives up after 60 s, as today.
+- On Cloud Run, the front end holds each call in the gap. On one
+  machine, the port is closed in the gap, and each connect is refused.
+  The client tries a refused connect again only when its process got a
+  reply from the server before. A new process cannot tell a server that
+  starts from no server, so it fails at once.
 
 ## The wire
 
@@ -385,14 +398,17 @@ does not call `who` for the whole riff.
 ## Tools
 
 - `riff-server log` prints the records of the log as text, from a
-  position.
+  position (`--from POSITION`).
 - `riff-server log verify` reads each chunk and each checkpoint from the
   oldest kept checkpoint, and names each line that does not read.
 - `riff-server log cut --after POSITION` deletes each chunk and each
-  checkpoint after the position. It prints the records that it removes,
-  and the threads. It refuses to cut before the oldest kept checkpoint.
+  checkpoint after the position. It writes the chunk that holds the
+  position again, with only its first records. It prints the records
+  that it removes, and the threads. It refuses to cut before the oldest
+  kept checkpoint.
 - The tools take a token from the metadata server of Cloud Run, or from
-  the Google sign-in of the person. So they run on a laptop too.
+  the Google sign-in of the person (`gcloud auth print-access-token`).
+  So they run on a laptop too.
 
 ## Operations
 
@@ -405,7 +421,9 @@ nothing.
 2. A lifecycle rule: delete older versions of each object after 7 days.
 3. The `riff-server` service account can read and write objects in the
    bucket.
-4. `--memory 1Gi` on the Cloud Run service.
+4. `--memory 1Gi` on the Cloud Run service. Each deploy sets it too.
+5. An alert on `severity>=ERROR` in the log of the service, with an
+   email to the owner (`RIFF_OWNER`).
 
 ### Cost
 
@@ -438,13 +456,15 @@ each GB each month. Make sure of the prices when you set up.
 
 ### Monitoring
 
-`riff server` shows these facts:
+`riff server` shows these facts, from `GET /v1/server`. The call
+answers also while the server replies 503 to each other call:
 
 - serves, or 503 and why; the last error,
 - the log position, and the time and the duration of the last chunk
   write,
 - the number of write errors and skipped records since the start,
-- the position, the age and the version of the newest checkpoint,
+- the position, the age and the version of the newest checkpoint, and
+  why this build writes none,
 - the numbers of chunks, sessions, cursors, threads and live sign-ins,
 - the memory in use,
 - the start time of the instance, and how long the replay took.
@@ -457,11 +477,11 @@ goes to the owner.
 
 - Object versioning keeps each older version of an object for 7 days.
 - To go back to a position:
-  1. Stop the server: set the instances of the service to 0.
+  1. Stop the server: `just cloud down`.
   2. `riff-server log verify`, to find the first bad record.
   3. `riff-server log cut --after POSITION`. A cut loses each change
      after the position: the tool names them.
-  4. Start the server: set the instances back to 1.
+  4. Start the server: `just cloud up`.
 
 ### Deploy and rollback
 

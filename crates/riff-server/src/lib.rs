@@ -116,6 +116,16 @@
 //!   [`lease::Timing::exit_after`].
 //! - A server refuses each proof issued before it started to serve
 //!   (R142).
+//! - `GET /v1/server` gives the facts of the instance, for `riff server`
+//!   (01M3TJWJ12WEDCXW3W0529KRP2): if it serves, its last error, the
+//!   log, the checkpoint, its sizes and its start. The route is outside
+//!   the gate and the build check, so it answers also while each other
+//!   call gets 503, and to a `riff` of each version. The server counts
+//!   the facts that the state does not hold: the writer counts the
+//!   chunks and the failed tries, and each error that the server logs
+//!   stays as the last error.
+//! - Each log line is JSON with a `severity` (see [`logline`]). The
+//!   tools of the log run with no server (see [`tools`]).
 //!
 //! The wire protocol is in [`riff_core::wire`].
 //!
@@ -135,11 +145,13 @@ pub mod idle;
 pub mod lease;
 pub mod listen;
 pub mod log;
+pub mod logline;
 pub mod oidc;
 pub mod owner;
 pub mod state;
 pub mod store;
 pub mod token;
+pub mod tools;
 
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -159,13 +171,13 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, AdminSet, Alive, AliveReply, Claim, ClaimReply, DenyOwner, End,
-    ID_TOKEN_TYPE, Idle, Invite, Invited, Keys, Kind, Lead, LeadReply, MeReply, Members,
-    MembersReply, Membership, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Person, Post,
-    Posted, Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked, Riff,
-    RiffOwner, RiffReply, ServerMetadata, SetAdmin, SetIdle, SetStatus, SignInConfig, Start,
-    Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads, ThreadsReply, TokenError, TokenReply,
-    TokenRequest, Wake, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, AdminSet, Alive, AliveReply, CheckpointFacts, Claim, ClaimReply, DenyOwner,
+    End, FactError, ID_TOKEN_TYPE, Idle, Invite, Invited, Keys, Kind, Lead, LeadReply, MeReply,
+    Members, MembersReply, Membership, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Person,
+    Post, Posted, Read, ReadReply, Register, Remove, Removed, ResourceMetadata, Revoke, Revoked,
+    Riff, RiffOwner, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetIdle, SetStatus,
+    SignInConfig, Start, Started, TOKEN_EXCHANGE, Tailed, TakeOwner, Threads, ThreadsReply,
+    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::sync::broadcast;
@@ -232,6 +244,8 @@ struct Server {
     deliveries: Mutex<Vec<(u64, Delivery)>>,
     /// The checkpoints of this server.
     checkpoints: Mutex<Checkpoints>,
+    /// What `GET /v1/server` tells about this instance.
+    facts: Mutex<Facts>,
 }
 
 /// The last checkpoint, and why the server writes none.
@@ -242,17 +256,53 @@ struct Checkpoints {
     at: Instant,
     /// Why this server writes no checkpoint (01M3TBZBQDF0ES4KM54FJQF6Z8).
     blocked: Option<String>,
+    /// The newest checkpoint, for the facts.
+    newest: Option<CheckpointFacts>,
 }
 
 impl Checkpoints {
-    fn new(position: u64, blocked: Option<String>) -> Self {
+    fn new(blocked: Option<String>, newest: Option<CheckpointFacts>) -> Self {
         if let Some(why) = &blocked {
             tracing::warn!("this server writes no checkpoint: {why}");
         }
         Checkpoints {
-            position,
+            position: newest.as_ref().map_or(0, |c| c.position),
             at: Instant::now(),
             blocked,
+            newest,
+        }
+    }
+}
+
+/// The facts of this instance that only the server counts
+/// (01M3TJWJ12WEDCXW3W0529KRP2). The state and the token store give the
+/// other facts.
+#[derive(Default)]
+struct Facts {
+    /// The start time of the instance, in milliseconds since the Unix
+    /// epoch.
+    started_at_ms: u64,
+    /// How long the load and the replay took.
+    replay: Duration,
+    last_error: Option<FactError>,
+    chunk_written_at_ms: Option<u64>,
+    chunk_write: Option<Duration>,
+    /// The number of failed tries of a chunk write.
+    write_errors: u64,
+    /// The number of records that this build skipped.
+    skipped: u64,
+    /// The number of chunks in the store.
+    chunks: u64,
+    /// Why the server stopped for good.
+    stopped: Option<String>,
+}
+
+impl Facts {
+    /// The facts of an instance that starts now.
+    fn start() -> Self {
+        Facts {
+            started_at_ms: now_ms(),
+            ..Facts::default()
         }
     }
 }
@@ -454,7 +504,7 @@ impl Server {
             return Ok(());
         }
         self.save_tokens_since(0).await.map_err(|error| {
-            tracing::error!("the token store was not saved: {error}");
+            self.error(format!("the token store was not saved: {error}"));
             no(UNAVAILABLE)
         })
     }
@@ -486,6 +536,72 @@ impl Server {
     fn stop(&self, why: &str) {
         if !self.gate.stopped.send_replace(true) {
             tracing::warn!("stopped for good: {why}");
+            self.facts().stopped = Some(why.to_owned());
+        }
+    }
+
+    fn facts(&self) -> MutexGuard<'_, Facts> {
+        self.facts
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Logs an error, and keeps it as the last error for the facts
+    /// (01M3TJWJ12WEDCXW3W0529KRP2).
+    fn error(&self, message: String) {
+        tracing::error!("{message}");
+        self.facts().last_error = Some(FactError {
+            message,
+            at_ms: now_ms(),
+        });
+    }
+
+    /// Why the server replies 503 to each call, or `None` while it
+    /// serves.
+    fn not_serving(&self) -> Option<String> {
+        if let Some(why) = &self.facts().stopped {
+            return Some(format!("it stopped for good: {why}"));
+        }
+        if self.gate.closing.load(Ordering::SeqCst) {
+            return Some("it shuts down".into());
+        }
+        (!self.leased()).then(|| "its last read of the lease is too old".into())
+    }
+
+    /// The facts of this instance, for `GET /v1/server`
+    /// (01M3TJWJ12WEDCXW3W0529KRP2).
+    fn server_facts(&self) -> ServerFacts {
+        let not_serving = self.not_serving();
+        let sign_ins = self.tokens().chains() as u64;
+        let (position, counts) = {
+            let state = self.state();
+            (state.written_position(), state.counts())
+        };
+        let (checkpoint, no_checkpoint) = {
+            let marks = self.checkpoints();
+            (marks.newest.clone(), marks.blocked.clone())
+        };
+        let facts = self.facts();
+        let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+        ServerFacts {
+            not_serving,
+            last_error: facts.last_error.clone(),
+            position,
+            chunk_written_at_ms: facts.chunk_written_at_ms,
+            chunk_write_ms: facts.chunk_write.map(ms),
+            write_errors: facts.write_errors,
+            skipped_records: facts.skipped,
+            checkpoint,
+            no_checkpoint,
+            chunks: facts.chunks,
+            sessions: counts.sessions,
+            cursors: counts.cursors,
+            threads: counts.threads,
+            sign_ins,
+            memory_bytes: memory_bytes(),
+            started_at_ms: facts.started_at_ms,
+            replay_ms: ms(facts.replay),
+            now_ms: now_ms(),
         }
     }
 
@@ -576,18 +692,29 @@ impl Server {
                 let mut marks = self.checkpoints();
                 marks.position = position;
                 marks.at = Instant::now();
+                marks.newest = Some(CheckpointFacts {
+                    position,
+                    written_at_ms: checkpoint.written_at_ms,
+                    build: checkpoint.build,
+                });
             }
             Err(error) => {
-                tracing::error!("the checkpoint at position {position} was not written: {error}");
+                self.error(format!(
+                    "the checkpoint at position {position} was not written: {error}"
+                ));
                 return;
             }
         }
         match checkpoint::prune(&*self.log, settings, now_ms()).await {
-            Ok(pruned) => tracing::info!(
-                checkpoints = pruned.checkpoints.len(),
-                chunks = pruned.chunks.len(),
-                "deleted the old checkpoints and chunks"
-            ),
+            Ok(pruned) => {
+                tracing::info!(
+                    checkpoints = pruned.checkpoints.len(),
+                    chunks = pruned.chunks.len(),
+                    "deleted the old checkpoints and chunks"
+                );
+                let mut facts = self.facts();
+                facts.chunks = facts.chunks.saturating_sub(pruned.chunks.len() as u64);
+            }
             Err(error) => tracing::warn!("the delete of old checkpoints failed: {error}"),
         }
     }
@@ -724,7 +851,7 @@ impl Server {
     /// now, it also asks each admin for a volunteer.
     async fn owner_changed(&self, change: &OwnerChange) {
         if let Err(error) = self.save_tokens_since(0).await {
-            tracing::error!("the token store was not saved: {error}");
+            self.error(format!("the token store was not saved: {error}"));
         }
         let news = owner::change_news(change, &self.config.owner_role);
         tracing::info!("{news}");
@@ -834,7 +961,8 @@ impl Service {
             Arc::new(Memory::default()),
             None,
             now_ms() / 1000,
-            Checkpoints::new(0, None),
+            Checkpoints::new(None, None),
+            Facts::start(),
         )
     }
 
@@ -845,7 +973,7 @@ impl Service {
     /// flowchart TD
     ///     L[load the sign-ins and the newest checkpoint,<br/>replay the log after it] -->|fails| X[error: no lease.<br/>The old instance serves on]
     ///     L -->|works| T[take the lease, wait]
-    ///     T --> C[apply the chunks that came since the load,<br/>load the sign-ins again]
+    ///     T --> C[apply the chunks that came since the load,<br/>list the checkpoints again,<br/>load the sign-ins again]
     ///     C --> S[serve from the next whole second]
     /// ```
     ///
@@ -855,6 +983,11 @@ impl Service {
     ///   old instance writes until it reads the new lease. So the new
     ///   instance then applies the chunks that came since its load, and
     ///   loads the sign-ins again.
+    /// - The old instance can also write a checkpoint in that time. So
+    ///   the new instance lists the checkpoints again. When a checkpoint
+    ///   came, it takes the position of the newest one, and writes no
+    ///   checkpoint when that one comes from a later version or does not
+    ///   read (01M3TJWJC08ZR5TWA1Y9CDE0QM).
     /// - It serves from the next whole second (R138, R142). It writes
     ///   each change to the log of `store`, and saves the token store
     ///   within [`Config::save_every`], while the service lives (R30).
@@ -893,25 +1026,32 @@ impl Service {
         let http = oidc::client(oidc::FETCH_TIMEOUT);
         // The load, with no lease. An error here leaves the store as it
         // is, and the old instance serves on.
+        let mut facts = Facts::start();
         let replayed = Instant::now();
         load_tokens(&*store).await?;
-        let found = checkpoint::load(&*store, &config.checkpoint.build).await?;
+        let build = config.checkpoint.build.clone();
+        let found = checkpoint::load(&*store, &build).await?;
+        let mut newest = found.checkpoint.as_ref().map(checkpoint_facts);
+        let mut blocked = found.blocked;
         let snapshot = found.checkpoint.map(|c| c.state);
         let from = snapshot.as_ref().map_or(0, |s| s.position);
         let log::Replayed {
             records,
             last,
             skipped,
+            skips,
+            ..
         } = log::replay_after(&*store, from).await?;
         let count = records.len();
         let mut state = State::load(snapshot, records, Instant::now(), now_ms());
         state.continue_after(last);
+        facts.replay = replayed.elapsed();
         tracing::info!(
             checkpoint = from,
             records = count,
             position = state.position(),
             "loaded the checkpoint and replayed the log after it in {:?}",
-            replayed.elapsed()
+            facts.replay
         );
         let lease = Lease::take(store.clone()).await?;
         tracing::info!(
@@ -934,12 +1074,24 @@ impl Service {
         state.catch_up(since.records);
         state.continue_after(since.last);
         let skipped = skipped.or(since.skipped);
+        facts.skipped = skips + since.skips;
+        facts.chunks = since.chunks;
+        // The old instance can also write a checkpoint until it reads
+        // the new lease. This build writes none past a checkpoint of a
+        // later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).
+        let now = checkpoint::names(&*store).await?.pop();
+        if now.map(|(_, _, name)| name) != found.newest {
+            let again = checkpoint::load(&*store, &build).await?;
+            tracing::info!("a checkpoint came since the load");
+            newest = again.checkpoint.as_ref().map(checkpoint_facts);
+            blocked = again.blocked;
+        }
         let (tokens, version) = load_tokens(&*store).await?;
         let written = Written { version, at: None };
-        let blocked = found.blocked.or_else(|| {
+        let blocked = blocked.or_else(|| {
             skipped.map(|position| format!("this build skipped the record at position {position}"))
         });
-        let checkpoints = Checkpoints::new(from, blocked);
+        let checkpoints = Checkpoints::new(blocked, newest);
         let asked = Instant::now();
         if !lease.held().await? {
             return Err(StoreError::Conflict(store::LEASE.into()));
@@ -959,12 +1111,15 @@ impl Service {
             Some(until),
             start,
             checkpoints,
+            facts,
         );
         // Save the tokens once, so that a new riff ID stays
         // (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
         drop(service.0.tokens_change());
         if let Err(error) = service.0.save_tokens_since(0).await {
-            tracing::error!("the token store was not saved: {error}");
+            service
+                .0
+                .error(format!("the token store was not saved: {error}"));
         }
         service.keep_lease(lease);
         service.save_each_second();
@@ -985,6 +1140,7 @@ impl Service {
         until: Option<Instant>,
         start: u64,
         checkpoints: Checkpoints,
+        facts: Facts,
     ) -> Self {
         let mut tokens = tokens;
         if let Some(owner) = &config.owner {
@@ -1017,6 +1173,7 @@ impl Service {
             queued: Arc::new(tokio::sync::Notify::new()),
             deliveries: Mutex::new(Vec::new()),
             checkpoints: Mutex::new(checkpoints),
+            facts: Mutex::new(facts),
         }));
         service.write_log();
         service.keep_checkpoints();
@@ -1061,15 +1218,26 @@ impl Service {
                 };
                 let log = s.log.clone();
                 let timing = s.config.log;
-                match log::write(&*log, &records, &timing, || s.leased()).await {
+                let began = Instant::now();
+                let failed = AtomicU64::new(0);
+                let wrote =
+                    log::write_counted(&*log, &records, &timing, || s.leased(), &failed).await;
+                s.facts().write_errors += failed.into_inner();
+                match wrote {
                     Ok(()) => {
                         s.state().written(&records);
                         s.written.send_replace(last);
                         s.deliver_written(last);
+                        let mut facts = s.facts();
+                        facts.chunks += 1;
+                        facts.chunk_written_at_ms = Some(now_ms());
+                        facts.chunk_write = Some(began.elapsed());
                     }
                     Err(error) => {
                         let chunk = log::chunk_name(records[0].position);
-                        tracing::error!("the write of the chunk {chunk} failed for good: {error}");
+                        s.error(format!(
+                            "the write of the chunk {chunk} failed for good: {error}"
+                        ));
                         s.stop(&format!("the write of the chunk {chunk} failed"));
                         break;
                     }
@@ -1288,7 +1456,7 @@ impl Service {
                     break;
                 }
                 if let Err(error) = server.save_tokens_since(0).await {
-                    tracing::error!("the token store was not saved: {error}");
+                    server.error(format!("the token store was not saved: {error}"));
                 }
             }
         });
@@ -1339,6 +1507,10 @@ impl Service {
             .route("/v1/owner/take", post(take_owner))
             .route("/v1/owner/deny", post(deny_owner))
             .route_layer(guard());
+        let mut facts = Router::new().route("/v1/server", get(server_facts));
+        if self.0.config.require_sign_in {
+            facts = facts.route_layer(guard());
+        }
         routes
             .merge(admin_routes)
             .route_layer(middleware::from_fn(check_build))
@@ -1349,6 +1521,9 @@ impl Service {
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
+            // The facts answer also while the gate replies 503, and to a
+            // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).
+            .merge(facts)
             .layer(middleware::from_fn(stamp_build))
             .with_state(self.0.clone())
     }
@@ -1536,6 +1711,13 @@ async fn me(
         session: state.me(q.uri.who(), Instant::now(), now_ms()),
         build: build::VERSION.into(),
     }))
+}
+
+/// The facts of this instance, for `riff server`
+/// (01M3TJWJ12WEDCXW3W0529KRP2). It changes nothing, and it is not a
+/// call of a session.
+async fn server_facts(AxumState(s): AxumState<Shared>) -> Json<ServerFacts> {
+    Json(s.server_facts())
 }
 
 async fn threads(
@@ -2348,6 +2530,24 @@ fn now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
+/// The position, the time and the build of a checkpoint, for the facts.
+fn checkpoint_facts(checkpoint: &checkpoint::Checkpoint) -> CheckpointFacts {
+    CheckpointFacts {
+        position: checkpoint.state.position,
+        written_at_ms: checkpoint.written_at_ms,
+        build: checkpoint.build.clone(),
+    }
+}
+
+/// The memory that this process uses now, in bytes: the `VmRSS` line of
+/// `/proc/self/status`. `None` on a system with no such file.
+fn memory_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find_map(|l| l.strip_prefix("VmRSS:"))?;
+    let kb: u64 = line.trim().strip_suffix("kB")?.trim().parse().ok()?;
+    Some(kb * 1024)
+}
+
 fn bad_request(message: String) -> (StatusCode, String) {
     (StatusCode::BAD_REQUEST, message)
 }
@@ -2376,6 +2576,9 @@ mod tests {
         tries: AtomicU64,
         /// Each chunk write fails with this error.
         fail: Mutex<Option<StoreError>>,
+        /// An object that another instance saves at the next write of
+        /// the lease: its name and its bytes.
+        at_lease: Mutex<Option<(String, Vec<u8>)>>,
     }
 
     impl Gated {
@@ -2442,6 +2645,14 @@ mod tests {
                     if let Some(error) = fail {
                         return Err(error);
                     }
+                }
+                let other = self
+                    .at_lease
+                    .lock()
+                    .unwrap()
+                    .take_if(|_| name == store::LEASE);
+                if let Some((other, bytes)) = other {
+                    self.store.save(&other, bytes, None).await?;
                 }
                 self.store.save(name, bytes, known).await
             })
@@ -2777,6 +2988,137 @@ mod tests {
         post_n(&next, 3, "m").await;
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(checkpoints(&store).await.is_empty());
+        // `riff server` says why (01M3TJWJ12WEDCXW3W0529KRP2).
+        let facts = next.0.server_facts();
+        assert_eq!(facts.skipped_records, 1);
+        assert_eq!(
+            facts.no_checkpoint,
+            Some(format!(
+                "this build skipped the record at position {}",
+                last + 1
+            ))
+        );
+    }
+
+    /// A rollback: the later build writes a checkpoint after the load of
+    /// the older build, and before the older build takes the lease
+    /// (01M3TJWJC08ZR5TWA1Y9CDE0QM).
+    #[tokio::test(start_paused = true)]
+    async fn a_checkpoint_of_a_later_build_at_the_lease_write_blocks_the_older_build() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        post_n(&service, 2, "new").await;
+        let snapshot = service.0.state().snapshot(Instant::now(), 0);
+        drop(service);
+        assert!(checkpoints(&store).await.is_empty());
+        let later = checkpoint::Checkpoint::new("0.9.0", 5, snapshot);
+        let name = checkpoint::name(later.state.position, later.written_at_ms);
+        *store.at_lease.lock().unwrap() = Some((name.clone(), checkpoint::encode(&later)));
+
+        let old = Service::load(with_checkpoints(3, "0.8.0"), store.clone())
+            .await
+            .unwrap();
+        assert_eq!(checkpoints(&store).await, std::slice::from_ref(&name));
+        post_n(&old, 6, "old").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        // The older build wrote no checkpoint past it.
+        assert_eq!(checkpoints(&store).await, [name]);
+        let facts = old.0.server_facts();
+        let why = facts.no_checkpoint.unwrap();
+        assert!(why.contains("comes from the later version 0.9.0"), "{why}");
+        let newest = facts.checkpoint.unwrap();
+        assert_eq!(
+            (newest.build.as_str(), newest.position),
+            ("0.9.0", later.state.position)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn me_shows_a_claim_only_after_its_write() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let request = Claim {
+            me: mike(),
+            thread: mike().default_thread().unwrap(),
+            item: "issue-7".into(),
+        };
+        let task = tokio::spawn(claim(AxumState(service.0.clone()), None, Json(request)));
+        store.tried(tries + 1).await;
+        let claims = || async {
+            let query = Query(WatchQuery { uri: mike() });
+            let reply = me(AxumState(service.0.clone()), None, query).await.unwrap();
+            let session = reply.session.clone().expect("the server knows mike");
+            session.uri.claims().to_vec()
+        };
+        assert!(claims().await.is_empty(), "no claim before the write");
+        store.release();
+        assert!(task.await.unwrap().unwrap().granted);
+        assert_eq!(claims().await, ["issue-7"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_facts_show_the_log_the_checkpoint_and_the_counts() {
+        let store = Arc::new(Gated::default());
+        let service = running_with(with_checkpoints(3, "0.8.0"), store.clone()).await;
+        post_n(&service, 4, "m").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        post_n(&service, 1, "late").await;
+
+        let facts = service.0.server_facts();
+        assert_eq!((&facts.not_serving, &facts.last_error), (&None, &None));
+        assert_eq!(facts.position, service.0.state().written_position());
+        assert!(facts.position > 4);
+        assert!(
+            facts
+                .chunk_written_at_ms
+                .is_some_and(|at| at <= facts.now_ms)
+        );
+        assert!(facts.chunk_write_ms.is_some());
+        assert_eq!((facts.write_errors, facts.skipped_records), (0, 0));
+        let newest = facts.checkpoint.expect("a checkpoint");
+        assert_eq!(newest.build, "0.8.0");
+        assert!(newest.position < facts.position && newest.written_at_ms <= facts.now_ms);
+        assert_eq!(facts.no_checkpoint, None);
+        let chunks = store.store.list(log::LOG).await.unwrap().len();
+        assert_eq!(facts.chunks, chunks as u64);
+        assert_eq!((facts.sessions, facts.threads), (2, 1));
+        assert_eq!(facts.sign_ins, 0);
+        assert!(facts.memory_bytes.is_none_or(|bytes| bytes > 0));
+        assert!(facts.started_at_ms > 0 && facts.started_at_ms <= facts.now_ms);
+
+        // A new instance counts the chunks of the store, and has the
+        // checkpoint of the old one.
+        drop(service);
+        let next = Service::load(with_checkpoints(3, "0.8.0"), store.clone())
+            .await
+            .unwrap();
+        let facts = next.0.server_facts();
+        assert_eq!(facts.chunks, chunks as u64);
+        assert_eq!(facts.checkpoint, Some(newest));
+        assert_eq!(facts.chunk_written_at_ms, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_facts_show_the_last_error_and_why_the_server_does_not_serve() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        *store.fail.lock().unwrap() = Some(StoreError::Failed("503 from the bucket".into()));
+        let post = Json(post_body(&mike(), "lost"));
+        assert!(
+            post_message(AxumState(service.0.clone()), None, post)
+                .await
+                .is_err()
+        );
+        service.stopped().await;
+        let facts = service.0.server_facts();
+        let why = facts.not_serving.unwrap();
+        assert!(why.starts_with("it stopped for good: the write of the chunk"));
+        let error = facts.last_error.unwrap();
+        assert!(error.message.contains("failed for good"), "{error:?}");
+        assert!(error.message.contains("503 from the bucket"), "{error:?}");
+        assert!(facts.write_errors > 3, "{}", facts.write_errors);
     }
 
     #[tokio::test(start_paused = true)]

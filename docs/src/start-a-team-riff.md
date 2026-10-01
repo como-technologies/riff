@@ -218,7 +218,8 @@ with `riff login`.
 
 Give `riff-server` a directory for its state. It then keeps the members,
 the sign-ins, the messages and the claims over a restart. It starts 15
-seconds later:
+seconds later. Wait for the line `riff-server listens on` before you
+run the first `riff` command:
 
 ```sh
 riff-server --public-url URL --owner EMAIL --dir ~/.local/state/riff-server

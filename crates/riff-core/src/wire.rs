@@ -22,6 +22,10 @@
 //! | `end` | [`End`] | `null` |
 //! | `start` | [`Start`] | [`Started`] |
 //!
+//! `GET /v1/me` gives [`MeReply`]. `GET /v1/server` gives
+//! [`ServerFacts`], also while the server replies 503 to each other
+//! call.
+//!
 //! `POST /v1/token` is an OAuth 2.1 token endpoint. Its request is a
 //! form, [`TokenRequest`]. Its reply is [`TokenReply`], or
 //! [`TokenError`] with status 400. `GET /v1/sign-in` gives
@@ -200,6 +204,78 @@ pub struct MeReply {
     /// The session of the caller, as `who` shows it.
     pub session: Option<SessionInfo>,
     /// The build of the server, as the `riff-build` header gives it.
+    pub build: String,
+}
+
+/// The reply to `GET /v1/server`: the facts of one `riff-server`, for
+/// `riff server` (01M3TJWJ12WEDCXW3W0529KRP2). Each field has a default,
+/// so a `riff` of another build reads the reply. Each time is in
+/// milliseconds since the Unix epoch, on the clock of the server.
+///
+/// ```
+/// use riff_core::wire::ServerFacts;
+///
+/// let facts: ServerFacts = serde_json::from_str(r#"{"position":7,"later":true}"#)?;
+/// assert_eq!(facts.position, 7);
+/// assert!(facts.not_serving.is_none() && facts.checkpoint.is_none());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ServerFacts {
+    /// Why the server replies 503 to each other call. `None`: it serves.
+    pub not_serving: Option<String>,
+    /// The last error of the server since its start.
+    pub last_error: Option<FactError>,
+    /// The position of the last written record of the log.
+    pub position: u64,
+    /// The time of the last chunk write.
+    pub chunk_written_at_ms: Option<u64>,
+    /// How long the last chunk write took, in milliseconds.
+    pub chunk_write_ms: Option<u64>,
+    /// The number of failed tries of a chunk write since the start.
+    pub write_errors: u64,
+    /// The number of records that this build skipped since the start.
+    pub skipped_records: u64,
+    /// The newest checkpoint.
+    pub checkpoint: Option<CheckpointFacts>,
+    /// Why this build writes no checkpoint. `None`: it writes them.
+    pub no_checkpoint: Option<String>,
+    /// The number of chunks in the store.
+    pub chunks: u64,
+    pub sessions: u64,
+    /// The number of read cursors.
+    pub cursors: u64,
+    pub threads: u64,
+    /// The number of live token chains: one for each sign-in, and one
+    /// for each session with a live session pair.
+    pub sign_ins: u64,
+    /// The memory that the server uses, in bytes. `None` when the
+    /// system does not tell.
+    pub memory_bytes: Option<u64>,
+    /// The start time of the instance.
+    pub started_at_ms: u64,
+    /// How long the load and the replay took, in milliseconds.
+    pub replay_ms: u64,
+    /// The time of this reply.
+    pub now_ms: u64,
+}
+
+/// An error of the server in [`ServerFacts`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct FactError {
+    pub message: String,
+    pub at_ms: u64,
+}
+
+/// The newest checkpoint in [`ServerFacts`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CheckpointFacts {
+    pub position: u64,
+    pub written_at_ms: u64,
+    /// The version of the build that wrote it.
     pub build: String,
 }
 

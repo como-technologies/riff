@@ -487,10 +487,27 @@ riff-server
 
 Stop it with Ctrl-C. With a bucket, it saves the state first.
 
+`riff-server` has one command, `riff-server log`. It runs no server:
+see [The tools of the log](#the-tools-of-the-log).
+
 - With no OAuth client, an address that is not loopback needs
   `--insecure`. Else the server does not start.
 - With sign-in, an address that is not loopback needs an owner:
   `--owner EMAIL`, or a bucket that holds one.
+
+### Read the log of the server
+
+Each line of the log is one JSON object, so that Cloud Logging can
+filter it. The field `severity` is `DEBUG`, `INFO`, `WARNING` or
+`ERROR`. The field `message` has the text. To read the log as text in
+your terminal, use `jq`:
+
+```sh
+riff-server | jq -r '"\(.time) \(.severity) \(.message)"'
+```
+
+An error in the options comes before the log starts. It is plain text
+on stderr.
 
 ### Keep the settings in .env
 
@@ -620,8 +637,10 @@ riff-server --bucket como-riff-state
 ```
 
 The server gets its access token from the metadata server of Cloud
-Run. So the flag works only on Cloud Run. The service account of the
-server must have write access to the bucket.
+Run. So the server works with a bucket only on Cloud Run. The service
+account of the server must have write access to the bucket.
+[The tools of the log](#the-tools-of-the-log) also work with a bucket
+from your machine.
 
 With a bucket, the server loads the checkpoint and replays the log at
 start. Then it takes the lease, waits 15 seconds, and opens its port.
@@ -668,6 +687,139 @@ The log is in `log/` of the directory, one file for each chunk. The
 checkpoints are in `checkpoint/`. To start again with an empty state,
 stop the server and remove the directory.
 
+With `--dir`, the port of the server is closed for the first 15
+seconds. Wait for the line `riff-server listens on` in the log before
+you run the first `riff` command. A `riff` that runs already, for
+example `riff watch`, waits through a restart by itself.
+
+## The tools of the log
+
+`riff-server log` reads and repairs the log of a riff. It runs no
+server. Name the store with `--dir DIR` or `--bucket BUCKET`, before or
+after the command.
+
+### Print the log
+
+`riff-server log` prints each record as one line of text: the
+position, the time, the kind of the change and its facts.
+
+```sh
+riff-server log --dir ~/.local/state/riff-server
+```
+
+```text
+1  2026-09-30T12:00:00Z  joined_thread  acme/app by riff://ann@heron/acme/app?session=s1
+2  2026-09-30T12:00:01Z  riff_state_set  running
+3  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
+4  2026-09-30T12:00:09Z  posted  acme/app #1 note from riff://ann@heron/acme/app?session=s1, woke 0: "started: issue-7"
+```
+
+To print only the records from a position, add `--from`:
+
+```sh
+riff-server log --from 1200 --dir ~/.local/state/riff-server
+```
+
+### Check the log
+
+`riff-server log verify` reads each checkpoint, and each chunk from the
+oldest kept checkpoint. It names each object and each line that does
+not read, and each gap in the positions. It exits with 1 when it finds
+a problem.
+
+```sh
+riff-server log verify --dir ~/.local/state/riff-server
+```
+
+A good log gives one line:
+
+```text
+The log reads: 3 chunks, 1234 records from position 1 to 1234, 1 checkpoint.
+```
+
+A bad log gives one line for each problem, then the last good position
+and the command that removes each record after it:
+
+```text
+/home/ann/.local/state/riff-server/log/00000000000000001201.jsonl line 3: EOF while parsing a value at line 1 column 30
+1 problem in 3 chunks and 1 checkpoint. The last good record of the log is at position 1201.
+To remove each record after it, stop the server and run: riff-server log cut --after 1201
+```
+
+### Cut the log
+
+`riff-server log cut --after POSITION` deletes each record and each
+checkpoint after the position. Stop the server first. A cut loses each
+change after the position: the command prints each record that it
+removes, and the threads of these records.
+
+```sh
+riff-server log cut --after 1201 --dir ~/.local/state/riff-server
+```
+
+```text
+1202  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
+1203  (a line that does not read: EOF while parsing a value at line 1 column 30)
+Removed 2 records and 0 checkpoints after position 1201. Threads: acme/app.
+```
+
+The command refuses a position before the oldest kept checkpoint. The
+chunks before that checkpoint are gone, so no start can replay them.
+
+### Use the tools on the bucket
+
+On your machine, a tool takes the access token of your Google sign-in.
+Sign in once with gcloud. Your account must have access to the objects
+of the bucket.
+
+```sh
+gcloud auth login
+riff-server log verify --bucket como-riff-state
+```
+
+On Cloud Run, a tool takes the token of the metadata server, as the
+server does.
+
+### Go back to a position
+
+When the server cannot load its log, or the log holds a bad change, cut
+the log before the bad record.
+
+```mermaid
+flowchart LR
+    S[stop the server] --> V[log verify:<br/>the last good position is P]
+    V --> C[log cut --after P:<br/>names each removed record]
+    C --> R[start the server:<br/>it replays up to P]
+```
+
+For a server on your machine, stop it with Ctrl-C. Then run:
+
+```sh
+riff-server log verify --dir ~/.local/state/riff-server
+riff-server log cut --after POSITION --dir ~/.local/state/riff-server
+riff-server --dir ~/.local/state/riff-server
+```
+
+For the shared server, stop the service first, so that no instance
+writes the log. Check out the release that ran, so that
+`just cloud up` deploys the same build:
+
+```sh
+just cloud down
+riff-server log verify --bucket como-riff-state
+riff-server log cut --after POSITION --bucket como-riff-state
+git checkout vX.Y.Z
+just cloud up
+```
+
+The bucket keeps each older version of an object for 7 days. So you
+can get back an object that a cut deleted:
+
+```sh
+gcloud storage ls --all-versions 'gs://como-riff-state/log/**'
+gcloud storage cp 'gs://como-riff-state/log/NAME#GENERATION' gs://como-riff-state/log/NAME
+```
+
 ## Set up the cloud project
 
 Do this once, for the team. The project `como-riff` exists: use these
@@ -710,22 +862,45 @@ The command checks each resource first, so you can run it again.
 It makes the bucket `como-riff-state` and two service accounts.
 `riff-server` runs as `riff-server`. That account can read and write
 only the bucket, and read only the client secret. Cloud Build builds
-the image as `riff-build`. The bucket has one lifecycle
-rule. The rule deletes each thread object 30 days after its last
-change. The rule does not touch the sessions, the tokens or the lease.
+the image as `riff-build`.
 CI signs in as `riff-deploy`, from `main` and from the tags `v*` of the
 repository only. When the identity provider exists, the command sets
 this condition on it again.
 
-### See the lifecycle rule
+The bucket is a standard bucket with object versioning: it keeps each
+older version of an object. It has two lifecycle rules. One rule
+deletes an older version after 7 days. The other rule deletes each
+thread object 30 days after its last change.
+
+The service gets 1 GiB of memory, because `riff-server` keeps the state
+in memory. Each deploy sets it. When a service runs with another limit,
+the setup sets it at once: Cloud Run then starts a new instance.
+
+### See the lifecycle rules
 
 ```sh
 gcloud storage buckets describe gs://como-riff-state --project como-riff \
-  --format 'json(lifecycle_config)'
+  --format 'json(lifecycle_config,versioning_enabled)'
 ```
 
-The output shows one `Delete` rule with `age` 30 and the prefix
-`threads/`.
+The output shows versioning on, and two `Delete` rules: one with `age`
+30 and the prefix `threads/`, and one with `daysSinceNoncurrentTime` 7.
+
+### Get an email for each error
+
+The setup makes an alert in the cloud project. When a log line of
+`riff-server` has the severity `ERROR` or more, Google Cloud sends an
+email to the owner, at most one each 5 minutes. The repository is
+public, so give your email in `RIFF_OWNER`:
+
+```sh
+RIFF_OWNER=YOUR_EMAIL just cloud setup
+```
+
+With no `RIFF_OWNER`, the setup makes no alert, and says so. The alert
+has the name `riff-server-errors`. Its rule is in `deploy/alert.json`.
+To send the email to another address, delete the channel `riff-owner`
+in the console of Google Cloud, and run the setup again.
 
 ## Make your own OAuth client
 
@@ -1025,3 +1200,16 @@ just cloud log --limit 20
 
 Each start shows `the provider knows the OAuth client`. When Google
 refuses the client, the log shows `riff-server stops` and why.
+
+### Find the errors in the shared log
+
+Each log line has a severity. To see only the lines with the severity
+`ERROR` or more:
+
+```sh
+just cloud errors
+just cloud errors 20
+```
+
+`riff server` shows the last error of the instance that runs now. See
+[the facts of the server](how-it-works.md#see-the-facts-of-the-server).

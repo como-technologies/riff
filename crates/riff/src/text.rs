@@ -1777,7 +1777,7 @@ where
 ///     answer: Ok(Probe { build: Some(this.clone()), sign_in: Some(false) }),
 ///     user: None,
 /// };
-/// let view = View { source: Source::Default, used: local.clone(), local: None };
+/// let view = View { source: Source::Default, used: local.clone(), local: None, facts: None };
 /// assert_eq!(
 ///     plain(&view),
 ///     format!(
@@ -1796,12 +1796,78 @@ where
 ///     user: None,
 /// };
 /// let down = Seen { answer: Err("refused".into()), ..local };
-/// let view = View { source: Source::Env, used: shared, local: Some(down) };
+/// let view = View { source: Source::Env, used: shared, local: Some(down), facts: None };
 /// let text = plain(&view);
 /// assert!(text.contains("\nserver      https://riff.example.com  (from RIFF_SERVER)\n"), "{text}");
 /// assert!(text.contains("\n  sign-in   yes, you are not signed in\n"), "{text}");
 /// assert!(!text.contains("7878"), "{text}");
 /// assert!(text.ends_with("\nRun riff login"), "{text}");
+/// ```
+///
+/// When the riff gives its facts (01M3TJWJ12WEDCXW3W0529KRP2), they
+/// come under its sign-in line:
+///
+/// ```
+/// use riff::api::Probe;
+/// use riff::lifecycle::{Seen, Source, View};
+/// use riff_core::build::Build;
+/// use riff_core::wire::{CheckpointFacts, FactError, ServerFacts};
+///
+/// let used = Seen {
+///     url: "http://127.0.0.1:7878".into(),
+///     answer: Ok(Probe { build: Some(Build::this()), sign_in: Some(false) }),
+///     user: None,
+/// };
+/// let now_ms = 1_790_000_000_000;
+/// let facts = ServerFacts {
+///     position: 1234,
+///     chunk_written_at_ms: Some(now_ms - 3_000),
+///     chunk_write_ms: Some(45),
+///     checkpoint: Some(CheckpointFacts {
+///         position: 1000,
+///         written_at_ms: now_ms - 300_000,
+///         build: "0.8.0".into(),
+///     }),
+///     chunks: 12,
+///     sessions: 8,
+///     cursors: 40,
+///     threads: 9,
+///     sign_ins: 5,
+///     memory_bytes: Some(35 * 1024 * 1024),
+///     started_at_ms: now_ms - 7_200_000,
+///     replay_ms: 120,
+///     now_ms,
+///     ..ServerFacts::default()
+/// };
+/// let mut view = View { source: Source::Default, used, local: None, facts: Some(facts.clone()) };
+/// let text = anstream::adapter::strip_str(&riff::text::server_view(&view)).to_string();
+/// let rows: Vec<&str> = text.lines().skip(4).collect();
+/// assert_eq!(
+///     rows,
+///     [
+///         "  serves    yes",
+///         "  error     none since the start",
+///         "  log       position 1234; the last chunk write was 3s ago and took 45 ms",
+///         "  faults    0 write errors, 0 skipped records since the start",
+///         "  saved     checkpoint at position 1000, 5m old, from v0.8.0",
+///         "  counts    12 chunks, 8 sessions, 40 cursors, 9 threads, 5 live sign-ins",
+///         "  memory    35 MB in use",
+///         "  started   2h ago; the replay took 120 ms",
+///     ]
+/// );
+///
+/// view.facts = Some(ServerFacts {
+///     not_serving: Some("it stopped for good: another instance holds the lease".into()),
+///     last_error: Some(FactError { message: "the token store was not saved".into(), at_ms: now_ms - 60_000 }),
+///     no_checkpoint: Some("this build skipped the record at position 7".into()),
+///     memory_bytes: None,
+///     ..facts
+/// });
+/// let text = anstream::adapter::strip_str(&riff::text::server_view(&view)).to_string();
+/// assert!(text.contains("\n  serves    no, it replies 503: it stopped for good: another instance holds the lease\n"), "{text}");
+/// assert!(text.contains("\n  error     1m ago: the token store was not saved\n"), "{text}");
+/// assert!(text.contains("from v0.8.0; this build writes none: this build skipped the record at position 7\n"), "{text}");
+/// assert!(text.contains("\n  memory    unknown\n"), "{text}");
 /// ```
 pub fn server_view(view: &crate::lifecycle::View) -> String {
     use crate::lifecycle::Source;
@@ -1819,6 +1885,9 @@ pub fn server_view(view: &crate::lifecycle::View) -> String {
     ));
     let mut need = Need::default();
     seen_rows(&mut out, &view.used, &mut need);
+    if let Some(facts) = &view.facts {
+        facts_rows(&mut out, facts);
+    }
     if view.used.answer.is_err() && view.source == Source::Default {
         need.add("riff-server", ERROR);
     }
@@ -1919,6 +1988,84 @@ fn seen_rows(out: &mut String, seen: &crate::lifecycle::Seen, need: &mut Need) {
         }
     };
     let _ = write!(out, "\n{}", row("  sign-in", &sign_in));
+}
+
+/// The lines of [`server_view`] for the facts of a riff
+/// (01M3TJWJ12WEDCXW3W0529KRP2): if it serves, its last error, its log,
+/// its write errors and skipped records, its newest checkpoint, its
+/// sizes, its memory, and its start. Each age is from the clock of the
+/// server.
+fn facts_rows(out: &mut String, facts: &riff_core::wire::ServerFacts) {
+    let age = |at_ms: u64| ago(facts.now_ms.saturating_sub(at_ms) / 1000);
+    let serves = match &facts.not_serving {
+        None => "yes".to_owned(),
+        Some(why) => styled(ERROR, &format!("no, it replies 503: {}", safe(why))),
+    };
+    let error = match &facts.last_error {
+        None => "none since the start".to_owned(),
+        Some(error) => {
+            let text = format!("{} ago: {}", age(error.at_ms), safe(&error.message));
+            styled(WARNING, &text)
+        }
+    };
+    let write = match (facts.chunk_written_at_ms, facts.chunk_write_ms) {
+        (Some(at), Some(took)) => {
+            format!(
+                "the last chunk write was {} ago and took {took} ms",
+                age(at)
+            )
+        }
+        _ => "no chunk write since the start".to_owned(),
+    };
+    let mut saved = match &facts.checkpoint {
+        Some(checkpoint) => format!(
+            "checkpoint at position {}, {} old, from {}",
+            checkpoint.position,
+            age(checkpoint.written_at_ms),
+            safe(&crate::lifecycle::release_tag(&checkpoint.build))
+        ),
+        None => "no checkpoint".to_owned(),
+    };
+    if let Some(why) = &facts.no_checkpoint {
+        let text = format!("; this build writes none: {}", safe(why));
+        saved.push_str(&styled(WARNING, &text));
+    }
+    let memory = match facts.memory_bytes {
+        Some(bytes) => format!("{} MB in use", bytes.div_ceil(1024 * 1024)),
+        None => "unknown".to_owned(),
+    };
+    let rows = [
+        ("  serves", serves),
+        ("  error", error),
+        ("  log", format!("position {}; {write}", facts.position)),
+        (
+            "  faults",
+            format!(
+                "{} write errors, {} skipped records since the start",
+                facts.write_errors, facts.skipped_records
+            ),
+        ),
+        ("  saved", saved),
+        (
+            "  counts",
+            format!(
+                "{} chunks, {} sessions, {} cursors, {} threads, {} live sign-ins",
+                facts.chunks, facts.sessions, facts.cursors, facts.threads, facts.sign_ins
+            ),
+        ),
+        ("  memory", memory),
+        (
+            "  started",
+            format!(
+                "{} ago; the replay took {} ms",
+                age(facts.started_at_ms),
+                facts.replay_ms
+            ),
+        ),
+    ];
+    for (label, value) in rows {
+        let _ = write!(out, "\n{}", row(label, &value));
+    }
 }
 
 /// The last words of `riff update` (01M3K0Q892KWM76R9DJC1P37JA). `old` is

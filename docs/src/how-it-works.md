@@ -132,6 +132,8 @@ server      https://riff.example.com  (from RIFF_SERVER)
 
 - `local` shows the riff of this machine too, when it answers.
 - `answer    none`: the riff does not answer.
+- Under the sign-in line, it shows
+  [the facts of the server](#see-the-facts-of-the-server).
 - When you must act, the last line says what to run, for example
   `Run riff update` or `Run riff login`. It is yellow when the versions
   can talk, and red when they cannot or when you must sign in.
@@ -146,6 +148,44 @@ color either, so a `grep` finds a line:
 riff server --color never
 riff server | grep release
 ```
+
+### See the facts of the server
+
+`riff server` also asks the riff that `riff` uses for its facts. Use
+them to see if the server is healthy:
+
+```sh
+riff server
+```
+
+```text
+server      https://riff.example.com  (from RIFF_SERVER)
+  release   v0.9.0  same build ✓
+  sign-in   yes, signed in as mike@example.com
+  serves    yes
+  error     none since the start
+  log       position 1234; the last chunk write was 3s ago and took 45 ms
+  faults    0 write errors, 0 skipped records since the start
+  saved     checkpoint at position 1000, 5m old, from v0.9.0
+  counts    12 chunks, 8 sessions, 40 cursors, 9 threads, 5 live sign-ins
+  memory    35 MB in use
+  started   2h ago; the replay took 120 ms
+```
+
+| Line | Shows |
+|---|---|
+| `serves` | `yes`, or `no, it replies 503` and why. A server that does not serve still gives its facts. |
+| `error` | The last error of the server since its start, with its age. |
+| `log` | The position of the last record, and the time and the duration of the last chunk write. |
+| `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped. |
+| `saved` | The newest checkpoint: its position, its age and its release. When this build writes no checkpoint, the line says why. |
+| `counts` | The chunks in the store, the sessions, the read cursors, the threads, and the live sign-ins: one for each person and one for each session with a token. |
+| `memory` | The memory that the server uses. |
+| `started` | The age of the instance, and how long its load and its replay took. |
+
+- A riff with sign-in gives its facts only to a person who is signed
+  in. Else the lines are not there.
+- An older `riff-server` has no facts. The lines are not there.
 
 ### Name the riff for one command
 
@@ -2086,6 +2126,7 @@ sequenceDiagram
         O-->>W: close the stream
         Note over O: replies 503, saves nothing, exits after 60 s
         N->>S: read the chunks that came since the load
+        N->>S: list the checkpoints again
         Note over N: opens its port
         W->>N: connect again
         N-->>W: one line, if an addressed message is unread
@@ -2098,6 +2139,12 @@ serves on.
 
 The claims of each session come back with the log. Each session has 5
 minutes from the load to call again. After that, its claims are free.
+
+The old instance can write a checkpoint until it reads the new lease.
+So the new instance lists the checkpoints again after its wait. At a
+rollback, the old instance runs a later release. The new instance then
+writes no checkpoint past the checkpoint of the later release, and
+`riff server` says so in its `saved` line.
 
 ### Wait while the server starts
 
@@ -2112,6 +2159,14 @@ line:
 
 `riff chat` shows the line above its prompt. `riff top` keeps its table,
 and shows the line below it.
+
+A server on one machine with `--dir` opens its port only after the
+gap. Before that, each connect is refused. A `riff` that got a reply
+from the server before waits in the same way: `riff mcp`,
+`riff watch`, `riff chat` and `riff top` go on after a restart. A new
+`riff` command cannot tell a server that starts from no server, so it
+fails at once. Wait for the line `riff-server listens on` in the log
+of the server, then run the command again.
 
 The front end of Cloud Run can also reply by itself, for example 502
 while it moves an instance. Such a reply has no `riff-build` header.

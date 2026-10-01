@@ -19,8 +19,14 @@ fn help(args: &[&str], env: &[(&str, &str)]) -> String {
 
 #[test]
 fn each_line_of_the_help_fits_in_80_columns() {
-    for args in [["--help"], ["-h"]] {
-        for line in help(&args, &[]).lines() {
+    for args in [
+        &["--help"][..],
+        &["-h"],
+        &["log", "--help"],
+        &["log", "verify", "--help"],
+        &["log", "cut", "--help"],
+    ] {
+        for line in help(args, &[]).lines() {
             assert!(line.chars().count() <= 80, "{args:?}: {line:?}");
         }
     }
