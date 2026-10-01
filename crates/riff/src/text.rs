@@ -1721,7 +1721,6 @@ pub fn told_step(session: &str) -> String {
 
 /// The automatic step of the lead after a `post` of `kind`
 /// (01M3W8AYDFPZNZ898WAJS7JEZA), with the message in one short line.
-/// The caller gives an empty `body` for a post to a direct thread.
 ///
 /// ```
 /// use riff::text::{STEP_TEXT_CHARS, posted_step};

@@ -1876,8 +1876,7 @@ mike@thelio:riff (4e54)  idle   lead  monitoring work for 2m  12s ago: told 075f
 The step of a post shows the message in one line of at most 80
 characters. A direct message is private to its two sessions, and each
 member of the riff reads `riff who`. So the step of a `tell` shows
-only the session, and the step of a post to a direct thread shows no
-text.
+only the session.
 
 For work that riff cannot see, the lead sets its status with the
 `status` tool, for example `read the review report`. That status stays

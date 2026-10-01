@@ -1242,11 +1242,10 @@
   of a session that is not the lead does not change. The skill tells
   the lead to set its status for work that riff cannot see.
 - **01M3WKCYM623M66ATHCH3QGMKP** The automatic step of the lead shows
-  no text of a direct message: the step of a `tell` is `told SESSION`,
-  and the step of a `post` to a direct thread has no TEXT. In TEXT,
-  each run of white space or control characters is one space. An
-  automatic step keeps the `blocked` reason that the lead set. A call
-  that `riff-server` refuses sets no step.
+  no text of a direct message: the step of a `tell` is `told SESSION`.
+  In TEXT, each run of white space or control characters is one space.
+  An automatic step keeps the `blocked` reason that the lead set. A
+  call that `riff-server` refuses sets no step.
 - **01M3Q555NV8ZCQ8PVPBXQ7J82C** The skill, the start hook and the
   `status` tool do not tell a session to set its status for a fact
   that riff derives: a claim, a release, a pause, or an idle worker.

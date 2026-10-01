@@ -241,7 +241,8 @@ async fn who_shows_no_text_of_a_direct_message_of_the_lead() {
     let row = riff.row("a1").await;
     assert!(row.ends_with(" ago: told b2"), "{row}");
 
-    // A post to the direct thread shows no text also.
+    // The server refuses a post to the direct thread, so no step shows
+    // its text.
     let who = |id| Who::new("mike", Some(id)).unwrap();
     let direct = ThreadName::direct(&who("a1"), &who("b2")).to_string();
     let post = serde_json::json!({
@@ -249,9 +250,9 @@ async fn who_shows_no_text_of_a_direct_message_of_the_lead() {
         "body": secret,
         "to": [{ "session": "b2" }]
     });
-    call(&riff.lead, "post", post).await;
+    refused(&riff.lead, "post", post).await;
     let row = riff.row("a1").await;
-    assert!(row.ends_with(" ago: posted a message"), "{row}");
+    assert!(row.ends_with(" ago: told b2"), "{row}");
 
     // A post to the repository thread keeps its text.
     let post = serde_json::json!({ "body": "the board of Wave 17" });
@@ -320,8 +321,8 @@ async fn a_call_that_the_server_refuses_sets_no_step() {
     let row = riff.row("a1").await;
     assert!(row.ends_with(" ago: read the review report"), "{row}");
 
-    // An empty message.
-    let post = serde_json::json!({ "body": " ", "kind": "note" });
+    // A selector with no field.
+    let post = serde_json::json!({ "body": "the board", "to": [{}] });
     refused(&riff.lead, "post", post).await;
     let row = riff.row("a1").await;
     assert!(row.ends_with(" ago: read the review report"), "{row}");

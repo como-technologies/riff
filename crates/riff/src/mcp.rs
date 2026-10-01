@@ -62,10 +62,10 @@
 //! | `lead` | `became the lead` |
 //!
 //! Each member of the riff reads the step, and a direct thread is
-//! private to its two sessions. So the step of a `tell`, and of a
-//! `post` to a direct thread, has no text of the message
-//! (01M3WKCYM623M66ATHCH3QGMKP). The text of each other post is one
-//! line with no control character.
+//! private to its two sessions. So the step of a `tell` has no text of
+//! the message (01M3WKCYM623M66ATHCH3QGMKP). A `post` cannot go to a
+//! direct thread: the server refuses it. The text of a post is one line
+//! with no control character.
 //!
 //! The step is a status like each other one: a later `status` call of
 //! the lead replaces it, and the next of these calls replaces that. An
@@ -383,9 +383,7 @@ matches."
             .post(&me, Some(&thread), &to, &a.body, kind)
             .await
             .map_err(err)?;
-        // A direct thread is private: its step has no text.
-        let body = if thread.is_direct() { "" } else { &a.body };
-        self.lead_step(&me, text::posted_step(kind, body)).await;
+        self.lead_step(&me, text::posted_step(kind, &a.body)).await;
         Ok(text::posted(&posted))
     }
 
