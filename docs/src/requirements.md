@@ -582,7 +582,8 @@
   Each read, wake, view and reply uses the written state: only the
   records whose chunk is written. A call that makes a record replies
   after its chunk is written. Its wakes and its `tail` events go out
-  after the write too. A call that makes no record does not wait.
+  after the write too. A command that makes no record waits too
+  (01M3WRD933ESXF33WDEDFCRFB8). A signal and a query do not wait.
 - **01M3T4118SDERYGJ25TAT1RGR2** The writer takes each record in the
   queue into one chunk: a new object with the name `log/` and the
   first position in 20 digits, for example
@@ -615,10 +616,78 @@
   removes each thing of the session, a `left_thread` record ends the
   lead of the session in that thread, and a thread keeps its last 200
   messages. A `released` record of a session that does not hold the
-  item changes nothing. A `claimed` record replaces the old holder.
+  item changes nothing. A `claimed` record replaces the old holder. A
+  `lead_set` record replaces the old lead of the user in the thread.
+  The `posted` and the `session_forgotten` records keep the index of
+  the signed messages.
 - **01M3WNQR41K41TV832GRQZ2CQS** A log and a checkpoint that an earlier
   build wrote read with no change. A test reads a log and a checkpoint
   that `main` wrote, and compares the state and the bytes.
+- **01M3WRD8WJ2JF9077PRDX04T9A** Each command of `riff-server` goes
+  through `Engine::dispatch`, and each signal goes through
+  `Engine::signal`. The engine module owns the state, its lock and the
+  queue of the writer: no other code locks the state. A query reads the
+  written state.
+- **01M3WRD8YQFSKR2PENZC6CX24B** The stages of a command are types:
+  `Authenticated`, `Checked`, `Queued` and `Applied`. Each one is made
+  from the stage before it, and only the engine module makes one. Only
+  `Applied` gives the reply.
+- **01M3WRD90WBBCWTDGVQCBR6MNT** The writer finishes each command. It
+  writes the chunk, applies its records to the written state in the
+  order of their positions, sends the wakes and the `tail` events, and
+  then tells each call of the chunk. A call that the client drops loses
+  only its reply.
+- **01M3WRD933ESXF33WDEDFCRFB8** Each command waits until the writer is
+  done with its entry in the queue. This is also the rule for a command
+  that makes no record, and for a command that is refused. So no reply
+  and no refusal tells of a change that is not in the log.
+- **01M3WRD8TBDPA4JNEZY6J4N2EX** Each call is one wire type that gives
+  its path and the type of its reply (`Call`, in `riff-core`). The
+  client sends each call with one function. The wire type of a command
+  that a client sends is its command type, and one handler serves each
+  such command (`Routed`).
+- **01M3WRD959DYNZHDKP5ZT9Q1C7** One function, `permits`, says who can
+  send each command. It reads only the caller (its class, its worker
+  mark and its role) and the role that the command needs. A kind of
+  command with no row does not compile. The token layer gives the class.
+  The engine adds the worker mark and the role under the lock of the
+  state. A refusal of `permits` has the code `not_allowed`. A worker
+  cannot send `lead`.
+- **01M3WRD97EZJK3AABXECXEY133** A status, the place of a session, a
+  keep-alive, the start and the end of a watch stream, and a read cursor
+  are signals. A signal changes only the presence: it makes no record
+  and no entry in the queue, and it does not wait for the writer. A
+  command can give a signal: a `register` gives the place and the worker
+  mark, and an `end` gives the end of the session. A refused command
+  sets no signal. A signal or a query of a session that the state does
+  not know first sends `register` through the dispatch, and waits for
+  its write.
+- **01M3WRD99M99PNGP8ME50KC6WS** The first start of a riff sends the
+  command `make_riff` of the server: the first record of the log pauses
+  the riff. A later start adds no record.
+- **01M3WRD9BSBKS9TN66H29TGTBV** `pause`, `resume` and `set_idle` are
+  commands, each with a path of its own: `/v1/pause`, `/v1/resume` and
+  `/v1/idle/set`. A read of the pause (`/v1/riff`) and of the settings
+  of idle workers (`/v1/idle`) is a query.
+- **01M3WRD9DYJWVN1QRBAC3ZVVZD** `riff-server` does not start on a store
+  that has the objects of a `riff-server` from before the log
+  (`sessions`, `tokens` or `threads/`) and no log. The error names the
+  objects. The server takes no lease.
+- **01M3WRD9G5GAF65EX8P6D5DMQM** A riff with no sign-in takes a call
+  with no token: the caller is then the `me` of the body, with the role
+  of an admin. A call whose body names no `me` needs a token.
+- **01M3WRD9JBQMNN96TXJH8EAJ3W** A refusal of a command has a code and a
+  reason. The reply has the status of the code: 403 for `not_allowed`;
+  409 for `held`, `paused`, `not_holder` and `other_user`; 400 for
+  `bad_request`. It has the code in the header `riff-refused`, and the
+  reason as its text. A claim of an item that another session holds is
+  refused with the code `held`, and the reason names the holder. `riff
+  claim` and the `claim` tool show that reason.
+- **01M3WRD9MGSC3FTBAANT4ZSMKY** `release_for` is a command of its own,
+  with the path `/v1/release/for`: the lead of a user frees the claim of
+  another session of that user. Only a session can send it. The note of
+  the server for it is a `posted` record in the chunk of the command,
+  after the `released` record.
 
 - **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
   Its name is `checkpoint/`, the position in 20 digits, `-`, and the

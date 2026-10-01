@@ -17,6 +17,21 @@ use riff_server::auth::Config;
 use riff_server::lease::Timing;
 use riff_server::store::{Store, StoreError};
 
+/// Sends a claim that the server refuses with the code `held`
+/// (01M3WRD9JBQMNN96TXJH8EAJ3W). Gives the text of the refusal: it
+/// names the holder.
+pub async fn held(base: &str, claim: Value) -> String {
+    let reply = client()
+        .post(format!("{base}/v1/claim"))
+        .json(&claim)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 409, "a claim of a held item");
+    assert_eq!(reply.headers()[riff_core::wire::REFUSED_HEADER], "held");
+    reply.text().await.unwrap()
+}
+
 /// The HTTP client of each test. The build of a client blocks the
 /// runtime for up to 250 ms under load: half of the [`LEASE`] serve
 /// time. So the tests build one client, before the first server starts.

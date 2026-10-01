@@ -44,6 +44,11 @@ pub struct Snapshot {
     presence: presence::Saved,
 }
 
+/// The proof that a call comes from the load of a checkpoint. Only this
+/// file makes one, so only [`Snapshot::into_parts`] makes a riff with
+/// no `apply` (`Riff::restore`).
+pub(super) struct LoadPath(());
+
 impl Snapshot {
     /// The snapshot of `riff` and the read cursors of `presence`, at
     /// `position`. `seen` gives the last call of a session, or 0.
@@ -69,6 +74,7 @@ impl Snapshot {
     pub(super) fn into_parts(self) -> (Riff, BTreeMap<(Who, ThreadName), u64>, BTreeMap<Who, u64>) {
         let (sessions, seen) = self.sessions.restore();
         let riff = Riff::restore(
+            LoadPath(()),
             self.position,
             sessions,
             self.threads.restore(),

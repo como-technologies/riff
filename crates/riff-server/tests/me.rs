@@ -41,7 +41,7 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
     for uri in [A, B] {
         call(&base, "register", json!({ "me": uri })).await;
     }
-    call(&base, "riff", json!({ "me": A, "state": "running" })).await;
+    call(&base, "resume", json!({ "me": A })).await;
     let thread = "como-technologies/riff";
     for (uri, item) in [(A, "issue-1"), (B, "issue-2")] {
         let reply = call(
@@ -50,7 +50,7 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
             json!({ "me": uri, "thread": thread, "item": item }),
         )
         .await;
-        assert_eq!(reply["granted"], true);
+        assert!(reply["holder"].as_str().unwrap().contains(item));
     }
     let status = json!({ "step": "tests", "blocked": "waits for a verify" });
     call(&base, "status", json!({ "me": A, "status": status })).await;

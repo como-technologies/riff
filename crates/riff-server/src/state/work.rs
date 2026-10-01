@@ -1,5 +1,6 @@
 //! The group "work": the commands [`Claim`], [`Release`],
-//! [`ReleaseFor`] and [`Lead`], the claims and the leads.
+//! [`ReleaseFor`] and [`Lead`], the claims and the leads. The wire type
+//! of each command is its command type.
 //!
 //! - Part of the riff: [`Work`]. The holder of each claimed item, and
 //!   the lead of each user in each repository thread (R175).
@@ -14,12 +15,14 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use riff_core::name::{SessionUri, ThreadName, Who, check};
-use riff_core::record::{Change, Claimed, Member};
-use riff_core::wire::RiffState;
+use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
+use riff_core::record::{Change, Claimed, Member, Record};
+use riff_core::wire::{
+    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, RiffState,
+};
 use serde::{Deserialize, Serialize};
 
-use super::command::{Command, Now};
+use super::command::{Caller, Code, Command, CommandKind, Now, Refused};
 use super::view::View;
 
 /// The claims and the leads.
@@ -177,27 +180,34 @@ impl View<'_> {
         self.riff.work().claims.values().any(|holder| holder == who)
     }
 
-    /// The lead change that makes `who` the lead, when its user has no
-    /// lead in its repository and no other session of the user there
-    /// holds (R176).
-    pub(super) fn lead_if_first(&self, who: &Who, now: Instant) -> Option<Change> {
+    /// The lead change that makes `who` the lead, when it arrives at
+    /// `place` in the repository thread `thread`, its user has no lead
+    /// there, and no other session of the user there holds (R176). A
+    /// lead that arrives again stays the lead.
+    pub(super) fn lead_if_first(
+        &self,
+        who: &Who,
+        place: &Place,
+        thread: &ThreadName,
+        now: Instant,
+    ) -> Option<Change> {
         who.session()?;
         let sessions = &self.presence.sessions;
-        let thread = sessions.get(who)?.place.default_thread()?;
-        let key = (who.user().to_owned(), thread);
-        if self.lead_of(&key, now).is_some() {
+        let key = (who.user().to_owned(), thread.clone());
+        let lead = self.riff.work().leads.get(&key);
+        if lead == Some(who) || self.lead_of(&key, now).is_some() {
             return None;
         }
         let others = sessions.iter().any(|(other, s)| {
             other != who
                 && other.user() == who.user()
                 && other.session().is_some()
-                && s.place.default_thread().as_ref() == Some(&key.1)
+                && s.place.default_thread().as_ref() == Some(thread)
                 && self.holds(other, now)
         });
         (!others).then(|| {
             Change::LeadSet(Member {
-                session: self.plain(who),
+                session: SessionUri::new(who.clone(), place.clone()),
                 thread: key.1,
             })
         })
@@ -223,35 +233,44 @@ impl View<'_> {
 
 /// Takes a claim if nobody holds it, or if its holder stopped more than
 /// [`CLAIM_GRACE`](super::CLAIM_GRACE) ago. While the riff is paused, a
-/// claim fails (01M3JCG3WBHDF0ZWM06XV94ZDC).
-#[derive(Clone, Debug)]
-pub struct Claim {
-    pub thread: ThreadName,
-    pub item: String,
-}
-
+/// claim fails (01M3JCG3WBHDF0ZWM06XV94ZDC). A claim of an item that
+/// another session holds is refused with the code `held`, and the
+/// reason names the holder (01M3WRD9JBQMNN96TXJH8EAJ3W).
 impl Command for Claim {
+    const KIND: CommandKind = CommandKind::Claim;
+    type Reply = ClaimReply;
     type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        let who = me.who();
-        let Claim { thread, item } = self;
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let who = caller.who();
+        let Claim { thread, item, .. } = self;
         check("claim", item).map_err(|e| e.to_string())?;
         if view.riff.the_riff().state == RiffState::Paused {
-            return Err(format!(
-                "the riff is paused, so nobody claims {item}. Wait until your user or \
-                 the lead resumes it."
+            return Err(Refused::new(
+                Code::Paused,
+                format!(
+                    "the riff is paused, so nobody claims {item}. Wait until your user or \
+                     the lead resumes it."
+                ),
             ));
         }
         let mut changes = Vec::new();
         match view.riff.work().holder(thread, item) {
             Some(holder) if holder == who => {}
-            Some(holder) if view.holds(holder, now.at) => {}
+            Some(holder) if view.holds(holder, now.at) => {
+                return Err(Refused::new(
+                    Code::Held,
+                    format!(
+                        "{} holds {item} in {thread}.",
+                        label(&view.uri(holder, now.at))
+                    ),
+                ));
+            }
             _ => changes.push(Change::Claimed(Claimed {
                 session: view.plain(who),
                 thread: thread.clone(),
@@ -260,26 +279,35 @@ impl Command for Claim {
         }
         Ok((changes, ()))
     }
+
+    fn reply(
+        &self,
+        caller: &Caller,
+        view: &View<'_>,
+        _: &[Record],
+        (): (),
+        now: Now,
+    ) -> ClaimReply {
+        ClaimReply {
+            holder: view.uri(caller.who(), now.at),
+        }
+    }
 }
 
 /// Frees a claim. Only its holder can.
-#[derive(Clone, Debug)]
-pub struct Release {
-    pub thread: ThreadName,
-    pub item: String,
-}
-
 impl Command for Release {
+    const KIND: CommandKind = CommandKind::Release;
+    type Reply = ();
     type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        let who = me.who();
-        let Release { thread, item } = self;
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let who = caller.who();
+        let Release { thread, item, .. } = self;
         match view.riff.work().holder(thread, item) {
             Some(holder) if holder == who => Ok((
                 vec![Change::Released(Claimed {
@@ -289,93 +317,126 @@ impl Command for Release {
                 })],
                 (),
             )),
-            Some(holder) => Err(format!(
-                "{item} is held by {}",
-                view.uri(holder, now.at).short()
+            Some(holder) => Err(Refused::new(
+                Code::NotHolder,
+                format!("{item} is held by {}", view.uri(holder, now.at).short()),
             )),
-            None => Err(format!("nobody holds {item}")),
+            None => Err(Refused::new(
+                Code::NotHolder,
+                format!("nobody holds {item}"),
+            )),
         }
     }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
 }
 
 /// The lead of a user frees the claim of another session of that user
-/// (01M3WG243BW7P6E1ME0DFNQF8C). `holder` is the session ID of the
-/// holder, or the start of it.
-#[derive(Clone, Debug)]
-pub struct ReleaseFor {
-    pub thread: ThreadName,
-    pub item: String,
-    pub holder: String,
-}
-
+/// (01M3WG243BW7P6E1ME0DFNQF8C). `session` is the session ID of the
+/// holder, or the start of it. The holder can be live, gone or ended.
+///
+/// The command also makes the note of the server in the thread of the
+/// claim: a `posted` record after the `released` record, in the chunk
+/// of the command (01M3WRD9MGSC3FTBAANT4ZSMKY). The note names the
+/// lead, the item and the holder.
 impl Command for ReleaseFor {
+    const KIND: CommandKind = CommandKind::ReleaseFor;
+    type Reply = ();
     type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        let who = me.who();
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let who = caller.who();
         let ReleaseFor {
             thread,
             item,
-            holder: id,
+            session: id,
+            ..
         } = self;
         let Some(holder) = view.riff.work().holder(thread, item) else {
-            return Err(format!("nobody holds {item}"));
+            return Err(Refused::new(
+                Code::NotHolder,
+                format!("nobody holds {item}"),
+            ));
         };
         let held_by = view.uri(holder, now.at).short();
         if !holder.session().is_some_and(|s| names(id, s)) {
-            return Err(format!(
-                "{item} is held by {held_by}, not by the session {id}"
+            return Err(Refused::new(
+                Code::NotHolder,
+                format!("{item} is held by {held_by}, not by the session {id}"),
             ));
         }
         let sessions = &view.presence.sessions;
         let repo = |who: &Who| sessions.get(who).map(|s| s.place.default_thread());
         if holder.user() != who.user() || repo(holder) != repo(who) {
-            return Err(format!(
-                "{item} is held by {held_by}. Only the lead of its user in its \
-                 repository frees it."
+            return Err(Refused::new(
+                Code::NotAllowed,
+                format!(
+                    "{item} is held by {held_by}. Only the lead of its user in its \
+                     repository frees it."
+                ),
             ));
         }
         if holder != who && !view.is_lead(who, now.at) {
-            return Err(format!(
-                "{item} is held by {held_by}. Only the lead of your user frees the \
-                 claim of another session. Tell the lead."
+            return Err(Refused::new(
+                Code::NotAllowed,
+                format!(
+                    "{item} is held by {held_by}. Only the lead of your user frees the \
+                     claim of another session. Tell the lead."
+                ),
             ));
         }
-        Ok((
-            vec![Change::Released(Claimed {
-                session: view.plain(holder),
-                thread: thread.clone(),
-                item: item.clone(),
-            })],
-            (),
-        ))
+        let mut changes = vec![Change::Released(Claimed {
+            session: view.plain(holder),
+            thread: thread.clone(),
+            item: item.clone(),
+        })];
+        let server = crate::owner::server_uri();
+        let news = released_for(&view.uri(who, now.at), item, &view.uri(holder, now.at));
+        let note = Message {
+            seq: 0,
+            from: server.clone(),
+            to: Vec::new(),
+            body: news,
+            at_ms: now.ms,
+            kind: Kind::Note,
+            sig: None,
+            payload: None,
+        };
+        let (mut put, _) = view.put(server.who(), thread.clone(), note, now.at);
+        changes.append(&mut put);
+        Ok((changes, ()))
+    }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) {
+        for record in made {
+            if let Change::Posted(posted) = &record.change {
+                tracing::info!("{}", posted.message.body);
+            }
+        }
     }
 }
 
 /// Makes the session the lead of its user in its repository. It
 /// replaces the old lead (R177). The note is the old lead, if another
-/// session was the lead.
-#[derive(Clone, Copy, Debug)]
-pub struct Lead;
-
+/// session was the lead. [`permits`](super::permits) refuses a person
+/// and a worker.
 impl Command for Lead {
+    const KIND: CommandKind = CommandKind::Lead;
+    type Reply = LeadReply;
     type Note = Option<Who>;
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, Option<Who>), String> {
-        let who = me.who();
-        if who.session().is_none() {
-            return Err("only an agent session can be the lead".into());
-        }
+    ) -> Result<(Vec<Change>, Option<Who>), Refused> {
+        let who = caller.who();
         let thread = view
             .place(who)
             .default_thread()
@@ -391,6 +452,33 @@ impl Command for Lead {
             }));
         }
         Ok((changes, old))
+    }
+
+    fn reply(
+        &self,
+        caller: &Caller,
+        view: &View<'_>,
+        _: &[Record],
+        old: Option<Who>,
+        now: Now,
+    ) -> LeadReply {
+        LeadReply {
+            lead: view.uri(caller.who(), now.at),
+            replaced: old.map(|old| view.uri(&old, now.at)),
+        }
+    }
+}
+
+/// The name of a session for people: its short form, and the start of
+/// its session ID.
+fn label(uri: &SessionUri) -> String {
+    match uri.who().session() {
+        Some(id) => format!(
+            "{} ({})",
+            uri.short(),
+            id.chars().take(8).collect::<String>()
+        ),
+        None => uri.short(),
     }
 }
 

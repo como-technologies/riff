@@ -291,7 +291,7 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     call(&base, "register", json!({ "me": mike })).await;
     call(&base, "register", json!({ "me": brett })).await;
     // Mike's session is the lead: it resumes the new riff.
-    call(&base, "riff", json!({ "me": mike, "state": "running" })).await;
+    call(&base, "resume", json!({ "me": mike })).await;
     let post = json!({ "me": mike, "thread": repo, "body": "saved" });
     call(&base, "post", post).await;
     let claim = json!({ "me": brett, "thread": repo, "item": "issue-44" });
@@ -308,7 +308,11 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     let read = call(&base, "read", json!({ "me": brett, "thread": repo })).await;
     assert_eq!(read["messages"][0]["body"], "saved");
     let claim = json!({ "me": mike, "thread": repo, "item": "issue-44" });
-    assert_eq!(call(&base, "claim", claim).await["granted"], false);
+    let held = common::held(&base, claim).await;
+    assert!(
+        held.contains("brett@heron:riff (b) holds issue-44"),
+        "{held}"
+    );
 }
 
 /// A token store of an old format: it has no `chains` field.

@@ -36,11 +36,14 @@
 //! | `posted` | A thread keeps its last [`KEEP_MESSAGES`](super::KEEP_MESSAGES) messages, so the oldest one goes (01M3TBZBT7MME9BG1RWX5SZAZ6). The number is a constant of the format. | Yes. |
 //! | `claimed` | The new holder replaces the old one. | Until E2 (#392): then the old holder gets a `released` record first. |
 //! | `released` | It frees the claim only when the session of the record holds it. If not, the record changes nothing. `handle` refuses such a release, so only a fault or an old build writes this record. | Yes. |
+//! | `lead_set` | The session of the record replaces the old lead of its user in the thread. | Yes. |
+//! | `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check: a `posted` record adds the hash of its payload, and removes the hash of the message that goes at the limit. A `session_forgotten` record removes the hashes of each direct thread that goes. | Yes. |
 //! | each record that names a session | It keeps the URI of the session and the time of the record. | Yes. |
 
 use riff_core::record::{Change, Record};
 
 use super::sessions::Sessions;
+use super::snapshot::LoadPath;
 use super::the_riff::TheRiff;
 use super::threads::Threads;
 use super::work::Work;
@@ -79,8 +82,11 @@ pub struct Riff {
 }
 
 impl Riff {
-    /// The riff of a checkpoint at `position`.
+    /// The riff of a checkpoint at `position`. Only the load path of a
+    /// checkpoint can call it: only [`super::snapshot`] makes a
+    /// `LoadPath`. So no other code makes a riff with no `apply`.
     pub(super) fn restore(
+        _: LoadPath,
         position: u64,
         sessions: Sessions,
         threads: Threads,

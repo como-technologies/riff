@@ -64,15 +64,14 @@ use a framework for it.
 
 ```mermaid
 flowchart LR
-    C[command] --> H["handle(state, command)"]
-    H -->|refused| E[error to the caller]
-    H -->|changes| Q[queue]
-    Q --> A["apply(state, record)"]
-    A --> S[(state in memory)]
+    C[command] --> H["permits, then<br/>handle(pending copy, command)"]
+    H -->|"changes, or a refusal"| Q[queue: one entry]
+    Q --> P["apply(pending copy, record)"]
+    P --> H
     Q -->|writer, outside the lock| L[(log)]
-    L -->|written| R[reply, wake]
-    S --> H
-    S --> V["views: who, top, board"]
+    L -->|written| A["apply(written copy, record),<br/>in order"]
+    A --> R["wakes, then the reply<br/>or the error to the caller"]
+    A --> V["views: who, top, board"]
 ```
 
 - `handle(&State, Command) -> Result<Vec<Change>, Refused>` checks a
@@ -87,9 +86,10 @@ flowchart LR
   there) changes nothing, and the server logs a warning. The live path
   and the replay use the same `apply`, so a replay gives the same state
   as the live server.
-- Under the one lock, the server runs `handle`, gives each change its
-  position and time, puts the records in the queue, and runs `apply`.
-  Then it releases the lock.
+- Under the one lock, the engine runs `handle`, gives each change its
+  position and time, puts the entry of the command in the queue, and
+  runs `apply` on the pending state. Then it releases the lock. A
+  refused command has an entry too, with no record.
 - The writer takes each record in the queue into one chunk: a group
   commit. It writes outside the lock. So each call runs `handle`
   against the state of each call before it, and two claims of one item

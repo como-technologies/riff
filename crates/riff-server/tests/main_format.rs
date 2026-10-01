@@ -7,7 +7,7 @@
 //! - `log.jsonl`: one chunk with each kind of record. A thread gets more
 //!   messages than it keeps. Five sessions are forgotten.
 //! - `checkpoint.json`: the checkpoint of the live state at the position
-//!   246, with read cursors.
+//!   240, with read cursors.
 //! - `replayed.json`: the state of a full replay of the log, as a
 //!   checkpoint.
 //! - `loaded.json`: the state of a start from the checkpoint and the

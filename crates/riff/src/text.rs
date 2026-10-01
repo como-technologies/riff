@@ -16,11 +16,11 @@ use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 
-use crate::api::{Checked, Inbox};
+use crate::api::{Checked, Claimed, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
-    AdminSet, ClaimReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, Posted,
-    Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    AdminSet, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, Posted, Removed,
+    Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -192,28 +192,28 @@ pub fn wake_line(wake: &Wake) -> String {
     }
 }
 
-/// The answer to a claim. It names the holder when another session has
-/// the item.
+/// The answer to a claim. When another session has the item, it is the
+/// text of the server, which names the holder
+/// (01M3WRD9JBQMNN96TXJH8EAJ3W).
 ///
 /// ```
-/// use riff_core::wire::ClaimReply;
+/// use riff::api::Claimed;
 ///
-/// let reply = ClaimReply {
-///     granted: false,
-///     holder: "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?,
-/// };
 /// let thread = "como-technologies/riff".parse()?;
+/// let mine = Claimed { granted: true, holder: None, held: None };
 /// assert_eq!(
-///     riff::text::claimed(&reply, &thread, "issue-12"),
-///     "mike@pangolin:riff#api (a6cf) holds issue-12 in como-technologies/riff."
+///     riff::text::claimed(&mine, &thread, "issue-12"),
+///     "You hold issue-12 in como-technologies/riff."
 /// );
+/// let held = "mike@pangolin:riff#api (a6cf) holds issue-12 in como-technologies/riff.";
+/// let reply = Claimed { granted: false, holder: None, held: Some(held.into()) };
+/// assert_eq!(riff::text::claimed(&reply, &thread, "issue-12"), held);
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn claimed(reply: &ClaimReply, thread: &ThreadName, item: &str) -> String {
-    if reply.granted {
-        format!("You hold {item} in {thread}.")
-    } else {
-        format!("{} holds {item} in {thread}.", name(&reply.holder))
+pub fn claimed(reply: &Claimed, thread: &ThreadName, item: &str) -> String {
+    match &reply.held {
+        Some(held) => held.clone(),
+        None => format!("You hold {item} in {thread}."),
     }
 }
 

@@ -416,7 +416,7 @@ async fn only_an_admin_sets_the_idle_workers() {
     let (status, body) = call(&url, &bob, "idle", idle("riff://bob@b", None, None)).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(read(&body), Idle::default());
-    let (status, body) = call(&url, &bob, "idle", idle("riff://bob@b", Some(3), None)).await;
+    let (status, body) = call(&url, &bob, "idle/set", idle("riff://bob@b", Some(3), None)).await;
     assert_eq!(status, 403);
     assert!(
         body.contains("only an admin can change the settings of idle workers"),
@@ -427,10 +427,16 @@ async fn only_an_admin_sets_the_idle_workers() {
         per_host: 3,
         after_secs: 30,
     };
-    let (status, body) = call(&url, &ada, "idle", idle("riff://ada@a", Some(3), Some(30))).await;
+    let (status, body) = call(
+        &url,
+        &ada,
+        "idle/set",
+        idle("riff://ada@a", Some(3), Some(30)),
+    )
+    .await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(read(&body), set);
-    let (status, body) = call(&url, &ada, "idle", idle("riff://ada@a", None, Some(0))).await;
+    let (status, body) = call(&url, &ada, "idle/set", idle("riff://ada@a", None, Some(0))).await;
     assert_eq!(status, 400, "{body}");
     let (_, body) = call(&url, &bob, "idle", idle("riff://bob@b", None, None)).await;
     assert_eq!(read(&body), set);
