@@ -178,6 +178,115 @@ pub fn workers_limit(limit: u16, path: &Path) -> String {
     )
 }
 
+/// `riff workers jobs` (01M3WFYZRK5CT22GJW6ZHYT9CC): the setting, and
+/// the `jobs` that each worker gets.
+///
+/// ```
+/// let out = riff::view::workers_jobs(0, 4, "/h/c.toml".as_ref());
+/// assert_eq!(
+///     anstream::adapter::strip_str(&out).to_string(),
+///     "workers.jobs  0  (/h/c.toml)\n\
+///      Each worker builds with 4 jobs and tests with 4 threads: the cores divided by the \
+///      limit of workers. Set it with: riff workers jobs N (0: riff makes the number)"
+/// );
+/// assert!(riff::view::workers_jobs(6, 6, "/h/c.toml".as_ref())
+///     .contains("6 jobs and tests with 6 threads. Set it"));
+/// ```
+pub fn workers_jobs(value: u16, jobs: u16, path: &Path) -> String {
+    let from = if value == 0 {
+        ": the cores divided by the limit of workers"
+    } else {
+        ""
+    };
+    setting(
+        "workers.jobs",
+        &value.to_string(),
+        path,
+        &format!(
+            "Each worker builds with {jobs} jobs and tests with {jobs} threads{from}. \
+             Set it with: riff workers jobs N (0: riff makes the number)"
+        ),
+    )
+}
+
+/// `riff workers nice` (01M3WFYZTX05CGDP2NQF9B356K).
+///
+/// ```
+/// let out = riff::view::workers_nice(10, "/h/c.toml".as_ref());
+/// assert_eq!(
+///     anstream::adapter::strip_str(&out).to_string(),
+///     "workers.nice  10  (/h/c.toml)\n\
+///      Each worker runs with nice 10. Set it with: riff workers nice N (0 to 19, 0 turns it off)"
+/// );
+/// ```
+pub fn workers_nice(nice: u8, path: &Path) -> String {
+    let what = match nice {
+        0 => "with no nice".to_owned(),
+        n => format!("with nice {n}"),
+    };
+    setting(
+        "workers.nice",
+        &nice.to_string(),
+        path,
+        &format!(
+            "Each worker runs {what}. Set it with: riff workers nice N (0 to 19, 0 turns it off)"
+        ),
+    )
+}
+
+/// `riff workers memory` (01M3WFYZX6GVFYW6NTTTKF144R): the setting, and
+/// the `gb` that all workers get.
+///
+/// ```
+/// let out = riff::view::workers_memory(0, 23, "/h/c.toml".as_ref());
+/// assert_eq!(
+///     anstream::adapter::strip_str(&out).to_string(),
+///     "workers.memory  0  (/h/c.toml)\n\
+///      All workers of this machine get at most 23 GB of memory: three quarters of the \
+///      memory. Set it with: riff workers memory GB (0: riff makes the number)"
+/// );
+/// ```
+pub fn workers_memory(value: u32, gb: u32, path: &Path) -> String {
+    let from = if value == 0 {
+        ": three quarters of the memory"
+    } else {
+        ""
+    };
+    setting(
+        "workers.memory",
+        &value.to_string(),
+        path,
+        &format!(
+            "All workers of this machine get at most {gb} GB of memory{from}. \
+             Set it with: riff workers memory GB (0: riff makes the number)"
+        ),
+    )
+}
+
+/// `riff workers floor` (01M3WFZ01PTAYYKG3T5CFA2W4D): the setting, and
+/// the memory that is available now.
+///
+/// ```
+/// let out = riff::view::workers_floor(4, 24, "/h/c.toml".as_ref());
+/// assert_eq!(
+///     anstream::adapter::strip_str(&out).to_string(),
+///     "workers.floor  4  (/h/c.toml)\n\
+///      riff starts no new worker while less than 4 GB of memory is available. Now: 24 GB. \
+///      Set it with: riff workers floor GB (0 turns it off)"
+/// );
+/// ```
+pub fn workers_floor(floor: u32, avail_gb: u32, path: &Path) -> String {
+    setting(
+        "workers.floor",
+        &floor.to_string(),
+        path,
+        &format!(
+            "riff starts no new worker while less than {floor} GB of memory is available. \
+             Now: {avail_gb} GB. Set it with: riff workers floor GB (0 turns it off)"
+        ),
+    )
+}
+
 /// `riff workers interval` (01M3Q5QE9H42FQKEDC5G9GKCWD): the most
 /// seconds between two workers that the lead starts by itself. 0 turns
 /// it off.
@@ -486,11 +595,18 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 /// use riff::machine::Machine;
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
-/// assert_eq!(plain(riff::view::host_heading("pangolin", 3, 1, None)), "pangolin  limit 3  runs 1");
-/// let m = Machine { cores: 16, mhz: 4500, mem_gb: 32, load: 1.5 };
+/// assert_eq!(plain(riff::view::host_heading("pangolin", 3, 1, None, 4)), "pangolin  limit 3  runs 1");
+/// let m = Machine { cores: 16, mhz: 4500, mem_gb: 32, avail_gb: 24, load: 1.5 };
 /// assert_eq!(
-///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&m))),
-///     "pangolin  limit 3  runs 1  cpu 16x4500MHz, mem 32GB, load 1.50  score 24.0"
+///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&m), 4)),
+///     "pangolin  limit 3  runs 1  cpu 16x4500MHz, mem 32GB, 24GB available, load 1.50  score 24.0"
+/// );
+/// // Why the machine starts no worker (01M3WFZ01PTAYYKG3T5CFA2W4D).
+/// let low = Machine { avail_gb: 3, ..m };
+/// assert_eq!(
+///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&low), 4)),
+///     "pangolin  limit 3  runs 1  cpu 16x4500MHz, mem 32GB, 3GB available, load 1.50  score 24.0\n\
+///      Starts no worker: 3 GB of memory is available, and the floor of this machine is 4 GB."
 /// );
 /// ```
 pub fn host_heading(
@@ -498,6 +614,7 @@ pub fn host_heading(
     limit: u16,
     runs: usize,
     machine: Option<&crate::machine::Machine>,
+    floor: u32,
 ) -> String {
     let mut out = format!("{}  limit {limit}  runs {runs}", styled(BOLD, &safe(host)));
     if let Some(m) = machine {
@@ -506,6 +623,14 @@ pub fn host_heading(
             "  {}",
             styled(DIM, &format!("{m}  score {:.1}", m.score()))
         );
+        if m.low(floor) {
+            let why = text::low_memory(m.avail_gb, floor);
+            let _ = write!(
+                out,
+                "\n{}",
+                styled(WARNING, &format!("Starts no worker: {why}"))
+            );
+        }
     }
     out
 }

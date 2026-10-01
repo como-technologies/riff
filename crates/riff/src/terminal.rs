@@ -185,6 +185,8 @@ impl Program {
     /// `RIFF_WORKER=1`, its riff session ID in `RIFF_SESSION`, only the
     /// MCP servers of the file `mcp` (see [`crate::worker_mcp`]), and no
     /// Remote Control and no recap: the flag settings [`WORKER_SETTINGS`].
+    /// With `slice`, the wrapper runs `claude` in a scope of that slice
+    /// (see [`crate::limits`]).
     /// `--mcp-config` takes more than one value, so `--settings` comes
     /// after it.
     ///
@@ -192,7 +194,7 @@ impl Program {
     /// use riff::terminal::Program;
     /// let worker = Program::worker(
     ///     "/bin/riff".as_ref(), "claude".as_ref(), "/src/riff".as_ref(), "http://h:7878", "w1",
-    ///     "/run/riff/workers-mcp.json".as_ref(),
+    ///     "/run/riff/workers-mcp.json".as_ref(), Some("riff-workers.slice"),
     /// );
     /// assert_eq!(
     ///     worker.command,
@@ -200,6 +202,7 @@ impl Program {
     /// );
     /// assert!(worker.env.contains(&("RIFF_WORKER".into(), "1".into())));
     /// assert!(worker.env.contains(&("RIFF_SESSION".into(), "w1".into())));
+    /// assert!(worker.env.contains(&("RIFF_WORKER_SLICE".into(), "riff-workers.slice".into())));
     /// assert_eq!(worker.session.as_deref(), Some("w1"));
     /// assert!(!worker.command.contains("remote-control"));
     /// ```
@@ -210,14 +213,19 @@ impl Program {
         server: &str,
         session: &str,
         mcp: &Path,
+        slice: Option<&str>,
     ) -> Self {
+        let mut env = vec![
+            ("RIFF_SERVER".into(), server.into()),
+            ("RIFF_WORKER".into(), "1".into()),
+            ("RIFF_SESSION".into(), session.into()),
+        ];
+        if let Some(slice) = slice {
+            env.push((crate::limits::SLICE_VAR.into(), slice.into()));
+        }
         Program {
             dir: main.to_owned(),
-            env: vec![
-                ("RIFF_SERVER".into(), server.into()),
-                ("RIFF_WORKER".into(), "1".into()),
-                ("RIFF_SESSION".into(), session.into()),
-            ],
+            env,
             command: format!(
                 "{} workers run {} {} {} {} {} {} {}",
                 quote(&riff.to_string_lossy()),

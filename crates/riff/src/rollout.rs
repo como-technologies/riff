@@ -44,8 +44,10 @@
 //! - **Machines** ([`Place`], [`pick`], 01M3Q5QE76BZ27SZ14FFE8HM1G).
 //!   The machine of the lead, when the lead runs in tmux, and each live
 //!   workers host of the user. A machine has room when its workers are
-//!   fewer than its limit and it is not busy
-//!   ([`crate::machine::Machine::busy`]). riff picks the machine with the
+//!   fewer than its limit, it is not busy
+//!   ([`crate::machine::Machine::busy`]), and its available memory is
+//!   not less than its floor ([`crate::machine::Machine::low`],
+//!   01M3WFZ01PTAYYKG3T5CFA2W4D). riff picks the machine with the
 //!   most free capacity. On a tie, the machine of the lead wins.
 //! - **Pause** (01M3Q5QEBTNM90SPYXNVTT7RJA). A pause stops the rollout
 //!   within one look. A look that started before the pause can start
@@ -92,15 +94,19 @@ pub struct Place {
     pub limit: u16,
     /// The workers that run there.
     pub workers: usize,
+    /// The available memory in GB under which the machine starts no
+    /// worker.
+    pub floor: u32,
     /// The numbers of the machine, if it tells them.
     pub machine: Option<Machine>,
 }
 
 impl Place {
     /// True when the machine can take one more worker: fewer workers
-    /// than its limit, and not busy.
+    /// than its limit, not busy, and not low on memory.
     pub fn room(&self) -> bool {
-        self.workers < usize::from(self.limit) && !self.machine.is_some_and(|m| m.busy())
+        self.workers < usize::from(self.limit)
+            && !self.machine.is_some_and(|m| m.busy() || m.low(self.floor))
     }
 
     /// The free capacity: the score less the workers. A machine that
@@ -139,13 +145,18 @@ pub struct View {
 ///     session: None,
 ///     limit: 4,
 ///     workers,
-///     machine: Some(Machine { cores, mhz: 3000, mem_gb: 64, load: 0.0 }),
+///     floor: 4,
+///     machine: Some(Machine { cores, mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 }),
 /// };
 /// let places = [place("thelio", 32, 0), place("pangolin", 8, 0)];
 /// assert_eq!(pick(&places), Some(0));
 /// // thelio is at its limit.
 /// let places = [place("thelio", 32, 4), place("pangolin", 8, 0)];
 /// assert_eq!(pick(&places), Some(1));
+/// // pangolin has less available memory than its floor.
+/// let mut low = place("pangolin", 8, 0);
+/// low.machine = low.machine.map(|m| Machine { avail_gb: 3, ..m });
+/// assert_eq!(pick(&[place("thelio", 32, 4), low]), None);
 /// ```
 pub fn pick(places: &[Place]) -> Option<usize> {
     places
@@ -166,7 +177,7 @@ pub fn pick(places: &[Place]) -> Option<usize> {
 /// ```
 /// use riff::rollout::{Place, View, decide};
 ///
-/// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, machine: None };
+/// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, floor: 4, machine: None };
 /// let view = View { running: true, work: 2, idle: 0, places: vec![here] };
 /// assert_eq!(decide(&view), Some(0));
 /// assert_eq!(decide(&View { running: false, ..view.clone() }), None);
@@ -555,7 +566,8 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         let user = me.who().user();
         let mut places = Vec::new();
         let mut panes = Vec::new();
-        let limit = settings::workers_limit(&settings::path()?)?;
+        let settings = settings::path()?;
+        let limit = settings::workers_limit(&settings)?;
         if let Some(tmux) = &self.tmux
             && limit > 0
         {
@@ -565,6 +577,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 session: None,
                 limit,
                 workers: here.len(),
+                floor: settings::workers_floor(&settings)?,
                 machine: Some(Machine::here()),
             });
             panes.extend(here);
@@ -578,6 +591,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 session: info.uri.who().session().map(str::to_owned),
                 limit: status.limit,
                 workers: status.workers.len(),
+                floor: status.floor,
                 machine: status.machine,
             });
             panes.extend(status.workers.iter().map(|(pane, short)| WorkerPane {
@@ -787,6 +801,7 @@ mod tests {
             cores,
             mhz,
             mem_gb,
+            avail_gb: mem_gb,
             load: 0.0,
         })
     }
@@ -797,6 +812,7 @@ mod tests {
             session: None,
             limit: 4,
             workers: 0,
+            floor: 4,
             machine: machine(32, 6000, 128),
         }
     }
@@ -807,6 +823,7 @@ mod tests {
             session: Some("h1".into()),
             limit: 4,
             workers: 0,
+            floor: 4,
             machine: machine(16, 4500, 32),
         }
     }
@@ -978,6 +995,27 @@ mod tests {
         busy.machine = busy.machine.map(|m| Machine { load: 40.0, ..m });
         assert_eq!(pick(&[busy.clone(), pangolin()]), Some(1));
         assert_eq!(pick(&[busy]), None);
+    }
+
+    #[test]
+    fn a_machine_under_its_floor_gets_no_worker() {
+        let mut low = thelio();
+        low.machine = low.machine.map(|m| Machine { avail_gb: 3, ..m });
+        assert!(!low.room());
+        assert_eq!(pick(&[low.clone(), pangolin()]), Some(1));
+        assert_eq!(pick(std::slice::from_ref(&low)), None);
+        // A floor of 0 turns the floor off.
+        assert!(Place { floor: 0, ..low }.room());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_rollout_starts_no_worker_on_a_machine_under_its_floor() {
+        let mut w = world(4);
+        w.places[0].machine = w.places[0].machine.map(|m| Machine { avail_gb: 1, ..m });
+        w.places[1].machine = w.places[1].machine.map(|m| Machine { avail_gb: 2, ..m });
+        let fake = Fake::new(w);
+        run_for(&fake, 60).await;
+        assert!(fake.hosts().is_empty(), "{:?}", fake.hosts());
     }
 
     #[test]

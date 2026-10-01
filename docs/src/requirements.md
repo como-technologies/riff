@@ -1985,8 +1985,8 @@
   repository does not count, also a worker of the user of the lead. A
   worker that did not join yet counts.
 - **01M3Q5QE4SQ8VYN2PSF42KB3QJ** Each machine that runs workers tells
-  its CPU cores, its CPU speed, its memory and its 1-minute load
-  average. A workers host puts them in its status. `riff workers` shows
+  its CPU cores, its CPU speed, its memory, its available memory and
+  its 1-minute load average. A workers host puts them in its status. `riff workers` shows
   the numbers and the score of this machine and of each host.
 - **01M3Q5QE76BZ27SZ14FFE8HM1G** The score of a machine is
   `min(cores, memory GB / 2) × MHz / 3000`. Its free capacity is the
@@ -2013,6 +2013,47 @@
   not claim yet, counts. So when no worker takes the counted work, one
   worker waits idle, the server keeps it, and riff starts no more
   workers.
+- **01M3WFYZP9Y4N41QGH5SWKFZZC** The skill tells each session: run one
+  build or test command at a time. To run a test many times, run that
+  test by its name in a loop, not the full `just ci`.
+- **01M3WFYZRK5CT22GJW6ZHYT9CC** `riff workers run` gives its worker
+  one number in `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`: the cores
+  of the machine divided by the worker limit, and 2 or more. The
+  setting `workers.jobs` replaces the number. 0, the default, means the
+  number from the machine. `riff workers jobs` shows it and sets it.
+- **01M3WFYZTX05CGDP2NQF9B356K** `riff workers run` starts its worker
+  with a nice value: the setting `workers.nice`, 0 to 19. The default
+  is 10. 0 means no nice. `riff workers nice` shows it and sets it.
+- **01M3WFYZX6GVFYW6NTTTKF144R** On a machine with systemd, the workers
+  of the machine run in the slice `riff-workers.slice` of the systemd
+  user manager, each in a scope of its own. `riff workers start` gives
+  the slice `MemoryMax`, `MemoryHigh` at nine tenths of it, and
+  `CPUWeight=50`, until the next start of the machine. `MemoryMax` is
+  the setting `workers.memory` in GB. 0, the default, means three
+  quarters of the memory of the machine. `riff workers memory` shows it
+  and sets it. `riff workers run` stays outside the slice.
+- **01M3WFYZZENNHVH8Z2BAFSR6TS** On a machine where `systemctl --user`
+  cannot set the slice, `riff workers start` says one time that the
+  workers run with no memory limit, and starts them with no scope.
+- **01M3WFZ01PTAYYKG3T5CFA2W4D** `riff workers start` and the rollout
+  start no new worker on a machine while its available memory is less
+  than the setting `workers.floor` in GB. The default is 4. 0 turns the
+  floor off. `riff workers start` says why. `riff workers` shows why,
+  for this machine and for each host. A workers host puts its floor in
+  its status. `riff workers floor` shows it and sets it.
+- **01M3WFZ03Z9Y60HPHJJ9ZE6AQZ** When a signal ends the `claude` of a
+  worker, the message of the wrapper to the lead names the signal, says
+  that a kill ended the worker, for example for the memory of the
+  workers, and says that its work that is not committed is in its
+  worktree.
+- **01M3WFZ0676C5HJDXCGVZ715K2** The skill tells the lead: never change
+  `workers.jobs`, `workers.nice`, `workers.memory` or `workers.floor`.
+  Only the user sets them. riff does not watch the memory, and does not
+  change a limit while the workers run.
+- **01M3WFZ08D8VT9KD6HXY09NHSE** The test environment gives each run of
+  `riff` the numbers of a machine with free memory and no load, in
+  `RIFF_MACHINE`. So no test depends on the load or the memory of the
+  machine that runs it.
 - **01M3Q5QEGBD5JB4ZZWNVVS09KV** The skill tells the lead: riff starts
   workers by itself. The lead gives free work to an idle worker with a
   request. It starts workers by hand only while the rollout is off. It

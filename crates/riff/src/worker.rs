@@ -57,6 +57,18 @@
 //!
 //! The wrapper tells the lead as the person, never as the session of
 //! the worker. So a crashed worker does not come back in `riff who`.
+//!
+//! # Limits
+//!
+//! The wrapper gives `claude` the limits of a worker
+//! ([`crate::limits`]): the number of its compile jobs and test threads,
+//! a nice value, and a scope in the slice of the workers. The wrapper
+//! itself stays outside the slice. So when the OS kills `claude` for the
+//! memory of the workers, the wrapper lives and tells the lead: the
+//! message names the signal, and says that the work that is not
+//! committed is in the worktree of the worker
+//! (01M3WFZ03Z9Y60HPHJJ9ZE6AQZ). The next worker of the item goes on
+//! from that worktree.
 
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -68,8 +80,10 @@ use riff_core::name::Place;
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::Api;
+use crate::limits::{self, Limits};
+use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
-use crate::{hygiene, identity, settings, text, worker_mcp};
+use crate::{hygiene, identity, local, settings, text, worker_mcp};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -116,18 +130,28 @@ pub fn wrapper_value(value: Option<&str>) -> Option<u32> {
     value?.parse().ok()
 }
 
-/// Runs `claude` with `args` as a worker, and waits. When `claude`
-/// exits on its own, it tells the lead. Returns the exit code for the
-/// wrapper: the code of `claude`, or 0 after a stop.
+/// Runs `claude` with `args` as a worker, and waits. It gives `claude`
+/// the limits of a worker of this machine (see [`crate::limits`]): the
+/// jobs (01M3WFYZRK5CT22GJW6ZHYT9CC), the nice value
+/// (01M3WFYZTX05CGDP2NQF9B356K), and a scope in the slice that
+/// [`limits::SLICE_VAR`] names (01M3WFYZX6GVFYW6NTTTKF144R). When
+/// `claude` exits on its own, it tells the lead. Returns the exit code
+/// for the wrapper: the code of `claude`, or 0 after a stop.
 pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let mut term = signal(SignalKind::terminate())?;
     let mut hup = signal(SignalKind::hangup())?;
-    let mut child = tokio::process::Command::new(claude)
-        .args(args)
+    let limit = Limits::of(&settings::path()?, &Machine::here())?;
+    let slice = std::env::var(limits::SLICE_VAR)
+        .ok()
+        .filter(|s| !s.is_empty());
+    let command = limits::command(claude, args, limit.nice, slice.as_deref());
+    let mut child = tokio::process::Command::new(&command[0])
+        .args(&command[1..])
         .env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
+        .envs(limits::JOBS_VARS.map(|var| (var, limit.jobs.to_string())))
         .spawn()
-        .with_context(|| format!("cannot start {}", claude.display()))?;
+        .with_context(|| format!("cannot start {}", Path::new(&command[0]).display()))?;
     let status = tokio::select! {
         status = child.wait() => status?,
         _ = term.recv() => return stop_child(&mut child).await,
@@ -225,12 +249,18 @@ pub struct Started {
     pub fresh: Option<String>,
     /// The workers that the limit kept from a start, and why.
     pub limited: Option<String>,
+    /// What riff says the first time that the workers of the machine
+    /// run with no scope (01M3WFYZZENNHVH8Z2BAFSR6TS).
+    pub no_scope: Option<String>,
 }
 
 /// Starts at most `count` workers in `tmux`, in the main worktree of
 /// `dir` (01M3JD392Q5ANX0FPZ51W7B0E3): at most the limit of the machine
 /// minus the workers that run (01M3JPQT57PJCRBQYJNDVESS04). Each loads
-/// only the MCP servers of `workers.mcp` (01M3NB5R92ZC61VW6Y45SJEAY9). The inner
+/// only the MCP servers of `workers.mcp` (01M3NB5R92ZC61VW6Y45SJEAY9). It
+/// starts none while the available memory is less than the floor
+/// (01M3WFZ01PTAYYKG3T5CFA2W4D). It makes the slice of the workers ready
+/// first (01M3WFYZX6GVFYW6NTTTKF144R). The inner
 /// error is the refusal to show when it started nothing. The caller
 /// checks who may start workers.
 pub fn start(
@@ -240,7 +270,8 @@ pub fn start(
     server: &str,
     dir: &Path,
 ) -> Result<std::result::Result<Started, String>> {
-    let limit = settings::workers_limit(&settings::path()?)?;
+    let settings = settings::path()?;
+    let limit = settings::workers_limit(&settings)?;
     if limit == 0 {
         return Ok(Err(text::NO_WORKER_LIMIT.into()));
     }
@@ -249,12 +280,18 @@ pub fn start(
     if start == 0 {
         return Ok(Err(text::workers_full(limit, run)));
     }
+    let machine = Machine::here();
+    let floor = settings::workers_floor(&settings)?;
+    if machine.low(floor) {
+        return Ok(Err(text::workers_low(machine.avail_gb, floor)));
+    }
     let main = identity::main_worktree(dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
     let fresh = hygiene::fast_forward(&main).line();
     let base = Api::new(server).base().to_owned();
     let riff = crate::binary::this_on_disk()?;
     let mcp = worker_mcp::prepare(&main, &riff)?;
+    let scope = limits::scope(&settings, &machine, local::dir().as_deref())?;
     let programs: Vec<Program> = (0..start)
         .map(|_| {
             Program::worker(
@@ -264,6 +301,7 @@ pub fn start(
                 &base,
                 &terminal::new_session_id(),
                 &mcp,
+                scope.slice,
             )
         })
         .collect();
@@ -274,6 +312,7 @@ pub fn start(
         main,
         fresh,
         limited: (start < count).then(|| text::workers_limited(count - start, limit, run)),
+        no_scope: scope.said,
     }))
 }
 

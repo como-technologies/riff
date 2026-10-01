@@ -191,7 +191,10 @@ async fn lead(limit: u16) -> Lead {
         .env("RIFF_SESSION", "l1")
         .env("TMUX", "/tmp/tmux-1000/default,1,0")
         .env("TMUX_PANE", "%0")
-        .env(riff::machine::MACHINE, "cpu 8x3000MHz, mem 16GB, load 0.00")
+        .env(
+            riff::machine::MACHINE,
+            "cpu 8x3000MHz, mem 16GB, 16GB available, load 0.00",
+        )
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env_remove("RIFF_WORKER")
         .stdin(Stdio::piped())
