@@ -473,10 +473,7 @@ the claim of another session of your user, for example one that is gone or that 
                 Ok(text::released_for(&thread, &a.item, &holder))
             }
             None => {
-                self.api
-                    .release(&me, &thread, &a.item)
-                    .await
-                    .map_err(err)?;
+                self.api.release(&me, &thread, &a.item).await.map_err(err)?;
                 Ok(text::released(&thread, &a.item))
             }
         }

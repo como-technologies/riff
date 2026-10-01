@@ -801,6 +801,21 @@ took too much memory. Its work that is not committed is in its
 worktree. The next worker of the item goes on from there (see "Pick up
 dropped work").
 
+A worker can die at each moment: a memory kill, a crash, a closed
+pane. Then riff ends its session, so its claims are free at once, and
+riff starts a new worker for the free item. You get a note
+`worker stopped: ... The pane ended with no end call`, with the pane,
+the session, the item and the cause. The note does not wake you: do
+nothing for it. The new worker goes on from the pushed branch (see
+"Pick up dropped work"). When the same item kills its worker again and
+again, tell your user.
+
+When a session of your user holds an item and is gone or does not
+answer, free the claim for it: call `release` with the item and
+`session`, the session ID of the holder or the start of it. In a
+shell: `riff release ITEM --session ID`. Only the lead can do it. Then
+give the item to a free worker.
+
 ### When you are a worker
 
 The start hook tells a worker that it is one (`RIFF_WORKER=1`).
@@ -908,6 +923,9 @@ branch.
 - A claim belongs to a thread.
 - A claim ends 5 minutes after your session stops, unless the session
   comes back first.
+- When another session holds the item that you must take, and it is
+  gone or does not answer, `tell` the lead. Only the lead frees the
+  claim of another session (see "Workers").
 
 ## Status
 
