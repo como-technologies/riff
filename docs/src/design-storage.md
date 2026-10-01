@@ -288,6 +288,7 @@ sequenceDiagram
     else the load worked
         S->>G: take the lease, wait
         S->>G: read the chunks that came since, apply them
+        S->>G: load the sign-ins again
         S->>S: open the port, serve
     end
 ```
@@ -352,9 +353,10 @@ does not call `who` for the whole riff.
 
 - `lease` names the instance that serves. A new instance writes its ID,
   waits, then serves. An instance that sees another ID stops.
-- Each start has a gap of about 15 s. The client waits through the gap,
-  and shows a line that it waits. `riff top` and `riff chat` keep
-  their screen. The client gives up after 60 s, as today.
+- Each start has a gap of about 15 s. The client waits through the gap.
+  When a call waits for more than 1 s, the client shows one line that
+  it waits. `riff top` and `riff chat` keep their screen. The client
+  gives up after 60 s, as today.
 
 ## The wire
 

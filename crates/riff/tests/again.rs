@@ -1,7 +1,8 @@
 //! `riff watch` and `riff tail` connect again when the server ends a
 //! stream (R131). `riff post` tries again while the server replies 503
-//! (R132). `riff watch --once` exits after one wake (R170). A fake
-//! server ends each stream after one event.
+//! (R132). A long wait shows one line on stderr
+//! (01M3THEE5V3RFHF9QTA8MA8QDF). `riff watch --once` exits after one
+//! wake (R170). A fake server ends each stream after one event.
 
 use isolated::Isolated;
 use std::convert::Infallible;
@@ -31,6 +32,8 @@ struct Calls {
     watch: AtomicU64,
     tail: AtomicU64,
     post: AtomicU64,
+    /// The number of 503 replies before a post goes through.
+    busy: AtomicU64,
 }
 
 type Shared = Arc<Calls>;
@@ -81,9 +84,10 @@ async fn tail(State(calls): State<Shared>) -> impl IntoResponse {
     })
 }
 
-/// 503 twice, then the post goes through.
+/// 503 some times, then the post goes through.
 async fn post_busy(State(calls): State<Shared>) -> Response {
-    if calls.post.fetch_add(1, Ordering::SeqCst) < 2 {
+    let busy = calls.busy.load(Ordering::SeqCst);
+    if calls.post.fetch_add(1, Ordering::SeqCst) < busy {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     Json(Posted {
@@ -107,6 +111,7 @@ async fn stamp_build(mut response: axum::response::Response) -> axum::response::
 
 async fn start_fake() -> (String, Shared) {
     let calls = Shared::default();
+    calls.busy.store(2, Ordering::SeqCst);
     let router = axum::Router::new()
         .route("/v1/watch", get(watch))
         .route("/v1/tail", get(tail))
@@ -232,4 +237,32 @@ async fn post_tries_again_while_the_server_replies_503() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Posted message 7"), "{stdout}");
     assert_eq!(calls.post.load(Ordering::SeqCst), 3);
+    // A wait of less than 1 second shows no line.
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(!stderr.contains(riff::api::WAITING), "{stderr}");
+}
+
+/// The gap of a start of `riff-server`: 503 for more than 1 second.
+#[tokio::test]
+async fn post_shows_one_line_while_it_waits_for_the_server() {
+    let (server, calls) = start_fake().await;
+    calls.busy.store(5, Ordering::SeqCst);
+    let dir = tempfile::tempdir().unwrap();
+    let mut cmd = riff(
+        &server,
+        dir.path(),
+        &["post", "--thread", "como-technologies/riff", "hello"],
+    );
+
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Posted message 7"), "{stdout}");
+    assert!(!stdout.contains(riff::api::WAITING), "{stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(stderr.matches(riff::api::WAITING).count(), 1, "{stderr}");
+    assert_eq!(calls.post.load(Ordering::SeqCst), 6);
 }

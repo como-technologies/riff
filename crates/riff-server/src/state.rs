@@ -1111,18 +1111,70 @@ impl State {
             apply(&mut state.pending, &record);
             state.apply_written(&record);
         }
-        for (who, known) in &state.written.known {
+        state.riff_changed = Some(now);
+        state.loaded = Some(now);
+        state.sessions_of_the_log(&seen, now);
+        state
+    }
+
+    /// Applies the records that came after the load: the old instance
+    /// wrote them between the load and the lease of this instance
+    /// (01M3THEE08ZKV8WGHDSVWV69ZE). Call it before the first call of a
+    /// session. The claim timer of each session still starts at the
+    /// load.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::RiffState;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut old = State::default();
+    /// old.register(&mike, now);
+    /// old.riff(&mike, Some(RiffState::Running), now).unwrap();
+    /// let mut new = State::replay(old.take_queue(), now, 1_000);
+    ///
+    /// // The old instance takes a claim after the load of the new one.
+    /// let thread = mike.default_thread().unwrap();
+    /// old.claim(&mike, &thread, "issue-12", now).unwrap();
+    /// new.catch_up(old.take_queue());
+    /// let later = now + Duration::from_secs(60);
+    /// assert_eq!(new.uri(mike.who(), later).claims(), ["issue-12"]);
+    /// assert!(new.same_log_state(&old));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn catch_up(&mut self, records: impl IntoIterator<Item = Record>) {
+        for record in records {
+            apply(&mut self.pending, &record);
+            self.apply_written(&record);
+        }
+        let Some(loaded) = self.loaded else {
+            return;
+        };
+        let seen = self
+            .sessions
+            .iter()
+            .filter_map(|(who, session)| Some((who.clone(), session.seen_before_load?)))
+            .collect();
+        self.sessions_of_the_log(&seen, loaded);
+    }
+
+    /// Makes each session that the log names, as it is after a replay at
+    /// `loaded`: gone until it calls, in the place of the last record that
+    /// names it. `seen` has the last call of each session that is known
+    /// from before.
+    fn sessions_of_the_log(&mut self, seen: &BTreeMap<Who, u64>, loaded: Instant) {
+        for (who, known) in &self.written.known {
             let at_ms = seen.get(who).copied().unwrap_or(0).max(known.at_ms);
             let session = Session {
                 seen_before_load: Some(at_ms),
                 alive: None,
-                ..Session::new(known.uri.place().clone(), now)
+                ..Session::new(known.uri.place().clone(), loaded)
             };
-            state.sessions.insert(who.clone(), session);
+            self.sessions.insert(who.clone(), session);
         }
-        state.riff_changed = Some(now);
-        state.loaded = Some(now);
-        state
     }
 
     /// The written state, the read cursors and the last call of each
@@ -3559,6 +3611,31 @@ mod tests {
 
         let start = now + Duration::from_secs(3600);
         let mut loaded = replayed(&mut state, start);
+        let soon = start + CLAIM_GRACE - Duration::from_secs(1);
+        assert!(!loaded.claim(&tests(), &repo(), "issue-12", soon).unwrap().0);
+        let late = start + CLAIM_GRACE + Duration::from_secs(1);
+        assert!(loaded.claim(&tests(), &repo(), "issue-12", late).unwrap().0);
+    }
+
+    #[test]
+    fn the_records_since_the_load_keep_the_claim_timer_of_the_load() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let start = now + Duration::from_secs(3600);
+        let mut loaded = replayed(&mut state, start);
+
+        // The old instance takes a claim and meets a new session after
+        // the load.
+        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        let late_one = uri("riff://mike@pangolin/como-technologies/riff?session=d4#late");
+        state.register(&late_one, now);
+        loaded.catch_up(state.take_queue());
+        assert!(loaded.same_log_state(&state));
+        // Each session is gone until it calls, also the new one.
+        assert!(loaded.who(start, T0, false).is_empty());
+        let all = listed(&loaded);
+        assert!(all.iter().any(|s| s.uri.who() == late_one.who()));
+
         let soon = start + CLAIM_GRACE - Duration::from_secs(1);
         assert!(!loaded.claim(&tests(), &repo(), "issue-12", soon).unwrap().0);
         let late = start + CLAIM_GRACE + Duration::from_secs(1);

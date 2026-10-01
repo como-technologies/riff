@@ -487,8 +487,9 @@
   the last checkpoint, and each record whose chunk was not written.
   The call of such a record got no success.
 - **R125** After a replay, each session counts as stopped at the time
-  of the replay. Its claims and its lead end after the grace period
-  (R9), unless it comes back.
+  of the load. Its claims and its lead end after the grace period
+  (R9), unless it comes back. A record that came since the load
+  (01M3THEE08ZKV8WGHDSVWV69ZE) does not start the time again.
 - **R154** Replaced by R125.
 - **R126** After a replay, each session is gone until it calls again.
   `who --all` shows it in the place of the last record that names it.
@@ -619,6 +620,11 @@
   `riff tail` then connect again.
 - **R132** `riff` tries a call again while the server replies 503, for
   up to 60 seconds.
+- **01M3THEE5V3RFHF9QTA8MA8QDF** When a call waits for more than 1
+  second while the server replies 503, `riff` shows one dim line
+  `(waits for riff-server…)` on stderr. It shows the line one time for
+  each gap, also with more than one call. `riff chat` shows the line
+  above its prompt. `riff top` keeps its table.
 - **R148** `riff watch` and `riff tail` connect again at once when a
   stream ends. When a connect fails, they try again every 5 seconds.
   They stop only when the person stops them.
@@ -761,8 +767,20 @@
 
 - **R137** The lease is an object in the bucket. It holds the ID of the
   instance that may serve.
-- **R138** At start, an instance makes a random ID and writes it to the
-  lease. It then waits 15 seconds, replays the log, and starts to serve.
+- **R138** At start, an instance loads its state
+  (01M3THEE08ZKV8WGHDSVWV69ZE). Then it makes a random ID and writes it
+  to the lease. It then waits 15 seconds, applies the chunks that came
+  since the load, and starts to serve.
+- **01M3THEE08ZKV8WGHDSVWV69ZE** The start order of an instance with a
+  store is: load, then the lease, then the port. The load reads the
+  sign-ins, the newest checkpoint and the log after it, with no lease.
+  When the load fails, the instance exits. It writes no lease, so the
+  old instance serves on. After the wait for the lease, the instance
+  applies the chunks that came since the load, and loads the sign-ins
+  again.
+- **01M3THEE31H5QVV3JAFC4ZRGFR** `riff-server` opens its port only
+  after the load and the wait for the lease. Before that, each connect
+  is refused.
 - **R139** An instance reads the lease every 2 seconds. It serves only
   for 5 seconds after the last read that showed its own ID. Else it
   replies 503.

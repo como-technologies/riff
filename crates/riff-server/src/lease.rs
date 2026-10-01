@@ -10,20 +10,24 @@
 //!     participant O as old instance
 //!     participant S as store
 //!     participant N as new instance
+//!     N->>S: load the state
+//!     Note over N: a load that fails: exit, no lease
 //!     N->>S: write the lease (new ID)
 //!     Note over N: waits 15 s
 //!     O->>S: read the lease (every 2 s)
 //!     S-->>O: new ID
 //!     Note over O: stops for good: 503, saves nothing, exits after 60 s
-//!     N->>S: load the state
-//!     Note over N: serves from the next whole second
+//!     N->>S: read the chunks that came since the load
+//!     Note over N: opens its port, serves from the next whole second
 //! ```
 //!
 //! # Rules
 //!
-//! - At start, an instance writes a new random ID to the lease with
-//!   [`Lease::take`]. It waits [`Timing::wait`], loads the state, and
-//!   starts to serve (R138).
+//! - At start, an instance loads the state first
+//!   (01M3THEE08ZKV8WGHDSVWV69ZE). Then it writes a new random ID to the
+//!   lease with [`Lease::take`]. It waits [`Timing::wait`], applies the
+//!   chunks that came since the load, and starts to serve (R138). See
+//!   [`crate::Service::load`].
 //! - It reads the lease each [`Timing::read_every`]. It serves only for
 //!   [`Timing::valid_for`] after the start of the last read that showed
 //!   its own ID. Else it replies 503 (R139).
@@ -58,7 +62,7 @@ use crate::store::{LEASE, Store, StoreError};
 /// The times of the lease rules. Tests use short times.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timing {
-    /// The wait after the lease write, before the load (R138).
+    /// The wait after the lease write, before the instance serves (R138).
     pub wait: Duration,
     /// The time between two reads of the lease (R139).
     pub read_every: Duration,

@@ -56,7 +56,11 @@
 //! after 60 minutes for each stream. So:
 //!
 //! - While the server replies 503, the client sends the request again,
-//!   for up to [`BUSY_LIMIT`] (R132). See [`busy_waits`].
+//!   for up to [`BUSY_LIMIT`] (R132). See [`busy_waits`]. A start of
+//!   `riff-server` has a gap of about 15 seconds. When a request waits
+//!   for [`WAIT_LINE_AFTER`], the client shows the line [`WAITING`]
+//!   (01M3THEE5V3RFHF9QTA8MA8QDF): on stderr, or where
+//!   [`Api::waits_to`] says. It shows the line one time for each gap.
 //! - A 5xx or 429 reply with no build header comes from the front end, not
 //!   from `riff-server`. The client sends the request again in the same
 //!   way, and never reads it as another build
@@ -66,6 +70,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -189,6 +194,43 @@ pub fn busy_waits() -> impl Iterator<Item = Duration> {
         Some(wait)
     })
 }
+
+/// The line that the client shows while it waits for a server that
+/// replies 503 (01M3THEE5V3RFHF9QTA8MA8QDF).
+pub const WAITING: &str = "(waits for riff-server…)";
+
+/// A request shows [`WAITING`] when it waited this long.
+pub const WAIT_LINE_AFTER: Duration = Duration::from_secs(1);
+
+/// True once a request showed [`WAITING`], until a request gets its
+/// reply. So each gap shows one line, also with many requests.
+static WAIT_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// True when a request that waited `waited` before its next wait shows
+/// [`WAITING`]. A short 503 shows nothing.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::api::{busy_waits, shows_wait_line};
+///
+/// let mut waited = Duration::ZERO;
+/// let shown: Vec<bool> = busy_waits()
+///     .take(5)
+///     .map(|wait| {
+///         let shows = shows_wait_line(waited);
+///         waited += wait;
+///         shows
+///     })
+///     .collect();
+/// // After 250 ms, 500 ms and 1 s, the request waited 1.75 seconds.
+/// assert_eq!(shown, [false, false, false, true, true]);
+/// ```
+pub fn shows_wait_line(waited: Duration) -> bool {
+    waited >= WAIT_LINE_AFTER
+}
+
+/// Where an [`Api`] shows [`WAITING`].
+type WaitLine = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Follows a stream across connections (R131, R148). `connect` opens the
 /// stream. When the stream ends or fails, `follow` connects again at
@@ -344,6 +386,8 @@ pub struct Api {
     http: reqwest::Client,
     base: String,
     auth: Option<Arc<Auth>>,
+    /// Where the client shows [`WAITING`]. `None` is stderr.
+    waits: Option<WaitLine>,
 }
 
 /// Where the tokens of a signed-in [`Api`] come from.
@@ -370,7 +414,36 @@ impl Api {
             http: reqwest::Client::new(),
             base: base.trim_end_matches('/').to_owned(),
             auth: None,
+            waits: None,
         }
+    }
+
+    /// The same client, which gives the line [`WAITING`] to `show`, not
+    /// to stderr. `riff chat` uses it to keep its screen
+    /// (01M3THEE5V3RFHF9QTA8MA8QDF).
+    ///
+    /// ```
+    /// let api = riff::api::Api::new("http://127.0.0.1:7878").waits_to(|line| println!("{line}"));
+    /// assert_eq!(api.base(), "http://127.0.0.1:7878");
+    /// ```
+    pub fn waits_to(mut self, show: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        self.waits = Some(Arc::new(show));
+        self
+    }
+
+    /// Waits `wait` before the next try of a request that waited
+    /// `waited` before. It shows [`WAITING`] when the request waited for
+    /// [`WAIT_LINE_AFTER`], one time for each gap.
+    async fn busy(&self, wait: Duration, waited: &mut Duration) {
+        if shows_wait_line(*waited) && !WAIT_SHOWN.swap(true, Ordering::SeqCst) {
+            let line = crate::style::styled(crate::style::DIM, WAITING);
+            match &self.waits {
+                Some(show) => show(&line),
+                None => anstream::eprintln!("{line}"),
+            }
+        }
+        *waited += wait;
+        tokio::time::sleep(wait).await;
     }
 
     /// The URL of the server.
@@ -638,6 +711,7 @@ impl Api {
         check: Check,
     ) -> Result<reqwest::Response> {
         let mut waits = busy_waits();
+        let mut waited = Duration::ZERO;
         let mut again = true;
         loop {
             // A box: a request may need a token, and a token is a request.
@@ -654,7 +728,7 @@ impl Api {
                         response.status()
                     );
                 };
-                tokio::time::sleep(wait).await;
+                self.busy(wait, &mut waited).await;
                 continue;
             }
             if check == Check::Build {
@@ -670,9 +744,12 @@ impl Api {
             }
             match waits.next() {
                 Some(wait) if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
-                    tokio::time::sleep(wait).await;
+                    self.busy(wait, &mut waited).await;
                 }
-                _ => return Ok(response),
+                _ => {
+                    WAIT_SHOWN.store(false, Ordering::SeqCst);
+                    return Ok(response);
+                }
             }
         }
     }
