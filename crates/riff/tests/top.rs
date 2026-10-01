@@ -238,7 +238,7 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
             "│  ├─ c3  blocked",
             "│  │    waits for a review (step: merge, Ns ago)",
             "│  └─ a1  lead  idle",
-            "│       ready for work for Ns",
+            "│       monitoring work for Ns",
             "└─ thelio",
             "   └─ b2  worker  busy",
             "        working on #12 Show the wave",
@@ -458,7 +458,8 @@ async fn a_worker_with_no_claim_shows_idle_not_its_old_step() {
 }
 
 /// A session with no claim and no status is `idle` in `riff top` and in
-/// `riff who`, with no status call (01M3QB6CJ1XCQG5B1BVR8AF3B4).
+/// `riff who`, with no status call. An idle lead monitors work. An idle
+/// worker is ready for work (01M3QB6CJ1XCQG5B1BVR8AF3B4).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_session_with_no_status_is_idle() {
     let (server, _) = start_server().await;
@@ -469,12 +470,22 @@ async fn a_session_with_no_status_is_idle() {
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    assert_eq!(detail(&top, "a1"), ["ready for work for Ns"], "{top}");
+    assert_eq!(detail(&top, "a1"), ["monitoring work for Ns"], "{top}");
     let who = ["who", "--color", "never"];
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
     let a1 = who.lines().find(|l| l.contains("(a1)")).unwrap();
     assert!(a1.contains("  idle  "), "{who}");
-    assert!(secs(a1).ends_with("  ready for work for Ns"), "{who}");
+    assert!(secs(a1).ends_with("  monitoring work for Ns"), "{who}");
+
+    let release = ["release", "issue-12"];
+    output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert_eq!(detail(&top, "b2"), ["ready for work for Ns"], "{top}");
+    let who = ["who", "--color", "never"];
+    let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
+    let b2 = who.lines().find(|l| l.contains("(b2)")).unwrap();
+    assert!(secs(b2).ends_with("  ready for work for Ns"), "{who}");
 }
 
 /// With 12 sessions, long titles and long statuses, `riff top --once`

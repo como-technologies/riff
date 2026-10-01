@@ -774,7 +774,7 @@ mike  owner  online
    ├─ 3a3f8d5d  blocked
    │    waits for a review (step: merge, 1m ago)
    ├─ 4e54d4e5  lead  idle
-   │    ready for work for 2h
+   │    monitoring work for 2h
    │    5m ago: plan the next wave
    └─ 8f1c2d3e  offline
         seen 4m ago
@@ -1684,9 +1684,11 @@ show it. The first state that matches wins:
 | `paused` | yellow | the riff is paused | the claims, and `stopped at:` the step |
 | `blocked` | red | the session set a blocked status | the reason and the step, then the claims |
 | `busy` | green | the session holds a claim | `working on #7`, or `reviewing #7` for a verify claim, then the step |
-| `idle` | dim | each other session | `ready for work for 6m`, then a current step |
+| `idle` | dim | each other session | `ready for work for 6m`, or `monitoring work for 6m` for the lead, then a current step |
 
-The time of `idle` counts from the last release of the session. An
+The lead takes no claims: it conducts the other sessions. So an idle
+lead shows `monitoring work`. The time of `idle` counts from the last
+release of the session. An
 older `riff-server` sends no state. Then riff derives the state from
 the other facts that the server sends.
 
@@ -1724,6 +1726,7 @@ riff top --once
 
 ```text
 SESSION                  STATE  ROLE    DETAIL
+mike@thelio:riff (4e54)  idle   lead    monitoring work for 2h
 mike@thelio:riff (9c0d)  idle   worker  ready for work for 6m
 ```
 
