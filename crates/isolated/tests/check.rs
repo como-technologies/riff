@@ -64,6 +64,7 @@ fn the_helper_sets_each_dir_in_its_temp_dir() {
         assert!(dir.is_dir(), "{name}: {}", dir.display());
     }
     assert_eq!(value("GIT_CONFIG_GLOBAL"), "/dev/null");
+    assert_eq!(value("GIT_ALLOW_PROTOCOL"), "file");
     let bus = value("DBUS_SESSION_BUS_ADDRESS");
     assert!(
         bus.to_string_lossy()

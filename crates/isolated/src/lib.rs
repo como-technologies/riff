@@ -16,6 +16,7 @@
 //! | `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`, `TMPDIR` | dirs of its own |
 //! | `DBUS_SESSION_BUS_ADDRESS` | a bus that does not exist, so each call to the OS keyring fails |
 //! | `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` | `/dev/null` and `1`: git reads no config of the machine |
+//! | `GIT_ALLOW_PROTOCOL` | `file`: git reaches no remote on the network (01M3WG82ZMQYG1TGHE4ET0BDDW) |
 //!
 //! Each dir is in one temp dir, which goes when the [`Isolated`] value
 //! drops. A test sets its own variables after the helper, so its
@@ -145,6 +146,7 @@ impl Isolated {
             ),
             ("GIT_CONFIG_GLOBAL".into(), Some("/dev/null".into())),
             ("GIT_CONFIG_NOSYSTEM".into(), Some("1".into())),
+            ("GIT_ALLOW_PROTOCOL".into(), Some("file".into())),
         ]);
         vars
     }

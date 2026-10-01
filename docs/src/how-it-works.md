@@ -877,8 +877,8 @@ sequenceDiagram
 
 A session that takes an item looks for the work of an earlier session
 first: a pushed branch, or a worktree on its machine. It goes on from
-that work, or starts again, and says why. A compaction is not a new
-start: the session keeps its claims.
+that work (see [A branch with WIP commits](#a-branch-with-wip-commits)).
+A compaction is not a new start: the session keeps its claims.
 
 To see that a new start freed the claims, run this after `/clear`:
 
@@ -896,15 +896,81 @@ echo '{"reason":"other"}' | riff hook session-end
 
 ### Start an item again
 
-When the earlier work is wrong or too old, the session starts again.
-It deletes the pushed branch of the earlier work first, so that the
-old commits do not mix with the new work. For `issue-12`:
+Only when the earlier work is wrong, the session starts again. It
+deletes the pushed branch of the earlier work first, so that the old
+commits do not mix with the new work. For `issue-12`:
 
 ```sh
 git push origin --delete worktree-issue-12
 ```
 
 The session says in its start post that it deleted the branch.
+
+### A branch with WIP commits
+
+A session can end at each moment, for example when the machine has no
+memory left. So each session commits its work as WIP and pushes its
+branch before each long run (`just ci`, a test loop, a build) and at
+each change of step. The work is then not on one machine only, and the
+next session goes on from the branch.
+
+```mermaid
+sequenceDiagram
+    participant A as session on pangolin
+    participant O as origin
+    participant S as riff-server
+    participant B as session on thelio
+    A->>S: claim issue-12
+    A->>O: push worktree-issue-12 with WIP commits
+    Note over A: killed
+    S->>S: the claim is free
+    B->>S: claim issue-12
+    S-->>B: granted
+    B->>O: git fetch
+    B->>B: "Earlier work on issue-12: the pushed branch ..."
+    B->>O: goes on, and pushes more commits
+```
+
+The rule for a person who looks at such a branch:
+
+- A WIP commit has `WIP` in its subject. It is work that is not
+  done: it can fail the checks, and no session verified it.
+- Do not review a WIP commit, and do not build on it. Look at the pull
+  request: the verify result names the commit that passed.
+- The pull request merges with a squash. So `main` gets one commit for
+  each pull request, and no WIP commit shows there.
+- The forge deletes the branch when the pull request merges.
+
+To see the commits of the branch of an item, for `issue-12`:
+
+```sh
+git fetch --prune origin
+git log --oneline origin/main..origin/worktree-issue-12
+```
+
+### See the earlier work on an item
+
+When a session claims an item, riff shows the earlier work on it: each
+pushed branch, and each worktree on the machine. You see the same
+line when you claim by hand:
+
+```sh
+riff claim issue-12
+```
+
+```text
+You hold issue-12 in como-technologies/riff.
+Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 (a WIP commit, 2 hours ago); the worktree /home/mike/src/riff/.claude/worktrees/issue-12 (3 files not committed, 1 commit not pushed). Go on from it, and do not start again: see "Pick up dropped work" in the riff skill.
+```
+
+- riff fetches from `origin` first, for at most 5 seconds.
+- A worktree can hold files that are not committed. They are the only
+  copy. The session commits them as WIP and pushes them before it goes
+  on.
+- A verify claim gets no such line: a verify worktree holds no work.
+- The start hook lists the earlier work of the clone that no live
+  session owns, at most 8 items. So a new session sees it before it
+  picks an item.
 
 ## Leave and join the riff
 
@@ -2713,9 +2779,11 @@ commits that `origin` does not have, riff changes nothing and says
 why. A worker also tells the lead. With no `origin`, riff says
 nothing.
 
-Each worker also fetches before it makes a worktree, rebases on a
-fresh `origin/main` before each push and each verify request, and
-after the merge removes its worktree and its branch and prunes. The
+Each worker also fetches before it makes a worktree, pushes its work
+as WIP before each long run (see
+[A branch with WIP commits](#a-branch-with-wip-commits)), rebases on a
+fresh `origin/main` before each verify request, and after the merge
+removes its worktree and its branch and prunes. The
 board of the lead lists each worktree and each branch that no live
 session owns.
 

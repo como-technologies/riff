@@ -697,24 +697,64 @@ mod tests {
         assert!(!flat.contains("you can verify the work of another session"));
     }
 
+    /// 01M3JEE1W32CMQP8CP2HJ829E7, 01M3WFYEP1H3VPW8G90KQDE6FW: a session
+    /// goes on from the work of an earlier session.
     #[test]
     fn the_skill_picks_up_dropped_work() {
         let skill = text("riff/skills/riff/SKILL.md");
         let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
         for word in [
+            "The result names the pushed branch and the worktree of an earlier session on the item",
             "look for the work of an earlier session on the item. See \"Pick up dropped work\"",
+            "go on from that work. Do not start again. Commit the files of that worktree that are not committed, and push them.",
+            "enter that worktree and make no new one",
+            "Say what you found of an earlier session, and that you go on from it.",
             "## Pick up dropped work",
             "A new start of a session (a new process, a resume or `/clear`) frees its claims",
+            "The result of `claim` names each pushed branch and each worktree of the item",
             "git branch -r --list '*issue-12*'",
             "git worktree list | grep issue-12",
+            "Go on from the earlier work. Do not start again.",
+            "its files that are not committed are the only copy",
+            "git -C PATH push -q -u origin HEAD",
             "`git reset --hard origin/worktree-issue-12`",
             "call `EnterWorktree` with its path",
-            "Start again when the earlier work is wrong or too old. First delete the pushed branch of the earlier work",
+            "Never use the worktree of another live session",
+            "Start again only when the earlier work is wrong. First delete the pushed branch of the earlier work",
             "git push origin --delete worktree-issue-12",
-            "whether you go on or start again, and why",
+            "the files that you committed. Say that you go on from it.",
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }
+        assert!(!skill.contains("too old"));
+    }
+
+    /// 01M3WFYEKTWVVZ1FWVNQMGBNN0: a session pushes its work as WIP.
+    #[test]
+    fn the_skill_pushes_the_work_as_wip() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "8. Do the work. Commit and push it as WIP before each long run (`just ci`, a test loop, a build) and at each change of step. See \"Push your work as WIP\".",
+            "### Push your work as WIP",
+            "before each long run: `just ci`, a test loop, a build;",
+            "at each change of step, when you set your status.",
+            "git commit -q -m \"WIP: STEP\"",
+            "git push -q --force-with-lease -u origin HEAD",
+            "A WIP commit says `WIP` in its subject",
+            "The pull request merges with a squash, so the WIP commits do not show on the default branch",
+            "Push it as WIP before the long run of the checks",
+            "`riff workers next` (step 12 of the start routine)",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+        // The rule is in the start routine and in the hygiene steps.
+        let start = &skill[skill.find("## Start routine").unwrap()..skill.find("## Waves").unwrap()];
+        assert!(start.contains("Push your work as WIP"));
+        let hygiene = &skill[skill.find("## Keep good git hygiene").unwrap()
+            ..skill.find("### Rebase before each push").unwrap()];
+        assert!(hygiene.contains("### Push your work as WIP"));
+        assert!(crate::hook::WORKER_LINE.contains("step 12 of the start routine"));
     }
 
     #[test]

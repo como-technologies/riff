@@ -3,7 +3,8 @@
 //! after `/clear`, a resume or a new process, the session has the same
 //! ID and no claims, and its item is free. The lead stays the lead. A
 //! compaction keeps the claims. The skill finds the pushed branch of an
-//! earlier session (01M3JEE1W32CMQP8CP2HJ829E7).
+//! earlier session (01M3JEE1W32CMQP8CP2HJ829E7), and keeps the files of
+//! its worktree (01M3WFYEP1H3VPW8G90KQDE6FW).
 
 use isolated::Isolated;
 use std::path::{Path, PathBuf};
@@ -193,9 +194,15 @@ fn find_steps(item: &str) -> String {
     dropped_work_block(0, item)
 }
 
+/// The steps that commit and push the files of the worktree `path` of
+/// an earlier session (01M3WFYEP1H3VPW8G90KQDE6FW).
+fn keep_steps(path: &Path) -> String {
+    dropped_work_block(1, "issue-12").replace("PATH", path.to_str().unwrap())
+}
+
 /// The step that deletes the pushed branch before a new start.
 fn start_again_step(item: &str) -> String {
-    dropped_work_block(1, item)
+    dropped_work_block(2, item)
 }
 
 #[test]
@@ -236,6 +243,18 @@ fn the_skill_finds_the_pushed_branch_of_an_earlier_session() {
     };
     assert!(run(find_steps("issue-12")).contains("origin/worktree-issue-12"));
     assert!(!run(find_steps("issue-7")).contains("worktree-issue"));
+
+    // The files of the earlier session that are not committed go to
+    // the pushed branch, so they are not the only copy.
+    std::fs::write(first.join("work.txt"), "not committed\n").unwrap();
+    run(keep_steps(&first));
+    assert_eq!(git(&first, &["status", "--porcelain"]), "");
+    assert!(git(&first, &["log", "-1", "--format=%s"]).starts_with("WIP"));
+    run(find_steps("issue-12"));
+    assert_eq!(
+        git(&second, &["show", "origin/worktree-issue-12:work.txt"]),
+        "not committed\n"
+    );
 
     // A new start deletes the old branch, so the next session finds
     // no earlier work.
