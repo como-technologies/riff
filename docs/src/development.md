@@ -758,10 +758,14 @@ riff-server log cut --after 1201 --dir ~/.local/state/riff-server
 ```
 
 ```text
-1202  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
-1203  (a line that does not read: EOF while parsing a value at line 1 column 30)
+1202  (a line that does not read: EOF while parsing a value at line 1 column 30)
+1203  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
 Removed 2 records and 0 checkpoints after position 1201. Threads: acme/app.
 ```
+
+In a chunk, the command keeps only the first lines whose positions are
+right. It removes each line after them, also a line with a lower
+position. So a record that it prints never stays.
 
 The command refuses a position before the oldest kept checkpoint. The
 chunks before that checkpoint are gone, so no start can replay them.
@@ -779,6 +783,13 @@ riff-server log verify --bucket como-riff-state
 
 On Cloud Run, a tool takes the token of the metadata server, as the
 server does.
+
+`--bucket` and `--dir` do not go together, also from the environment.
+When your shell sets `RIFF_DIR`, remove it for the command:
+
+```sh
+env -u RIFF_DIR riff-server log verify --bucket como-riff-state
+```
 
 ### Go back to a position
 

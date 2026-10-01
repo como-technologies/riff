@@ -228,3 +228,41 @@ async fn a_server_loads_the_log_after_a_cut() {
     let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
     assert_eq!(positions, [3, 4]);
 }
+
+/// A record with a position lower than the record before it: `verify`
+/// names the cut, and the cut removes each record that it names.
+#[tokio::test]
+async fn log_cut_repairs_a_chunk_with_a_record_of_a_lower_position() {
+    let dir = store(&[]).await;
+    let chunk = dir.path().join(chunk_name(5));
+    let line = |record: &Record| serde_json::to_string(record).unwrap();
+    let text = format!(
+        "{{\"format\":1,\"first\":5}}\n{}\n{}\n{}\n",
+        line(&running(5)),
+        line(&claimed(6)),
+        line(&running(3))
+    );
+    fs::write(&chunk, text).unwrap();
+
+    let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
+    assert!(!ok);
+    assert!(
+        stdout.contains("line 4: a record has position 3, and the log needs 7"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("riff-server log cut --after 6"), "{stdout}");
+
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "4"]);
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains("Removed 3 records and 0 checkpoints after position 4."),
+        "{stdout}"
+    );
+    assert!(!chunk.exists(), "no record after the position stays");
+    let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
+    assert!(ok, "{stdout}");
+    assert_eq!(
+        stdout,
+        "The log reads: 2 chunks, 4 records from position 1 to 4, 0 checkpoints.\n"
+    );
+}

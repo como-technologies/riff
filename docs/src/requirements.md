@@ -628,10 +628,13 @@
 - **01M3TJWHVN730ZWCWHT9ER186R** `riff-server log cut --after POSITION`
   deletes each record and each checkpoint after the position. It
   prints each record that it removes, and the threads of these
-  records. It keeps the bytes of each line that stays. It deletes the
-  chunks from the end of the log to its start, so a cut that stops
-  leaves no gap. It refuses a position before the oldest kept
-  checkpoint.
+  records. It keeps the bytes of each line that stays. In a chunk, it
+  keeps only the first lines whose positions are right, up to the
+  position, and removes each line after them, also a line with a
+  lower position. It removes a chunk whose header does not read. It
+  deletes the chunks from the end of the log to its start, so a cut
+  that stops leaves no gap. It refuses a position before the oldest
+  kept checkpoint.
 - **01M3TJWHYB9FTZ3G8G227V0N05** With a bucket, a tool of the log takes
   its access token from the metadata server of Cloud Run. When that
   server does not answer in 2 seconds, the tool takes the token of the
