@@ -42,13 +42,13 @@ flowchart TD
     K -->|query| Q["view of the written copy"] --> QR[reply]
     K -->|signal| P["presence in memory"] --> QR
     K -->|command| H["permits, then handle<br/>under the lock: Checked"]
-    H -->|refused| J1[log line: refused, the code] --> E[error to the caller]
-    H -->|accepted| U["Queued: positions, the entry in the queue,<br/>apply to the pending copy"]
+    H -->|"accepted, or refused"| U["Queued: positions, the entry in the queue,<br/>apply to the pending copy"]
     U --> W["the writer writes the chunk<br/>outside the lock"]
     W -->|failed for good| J3[log line: failed] --> S[503, the instance stops]
     W --> AP["the writer applies the chunk<br/>to the written copy, in order"]
     AP --> F["the writer: the log line of a command<br/>with no record, the effects"]
-    F -->|Applied| R[the call makes the reply<br/>from the written copy]
+    F -->|"Applied, accepted"| R[the call makes the reply<br/>from the written copy]
+    F -->|"Applied, refused"| E[error to the caller]
 ```
 
 - The engine is the only code that locks the state. Its one entry for a
@@ -70,14 +70,30 @@ flowchart TD
 - Each command waits until the writer is done with its entry in the
   queue. The queue is in order, so each entry before it is done too.
   This is one rule for each command, also for a command that makes no
-  record. So no reply tells of a change that is not in the log.
+  record, and for a command that is refused: a refused command has an
+  entry with no record. So no reply and no refusal tells of a change
+  that is not in the log.
+- A call can be a command and a signal: a `register` sets the place,
+  and an `end` ends the session. The trait `Command` has the method
+  `signal`, which gives the signal of the call, or none. The engine
+  sets it in the presence at the check, under the same lock, also when
+  the command makes no record.
 - The server is a caller too. Each timer sends a command as the caller
   `server`: forget the old sessions, grant a request for the owner
   role, end the role of an owner who is gone, post a note of the
-  server, name the owner of the settings.
+  server, name the owner of the settings. The engine has one function
+  for each command of the server, for example `Engine::forget`. The
+  function makes the `Authenticated` value inside the engine module.
+  The token path calls `Engine::admit` with the proof of the sign-in.
+- The first start of a riff sends the command `make_riff` of the
+  server. It makes the `riff_made` record, and a `pause_set` record
+  that pauses the riff.
 - A call from a session that the state does not know first runs the
-  command `register` for that session. It is a command of its own: its
-  records name `register`. A query of such a session waits for that
+  command `register` for that session, also when the call is a query
+  or a signal. It is a command of its own, with an entry of its own:
+  its records name `register`, and they have a `session_started`
+  record with the reason `join`. `Engine::check` runs the two `handle`
+  functions under one lock. A query of such a session waits for that
   write, then reads the view.
 
 ### The callers
@@ -93,8 +109,9 @@ flowchart TD
   member, admin or owner. `handle` reads the role from the caller.
 - A build reads a class of caller that it does not know as `other`.
 - A riff with no sign-in trusts its network. The caller is then the
-  `me` of the body. Such a riff refuses each command of the group
-  "people".
+  `me` of the body, with the role of an admin. Such a riff refuses each
+  command of the group "people". For a call with no `me`, E1b keeps
+  the rule of the code of today and writes it here.
 
 ### The commands
 
@@ -103,44 +120,53 @@ flowchart TD
 | sessions | `register`, `start`, `end` |
 | threads | `join`, `leave`, `post`, `announce` |
 | work | `claim`, `release`, `lead` |
-| the riff | `pause`, `resume`, `set_idle`, `forget`, `import` |
+| the riff | `make_riff`, `pause`, `resume`, `set_idle`, `forget`, `import` |
 | people | `admit`, `invite`, `remove`, `set_admin`, `pass_owner`, `take_owner`, `deny_owner`, `grant_owner`, `end_owner`, `name_owner`, `revoke` |
 
-- `announce`, `forget`, `import`, `grant_owner`, `end_owner`,
-  `name_owner` and `admit` are not `Routed`. No HTTP call can send
-  them.
+- `make_riff`, `announce`, `forget`, `import`, `grant_owner`,
+  `end_owner`, `name_owner` and `admit` are not `Routed`. No HTTP call
+  can send them.
 - `pause`, `resume` and `set_idle` each have a path of their own. A
   read of the pause or of the idle setting is a query.
 - The path and the reply type of each routed command are in
-  `riff-core`, next to its wire type. The server and the client use
-  the same ones.
+  `riff-core`, next to its wire type: the trait `Call`. The server and
+  the client use the same ones.
+- The wire changes in two places: `start` gets the fields `reason` and
+  `worker`, and `pause`, `resume` and `set_idle` get paths of their
+  own. The client and the server are one release.
 - A kind is never renamed, and the name of a removed command is never
   used again. A file in the fixtures lists each kind of each release.
 
 ### Who can send a command
 
-One function, `permits`, holds this table: the class of the caller,
-its role, the state of its life cycle, and the kind of the command.
-The engine calls it before `handle`. A kind with no row does not
-compile. One test runs each command as each class of caller and
+One function, `permits`, holds this table. It reads only the caller:
+its class (person, session, sign-in, server), its worker mark, and its
+role (member, admin, owner; the owner has the role of an admin too).
+It does not read the state. The engine calls it before `handle`, and
+its refusal has the code `not_allowed`. A kind with no row does not
+compile. One test runs each command as each class, mark and role, and
 compares the result with the table.
 
-| Command | Person | Session | Worker | Lead | Admin, owner | Server |
-|---|---|---|---|---|---|---|
-| `register`, `start`, `end` | | yes | yes | yes | | |
-| `join`, `leave`, `post` | yes | yes | yes | yes | | |
-| `claim`, `release` | yes | yes | yes, not in MustClear | yes | | |
-| `lead` | | yes | | yes | | |
-| `pause`, `resume` of a repository | yes | | | yes, its repository | yes | |
-| `pause`, `resume` of the riff | | | | | yes | |
-| `revoke` of the own sign-ins | yes | | | | | |
-| `set_idle`, `invite`, `remove`, `revoke` of another person | | | | | admin | |
-| `set_admin`, `pass_owner`, `deny_owner` | | | | | owner | |
-| `take_owner` | | | | | admin | |
-| `announce`, `forget`, `import`, `grant_owner`, `end_owner`, `name_owner` | | | | | | yes |
-| `admit` | | | | | | the sign-in |
+| Command | Class of the caller | Role |
+|---|---|---|
+| `register`, `start`, `end` | a session | member |
+| `join`, `leave`, `post` | a person, a session | member |
+| `claim`, `release` | a person, a session | member |
+| `lead` | a session that is not a worker | member |
+| `pause`, `resume` of a repository | a person, a session | member |
+| `pause`, `resume` of the riff | a person, a session | admin |
+| `revoke` of the own sign-ins | a person | member |
+| `set_idle`, `invite`, `remove`, `revoke` of another person, `take_owner` | a person | admin |
+| `set_admin`, `pass_owner`, `deny_owner` | a person | owner |
+| `make_riff`, `announce`, `forget`, `import`, `grant_owner`, `end_owner`, `name_owner` | the server | |
+| `admit` | a sign-in | |
 
-A lead that is an admin has the commands of an admin. A worker is
+`handle` makes each check that reads the state: a session pauses only
+the repository of which it is a lead, a worker in MustClear cannot
+claim, a caller releases only what it holds. See "The moves that
+`handle` refuses".
+
+A worker is
 never the lead: the rule for the first session of a user in a
 repository skips a worker. Only an explicit `register` or `start`
 makes the first lead. When the only session of a person in a
@@ -216,17 +242,28 @@ line has the format of each other log line (`severity`, `time`,
 | `refused` | `permits` or `handle` refused the command. | `INFO` |
 | `no_change` | `handle` accepted the command, and it made no record. | `INFO` |
 | `failed` | The chunk was not written, and the instance stopped. | `ERROR` |
-| `denied` | The token layer refused the call: no token, a bad proof, a token that may not act as the `me` of the body, an old build of `riff`. The caller is the one that the call named, marked as not proved. | `INFO` |
+| `denied` | The token layer refused the call: a command, a query or a signal. | `INFO` |
 
-- A refusal has a `code` from a fixed set (`held`, `paused`,
-  `must_clear`, `not_allowed`, `not_holder`, `other_user`) and a
-  `reason` as text. A test of a refusal compares the code.
+- The writer makes the lines `refused`, `no_change` and `failed`. The
+  token layer makes the line `denied`.
+- A refusal has a `code` and a `reason` as text. A test of a refusal
+  compares the code. The codes of this release: `not_allowed` (the
+  class or the role of the caller), `no_sign_in` (a command of the
+  people in a riff with no sign-in), `held`, `paused`, `must_clear`,
+  `not_holder`, `other_user`, `not_member` (the command names a person
+  who is not a member), `bad_request` (the fields of the call do not
+  agree, for example the signed fields of a post). A release can add a
+  code. A reader takes a code that it does not know as text.
+- A `denied` line has no `caller`. It has `named` (the caller that the
+  call named, not proved), `path` in the place of `command`, and a
+  code: `no_token`, `bad_proof`, `not_you` (the token may not act as
+  the `me` of the body), `old_build`.
 - `key` is the thumbprint of the device key of the token. It is not a
   secret.
 - A line never holds the body of a post, a token or a key.
-- A command with records gets no line. A signal and a query get no
-  line. The request log of Cloud Run holds each call with its path and
-  its status.
+- A command with records gets no line. A signal and a query that the
+  token layer accepts get no line. The request log of Cloud Run holds
+  each call with its path and its status.
 - The lines are best effort: a stop between the result and the line
   loses the line.
 - The log shows who did what for as long as it keeps its chunks: about
@@ -249,6 +286,7 @@ stateDiagram-v2
     MustClear --> Ready: session_started (process, clear)
     Ready --> [*]: session_forgotten
     MustClear --> [*]: session_forgotten
+    Working --> [*]: released for each claim, then session_forgotten
 ```
 
 | State | Meaning |
@@ -279,6 +317,12 @@ stateDiagram-v2
   too. The log has no record for the end itself.
 - A claim that takes an item whose holder is gone gives a `released`
   record for the old holder, then the `claimed` record, in one chunk.
+- `forget` gives one `released` record for each claim of the session,
+  then the `session_forgotten` record. That record says that each
+  thing of the session goes: `apply` removes the session, its places
+  in the threads and its lead.
+- The state keeps the time of the last fresh start of each session:
+  the time of its last `session_started` record with a fresh context.
 - A person has no session ID and no life cycle. A person can claim and
   release.
 
@@ -290,8 +334,10 @@ stateDiagram-v2
 | `claim` | The repository or the riff is paused. | `paused` |
 | `claim` | Another session holds the item. | `held` |
 | `release` | The caller does not hold the item. | `not_holder` |
-| `lead` | The caller is a person, or a worker. | `not_allowed` |
+| `pause`, `resume` of a repository | The caller is a session that is not a lead of that repository, and not an admin. | `not_allowed` |
 | `register` | The session ID is known under another user. | `other_user` |
+
+`permits` refuses a `lead` of a person or of a worker, before `handle`.
 
 ### The clear of a worker
 
@@ -321,25 +367,32 @@ sequenceDiagram
   MustClear tells it too, so a lost reply does not leave the worker
   there.
 - The engine sends no wake to a session in MustClear. The message is in
-  its thread. When the watch starts after the clear, the session gets
-  the wake that it missed.
+  its thread, and its `posted` record names the session in `woken`.
+  The wake waits in the presence. When the watch starts after the
+  clear, the session gets the wake that it missed. A start of the
+  server loses the wake that waits: the message stays unread, and the
+  session reads it at its start.
 - `who`, `top` and `riff workers` show MustClear, and the time since
   the last fresh start of each worker.
 
 ## The pipeline in the types
 
-The stages of a command are types. Only the engine module can make a
-value of a stage, and each stage is made from the stage before it. The
+The stages of a command are types of the engine module. Only that
+module can make `Checked`, `Queued` and `Applied`, and each one is
+made from the stage before it. `Authenticated<C>` has two doors: its
+constructor for a routed command takes the proof of the token layer
+(`SignedIn`), and the functions of the engine for the commands of the
+server and for `admit` make it inside the module. The
 state, its lock and the queue are private fields of the engine module.
 The files of the commands are next to the engine module, not below it,
 so no command can make a stage or lock the state.
 
 | Stage | Made by | It proves |
 |---|---|---|
-| `Authenticated<C>` | the token layer, or the engine for the caller `server` | The caller is the caller of the token, and may act as the `me` of the body. |
-| `Checked<'s, C>` | `Engine::check`, in the call | `permits` and `handle` accepted the command. It holds the lock of the state. |
+| `Authenticated<C>` | the token layer with its proof, or a function of the engine | The caller is the caller of the token, and may act as the `me` of the body. |
+| `Checked<'s, C>` | `Engine::check`, in the call | `permits` and `handle` ran: the command is accepted or refused. It holds the lock of the state. |
 | `Queued<C>` | `Checked::queue`, in the call | The records have positions. The entry of the command is in the queue, and its records are in the pending copy. The lock is free. |
-| `Applied<C>` | the writer | The chunk of each record is in the log, and the written copy has the records, in order. The log line and the effects of the command are done. |
+| `Applied<C>` | `Queued::applied`, from the word of the writer | The chunk of each record is in the log, and the written copy has the records, in order. The log line and the effects of the command are done. |
 
 - Only `Applied` gives the reply. So a handler cannot reply before the
   write. The writer sends the effects, so no wake goes out for a record
@@ -351,9 +404,14 @@ so no command can make a stage or lock the state.
   comes between the check and the queue. The guard is not `Send`, and
   axum needs a `Send` future. So a handler that holds it over an
   `await` does not compile.
-- Each of these rules has a doc test with `compile_fail` that names
-  its error code, and a twin doc test that compiles and differs in the
-  one line that the rule forbids.
+- Two rules have a doc test with `compile_fail` that names its error
+  code, and a twin doc test that compiles and differs in the one line
+  that the rule forbids: code outside the engine module cannot make a
+  stage (the twin uses `Engine::dispatch`), and a signal cannot reach
+  the riff (the twin changes the presence). The rule "no `await` while
+  `Checked` lives" has no doc test: only `dispatch` can break it, and
+  then the one handler does not build. The rustdoc of `dispatch` says
+  so, with the text of the error.
 - The tests `a_state_with_a_writer_shows_a_record_only_after_its_write`
   and `a_post_of_a_state_with_a_writer_is_read_only_after_its_write`
   stay. A new test drops a call while the write waits, then checks the
@@ -379,11 +437,21 @@ pub trait Command: Send + 'static {
     /// Makes the reply from the written copy.
     fn reply(&self, caller: &Caller, view: &View<'_>, made: &[Record],
         note: Self::Note) -> Self::Reply;
+
+    /// The signal of the call, for the presence. Most commands have
+    /// none.
+    fn signal(&self, _caller: &Caller) -> Option<Signal> { None }
 }
 
-/// A command that a client can send. The path is in `riff-core`.
-pub trait Routed: Command + DeserializeOwned {
+/// In `riff-core`, next to each wire type: the path and the reply of
+/// a call. The client sends each call with one generic function.
+pub trait Call: Serialize + DeserializeOwned {
     const PATH: &'static str;
+    type Reply: Serialize + DeserializeOwned;
+}
+
+/// A command that a client can send.
+pub trait Routed: Call + Command<Reply = <Self as Call>::Reply> {
     /// The session that the body names, for the token layer.
     fn me(&self) -> Option<&SessionUri>;
 }
@@ -394,22 +462,35 @@ pub struct Decision {
     pub effects: Vec<Effect>,
 }
 
-/// One accepted command in the queue of the writer.
+/// One command in the queue of the writer: accepted (with its
+/// records, or none) or refused (no record, and a line).
 struct Entry {
     made: Vec<Record>,
     effects: Vec<Effect>,
     line: Option<LogLine>,
-    done: oneshot::Sender<Applied>,
+    done: oneshot::Sender<Done>,
+}
+
+/// The word of the writer to the call: the entry is done.
+struct Done { made: Vec<Record> }
+
+/// Why a call gets no reply.
+pub enum Failed {
+    /// `permits` or `handle` refused the command: 403 or 409, with the code.
+    Refused(Refused),
+    /// The chunk was not written, and the instance stops: 503.
+    Stopped,
 }
 
 impl Engine {
     /// The one path of each command.
     pub async fn dispatch<C: Command>(&self, call: Authenticated<C>)
-        -> Result<C::Reply, Refused>
+        -> Result<C::Reply, Failed>
     {
-        let checked: Checked<'_, C> = self.check(call)?; // lock, permits, handle
-        let queued: Queued<C> = checked.queue();         // positions, the entry
-        Ok(queued.applied().await?.reply())              // the writer did the rest
+        let checked: Checked<'_, C> = self.check(call); // lock, permits, handle, signal
+        let queued: Queued<C> = checked.queue();        // positions, the entry
+        let applied: Applied<C> = queued.applied().await?; // the writer did the rest
+        applied.reply() // the reply, or the refusal
     }
 }
 
@@ -418,7 +499,7 @@ impl Engine {
 async fn command<C: Routed>(
     State(engine): State<Engine>,
     call: Authenticated<C>,
-) -> Result<Json<C::Reply>, Refused> {
+) -> Result<Json<C::Reply>, Failed> {
     engine.dispatch(call).await.map(Json)
 }
 ```
@@ -437,7 +518,7 @@ loop {
         entry.line.map(log);
         engine.send(entry.effects);
         // The call can be gone. The change is done.
-        let _ = entry.done.send(Applied::new(entry.made));
+        let _ = entry.done.send(Done { made: entry.made });
     }
 }
 ```
@@ -455,16 +536,16 @@ The envelope of each record: `position`, `written_at_ms`, `by`,
 
 | Kind | Fields | Made by |
 |---|---|---|
-| `riff_made` | `riff_id` | the first start of a riff, or `import`: the first record of the log |
-| `posted` | `thread`, `message`, `woken` | `post`, `announce`, and a command that causes a note |
+| `riff_made` | `riff_id` | `make_riff`, or `import`: the first record of the log |
+| `posted` | `thread`, `message` (it holds the seq), `woken` | `post`, `announce`, and a command that causes a note |
 | `joined_thread` | `session`, `thread` | `register`, `join`, `post` |
 | `left_thread` | `session`, `thread` | `leave` |
 | `claimed` | `session`, `thread`, `item` | `claim` |
-| `released` | `session`, `thread`, `item`, `must_clear` | `release`, `start`, `end`, `claim` |
+| `released` | `session`, `thread`, `item`, `must_clear` | `release`, `start`, `end`, `claim`, `forget` |
 | `lead_set` | `session`, `thread` | `lead`, `register`, `start` |
 | `session_started` | `session`, `reason`, `worker` | `register`, `start` |
 | `session_forgotten` | `session` | `forget` |
-| `pause_set` | `scope`, `state` | `pause`, `resume` |
+| `pause_set` | `scope`, `state` | `pause`, `resume`, `make_riff`, `import` |
 | `setting_changed` | `idle` | `set_idle` |
 | `person_joined` | `user`, `email` | `admit` |
 | `member_invited` | `email` | `invite` |
@@ -476,6 +557,8 @@ The envelope of each record: `position`, `written_at_ms`, `by`,
 | `signins_ended` | `user` | `revoke` |
 
 - `pause_set` holds the pause of the riff too.
+- A record of the people names a person by the email. The state finds
+  the user from the email.
 - `setting_changed` holds each setting. Each setting is a field that
   can be absent: absent means "not changed".
 - The log has no record for the end of a session. A later release can
@@ -496,16 +579,19 @@ The three rules of the store design stay. These rules come with them:
   it does not know as `other`, and `apply` changes nothing for it: a
   `session_started` with the reason `other` is not a fresh start, and
   a `pause_set` with the scope `other` changes no pause. A record with
-  a value that the build read as `other` in its change counts as a
-  skipped record: the build writes no checkpoint past it, and
-  `riff server` counts it. `state` of `pause_set` has two values and
-  no `other`.
+  a value that the build read as `other`, in its change or in its
+  `by`, counts as a skipped record: the build writes no checkpoint
+  past it, and `riff server` counts it. `state` of `pause_set` has two
+  values and no `other`.
 - A new command needs no change of the format: `command` is text. A
   reader takes a `command` that it does not know as text.
 
 ### The checkpoint
 
-Each part of the state that the log gives is in the checkpoint:
+Each part of the state that the log gives is in the checkpoint. The
+store design names the parts of today. The engine adds these parts,
+and the build item that adds a part to the state adds it to the
+checkpoint:
 
 - the riff ID;
 - the people: the email of each user, the members, the admins, the
@@ -513,7 +599,8 @@ Each part of the state that the log gives is in the checkpoint:
   role with its time;
 - the position of the last `member_removed` and `signins_ended` record
   of each user;
-- the worker mark and the MustClear mark of each session;
+- the worker mark, the MustClear mark and the time of the last fresh
+  start of each session;
 - each pause, with who set it and when.
 
 A test takes each fixture log and compares the state of a full replay
@@ -567,8 +654,10 @@ pub struct Pause { by: Who, at_ms: u64 }
 
 ## The import of go-live
 
-The import is the command `import` of the server through
-`Engine::dispatch`. It reads the old objects one time and writes these
+A start that finds the old objects and no log is the import. It needs
+no flag: the deploy of release 1.0.0 is the import. The server reads
+the old objects before the dispatch, and gives what it read to the
+command `import` of the server. `Engine::dispatch` writes these
 records, with `by` `server` and `command` `import`:
 
 1. `riff_made`, with the riff ID of today.
@@ -579,25 +668,34 @@ records, with `by` `server` and `command` `import`:
 5. For each session that did not end: `session_started` (the reason
    `join`, the worker mark), then its `joined_thread`, `lead_set` and
    `claimed` records.
-6. The `posted` records.
+6. The `posted` records: the last 200 messages of each thread, as the
+   checkpoint keeps them. A direct thread whose two sessions ended is
+   not in the import.
 
+- After the import, the server writes a checkpoint with the read
+  cursors of the old objects. So no session reads a message of the
+  import a second time.
 - A worker that holds no claim at the import is Ready.
-- `riff-server` refuses to start on a store that has the old objects
-  and no log, unless the start is the import.
+- A second start finds the log, and does not import again.
+- Until the import is built (E6), `riff-server` refuses to start on a
+  store that has the old objects and no log.
 - After go-live, only the owner and the admins resume the whole riff.
 
 ## Build items
 
-Each item is in Wave 17, with a `Needs:` line. No release goes out
-from `main` before go-live (#341).
+Each item is in Wave 17, with a `Needs:` line. A session takes an item
+only when each item that it needs is merged. No release goes out from
+`main` before go-live (#341). Each item that adds a part to the state
+adds it to the checkpoint, with a test: a start from a checkpoint
+gives the state of a full replay.
 
 | Item | What | Needs |
 |---|---|---|
-| E1a | The move, with no change of behavior: `State` becomes the riff and the presence. Each command becomes a type with `handle`. Each group of commands gets a file with its part of the state, its `apply` arms and its part of the checkpoint. The old handlers stay. | |
-| E1b | The engine: `Caller` with its role, `Command`, `Routed` in `riff-core`, `permits`, the stages as types, `Engine::dispatch`, `Engine::signal`, the one handler, the writer that makes `Applied`, the one wait rule and its measure, a status and a place as signals, the paths of `pause`, `resume` and `set_idle`, the refusal to start on old objects with no log. | E1a |
-| E2 | The trace: `by` and `command` in each record, the log line of a command with no record, the codes of a refusal, the `denied` line of the token layer, a note in the chunk of its cause, the `released` record of a claim that takes an item. A how-to in the book: find who did what. | E1b |
+| E1a | The move, with no change of behavior: `State` becomes the riff and the presence. Each command becomes a type with `handle`. Each group of commands gets a file with its part of the state, its `apply` arms and its part of the checkpoint. The old handlers stay. The requirement: `apply` only stores what a record says. | |
+| E1b | The engine: `Caller` with its role, `Command`, `Routed` in `riff-core`, `permits`, the stages as types, `Engine::dispatch`, `Engine::signal`, the one handler, the writer that makes `Applied`, the one wait rule (also for a refusal) and its measure, a status and a place as signals, the signal of a command, `make_riff`, the paths of `pause`, `resume` and `set_idle`, the refusal to start on old objects with no log. | E1a |
+| E2 | The trace: `by` and `command` in each record, the log line of a command with no record with its fields and the `key`, the codes of a refusal, the `denied` line of the token layer, a note in the chunk of its cause, the `released` record of a claim that takes an item. A how-to in the book: find who did what. | E1b |
 | E3 | The people in the log: the kinds, the commands, `admit`, `name_owner`, the timer commands of the owner, `riff_made`, the role of the caller from the written copy, `signins.json` with only the sign-ins and the position of each, the drop of an old sign-in at a load. | E2 |
-| E4 | The life cycle: `reason` and `worker` in `start`, `session_started`, `must_clear` in `released`, MustClear, the refusals, the ask to clear in the reply to a release and to a keep-alive, the wake that waits, the state in `who`, `top` and `riff workers`. | E2 |
+| E4 | The life cycle: `reason` and `worker` in `start`, `session_started`, the first lead only from an explicit `register` or `start` and never for a worker, the `released` records of `forget`, `must_clear` in `released`, MustClear, the refusals, the ask to clear in the reply to a release and to a keep-alive, the wake that waits, the state in `who`, `top` and `riff workers`. | E2 |
 | E5 | The two pauses (#364): `pause_set`, the roles, the views, the rollout, the idle workers for each repository. | E2 |
 | E6 | The format of 1.0.0: the enum and the kinds from one place, the value `other` and its checkpoint rule, the list of the command kinds, a fixture with one record of each kind, the replay of each fixture in CI, the test of the checkpoint, the command `import`. | E3, E4, E5 |
 
@@ -615,8 +713,8 @@ Other items:
    `Queued`. The writer makes `Applied`.
 2. The writer finishes each command: the write, the apply in order,
    the log line, the effects.
-3. Each command leaves one trace: its records, or one log line. There
-   is no journal of accepted commands.
+3. Each command leaves one trace: its records, or one log line. A
+   command with records gets no log line.
 4. Each record names its caller and its command. `by` is an object
    that names the class of the caller.
 5. The log shows who did what for as long as it keeps its chunks.
