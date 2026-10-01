@@ -2829,6 +2829,37 @@ impl State {
     }
 }
 
+/// The note of the server in the thread of a claim that the lead `lead`
+/// freed for the session `holder` (01M3WG243BW7P6E1ME0DFNQF8C). It names
+/// the lead, the item and the holder.
+///
+/// ```
+/// use riff_core::name::SessionUri;
+/// use riff_server::state::released_for;
+///
+/// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=518bd482-fcc4&lead=true".parse()?;
+/// let holder: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=068a2cc2-11aa#issue-347".parse()?;
+/// assert_eq!(
+///     released_for(&lead, "issue-347", &holder),
+///     "claims: the lead mike@pangolin:riff (518bd482) released issue-347 for the session \
+///      mike@pangolin:riff#issue-347 (068a2cc2). issue-347 is free."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn released_for(lead: &SessionUri, item: &str, holder: &SessionUri) -> String {
+    let id = |uri: &SessionUri| -> String {
+        let id = uri.who().session().unwrap_or_default();
+        id.chars().take(8).collect()
+    };
+    format!(
+        "claims: the lead {} ({}) released {item} for the session {} ({}). {item} is free.",
+        lead.short(),
+        id(lead),
+        holder.short(),
+        id(holder)
+    )
+}
+
 /// True when `id` names the session `session`: the whole session ID, or
 /// a start of it of 4 or more characters.
 fn names(id: &str, session: &str) -> bool {
@@ -3167,10 +3198,79 @@ mod tests {
         let t = repo();
         state.watch_started(&api(), now);
         assert!(state.claim(&api(), &t, "issue-12", now).unwrap().0);
+        for m in 1..=10 {
+            state.alive(&api(), now + MINUTE * m);
+        }
         let later = now + CLAIM_GRACE * 2;
         let reply = state.claim(&tests(), &t, "issue-12", later).unwrap();
         assert!(!reply.0);
         assert_eq!(&reply.1, api().who());
+    }
+
+    /// A front end can hold the watch stream of a killed client open:
+    /// the server sees no close. The session is gone after [`GONE`], and
+    /// its claims are free after [`CLAIM_GRACE`]
+    /// (01M3WG240PNMQYZ7TX6Z7ZF6M9).
+    #[test]
+    fn a_killed_session_with_an_open_watch_is_gone_and_its_claim_is_free() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let t = repo();
+        state.watch_started(&api(), now);
+        state.worker(api().who(), true);
+        assert!(state.claim(&api(), &t, "issue-12", now).unwrap().0);
+        // The kill: no end call, no close of the stream, no keep-alive.
+        let soon = now + GONE - Duration::from_secs(1);
+        assert!(shown(&state, soon).contains(api().who()));
+        let gone = now + GONE;
+        assert!(!shown(&state, gone).contains(api().who()));
+        let all = state.who(gone, T0 + ms(GONE), true);
+        let dead = all.iter().find(|s| s.uri.who() == api().who()).unwrap();
+        assert!(!dead.live, "an open stream of a gone session is not live");
+        assert_eq!(dead.idle_secs, GONE.as_secs());
+        // A post does not wake it.
+        let to = vec![Selector::session("a1")];
+        let post = Post::new(&tests(), None, to, "are you there?");
+        assert!(state.post(post, gone, 0).is_err());
+        let held = now + CLAIM_GRACE - Duration::from_secs(1);
+        assert!(!state.claim(&tests(), &t, "issue-12", held).unwrap().0);
+        let free = now + CLAIM_GRACE;
+        assert!(state.claim(&tests(), &t, "issue-12", free).unwrap().0);
+    }
+
+    /// The stream of a dead client closes late, for example at the time
+    /// limit of a request. The close does not bring the session back.
+    #[test]
+    fn the_late_close_of_a_watch_brings_no_session_back() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.watch_started(&api(), now);
+        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        let hour = now + MINUTE * 60;
+        state.watch_ended(api().who(), hour);
+        assert!(!shown(&state, hour).contains(api().who()));
+        let all = state.who(hour, T0 + ms(MINUTE * 60), true);
+        let dead = all.iter().find(|s| s.uri.who() == api().who()).unwrap();
+        assert_eq!(dead.idle_secs, 3600, "the close is not a call");
+        assert!(state.claim(&tests(), &repo(), "issue-12", hour).unwrap().0);
+    }
+
+    /// The keep-alive of `riff watch` keeps a session with an open watch
+    /// live, with its claims.
+    #[test]
+    fn a_watch_with_keep_alives_stays_live() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state.watch_started(&api(), now);
+        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        for m in 1..=60 {
+            state.alive(&api(), now + MINUTE * m);
+        }
+        let hour = now + MINUTE * 60;
+        let info = state.who(hour, T0 + ms(MINUTE * 60), false);
+        let mike = info.iter().find(|s| s.uri.who() == api().who()).unwrap();
+        assert!(mike.live);
+        assert_eq!(mike.uri.claims(), ["issue-12"]);
     }
 
     #[test]
@@ -3221,6 +3321,7 @@ mod tests {
         let mut state = setup(now);
         state.watch_started(&tests(), now);
         let day2 = now + DAY * 2;
+        state.alive(&tests(), day2 - Duration::from_secs(60));
         state.register(&api(), day2 - Duration::from_secs(90));
         let shown = state.who(day2, T0, false);
         let uris: Vec<SessionUri> = shown.iter().map(|s| s.uri.clone()).collect();
@@ -3791,6 +3892,7 @@ mod tests {
         let mut loaded = replayed(&mut state, now);
         loaded.watch_started(&api(), now + Duration::from_secs(60));
         let late = now + CLAIM_GRACE * 2;
+        loaded.alive(&api(), late - Duration::from_secs(60));
         assert!(!loaded.claim(&tests(), &repo(), "issue-12", late).unwrap().0);
     }
 

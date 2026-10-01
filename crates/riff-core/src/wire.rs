@@ -886,6 +886,11 @@ pub struct Claim {
     pub me: SessionUri,
     pub thread: ThreadName,
     pub item: String,
+    /// In a release only: the session that holds the item, by its
+    /// session ID or the start of it. The lead of a user frees the claim
+    /// of another session of that user (01M3WG243BW7P6E1ME0DFNQF8C).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

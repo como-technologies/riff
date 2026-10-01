@@ -527,6 +527,62 @@ fn only_the_holder_releases_a_claim() {
         .then_refused("nobody holds issue-7");
 }
 
+fn release_for(holder: &str) -> Command {
+    Command::ReleaseFor {
+        thread: repo(),
+        item: "issue-7".into(),
+        holder: holder.into(),
+    }
+}
+
+/// The lead of a user frees the claim of another session of that user,
+/// live or gone (01M3WG243BW7P6E1ME0DFNQF8C). The record names the
+/// holder.
+#[test]
+fn the_lead_releases_the_claim_of_a_session_of_its_user() {
+    let mut records = team();
+    records.push(claimed(&ann2(), "issue-7"));
+    // The holder is gone: it made no call since the replay.
+    given(&records)
+        .when(&ann(), release_for("a2"))
+        .then(&[released(&ann2(), "issue-7")]);
+    given(&records)
+        .live(&[ann2()])
+        .when(&ann(), release_for("a2"))
+        .then(&[released(&ann2(), "issue-7")]);
+}
+
+#[test]
+fn a_session_that_is_not_the_lead_releases_no_claim_of_another_session() {
+    let third: SessionUri = "riff://ann@heron/acme/app?session=a3".parse().unwrap();
+    let mut records = team();
+    records.push(joined(&third, &repo()));
+    records.push(claimed(&ann2(), "issue-7"));
+    given(&records)
+        .when(&third, release_for("a2"))
+        .then_refused("Only the lead of your user");
+    // The lead of another user is refused too.
+    given(&records)
+        .when(&bob(), release_for("a2"))
+        .then_refused("Only the lead of its user");
+    // A person is no lead.
+    given(&records)
+        .when(&person(), release_for("a2"))
+        .then_refused("Only the lead of its user");
+}
+
+#[test]
+fn a_release_for_a_session_names_the_holder() {
+    let mut records = team();
+    records.push(claimed(&ann2(), "issue-7"));
+    given(&records)
+        .when(&ann(), release_for("b1"))
+        .then_refused("not by the session b1");
+    given(&team())
+        .when(&ann(), release_for("a2"))
+        .then_refused("nobody holds issue-7");
+}
+
 #[test]
 fn an_end_and_a_new_start_free_each_claim() {
     let mut records = team();

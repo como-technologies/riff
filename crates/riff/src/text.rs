@@ -1207,6 +1207,22 @@ pub fn released(thread: &ThreadName, item: &str) -> String {
     format!("You released {item} in {thread}.")
 }
 
+/// The answer to a release by the lead for the session `holder`
+/// (01M3WG243BW7P6E1ME0DFNQF8C).
+///
+/// ```
+/// let thread = "como-technologies/riff".parse()?;
+/// assert_eq!(
+///     riff::text::released_for(&thread, "issue-347", "068a2cc2"),
+///     "You released issue-347 in como-technologies/riff for the session 068a2cc2. \
+///      The item is free."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
+    format!("You released {item} in {thread} for the session {holder}. The item is free.")
+}
+
 /// One message of `thread`. The sender is short: its [`name`], and
 /// `lead=true` for a lead (01M3JPK85FT5CCQPF3WDCXSMDF). The start of its
 /// session ID lets an agent reply with `tell`. `who` gives the full

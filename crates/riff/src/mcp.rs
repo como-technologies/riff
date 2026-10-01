@@ -177,6 +177,17 @@ pub struct ClaimArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct ReleaseArgs {
+    /// The thread. Leave it out to use your repository thread.
+    thread: Option<String>,
+    /// The work item, for example issue-12.
+    item: String,
+    /// Only the lead: the session that holds the item, by its session ID
+    /// or the start of it. Leave it out to release your own claim.
+    session: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct MoveArgs {
     /// The absolute path of the directory where you work now, for example a new worktree.
     path: String,
@@ -445,14 +456,29 @@ names the pushed branch and the worktree of an earlier session on the item, when
         Ok(out)
     }
 
-    #[tool(description = "Release a work item that you claimed.")]
-    async fn release(&self, Parameters(a): Parameters<ClaimArgs>) -> ToolResult {
+    #[tool(
+        description = "Release a work item that you claimed. Only the lead: with `session`, free \
+the claim of another session of your user, for example one that is gone or that does not answer."
+    )]
+    async fn release(&self, Parameters(a): Parameters<ReleaseArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
-        self.api
-            .release(&self.here()?, &thread, &a.item)
-            .await
-            .map_err(err)?;
-        Ok(text::released(&thread, &a.item))
+        let me = self.here()?;
+        match a.session {
+            Some(holder) => {
+                self.api
+                    .release_for(&me, &thread, &a.item, &holder)
+                    .await
+                    .map_err(err)?;
+                Ok(text::released_for(&thread, &a.item, &holder))
+            }
+            None => {
+                self.api
+                    .release(&me, &thread, &a.item)
+                    .await
+                    .map_err(err)?;
+                Ok(text::released(&thread, &a.item))
+            }
+        }
     }
 
     #[tool(

@@ -171,11 +171,19 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// Release a work item that you claimed.
+    /// Release a work item that you claimed
+    ///
+    /// The lead frees the claim of another session of its user with
+    /// `--session`, for example a session that is gone or that does not
+    /// answer. Then the next session can claim the item.
     Release {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
         thread: Option<String>,
+        /// The session that holds the item: its session ID or the start
+        /// of it, as `riff who` shows it. Only the lead can name one.
+        #[arg(long)]
+        session: Option<String>,
         /// The work item, for example issue-12.
         item: String,
     },
@@ -1010,10 +1018,22 @@ async fn main() -> Result<()> {
                 println!("{line}");
             }
         }
-        Command::Release { thread, item } => {
+        Command::Release {
+            thread,
+            session,
+            item,
+        } => {
             let thread = thread_or_default(thread, &here)?;
-            api.release(&me, &thread, &item).await?;
-            println!("{}", text::released(&thread, &item));
+            match session {
+                Some(holder) => {
+                    api.release_for(&me, &thread, &item, &holder).await?;
+                    println!("{}", text::released_for(&thread, &item, &holder));
+                }
+                None => {
+                    api.release(&me, &thread, &item).await?;
+                    println!("{}", text::released(&thread, &item));
+                }
+            }
         }
         Command::Lead { command: None } => println!("{}", text::led(&api.lead(&me).await?)),
         Command::Pr {
@@ -2035,7 +2055,8 @@ async fn draw_top(
 /// Runs until stopped, or with `once` until the first wake (R170). It
 /// connects again when the stream ends (R131). It stops when the session
 /// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2). On a new binary, it runs
-/// it (01M3MNVTC248YYJJQKFD9H1WY9).
+/// it (01M3MNVTC248YYJJQKFD9H1WY9). It sends a keep-alive each minute
+/// while it runs ([`api::keep_alive`], 01M3WG240PNMQYZ7TX6Z7ZF6M9).
 async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     let stream = follow(|| api.watch(me), RETRY);
     let left = async {
@@ -2048,6 +2069,7 @@ async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
     };
     tokio::select! {
         () = print_each(stream, text::wake_line, once) => {}
+        () = api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY) => {}
         () = left => println!("{}", text::WATCH_LEFT),
         () = binary::follow_update(me.place()) => {}
     }
