@@ -153,10 +153,10 @@ code](#the-book-shows-the-real-code):
 {"position":1234,"written_at_ms":1790000000000,"change":{"claimed":{"session":"ann/s1","thread":"repo","item":"issue-7"}}}
 ```
 
-- The change names say what happened, in the past tense: `posted`,
-  `joined_thread`, `left_thread`, `claimed`, `released`, `lead_set`,
-  `riff_state_set` (paused or running), `person_changed` (invite,
-  remove, admin, owner, take), `setting_changed`, `session_forgotten`.
+- The change names say what happened, in the past tense, for example
+  `posted`, `claimed`, `released`, `pause_set`. The full list of the
+  kinds, and the caller and the command in each record, are in
+  [the design of the command engine](design-engine.md#the-records).
 - A `posted` record keeps the signed bytes of its message unchanged.
   See [Signed messages](#signed-messages).
 - The rules for a change of a record:
@@ -345,8 +345,9 @@ does not call `who` for the whole riff.
   current generation, or the next one, as good.
 - While a write of `signins.json` fails, a refresh gets 503. So the
   snapshot does not fall more generations behind.
-- Until go-live, `signins.json` also holds the people: the owner, the
-  admins, the members and the riff ID.
+- `signins.json` holds only the sign-ins. The people (the owner, the
+  admins, the members) and the riff ID are in the log. Each sign-in
+  keeps the position of the log at its start.
 - Access tokens and DPoP replay IDs are in memory. After a start, each
   client refreshes one time. A new instance refuses each DPoP proof from
   before its start.
@@ -505,11 +506,12 @@ claimed.
 
 1. The lead writes its handoff in the release issue on GitHub, not in
    the riff.
-2. The tag deploys the new server. It starts with an empty log, and a
-   new riff ID. A new riff starts paused.
-3. The new server reads the old `tokens` object one time, and writes a
-   record for each member, admin and the owner. So nobody invites a
-   member again.
+2. The tag deploys the new server. It keeps the riff ID, and it starts
+   paused.
+3. The new server reads the old objects one time, and writes the
+   records of the import. See [The import of
+   go-live](design-engine.md#the-import-of-go-live). So nobody invites
+   a member again, and each claim and each lead stays.
 4. Each machine updates itself: the old riff sees the new build in the
    `riff-build` header of each reply.
 5. Each person signs in again with `riff login`, on each machine.
