@@ -1,5 +1,6 @@
 //! The book check: `hygiene book [DIR]` builds the book and fails when
-//! it has a missing include or anchor.
+//! it has a missing include or anchor, or when the build changes a
+//! tracked file.
 //!
 //! # Design
 //!
@@ -14,6 +15,7 @@
 //! | `mdbook` | An `ERROR` line in the log of mdbook. |
 //! | `include` | An include line, `{{#...}}`, that mdbook left in the text of a page, outside a code block. |
 //! | `empty-code` | A code block with no text. A missing anchor gives one. |
+//! | `tracked` | A tracked file that the build changed. |
 //!
 //! An example of an include in a code block of the book is escaped, as
 //! `\{{#include file.rs:name}}`. mdbook shows it as text in the code
@@ -32,6 +34,39 @@
 //! let example = "<pre><code class=\"language-text\">{{#include a.rs:x}}\n</code></pre>";
 //! assert!(hygiene::book::check_page("a.html", example).is_empty());
 //! ```
+//!
+//! # The theme and the tracked files
+//!
+//! The theme of the book, `DIR/gruvbox`, is not in git. `hygiene book`
+//! installs it with `mdbook-gruvbox install DIR` when `book.toml` names
+//! it ([`uses_theme`]) and the directory is missing. A new version of
+//! that tool also writes `book.toml`. `book.toml` is the decision of
+//! the repository, so `hygiene book` puts its bytes back after the
+//! install (01M3W5YW0172EVF2JA8T7WW392).
+//!
+//! The build must not change a tracked file: a session can commit the
+//! change with its item by mistake. `hygiene book` reads the tracked
+//! files that differ from `HEAD` before the install and after the
+//! build ([`Tracked`]), and [`check_tracked`] compares the two. So a
+//! file that a person changed before the build passes, and a file that
+//! the build changed fails. A directory outside a git repository has no
+//! tracked file.
+//!
+//! ```
+//! use hygiene::book::{check_tracked, Tracked};
+//!
+//! let before = Tracked::from([("src/a.rs".to_owned(), "1".to_owned())]);
+//! let mut after = before.clone();
+//! assert!(check_tracked(&before, &after).is_empty());
+//!
+//! after.insert("docs/book.toml".to_owned(), "2".to_owned());
+//! let errors = check_tracked(&before, &after);
+//! assert_eq!(errors.len(), 1);
+//! assert_eq!(errors[0].rule, "tracked");
+//! assert!(errors[0].text.starts_with("docs/book.toml: "));
+//! ```
+
+use std::collections::BTreeMap;
 
 use crate::Error;
 
@@ -43,6 +78,41 @@ const SKIPS: [(&str, &str); 4] = [
     ("<script", "</script>"),
     ("<style", "</style>"),
 ];
+
+/// The tracked files that differ from `HEAD`: the path of each file from
+/// the top of the repository, and a mark of its content. Two marks are
+/// equal when the content is the same.
+pub type Tracked = BTreeMap<String, String>;
+
+/// True when `book_toml`, the text of a `book.toml`, names a file of the
+/// theme directory `gruvbox`.
+///
+/// ```
+/// assert!(hygiene::book::uses_theme("additional-js = [\"gruvbox/gruvbox.js\"]"));
+/// assert!(!hygiene::book::uses_theme("[book]\ntitle = \"t\"\n"));
+/// ```
+pub fn uses_theme(book_toml: &str) -> bool {
+    book_toml.contains("gruvbox/")
+}
+
+/// A `tracked` error for each tracked file that differs between
+/// `before` and `after`: a file that only one of them has, or a file
+/// with two different marks.
+pub fn check_tracked(before: &Tracked, after: &Tracked) -> Vec<Error> {
+    let names: std::collections::BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    names
+        .into_iter()
+        .filter(|name| before.get(*name) != after.get(*name))
+        .map(|name| {
+            Error::new(
+                "tracked",
+                format!(
+                    "{name}: the build changed this tracked file. Find the step that writes it."
+                ),
+            )
+        })
+        .collect()
+}
 
 /// An `mdbook` error for each `ERROR` line of the log of mdbook.
 ///
@@ -177,6 +247,58 @@ mod tests {
             .into_iter()
             .map(|e| e.rule)
             .collect()
+    }
+
+    fn tracked(files: &[(&str, &str)]) -> Tracked {
+        files
+            .iter()
+            .map(|&(name, mark)| (name.to_owned(), mark.to_owned()))
+            .collect()
+    }
+
+    fn names(errors: &[Error]) -> Vec<&str> {
+        errors
+            .iter()
+            .map(|e| e.text.split(':').next().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_file_that_the_build_does_not_change_passes() {
+        let before = tracked(&[("a.rs", "1"), ("docs/book.toml", "2")]);
+        assert!(check_tracked(&before, &before.clone()).is_empty());
+        assert!(check_tracked(&Tracked::new(), &Tracked::new()).is_empty());
+    }
+
+    #[test]
+    fn a_file_that_the_build_changes_fails() {
+        let before = tracked(&[("a.rs", "1")]);
+        let after = tracked(&[("a.rs", "1"), ("docs/book.toml", "2")]);
+        let errors = check_tracked(&before, &after);
+        assert_eq!(names(&errors), ["docs/book.toml"]);
+        assert_eq!(errors[0].rule, "tracked");
+    }
+
+    #[test]
+    fn a_changed_file_that_the_build_changes_again_fails() {
+        let before = tracked(&[("a.rs", "1"), ("b.rs", "1")]);
+        let after = tracked(&[("a.rs", "1"), ("b.rs", "2")]);
+        assert_eq!(names(&check_tracked(&before, &after)), ["b.rs"]);
+    }
+
+    #[test]
+    fn a_changed_file_that_the_build_puts_back_fails() {
+        let before = tracked(&[("a.rs", "1"), ("b.rs", "1")]);
+        let after = tracked(&[("b.rs", "1"), ("c.rs", "1")]);
+        assert_eq!(names(&check_tracked(&before, &after)), ["a.rs", "c.rs"]);
+    }
+
+    #[test]
+    fn only_a_book_toml_that_names_a_theme_file_uses_the_theme() {
+        assert!(uses_theme(
+            "additional-css = [\"gruvbox/css/variables.css\"]\n"
+        ));
+        assert!(!uses_theme("default-theme = \"gruvbox\"\n"));
     }
 
     #[test]

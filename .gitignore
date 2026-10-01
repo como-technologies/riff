@@ -2,7 +2,7 @@
 /docs/book
 # The settings of `just dev`, for example the OAuth client.
 /.env
-# Installed by `just init` and by CI (`mdbook-gruvbox install docs`).
+# The theme of the book. `just book` installs it when it is missing.
 /docs/gruvbox
 .claude/settings.local.json
 # Agent worktrees.

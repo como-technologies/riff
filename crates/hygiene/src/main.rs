@@ -2,7 +2,8 @@
 //! checks the message of a commit with `git`. `hygiene book [DIR]` builds
 //! the book in DIR with `mdbook` and checks it. See the library docs.
 
-use std::path::Path;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use hygiene::{Issue, PullRequest};
@@ -75,7 +76,13 @@ fn commit(rev: &str) -> ExitCode {
 
 /// Builds the book in `dir` with `mdbook build`, and checks its log and
 /// each page in `dir/book`, except `print.html`: it repeats each page.
+/// It installs the theme first when it is missing, and fails when the
+/// install or the build changed a tracked file.
 fn book(dir: &str) -> ExitCode {
+    let before = tracked(dir);
+    if let Err(e) = theme(dir) {
+        return tool_error(&e);
+    }
     let out = match Command::new("mdbook")
         .args(["build", dir])
         .env("NO_COLOR", "1")
@@ -112,7 +119,72 @@ fn book(dir: &str) -> ExitCode {
             Err(e) => return tool_error(&format!("{}: {e}", page.display())),
         }
     }
+    errors.extend(hygiene::book::check_tracked(&before, &tracked(dir)));
     report(&format!("the book in {dir}"), &errors, BOOK)
+}
+
+/// Installs the theme in `dir/gruvbox` with `mdbook-gruvbox install`,
+/// when `dir/book.toml` names the theme and the directory is missing.
+/// The install can write `book.toml`, so this puts its bytes back
+/// (01M3W5YW0172EVF2JA8T7WW392). mdbook reports a missing `book.toml`.
+fn theme(dir: &str) -> Result<(), String> {
+    let toml = Path::new(dir).join("book.toml");
+    let Ok(saved) = std::fs::read(&toml) else {
+        return Ok(());
+    };
+    if !hygiene::book::uses_theme(&String::from_utf8_lossy(&saved))
+        || Path::new(dir).join("gruvbox").is_dir()
+    {
+        return Ok(());
+    }
+    let shown = format!("mdbook-gruvbox install {dir}");
+    let out = Command::new("mdbook-gruvbox")
+        .args(["install", dir])
+        .output()
+        .map_err(|e| format!("{shown}: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("{shown}: {}", stderr.trim()));
+    }
+    if std::fs::read(&toml).ok().as_ref() != Some(&saved) {
+        std::fs::write(&toml, &saved).map_err(|e| format!("{}: {e}", toml.display()))?;
+    }
+    Ok(())
+}
+
+/// The tracked files of the repository of `dir` that differ from `HEAD`,
+/// each with a mark of its content. Empty when `dir` is in no git
+/// repository, or when the repository has no commit.
+fn tracked(dir: &str) -> hygiene::book::Tracked {
+    let git = |at: &Path, args: &[&str]| {
+        let out = Command::new("git").arg("-C").arg(at).args(args).output();
+        out.ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let Some(top) = git(Path::new(dir), &["rev-parse", "--show-toplevel"]) else {
+        return hygiene::book::Tracked::new();
+    };
+    let top = PathBuf::from(top.trim_end_matches('\n'));
+    git(&top, &["diff", "HEAD", "--name-only", "-z"])
+        .unwrap_or_default()
+        .split('\0')
+        .filter(|name| !name.is_empty())
+        .map(|name| (name.to_owned(), mark(&top.join(name))))
+        .collect()
+}
+
+/// A mark of the content of the file `path`, or `gone` when it cannot be
+/// read, for example a deleted file.
+fn mark(path: &Path) -> String {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let mut hasher = DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        }
+        Err(_) => "gone".to_owned(),
+    }
 }
 
 /// Runs `gh` and reads its JSON output.

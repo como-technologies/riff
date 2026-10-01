@@ -2192,6 +2192,10 @@
   of a page outside a code block (`include`), and on an empty code
   block (`empty-code`). It skips an escaped include example in a code
   block.
+- **01M3W5YW0172EVF2JA8T7WW392** `just ci` changes no tracked file.
+  `hygiene book` installs the theme of the book when it is missing,
+  and keeps `book.toml` as it is. It fails when the install or the
+  build of the book changed a tracked file (`tracked`).
 
 ## Open
 
