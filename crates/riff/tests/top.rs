@@ -547,7 +547,13 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     // The first session of mike in strata is its lead.
     let strata = "como-technologies/strata";
     session_at(&server, strata, "d4", Some("issue-12")).await;
-    session_at(&server, &format!("{strata}#issue-88"), "e5", Some("issue-88")).await;
+    session_at(
+        &server,
+        &format!("{strata}#issue-88"),
+        "e5",
+        Some("issue-88"),
+    )
+    .await;
     session_at(&server, "como-technologies/riff#issue-12", "f6", None).await;
 
     let top = ["top", "--once", "--color", "never"];
