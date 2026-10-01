@@ -1948,6 +1948,10 @@
   worker is a worker with no claim, also a new worker that did not
   join yet, and a live worker of another user. A worker that the
   server asked to stop is not idle.
+- **01M3W27BJYFQCHY5MTZ2J4SKW4** An idle worker counts for the rollout
+  only when it is in the repository of the lead. A worker in another
+  repository does not count, also a worker of the user of the lead. A
+  worker that did not join yet counts.
 - **01M3Q5QE4SQ8VYN2PSF42KB3QJ** Each machine that runs workers tells
   its CPU cores, its CPU speed, its memory and its 1-minute load
   average. A workers host puts them in its status. `riff workers` shows

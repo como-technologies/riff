@@ -2366,11 +2366,12 @@ flowchart TD
   comment `Merged in #`, and each issue of its `Needs:` line is
   closed. A pull request counts only when its branch names an issue,
   for example `worktree-issue-12`.
-- **Idle workers.** Workers with no claim. A new worker counts as idle
-  until it claims an item. riff starts a worker only when no worker is
-  idle. So the next worker starts after the new one claims. When no
-  worker takes the free work, one worker waits idle, the server keeps
-  it, and riff starts no more.
+- **Idle workers.** Workers with no claim in the repository of your
+  lead. A worker in another repository does not count. A new worker
+  counts as idle until it claims an item. riff starts a worker only
+  when no worker is idle. So the next worker starts after the new one
+  claims. When no worker takes the free work, one worker waits idle,
+  the server keeps it, and riff starts no more.
 - **Machines.** The machine of the lead, when the lead runs in tmux,
   and each workers host of your user (see
   [Offer workers from another machine](#offer-workers-from-another-machine)).

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use riff::api::Api;
 use riff::identity;
-use riff_core::name::{SessionUri, Who};
+use riff_core::name::{Place, SessionUri, Who};
 use riff_core::wire::RiffState;
 
 /// `list-panes -a` lists the worker panes from the file `workers`.
@@ -250,6 +250,36 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
     assert_eq!(lead.workers(), 2, "a pause stops the rollout");
     lead.riff(RiffState::Running).await;
     lead.until_workers(3).await;
+}
+
+/// An idle worker of another user in another repository cannot take the
+/// free work, so the rollout starts a worker (01M3W27BJYFQCHY5MTZ2J4SKW4).
+/// An idle worker of another user in the repository of the lead can
+/// take it, so the rollout starts none.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_worker_in_another_repository_does_not_stop_the_rollout() {
+    let lead = lead(5).await;
+    lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
+    // A live idle worker of brett in the repository o/strata.
+    let other: SessionUri = "riff://brett@k/o/strata?session=w1".parse().unwrap();
+    lead.api.register_as(&other, true).await.unwrap();
+    let _other = lead.api.watch(&other).await.unwrap();
+    let who = lead.api.who(&lead.me, false).await.unwrap();
+    let seen = who.iter().find(|s| s.uri.who() == other.who()).unwrap();
+    assert!(seen.live && seen.worker && seen.uri.claims().is_empty());
+
+    lead.riff(RiffState::Running).await;
+    lead.until_workers(1).await;
+    lead.claim(1, "issue-1").await;
+
+    // A live idle worker of brett in the repository of the lead.
+    let place = Place::new("k", lead.me.place().repo().clone(), None).unwrap();
+    let same = SessionUri::new(Who::new("brett", Some("w2")).unwrap(), place);
+    lead.api.register_as(&same, true).await.unwrap();
+    let _same = lead.api.watch(&same).await.unwrap();
+    lead.issues(r#"[{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(lead.workers(), 1, "brett's worker can take the item");
 }
 
 /// The rollout never starts more workers than the limit of the machine.
