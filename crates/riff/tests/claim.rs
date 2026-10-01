@@ -383,6 +383,63 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
     assert_ne!(code, 0, "a person with no session ID cannot be the lead");
 }
 
+/// The lead frees the claim of another session of its user, and the
+/// next session claims the item. A note of the server in the thread
+/// names the lead, the item and the holder. A session that is not the
+/// lead is refused, and so is the lead of another user
+/// (01M3WG243BW7P6E1ME0DFNQF8C).
+#[tokio::test]
+async fn the_lead_releases_the_claim_of_another_session() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    agent(&server, dir, "mike", "lead1", &["read"]).await;
+    agent(&server, dir, "brett", "b1", &["read"]).await;
+    resume(&server, dir).await;
+    let (out, code) = agent(&server, dir, "mike", "work1", &["claim", "issue-12"]).await;
+    assert_eq!(code, 0, "{out}");
+
+    let free = ["release", "issue-12", "--session", "work1"];
+    let (out, code) = agent(&server, dir, "mike", "work2", &free).await;
+    assert_ne!(code, 0, "a session that is not the lead: {out}");
+    let (out, code) = agent(&server, dir, "brett", "b1", &free).await;
+    assert_ne!(code, 0, "the lead of another user: {out}");
+    let (out, code) = riff(&server, dir, "mike", &free).await;
+    assert_ne!(code, 0, "a person is not the lead: {out}");
+    let other = ["release", "issue-12", "--session", "work2"];
+    let (out, code) = agent(&server, dir, "mike", "lead1", &other).await;
+    assert_ne!(code, 0, "work2 does not hold the item: {out}");
+    let (_, code) = agent(&server, dir, "mike", "work2", &["claim", "issue-12"]).await;
+    assert_eq!(code, 1, "work1 still holds the item");
+
+    // The start of the session ID names the holder, as `riff who` shows it.
+    let (out, code) = agent(
+        &server,
+        dir,
+        "mike",
+        "lead1",
+        &["release", "issue-12", "--session", "work"],
+    )
+    .await;
+    assert_eq!(
+        out,
+        "You released issue-12 in como-technologies/riff for the session work. \
+         The item is free.\n"
+    );
+    assert_eq!(code, 0);
+    let (out, code) = agent(&server, dir, "mike", "work2", &["claim", "issue-12"]).await;
+    assert_eq!(code, 0, "{out}");
+
+    let (out, _) = agent(&server, dir, "mike", "work1", &["read"]).await;
+    assert!(
+        out.contains(
+            "claims: the lead mike@pangolin:riff (lead1) released issue-12 for the session \
+             mike@pangolin:riff (work1). issue-12 is free."
+        ),
+        "{out}"
+    );
+}
+
 #[tokio::test]
 async fn a_person_asks_for_status_and_who_shows_each_answer() {
     let server = start_server().await;
