@@ -56,7 +56,11 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
-        expires_at: u64::MAX,
+        // The access token counts as expired, so the first call
+        // refreshes the pair. The server then saves the sign-in, as
+        // after a real sign-in: a swap for a session token saves nothing
+        // (01M3WFVAB44T8EP4QZD4KS7DRF).
+        expires_at: 0,
         riff_id: None,
     };
     login::store(api.base(), &sign_in).unwrap();
