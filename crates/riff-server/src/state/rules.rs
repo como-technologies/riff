@@ -10,6 +10,8 @@
 //!
 //! The tests do no I/O.
 
+use riff_core::record::{Forgotten, Member, RiffStateSet, SettingChanged};
+
 use super::*;
 
 fn ann() -> SessionUri {
@@ -120,12 +122,12 @@ fn draft(me: &SessionUri, thread: Option<&ThreadName>, to: &[&str], body: &str) 
     }
 }
 
-fn post(me: &SessionUri, thread: Option<&ThreadName>, to: &[&str], body: &str) -> Command {
-    Command::Post(Box::new(draft(me, thread, to, body)))
+fn post(me: &SessionUri, thread: Option<&ThreadName>, to: &[&str], body: &str) -> Post {
+    draft(me, thread, to, body)
 }
 
-fn claim(item: &str) -> Command {
-    Command::Claim {
+fn claim(item: &str) -> Claim {
+    Claim {
         thread: repo(),
         item: item.into(),
     }
@@ -156,6 +158,7 @@ impl Given {
         for me in sessions {
             let session = self
                 .state
+                .presence
                 .sessions
                 .entry(me.who().clone())
                 .or_insert_with(|| Session::new(me.place().clone(), self.now));
@@ -168,6 +171,7 @@ impl Given {
     /// `me` read `thread` up to `seq`, with no record.
     fn read_to(mut self, me: &SessionUri, thread: &ThreadName, seq: u64) -> Given {
         self.state
+            .presence
             .cursors
             .insert((me.who().clone(), thread.clone()), seq);
         self
@@ -187,7 +191,7 @@ impl Given {
         self
     }
 
-    fn when(self, me: &SessionUri, command: Command) -> When {
+    fn when<C: Command>(self, me: &SessionUri, command: C) -> When {
         let now = self.now;
         let this = if me == &crate::owner::server_uri() {
             self
@@ -216,7 +220,7 @@ impl When {
 #[test]
 fn a_new_session_joins_its_repository_and_is_the_first_lead() {
     given(&[])
-        .when(&ann(), Command::Register)
+        .when(&ann(), Register)
         .then(&[joined(&ann(), &repo()), lead_set(&ann())]);
 }
 
@@ -224,7 +228,7 @@ fn a_new_session_joins_its_repository_and_is_the_first_lead() {
 fn a_second_session_of_a_user_is_not_the_lead_while_the_first_holds() {
     given(&[joined(&ann(), &repo()), lead_set(&ann())])
         .live(&[ann()])
-        .when(&ann2(), Command::Register)
+        .when(&ann2(), Register)
         .then(&[joined(&ann2(), &repo())]);
 }
 
@@ -232,42 +236,40 @@ fn a_second_session_of_a_user_is_not_the_lead_while_the_first_holds() {
 fn a_second_session_is_the_lead_when_the_first_stopped_long_ago() {
     given(&[joined(&ann(), &repo()), lead_set(&ann())])
         .after(CLAIM_GRACE)
-        .when(&ann2(), Command::Register)
+        .when(&ann2(), Register)
         .then(&[joined(&ann2(), &repo()), lead_set(&ann2())]);
 }
 
 #[test]
 fn a_register_of_a_member_and_lead_changes_nothing() {
-    given(&team()).when(&ann(), Command::Register).then(&[]);
+    given(&team()).when(&ann(), Register).then(&[]);
 }
 
 #[test]
 fn a_person_joins_no_thread_on_register() {
-    given(&[]).when(&person(), Command::Register).then(&[]);
+    given(&[]).when(&person(), Register).then(&[]);
 }
 
 #[test]
 fn a_join_adds_a_member_once() {
     given(&[])
         .live(&[ann()])
-        .when(&ann(), Command::Join(design()))
+        .when(&ann(), Join(design()))
         .then(&[joined(&ann(), &design())]);
     given(&[joined(&ann(), &design())])
-        .when(&ann(), Command::Join(design()))
+        .when(&ann(), Join(design()))
         .then(&[]);
 }
 
 #[test]
 fn a_leave_removes_a_member_or_a_lead() {
     given(&team())
-        .when(&ann(), Command::Leave(repo()))
+        .when(&ann(), Leave(repo()))
         .then(&[left(&ann(), &repo())]);
     given(&[lead_set(&ann())])
-        .when(&ann(), Command::Leave(repo()))
+        .when(&ann(), Leave(repo()))
         .then(&[left(&ann(), &repo())]);
-    given(&team())
-        .when(&ann(), Command::Leave(design()))
-        .then(&[]);
+    given(&team()).when(&ann(), Leave(design())).then(&[]);
 }
 
 #[test]
@@ -335,14 +337,11 @@ fn a_note_wakes_nobody_but_its_selected_sessions_join() {
         kind: Kind::Note,
         ..message(sender, 1, &["user=bob"], "fyi")
     };
-    given(&team())
-        .live(&[bob()])
-        .when(&ann(), Command::Post(Box::new(note)))
-        .then(&[
-            joined(&ann(), &design()),
-            joined(&bob(), &design()),
-            posted(&design(), expected, &[]),
-        ]);
+    given(&team()).live(&[bob()]).when(&ann(), note).then(&[
+        joined(&ann(), &design()),
+        joined(&bob(), &design()),
+        posted(&design(), expected, &[]),
+    ]);
 }
 
 #[test]
@@ -402,7 +401,7 @@ fn a_signed_post_with_the_lead_mark_of_a_session_that_is_not_the_lead_is_refused
         ..signed
     };
     given(&team())
-        .when(&ann2().with_lead(true), Command::Post(Box::new(signed)))
+        .when(&ann2().with_lead(true), signed)
         .then_refused("not the lead");
 }
 
@@ -420,14 +419,14 @@ fn a_copy_of_a_signed_payload_is_refused() {
         ..copy
     };
     given(&records)
-        .when(&ann(), Command::Post(Box::new(copy)))
+        .when(&ann(), copy)
         .then_refused("a copy of message 1");
 }
 
 #[test]
 fn the_server_announces_as_itself_and_joins_no_thread() {
     let server = crate::owner::server_uri();
-    let announce = Command::Announce {
+    let announce = Announce {
         thread: Some(repo()),
         to: vec!["user=bob".parse().unwrap()],
         body: "news".into(),
@@ -500,7 +499,7 @@ fn only_the_holder_releases_a_claim() {
         .live(&[bob()])
         .when(
             &bob(),
-            Command::Release {
+            Release {
                 thread: repo(),
                 item: "issue-7".into(),
             },
@@ -510,7 +509,7 @@ fn only_the_holder_releases_a_claim() {
         .live(&[bob()])
         .when(
             &ann(),
-            Command::Release {
+            Release {
                 thread: repo(),
                 item: "issue-7".into(),
             },
@@ -519,7 +518,7 @@ fn only_the_holder_releases_a_claim() {
     given(&team())
         .when(
             &ann(),
-            Command::Release {
+            Release {
                 thread: repo(),
                 item: "issue-7".into(),
             },
@@ -527,8 +526,8 @@ fn only_the_holder_releases_a_claim() {
         .then_refused("nobody holds issue-7");
 }
 
-fn release_for(holder: &str) -> Command {
-    Command::ReleaseFor {
+fn release_for(holder: &str) -> ReleaseFor {
+    ReleaseFor {
         thread: repo(),
         item: "issue-7".into(),
         holder: holder.into(),
@@ -588,47 +587,48 @@ fn an_end_and_a_new_start_free_each_claim() {
     let mut records = team();
     records.extend([claimed(&ann(), "issue-7"), claimed(&ann(), "issue-8")]);
     records.push(claimed(&bob(), "issue-9"));
-    for command in [Command::End, Command::Start] {
-        given(&records)
-            .when(&ann(), command)
-            .then(&[released(&ann(), "issue-7"), released(&ann(), "issue-8")]);
-    }
+    given(&records)
+        .when(&ann(), End)
+        .then(&[released(&ann(), "issue-7"), released(&ann(), "issue-8")]);
+    given(&records)
+        .when(&ann(), Start)
+        .then(&[released(&ann(), "issue-7"), released(&ann(), "issue-8")]);
 }
 
 #[test]
 fn a_lead_call_makes_the_session_the_lead() {
     given(&team())
         .live(&[ann()])
-        .when(&ann2(), Command::Lead)
+        .when(&ann2(), Lead)
         .then(&[lead_set(&ann2())]);
-    given(&team()).when(&ann(), Command::Lead).then(&[]);
+    given(&team()).when(&ann(), Lead).then(&[]);
 }
 
 #[test]
 fn a_person_or_a_session_outside_git_is_never_the_lead() {
     given(&[])
-        .when(&person(), Command::Lead)
+        .when(&person(), Lead)
         .then_refused("only an agent session");
     let outside: SessionUri = "riff://ann@heron/-?session=a9".parse().unwrap();
     given(&[])
-        .when(&outside, Command::Lead)
+        .when(&outside, Lead)
         .then_refused("needs a git repository");
 }
 
 #[test]
 fn only_a_person_or_the_lead_sets_the_riff_state() {
     given(&team())
-        .when(&ann(), Command::SetRiff(RiffState::Paused))
+        .when(&ann(), SetRiff(RiffState::Paused))
         .then(&[riff_set(RiffState::Paused)]);
     given(&team())
-        .when(&person(), Command::SetRiff(RiffState::Paused))
+        .when(&person(), SetRiff(RiffState::Paused))
         .then(&[riff_set(RiffState::Paused)]);
     given(&team())
         .live(&[ann()])
-        .when(&ann2(), Command::SetRiff(RiffState::Paused))
+        .when(&ann2(), SetRiff(RiffState::Paused))
         .then_refused("only your user or the lead");
     given(&team())
-        .when(&ann(), Command::SetRiff(RiffState::Running))
+        .when(&ann(), SetRiff(RiffState::Running))
         .then(&[]);
 }
 
@@ -638,7 +638,7 @@ fn a_change_of_the_idle_settings_is_a_record() {
         per_host: 2,
         after_secs: 60,
     };
-    let set = |per_host, after_secs| Command::SetIdle {
+    let set = |per_host, after_secs| SetIdle {
         per_host,
         after_secs,
     };
@@ -688,7 +688,7 @@ fn a_session_with_no_sign_of_life_for_the_expiry_is_forgotten() {
     given(&three_with_direct_threads())
         .after(SESSION_EXPIRY)
         .live(&[carol()])
-        .when(&crate::owner::server_uri(), Command::Forget)
+        .when(&crate::owner::server_uri(), Forget)
         .then(&[forgotten(&ann()), forgotten(&bob())]);
 }
 
@@ -696,7 +696,7 @@ fn a_session_with_no_sign_of_life_for_the_expiry_is_forgotten() {
 fn a_session_with_a_sign_of_life_in_the_expiry_is_not_forgotten() {
     given(&three_with_direct_threads())
         .after(SESSION_EXPIRY - Duration::from_secs(60))
-        .when(&crate::owner::server_uri(), Command::Forget)
+        .when(&crate::owner::server_uri(), Forget)
         .then(&[]);
 }
 
@@ -711,22 +711,22 @@ fn session_forgotten_drops_the_cursors_the_memberships_and_the_direct_thread_of_
         .read_to(&bob(), &design(), 1)
         .read_to(&carol(), &ann_carol, 1)
         .apply(&[forgotten(&ann()), forgotten(&bob())]);
-    let riff = &state.written;
+    let threads = &state.written.threads().by_name;
 
     // The cursors of ann and bob are gone. Carol keeps hers.
-    let readers: Vec<&Who> = state.cursors.keys().map(|(who, _)| who).collect();
+    let readers: Vec<&Who> = state.presence.cursors.keys().map(|(who, _)| who).collect();
     assert_eq!(readers, [carol().who()]);
     // Ann and bob are in no thread.
-    for thread in riff.threads.values() {
+    for thread in threads.values() {
         assert!(!thread.members.contains(ann().who()));
         assert!(!thread.members.contains(bob().who()));
     }
     // The direct thread of ann and bob is gone: both sessions are gone.
-    assert!(!riff.threads.contains_key(&ann_bob));
+    assert!(!threads.contains_key(&ann_bob));
     // The direct thread of ann and carol stays while carol is known.
-    assert!(riff.threads.contains_key(&ann_carol));
-    assert!(!state.sessions.contains_key(ann().who()));
-    assert!(state.sessions.contains_key(carol().who()));
+    assert!(threads.contains_key(&ann_carol));
+    assert!(!state.presence.sessions.contains_key(ann().who()));
+    assert!(state.presence.sessions.contains_key(carol().who()));
 
     // When carol is forgotten too, her direct thread with ann goes.
     let state = Given {
@@ -734,17 +734,17 @@ fn session_forgotten_drops_the_cursors_the_memberships_and_the_direct_thread_of_
         now: Instant::now(),
     }
     .apply(&[forgotten(&carol())]);
-    assert!(!state.written.threads.contains_key(&ann_carol));
-    assert!(state.cursors.is_empty());
-    assert_eq!(state.written.threads[&repo()].members.len(), 0);
+    assert!(!state.written.threads().by_name.contains_key(&ann_carol));
+    assert!(state.presence.cursors.is_empty());
+    assert_eq!(state.written.threads().by_name[&repo()].members.len(), 0);
 }
 
 #[test]
 fn a_forgotten_session_loses_its_claims_and_its_lead() {
     let state = given(&team()).apply(&[claimed(&ann(), "issue-7"), forgotten(&ann())]);
-    assert!(state.written.claims.is_empty());
+    assert!(state.written.work().claims.is_empty());
     assert_eq!(
-        state.written.leads.values().collect::<Vec<_>>(),
+        state.written.work().leads.values().collect::<Vec<_>>(),
         [bob().who()]
     );
 }
