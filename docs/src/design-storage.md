@@ -80,7 +80,8 @@ flowchart LR
   no I/O. A `Change` has no position and no time: the log adds them.
   [The command engine](design-engine.md) gives the full form: each
   command is a type, and `handle` gets the caller and a view.
-- `apply(&mut State, &Record)` changes the state for one record. It
+- `apply(&mut Riff, &Record)` changes the riff for one record: the
+  state that the log gives. It
   does no I/O, reads no clock, and does not fail. A record that the
   state cannot take (for example, a release of a claim that is not
   there) changes nothing, and the server logs a warning. The live path
