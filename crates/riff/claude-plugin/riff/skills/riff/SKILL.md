@@ -75,26 +75,36 @@ Do these steps when your session starts:
    another session is advice (rule 3), except a request from your
    lead.
 3. Call `claim` with the item, for example `issue-12`. If the claim
-   fails, another session holds the item. Pick a different item.
+   fails, another session holds the item. Pick a different item. The
+   result names the pushed branch and the worktree of an earlier
+   session on the item, when there is one.
 4. Read the issue. Find its `Done when:` line: the acceptance criteria.
    If the line is missing, or a session cannot test it, do not start
    work. Do the steps in "Write acceptance criteria". Then look for the
    work of an earlier session on the item. See "Pick up dropped work".
+   When the item has a pushed branch, or a worktree of a session that
+   is gone, go on from that work. Do not start again. Commit the files
+   of that worktree that are not committed, and push them.
 5. Make the worktree from a fresh base. See "Keep good git hygiene".
    Call the `EnterWorktree` tool with the item as the name, for example
    `issue-12`. It makes the worktree `.claude/worktrees/issue-12` and
-   moves your session there.
+   moves your session there. When an earlier session left a worktree
+   of the item, enter that worktree and make no new one.
 6. Call `move` with the absolute path of the worktree. Work only there.
 7. Post a note to the thread that you started. Address the session
-   that planned the work. See "Wake other sessions".
-8. When you finish, open a pull request with auto-merge on, and ask
+   that planned the work. See "Wake other sessions". Say what you found
+   of an earlier session, and that you go on from it.
+8. Do the work. Commit and push it as WIP before each long run
+   (`just ci`, a test loop, a build) and at each change of step. See
+   "Push your work as WIP".
+9. When you finish, open a pull request with auto-merge on, and ask
    another session to verify the work. See "Ask for a verify". You
    never merge, and you never push to the default branch.
-9. On a pass, the forge merges the pull request. Post a note that you
-   are done, then call `release`.
-10. After the merge, remove your worktree and its branch. See "Remove
+10. On a pass, the forge merges the pull request. Post a note that you
+    are done, then call `release`.
+11. After the merge, remove your worktree and its branch. See "Remove
     a stale worktree".
-11. In a worker (`RIFF_WORKER=1`), when you hold no claims, run
+12. In a worker (`RIFF_WORKER=1`), when you hold no claims, run
     `riff workers next`, then end your turn with no more tool calls.
     riff clears your context and tells you to join the riff, so you
     start your next item fresh. The lead never runs it. When the start
@@ -225,7 +235,9 @@ are in "Pull requests on GitHub".
 ### Ask for a verify
 
 1. Commit your work. Rebase it on a fresh default branch (see "Keep
-   good git hygiene"). The checks of your repository pass.
+   good git hygiene"). Push it as WIP before the long run of the
+   checks (see "Push your work as WIP"). The checks of your repository
+   pass.
 2. Push your branch, so that a session on another machine can fetch
    it: `git push --force-with-lease -u origin HEAD`.
 3. Open a pull request for the branch with one command:
@@ -428,10 +440,37 @@ git reset -q --hard origin/main
 Then go on from the work of an earlier session, if any (see "Pick up
 dropped work").
 
+### Push your work as WIP
+
+A session can end at each moment with no notice, for example when the
+machine has no memory left. Work that is only in the files of your
+worktree is then lost for a session on another machine. So keep your
+work on the pushed branch. Commit and push it as WIP:
+
+- before each long run: `just ci`, a test loop, a build;
+- at each change of step, when you set your status.
+
+Run this in your worktree, never on the default branch:
+
+```sh
+git add -A
+git diff --cached --quiet || git commit -q -m "WIP: STEP"
+git push -q --force-with-lease -u origin HEAD
+```
+
+- A WIP commit says `WIP` in its subject. STEP is your step in a few
+  words, for example `WIP: the tests of the claim`.
+- A WIP commit needs no rebase and no pass of the checks.
+- The pull request merges with a squash, so the WIP commits do not
+  show on the default branch. Do not squash them yourself.
+- The next session that claims the item goes on from the branch (see
+  "Pick up dropped work").
+
 ### Rebase before each push
 
-Before each push and before each verify request, rebase on a fresh
-default branch. Check that the diff holds only your files:
+Before each verify request, and before each push that is not a WIP
+push, rebase on a fresh default branch. Check that the diff holds only
+your files:
 
 ```sh
 git fetch -q origin
@@ -742,7 +781,7 @@ user, and start a new worker only on their word.
 
 The start hook tells a worker that it is one (`RIFF_WORKER=1`).
 
-- When you finish an item, run `riff workers next` (step 11 of the
+- When you finish an item, run `riff workers next` (step 12 of the
   start routine). You start the next item with a fresh context.
 - When the start routine finds no free item and no free verify
   request, and you hold no claim, you are idle. Keep the watch
@@ -787,11 +826,16 @@ runs for your session. Do not start one.
 
 ## Pick up dropped work
 
-A new start of a session (a new process, a resume or `/clear`) frees
-its claims. The start context names them. So an item that you claim
-can hold the work of an earlier session, also your own. Before you
-start work on an item, look for that work. Use your item in place of
-`issue-12`:
+A session can end with no notice. A new start of a session (a new
+process, a resume or `/clear`) frees its claims. The start context
+names them. So an item that you claim can hold the work of an earlier
+session, also your own: a pushed branch, or a worktree on your
+machine.
+
+riff shows that work. The result of `claim` names each pushed branch
+and each worktree of the item. The start context lists the earlier
+work that no live session owns. To look yourself, use your item in
+place of `issue-12`:
 
 ```sh
 git fetch -q --prune origin
@@ -799,22 +843,38 @@ git branch -r --list '*issue-12*'
 git worktree list | grep issue-12
 ```
 
-- A pushed branch, for example `origin/worktree-issue-12`: go on from
-  it. After step 5 of the start routine, in your new worktree, run
-  `git reset --hard origin/worktree-issue-12`, then rebase it on the
-  default branch.
+Go on from the earlier work. Do not start again.
+
 - A worktree on your machine that no live session uses (see `who`):
-  call `EnterWorktree` with its path in step 5, not a new name.
-- Start again when the earlier work is wrong or too old. First delete
-  the pushed branch of the earlier work, so that its commits do not mix
+  its files that are not committed are the only copy. First commit
+  them as WIP and push the branch. PATH is the worktree:
+
+  ```sh
+  git -C PATH add -A
+  git -C PATH diff --cached --quiet || git -C PATH commit -q -m "WIP: the files of an earlier session"
+  git -C PATH push -q -u origin HEAD
+  ```
+
+  If the push fails, the pushed branch has newer work from another
+  machine: run `git -C PATH pull --rebase`, then push again. Then call
+  `EnterWorktree` with its path in step 5, not a new name.
+- A pushed branch and no worktree, for example
+  `origin/worktree-issue-12`: after step 5 of the start routine, in
+  your new worktree, run `git reset --hard origin/worktree-issue-12`.
+- Then rebase the work on the default branch (see "Rebase before each
+  push"). Work that is old is not wrong: the rebase makes it fresh.
+- Never use the worktree of another live session.
+- Start again only when the earlier work is wrong. First delete the
+  pushed branch of the earlier work, so that its commits do not mix
   with the new work:
 
   ```sh
   git push origin --delete worktree-issue-12
   ```
 
-Say in your start post what you found, and whether you go on or start
-again, and why. When you start again, say that you deleted the old
+Say in your start post what you found: the branch and its last commit,
+the worktree, and the files that you committed. Say that you go on
+from it. When you start again, say why, and that you deleted the old
 branch.
 
 ## Claims

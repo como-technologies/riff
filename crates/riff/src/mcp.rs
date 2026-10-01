@@ -81,7 +81,7 @@ use serde::Deserialize;
 
 use crate::api::Api;
 use crate::binary::{Follow, with_last, with_place};
-use crate::{identity, leave, local, relay, text};
+use crate::{dropped, identity, leave, local, relay, text};
 
 /// The hidden option that gives a new `riff mcp` the initialize request
 /// of its client, as JSON, after an update (01M3NT6WZTKAFKGDWGCFKC8TB5).
@@ -91,8 +91,12 @@ pub const CLIENT: &str = "--client";
 pub struct Tools {
     api: Api,
     me: Arc<Mutex<SessionUri>>,
-    /// Where the session works: the directory of the WIP push of `leave`.
+    /// Where the session works: the directory of the WIP push of `leave`,
+    /// and of the look for earlier work at a claim.
     dir: Arc<Mutex<PathBuf>>,
+    /// True when a granted claim looks for the earlier work on its item
+    /// (01M3WFYER9QWA698KY2E1HNTCW).
+    earlier: bool,
     /// The directory of the files of [`local`], for the record of a leave.
     local: Option<PathBuf>,
     /// True while the session is out of the riff.
@@ -190,6 +194,7 @@ impl Tools {
             api,
             me: Arc::new(Mutex::new(me)),
             dir: Arc::new(Mutex::new(std::env::current_dir().unwrap_or_default())),
+            earlier: false,
             local: None,
             left: Arc::new(AtomicBool::new(false)),
             worker: false,
@@ -227,6 +232,15 @@ impl Tools {
     /// Sets the directory where the session works.
     pub fn in_dir(self, dir: PathBuf) -> Self {
         *self.dir.lock().unwrap_or_else(|p| p.into_inner()) = dir;
+        self
+    }
+
+    /// Makes a granted claim name the earlier work on its item in the
+    /// clone where the session works (01M3WFYER9QWA698KY2E1HNTCW). It
+    /// fetches from `origin`, so `riff mcp` turns it on, and a test
+    /// only for a clone of its own.
+    pub fn with_earlier_work(mut self) -> Self {
+        self.earlier = true;
         self
     }
 
@@ -409,7 +423,10 @@ request wakes you, answer with this tool. Do not post a reply."
         Ok(text::inbox(&inbox, &me))
     }
 
-    #[tool(description = "Claim a work item so that no other session does the same work.")]
+    #[tool(
+        description = "Claim a work item so that no other session does the same work. The result \
+names the pushed branch and the worktree of an earlier session on the item, when there is one."
+    )]
     async fn claim(&self, Parameters(a): Parameters<ClaimArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
         let reply = self
@@ -417,7 +434,15 @@ request wakes you, answer with this tool. Do not post a reply."
             .claim(&self.here()?, &thread, &a.item)
             .await
             .map_err(err)?;
-        Ok(text::claimed(&reply, &thread, &a.item))
+        let mut out = text::claimed(&reply, &thread, &a.item);
+        if reply.granted && self.earlier {
+            let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            if let Some(line) = dropped::at_claim(&dir, &a.item).await {
+                out.push('\n');
+                out.push_str(&line);
+            }
+        }
+        Ok(out)
     }
 
     #[tool(description = "Release a work item that you claimed.")]
@@ -649,6 +674,7 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
     use tokio::signal::unix::{SignalKind, signal};
     let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
+        .with_earlier_work()
         .in_local(local::dir())
         .as_worker(worker)
         .in_wrapper(crate::worker::wrapper());

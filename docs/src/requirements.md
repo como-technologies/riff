@@ -483,6 +483,9 @@
   that fails each call. `riff server` and `riff update` still ask the
   riff of the machine for its build, by design. `just dev` sets
   `RIFF_HOME` to `target/dev-home` of its tree.
+- **01M3WG82ZMQYG1TGHE4ET0BDDW** In a test, git reaches no remote on
+  the network: the helper `isolated` sets `GIT_ALLOW_PROTOCOL` to
+  `file`.
 - **01M3W98PMDPZW1CR3KJYMPHVQZ** A test server starts with no old
   sign-in at its URL. The tests of one file share one mock keyring,
   and the OS can give the port of an earlier test to a later test. A
@@ -905,6 +908,33 @@
 - **01M3JY13Y75S9S0SMK5XQ529AD** When a session starts an item again, it
   deletes the pushed branch of the earlier work first
   (`git push origin --delete worktree-ITEM`). Its start post says so.
+- **01M3WFYEKTWVVZ1FWVNQMGBNN0** A session commits its work as a WIP
+  commit and pushes its branch before each long run (`just ci`, a test
+  loop, a build) and at each change of step. A WIP commit has `WIP` in
+  its subject. The pull request merges with a squash, so no WIP commit
+  shows on the default branch. The skill says so in the start routine
+  and in "Push your work as WIP". A WIP push needs no rebase
+  (01M3MNP39172Y463WGQAW125KW).
+- **01M3WFYEP1H3VPW8G90KQDE6FW** A session that claims an item with a
+  pushed branch, or with a worktree of a session that is gone, goes on
+  from that work. It first commits the files of that worktree that are
+  not committed, and pushes them. It starts again only when the earlier
+  work is wrong. Its start post says what it found.
+- **01M3WFYER9QWA698KY2E1HNTCW** The answer to a granted claim names
+  the earlier work on the item, from `riff claim` and from the `claim`
+  tool: each branch of `origin` with its last commit, and each worktree
+  on the machine with the count of its files that are not committed
+  and of its commits that are not pushed. riff runs
+  `git fetch --prune origin` first, for at most 5 seconds. A branch or
+  a worktree belongs to the item when its name holds the item as a
+  whole word. A verify claim gets no such line. riff does not show the
+  subject of a commit.
+- **01M3WFYETKXPWWE0R0EAKGCD1E** The context of a new start lists the
+  earlier work of the clone that no live session owns: at most 8 items,
+  each with its pushed worktree branch and its worktree. A live session
+  owns the work when it holds the claim of the item, or works in its
+  worktree. The fetch of the start hook prunes
+  (01M3JN21T9C5GX6VX8N032JYWE).
 - **R35** A session has a URI:
   `riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE`.
   It shows who the session is, where it works and what it works on.
