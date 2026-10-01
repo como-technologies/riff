@@ -592,7 +592,7 @@ sequenceDiagram
     C->>S: swap the person token, session a6cf
     S-->>C: session token 2
     M->>S: a call with token 1
-    S-->>M: 200: token 1 stays live
+    S-->>M: 200, token 1 stays live
     Note over M: before token 1 expires
     M->>S: swap the person token, session a6cf
     S-->>M: session token 3
@@ -600,8 +600,9 @@ sequenceDiagram
 
 A refresh token works once. It names its chain and its generation:
 `chain.generation.secret`. A sign-in has one chain, for the person.
-Each refresh gives the next generation of the chain. `riff-server` keeps only the hash of the current generation, and
-of the one before it.
+Each refresh gives the next generation of the chain. `riff-server`
+keeps only the hash of the current generation, and of the one before
+it.
 
 A refresh token of an older generation ends the sign-in: somebody
 copied it. A lost reply is not a copy. When the token of the generation
