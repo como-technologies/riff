@@ -363,7 +363,7 @@ fn connect_writes_the_skill_with_git_hygiene() {
     let enter = pos("Call the `EnterWorktree` tool with the item as the name");
     assert!(step < enter);
     pos("Rebase it on a fresh default branch");
-    pos("10. After the merge, remove your worktree and its branch.");
+    pos("11. After the merge, remove your worktree and its branch.");
 
     let section = pos("## Keep good git hygiene");
     let fresh = pos("### Start from a fresh base");

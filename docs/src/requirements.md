@@ -913,7 +913,8 @@
   loop, a build) and at each change of step. A WIP commit has `WIP` in
   its subject. The pull request merges with a squash, so no WIP commit
   shows on the default branch. The skill says so in the start routine
-  and in "Push your work as WIP".
+  and in "Push your work as WIP". A WIP push needs no rebase
+  (01M3MNP39172Y463WGQAW125KW).
 - **01M3WFYEP1H3VPW8G90KQDE6FW** A session that claims an item with a
   pushed branch, or with a worktree of a session that is gone, goes on
   from that work. It first commits the files of that worktree that are
