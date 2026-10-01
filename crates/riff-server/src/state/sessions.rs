@@ -1,5 +1,6 @@
 //! The group "sessions": the commands [`Register`], [`Start`] and
-//! [`End`], and the sessions that the log names.
+//! [`End`], and the sessions that the log names. The wire type of each
+//! command is its command type.
 //!
 //! - Part of the riff: [`Sessions`]. Each session that a record names,
 //!   with its URI and the time of the last record that names it. A
@@ -15,9 +16,11 @@ use std::collections::BTreeMap;
 
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Member, Record};
+use riff_core::wire::{End, Freed, Register, Start, Started};
 use serde::{Deserialize, Serialize};
 
-use super::command::{Command, Now};
+use super::command::{Caller, Command, CommandKind, Now, Refused};
+use super::presence::Signal;
 use super::view::View;
 
 /// Each session that a record names.
@@ -121,65 +124,100 @@ impl Saved {
     }
 }
 
-/// A session registers, or arrives: it joins the thread of its
-/// repository, and becomes the lead when it is the first.
-#[derive(Clone, Copy, Debug)]
-pub struct Register;
-
+/// A session registers: it says where it works. It joins the thread
+/// of its repository, and becomes the lead when it is the first. The
+/// engine runs it first for a call of a session that the state does not
+/// know. Its signal sets the place and the worker mark
+/// (01M3WRD97EZJK3AABXECXEY133).
 impl Command for Register {
+    const KIND: CommandKind = CommandKind::Register;
+    type Reply = ();
     type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        let who = me.who();
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let who = caller.who();
+        let place = self.me.place();
         let mut changes = Vec::new();
-        if let Some(thread) = view.place(who).default_thread()
-            && !view.riff.threads().member(who, &thread)
-        {
-            changes.push(Change::JoinedThread(Member {
-                session: view.plain(who),
-                thread,
-            }));
+        if let Some(thread) = place.default_thread() {
+            if !view.riff.threads().member(who, &thread) {
+                changes.push(Change::JoinedThread(Member {
+                    session: SessionUri::new(who.clone(), place.clone()),
+                    thread: thread.clone(),
+                }));
+            }
+            changes.extend(view.lead_if_first(who, place, &thread, now.at));
         }
-        changes.extend(view.lead_if_first(who, now.at));
         Ok((changes, ()))
     }
-}
 
-/// A new start of the session: each of its claims is free.
-#[derive(Clone, Copy, Debug)]
-pub struct Start;
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
 
-impl Command for Start {
-    type Note = ();
-
-    fn handle(
-        &self,
-        me: &SessionUri,
-        view: &View<'_>,
-        _now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        Ok((view.released_all(me.who()), ()))
+    fn signal(&self, _caller: &Caller) -> Option<Signal> {
+        Some(Signal::Place {
+            place: self.me.place().clone(),
+            worker: Some(self.worker),
+        })
     }
 }
 
-/// The session ended: each of its claims is free.
-#[derive(Clone, Copy, Debug)]
-pub struct End;
+/// The claims that the records of a start freed.
+fn freed(made: &[Record]) -> Vec<Freed> {
+    made.iter()
+        .filter_map(|record| match &record.change {
+            Change::Released(claimed) => Some(Freed {
+                thread: claimed.thread.clone(),
+                item: claimed.item.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
 
-impl Command for End {
+/// A new start of the session: each of its claims is free. The reply
+/// names them.
+impl Command for Start {
+    const KIND: CommandKind = CommandKind::Start;
+    type Reply = Started;
     type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         _now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        Ok((view.released_all(me.who()), ()))
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        Ok((view.released_all(caller.who()), ()))
+    }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> Started {
+        Started { freed: freed(made) }
+    }
+}
+
+/// The session ended: each of its claims is free. Its signal ends the
+/// session in the presence.
+impl Command for End {
+    const KIND: CommandKind = CommandKind::End;
+    type Reply = ();
+    type Note = ();
+
+    fn handle(
+        &self,
+        caller: &Caller,
+        view: &View<'_>,
+        _now: Now,
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        Ok((view.released_all(caller.who()), ()))
+    }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+
+    fn signal(&self, _caller: &Caller) -> Option<Signal> {
+        Some(Signal::Ended)
     }
 }

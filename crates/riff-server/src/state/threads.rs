@@ -1,5 +1,7 @@
 //! The group "threads": the commands [`Join`], [`Leave`],
-//! [`Post`] and [`Announce`], and the threads with their messages.
+//! [`Post`] and [`Announce`], and the threads with their messages. The
+//! wire type of a command that a client can send is its command type.
+//! [`Announce`] is a command of the server.
 //!
 //! - Part of the riff: [`Threads`]. The members and the last
 //!   [`KEEP_MESSAGES`] messages of each thread, and the index of the
@@ -16,14 +18,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Instant;
 
 use riff_core::name::{SessionUri, ThreadName, Who};
-use riff_core::record::{Change, Member, Posted};
+use riff_core::record::{Change, Member, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::signed::payload_hash;
-use riff_core::wire::{Kind, Message, Post, Wake};
+use riff_core::wire::{self, Join, Kind, Leave, Message, Post, Wake};
 use serde::{Deserialize, Serialize};
 
 use super::KEEP_MESSAGES;
-use super::command::{Command, Now};
+use super::command::{Caller, Code, Command, CommandKind, Now, Refused};
 use super::sessions::Sessions;
 use super::view::View;
 
@@ -343,7 +345,7 @@ impl View<'_> {
     /// number, and wake each live session that its selectors match,
     /// except `from`. Each selected session joins the thread. It also
     /// gives each selector that matched no session.
-    fn put(
+    pub(super) fn put(
         &self,
         from: &Who,
         thread: ThreadName,
@@ -378,21 +380,29 @@ impl View<'_> {
     }
 }
 
-/// Adds a session to a thread. It makes the thread if it is new.
-#[derive(Clone, Debug)]
-pub struct Join(pub ThreadName);
+/// The message of the records of a post or of an announce: the last
+/// `posted` record.
+fn message_of(made: &[Record]) -> Option<&Posted> {
+    made.iter().rev().find_map(|record| match &record.change {
+        Change::Posted(posted) => Some(&**posted),
+        _ => None,
+    })
+}
 
+/// Adds a session to a thread. It makes the thread if it is new.
 impl Command for Join {
+    const KIND: CommandKind = CommandKind::Join;
+    type Reply = ();
     type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         _now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        let who = me.who();
-        let thread = &self.0;
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let who = caller.who();
+        let thread = &self.thread;
         let mut changes = Vec::new();
         if !view.riff.threads().member(who, thread) {
             changes.push(Change::JoinedThread(Member {
@@ -402,23 +412,24 @@ impl Command for Join {
         }
         Ok((changes, ()))
     }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
 }
 
 /// Removes a session from a thread. It is no longer the lead there.
-#[derive(Clone, Debug)]
-pub struct Leave(pub ThreadName);
-
 impl Command for Leave {
+    const KIND: CommandKind = CommandKind::Leave;
+    type Reply = ();
     type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         _now: Now,
-    ) -> Result<(Vec<Change>, ()), String> {
-        let who = me.who();
-        let thread = &self.0;
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let who = caller.who();
+        let thread = &self.thread;
         let key = (who.user().to_owned(), thread.clone());
         let mut changes = Vec::new();
         if view.riff.threads().member(who, thread) || view.riff.work().leads.get(&key) == Some(who)
@@ -430,10 +441,13 @@ impl Command for Leave {
         }
         Ok((changes, ()))
     }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
 }
 
 /// A post of a session. Its `at_ms` is the time of the message. The
-/// note has each selector that matched no session (R61).
+/// note has each selector that matched no session (R61). The reply
+/// names each session that the message woke.
 ///
 /// The signature covers the lead mark of `me`. So the sender of a
 /// signed message has `lead=true` only when `me` has it, and a signed
@@ -441,22 +455,26 @@ impl Command for Leave {
 /// refused (R198). A signed post with the payload of a message in the
 /// thread is a copy, and is refused (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
 impl Command for Post {
+    const KIND: CommandKind = CommandKind::Post;
+    type Reply = wire::Posted;
     type Note = Vec<Selector>;
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, Vec<Selector>), String> {
+    ) -> Result<(Vec<Change>, Vec<Selector>), Refused> {
         let post = self;
+        let me = &post.me;
         let now = now.at;
-        let from = me.who();
+        let from = caller.who();
         let signed = post.sig.is_some();
         if signed && me.lead() && !view.is_lead(from, now) {
-            return Err(
-                "the post has the lead mark, but this session is not the lead. Post again.".into(),
-            );
+            return Err(Refused::new(
+                Code::NotAllowed,
+                "the post has the lead mark, but this session is not the lead. Post again.",
+            ));
         }
         let thread = view.thread_of(from, post.thread.as_ref(), &post.to, now)?;
         if let Some(payload) = &post.payload
@@ -468,7 +486,8 @@ impl Command for Post {
         {
             return Err(format!(
                 "the post is a copy of message {seq}: each signed message comes once"
-            ));
+            )
+            .into());
         }
         let mut sender = view.uri(from, now);
         if signed {
@@ -495,11 +514,34 @@ impl Command for Post {
         changes.append(&mut put);
         Ok((changes, unmatched))
     }
+
+    fn reply(
+        &self,
+        _: &Caller,
+        view: &View<'_>,
+        made: &[Record],
+        unmatched: Vec<Selector>,
+        now: Now,
+    ) -> wire::Posted {
+        let posted = message_of(made).expect("the records of a post end with the message");
+        wire::Posted {
+            thread: posted.thread.clone(),
+            seq: posted.message.seq,
+            woken: posted
+                .woken
+                .iter()
+                .map(|who| view.uri(who, now.at))
+                .collect(),
+            unmatched,
+        }
+    }
 }
 
-/// A post of the riff server itself (01M3N7K4BC1RPZKQ1XNDTBRPGF). `me`
-/// is the URI of the server. The post has no signature. The note has
-/// each selector that matched no session.
+/// A post of the riff server itself (01M3N7K4BC1RPZKQ1XNDTBRPGF). The
+/// sender is the URI of the server. The post has no signature. The
+/// server is not a session: it joins no thread, and does not show in
+/// `who`. With no thread, the post is a direct message. The reply has
+/// each session that the message woke.
 #[derive(Clone, Debug)]
 pub struct Announce {
     pub thread: Option<ThreadName>,
@@ -511,19 +553,21 @@ pub struct Announce {
 }
 
 impl Command for Announce {
-    type Note = Vec<Selector>;
+    const KIND: CommandKind = CommandKind::Announce;
+    type Reply = Vec<Who>;
+    type Note = ();
 
     fn handle(
         &self,
-        me: &SessionUri,
+        caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, Vec<Selector>), String> {
-        let from = me.who();
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let from = caller.who();
         let thread = view.thread_of(from, self.thread.as_ref(), &self.to, now.at)?;
         let message = Message {
             seq: 0,
-            from: me.clone(),
+            from: caller.me().clone(),
             to: self.to.clone(),
             body: self.body.clone(),
             at_ms: self.at_ms,
@@ -531,6 +575,13 @@ impl Command for Announce {
             sig: None,
             payload: None,
         };
-        Ok(view.put(from, thread, message, now.at))
+        let (changes, _) = view.put(from, thread, message, now.at);
+        Ok((changes, ()))
+    }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> Vec<Who> {
+        message_of(made)
+            .map(|posted| posted.woken.iter().cloned().collect())
+            .unwrap_or_default()
     }
 }

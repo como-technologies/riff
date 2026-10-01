@@ -1,9 +1,11 @@
-//! The rules of [`State::handle`], one test for each rule, in the form
-//! given, when, then:
+//! The rules of [`permits`] and of [`Command::handle`], one test for
+//! each rule, in the form given, when, then:
 //!
 //! - `given` applies records to an empty state.
 //! - `live` makes sessions live, as a call does. It makes no record.
-//! - `when` runs `handle` with one command. The caller is live.
+//! - `when` runs [`State::check`] with one command. The caller is live.
+//!   A test names a command in a short form with no `me` ([`Ask`]):
+//!   `when` puts the caller in it.
 //! - `then` compares the changes, or `then_refused` the error.
 //! - `apply` writes more records to the state of `given`, and gives the
 //!   state, so that a test can look at it.
@@ -11,6 +13,7 @@
 //! The tests do no I/O.
 
 use riff_core::record::{Forgotten, Member, RiffStateSet, SettingChanged};
+use riff_core::wire;
 
 use super::*;
 
@@ -126,6 +129,142 @@ fn post(me: &SessionUri, thread: Option<&ThreadName>, to: &[&str], body: &str) -
     draft(me, thread, to, body)
 }
 
+/// A command in a short form with no `me`. `when` makes the command of
+/// the caller from it.
+trait Ask {
+    type Command: Command;
+    fn of(self, me: &SessionUri) -> Self::Command;
+}
+
+/// The short form of a command that has only a `me`.
+macro_rules! asks {
+    ($($ask:ident => $command:ty, $make:expr;)*) => {
+        $(struct $ask;
+
+        impl Ask for $ask {
+            type Command = $command;
+            fn of(self, me: &SessionUri) -> $command {
+                let make: fn(SessionUri) -> $command = $make;
+                make(me.clone())
+            }
+        })*
+    };
+}
+
+asks! {
+    Register => wire::Register, |me| wire::Register { me, worker: false };
+    Start => wire::Start, |me| wire::Start { me };
+    End => wire::End, |me| wire::End { me };
+    Lead => wire::Lead, |me| wire::Lead { me };
+    Pause => wire::Pause, |me| wire::Pause { me };
+    Resume => wire::Resume, |me| wire::Resume { me };
+}
+
+struct Join(ThreadName);
+
+impl Ask for Join {
+    type Command = wire::Join;
+    fn of(self, me: &SessionUri) -> wire::Join {
+        wire::Join {
+            me: me.clone(),
+            thread: self.0,
+        }
+    }
+}
+
+struct Leave(ThreadName);
+
+impl Ask for Leave {
+    type Command = wire::Leave;
+    fn of(self, me: &SessionUri) -> wire::Leave {
+        wire::Leave {
+            me: me.clone(),
+            thread: self.0,
+        }
+    }
+}
+
+struct Claim {
+    thread: ThreadName,
+    item: String,
+}
+
+impl Ask for Claim {
+    type Command = wire::Claim;
+    fn of(self, me: &SessionUri) -> wire::Claim {
+        wire::Claim {
+            me: me.clone(),
+            thread: self.thread,
+            item: self.item,
+        }
+    }
+}
+
+struct Release {
+    thread: ThreadName,
+    item: String,
+}
+
+impl Ask for Release {
+    type Command = wire::Release;
+    fn of(self, me: &SessionUri) -> wire::Release {
+        wire::Release {
+            me: me.clone(),
+            thread: self.thread,
+            item: self.item,
+        }
+    }
+}
+
+struct ReleaseFor {
+    thread: ThreadName,
+    item: String,
+    holder: String,
+}
+
+impl Ask for ReleaseFor {
+    type Command = wire::ReleaseFor;
+    fn of(self, me: &SessionUri) -> wire::ReleaseFor {
+        wire::ReleaseFor {
+            me: me.clone(),
+            thread: self.thread,
+            item: self.item,
+            session: self.holder,
+        }
+    }
+}
+
+struct SetIdle {
+    per_host: Option<u16>,
+    after_secs: Option<u64>,
+}
+
+impl Ask for SetIdle {
+    type Command = wire::SetIdle;
+    fn of(self, me: &SessionUri) -> wire::SetIdle {
+        wire::SetIdle {
+            me: me.clone(),
+            per_host: self.per_host,
+            after_secs: self.after_secs,
+        }
+    }
+}
+
+/// A command with its `me`, or a command of the server, is its own
+/// short form.
+macro_rules! whole {
+    ($($command:ty),*) => {
+        $(impl Ask for $command {
+            type Command = $command;
+            fn of(self, _me: &SessionUri) -> $command {
+                self
+            }
+        })*
+    };
+}
+
+whole!(Post, Announce, Forget, MakeRiff);
+
 fn claim(item: &str) -> Claim {
     Claim {
         thread: repo(),
@@ -179,8 +318,7 @@ impl Given {
 
     /// Commits `changes` as records, writes them, and gives the state.
     fn apply(mut self, changes: &[Change]) -> State {
-        self.state.commit(changes, self.now);
-        let records = self.state.take_queue();
+        let records = self.state.queue(changes, self.now);
         self.state.written(&records);
         self.state
     }
@@ -191,18 +329,38 @@ impl Given {
         self
     }
 
-    fn when<C: Command>(self, me: &SessionUri, command: C) -> When {
+    /// The caller that acts as `me`, with the role of an admin, as in a
+    /// riff with no sign-in.
+    fn caller(me: &SessionUri) -> Caller {
+        if me == &crate::owner::server_uri() {
+            Caller::server()
+        } else {
+            Caller::of(me).with_role(Role::Admin)
+        }
+    }
+
+    fn when<A: Ask>(self, me: &SessionUri, ask: A) -> When {
+        self.when_as(&Given::caller(me), ask)
+    }
+
+    /// As `when`, for a caller with a class, a mark or a role of its
+    /// own.
+    fn when_as<A: Ask>(self, caller: &Caller, ask: A) -> When {
         let now = self.now;
-        let this = if me == &crate::owner::server_uri() {
+        let me = caller.me().clone();
+        let mut this = if caller.class() == Class::Server {
             self
         } else {
-            self.live(std::slice::from_ref(me))
+            self.live(std::slice::from_ref(&me))
         };
-        When(this.state.handle(me, &command, now))
+        let command = ask.of(&me);
+        let check = this.state.check(caller, &command, now);
+        assert!(check.registered.is_none(), "the caller is live");
+        When(check.result.map(|(changes, _)| changes))
     }
 }
 
-struct When(Result<Vec<Change>, String>);
+struct When(Result<Vec<Change>, Refused>);
 
 impl When {
     fn then(self, changes: &[Change]) {
@@ -211,7 +369,18 @@ impl When {
 
     fn then_refused(self, part: &str) {
         match self.0 {
-            Err(error) => assert!(error.contains(part), "{error}"),
+            Err(refused) => assert!(refused.reason.contains(part), "{refused}"),
+            Ok(changes) => panic!("not refused: {changes:?}"),
+        }
+    }
+
+    /// As `then_refused`, and it compares the code of the refusal.
+    fn then_refused_as(self, code: Code, part: &str) {
+        match self.0 {
+            Err(refused) => {
+                assert_eq!(refused.code, code, "{refused}");
+                assert!(refused.reason.contains(part), "{refused}");
+            }
             Ok(changes) => panic!("not refused: {changes:?}"),
         }
     }
@@ -450,14 +619,15 @@ fn a_claim_of_a_free_item_is_granted() {
         .then(&[claimed(&ann(), "issue-7")]);
 }
 
+/// The refusal names the holder (01M3WRD9JBQMNN96TXJH8EAJ3W).
 #[test]
-fn a_claim_of_an_item_that_a_live_session_holds_changes_nothing() {
+fn a_claim_of_an_item_that_a_live_session_holds_is_refused_as_held() {
     let mut records = team();
     records.push(claimed(&bob(), "issue-7"));
     given(&records)
         .live(&[bob()])
         .when(&ann(), claim("issue-7"))
-        .then(&[]);
+        .then_refused_as(Code::Held, "bob@kite:app (b1) holds issue-7 in acme/app.");
 }
 
 #[test]
@@ -481,7 +651,7 @@ fn a_claim_of_an_own_item_changes_nothing() {
 fn a_claim_in_a_paused_riff_is_refused() {
     given(&[joined(&ann(), &repo())])
         .when(&ann(), claim("issue-7"))
-        .then_refused("paused");
+        .then_refused_as(Code::Paused, "paused");
 }
 
 #[test]
@@ -541,14 +711,31 @@ fn release_for(holder: &str) -> ReleaseFor {
 fn the_lead_releases_the_claim_of_a_session_of_its_user() {
     let mut records = team();
     records.push(claimed(&ann2(), "issue-7"));
+    let note = |holder: &str| Message {
+        kind: Kind::Note,
+        at_ms: 0,
+        ..message(
+            crate::owner::server_uri(),
+            1,
+            &[],
+            &format!(
+                "claims: the lead ann@heron:app (a1) released issue-7 for the session \
+                 {holder} (a2). issue-7 is free."
+            ),
+        )
+    };
     // The holder is gone: it made no call since the replay.
-    given(&records)
-        .when(&ann(), release_for("a2"))
-        .then(&[released(&ann2(), "issue-7")]);
+    given(&records).when(&ann(), release_for("a2")).then(&[
+        released(&ann2(), "issue-7"),
+        posted(&repo(), note("ann@heron:app#api"), &[]),
+    ]);
     given(&records)
         .live(&[ann2()])
         .when(&ann(), release_for("a2"))
-        .then(&[released(&ann2(), "issue-7")]);
+        .then(&[
+            released(&ann2(), "issue-7"),
+            posted(&repo(), note("ann@heron:app#api"), &[]),
+        ]);
 }
 
 #[test]
@@ -564,10 +751,10 @@ fn a_session_that_is_not_the_lead_releases_no_claim_of_another_session() {
     given(&records)
         .when(&bob(), release_for("a2"))
         .then_refused("Only the lead of its user");
-    // A person is no lead.
+    // A person is no lead: `permits` refuses it.
     given(&records)
         .when(&person(), release_for("a2"))
-        .then_refused("Only the lead of its user");
+        .then_refused_as(Code::NotAllowed, "a person cannot send the command release_for");
 }
 
 #[test]
@@ -618,18 +805,16 @@ fn a_person_or_a_session_outside_git_is_never_the_lead() {
 #[test]
 fn only_a_person_or_the_lead_sets_the_riff_state() {
     given(&team())
-        .when(&ann(), SetRiff(RiffState::Paused))
+        .when(&ann(), Pause)
         .then(&[riff_set(RiffState::Paused)]);
     given(&team())
-        .when(&person(), SetRiff(RiffState::Paused))
+        .when(&person(), Pause)
         .then(&[riff_set(RiffState::Paused)]);
     given(&team())
         .live(&[ann()])
-        .when(&ann2(), SetRiff(RiffState::Paused))
-        .then_refused("only your user or the lead");
-    given(&team())
-        .when(&ann(), SetRiff(RiffState::Running))
-        .then(&[]);
+        .when(&ann2(), Pause)
+        .then_refused_as(Code::NotAllowed, "only your user or the lead");
+    given(&team()).when(&ann(), Resume).then(&[]);
 }
 
 #[test]

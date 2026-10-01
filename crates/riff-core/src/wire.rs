@@ -2,25 +2,37 @@
 //!
 //! # Protocol
 //!
-//! Each call is `POST /v1/<op>` with a JSON body. A reply is JSON with
-//! status 200. An error is plain text with status 400 or 404.
+//! Each call is a `POST` with a JSON body. A reply is JSON with status
+//! 200. An error is plain text with status 400, 403, 404 or 409.
 //!
-//! | Op | Request | Reply |
-//! |---|---|---|
-//! | `register` | [`Register`] | `null` |
-//! | `who` | [`WhoRequest`] | [`WhoReply`] |
-//! | `threads` | [`Threads`] | [`ThreadsReply`] |
-//! | `join`, `leave` | [`Membership`] | `null` |
-//! | `post` | [`Post`] | [`Posted`] |
-//! | `read` | [`Read`] | [`ReadReply`] |
-//! | `claim` | [`Claim`] | [`ClaimReply`] |
-//! | `release` | [`Claim`] | `null` |
-//! | `lead` | [`Lead`] | [`LeadReply`] |
-//! | `riff` | [`Riff`] | [`RiffReply`] |
-//! | `status` | [`SetStatus`] | `null` |
-//! | `alive` | [`Alive`] | `null` |
-//! | `end` | [`End`] | `null` |
-//! | `start` | [`Start`] | [`Started`] |
+//! Each call is one type that implements [`Call`]: the trait gives the
+//! path and the type of the reply (01M3WRD8TBDPA4JNEZY6J4N2EX). The
+//! client and the server use the same ones. A command asks for a
+//! change of the state that the log gives. A signal changes only what
+//! the server keeps in memory. A query reads.
+//!
+//! | Path | Request | Reply | Sort |
+//! |---|---|---|---|
+//! | `/v1/register` | [`Register`] | `null` | command |
+//! | `/v1/start` | [`Start`] | [`Started`] | command |
+//! | `/v1/end` | [`End`] | `null` | command |
+//! | `/v1/join` | [`Join`] | `null` | command |
+//! | `/v1/leave` | [`Leave`] | `null` | command |
+//! | `/v1/post` | [`Post`] | [`Posted`] | command |
+//! | `/v1/claim` | [`Claim`] | [`ClaimReply`] | command |
+//! | `/v1/release` | [`Release`] | `null` | command |
+//! | `/v1/release/for` | [`ReleaseFor`] | `null` | command |
+//! | `/v1/lead` | [`Lead`] | [`LeadReply`] | command |
+//! | `/v1/pause` | [`Pause`] | [`RiffReply`] | command |
+//! | `/v1/resume` | [`Resume`] | [`RiffReply`] | command |
+//! | `/v1/idle/set` | [`SetIdle`] | [`Idle`] | command |
+//! | `/v1/status` | [`SetStatus`] | `null` | signal |
+//! | `/v1/alive` | [`Alive`] | [`AliveReply`] | signal |
+//! | `/v1/who` | [`WhoRequest`] | [`WhoReply`] | query |
+//! | `/v1/threads` | [`Threads`] | [`ThreadsReply`] | query |
+//! | `/v1/read` | [`Read`] | [`ReadReply`] | query |
+//! | `/v1/riff` | [`RiffQuery`] | [`RiffReply`] | query |
+//! | `/v1/idle` | [`IdleQuery`] | [`Idle`] | query |
 //!
 //! `GET /v1/me` gives [`MeReply`]. `GET /v1/server` gives
 //! [`ServerFacts`], also while the server replies 503 to each other
@@ -105,12 +117,89 @@
 use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::dpop::Key;
 use crate::name::{SessionUri, ThreadName};
 use crate::selector::Selector;
 use crate::signed::Content;
+
+// ANCHOR: call
+/// A call: one wire type with its path and the type of its reply
+/// (01M3WRD8TBDPA4JNEZY6J4N2EX). The client sends each call with one
+/// generic function, and the server makes one route for each.
+///
+/// ```
+/// use riff_core::wire::{Call, Claim};
+///
+/// /// The path of a call and the JSON of its body.
+/// fn request<C: Call>(call: &C) -> (&'static str, String) {
+///     (C::PATH, serde_json::to_string(call).unwrap())
+/// }
+///
+/// let claim = Claim {
+///     me: "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?,
+///     thread: "como-technologies/riff".parse()?,
+///     item: "issue-12".into(),
+/// };
+/// let (path, body) = request(&claim);
+/// assert_eq!(path, "/v1/claim");
+/// assert!(body.contains("issue-12"));
+/// let reply: <Claim as Call>::Reply = serde_json::from_str(
+///     r#"{"holder":"riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-12"}"#,
+/// ).unwrap();
+/// assert_eq!(reply.holder.claims(), ["issue-12"]);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub trait Call: Serialize + DeserializeOwned {
+    /// The HTTP path of the call, for example `/v1/claim`.
+    const PATH: &'static str;
+    /// The reply to the call.
+    type Reply: Serialize + DeserializeOwned;
+}
+// ANCHOR_END: call
+
+/// Gives each call its path and its reply.
+macro_rules! calls {
+    ($($call:ty => $path:literal, $reply:ty;)*) => {
+        $(impl Call for $call {
+            const PATH: &'static str = $path;
+            type Reply = $reply;
+        })*
+    };
+}
+
+calls! {
+    Register => "/v1/register", ();
+    Start => "/v1/start", Started;
+    End => "/v1/end", ();
+    Join => "/v1/join", ();
+    Leave => "/v1/leave", ();
+    Post => "/v1/post", Posted;
+    Claim => "/v1/claim", ClaimReply;
+    Release => "/v1/release", ();
+    ReleaseFor => "/v1/release/for", ();
+    Lead => "/v1/lead", LeadReply;
+    Pause => "/v1/pause", RiffReply;
+    Resume => "/v1/resume", RiffReply;
+    SetIdle => "/v1/idle/set", Idle;
+    SetStatus => "/v1/status", ();
+    Alive => "/v1/alive", AliveReply;
+    WhoRequest => "/v1/who", WhoReply;
+    Threads => "/v1/threads", ThreadsReply;
+    Read => "/v1/read", ReadReply;
+    RiffQuery => "/v1/riff", RiffReply;
+    IdleQuery => "/v1/idle", Idle;
+    Revoke => "/v1/revoke", Revoked;
+    Invite => "/v1/invite", Invited;
+    Remove => "/v1/remove", Removed;
+    Members => "/v1/members", MembersReply;
+    SetAdmin => "/v1/admin", AdminSet;
+    PassOwner => "/v1/owner", OwnerPassed;
+    TakeOwner => "/v1/owner/take", OwnerAsked;
+    DenyOwner => "/v1/owner/deny", OwnerDenied;
+}
 
 /// `POST /v1/register`: a session says that it exists and where it
 /// works. A session registers when it starts and when it moves. It
@@ -589,9 +678,18 @@ pub struct ThreadInfo {
     pub unread: usize,
 }
 
-/// `POST /v1/join` and `POST /v1/leave`.
+/// `POST /v1/join`: adds `me` to a thread. It makes the thread if it
+/// is new.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct Membership {
+pub struct Join {
+    pub me: SessionUri,
+    pub thread: ThreadName,
+}
+
+/// `POST /v1/leave`: removes `me` from a thread. It is no longer the
+/// lead there.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Leave {
     pub me: SessionUri,
     pub thread: ThreadName,
 }
@@ -880,23 +978,42 @@ impl Message {
     }
 }
 
-/// `POST /v1/claim` and `POST /v1/release`: a lease on one work item.
+/// `POST /v1/claim`: takes a lease on one work item. The server
+/// refuses a claim of an item that another session holds, with status
+/// 409 and a text that names the holder (01M3WRD9JBQMNN96TXJH8EAJ3W).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Claim {
     pub me: SessionUri,
     pub thread: ThreadName,
     pub item: String,
-    /// In a release only: the session that holds the item, by its
-    /// session ID or the start of it. The lead of a user frees the claim
-    /// of another session of that user (01M3WG243BW7P6E1ME0DFNQF8C).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session: Option<String>,
 }
 
+/// The reply to a claim that the server took.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ClaimReply {
-    pub granted: bool,
+    /// The URI of `me` now, with the item in its claims.
     pub holder: SessionUri,
+}
+
+/// `POST /v1/release`: frees a claim. Only its holder can.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Release {
+    pub me: SessionUri,
+    pub thread: ThreadName,
+    pub item: String,
+}
+
+/// `POST /v1/release/for`: the lead of a user frees the claim of
+/// another session of that user (01M3WG243BW7P6E1ME0DFNQF8C). The
+/// server posts a note to the thread of the claim.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ReleaseFor {
+    pub me: SessionUri,
+    pub thread: ThreadName,
+    pub item: String,
+    /// The session that holds the item: its session ID, or the start of
+    /// it.
+    pub session: String,
 }
 
 /// `POST /v1/lead`: makes `me` the lead of its user in its repository.
@@ -937,14 +1054,25 @@ pub struct Freed {
     pub item: String,
 }
 
-/// `POST /v1/riff`: reads the state of the riff. With a `state`, it
-/// sets it. Only a person (a `me` with no session ID) or a lead can set
-/// it.
+/// `POST /v1/riff`: reads the state of the riff. It changes nothing
+/// (01M3WRD9BSBKS9TN66H29TGTBV).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct Riff {
+pub struct RiffQuery {
     pub me: SessionUri,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<RiffState>,
+}
+
+/// `POST /v1/pause`: pauses the riff. Only a person (a `me` with no
+/// session ID) or a lead can (01M3JCG3T8AJZN31SZQQTP3FAF).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Pause {
+    pub me: SessionUri,
+}
+
+/// `POST /v1/resume`: resumes the riff. Only a person (a `me` with no
+/// session ID) or a lead can (01M3JCG3T8AJZN31SZQQTP3FAF).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Resume {
+    pub me: SessionUri,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -956,9 +1084,17 @@ pub struct RiffReply {
     pub changed: bool,
 }
 
-/// `POST /v1/idle`: reads the settings of idle workers. With a value, it
-/// sets it. Only the owner or an admin can set them; in a riff with no
-/// sign-in, each person can (01M3Q5A0TF9K49V8Z1ZY9NDF74).
+/// `POST /v1/idle`: reads the settings of idle workers
+/// (01M3Q5A0TF9K49V8Z1ZY9NDF74). It changes nothing
+/// (01M3WRD9BSBKS9TN66H29TGTBV).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct IdleQuery {
+    pub me: SessionUri,
+}
+
+/// `POST /v1/idle/set`: sets each given setting of idle workers, and
+/// gives the settings. Only the owner or an admin can; in a riff with
+/// no sign-in, each caller can (01M3Q5A0TF9K49V8Z1ZY9NDF74).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SetIdle {
     pub me: SessionUri,

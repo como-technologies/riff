@@ -6,7 +6,8 @@
 //! checkpoint keeps. A start of the server loses the rest.
 //!
 //! No record is needed to change the presence: a keep-alive, a status
-//! and a read change it. A record changes it only in
+//! and a read change it. Each such change is a [`Signal`]
+//! (01M3WRD97EZJK3AABXECXEY133). A record changes the presence only in
 //! `Presence::applied` (01M3WNQRCBP0PHSA0H3THDH5NJ).
 
 use std::collections::BTreeMap;
@@ -14,7 +15,7 @@ use std::time::Instant;
 
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{Change, Record};
-use riff_core::wire::Status;
+use riff_core::wire::{AliveReply, Status};
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
@@ -58,7 +59,147 @@ pub struct Presence {
     pub(super) loaded: Option<Instant>,
 }
 
+// ANCHOR: signal
+/// A change of the presence only: it makes no record, and it cannot
+/// change the riff (01M3WRD97EZJK3AABXECXEY133).
+///
+/// A signal takes the presence:
+///
+/// ```
+/// use std::time::Instant;
+/// use riff_core::name::SessionUri;
+/// use riff_server::state::{Presence, Riff, Signal};
+///
+/// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let (mut presence, mut riff) = (Presence::default(), Riff::default());
+/// let place = Signal::Place { place: mike.place().clone(), worker: None };
+/// place.set(&mut presence, mike.who(), Instant::now());
+/// Signal::Alive.set(&mut presence, mike.who(), Instant::now());
+/// # let _ = &mut riff;
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+///
+/// It does not take the riff. This differs only in the value that the
+/// last signal gets, and it does not compile:
+///
+/// ```compile_fail,E0308
+/// use std::time::Instant;
+/// use riff_core::name::SessionUri;
+/// use riff_server::state::{Presence, Riff, Signal};
+///
+/// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let (mut presence, mut riff) = (Presence::default(), Riff::default());
+/// let place = Signal::Place { place: mike.place().clone(), worker: None };
+/// place.set(&mut presence, mike.who(), Instant::now());
+/// Signal::Alive.set(&mut riff, mike.who(), Instant::now());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Signal {
+    /// A call of the session from `place`: a sign of life. It takes
+    /// back an ask to stop. A person takes the place of each call
+    /// (01M3MWW8KYJ3ZV91X22RBSAF33).
+    Called { place: Place },
+    /// A keep-alive: a sign of life that is not a call (R204).
+    Alive,
+    /// The place of the session, from a `register`. It makes a session
+    /// that the presence does not know. `worker` sets the worker mark;
+    /// `None` keeps it.
+    Place { place: Place, worker: Option<bool> },
+    /// The status of the session, set at `at_ms`.
+    Status { status: Status, at_ms: u64 },
+    /// A watch stream opened.
+    WatchStarted,
+    /// A watch stream closed. It is no sign of life
+    /// (01M3WG240PNMQYZ7TX6Z7ZF6M9).
+    WatchEnded,
+    /// The session ended (R205).
+    Ended,
+    /// The session read `thread` up to `seq`. A read of all the
+    /// messages (`all`) never moves the cursor back.
+    Read {
+        thread: ThreadName,
+        seq: u64,
+        all: bool,
+    },
+    /// The server asks this idle worker to stop
+    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
+    AskedToStop,
+}
+// ANCHOR_END: signal
+
+impl Signal {
+    /// Sets the signal of the session `who` in `presence`, at `now`.
+    /// Only [`Signal::Place`] makes a session that the presence does not
+    /// know: each other signal of such a session changes nothing. The
+    /// reply says if the server asks the session to stop.
+    pub fn set(self, presence: &mut Presence, who: &Who, now: Instant) -> AliveReply {
+        if let Signal::Read { thread, seq, all } = self {
+            let cursor = presence.cursors.entry((who.clone(), thread)).or_insert(0);
+            *cursor = if all { (*cursor).max(seq) } else { seq };
+            return AliveReply::default();
+        }
+        if let Signal::Place { place, .. } = &self
+            && !presence.sessions.contains_key(who)
+        {
+            let session = Session::new(place.clone(), now);
+            presence.sessions.insert(who.clone(), session);
+        }
+        let Some(session) = presence.sessions.get_mut(who) else {
+            return AliveReply::default();
+        };
+        match self {
+            Signal::Called { place } => {
+                if who.session().is_none() {
+                    session.place = place;
+                }
+                session.called(now);
+            }
+            Signal::Alive => session.live(now),
+            Signal::Place { place, worker } => {
+                session.place = place;
+                session.called(now);
+                if let Some(worker) = worker {
+                    session.worker = worker;
+                }
+            }
+            Signal::Status { status, at_ms } => {
+                session.status = Some(SetStatus {
+                    status,
+                    set_ms: at_ms,
+                    set: now,
+                });
+            }
+            Signal::WatchStarted => session.watchers += 1,
+            Signal::WatchEnded => {
+                session.watchers = session.watchers.saturating_sub(1);
+                session.stopping = false;
+                if !session.gone(now) {
+                    session.last_seen = now;
+                    session.seen_before_load = None;
+                }
+            }
+            Signal::Ended => {
+                session.ended = true;
+                session.last_seen = now;
+                session.seen_before_load = None;
+                session.claims_changed = now;
+            }
+            Signal::AskedToStop => session.stopping = true,
+            Signal::Read { .. } => {}
+        }
+        AliveReply {
+            stop: session.stopping,
+        }
+    }
+}
+
 impl Presence {
+    /// True when the presence knows the session `who`.
+    pub fn knows(&self, who: &Who) -> bool {
+        self.sessions.contains_key(who)
+    }
+
     /// What a record changes in memory. The caller applies the record to
     /// `riff` first. `at` is the time of the call that made the record.
     /// A replay gives `None`, and sets no time: it makes each session
@@ -221,6 +362,15 @@ impl Session {
     pub(super) fn live(&mut self, now: Instant) {
         self.alive = Some(now);
         self.ended = false;
+    }
+
+    /// Records a call at `now`: a sign of life that also takes back an
+    /// ask to stop.
+    fn called(&mut self, now: Instant) {
+        self.last_seen = now;
+        self.seen_before_load = None;
+        self.stopping = false;
+        self.live(now);
     }
 
     /// True when the session ended, or had no sign of life for [`GONE`].
