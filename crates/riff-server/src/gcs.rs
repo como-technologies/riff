@@ -21,6 +21,13 @@
 //! The store gets its access token from the metadata server of Cloud
 //! Run. It keeps the token until one minute before it expires.
 //!
+//! A tool of the log also runs on the machine of a person, where no
+//! metadata server answers (01M3TJWHYB9FTZ3G8G227V0N05). [`Gcs::for_person`]
+//! asks the metadata server first, for [`PERSON_WAIT`]. When it does not
+//! answer, the store takes the token of the Google sign-in of the
+//! person: the output of `gcloud auth print-access-token`. It keeps that
+//! token for [`PERSON_TOKEN`].
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant S as riff-server
@@ -51,6 +58,7 @@
 //! ```
 
 use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -75,6 +83,12 @@ pub const TIMEOUT: Duration = Duration::from_secs(30);
 /// The store keeps an access token until this time before it expires.
 const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 
+/// A store for a person waits this long for the metadata server.
+pub const PERSON_WAIT: Duration = Duration::from_secs(2);
+
+/// A store for a person keeps a token of `gcloud` this long.
+pub const PERSON_TOKEN: Duration = Duration::from_secs(5 * 60);
+
 /// A store in a Cloud Storage bucket. See the module docs.
 pub struct Gcs {
     http: reqwest::Client,
@@ -82,6 +96,8 @@ pub struct Gcs {
     storage: String,
     metadata: String,
     token: Mutex<Option<Token>>,
+    /// The `gcloud` command of a store for a person.
+    gcloud: Option<PathBuf>,
 }
 
 struct Token {
@@ -128,7 +144,68 @@ impl Gcs {
             storage: storage.trim_end_matches('/').to_owned(),
             metadata: metadata.trim_end_matches('/').to_owned(),
             token: Mutex::new(None),
+            gcloud: None,
         }
+    }
+
+    /// A store in `bucket` for a tool that a person runs
+    /// (01M3TJWHYB9FTZ3G8G227V0N05). See "Access token" in the module
+    /// docs.
+    pub fn for_person(bucket: &str) -> Gcs {
+        Gcs::new(bucket).or_gcloud("gcloud")
+    }
+
+    /// The same store, which takes its token from
+    /// `COMMAND auth print-access-token` when the metadata server does
+    /// not answer.
+    ///
+    /// ```
+    /// use riff_server::gcs::Gcs;
+    /// use riff_server::store::Store;
+    ///
+    /// let store = Gcs::new("como-riff-state").or_gcloud("gcloud");
+    /// assert_eq!(store.locate("lease"), "gs://como-riff-state/lease");
+    /// ```
+    pub fn or_gcloud(mut self, command: impl Into<PathBuf>) -> Gcs {
+        self.gcloud = Some(command.into());
+        self
+    }
+
+    fn keep_token(&self, value: &str, life: Duration) {
+        *self.token.lock().unwrap_or_else(|p| p.into_inner()) = Some(Token {
+            value: value.to_owned(),
+            until: Instant::now() + life,
+        });
+    }
+
+    /// The token of the Google sign-in of the person, from `gcloud`.
+    async fn person_token(
+        &self,
+        gcloud: &Path,
+        metadata: StoreError,
+    ) -> Result<String, StoreError> {
+        let failed = |why: String| {
+            StoreError::Failed(format!(
+                "no access token for the bucket. The metadata server did not answer \
+                 ({metadata}), and `{} auth print-access-token` failed ({why}). \
+                 Sign in with: gcloud auth login",
+                gcloud.display()
+            ))
+        };
+        let out = tokio::process::Command::new(gcloud)
+            .args(["auth", "print-access-token"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+            .map_err(|e| failed(e.to_string()))?;
+        let token = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if !out.status.success() || token.is_empty() {
+            return Err(failed(
+                String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+            ));
+        }
+        self.keep_token(&token, PERSON_TOKEN);
+        Ok(token)
     }
 
     fn cached_token(&self) -> Option<String> {
@@ -143,24 +220,26 @@ impl Gcs {
         if let Some(value) = self.cached_token() {
             return Ok(value);
         }
+        match (self.metadata_token().await, &self.gcloud) {
+            (Err(error), Some(gcloud)) => self.person_token(gcloud, error).await,
+            (token, _) => token,
+        }
+    }
+
+    /// The token of the service account, from the metadata server.
+    async fn metadata_token(&self) -> Result<String, StoreError> {
         let url = format!("{}{TOKEN_PATH}", self.metadata);
-        let reply: TokenReply = check(
-            self.http
-                .get(&url)
-                .header("Metadata-Flavor", "Google")
-                .send()
-                .await,
-            &url,
-        )
-        .await?
-        .json()
-        .await
-        .map_err(|e| failed(&url, e))?;
+        let mut request = self.http.get(&url).header("Metadata-Flavor", "Google");
+        if self.gcloud.is_some() {
+            request = request.timeout(PERSON_WAIT);
+        }
+        let reply: TokenReply = check(request.send().await, &url)
+            .await?
+            .json()
+            .await
+            .map_err(|e| failed(&url, e))?;
         let life = Duration::from_secs(reply.expires_in).saturating_sub(TOKEN_MARGIN);
-        *self.token.lock().unwrap_or_else(|p| p.into_inner()) = Some(Token {
-            value: reply.access_token.clone(),
-            until: Instant::now() + life,
-        });
+        self.keep_token(&reply.access_token, life);
         Ok(reply.access_token)
     }
 

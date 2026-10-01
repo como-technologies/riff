@@ -22,7 +22,8 @@ echo "Project $CLOUD_PROJECT: exists, with billing."
 gcloud services enable secretmanager.googleapis.com storage.googleapis.com \
     iam.googleapis.com run.googleapis.com cloudbuild.googleapis.com \
     artifactregistry.googleapis.com iamcredentials.googleapis.com \
-    sts.googleapis.com "${project[@]}"
+    sts.googleapis.com logging.googleapis.com monitoring.googleapis.com \
+    "${project[@]}"
 echo "APIs: on."
 
 # IAM needs some seconds before it knows a new service account. So try
@@ -50,11 +51,15 @@ if gcloud storage buckets describe "$bucket" "${project[@]}" >/dev/null 2>&1; th
 else
     echo "Bucket $CLOUD_BUCKET: making it."
     gcloud storage buckets create "$bucket" --location "$CLOUD_REGION" \
+        --default-storage-class standard \
         --uniform-bucket-level-access --public-access-prevention "${project[@]}"
 fi
-# The rule deletes each thread object 30 days after its last change (R46).
-gcloud storage buckets update "$bucket" --lifecycle-file lifecycle.json "${project[@]}"
-echo "Bucket $CLOUD_BUCKET: lifecycle rule set."
+# Object versioning keeps each older version of an object. One rule
+# deletes an older version after 7 days (01M3TJWJEPTSF1S3S5PJD25Z7Y). The
+# other rule deletes each thread object 30 days after its last change
+# (R46).
+gcloud storage buckets update "$bucket" --lifecycle-file lifecycle.json --versioning "${project[@]}"
+echo "Bucket $CLOUD_BUCKET: versioning on, lifecycle rules set."
 
 account() { echo "$1@$CLOUD_PROJECT.iam.gserviceaccount.com"; }
 for name in "$CLOUD_RUN_ACCOUNT" "$CLOUD_BUILD_ACCOUNT" "$CLOUD_DEPLOY_ACCOUNT"; do
@@ -125,6 +130,51 @@ github=principalSet://iam.googleapis.com/projects/$CLOUD_PROJECT_NUMBER/location
 bind gcloud iam service-accounts add-iam-policy-binding "$(account "$CLOUD_DEPLOY_ACCOUNT")" \
     --member "$github" --role roles/iam.workloadIdentityUser "${project[@]}"
 echo "CI deploy: set."
+
+# riff-server keeps the state in memory (01M3TJWJEPTSF1S3S5PJD25Z7Y).
+# Each deploy sets the memory. A service that runs with another limit
+# gets it now.
+service=(--region "$CLOUD_REGION" "${project[@]}")
+if gcloud run services describe "$CLOUD_SERVICE" "${service[@]}" >/dev/null 2>&1; then
+    memory=$(gcloud run services describe "$CLOUD_SERVICE" "${service[@]}" \
+        --format='value(spec.template.spec.containers[0].resources.limits.memory)')
+    if [ "$memory" = "$CLOUD_MEMORY" ]; then
+        echo "Service $CLOUD_SERVICE: $CLOUD_MEMORY of memory."
+    else
+        echo "Service $CLOUD_SERVICE: setting $CLOUD_MEMORY of memory."
+        gcloud run services update "$CLOUD_SERVICE" --memory "$CLOUD_MEMORY" "${service[@]}"
+    fi
+else
+    echo "Service $CLOUD_SERVICE: none yet. The deploy gives it $CLOUD_MEMORY of memory."
+fi
+
+# An alert on each log line of riff-server with the severity ERROR or
+# more goes to the owner by email (01M3TJWJ6J3M6JRXJTAETZ5M6F). The
+# repository is public, so the email comes from RIFF_OWNER.
+if [ -z "${RIFF_OWNER:-}" ]; then
+    echo "Alert: not set, because RIFF_OWNER is not set."
+    echo "  Run: RIFF_OWNER=YOUR_EMAIL just cloud setup"
+else
+    channel=$(gcloud beta monitoring channels list "${project[@]}" \
+        --filter "displayName=\"$CLOUD_ALERT_CHANNEL\"" --format 'value(name)')
+    if [ -n "$channel" ]; then
+        echo "Alert channel $CLOUD_ALERT_CHANNEL: exists."
+    else
+        echo "Alert channel $CLOUD_ALERT_CHANNEL: making it."
+        channel=$(gcloud beta monitoring channels create "${project[@]}" \
+            --display-name "$CLOUD_ALERT_CHANNEL" --type email \
+            --channel-labels "email_address=$RIFF_OWNER" --format 'value(name)')
+    fi
+    policy=$(gcloud alpha monitoring policies list "${project[@]}" \
+        --filter "displayName=\"$CLOUD_ALERT\"" --format 'value(name)')
+    if [ -n "$policy" ]; then
+        echo "Alert $CLOUD_ALERT: exists."
+    else
+        echo "Alert $CLOUD_ALERT: making it."
+        gcloud alpha monitoring policies create "${project[@]}" \
+            --policy-from-file alert.json --notification-channels "$channel"
+    fi
+fi
 
 # gcloud warns when it filters an empty list, so hide its stderr.
 versions=$(gcloud secrets versions list "$CLOUD_SECRET" --filter=state=ENABLED \

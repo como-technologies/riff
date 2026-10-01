@@ -416,10 +416,27 @@
 
 - **R118** `riff-server` with no command runs in the foreground, in a
   terminal.
-- **01M3K0QM5HY852J4E5M2YQDYEM** `riff-server` has no subcommand and
-  installs no service. A person runs it in a terminal. The cloud runs
-  it on Cloud Run. It keeps no settings: it reads them only from its
-  options and the environment at each start.
+- **01M3K0QM5HY852J4E5M2YQDYEM** `riff-server` has one command, `log`
+  (01M3TJWHNYRCA7RTPFNYM5ZNQS), and installs no service. A person runs
+  it in a terminal. The cloud runs it on Cloud Run. It keeps no
+  settings: it reads them only from its options and the environment at
+  each start.
+- **01M3TJWJ3VK671T9NM95F3ES82** Each log line of `riff-server` is one
+  JSON object on stdout, with the fields `severity`, `time`, `message`
+  and `target`, and each field of the event. The `severity` is `DEBUG`,
+  `INFO`, `WARNING` or `ERROR`. An error of the options comes before
+  the log starts: it is text on stderr.
+- **01M3TJWJ12WEDCXW3W0529KRP2** `GET /v1/server` gives the facts of the
+  instance: if it serves, or why it replies 503; its last error; the
+  log position, and the time and the duration of the last chunk write;
+  the numbers of write errors and skipped records since the start; the
+  position, the time and the version of the newest checkpoint, and why
+  this build writes none; the numbers of chunks, sessions, read
+  cursors, threads and live token chains; the memory in use; the start
+  time, and how long the load and the replay took. It answers also
+  while the instance replies 503 to each other call, and to a `riff` of
+  each version. With sign-in, it needs a token. `riff server` shows the
+  facts under the riff that `riff` uses.
 - **01M3JY12HASECNN6SFQ880JT5H** `just dev [ARGS]` builds the
   workspace in debug. It runs the debug `riff-server` of its tree with
   `ARGS` on the first free local port from 7900, with its log in
@@ -598,6 +615,32 @@
   memberships, its claims, its lead, and each direct thread whose two
   sessions are gone.
 
+- **01M3TJWHNYRCA7RTPFNYM5ZNQS** `riff-server log` prints each record of
+  the log as one line of text: the position, the time, the kind of the
+  change and its facts. `--from POSITION` names the first record.
+  `--bucket` or `--dir` names the store. The command runs no server.
+- **01M3TJWHRP49M66NYNHWSYD3XP** `riff-server log verify` reads each
+  checkpoint, and each chunk from the oldest kept checkpoint. It names
+  each object and each line that does not read, and each gap or repeat
+  of a position. It does not stop at the first problem. For a problem
+  in a chunk, it names the last good position and the cut that removes
+  each record after it. It exits with 1 when it finds a problem.
+- **01M3TJWHVN730ZWCWHT9ER186R** `riff-server log cut --after POSITION`
+  deletes each record and each checkpoint after the position. It
+  prints each record that it removes, and the threads of these
+  records. It keeps the bytes of each line that stays. In a chunk, it
+  keeps only the first lines whose positions are right, up to the
+  position, and removes each line after them, also a line with a
+  lower position. It removes a chunk whose header does not read. It
+  deletes the chunks from the end of the log to its start, so a cut
+  that stops leaves no gap. It refuses a position before the oldest
+  kept checkpoint.
+- **01M3TJWHYB9FTZ3G8G227V0N05** With a bucket, a tool of the log takes
+  its access token from the metadata server of Cloud Run. When that
+  server does not answer in 2 seconds, the tool takes the token of the
+  Google sign-in of the person: the output of
+  `gcloud auth print-access-token`.
+
 ## Cloud
 
 - **R5** `riff-server` runs on Google Cloud Run. It runs with
@@ -625,6 +668,10 @@
   `(waits for riff-server…)` on stderr. It shows the line one time for
   each gap, also with more than one call. `riff chat` shows the line
   above its prompt. `riff top` keeps its table.
+- **01M3TJWJ9914B7Z5EQJF310REK** `riff` tries a refused connect again
+  only when its process got a reply from that server before. It then
+  waits as for a 503 (R132), and shows the same line. A process that
+  got no reply from the server fails at once.
 - **R148** `riff watch` and `riff tail` connect again at once when a
   stream ends. When a connect fails, they try again every 5 seconds.
   They stop only when the person stops them.
@@ -758,6 +805,17 @@
   resources of riff in the project. It checks each resource first, so it
   can run again. `just cloud deploy` builds the image and deploys it to
   Cloud Run.
+- **01M3TJWJEPTSF1S3S5PJD25Z7Y** The bucket is a standard bucket with
+  object versioning. A lifecycle rule deletes each older version of an
+  object after 7 days. The service has 1 GiB of memory.
+  `just cloud setup` sets each of them, and each deploy sets the
+  memory.
+- **01M3TJWJ6J3M6JRXJTAETZ5M6F** `just cloud setup` makes an alert in
+  the cloud project: a log line of the service with the severity
+  `ERROR` or more sends an email to the owner, at most one each 5
+  minutes. The email comes from `RIFF_OWNER`. With no `RIFF_OWNER`,
+  the setup makes no alert, and says how to make it. `just cloud errors`
+  shows these log lines.
 - **R145** A person makes the OAuth client by hand in the console, with
   the how-to in the book. `just cloud oauth-client` puts the client
   secret in Secret Manager and the client ID in `deploy/cloud.env`. The
@@ -778,6 +836,11 @@
   old instance serves on. After the wait for the lease, the instance
   applies the chunks that came since the load, and loads the sign-ins
   again.
+- **01M3TJWJC08ZR5TWA1Y9CDE0QM** After the wait for the lease, the
+  instance also lists the checkpoints again. When a checkpoint came
+  since its load, it takes the position of the newest one. It writes
+  no checkpoint when that one comes from a later version, or does not
+  read (01M3TBZBQDF0ES4KM54FJQF6Z8).
 - **01M3THEE31H5QVV3JAFC4ZRGFR** `riff-server` opens its port only
   after the load and the wait for the lease. Before that, each connect
   is refused.

@@ -38,12 +38,14 @@ if [ -z "${RIFF_OWNER:-}" ]; then
     exit 1
 fi
 
-# One instance, with its CPU on also between calls. 1000 calls at a
-# time, each for up to 60 minutes. riff checks each token itself, so
-# Cloud Run lets each caller in.
+# One instance, with its CPU on also between calls, and the memory for
+# the state (01M3TJWJEPTSF1S3S5PJD25Z7Y). 1000 calls at a time, each for
+# up to 60 minutes. riff checks each token itself, so Cloud Run lets
+# each caller in.
 gcloud run deploy "$CLOUD_SERVICE" "${from[@]}" --quiet "${where[@]}" \
     --service-account "$(account "$CLOUD_RUN_ACCOUNT")" \
     --port 8080 --min-instances 1 --max-instances 1 --no-cpu-throttling \
+    --memory "$CLOUD_MEMORY" \
     --concurrency 1000 --timeout 3600 --no-invoker-iam-check \
     --set-env-vars "RIFF_PUBLIC_URL=$CLOUD_URL,RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID=$RIFF_OIDC_CLIENT_ID,RIFF_BUCKET=$CLOUD_BUCKET,RIFF_OWNER=$RIFF_OWNER" \
     --set-secrets "RIFF_OIDC_CLIENT_SECRET=$CLOUD_SECRET:latest"

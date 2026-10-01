@@ -17,7 +17,10 @@
 //! machine about themselves, with [`Api::probe`]
 //! (01M3Q5VE74608N5H2M73RB6Y2Z). It shows a short table, one fact on a
 //! line, and the action last (01M3NTEMQAY1Z10H1GX2K6PEAH). See
-//! [`crate::text::server_view`].
+//! [`crate::text::server_view`]. Under the riff that `riff` uses, it
+//! shows the facts of that server from `GET /v1/server`: if it serves,
+//! its last error, its log and its checkpoint
+//! (01M3TJWJ12WEDCXW3W0529KRP2).
 //!
 //! Only the network counts in the wait of a probe
 //! (01M3MX598VTWZ02R7J6AYJB2E5). The two probes run at the same time.
@@ -77,6 +80,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use riff_core::build::Build;
+use riff_core::wire::ServerFacts;
 
 use crate::api::{Api, Probe};
 use crate::login;
@@ -116,6 +120,9 @@ pub struct View {
     pub used: Seen,
     /// The riff of this machine, when `riff` uses another riff.
     pub local: Option<Seen>,
+    /// The facts of the riff that `riff` uses, when it gives them
+    /// (01M3TJWJ12WEDCXW3W0529KRP2).
+    pub facts: Option<ServerFacts>,
 }
 
 /// Asks the riff of `api` about itself, within [`PROBE_WAIT`].
@@ -159,11 +166,29 @@ pub async fn view(server: &str, local: &str, source: Source) -> View {
         let (a, b) = tokio::join!(probe(&used), probe(&other));
         (seen(server, a), Some(seen(local, b)))
     };
+    let facts = match &used.answer {
+        Ok(_) => facts(server).await,
+        Err(_) => None,
+    };
     View {
         source,
         used,
         local,
+        facts,
     }
+}
+
+/// The facts of the riff at `server`, within [`PROBE_WAIT`]. `None` when
+/// it gives none: an old server, or a riff with sign-in and no sign-in
+/// of this machine. It reads the keyring, so call it after each probe.
+async fn facts(server: &str) -> Option<ServerFacts> {
+    let api = Api::new(server).signed_in(None).ok()?;
+    let facts = tokio::time::timeout(PROBE_WAIT, api.facts())
+        .await
+        .ok()?
+        .ok()?;
+    // A real reply has the time of the server.
+    (facts.now_ms > 0).then_some(facts)
 }
 
 /// The arguments of `cargo` that install riff and riff-server of the

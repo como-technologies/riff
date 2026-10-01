@@ -54,7 +54,10 @@ fn serve_cmd(mut cmd: Command) -> (Server, u16, String) {
     };
     // Read the rest of the log, so that the server can write it.
     std::thread::spawn(move || lines.for_each(drop));
-    let port = line.rsplit(':').next().unwrap().trim().parse().unwrap();
+    // Each log line is JSON (01M3TJWJ3VK671T9NM95F3ES82).
+    let line: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let message = line["message"].as_str().unwrap();
+    let port = message.rsplit(':').next().unwrap().trim().parse().unwrap();
     (server, port, log)
 }
 

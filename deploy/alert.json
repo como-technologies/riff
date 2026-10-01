@@ -1,0 +1,22 @@
+{
+  "displayName": "riff-server-errors",
+  "documentation": {
+    "content": "A log line of riff-server has the severity ERROR or more. See the log: just cloud log. See the facts of the server: riff server.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "A log line of riff-server with the severity ERROR or more",
+      "conditionMatchedLog": {
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"riff-server\" AND severity>=ERROR"
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "300s"
+    },
+    "autoClose": "1800s"
+  }
+}

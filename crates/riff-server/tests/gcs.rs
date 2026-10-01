@@ -330,3 +330,43 @@ async fn a_token_store_of_an_old_format_stops_the_load_with_the_fix() {
          gcloud storage rm 'gs://riff-test/**'"
     );
 }
+
+/// The fake `gcloud` of the tests. Its `auth print-access-token` prints
+/// [`TOKEN`].
+fn fake_gcloud() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake/gcloud")
+}
+
+/// 01M3TJWHYB9FTZ3G8G227V0N05: on the machine of a person, no metadata
+/// server answers. The store of a tool then takes the token of the
+/// Google sign-in of the person.
+#[tokio::test]
+async fn a_store_for_a_person_takes_the_token_of_gcloud() {
+    let (fake, url) = start().await;
+    let store = Gcs::with_urls(BUCKET, &url, "http://127.0.0.1:1").or_gcloud(fake_gcloud());
+    store.save(LEASE, b"1".to_vec(), None).await.unwrap();
+    assert_eq!(store.load(LEASE).await.unwrap().unwrap().bytes, b"1");
+    assert_eq!(fake.lock().unwrap().token_calls, 0);
+}
+
+#[tokio::test]
+async fn a_store_for_a_person_asks_the_metadata_server_first() {
+    let (fake, url) = start().await;
+    let store = store(&url).or_gcloud("/nonexistent/gcloud");
+    store.save(LEASE, b"1".to_vec(), None).await.unwrap();
+    assert_eq!(fake.lock().unwrap().token_calls, 1);
+}
+
+#[tokio::test]
+async fn a_person_with_no_gcloud_gets_the_fix() {
+    let (_fake, url) = start().await;
+    let store = Gcs::with_urls(BUCKET, &url, "http://127.0.0.1:1").or_gcloud("/nonexistent/gcloud");
+    let Err(StoreError::Failed(message)) = store.load(LEASE).await else {
+        panic!("a load with no token is a failure");
+    };
+    assert!(message.contains("gcloud auth login"), "{message}");
+    assert!(
+        message.contains("The metadata server did not answer"),
+        "{message}"
+    );
+}

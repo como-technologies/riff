@@ -207,19 +207,18 @@ pub struct Found {
     /// Why this build writes no checkpoint: the newest checkpoint comes
     /// from a later version, or does not read.
     pub blocked: Option<String>,
+    /// The name of the newest checkpoint in the store, also when it does
+    /// not read. A start compares it with the name after the wait for the
+    /// lease (01M3TJWJC08ZR5TWA1Y9CDE0QM).
+    pub newest: Option<String>,
 }
 
 /// Loads the newest checkpoint that reads. It logs a warning for each
 /// newer one that does not read. `build` is the crate version of this
 /// build.
 pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
-    let mut names: Vec<(u64, u64, String)> = store
-        .list(CHECKPOINT)
-        .await?
-        .into_iter()
-        .filter_map(|name| parse(&name).map(|(position, at)| (position, at, name)))
-        .collect();
-    names.sort();
+    let names = names(store).await?;
+    let newest = names.last().map(|(_, _, name)| name.clone());
     let mut blocked = None;
     for (_, _, name) in names.iter().rev() {
         let read = match store.load(name).await? {
@@ -237,6 +236,7 @@ pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
                 return Ok(Found {
                     checkpoint: Some(checkpoint),
                     blocked,
+                    newest,
                 });
             }
             Err(why) => {
@@ -249,7 +249,35 @@ pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
     Ok(Found {
         checkpoint: None,
         blocked,
+        newest,
     })
+}
+
+/// The position, the time and the name of each checkpoint in `store`,
+/// from the names, in the order of the positions.
+///
+/// ```
+/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// use riff_server::checkpoint::{name, names};
+/// use riff_server::store::{Memory, Store};
+///
+/// let store = Memory::default();
+/// for position in [20, 3] {
+///     store.save(&name(position, 5), b"{}".to_vec(), None).await?;
+/// }
+/// let positions: Vec<u64> = names(&store).await?.iter().map(|n| n.0).collect();
+/// assert_eq!(positions, [3, 20]);
+/// # Ok(()) }
+/// ```
+pub async fn names(store: &dyn Store) -> Result<Vec<(u64, u64, String)>, StoreError> {
+    let mut names: Vec<(u64, u64, String)> = store
+        .list(CHECKPOINT)
+        .await?
+        .into_iter()
+        .filter_map(|name| parse(&name).map(|(position, at)| (position, at, name)))
+        .collect();
+    names.sort();
+    Ok(names)
 }
 
 /// Writes a checkpoint as a new object. Gives its name.
@@ -309,12 +337,7 @@ pub async fn prune(
     settings: &Settings,
     now_ms: u64,
 ) -> Result<Pruned, StoreError> {
-    let checkpoints: Vec<(u64, u64, String)> = store
-        .list(CHECKPOINT)
-        .await?
-        .into_iter()
-        .filter_map(|name| parse(&name).map(|(position, at)| (position, at, name)))
-        .collect();
+    let checkpoints = names(store).await?;
     let times: Vec<(u64, u64)> = checkpoints.iter().map(|(p, at, _)| (*p, *at)).collect();
     let keep = kept(&times, now_ms, settings.keep_last, settings.keep_days);
     let mut pruned = Pruned::default();

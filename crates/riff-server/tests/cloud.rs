@@ -69,9 +69,10 @@ fn run_in(scripts: &Path, script: &str, args: &[&str], found: &[&str]) -> String
     out.log
 }
 
-/// The result of a script: its exit status, its stderr and the calls.
+/// The result of a script: its exit status, its output and the calls.
 struct Ran {
     status: std::process::ExitStatus,
+    stdout: Vec<u8>,
     stderr: Vec<u8>,
     log: String,
 }
@@ -104,6 +105,7 @@ fn command(
     let out = command.output().unwrap();
     Ran {
         status: out.status,
+        stdout: out.stdout,
         stderr: out.stderr,
         log: fs::read_to_string(log).unwrap_or_default(),
     }
@@ -194,17 +196,132 @@ fn setup_again_sets_the_condition_of_the_provider() {
     assert!(update.contains(CONDITION), "{update}");
 }
 
+/// R46, and 01M3TJWJEPTSF1S3S5PJD25Z7Y: an older version of an object
+/// goes after 7 days.
 #[test]
-fn the_rule_deletes_only_thread_objects_after_30_days() {
+fn the_rules_delete_thread_objects_after_30_days_and_older_versions_after_7() {
     let text = fs::read_to_string(deploy().join("lifecycle.json")).unwrap();
     let rules: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
         rules,
-        serde_json::json!({"rule": [{
-            "action": {"type": "Delete"},
-            "condition": {"age": 30, "matchesPrefix": ["threads/"]},
-        }]})
+        serde_json::json!({"rule": [
+            {
+                "action": {"type": "Delete"},
+                "condition": {"age": 30, "matchesPrefix": ["threads/"]},
+            },
+            {
+                "action": {"type": "Delete"},
+                "condition": {"daysSinceNoncurrentTime": 7},
+            },
+        ]})
     );
+}
+
+/// 01M3TJWJEPTSF1S3S5PJD25Z7Y: a standard bucket with object versioning.
+#[test]
+fn setup_makes_a_standard_bucket_with_versioning() {
+    let calls = run("cloud-setup.sh", &[]);
+    let make = line(&calls, "storage buckets create gs://como-riff-state ");
+    assert!(make.contains("--default-storage-class standard"), "{make}");
+    let update = line(&calls, "storage buckets update gs://como-riff-state ");
+    assert!(update.contains("--versioning"), "{update}");
+    // A setup again sets the same.
+    let again = run("cloud-setup.sh", &SETUP);
+    let update = line(&again, "storage buckets update gs://como-riff-state ");
+    assert!(update.contains("--versioning"), "{update}");
+}
+
+/// 01M3TJWJEPTSF1S3S5PJD25Z7Y: the service has 1 GiB of memory. The
+/// deploy sets it, and a setup sets it on a service that runs.
+#[test]
+fn the_service_gets_1_gib_of_memory() {
+    let calls = run("deploy.sh", &[]);
+    let deploy = line(&calls, "run deploy riff-server ");
+    assert!(deploy.contains("--memory 1Gi"), "{deploy}");
+
+    let calls = run("cloud-setup.sh", &[]);
+    assert!(!calls.contains("run services update"), "{calls}");
+    let calls = run("cloud-setup.sh", &["run services describe riff-server "]);
+    let update = line(&calls, "run services update riff-server ");
+    assert!(update.contains("--memory 1Gi"), "{update}");
+    assert!(update.contains("--region us-central1"), "{update}");
+}
+
+/// 01M3TJWJ6J3M6JRXJTAETZ5M6F: an alert on each error in the log of
+/// riff-server goes to the owner by email.
+#[test]
+fn setup_makes_the_alert_for_the_owner() {
+    let calls = run("cloud-setup.sh", &[]);
+    let channel = line(&calls, "beta monitoring channels create ");
+    assert!(channel.contains("--type email"), "{channel}");
+    assert!(
+        channel.contains("--channel-labels email_address=owner@example.com"),
+        "{channel}"
+    );
+    let policy = line(&calls, "alpha monitoring policies create ");
+    assert!(policy.contains("--policy-from-file alert.json"), "{policy}");
+    assert!(policy.contains("--notification-channels"), "{policy}");
+    assert!(calls.contains("monitoring.googleapis.com"), "{calls}");
+
+    // A setup again keeps the channel and the alert.
+    let found = [
+        "beta monitoring channels list ",
+        "alpha monitoring policies list ",
+    ];
+    let calls = run("cloud-setup.sh", &found);
+    assert!(!calls.contains("monitoring channels create"), "{calls}");
+    assert!(!calls.contains("monitoring policies create"), "{calls}");
+}
+
+#[test]
+fn the_errors_recipe_reads_only_the_lines_with_the_severity_error() {
+    let text = fs::read_to_string(deploy().join("cloud.just")).unwrap();
+    let recipe = text.split("\nerrors ").nth(1).expect("an errors recipe");
+    assert!(recipe.contains("gcloud run services logs read"), "{recipe}");
+    assert!(
+        recipe.contains("--log-filter 'severity>=ERROR'"),
+        "{recipe}"
+    );
+}
+
+#[test]
+fn setup_with_no_owner_makes_no_alert_and_says_how() {
+    let out = command(&deploy(), "cloud-setup.sh", &[], &[], None);
+    assert!(out.status.success());
+    assert!(!out.log.contains("monitoring channels"), "{}", out.log);
+    assert!(!out.log.contains("monitoring policies"), "{}", out.log);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("RIFF_OWNER=YOUR_EMAIL just cloud setup"),
+        "{stdout}"
+    );
+}
+
+/// The alert fires on a log line of the service of `cloud.env` with the
+/// severity ERROR or more, and has the name that the setup looks for.
+#[test]
+fn the_alert_matches_each_error_of_the_service() {
+    let text = fs::read_to_string(deploy().join("alert.json")).unwrap();
+    let alert: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let env = fs::read_to_string(deploy().join("cloud.env")).unwrap();
+    let setting = |name: &str| {
+        env.lines()
+            .find_map(|l| l.strip_prefix(&format!("{name}=")))
+            .unwrap_or_else(|| panic!("no {name} in cloud.env"))
+            .to_owned()
+    };
+    assert_eq!(alert["displayName"], setting("CLOUD_ALERT"));
+    let filter = alert["conditions"][0]["conditionMatchedLog"]["filter"]
+        .as_str()
+        .unwrap();
+    assert!(filter.contains("severity>=ERROR"), "{filter}");
+    let service = format!(
+        "resource.labels.service_name=\"{}\"",
+        setting("CLOUD_SERVICE")
+    );
+    assert!(filter.contains(&service), "{filter}");
+    // A log alert needs a rate limit.
+    assert!(alert["alertStrategy"]["notificationRateLimit"]["period"].is_string());
 }
 
 #[test]

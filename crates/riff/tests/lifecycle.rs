@@ -114,12 +114,96 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
     ];
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[..4], table, "{stdout}");
+    // Then the facts of the riff, one on a line.
+    let after = 4 + FACTS.len();
     if local_answers() {
-        assert_eq!(lines[4], "local       http://127.0.0.1:7878", "{stdout}");
-        assert!(lines[5].starts_with("  release   "), "{stdout}");
+        assert_eq!(
+            lines[after], "local       http://127.0.0.1:7878",
+            "{stdout}"
+        );
+        assert!(lines[after + 1].starts_with("  release   "), "{stdout}");
     } else {
-        assert_eq!(lines.len(), 4, "{stdout}");
+        assert_eq!(lines.len(), after, "{stdout}");
     }
+}
+
+/// The label of each line of facts in `riff server`, in order.
+const FACTS: [&str; 8] = [
+    "serves", "error", "log", "faults", "saved", "counts", "memory", "started",
+];
+
+/// 01M3TJWJ12WEDCXW3W0529KRP2: `riff server` shows each fact of
+/// "Monitoring" of the riff that `riff` uses.
+#[tokio::test]
+async fn server_shows_each_fact_of_the_riff() {
+    let addr = real().await;
+    // One call, so that the log has a record and a chunk.
+    let me = "riff://mike@pangolin/como-technologies/riff?session=a";
+    let registered = reqwest::Client::new()
+        .post(format!("http://{addr}/v1/register"))
+        .header(HEADER, Build::this().to_string())
+        .json(&serde_json::json!({ "me": me }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(registered.status(), 200);
+
+    let mut cmd = riff(&["server"]);
+    cmd.env("RIFF_SERVER", format!("http://{addr}"));
+    let out = run(cmd).await;
+    assert!(out.status.success());
+    let stdout = text(&out.stdout);
+    let rows: Vec<(&str, &str)> = stdout
+        .lines()
+        .skip(4)
+        .take(FACTS.len())
+        .map(|line| {
+            let (label, value) = line.trim_start().split_once(' ').unwrap();
+            (label, value.trim_start())
+        })
+        .collect();
+    let labels: Vec<&str> = rows.iter().map(|(label, _)| *label).collect();
+    assert_eq!(labels, FACTS, "{stdout}");
+    let value = |label: &str| rows.iter().find(|(l, _)| *l == label).unwrap().1;
+    // It serves, or 503 and why; the last error.
+    assert_eq!(value("serves"), "yes");
+    assert_eq!(value("error"), "none since the start");
+    // The log position, and the time and the duration of the last
+    // chunk write.
+    let log = value("log");
+    assert!(log.starts_with("position "), "{log}");
+    assert!(log.contains("the last chunk write was "), "{log}");
+    assert!(
+        log.contains(" ago and took ") && log.ends_with(" ms"),
+        "{log}"
+    );
+    // The numbers of write errors and skipped records.
+    assert_eq!(
+        value("faults"),
+        "0 write errors, 0 skipped records since the start"
+    );
+    // The position, the age and the version of the newest checkpoint.
+    assert_eq!(value("saved"), "no checkpoint");
+    // The numbers of chunks, sessions, cursors, threads and sign-ins.
+    let counts = value("counts");
+    for part in [
+        "chunks",
+        "1 sessions",
+        "cursors",
+        "1 threads",
+        "0 live sign-ins",
+    ] {
+        assert!(counts.contains(part), "{counts}");
+    }
+    // The memory in use.
+    let memory = value("memory");
+    assert!(
+        memory.ends_with(" MB in use") || memory == "unknown",
+        "{memory}"
+    );
+    // The start time, and how long the replay took.
+    let started = value("started");
+    assert!(started.contains(" ago; the replay took "), "{started}");
 }
 
 #[tokio::test]
