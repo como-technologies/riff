@@ -2010,6 +2010,7 @@ async fn draw_top(
         .as_ref()
         .map(|t| Box::pin(follow(|| api.tail(me, t), RETRY)));
     let clear = !once && std::io::stdout().is_terminal();
+    let repo = thread.as_ref().map(ToString::to_string);
     loop {
         let state = api.riff(me).await?;
         let mut who = api.roster(me, false).await?;
@@ -2022,6 +2023,7 @@ async fn draw_top(
             sessions: &who.sessions,
             people: &who.people,
             issues: issues.as_ref(),
+            repo: repo.as_deref(),
             width: textwrap::termwidth(),
         };
         if clear {
