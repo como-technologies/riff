@@ -1,12 +1,17 @@
-# Reviews of the design of the store and the wire
+# Reviews of the designs
 
-Each file here is the write-up of one review of [the design](../../docs/src/design-storage.md), from one point of view. A review is a work item of Wave 14. Another session verifies it, as each item of a wave.
+Each file here is the write-up of one review of a design page of the book, from one point of view. A review is a work item of a wave. Another session verifies it, as each item of a wave.
+
+| Design | Reviews | Wave |
+|---|---|---|
+| [The store of riff-server](../../docs/src/design-storage.md) | `design/reviews/NN-point-of-view.md`, for example `02-operator.md`, and the report `08-report.md` | Wave 14 |
+| [The command engine of riff-server](../../docs/src/design-engine.md) | `design/reviews/engine-NN-name.md`, for example `engine-01-maintainer.md` | Wave 16 |
 
 The files are not in the book. The book shows the design, not its review.
 
 ## The form of a write-up
 
-File: `design/reviews/NN-point-of-view.md`, for example `02-operator.md`.
+The file name is in the table above. In a review of the command engine, `NN` in the title and in each finding ID is `engine-NN`, for example `engine-01-1`.
 
 ```markdown
 # Review NN: <point of view>

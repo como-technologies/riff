@@ -8,5 +8,6 @@
 - [How It Works](how-it-works.md)
 - [Waves](waves.md)
 - [Design: the store of riff-server](design-storage.md)
+- [Design: the command engine of riff-server](design-engine.md)
 - [Requirements](requirements.md)
 - [Development](development.md)
