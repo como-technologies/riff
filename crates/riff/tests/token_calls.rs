@@ -5,7 +5,7 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 
 use common::{CLIENT, FakeProvider, browser};
 use riff::api::Api;
@@ -15,19 +15,13 @@ use riff_server::Service;
 use riff_server::auth::{Config, TOKEN_PATH};
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 
-static MOCK_KEYRING: Once = Once::new();
-
 /// The status of each reply of `/v1/token`, in order.
 type Replies = Arc<Mutex<Vec<u16>>>;
 
 /// A server with sign-in that needs a token for each call, a fake
 /// provider that signs in Ada, and the replies of its token endpoint.
 async fn start() -> (Service, Api, Replies) {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (listener, url) = common::listen().await;
     let issuer = FakeProvider::start("Ada@comotechnologies.io", Some(DEFAULT_DOMAIN))
         .await
         .issuer;
@@ -148,11 +142,14 @@ async fn an_error_that_is_no_refusal_keeps_the_sign_in() {
         expires_at: 0,
         ..sign_in
     };
-    // No server listens at port 9.
-    let down = "http://127.0.0.1:9";
-    login::store(down, &expired).unwrap();
-    login::access_token(&Api::new(down)).await.unwrap_err();
-    assert_eq!(login::stored(down).unwrap(), Some(expired));
+    // A socket that holds its port and does not listen: each connection
+    // is refused, and no other test gets the port.
+    let held = tokio::net::TcpSocket::new_v4().unwrap();
+    held.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let down = format!("http://{}", held.local_addr().unwrap());
+    login::store(&down, &expired).unwrap();
+    login::access_token(&Api::new(&down)).await.unwrap_err();
+    assert_eq!(login::stored(&down).unwrap(), Some(expired));
 }
 
 /// `riff connect claude` signs in again when the sign-in ended.

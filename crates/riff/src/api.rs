@@ -666,10 +666,10 @@ impl Api {
                 let refreshed = self.token(&request, &auth.key).await;
                 // The server refused the pair: never send it again
                 // (01M3W947QF6PFBWR28ZVXCVQHG).
-                if refreshed
-                    .as_ref()
-                    .is_err_and(|e| e.downcast_ref::<TokenRefused>().is_some())
-                {
+                if refreshed.as_ref().is_err_and(|e| {
+                    e.downcast_ref::<TokenRefused>()
+                        .is_some_and(TokenRefused::ended)
+                }) {
                     *pair = None;
                 }
                 refreshed.ok()
