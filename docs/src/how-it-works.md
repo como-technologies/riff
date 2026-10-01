@@ -3093,8 +3093,9 @@ journalctl -u systemd-oomd --since "-10min"
 
 On a machine with no `riff workers host` and no lead session in tmux,
 nobody looks at the panes. There the server frees the claims 5 minutes
-after the last sign of life of the worker, or your lead frees a claim
-(see [Free the claim of another session](#free-the-claim-of-another-session)).
+after the last sign of life of the worker, or your lead frees a
+claim. See
+[Free the claim of another session](#free-the-claim-of-another-session).
 
 ### A worker with no work waits idle
 
