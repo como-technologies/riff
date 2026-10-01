@@ -88,6 +88,7 @@ async fn read_reply(port: u16) -> ReadReply {
         me,
         thread,
         all: true,
+        after: None,
     };
     call("read", serde_json::to_value(read).unwrap())
         .await

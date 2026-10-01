@@ -150,6 +150,10 @@ impl Store for Busy {
         }
         self.store.save(name, bytes, known)
     }
+
+    fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        self.store.delete(name)
+    }
 }
 
 /// A server with sign-in that needs a token for each call, and a fake

@@ -1289,6 +1289,7 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 ///     thread: "como-technologies/riff".parse()?,
 ///     members: vec![],
 ///     messages: vec![Checked { message, verified: true }],
+///     next: None,
 /// };
 /// assert_eq!(
 ///     riff::text::inbox(&[inbox], &me),
@@ -1297,6 +1298,29 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 ///         riff::text::DATA_NOTE
 ///     )
 /// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+///
+/// A page with more messages after it says how to read the next page:
+///
+/// ```
+/// # use riff::api::{Checked, Inbox};
+/// # use riff_core::name::SessionUri;
+/// # use riff_core::wire::Message;
+/// # let me: SessionUri = "riff://brett@heron".parse()?;
+/// # let message = Message {
+/// #     seq: 1, from: "riff://mike@pangolin".parse()?, to: vec![], body: "hello".into(),
+/// #     at_ms: 0, kind: Default::default(), sig: None, payload: None,
+/// # };
+/// let inbox = Inbox {
+///     thread: "chat".parse()?,
+///     members: vec![],
+///     messages: vec![Checked { message, verified: true }],
+///     next: Some(1),
+/// };
+/// assert!(riff::text::inbox(&[inbox], &me).ends_with(
+///     "More messages follow. Read this thread again. With all, set after to 1.\n"
+/// ));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
@@ -1308,6 +1332,12 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
         let _ = writeln!(out, "{}", label(&t.thread, &t.members, me));
         for m in &t.messages {
             let _ = writeln!(out, "{}", message(m, &t.thread));
+        }
+        if let Some(next) = t.next {
+            let _ = writeln!(
+                out,
+                "More messages follow. Read this thread again. With all, set after to {next}."
+            );
         }
     }
     out

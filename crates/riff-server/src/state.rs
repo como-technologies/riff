@@ -4,12 +4,13 @@
 //!
 //! | Data | Key | Where it comes from |
 //! |---|---|---|
-//! | Threads | thread name | The log. Members, and messages with a sequence number that starts at 1. |
+//! | Threads | thread name | The log. Members, and the last [`KEEP_MESSAGES`] messages with a sequence number that starts at 1. |
 //! | Claims | thread and item | The log. The session that holds the item. |
 //! | Leads | user and repository thread | The log. The lead session of the user. |
 //! | Riff state | none: one for the server | The log. Paused or running, and the settings of idle workers. |
 //! | Sessions | who | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
-//! | Read cursors | who and thread | Memory. The last sequence number that the session read. |
+//! | Known sessions | who | The log. The URI and the time of the last record that names the session. |
+//! | Read cursors | who and thread | Memory and the checkpoint. The last sequence number that the session read. |
 //!
 //! The server keys each session by its [`Who`]: the user and the session
 //! ID. It builds the [`SessionUri`] of a session from the who, the place
@@ -62,8 +63,15 @@
 //! - `threads` lists only the threads that the session joined. `read`
 //!   takes any thread by name, except a direct thread of others
 //!   ([`may_read`]).
-//! - `read` returns the messages after the cursor, then moves the cursor
-//!   to the end.
+//! - `read` returns one page of the messages after the cursor, then moves
+//!   the cursor to the end of the page ([`State::read_page`]).
+//! - A thread keeps its last [`KEEP_MESSAGES`] messages
+//!   (01M3TBZBT7MME9BG1RWX5SZAZ6).
+//! - [`State::forget_expired`] forgets each session with no sign of life
+//!   for [`SESSION_EXPIRY`] (01M3TBZBZVH907QD359AB8TBSX): a
+//!   [`Change::SessionForgotten`] record drops the session, its read
+//!   cursors, its memberships, its claims, its lead, and each direct
+//!   thread whose two sessions are gone.
 //! - When a watch starts, [`State::missed`] gives one wake for the
 //!   newest unread message that woke the session (R49).
 //! - `who` lists each session with the time since its last call. A
@@ -131,10 +139,12 @@
 //!
 //! # After a replay
 //!
-//! [`State::replay`] makes a state from the records of the log. The
-//! sessions, their statuses and the read cursors are in memory, so a
-//! replay has none of them. It makes each session that a record names,
-//! in the place of the last record that names it. Each such session is
+//! [`State::replay`] makes a state from the records of the log, and
+//! [`State::load`] from a checkpoint and the records after it. The
+//! sessions and their statuses are in memory, so a replay has none of
+//! them. The read cursors come from the checkpoint. It makes each
+//! session that a record names, in the place of the last record that
+//! names it. Each such session is
 //! gone until it calls. Its claims and its lead hold for [`CLAIM_GRACE`]
 //! from the replay, unless it comes back (R125).
 //!
@@ -183,17 +193,20 @@
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
-use riff_core::record::{Change, Claimed, Member, Posted, Record, RiffStateSet, SettingChanged};
+use riff_core::record::{
+    Change, Claimed, Forgotten, Member, Posted, Record, RiffStateSet, SettingChanged,
+};
 use riff_core::selector::Selector;
 use riff_core::signed::payload_hash;
 use riff_core::wire::{
     AliveReply, ClaimReply, Freed, Idle, Keys, Kind, LeadReply, Message, Post, RiffReply,
     RiffState, SessionInfo, SessionState, Status, StatusInfo, Tailed, ThreadInfo, Wake,
 };
+use serde::{Deserialize, Serialize};
 
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
@@ -203,8 +216,17 @@ pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 /// [`riff_core::wire::ALIVE_EVERY`].
 pub const GONE: Duration = Duration::from_secs(3 * 60);
 
-/// A session with no sign of life for this long is forgotten (R126).
+/// A session with no sign of life for this long is forgotten
+/// ([`Change::SessionForgotten`], 01M3TBZBZVH907QD359AB8TBSX).
 pub const SESSION_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Memory and the checkpoint keep the last this many messages of each
+/// thread. Nobody reads an older message (01M3TBZBT7MME9BG1RWX5SZAZ6).
+pub const KEEP_MESSAGES: usize = 200;
+
+/// `read` gives at most this many messages, and a cursor for the next
+/// page (01M3TBZBX140GJWCV5GZ73Q5Z5).
+pub const PAGE: usize = 50;
 
 /// All state of one `riff-server`. See the module docs for the rules.
 pub struct State {
@@ -259,17 +281,30 @@ pub struct Riff {
     riff: RiffState,
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     idle: Idle,
-    /// The seq of each signed message, by thread and by the hash of its
-    /// payload.
+    /// The seq of each kept signed message, by thread and by the hash of
+    /// its payload.
     copies: BTreeMap<(ThreadName, String), u64>,
+    /// Each session that a record names, with its URI and the time of the
+    /// last record that names it. A replay makes a session for each.
+    known: BTreeMap<Who, Known>,
     /// The position of the last record.
     position: u64,
+}
+
+/// A session that a record names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Known {
+    /// The URI of the last record that names the session.
+    uri: SessionUri,
+    /// The time of that record, in milliseconds since the Unix epoch.
+    at_ms: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Thread {
     members: BTreeSet<Who>,
-    messages: Vec<Stored>,
+    /// The last [`KEEP_MESSAGES`] messages.
+    messages: VecDeque<Stored>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -294,8 +329,42 @@ impl Riff {
     fn last_seq(&self, thread: &ThreadName) -> u64 {
         self.threads
             .get(thread)
-            .and_then(|t| t.messages.last())
+            .and_then(|t| t.messages.back())
             .map_or(0, |m| m.message.seq)
+    }
+
+    /// Drops a forgotten session: its memberships, its claims, its lead,
+    /// and each direct thread whose other session is gone too.
+    fn forget(&mut self, who: &Who) {
+        self.known.remove(who);
+        for thread in self.threads.values_mut() {
+            thread.members.remove(who);
+        }
+        self.claims.retain(|_, holder| holder != who);
+        self.leads.retain(|_, lead| lead != who);
+        let known = &self.known;
+        let gone: BTreeSet<ThreadName> = self
+            .threads
+            .keys()
+            .filter(|thread| {
+                thread
+                    .peer(who)
+                    .is_some_and(|peer| peer == *who || !known.contains_key(&peer))
+            })
+            .cloned()
+            .collect();
+        self.threads.retain(|thread, _| !gone.contains(thread));
+        self.copies.retain(|(thread, _), _| !gone.contains(thread));
+    }
+}
+
+/// The session that a change names, if any.
+fn named(change: &Change) -> Option<&SessionUri> {
+    match change {
+        Change::Posted(posted) => Some(&posted.message.from),
+        Change::JoinedThread(m) | Change::LeftThread(m) | Change::LeadSet(m) => Some(&m.session),
+        Change::Claimed(c) | Change::Released(c) => Some(&c.session),
+        Change::RiffStateSet(_) | Change::SettingChanged(_) | Change::SessionForgotten(_) => None,
     }
 }
 
@@ -326,6 +395,15 @@ impl Riff {
 /// ```
 pub fn apply(riff: &mut Riff, record: &Record) {
     riff.position = record.position;
+    if let Some(uri) = named(&record.change)
+        && uri.who() != crate::owner::server_uri().who()
+    {
+        let known = Known {
+            uri: SessionUri::new(uri.who().clone(), uri.place().clone()),
+            at_ms: record.written_at_ms,
+        };
+        riff.known.insert(uri.who().clone(), known);
+    }
     let warn = |what: &str| {
         tracing::warn!(
             position = record.position,
@@ -343,14 +421,19 @@ pub fn apply(riff: &mut Riff, record: &Record) {
                 riff.copies
                     .insert((thread.clone(), payload_hash(payload)), message.seq);
             }
-            riff.threads
-                .entry(thread.clone())
-                .or_default()
-                .messages
-                .push(Stored {
-                    message: message.clone(),
-                    woken: woken.clone(),
-                });
+            let messages = &mut riff.threads.entry(thread.clone()).or_default().messages;
+            messages.push_back(Stored {
+                message: message.clone(),
+                woken: woken.clone(),
+            });
+            while messages.len() > KEEP_MESSAGES {
+                let Some(old) = messages.pop_front() else {
+                    break;
+                };
+                if let Some(payload) = &old.message.payload {
+                    riff.copies.remove(&(thread.clone(), payload_hash(payload)));
+                }
+            }
         }
         Change::JoinedThread(Member { session, thread }) => {
             riff.threads
@@ -401,6 +484,12 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         }
         Change::RiffStateSet(RiffStateSet { state }) => riff.riff = *state,
         Change::SettingChanged(SettingChanged { idle }) => riff.idle = *idle,
+        Change::SessionForgotten(Forgotten { session }) => {
+            if !riff.known.contains_key(session.who()) {
+                warn("the session is not known");
+            }
+            riff.forget(session.who());
+        }
     }
 }
 
@@ -459,6 +548,9 @@ pub enum Command {
         per_host: Option<u16>,
         after_secs: Option<u64>,
     },
+    /// The timer of the server forgets each session with no sign of life
+    /// for [`SESSION_EXPIRY`]. `me` is the URI of the server.
+    Forget,
 }
 
 struct Session {
@@ -588,6 +680,145 @@ pub struct Delivery {
     pub unmatched: Vec<Selector>,
     /// The event for the `tail` streams of the thread.
     pub tailed: Tailed,
+}
+
+/// One page of messages from [`State::read_page`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Page {
+    pub messages: Vec<Message>,
+    /// The seq of the last message of the page, when more messages
+    /// follow.
+    pub next: Option<u64>,
+}
+
+/// The state that a checkpoint keeps: the state that the log gives up to
+/// [`Snapshot::position`], the read cursors, and the last call of each
+/// session. See [`crate::checkpoint`]. A new field has a default, as in
+/// a record (01M3T4111PFM0C6KPREWFS9EQQ).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Snapshot {
+    /// The position of the last record in the state.
+    pub position: u64,
+    #[serde(default)]
+    riff: RiffState,
+    #[serde(default)]
+    idle: Idle,
+    #[serde(default)]
+    threads: Vec<SnapshotThread>,
+    #[serde(default)]
+    claims: Vec<SnapshotClaim>,
+    #[serde(default)]
+    leads: Vec<SnapshotLead>,
+    #[serde(default)]
+    sessions: Vec<SnapshotSession>,
+    #[serde(default)]
+    cursors: Vec<SnapshotCursor>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SnapshotThread {
+    thread: ThreadName,
+    #[serde(default)]
+    members: Vec<Who>,
+    #[serde(default)]
+    messages: Vec<SnapshotMessage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SnapshotMessage {
+    message: Message,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    woken: BTreeSet<Who>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SnapshotClaim {
+    thread: ThreadName,
+    item: String,
+    holder: Who,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SnapshotLead {
+    thread: ThreadName,
+    lead: Who,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SnapshotSession {
+    /// The URI of the last record that names the session.
+    session: SessionUri,
+    /// The time of that record.
+    at_ms: u64,
+    /// The last call of the session before the checkpoint, or 0.
+    #[serde(default)]
+    seen_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SnapshotCursor {
+    session: Who,
+    thread: ThreadName,
+    seq: u64,
+}
+
+impl Snapshot {
+    /// The state that the log gives, the read cursors, and the last call
+    /// of each session.
+    #[allow(clippy::type_complexity)]
+    fn into_parts(self) -> (Riff, BTreeMap<(Who, ThreadName), u64>, BTreeMap<Who, u64>) {
+        let mut riff = Riff {
+            riff: self.riff,
+            idle: self.idle,
+            position: self.position,
+            ..Riff::default()
+        };
+        for t in self.threads {
+            for m in &t.messages {
+                if let Some(payload) = &m.message.payload {
+                    riff.copies
+                        .insert((t.thread.clone(), payload_hash(payload)), m.message.seq);
+                }
+            }
+            let thread = Thread {
+                members: t.members.into_iter().collect(),
+                messages: t
+                    .messages
+                    .into_iter()
+                    .map(|m| Stored {
+                        message: m.message,
+                        woken: m.woken,
+                    })
+                    .collect(),
+            };
+            riff.threads.insert(t.thread, thread);
+        }
+        for c in self.claims {
+            riff.claims.insert((c.thread, c.item), c.holder);
+        }
+        for l in self.leads {
+            riff.leads
+                .insert((l.lead.user().to_owned(), l.thread), l.lead);
+        }
+        let mut seen = BTreeMap::new();
+        for s in self.sessions {
+            let who = s.session.who().clone();
+            seen.insert(who.clone(), s.seen_ms);
+            riff.known.insert(
+                who,
+                Known {
+                    uri: s.session,
+                    at_ms: s.at_ms,
+                },
+            );
+        }
+        let cursors = self
+            .cursors
+            .into_iter()
+            .map(|c| ((c.session, c.thread), c.seq))
+            .collect();
+        (riff, cursors, seen)
+    }
 }
 
 /// One copy of the state that the log gives, with the sessions in
@@ -831,37 +1062,146 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn replay(records: impl IntoIterator<Item = Record>, now: Instant, now_ms: u64) -> State {
+        State::load(None, records, now, now_ms)
+    }
+
+    /// Makes a state from a checkpoint and the records of the log after
+    /// it, with a writer. With no checkpoint, it is [`State::replay`].
+    /// The read cursors come from the checkpoint. Each session that the
+    /// log names counts as seen at the later of its last record and its
+    /// last call before the checkpoint.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// let first = state.take_queue();
+    /// let snapshot = State::replay(first.clone(), now, 0).snapshot(now, 0);
+    /// state.join(&mike, &"design".parse()?, now);
+    /// let rest = state.take_queue();
+    ///
+    /// // A start from the checkpoint and the records after it gives the
+    /// // state of a full replay.
+    /// let loaded = State::load(Some(snapshot), rest.clone(), now, 0);
+    /// let full = State::replay(first.into_iter().chain(rest), now, 0);
+    /// assert!(loaded.same_log_state(&full));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn load(
+        snapshot: Option<Snapshot>,
+        records: impl IntoIterator<Item = Record>,
+        now: Instant,
+        now_ms: u64,
+    ) -> State {
         let mut state = State::with_writer(now, now_ms);
-        let server = crate::owner::server_uri();
-        let mut seen: BTreeMap<Who, (SessionUri, u64)> = BTreeMap::new();
-        for record in records {
-            let named = match &record.change {
-                Change::Posted(posted) => Some(&posted.message.from),
-                Change::JoinedThread(m) | Change::LeftThread(m) | Change::LeadSet(m) => {
-                    Some(&m.session)
-                }
-                Change::Claimed(c) | Change::Released(c) => Some(&c.session),
-                Change::RiffStateSet(_) | Change::SettingChanged(_) => None,
-            };
-            if let Some(uri) = named
-                && uri.who() != server.who()
-            {
-                seen.insert(uri.who().clone(), (uri.clone(), record.written_at_ms));
-            }
-            apply(&mut state.pending, &record);
-            apply(&mut state.written, &record);
+        let mut seen = BTreeMap::new();
+        if let Some(snapshot) = snapshot {
+            let (riff, cursors, seen_ms) = snapshot.into_parts();
+            state.pending = riff.clone();
+            state.written = riff;
+            state.cursors = cursors;
+            seen = seen_ms;
         }
-        for (who, (uri, at_ms)) in seen {
+        for record in records {
+            apply(&mut state.pending, &record);
+            state.apply_written(&record);
+        }
+        for (who, known) in &state.written.known {
+            let at_ms = seen.get(who).copied().unwrap_or(0).max(known.at_ms);
             let session = Session {
                 seen_before_load: Some(at_ms),
                 alive: None,
-                ..Session::new(uri.place().clone(), now)
+                ..Session::new(known.uri.place().clone(), now)
             };
-            state.sessions.insert(who, session);
+            state.sessions.insert(who.clone(), session);
         }
         state.riff_changed = Some(now);
         state.loaded = Some(now);
         state
+    }
+
+    /// The written state, the read cursors and the last call of each
+    /// session, for a checkpoint. The caller encodes it outside the lock.
+    pub fn snapshot(&self, now: Instant, now_ms: u64) -> Snapshot {
+        let riff = &self.written;
+        Snapshot {
+            position: riff.position,
+            riff: riff.riff,
+            idle: riff.idle,
+            threads: riff
+                .threads
+                .iter()
+                .map(|(name, thread)| SnapshotThread {
+                    thread: name.clone(),
+                    members: thread.members.iter().cloned().collect(),
+                    messages: thread
+                        .messages
+                        .iter()
+                        .map(|m| SnapshotMessage {
+                            message: m.message.clone(),
+                            woken: m.woken.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            claims: riff
+                .claims
+                .iter()
+                .map(|((thread, item), holder)| SnapshotClaim {
+                    thread: thread.clone(),
+                    item: item.clone(),
+                    holder: holder.clone(),
+                })
+                .collect(),
+            leads: riff
+                .leads
+                .iter()
+                .map(|((_, thread), lead)| SnapshotLead {
+                    thread: thread.clone(),
+                    lead: lead.clone(),
+                })
+                .collect(),
+            sessions: riff
+                .known
+                .values()
+                .map(|known| SnapshotSession {
+                    session: known.uri.clone(),
+                    at_ms: known.at_ms,
+                    seen_ms: self
+                        .sessions
+                        .get(known.uri.who())
+                        .map_or(0, |s| s.seen_ms(now, now_ms)),
+                })
+                .collect(),
+            cursors: self
+                .cursors
+                .iter()
+                .map(|((who, thread), seq)| SnapshotCursor {
+                    session: who.clone(),
+                    thread: thread.clone(),
+                    seq: *seq,
+                })
+                .collect(),
+        }
+    }
+
+    /// Applies a record to the written copy. A forgotten session also
+    /// leaves memory: its session and its read cursors, and each cursor
+    /// of a thread that is gone.
+    fn apply_written(&mut self, record: &Record) {
+        apply(&mut self.written, record);
+        if let Change::SessionForgotten(Forgotten { session }) = &record.change {
+            let who = session.who();
+            self.sessions.remove(who);
+            let threads = &self.written.threads;
+            self.cursors
+                .retain(|(reader, thread), _| reader != who && threads.contains_key(thread));
+        }
     }
 
     /// True when the state that the log gives is the same in both
@@ -910,7 +1250,7 @@ impl State {
     pub fn written(&mut self, records: &[Record]) {
         if self.writer {
             for record in records {
-                apply(&mut self.written, record);
+                self.apply_written(record);
             }
         }
     }
@@ -1069,6 +1409,31 @@ impl State {
                 }
                 if idle != view.riff.idle {
                     changes.push(Change::SettingChanged(SettingChanged { idle }));
+                }
+            }
+            Command::Forget => {
+                // A replayed session calls again soon when it lives.
+                if self
+                    .loaded
+                    .is_some_and(|loaded| now.saturating_duration_since(loaded) < GONE)
+                {
+                    return Ok(changes);
+                }
+                let now_ms = self.ms(now);
+                let expiry = u64::try_from(SESSION_EXPIRY.as_millis()).unwrap_or(u64::MAX);
+                for (who, known) in &view.riff.known {
+                    let expired = match self.sessions.get(who) {
+                        Some(session) => {
+                            session.gone(now)
+                                && now_ms.saturating_sub(session.seen_ms(now, now_ms)) >= expiry
+                        }
+                        None => now_ms.saturating_sub(known.at_ms) >= expiry,
+                    };
+                    if expired {
+                        changes.push(Change::SessionForgotten(Forgotten {
+                            session: known.uri.clone(),
+                        }));
+                    }
                 }
             }
         }
@@ -1723,6 +2088,15 @@ impl State {
             .map(|(_, wake)| wake)
     }
 
+    /// Forgets each session with no sign of life for [`SESSION_EXPIRY`]
+    /// ([`Command::Forget`]). A timer of the server calls it. Gives the
+    /// number of forgotten sessions.
+    pub fn forget_expired(&mut self, now: Instant) -> usize {
+        let server = crate::owner::server_uri();
+        self.run(&server, &Command::Forget, now)
+            .map_or(0, |changes| changes.len())
+    }
+
     /// Adds a session to a thread. It makes the thread if it is new.
     pub fn join(&mut self, me: &SessionUri, thread: &ThreadName, now: Instant) {
         self.arrive(me, now);
@@ -1887,10 +2261,8 @@ impl State {
         threads.into_iter().collect()
     }
 
-    /// Returns unread messages (or all of them) and marks them as read.
-    /// The unread messages leave out the own posts of `me`; `all` gives
-    /// them (01M3JPK82PN4F706MCHDH771MW). A direct thread of two other
-    /// sessions is not found ([`may_read`]).
+    /// Returns unread messages (or all of them) and marks them as read,
+    /// with no limit. See [`State::read_page`].
     pub fn read(
         &mut self,
         me: &SessionUri,
@@ -1898,24 +2270,78 @@ impl State {
         all: bool,
         now: Instant,
     ) -> Result<Vec<Message>, String> {
+        self.read_page(me, thread, all, None, usize::MAX, now)
+            .map(|page| page.messages)
+    }
+
+    /// Returns at most `limit` unread messages (or of all the kept
+    /// messages after the seq `after`), and marks them as read. The
+    /// unread messages leave out the own posts of `me`; `all` gives them
+    /// (01M3JPK82PN4F706MCHDH771MW). When more messages follow, the page
+    /// has the seq of its last message in [`Page::next`]: a new unread
+    /// read gives the next page, and a read of all gives it with `after`
+    /// set to that seq. A direct thread of two other sessions is not
+    /// found ([`may_read`]).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Post;
+    /// use riff_server::state::State;
+    ///
+    /// let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
+    /// let bob: SessionUri = "riff://bob@kite/acme/app?session=b1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// let thread = ann.default_thread().unwrap();
+    /// for body in ["one", "two", "three"] {
+    ///     state.post(Post::new(&ann, Some(thread.clone()), vec![], body), now, 0).unwrap();
+    /// }
+    /// let page = state.read_page(&bob, &thread, false, None, 2, now).unwrap();
+    /// assert_eq!((page.messages.len(), page.next), (2, Some(2)));
+    /// let page = state.read_page(&bob, &thread, false, None, 2, now).unwrap();
+    /// assert_eq!((page.messages[0].body.as_str(), page.next), ("three", None));
+    /// let page = state.read_page(&bob, &thread, true, Some(1), 2, now).unwrap();
+    /// assert_eq!(page.messages[0].seq, 2);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn read_page(
+        &mut self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        all: bool,
+        after: Option<u64>,
+        limit: usize,
+        now: Instant,
+    ) -> Result<Page, String> {
         let who = self.arrive(me, now);
         let not_found = || format!("no thread named {thread}");
         if !may_read(&who, thread) {
             return Err(not_found());
         }
         let t = self.written.threads.get(thread).ok_or_else(not_found)?;
-        let from = if all { 0 } else { self.cursor(&who, thread) };
-        let messages: Vec<Message> = t
+        let from = if all {
+            after.unwrap_or(0)
+        } else {
+            self.cursor(&who, thread)
+        };
+        let mut shown = t
             .messages
             .iter()
-            .filter(|m| all || (m.message.seq > from && m.message.from.who() != &who))
-            .map(|m| m.message.clone())
-            .collect();
-        if let Some(last) = t.messages.last() {
-            let seq = last.message.seq;
-            self.cursors.insert((who, thread.clone()), seq);
+            .filter(|m| m.message.seq > from && (all || m.message.from.who() != &who))
+            .map(|m| m.message.clone());
+        let messages: Vec<Message> = shown.by_ref().take(limit.max(1)).collect();
+        let next = if shown.next().is_some() {
+            messages.last().map(|m| m.seq)
+        } else {
+            None
+        };
+        if let Some(last) = t.messages.back() {
+            let read = next.unwrap_or(last.message.seq);
+            let cursor = self.cursors.entry((who, thread.clone())).or_insert(0);
+            *cursor = if all { (*cursor).max(read) } else { read };
         }
-        Ok(messages)
+        Ok(Page { messages, next })
     }
 
     /// Takes a claim if nobody holds it, or if its holder stopped more than
@@ -2019,7 +2445,7 @@ impl State {
             };
             apply(&mut self.pending, &record);
             if !self.writer {
-                apply(&mut self.written, &record);
+                self.apply_written(&record);
             }
             self.queue.push(record);
         }
@@ -2978,6 +3404,129 @@ mod tests {
             loaded.missed(tests().who()).unwrap().thread,
             thread("design")
         );
+    }
+
+    /// A JSON round trip of the snapshot of `state`, as a checkpoint
+    /// does.
+    fn through_json(state: &State, now: Instant) -> Snapshot {
+        let bytes = serde_json::to_vec(&state.snapshot(now, T0)).unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn a_start_from_a_checkpoint_and_the_records_after_it_gives_the_state_of_a_full_replay() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        // More messages than a thread keeps.
+        for n in 0..KEEP_MESSAGES + 20 {
+            post(
+                &mut state,
+                &api(),
+                "design",
+                &["user=brett"],
+                &format!("m{n}"),
+            );
+        }
+        state
+            .post(Post::new(&api(), None, to(&["session=c3"]), "hi"), now, 7)
+            .unwrap();
+        state.claim(&tests(), &repo(), "issue-6", now).unwrap();
+        state.lead(&docs(), now).unwrap();
+        state.set_idle(Some(3), None, now);
+        state.commit(
+            &[Change::SessionForgotten(Forgotten { session: docs() })],
+            now,
+        );
+        post(&mut state, &tests(), "design", &[], "after");
+        let log: Vec<Record> = state.take_queue();
+        let full = State::replay(log.clone(), now, T0);
+        assert_eq!(
+            full.written.threads[&thread("design")].messages.len(),
+            KEEP_MESSAGES
+        );
+
+        for at in [0, 1, 10, log.len() / 2, log.len() - 2, log.len()] {
+            let head = State::replay(log[..at].to_vec(), now, T0);
+            let loaded = State::load(Some(through_json(&head, now)), log[at..].to_vec(), now, T0);
+            assert!(loaded.same_log_state(&full), "a checkpoint at {at}");
+            let uris = |state: &State| -> Vec<String> {
+                listed(state).iter().map(|s| s.uri.to_string()).collect()
+            };
+            assert_eq!(uris(&loaded), uris(&full), "a checkpoint at {at}");
+        }
+    }
+
+    #[test]
+    fn a_checkpoint_keeps_the_read_cursors() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        post(&mut state, &api(), "design", &["user=brett"], "one");
+        let design = thread("design");
+        assert_eq!(state.read(&tests(), &design, false, now).unwrap().len(), 1);
+        post(&mut state, &api(), "design", &[], "two");
+        let loaded = State::load(Some(through_json(&state, now)), [], now, T0);
+        let mut loaded = loaded;
+        let unread = loaded.read(&tests(), &design, false, now).unwrap();
+        assert_eq!(unread.len(), 1);
+        assert_eq!(unread[0].body, "two");
+    }
+
+    #[test]
+    fn read_pages_with_a_cursor() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let design = thread("design");
+        for n in 1..=7 {
+            post(&mut state, &api(), "design", &[], &format!("m{n}"));
+        }
+        let bodies =
+            |page: &Page| -> Vec<String> { page.messages.iter().map(|m| m.body.clone()).collect() };
+        // The unread pages move the cursor of the reader.
+        let page = state
+            .read_page(&tests(), &design, false, None, 3, now)
+            .unwrap();
+        assert_eq!(
+            (bodies(&page), page.next),
+            (vec!["m1".into(), "m2".into(), "m3".into()], Some(3))
+        );
+        let page = state
+            .read_page(&tests(), &design, false, None, 3, now)
+            .unwrap();
+        assert_eq!(page.next, Some(6));
+        let page = state
+            .read_page(&tests(), &design, false, None, 3, now)
+            .unwrap();
+        assert_eq!((bodies(&page), page.next), (vec!["m7".into()], None));
+        assert!(
+            state
+                .read(&tests(), &design, false, now)
+                .unwrap()
+                .is_empty()
+        );
+        // A read of all follows the cursor in `after`.
+        let page = state
+            .read_page(&docs(), &design, true, Some(3), 3, now)
+            .unwrap();
+        assert_eq!(
+            (bodies(&page), page.next),
+            (vec!["m4".into(), "m5".into(), "m6".into()], Some(6))
+        );
+        let page = state
+            .read_page(&docs(), &design, true, Some(6), 3, now)
+            .unwrap();
+        assert_eq!(page.next, None);
+    }
+
+    #[test]
+    fn a_reader_cannot_read_a_message_older_than_the_kept_ones() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        for n in 0..KEEP_MESSAGES + 5 {
+            post(&mut state, &api(), "design", &[], &format!("m{n}"));
+        }
+        let all = state.read(&tests(), &thread("design"), true, now).unwrap();
+        assert_eq!(all.len(), KEEP_MESSAGES);
+        assert_eq!(all[0].seq, 6);
     }
 
     #[test]

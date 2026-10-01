@@ -678,11 +678,20 @@ pub struct Read {
     pub thread: ThreadName,
     #[serde(default)]
     pub all: bool,
+    /// With `all`: the page after this seq, from [`ReadReply::next`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadReply {
+    /// At most one page of messages (01M3TBZBX140GJWCV5GZ73Q5Z5).
     pub messages: Vec<Message>,
+    /// The seq of the last message of the page, when more messages
+    /// follow. Read again for the next page: with `all`, set
+    /// [`Read::after`] to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<u64>,
     /// The keys of the user of each sender, to verify the messages.
     #[serde(default, skip_serializing_if = "Keys::is_empty")]
     pub keys: Keys,

@@ -612,7 +612,8 @@ In the dev session, sign in to the server of the tree:
 Without a bucket or a directory, `riff-server` keeps its log only in
 memory. A restart loses all threads, claims and members. With
 `--bucket` (`RIFF_BUCKET`), the server writes each change to the log in
-a Cloud Storage bucket, and replays the log at start:
+a Cloud Storage bucket. At start, it loads the newest checkpoint and
+replays the log after it:
 
 ```sh
 riff-server --bucket como-riff-state
@@ -623,7 +624,8 @@ Run. So the flag works only on Cloud Run. The service account of the
 server must have write access to the bucket.
 
 With a bucket, the server takes the lease at start, waits 15 seconds,
-and then replays the log. Only one server serves from a bucket. When a
+and then loads the checkpoint and replays the log. Only one server
+serves from a bucket. When a
 new server takes the lease, the old one replies 503 and exits after 60
 seconds.
 
@@ -652,14 +654,16 @@ and the owner invites each member again.
 
 For local work, `--dir` (`RIFF_DIR`) keeps the log, the token store and
 the lease as files in a directory. It works as a bucket: the server
-waits 15 seconds for the lease, then replays the log:
+waits 15 seconds for the lease, then loads the checkpoint and replays
+the log:
 
 ```sh
 riff-server --dir ~/.local/state/riff-server
 ```
 
-The log is in `log/` of the directory, one file for each chunk. To start
-again with an empty state, stop the server and remove the directory.
+The log is in `log/` of the directory, one file for each chunk. The
+checkpoints are in `checkpoint/`. To start again with an empty state,
+stop the server and remove the directory.
 
 ## Set up the cloud project
 

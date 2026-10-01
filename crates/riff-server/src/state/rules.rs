@@ -5,6 +5,8 @@
 //! - `live` makes sessions live, as a call does. It makes no record.
 //! - `when` runs `handle` with one command. The caller is live.
 //! - `then` compares the changes, or `then_refused` the error.
+//! - `apply` writes more records to the state of `given`, and gives the
+//!   state, so that a test can look at it.
 //!
 //! The tests do no I/O.
 
@@ -161,6 +163,22 @@ impl Given {
             session.live(self.now);
         }
         self
+    }
+
+    /// `me` read `thread` up to `seq`, with no record.
+    fn read_to(mut self, me: &SessionUri, thread: &ThreadName, seq: u64) -> Given {
+        self.state
+            .cursors
+            .insert((me.who().clone(), thread.clone()), seq);
+        self
+    }
+
+    /// Commits `changes` as records, writes them, and gives the state.
+    fn apply(mut self, changes: &[Change]) -> State {
+        self.state.commit(changes, self.now);
+        let records = self.state.take_queue();
+        self.state.written(&records);
+        self.state
     }
 
     /// The time passes by `by`.
@@ -574,4 +592,103 @@ fn a_change_of_the_idle_settings_is_a_record() {
     given(&team())
         .when(&person(), set(Some(1), Some(60)))
         .then(&[]);
+}
+
+fn carol() -> SessionUri {
+    "riff://carol@wren/acme/app?session=c1".parse().unwrap()
+}
+
+fn forgotten(me: &SessionUri) -> Change {
+    Change::SessionForgotten(Forgotten {
+        session: me.clone(),
+    })
+}
+
+fn direct(a: &SessionUri, b: &SessionUri) -> ThreadName {
+    ThreadName::direct(a.who(), b.who())
+}
+
+/// Ann, bob and carol in the repository thread, with a direct message
+/// from ann to bob and one from ann to carol.
+fn three_with_direct_threads() -> Vec<Change> {
+    let mut changes = vec![
+        joined(&ann(), &repo()),
+        joined(&bob(), &repo()),
+        joined(&carol(), &repo()),
+        joined(&bob(), &design()),
+        riff_set(RiffState::Running),
+    ];
+    for peer in [bob(), carol()] {
+        let thread = direct(&ann(), &peer);
+        changes.push(joined(&ann(), &thread));
+        changes.push(joined(&peer, &thread));
+        changes.push(posted(&thread, message(ann(), 1, &[], "hi"), &[&peer]));
+    }
+    changes
+}
+
+#[test]
+fn a_session_with_no_sign_of_life_for_the_expiry_is_forgotten() {
+    given(&three_with_direct_threads())
+        .after(SESSION_EXPIRY)
+        .live(&[carol()])
+        .when(&crate::owner::server_uri(), Command::Forget)
+        .then(&[forgotten(&ann()), forgotten(&bob())]);
+}
+
+#[test]
+fn a_session_with_a_sign_of_life_in_the_expiry_is_not_forgotten() {
+    given(&three_with_direct_threads())
+        .after(SESSION_EXPIRY - Duration::from_secs(60))
+        .when(&crate::owner::server_uri(), Command::Forget)
+        .then(&[]);
+}
+
+#[test]
+fn session_forgotten_drops_the_cursors_the_memberships_and_the_direct_thread_of_two_gone_sessions()
+{
+    let ann_bob = direct(&ann(), &bob());
+    let ann_carol = direct(&ann(), &carol());
+    let state = given(&three_with_direct_threads())
+        .read_to(&ann(), &repo(), 1)
+        .read_to(&bob(), &ann_bob, 1)
+        .read_to(&bob(), &design(), 1)
+        .read_to(&carol(), &ann_carol, 1)
+        .apply(&[forgotten(&ann()), forgotten(&bob())]);
+    let riff = &state.written;
+
+    // The cursors of ann and bob are gone. Carol keeps hers.
+    let readers: Vec<&Who> = state.cursors.keys().map(|(who, _)| who).collect();
+    assert_eq!(readers, [carol().who()]);
+    // Ann and bob are in no thread.
+    for thread in riff.threads.values() {
+        assert!(!thread.members.contains(ann().who()));
+        assert!(!thread.members.contains(bob().who()));
+    }
+    // The direct thread of ann and bob is gone: both sessions are gone.
+    assert!(!riff.threads.contains_key(&ann_bob));
+    // The direct thread of ann and carol stays while carol is known.
+    assert!(riff.threads.contains_key(&ann_carol));
+    assert!(!state.sessions.contains_key(ann().who()));
+    assert!(state.sessions.contains_key(carol().who()));
+
+    // When carol is forgotten too, her direct thread with ann goes.
+    let state = Given {
+        state,
+        now: Instant::now(),
+    }
+    .apply(&[forgotten(&carol())]);
+    assert!(!state.written.threads.contains_key(&ann_carol));
+    assert!(state.cursors.is_empty());
+    assert_eq!(state.written.threads[&repo()].members.len(), 0);
+}
+
+#[test]
+fn a_forgotten_session_loses_its_claims_and_its_lead() {
+    let state = given(&team()).apply(&[claimed(&ann(), "issue-7"), forgotten(&ann())]);
+    assert!(state.written.claims.is_empty());
+    assert_eq!(
+        state.written.leads.values().collect::<Vec<_>>(),
+        [bob().who()]
+    );
 }

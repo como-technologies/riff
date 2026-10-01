@@ -248,7 +248,9 @@ a scheme that it does not know shows the message as not verified.
 
 - From time to time (each 1,000 records, or each 60 minutes when records
   came), the server writes a checkpoint:
-  `checkpoint/00000000000000001234.json`. It holds the state that the
+  `checkpoint/00000000000000001234-1790000000000.json`, with the
+  position and the time of the write. The keep rule reads the day from
+  the name. It holds the state that the
   log gives up to that position, the read cursors, the last N messages
   of each thread, and the version of the build that wrote it.
 - The server encodes a copy of the state outside the lock.
@@ -302,10 +304,9 @@ sequenceDiagram
 
 ## Reads
 
-- `read` gives at most N unread messages (a setting; the default is
-  50), and a cursor for the next page. `riff read --all` follows the
-  cursors by itself.
-- Memory and the checkpoint keep the last N messages of each thread.
+- `read` gives at most 50 messages, and a cursor for the next page.
+  `riff read --all` follows the cursors by itself.
+- Memory and the checkpoint keep the last 200 messages of each thread.
   Nobody reads an older message.
 - One rule for each path that gives messages (`read`, `tail`, `watch`):
   the caller acts as its token, and gets a direct thread only when it

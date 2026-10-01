@@ -254,6 +254,32 @@ async fn read_shows_unread_messages_of_the_repository_thread() {
     );
 }
 
+/// The server gives one page of messages for each read. `riff read`
+/// and `riff read --all` read each page (01M3TBZBX140GJWCV5GZ73Q5Z5).
+#[tokio::test]
+async fn read_all_reads_each_page() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let count = riff_server::state::PAGE + 10;
+    for n in 1..=count {
+        riff(&server, dir, "mike", &["post", &format!("message {n}")]).await;
+    }
+    for args in [&["read"][..], &["read", "--all"]] {
+        let (out, code) = riff(&server, dir, "brett", args).await;
+        assert_eq!(code, 0);
+        assert_eq!(
+            out.matches("mike@pangolin (verified)").count(),
+            count,
+            "{out}"
+        );
+        assert!(out.contains(&format!(
+            "[{count}] mike@pangolin (verified): message {count}"
+        )));
+        assert!(!out.contains("More messages follow"), "{out}");
+    }
+}
+
 #[tokio::test]
 async fn read_takes_a_named_thread() {
     let server = start_server().await;

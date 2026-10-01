@@ -106,6 +106,13 @@ impl riff_server::store::Store for Broken {
         }
         Box::pin(async { Err(StoreError::Failed("the disk is gone".into())) })
     }
+
+    fn delete<'a>(
+        &'a self,
+        _name: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async { Err(StoreError::Failed("the disk is gone".into())) })
+    }
 }
 
 #[tokio::test]
@@ -204,6 +211,13 @@ impl riff_server::store::Store for Failing {
             return Box::pin(async { Err(StoreError::Failed("the disk is busy".into())) });
         }
         self.store.save(name, bytes, known)
+    }
+
+    fn delete<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<(), StoreError>> {
+        self.store.delete(name)
     }
 }
 

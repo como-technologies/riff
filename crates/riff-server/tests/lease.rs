@@ -173,6 +173,13 @@ impl Store for Flaky {
             Err(e) => futures::future::ready(Err(e)).boxed(),
         }
     }
+
+    fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        match self.check() {
+            Ok(()) => self.store.delete(name),
+            Err(e) => futures::future::ready(Err(e)).boxed(),
+        }
+    }
 }
 
 #[tokio::test]

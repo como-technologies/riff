@@ -847,12 +847,36 @@ impl Api {
 
     /// The unread messages (or all of them) of one thread. With no
     /// thread, those of each thread that `me` joined. Leaves out each
-    /// thread with no messages to show.
+    /// thread with no messages to show. It reads each page.
     pub async fn inbox(
         &self,
         me: &SessionUri,
         thread: Option<&ThreadName>,
         all: bool,
+    ) -> Result<Vec<Inbox>> {
+        self.inbox_pages(me, thread, all, None, true).await
+    }
+
+    /// As [`Api::inbox`], but it reads one page of each thread
+    /// (01M3TBZBX140GJWCV5GZ73Q5Z5). With `all`, the page starts after
+    /// the seq `after`. [`Inbox::next`] tells when more messages follow.
+    pub async fn inbox_page(
+        &self,
+        me: &SessionUri,
+        thread: Option<&ThreadName>,
+        all: bool,
+        after: Option<u64>,
+    ) -> Result<Vec<Inbox>> {
+        self.inbox_pages(me, thread, all, after, false).await
+    }
+
+    async fn inbox_pages(
+        &self,
+        me: &SessionUri,
+        thread: Option<&ThreadName>,
+        all: bool,
+        after: Option<u64>,
+        each_page: bool,
     ) -> Result<Vec<Inbox>> {
         let targets = match thread {
             Some(t) => vec![(t.clone(), Vec::new())],
@@ -866,12 +890,17 @@ impl Api {
         };
         let mut out = Vec::new();
         for (thread, members) in targets {
-            let messages = self.read(me, &thread, all).await?;
+            let (messages, next) = if each_page {
+                (self.read(me, &thread, all).await?, None)
+            } else {
+                self.read_page(me, &thread, all, after).await?
+            };
             if !messages.is_empty() {
                 out.push(Inbox {
                     thread,
                     members,
                     messages,
+                    next,
                 });
             }
         }
@@ -880,24 +909,48 @@ impl Api {
 
     /// The unread messages (or all of them) of one thread, each checked
     /// with the keys that the server gives (R199), or with its trusted
-    /// mark (R212).
+    /// mark (R212). It reads each page.
     pub async fn read(
         &self,
         me: &SessionUri,
         thread: &ThreadName,
         all: bool,
     ) -> Result<Vec<Checked>> {
+        let mut out = Vec::new();
+        let mut after = None;
+        loop {
+            let (mut messages, next) = self.read_page(me, thread, all, after).await?;
+            out.append(&mut messages);
+            match next {
+                Some(next) => after = Some(next),
+                None => return Ok(out),
+            }
+        }
+    }
+
+    /// One page of [`Api::read`], and the seq of its last message when
+    /// more messages follow (01M3TBZBX140GJWCV5GZ73Q5Z5). With `all`, the
+    /// page starts after the seq `after`.
+    pub async fn read_page(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        all: bool,
+        after: Option<u64>,
+    ) -> Result<(Vec<Checked>, Option<u64>)> {
         let request = Read {
             me: me.clone(),
             thread: thread.clone(),
             all,
+            after: after.filter(|_| all),
         };
         let reply: ReadReply = self.call("read", &request).await?;
-        Ok(reply
+        let messages = reply
             .messages
             .into_iter()
             .map(|message| checked(thread, message, &reply.keys, reply.trusted))
-            .collect())
+            .collect();
+        Ok((messages, reply.next))
     }
 
     pub async fn claim(
@@ -1334,6 +1387,8 @@ pub struct Inbox {
     /// Empty when the caller named the thread.
     pub members: Vec<SessionUri>,
     pub messages: Vec<Checked>,
+    /// The seq of the last message, when more messages follow.
+    pub next: Option<u64>,
 }
 
 /// A message, and whether the reader proved its sender (R199).

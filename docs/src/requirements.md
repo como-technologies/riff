@@ -474,16 +474,17 @@
 - **R30** `riff-server` keeps its state in memory. With `--bucket NAME`
   (`RIFF_BUCKET`), it keeps its log and its token store in that Cloud
   Storage bucket. With `--dir DIR` (`RIFF_DIR`), it keeps them as files
-  in that directory. It replays the log at start.
+  in that directory. At start, it loads the newest checkpoint and
+  replays the log after it (01M3TBZBMMSMNWP126ZQED13YG).
 - **R34** Storage is behind one interface. Tests use an in-memory store
   or a temporary directory, never the real bucket. Without `--bucket`
   and `--dir`, the log is in memory, and a restart loses it.
-- **R124** The bucket holds the chunks of the log, the token store and
-  the lease.
+- **R124** The bucket holds the chunks of the log, the checkpoints, the
+  token store and the lease.
 - **R31** A restart loses the open streams, the proof IDs, the sessions
-  with their places and statuses, the read cursors, and each record
-  whose chunk was not written. The call of such a record got no
-  success.
+  with their places and statuses, each change of a read cursor since
+  the last checkpoint, and each record whose chunk was not written.
+  The call of such a record got no success.
 - **R125** After a replay, each session counts as stopped at the time
   of the replay. Its claims and its lead end after the grace period
   (R9), unless it comes back.
@@ -502,7 +503,8 @@
 - **R46** A lifecycle rule of the bucket deletes each thread object 30
   days after its last change.
 - **R147** The name of each chunk of the log starts with `log/`. The
-  token store and the lease have names outside `log/`.
+  name of each checkpoint starts with `checkpoint/`. The token store
+  and the lease have names outside `log/` and `checkpoint/`.
 - **R149** Replaced by 01M3T411BZQB8N4D2S0JFVESMS.
 - **01M3MMXYS1V8CA89D2XHKPR6C4** When `riff-server` cannot read a saved
   object at start, for example state of an old format, it does not
@@ -515,7 +517,8 @@
 - **01M3T410XDD9W4EC0Y68FAA7XN** Each change that must not be lost is a
   record in one log: a message with the sessions that it woke, a join
   or a leave of a thread, a claim or a release, a lead, the state of
-  the riff, and a setting. Each record has a position: 1, 2, 3, and so
+  the riff, a setting, and a forgotten session. Each record has a
+  position: 1, 2, 3, and so
   on. A record is one line of JSON. The name of its change says what
   happened, in the past tense, for example `claimed`.
 - **01M3T4111PFM0C6KPREWFS9EQQ** A new field of a record has a default,
@@ -552,6 +555,41 @@
   plus 1. A gap, a repeat, a line that does not read, or a chunk of a
   later format stops the start. The error names the chunk
   (01M3MMXYS1V8CA89D2XHKPR6C4).
+
+- **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
+  Its name is `checkpoint/`, the position in 20 digits, `-`, and the
+  time of the write in milliseconds, for example
+  `checkpoint/00000000000000001234-1790000000000.json`. It holds the
+  format, the version of the build that wrote it, the state that the
+  log gives up to the position, the last messages of each thread, the
+  read cursors, and the last call of each session. A start loads the
+  newest checkpoint that reads, and replays only the records after its
+  position. When the newest checkpoint does not read, the start uses
+  the one before it.
+- **01M3TBZBQDF0ES4KM54FJQF6Z8** `riff-server` writes a checkpoint each
+  1,000 records, or each 60 minutes when records came. It encodes the
+  checkpoint outside the lock of the state. A build writes no
+  checkpoint past the first record that it skipped. A build writes no
+  checkpoint while the newest checkpoint comes from a later version,
+  or does not read. The server keeps the last 3 checkpoints and the
+  newest checkpoint of each day for 30 days. It deletes the others. It
+  deletes a chunk only when each kept checkpoint is past it. No rule
+  deletes chunks by age.
+- **01M3TBZBT7MME9BG1RWX5SZAZ6** Memory and the checkpoint keep the last
+  200 messages of each thread. Nobody reads an older message. The copy
+  check (01M3JEJVXXEPPNGT3FY4ZSFCWZ) knows only the kept messages.
+- **01M3TBZBX140GJWCV5GZ73Q5Z5** `read` gives one page: at most 50
+  messages. When more messages follow, the reply has the number of the
+  last message of the page. An unread read again gives the next page.
+  A read of all with `after` set to that number gives the next page.
+  `riff read` and `riff read --all` read each page. The `read` tool of
+  `riff mcp` gives one page, and says how to read the next.
+- **01M3TBZBZVH907QD359AB8TBSX** Each hour, a timer of `riff-server`
+  writes a `session_forgotten` record for each session with no sign of
+  life for 30 days. It does not run in the first 3 minutes after a
+  start. The record drops the session, its read cursors, its
+  memberships, its claims, its lead, and each direct thread whose two
+  sessions are gone.
 
 ## Cloud
 
@@ -992,8 +1030,8 @@
   each session as `live`, or with the time since its last call, for
   example `idle 2m`.
 - **R164** A gone session (R206) is not in `who`. `who --all` lists
-  it. The server keeps its record until R126 drops it, so a resumed
-  session keeps its ID.
+  it. The server keeps its record until it forgets the session
+  (01M3TBZBZVH907QD359AB8TBSX), so a resumed session keeps its ID.
 - **R204** `riff mcp` sends a keep-alive to `riff-server` each 60
   seconds while it runs, also while no turn runs.
 - **R205** When `riff mcp` stops (its stdin closes, or it gets SIGTERM,
@@ -1093,7 +1131,8 @@
 - **R23** Sessions talk in named threads. A direct message is a thread
   with two members.
 - **R24** Threads are flat. There are no nested replies.
-- **R25** A thread keeps its history. A session that joins can read it.
+- **R25** A thread keeps its last messages (01M3TBZBT7MME9BG1RWX5SZAZ6).
+  A session that joins can read them.
 - **R26** Only an address wakes a session. Text in a message body
   never wakes a session.
 - **R27** A person can read and post in each thread from the command
@@ -1131,7 +1170,8 @@
   the sender to ask its own user.
 - **R79** `riff read` shows the unread messages of the threads of the
   person. It joins the person to the thread of the directory first.
-  `--thread` reads one thread. `--all` shows the full history.
+  `--thread` reads one thread. `--all` shows each kept message. It
+  reads each page (01M3TBZBX140GJWCV5GZ73Q5Z5).
 - **R185** A post has a kind: `message` (the default), `status` or
   `note`. A post of kind `status` is a status request. It wakes the
   sessions that its selectors match, as each post does. A person sends
