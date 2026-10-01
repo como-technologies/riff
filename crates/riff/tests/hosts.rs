@@ -745,17 +745,23 @@ async fn stops_on(r: &mut Riff, signal: &str, state: &str) {
     );
 }
 
-/// Waits until the fake `tmux` of `m` logs a call that contains `call`,
-/// after its first `before` calls.
-async fn calls(m: &Machine, call: &str, before: usize) {
-    until(call, || async {
-        m.log()
-            .lines()
-            .skip(before)
-            .any(|l| l.contains(call))
-            .then_some(())
-    })
-    .await;
+/// Waits until the fake `tmux` of the host of `r` logs a call that
+/// contains `call`, after its first `before` calls. A failure shows
+/// what the host did and what the server knows.
+async fn calls(r: &Riff, call: &str, before: usize) {
+    let start = Instant::now();
+    while !r.b.log().lines().skip(before).any(|l| l.contains(call)) {
+        if start.elapsed() > WAIT {
+            let who = tokio::time::timeout(STOPS, r.api.who(&r.lead, true)).await;
+            panic!(
+                "timed out: {call}\nthe host {}\nthe calls of tmux:\n{}\nthe output of the host:\n{}\nriff who:\n{who:#?}",
+                r.host_id,
+                r.b.log(),
+                r.b.host_output(),
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// Ctrl-C stops a host that waits for a wake, that answers a request (a
@@ -773,14 +779,14 @@ async fn ctrl_c_stops_the_host_in_each_state() {
         .tell(&r.lead, &r.host_id, "workers start 1")
         .await
         .unwrap();
-    calls(&r.b, "-window", before).await;
+    calls(&r, "-window", before).await;
     stops_on(&mut r, "INT", "answering a request").await;
 
     let mut r = riff().await;
     r.b.slow("list-panes -a*");
     let before = r.b.log().lines().count();
     r.api.tell(&r.lead, &r.host_id, "hello").await.unwrap();
-    calls(&r.b, "list-panes -a", before).await;
+    calls(&r, "list-panes -a", before).await;
     stops_on(&mut r, "INT", "setting its status").await;
 }
 
@@ -813,7 +819,7 @@ async fn ctrl_c_stops_a_host_that_tries_again() {
     })
     .await;
     let took = host.stop("INT");
-    assert!(took < Duration::from_secs(2), "took {took:?}");
+    assert!(took < STOPS, "took {took:?}");
 }
 
 /// Ctrl-C stops a host at start, while the OS keyring does not answer

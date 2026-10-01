@@ -319,8 +319,7 @@ async fn the_limit_caps_the_rollout() {
     lead.issues(TWO_FREE);
     lead.riff(RiffState::Running).await;
     lead.claim(1, "issue-1").await;
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(lead.workers(), 1);
+    assert_eq!(lead.settled().await, 1);
 }
 
 /// `riff workers interval` shows and sets the interval
