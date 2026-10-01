@@ -96,6 +96,25 @@ macro_rules! embed {
 /// assert!(skill[prs..prs_end].contains("Milestone: Wave 3"));
 /// assert!(!skill[prs_end..].contains("milestone"));
 /// ```
+///
+/// The skill keeps a live security fault out of a verify result, the
+/// body of a pull request and a post (01M3W62QG36F9RD4SZ1X508T3A). The
+/// author and the verifier each have the rule:
+///
+/// ```
+/// let (_, skill) = riff::plugin::FILES
+///     .iter()
+///     .find(|(path, _)| path.ends_with("SKILL.md"))
+///     .unwrap();
+/// let ask = skill.find("### Ask for a verify").unwrap();
+/// let check = skill.find("### Verify the work of another session").unwrap();
+/// let end = skill.find("### Pull requests on GitHub").unwrap();
+/// for part in [&skill[ask..check], &skill[check..end]] {
+///     let part = part.split_whitespace().collect::<Vec<_>>().join(" ");
+///     assert!(part.contains("no live security fault"));
+///     assert!(part.contains("`tell` the lead the fault."));
+/// }
+/// ```
 pub const FILES: &[(&str, &str)] = &[
     embed!(".claude-plugin/marketplace.json"),
     embed!("riff/.claude-plugin/plugin.json"),
@@ -442,6 +461,51 @@ mod tests {
         assert!(
             skill.contains("`join_thread` joins a different thread. `leave_thread` leaves it.")
         );
+    }
+
+    /// 01M3W62QG36F9RD4SZ1X508T3A: the verifier and the author each
+    /// have the rule, and each sends the fault to the lead with `tell`.
+    #[test]
+    fn the_skill_keeps_a_live_security_fault_out_of_public_text() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = |from: &str, to: &str| {
+            let start = skill.find(from).unwrap();
+            let end = start + skill[start..].find(to).unwrap();
+            skill[start..end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let ask = part(
+            "### Ask for a verify",
+            "### Verify the work of another session",
+        );
+        assert!(
+            ask.contains(
+                "The body of your pull request and your posts to a thread hold no live \
+                 security fault: a security fault in the code of the default branch, or \
+                 in a server that runs."
+            ),
+            "{ask}"
+        );
+        let check = part(
+            "### Verify the work of another session",
+            "### Pull requests on GitHub",
+        );
+        assert!(
+            check.contains(
+                "The result holds only the check against the `Done when:` line. It \
+                 holds no live security fault: a security fault in the code of the \
+                 default branch, or in a server that runs."
+            ),
+            "{check}"
+        );
+        for part in [&ask, &check] {
+            assert!(
+                part.contains("`tell` the lead the fault. The lead decides on a private advisory."),
+                "{part}"
+            );
+        }
     }
 
     #[test]

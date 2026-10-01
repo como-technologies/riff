@@ -257,6 +257,11 @@ When a permission refusal stops a step, do not ask in your own
 terminal. `tell` the lead the pull request, the commit and the verify
 result (see "Questions for your user").
 
+The body of your pull request and your posts to a thread hold no live
+security fault: a security fault in the code of the default branch, or
+in a server that runs. A pull request can be public. `tell` the lead
+the fault. The lead decides on a private advisory.
+
 A live check of new code, for example a new plugin command, hook or
 skill text, runs in a dev session: `just dev` in the worktree. It needs
 no release and no update of the machine. Never run `riff update`,
@@ -294,6 +299,11 @@ claim, or starts a worker for it.
    - Pass: each criterion, with what you did to check it.
    - Fail: each criterion that failed, with the steps to see the
      failure.
+   The result holds only the check against the `Done when:` line. It
+   holds no live security fault: a security fault in the code of the
+   default branch, or in a server that runs. The result is a comment
+   on the pull request, which can be public. `tell` the lead the
+   fault. The lead decides on a private advisory.
    Report it with one command in the verify worktree:
    `riff verify pass 40 --file result.md` or
    `riff verify fail 40 --file result.md`. It reports nothing when

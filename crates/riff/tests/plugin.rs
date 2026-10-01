@@ -174,6 +174,54 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     assert!(!verifier.contains("`keep`"), "{verifier}");
 }
 
+/// The skill that `riff connect` writes keeps a live security fault out
+/// of a verify result, the body of a pull request and a post
+/// (01M3W62QG36F9RD4SZ1X508T3A). The fault goes to the lead with `tell`.
+#[test]
+fn connect_writes_the_skill_with_no_live_security_fault_in_public_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = fake_claude(tmp.path(), 1);
+    connect(&bin, tmp.path(), tmp.path()).success();
+    let skill = tmp
+        .path()
+        .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
+    let skill = std::fs::read_to_string(skill).unwrap();
+    let section = |from: &str, to: &str| {
+        let start = skill.find(from).unwrap_or_else(|| panic!("no {from:?}"));
+        let end = skill[start..]
+            .find(to)
+            .unwrap_or_else(|| panic!("no {to:?}"));
+        skill[start..start + end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let ask = section(
+        "### Ask for a verify",
+        "### Verify the work of another session",
+    );
+    assert!(
+        ask.contains(
+            "The body of your pull request and your posts to a thread hold no live security fault"
+        ),
+        "{ask}"
+    );
+    let check = section(
+        "### Verify the work of another session",
+        "### Pull requests on GitHub",
+    );
+    let only = check.find("The result holds only the check against the `Done when:` line.");
+    let report = check.find("Report it with one command");
+    assert!(only.is_some() && only < report, "{check}");
+    assert!(check.contains("It holds no live security fault"), "{check}");
+    for part in [&ask, &check] {
+        assert!(
+            part.contains("`tell` the lead the fault. The lead decides on a private advisory."),
+            "{part}"
+        );
+    }
+}
+
 /// The skill names one `riff` command for each step of a pull request
 /// (01M3NB6G132QG4TAEJ5QPRJNAE), and no `gh` recipe for those steps.
 #[test]
