@@ -123,14 +123,29 @@ pub fn post(url: &str, key: &Key, token: Option<&str>) -> reqwest::RequestBuilde
     request
 }
 
+/// How long a test tries a call again while the server does not serve.
+pub const BUSY_LIMIT: Duration = Duration::from_secs(30);
+
 /// A refresh at the token endpoint of `base`, with a proof from `key`.
+/// As `riff` does, it tries again while the gate replies 503 (R132):
+/// under load, the lease read of a test server can be older than the
+/// 500 ms of [`LEASE`] (R139). Only the 503 of the gate has the header
+/// `retry-after`, so a 503 of the token endpoint comes back at once.
 pub async fn refresh(base: &str, key: &Key, form: &str) -> reqwest::Response {
-    post(&format!("{base}/v1/token"), key, None)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body(form.to_owned())
-        .send()
-        .await
-        .unwrap()
+    let started = std::time::Instant::now();
+    loop {
+        let reply = post(&format!("{base}/v1/token"), key, None)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(form.to_owned())
+            .send()
+            .await
+            .unwrap();
+        let gate = reply.status() == 503 && reply.headers().contains_key("retry-after");
+        if !gate || started.elapsed() > BUSY_LIMIT {
+            return reply;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 const KEY: &str = include_str!("../../testdata/test-only-rsa-key.pem");
