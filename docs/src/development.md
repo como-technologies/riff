@@ -68,9 +68,27 @@ block. Each error names its rule and the page:
 | `mdbook` | An `ERROR` line of mdbook, for example a missing file. |
 | `include` | An include line that mdbook left in the text. |
 | `empty-code` | A code block with no text, for example a missing anchor. |
+| `tracked` | A file in git that the build changed. |
 
 To show an include line as an example, put it in a code block and
 escape it: `\{{#include file.rs:name}}`. The check skips it.
+
+The theme of the book, `docs/gruvbox`, is not in git. `just book`
+installs it when it is missing. The install does not change
+`docs/book.toml`. To install the theme again, remove it and build:
+
+```sh
+rm -r docs/gruvbox
+just book
+```
+
+The build must not change a file in git. When `just book` reports the
+rule `tracked`, see what changed, and find the step that writes the
+file:
+
+```sh
+git diff
+```
 
 ## Check a pull request on GitHub
 

@@ -8,7 +8,6 @@ default:
 init:
     rustup component add clippy rustfmt
     cargo install --locked mdbook mdbook-gruvbox mdbook-mermaid cargo-audit
-    mdbook-gruvbox install docs
 
 # Run all CI checks. crate-audit is not part of the gate: CI runs it as a
 # separate job (and weekly), so a new advisory cannot hide a code failure.
@@ -54,10 +53,12 @@ test *ARGS:
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
 
-# Build the book (installs the gitignored gruvbox theme if it is missing).
-# It fails on an ERROR line of mdbook, a missing include or an empty code block.
+# hygiene book installs the gitignored gruvbox theme if it is missing, and
+# keeps docs/book.toml as it is (01M3W5YW0172EVF2JA8T7WW392). It fails on an
+# ERROR line of mdbook, a missing include, an empty code block, or a tracked
+# file that the build changed.
+# Build the book and check it
 book:
-    @if [ ! -d docs/gruvbox ]; then mdbook-gruvbox install docs; fi
     cargo run -q -p hygiene -- book docs
     @echo "Book built -> docs/book"
 
