@@ -11,7 +11,7 @@
 //! | `paused` | yellow | the claims, and the step it stopped at |
 //! | `blocked` | red | the reason, then the claims |
 //! | `busy` | green | `working on #N`, or `reviewing #N` for a verify claim, then the step |
-//! | `idle` | dim | `ready for work` with the time, then a current step |
+//! | `idle` | dim | `ready for work` with the time, then a current step. The lead: `monitoring work` |
 //!
 //! `riff top`, `riff who`, the MCP `who` tool and `riff workers` show
 //! the same words.
@@ -68,6 +68,8 @@ fn current(s: &SessionInfo) -> Option<&StatusInfo> {
 
 /// The detail of the state of `s`: one line for each fact, each with
 /// its style. `title` gives the title of an issue, when riff knows it.
+/// An idle lead takes no claims, so it shows `monitoring work`, not
+/// `ready for work`.
 ///
 /// ```
 /// use riff::state::detail;
@@ -109,6 +111,8 @@ fn current(s: &SessionInfo) -> Option<&StatusInfo> {
 /// assert_eq!(plain(&s), ["ready for work for 5m"]);
 /// s.status = Some(step("plan the wave", None, false));
 /// assert_eq!(plain(&s), ["ready for work for 5m", "2m ago: plan the wave"]);
+/// s.uri = "riff://mike@thelio/o/r?session=w1&lead=true".parse()?;
+/// assert_eq!(plain(&s), ["monitoring work for 5m", "2m ago: plan the wave"]);
 /// s.state = Some(SessionState::Offline);
 /// assert_eq!(plain(&s), ["seen 2h ago"]);
 /// # Ok::<(), riff_core::name::NameError>(())
@@ -162,7 +166,12 @@ pub fn detail(
             lines.extend(s.status.as_ref().map(step));
         }
         SessionState::Idle => {
-            lines.push((format!("ready for work for {}", ago(s.claims_secs)), plain));
+            let what = if s.uri.lead() {
+                "monitoring work"
+            } else {
+                "ready for work"
+            };
+            lines.push((format!("{what} for {}", ago(s.claims_secs)), plain));
             lines.extend(current(s).map(step));
         }
     }

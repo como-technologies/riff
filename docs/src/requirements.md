@@ -1179,7 +1179,9 @@
   the step, then the claims; for `busy`, `working on #N` or
   `reviewing #N` (a verify claim) for each claim, then the step; for
   `idle`, `ready for work for` the time since the last release, then a
-  current step. `riff top` adds the title of each issue. The colors:
+  current step. An `idle` lead shows `monitoring work for` and the
+  time, not `ready for work for`. `riff top` adds the title of each
+  issue. The colors:
   `blocked` red, `busy` green, `idle` dim, `offline` grey, `paused`
   yellow. A `blocked` session comes first in `riff top`. A person is
   `online` when a session of the person is live, else `offline` with

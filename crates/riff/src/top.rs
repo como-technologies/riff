@@ -409,7 +409,7 @@ impl Top<'_> {
     ///     "│       reviewing #13 Later",
     ///     "└─ thelio",
     ///     "   ├─ aaaa1111  lead  idle",
-    ///     "   │    ready for work for 10m",
+    ///     "   │    monitoring work for 10m",
     ///     "   │    2m ago: plan",
     ///     "   ├─ bbbb2222  worker  busy",
     ///     "   │    working on #12 Show the wave in the board of riff top",
