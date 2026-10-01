@@ -16,9 +16,12 @@
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
-//! the trailers `Issue:` and `Milestone:` ([`body`]). It checks the pull
-//! request with [`hygiene::check_pr`] before it opens it, and turns on
-//! auto-merge with a squash at once (01M3NB6FTGPD0S5JTXXXNGNNDT).
+//! the trailers `Issue:` and `Milestone:` ([`body`]). It adds each of
+//! them only when the summary does not have it, and refuses a summary
+//! with a line for another issue or another milestone
+//! (01M3W2627GYXR8CFW76KB6CB9W). It checks the pull request with
+//! [`hygiene::check_pr`] before it opens it, and turns on auto-merge
+//! with a squash at once (01M3NB6FTGPD0S5JTXXXNGNNDT).
 //!
 //! `riff pr wait N` looks at the pull request until it is merged, and
 //! prints the merge commit. It stops with an error when the pull request
@@ -121,32 +124,98 @@ impl Gh {
     }
 }
 
-/// The body of a pull request for issue `issue` in the form of the
+/// The body of a pull request for the issue of `link` in the form of the
 /// hygiene check: the link line, the summary, and the trailers.
+///
+/// It adds the link line and each trailer only when `summary` does not
+/// have it. It refuses a link line, or a trailer `Issue:` or
+/// `Milestone:`, of `summary` that is not the one of the pull request,
+/// and names the line (01M3W2627GYXR8CFW76KB6CB9W).
 ///
 /// ```
 /// use hygiene::{Issue, Link, PullRequest};
 ///
-/// let body = riff::pr::body(Link::Closes(12), "Show the wave.\n", "Wave 3");
+/// let body = riff::pr::body(Link::Closes(12), "Show the wave.\n", "Wave 3").unwrap();
 /// assert_eq!(body, "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n");
 /// let pr = PullRequest::new("Show the wave", &body, Some("Wave 3"));
 /// assert!(hygiene::check_pr(&pr, Some(&Issue::new(12, "OPEN", Some("Wave 3")))).is_empty());
 ///
-/// let body = riff::pr::body(Link::Refs(12), "", "Wave 3");
+/// let body = riff::pr::body(Link::Refs(12), "", "Wave 3").unwrap();
 /// assert_eq!(body, "Refs #12\n\nIssue: #12\nMilestone: Wave 3\n");
+///
+/// // A summary that is a full body stays as it is.
+/// let full = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
+/// assert_eq!(riff::pr::body(Link::Closes(12), full, "Wave 3").unwrap(), full);
+///
+/// // A line for another issue is refused.
+/// let other = riff::pr::body(Link::Closes(12), "Text.\n\nIssue: #9\n", "Wave 3");
+/// assert_eq!(
+///     other.unwrap_err().to_string(),
+///     "the body has the line `Issue: #9`, but this pull request needs `Issue: #12`. \
+///      Change the line, or remove it."
+/// );
 /// ```
-pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> String {
-    let (word, n) = match link {
-        hygiene::Link::Closes(n) => ("Closes", n),
-        hygiene::Link::Refs(n) => ("Refs", n),
+pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> Result<String> {
+    let n = link.issue();
+    let line = match link {
+        hygiene::Link::Closes(_) => format!("Closes #{n}"),
+        hygiene::Link::Refs(_) => format!("Refs #{n}"),
     };
+    let summary = summary.replace("\r\n", "\n");
     let summary = summary.trim();
-    let summary = if summary.is_empty() {
-        String::new()
-    } else {
-        format!("{summary}\n\n")
-    };
-    format!("{word} #{n}\n\n{summary}Issue: #{n}\nMilestone: {milestone}\n")
+
+    let mut linked = false;
+    for found in summary
+        .lines()
+        .filter(|l| hygiene::Link::parse(l).is_some())
+    {
+        if hygiene::Link::parse(found) != Some(link) {
+            let found = found.trim();
+            let refs = match link {
+                hygiene::Link::Closes(_) => "Give --refs for a line `Refs #N`. ",
+                hygiene::Link::Refs(_) => "Give no --refs for a line `Closes #N`. ",
+            };
+            bail!(
+                "the body has the line `{found}`, but this pull request needs `{line}`. \
+                 {refs}Change the line, or remove it."
+            );
+        }
+        linked = true;
+    }
+
+    let trailers = hygiene::trailers(summary);
+    let mut missing = String::new();
+    for (key, want) in [
+        ("Issue", format!("#{n}")),
+        ("Milestone", milestone.to_owned()),
+    ] {
+        let mut values = trailers.iter().filter(|(k, _)| k == key).map(|(_, v)| v);
+        if let Some(value) = values.find(|value| **value != want) {
+            bail!(
+                "the body has the line `{key}: {value}`, but this pull request needs \
+                 `{key}: {want}`. Change the line, or remove it."
+            );
+        }
+        if !trailers.iter().any(|(k, _)| k == key) {
+            missing.push_str(&format!("{key}: {want}\n"));
+        }
+    }
+
+    let mut body = String::new();
+    if !linked {
+        body.push_str(&format!("{line}\n\n"));
+    }
+    if !summary.is_empty() {
+        body.push_str(summary);
+        body.push('\n');
+        // A new trailer joins the trailers of the summary, in its last
+        // paragraph. With none, the trailers are a new paragraph.
+        if trailers.is_empty() && !missing.is_empty() {
+            body.push('\n');
+        }
+    }
+    body.push_str(&missing);
+    Ok(body)
 }
 
 /// The issue of the claims of a session: the one claim `issue-N`.
@@ -185,7 +254,7 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
     } else {
         hygiene::Link::Closes(issue)
     };
-    let body = body(link, summary, &milestone);
+    let body = body(link, summary, &milestone)?;
     let errors = hygiene::check_pr(
         &hygiene::PullRequest::new(title, &body, Some(&milestone)),
         Some(&found),
@@ -483,4 +552,96 @@ pub fn report(
         None,
     )?;
     Ok(Reported { issue, commit, url })
+}
+
+#[cfg(test)]
+mod tests {
+    use hygiene::Link;
+
+    use super::body;
+
+    const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
+
+    fn refused(link: Link, summary: &str) -> String {
+        body(link, summary, "Wave 3").unwrap_err().to_string()
+    }
+
+    #[test]
+    fn a_body_with_the_link_line_and_the_trailers_has_each_one_time() {
+        for summary in [
+            FULL.to_owned(),
+            FULL.replace('\n', "\r\n"),
+            format!("\n{FULL}\n\n"),
+        ] {
+            assert_eq!(body(Link::Closes(12), &summary, "Wave 3").unwrap(), FULL);
+        }
+    }
+
+    #[test]
+    fn a_body_gets_only_the_lines_that_it_does_not_have() {
+        for part in [
+            "Show the wave.\n",
+            "Closes #12\n\nShow the wave.\n",
+            "Show the wave.\n\nIssue: #12\nMilestone: Wave 3\n",
+            "Show the wave.\n\nIssue: #12\n",
+            "Closes #12\n\nShow the wave.\n\nIssue: #12\n",
+        ] {
+            assert_eq!(
+                body(Link::Closes(12), part, "Wave 3").unwrap(),
+                FULL,
+                "{part}"
+            );
+        }
+        assert_eq!(
+            body(
+                Link::Closes(12),
+                "Show the wave.\n\nMilestone: Wave 3\n",
+                "Wave 3"
+            )
+            .unwrap(),
+            "Closes #12\n\nShow the wave.\n\nMilestone: Wave 3\nIssue: #12\n"
+        );
+        assert_eq!(
+            body(Link::Refs(12), "Issue: #12\nMilestone: Wave 3\n", "Wave 3").unwrap(),
+            "Refs #12\n\nIssue: #12\nMilestone: Wave 3\n"
+        );
+    }
+
+    #[test]
+    fn a_line_that_is_not_of_the_pull_request_is_refused_by_name() {
+        assert_eq!(
+            refused(Link::Closes(12), &FULL.replace("Issue: #12", "Issue: #9")),
+            "the body has the line `Issue: #9`, but this pull request needs `Issue: #12`. \
+             Change the line, or remove it."
+        );
+        assert_eq!(
+            refused(Link::Closes(12), &FULL.replace("Wave 3", "Wave 4")),
+            "the body has the line `Milestone: Wave 4`, but this pull request needs \
+             `Milestone: Wave 3`. Change the line, or remove it."
+        );
+        assert_eq!(
+            refused(Link::Closes(12), &FULL.replace("Closes #12", "Closes #9")),
+            "the body has the line `Closes #9`, but this pull request needs `Closes #12`. \
+             Give --refs for a line `Refs #N`. Change the line, or remove it."
+        );
+        assert_eq!(
+            refused(Link::Closes(12), &FULL.replace("Closes #12", "Refs #12")),
+            "the body has the line `Refs #12`, but this pull request needs `Closes #12`. \
+             Give --refs for a line `Refs #N`. Change the line, or remove it."
+        );
+        assert_eq!(
+            refused(Link::Refs(12), FULL),
+            "the body has the line `Closes #12`, but this pull request needs `Refs #12`. \
+             Give no --refs for a line `Closes #N`. Change the line, or remove it."
+        );
+        assert!(refused(Link::Closes(12), "Text.\n\nIssue: 12\n").contains("`Issue: 12`"));
+    }
+
+    /// The same line two times stays: the hygiene check then refuses
+    /// the pull request.
+    #[test]
+    fn a_line_that_the_body_has_two_times_stays() {
+        let twice = "Closes #12\nCloses #12\n\nIssue: #12\nIssue: #12\nMilestone: Wave 3\n";
+        assert_eq!(body(Link::Closes(12), twice, "Wave 3").unwrap(), twice);
+    }
 }

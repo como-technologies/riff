@@ -356,6 +356,11 @@
   issue. It refuses a pull request that breaks the hygiene check, and
   opens nothing then. After the create, it runs
   `gh pr merge N --auto --squash` at once.
+- **01M3W2627GYXR8CFW76KB6CB9W** `riff pr open` adds the link line and
+  each of the trailers `Issue:` and `Milestone:` only when the text of
+  `--file` does not have it. When that text has a link line, or a
+  trailer `Issue:` or `Milestone:`, that is not the one of the pull
+  request, it names the line, opens nothing, and exits with status 1.
 - **01M3NB6FWMGBQ9VTY6RCBPKBHK** `riff pr wait N` looks at pull
   request N with `gh` each `--every` seconds (default 30), until it is
   merged. Then it prints the merge commit and exits with status 0. It
