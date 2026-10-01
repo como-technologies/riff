@@ -1149,10 +1149,11 @@ for example `claim=issue-12`.
 ### Keep a live security fault out of public text
 
 A live security fault is a security fault in the code of `main`, or
-in a server that runs. A pull request can be public, so its body and
-its verify result do not name such a fault. A post to a thread does
-not name it too. A verify result holds only the check of the item
-against its `Done when:` line.
+in a server that runs. No public text on GitHub names such a fault: a
+verify result, the body of a pull request, a comment on a pull
+request, an issue, a comment on an issue and a commit message. A post
+to a thread does not name it too. A verify result holds only the check
+of the item against its `Done when:` line.
 
 Tell the fault to your lead. The lead decides on a private advisory:
 

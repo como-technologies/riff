@@ -175,7 +175,7 @@ fn connect_writes_the_skill_with_the_verify_flow() {
 }
 
 /// The skill that `riff connect` writes keeps a live security fault out
-/// of a verify result, the body of a pull request and a post
+/// of the public text on the forge and out of a post
 /// (01M3W62QG36F9RD4SZ1X508T3A). The fault goes to the lead with `tell`.
 #[test]
 fn connect_writes_the_skill_with_no_live_security_fault_in_public_text() {
@@ -202,10 +202,20 @@ fn connect_writes_the_skill_with_no_live_security_fault_in_public_text() {
     );
     assert!(
         ask.contains(
-            "The body of your pull request and your posts to a thread hold no live security fault"
+            "Your public text on the forge and your posts to a thread hold no live security fault"
         ),
         "{ask}"
     );
+    let list = &ask[ask.find("The public text is").unwrap()..];
+    for text in [
+        "the body of a pull request",
+        "a comment on a pull request",
+        "an issue",
+        "a comment on an issue",
+        "a commit message",
+    ] {
+        assert!(list.contains(text), "no {text:?} in {list}");
+    }
     let check = section(
         "### Verify the work of another session",
         "### Pull requests on GitHub",

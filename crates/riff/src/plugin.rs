@@ -97,8 +97,8 @@ macro_rules! embed {
 /// assert!(!skill[prs_end..].contains("milestone"));
 /// ```
 ///
-/// The skill keeps a live security fault out of a verify result, the
-/// body of a pull request and a post (01M3W62QG36F9RD4SZ1X508T3A). The
+/// The skill keeps a live security fault out of the public text on the
+/// forge and out of a post (01M3W62QG36F9RD4SZ1X508T3A). The
 /// author and the verifier each have the rule:
 ///
 /// ```
@@ -482,9 +482,11 @@ mod tests {
         );
         assert!(
             ask.contains(
-                "The body of your pull request and your posts to a thread hold no live \
+                "Your public text on the forge and your posts to a thread hold no live \
                  security fault: a security fault in the code of the default branch, or \
-                 in a server that runs."
+                 in a server that runs. The public text is the body of a pull request, \
+                 a comment on a pull request, an issue, a comment on an issue and a \
+                 commit message."
             ),
             "{ask}"
         );
