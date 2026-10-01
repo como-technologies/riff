@@ -1,10 +1,11 @@
 //! A fake OpenID Connect provider and a fake browser, for the tests
-//! that sign in end to end.
+//! that sign in end to end. Also the mock keyring, and a listener whose
+//! URL has no old sign-in in it.
 
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Form, Query, State};
@@ -19,6 +20,34 @@ use serde_json::{Value, json};
 
 const KEY: &str = include_str!("../../../riff-server/testdata/test-only-rsa-key.pem");
 const JWKS: &str = include_str!("../../../riff-server/testdata/test-only-jwks.json");
+
+/// Makes the mock store of `keyring-core` the keyring of this test
+/// process. All tests of a test file share it.
+pub fn mock_keyring() {
+    static MOCK_KEYRING: Once = Once::new();
+    MOCK_KEYRING.call_once(|| {
+        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+    });
+}
+
+/// The URL of `listener`, with no sign-in for it in the mock keyring.
+/// The keyring keeps a sign-in by the URL of its server. When a test
+/// ends, its port is free, and the OS can give the port to a later
+/// test. So a new server removes the sign-in that an earlier test left
+/// at its URL.
+pub fn fresh_url(listener: &tokio::net::TcpListener) -> String {
+    mock_keyring();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    login::logout(&url).unwrap();
+    url
+}
+
+/// A listener on a free port, and its URL from [`fresh_url`].
+pub async fn listen() -> (tokio::net::TcpListener, String) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = fresh_url(&listener);
+    (listener, url)
+}
 
 /// The client ID of riff at the fake provider.
 pub const CLIENT: &str = "riff-client";

@@ -806,9 +806,11 @@ async fn sigterm_and_sighup_stop_the_host() {
 async fn ctrl_c_stops_a_host_that_tries_again() {
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
-    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let dead = format!("http://{}", free.local_addr().unwrap());
-    drop(free);
+    // A socket that holds its port and does not listen: each connection
+    // is refused, and no other test gets the port.
+    let held = tokio::net::TcpSocket::new_v4().unwrap();
+    held.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let dead = format!("http://{}", held.local_addr().unwrap());
     let b = Machine::new("b", &dead);
     b.limit(1);
     let mut host = b.host(&main);

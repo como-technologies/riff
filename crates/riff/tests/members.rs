@@ -3,7 +3,8 @@
 //! (01M3Q63NK0AHM25MB258B0K8XP). The sign-in is in the mock store of
 //! `keyring-core`, so the tests run in process.
 
-use std::sync::Once;
+mod common;
+
 use std::time::Instant;
 
 use riff::api::Api;
@@ -15,8 +16,6 @@ use riff_core::wire::{Kind, PersonRole, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::Provider;
-
-static MOCK_KEYRING: Once = Once::new();
 
 async fn start() -> (Service, Api) {
     start_with(false).await
@@ -33,11 +32,7 @@ async fn start_with(require_sign_in: bool) -> (Service, Api) {
 
 /// A server with the config that `config` makes from its URL.
 async fn serve(config: impl FnOnce(&str) -> Config) -> (Service, Api) {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (listener, url) = common::listen().await;
     let service = Service::new(config(&url));
     let api = Api::new(&url);
     let router = service.router();

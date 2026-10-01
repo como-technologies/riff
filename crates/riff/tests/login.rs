@@ -1,10 +1,11 @@
 //! `riff login` end to end: a fake provider, a real `riff-server`, and
 //! a fake browser that follows the redirects. The keyring is the mock
-//! store of `keyring-core`.
+//! store of `keyring-core`. All tests share it, so each server starts
+//! with no old sign-in at its URL (`common::fresh_url`).
 
 mod common;
 
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::Router;
@@ -15,14 +16,6 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 
-static MOCK_KEYRING: Once = Once::new();
-
-fn mock_keyring() {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
-}
-
 /// A fake provider that signs in Ada, and its issuer.
 async fn fake_provider() -> String {
     FakeProvider::start("Ada@comotechnologies.io", Some(DEFAULT_DOMAIN))
@@ -31,9 +24,13 @@ async fn fake_provider() -> String {
 }
 
 async fn start() -> (Service, Api) {
-    mock_keyring();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    start_on(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap()).await
+}
+
+/// A server with sign-in on `listener`. The keyring holds no sign-in
+/// for its URL.
+async fn start_on(listener: tokio::net::TcpListener) -> (Service, Api) {
+    let url = common::fresh_url(&listener);
     let service = Service::new(Config {
         provider: Some(Provider {
             issuer: fake_provider().await,
@@ -184,8 +181,8 @@ async fn ensure_signs_in_only_when_needed() {
     assert_eq!(again, None);
 
     // A riff with no sign-in needs none.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let open = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let (listener, url) = common::listen().await;
+    let open = Api::new(&url);
     let router = Service::default().router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let none = login::ensure(&open, |_| panic!("no browser"))
@@ -197,6 +194,30 @@ async fn ensure_signs_in_only_when_needed() {
 #[tokio::test]
 async fn logout_all_with_no_sign_in_at_a_riff_with_sign_in_says_riff_login() {
     let (_, api) = start().await;
+    let error = login::logout_all(&api, None).await.unwrap_err();
+    assert!(error.to_string().contains("run riff login"), "{error}");
+}
+
+/// The OS can give the port of an earlier test to a later test. The
+/// sign-in that the earlier test left in the shared keyring for that
+/// URL, with another riff ID, does not reach the later test.
+#[tokio::test]
+async fn a_server_starts_with_no_old_sign_in_at_its_url() {
+    common::mock_keyring();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let old = SignIn {
+        user: "ada".into(),
+        access_token: "a".into(),
+        refresh_token: "r".into(),
+        expires_at: u64::MAX,
+        riff_id: Some("the-riff-of-an-earlier-test".into()),
+    };
+    login::store(&url, &old).unwrap();
+
+    let (_, api) = start_on(listener).await;
+    assert_eq!(api.base(), url);
+    assert_eq!(login::stored(&url).unwrap(), None);
     let error = login::logout_all(&api, None).await.unwrap_err();
     assert!(error.to_string().contains("run riff login"), "{error}");
 }
@@ -223,9 +244,8 @@ async fn login_says_that_another_account_holds_the_user() {
 
 #[tokio::test]
 async fn a_server_without_a_provider_says_so() {
-    mock_keyring();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let (listener, url) = common::listen().await;
+    let api = Api::new(&url);
     let router = Service::default().router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let error = login::login(&api, |_| panic!("no browser"))
@@ -244,9 +264,7 @@ struct Front {
 
 impl Front {
     async fn start() -> (Front, Api) {
-        mock_keyring();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (listener, url) = common::listen().await;
         let current = Arc::new(Mutex::new(Router::new()));
         let serve = current.clone();
         let router = Router::new().fallback(move |request: axum::extract::Request| {

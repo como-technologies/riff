@@ -1,7 +1,9 @@
 //! Signed messages from `riff` to a real server that needs sign-in
 //! (R195-R201). The sign-in is in the mock store of `keyring-core`.
 
-use std::sync::{Arc, Once};
+mod common;
+
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
@@ -13,8 +15,6 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::store::{Memory, Store};
 use serde_json::Value;
-
-static MOCK_KEYRING: Once = Once::new();
 
 const LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=a1";
 const READER: &str = "riff://mike@pangolin/como-technologies/riff?session=b2#review";
@@ -32,11 +32,7 @@ fn repo() -> ThreadName {
 /// A server that needs sign-in, on `store`, and a sign-in of mike on
 /// this device for it.
 async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (listener, url) = common::listen().await;
     let config = Config {
         require_sign_in: true,
         lease: riff_server::lease::Timing {
