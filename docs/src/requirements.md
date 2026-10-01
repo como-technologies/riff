@@ -1970,8 +1970,10 @@
   setting `workers.interval` of the machine of the lead, in seconds.
   The default is 10. 0 turns the rollout off. `riff workers interval`
   shows it and sets it.
-- **01M3Q5QEBTNM90SPYXNVTT7RJA** While the riff is paused, the rollout
-  starts no worker. The resume starts the rollout again.
+- **01M3Q5QEBTNM90SPYXNVTT7RJA** A pause stops the rollout within one
+  look. A look that started before the pause can start one more
+  worker. After it, the rollout starts no worker while the riff is
+  paused. The resume starts the rollout again.
 - **01M3Q5QEE4MQNCRKVJK3D54G9Z** Each start of the rollout gives the
   lead a note with the host, the pane and the session of the new
   worker. A note wakes nobody. On the machine of the lead, the person

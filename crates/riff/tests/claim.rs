@@ -440,11 +440,23 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     let _a1 = api.watch(&a1).await.unwrap();
     let _b2 = api.watch(&b2).await.unwrap();
     let (out, _) = riff(&server, dir, "mike", &["who"]).await;
-    let row = |id: &str| out.lines().find(|l| l.contains(id)).unwrap();
-    assert!(row("(a1)").ends_with("  0s ago: write the tests"), "{out}");
+    // The age of a step is the time since the session set it. The test
+    // checks that the age is there, not its number: a machine under
+    // load takes more than a second.
+    let row = |id: &str| -> String {
+        let row = out.lines().find(|l| l.contains(id)).unwrap();
+        let Some(end) = row.rfind("s ago") else {
+            return row.to_owned();
+        };
+        let digits = row[..end].chars().rev().take_while(char::is_ascii_digit);
+        let start = end - digits.count();
+        assert!(start < end, "an age in seconds: {row}");
+        format!("{}AGE{}", &row[..start], &row[end + 1..])
+    };
+    assert!(row("(a1)").ends_with("  AGE ago: write the tests"), "{out}");
     assert!(row("(b2)").contains("  blocked  "), "{out}");
     assert!(
-        row("(b2)").ends_with("  waits for a review (step: merge, 0s ago)"),
+        row("(b2)").ends_with("  waits for a review (step: merge, AGE ago)"),
         "{out}"
     );
 

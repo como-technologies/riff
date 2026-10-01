@@ -10,7 +10,7 @@ use isolated::Isolated;
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use riff_core::dpop::Key;
 use riff_core::wire::{ID_TOKEN_TYPE, Invite, Invited, TOKEN_EXCHANGE, TokenReply, TokenRequest};
@@ -51,40 +51,56 @@ fn free_port() -> u16 {
     listener.local_addr().unwrap().port()
 }
 
-/// Runs the `riff-server` command of the page. `URL` is `url` and
-/// `EMAIL` is `owner`. The environment holds the OIDC app of the page,
-/// with the fake `issuer`, and the listen address of the test. The TLS
-/// proxy of the page is not in the test.
-async fn start(command: &str, issuer: &str, listen: &str, url: &str, owner: &str) -> Server {
-    let args: Vec<String> = command
-        .split_whitespace()
-        .skip(1)
-        .map(|word| match word {
-            "URL" => url.to_owned(),
-            "EMAIL" => owner.to_owned(),
-            other => other.to_owned(),
-        })
-        .collect();
-    let child = Isolated::shared()
-        .riff_server()
-        .args(args)
-        .env_clear()
-        .env("RIFF_OIDC_CLIENT_ID", "riff-client")
-        .env("RIFF_OIDC_CLIENT_SECRET", "not-secret")
-        .env("RIFF_OIDC_ISSUER", issuer)
-        .env("RIFF_LISTEN", listen)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let server = Server(child);
-    for _ in 0..200 {
-        if tokio::net::TcpStream::connect(listen).await.is_ok() {
-            return server;
+/// The bound of the wait for the server. It is generous: it only ends
+/// a test that hangs.
+const WAIT: Duration = Duration::from_secs(60);
+
+/// Runs the `riff-server` command of the page on a free port, and gives
+/// the server and its URL. `URL` is that URL and `EMAIL` is `owner`.
+/// The environment holds the OIDC app of the page, with the fake
+/// `issuer`, and the listen address of the test. The TLS proxy of the
+/// page is not in the test. Another process can take the free port
+/// before the server listens there. Then the server ends, and the test
+/// starts it again on a new port.
+async fn start(command: &str, issuer: &str, owner: &str) -> (Server, String) {
+    let start = Instant::now();
+    loop {
+        let listen = format!("127.0.0.1:{}", free_port());
+        let url = format!("http://{listen}");
+        let args: Vec<String> = command
+            .split_whitespace()
+            .skip(1)
+            .map(|word| match word {
+                "URL" => url.clone(),
+                "EMAIL" => owner.to_owned(),
+                other => other.to_owned(),
+            })
+            .collect();
+        let child = Isolated::shared()
+            .riff_server()
+            .args(args)
+            .env_clear()
+            .env("RIFF_OIDC_CLIENT_ID", "riff-client")
+            .env("RIFF_OIDC_CLIENT_SECRET", "not-secret")
+            .env("RIFF_OIDC_ISSUER", issuer)
+            .env("RIFF_LISTEN", &listen)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut server = Server(child);
+        while server.0.try_wait().unwrap().is_none() {
+            if tokio::net::TcpStream::connect(&listen).await.is_ok() {
+                return (server, url);
+            }
+            assert!(
+                start.elapsed() < WAIT,
+                "riff-server does not listen on {listen}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(start.elapsed() < WAIT, "riff-server ends at each start");
     }
-    panic!("riff-server does not listen on {listen}");
 }
 
 /// Signs in `email` with a personal account, as `riff login` does.
@@ -131,9 +147,7 @@ async fn the_page_starts_a_team_riff_signs_in_the_owner_and_invites_a_person() {
     );
 
     let issuer = common::fake_provider().await;
-    let listen = format!("127.0.0.1:{}", free_port());
-    let url = format!("http://{listen}");
-    let _server = start(servers[0], &issuer, &listen, &url, "Ada@gmail.com").await;
+    let (_server, url) = start(servers[0], &issuer, "Ada@gmail.com").await;
 
     // The owner signs in first.
     let (key, owner) = sign_in(&url, &issuer, "ada@gmail.com").await;

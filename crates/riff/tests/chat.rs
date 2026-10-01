@@ -21,7 +21,9 @@ use riff_server::auth::Config;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
-const WAIT: Duration = Duration::from_secs(10);
+/// The bound of each wait. It is generous: it only ends a test that
+/// hangs.
+const WAIT: Duration = Duration::from_secs(30);
 
 async fn start_server() -> Api {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -373,6 +375,28 @@ fn tail(api: &Api, user: &str, dir: &std::path::Path) -> (Child, Lines<BufReader
     (child, stdout)
 }
 
+/// Waits until a `riff tail` of the chat is connected. It shows only
+/// the new messages, so the test posts a line again and again, until
+/// the tail shows one.
+async fn connected(api: &Api, tailed: &mut Lines<BufReader<ChildStdout>>) {
+    const PROBE: &str = "is the tail there";
+    let (lead, chat) = (lead_of("mike"), riff::chat::thread());
+    let deadline = Instant::now() + WAIT;
+    loop {
+        api.post(&lead, Some(&chat), &[], PROBE, Kind::Message)
+            .await
+            .unwrap();
+        match tokio::time::timeout(Duration::from_millis(500), tailed.next_line()).await {
+            Ok(line) => {
+                if line.unwrap().expect("riff tail runs").contains(PROBE) {
+                    return;
+                }
+            }
+            Err(_) => assert!(Instant::now() < deadline, "riff tail connects in time"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
     let api = start_server().await;
@@ -380,8 +404,7 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
     let mut mike = Client::start(&api, "mike", "thelio", &[]).await;
     let dir = tempfile::tempdir().unwrap();
     let (_tail, mut tailed) = tail(&api, "ann", dir.path());
-    // riff tail shows only the new messages: give it time to connect.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    connected(&api, &mut tailed).await;
 
     brett.say("/me waves").await;
     for client in [&mut mike, &mut brett] {
@@ -835,8 +858,7 @@ async fn a_cut_stream_shows_no_error_in_tail() {
     );
     let (lead, chat) = (lead_of("mike"), riff::chat::thread());
     for body in ["before the cut", "after the cut"] {
-        // Give the tail time to connect: it shows only new messages.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        connected(&api, &mut out).await;
         api.post(&lead, Some(&chat), &[], body, Kind::Message)
             .await
             .unwrap();
@@ -923,7 +945,7 @@ async fn a_front_end_error_with_no_build_is_no_version_error() {
         .await
         .unwrap();
     // A dead connection in the pool can add one wait of `follow`.
-    mike.shows_within("after the outage", 3 * WAIT).await;
+    mike.shows_within("after the outage", 2 * WAIT).await;
 
     mike.say("/quit").await;
     let status = tokio::time::timeout(WAIT, mike.child.wait()).await;

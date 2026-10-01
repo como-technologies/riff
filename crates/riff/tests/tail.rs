@@ -68,7 +68,20 @@ async fn start_fake() -> String {
     format!("http://{addr}")
 }
 
-/// The stdout of `riff tail ARGS` through a pipe, for one second.
+/// The bound of the wait for the message. It is generous: it only ends
+/// a test that hangs.
+const WAIT: Duration = Duration::from_secs(60);
+
+/// True when `out` shows the whole message: each word of [`BODY`], and
+/// the end of the last line.
+fn whole(out: &[u8]) -> bool {
+    let out = String::from_utf8_lossy(out);
+    out.matches("word").count() >= BODY.matches("word").count()
+        && out.rfind("word").is_some_and(|at| out[at..].contains('\n'))
+}
+
+/// The stdout of `riff tail ARGS` through a pipe, until it shows the
+/// whole message.
 async fn tail_output(server: &str, args: &[&str], envs: &[(&str, &str)]) -> String {
     let dir = tempfile::tempdir().unwrap();
     let mut cmd = Isolated::shared().riff();
@@ -89,16 +102,26 @@ async fn tail_output(server: &str, args: &[&str], envs: &[(&str, &str)]) -> Stri
         .stderr(Stdio::null());
     tokio::task::spawn_blocking(move || {
         let mut child = cmd.spawn().unwrap();
-        std::thread::sleep(Duration::from_secs(1));
+        let mut stdout = child.stdout.take().unwrap();
+        let (done, shown) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let mut buf = [0; 4096];
+            while !whole(&out) {
+                match stdout.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => out.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = done.send(());
+            out
+        });
+        // The kill ends the read of a tail that shows no message.
+        let in_time = shown.recv_timeout(WAIT).is_ok();
         child.kill().unwrap();
-        let mut out = String::new();
-        child
-            .stdout
-            .take()
-            .unwrap()
-            .read_to_string(&mut out)
-            .unwrap();
         child.wait().unwrap();
+        let out = String::from_utf8_lossy(&reader.join().unwrap()).into_owned();
+        assert!(in_time && whole(out.as_bytes()), "no message: {out:?}");
         out
     })
     .await
