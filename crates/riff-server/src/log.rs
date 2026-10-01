@@ -51,7 +51,12 @@
 //! that does not read, or a header of a later format stops the load, and
 //! the error names the chunk. A record of a kind that this build does not
 //! know is skipped, with a warning. It keeps its position: the next
-//! record comes after it ([`Replayed::last`]).
+//! record comes after it ([`Replayed::last`]). [`Replayed::skipped`] has
+//! the position of the first skipped record: the server writes no
+//! checkpoint past it (see [`crate::checkpoint`]).
+//!
+//! A start from a checkpoint reads only the records after its position
+//! ([`replay_after`]): from the chunk that holds the next position.
 //!
 //! # Example
 //!
@@ -233,44 +238,126 @@ pub async fn write(
 /// Reads each record of the log, in order. See "The replay" in the
 /// module docs.
 pub async fn replay(store: &dyn Store) -> Result<Replayed, StoreError> {
-    let mut names = store.list(LOG).await?;
-    names.sort();
+    replay_after(store, 0).await
+}
+
+/// The first position of a chunk, from its name.
+///
+/// ```
+/// use riff_server::log::{chunk_name, first_of};
+///
+/// assert_eq!(first_of(&chunk_name(1234)), Some(1234));
+/// assert_eq!(first_of("log/x.jsonl"), None);
+/// ```
+pub fn first_of(name: &str) -> Option<u64> {
+    name.strip_prefix(LOG)?.strip_suffix(".jsonl")?.parse().ok()
+}
+
+/// The chunks of the log, with their first positions, in log order.
+pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError> {
+    let mut chunks: Vec<(u64, String)> = store
+        .list(LOG)
+        .await?
+        .into_iter()
+        .filter_map(|name| Some((first_of(&name)?, name)))
+        .collect();
+    chunks.sort();
+    Ok(chunks)
+}
+
+/// Reads each record after the position `after`, in order: from the
+/// chunk that holds the position `after + 1`. See "The replay" in the
+/// module docs.
+///
+/// ```
+/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// use riff_core::record::{Change, Record, RiffStateSet};
+/// use riff_core::wire::RiffState;
+/// use riff_server::log::{Timing, replay_after, write};
+/// use riff_server::store::Memory;
+///
+/// let store = Memory::default();
+/// let record = |position| Record {
+///     position,
+///     written_at_ms: 0,
+///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
+/// };
+/// write(&store, &[record(1), record(2)], &Timing::default(), || true).await?;
+/// write(&store, &[record(3)], &Timing::default(), || true).await?;
+/// let replayed = replay_after(&store, 1).await?;
+/// let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
+/// assert_eq!(positions, [2, 3]);
+/// assert!(replay_after(&store, 3).await?.records.is_empty());
+/// # Ok(()) }
+/// ```
+pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, StoreError> {
+    let chunks = chunks(store).await?;
+    let from = chunks
+        .iter()
+        .rposition(|(first, _)| *first <= after + 1)
+        .unwrap_or(0);
     let mut records = Vec::new();
-    let mut next = 1;
-    for name in names {
-        let not_valid = |why: String| StoreError::not_valid(store, &name, why);
-        let Some(loaded) = store.load(&name).await? else {
+    let mut skipped = None;
+    let mut next = None;
+    let mut last_name = None;
+    for (_, name) in &chunks[from..] {
+        let not_valid = |why: String| StoreError::not_valid(store, name, why);
+        let Some(loaded) = store.load(name).await? else {
             return Err(not_valid("the chunk is gone".into()));
         };
         let (header, lines) = decode(&loaded.bytes).map_err(not_valid)?;
-        if header.first != next {
+        // The first chunk holds the position after + 1, or starts the log.
+        let expected = next.unwrap_or(if header.first <= after + 1 {
+            header.first
+        } else {
+            after + 1
+        });
+        if header.first != expected {
             return Err(not_valid(format!(
-                "the chunk starts at position {}, and the log needs {next}",
+                "the chunk starts at position {}, and the log needs {expected}",
                 header.first
             )));
         }
+        let mut position = header.first;
         for line in lines {
-            let position = match &line {
+            let at = match &line {
                 Line::Record(record) => record.position,
                 Line::Unknown { position, .. } => *position,
             };
-            if position != next {
+            if at != position {
                 return Err(not_valid(format!(
-                    "a record has position {position}, and the log needs {next}"
+                    "a record has position {at}, and the log needs {position}"
                 )));
             }
-            next += 1;
+            position += 1;
+            if at <= after {
+                continue;
+            }
             match line {
                 Line::Record(record) => records.push(*record),
                 Line::Unknown { position, kind } => {
                     tracing::warn!(position, "skipped a record of the unknown kind {kind}");
+                    skipped = skipped.or(Some(position));
                 }
             }
         }
+        next = Some(position);
+        last_name = Some(name);
+    }
+    let last = next.map_or(after, |next| next - 1);
+    if last < after
+        && let Some(name) = last_name
+    {
+        return Err(StoreError::not_valid(
+            store,
+            name,
+            format!("the log ends at position {last}, before the checkpoint at {after}"),
+        ));
     }
     Ok(Replayed {
         records,
-        last: next - 1,
+        last,
+        skipped,
     })
 }
 
@@ -283,6 +370,8 @@ pub struct Replayed {
     /// record comes after it, so it never takes the position of a skipped
     /// record.
     pub last: u64,
+    /// The position of the first record that this build skipped.
+    pub skipped: Option<u64>,
 }
 
 fn to_line(value: &impl Serialize) -> Vec<u8> {

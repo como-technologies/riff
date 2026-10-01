@@ -223,6 +223,21 @@ impl Gcs {
         }
     }
 
+    /// Deletes one object. A missing object is done.
+    async fn remove(&self, name: &str) -> Result<(), StoreError> {
+        let url = self.object_url(name);
+        let reply = self
+            .http
+            .delete(&url)
+            .bearer_auth(self.access_token().await?)
+            .send()
+            .await;
+        if matches!(&reply, Ok(r) if r.status() == StatusCode::NOT_FOUND) {
+            return Ok(());
+        }
+        check(reply, &url).await.map(drop)
+    }
+
     /// One conditional upload. `None` names no object.
     async fn put(
         &self,
@@ -280,6 +295,10 @@ impl Store for Gcs {
         known: Option<Version>,
     ) -> BoxFuture<'a, Result<Version, StoreError>> {
         self.put(name, bytes, known).boxed()
+    }
+
+    fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        self.remove(name).boxed()
     }
 
     fn locate(&self, name: &str) -> String {

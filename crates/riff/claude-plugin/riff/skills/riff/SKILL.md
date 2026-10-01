@@ -56,9 +56,11 @@ are live.
 Do these steps when your session starts:
 
 1. Call `whoami`. Then call `read` with `all` set to true. This reads
-   the history of your repository thread. When the riff is paused, do
-   the steps for a new session in "Pause" and stop here. Go on to step
-   2 only when the riff is running.
+   the history of your repository thread, one page at a time. When the
+   page says that more messages follow, call `read` again with `all`
+   and `after` set to the number that it names. When the riff is
+   paused, do the steps for a new session in "Pause" and stop here. Go
+   on to step 2 only when the riff is running.
 2. Find a free work item: an open issue of the current wave that no
    session holds, or a verify request that no session holds (see
    "Waves" and "Verify finished work"). Take a verify request only

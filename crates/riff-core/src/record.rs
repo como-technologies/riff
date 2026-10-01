@@ -86,6 +86,10 @@ pub enum Change {
     RiffStateSet(RiffStateSet),
     /// A setting of the riff changed.
     SettingChanged(SettingChanged),
+    /// A session had no sign of life for `SESSION_EXPIRY`. The state
+    /// drops it: its read cursors, its memberships, its claims, its lead,
+    /// and each direct thread whose two sessions are gone.
+    SessionForgotten(Forgotten),
 }
 // ANCHOR_END: record
 
@@ -100,6 +104,7 @@ impl Change {
         "lead_set",
         "riff_state_set",
         "setting_changed",
+        "session_forgotten",
     ];
 }
 
@@ -139,6 +144,12 @@ pub struct RiffStateSet {
 pub struct SettingChanged {
     /// The settings of idle workers.
     pub idle: Idle,
+}
+
+/// A session that the state forgets.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Forgotten {
+    pub session: SessionUri,
 }
 
 /// One line of the log, as this build reads it.
@@ -248,6 +259,7 @@ mod tests {
             Change::SettingChanged(SettingChanged {
                 idle: Idle::default(),
             }),
+            Change::SessionForgotten(Forgotten { session: uri() }),
         ]
     }
 

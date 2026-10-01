@@ -101,6 +101,8 @@ pub struct Config {
     pub owner_role: crate::owner::Timing,
     /// How long the writer tries a chunk of the log.
     pub log: crate::log::Timing,
+    /// When the server writes checkpoints, and which it keeps.
+    pub checkpoint: crate::checkpoint::Settings,
 }
 
 impl Default for Config {
@@ -122,6 +124,7 @@ impl Config {
             lease: crate::lease::Timing::default(),
             owner_role: crate::owner::Timing::default(),
             log: crate::log::Timing::default(),
+            checkpoint: crate::checkpoint::Settings::default(),
         }
     }
 

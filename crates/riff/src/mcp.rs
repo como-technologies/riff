@@ -121,6 +121,9 @@ pub struct ReadArgs {
     thread: Option<String>,
     /// True returns the full history, not only the unread messages.
     all: Option<bool>,
+    /// With all: the page after this message number. A page that has
+    /// more messages after it names the number.
+    after: Option<u64>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -367,7 +370,7 @@ request wakes you, answer with this tool. Do not post a reply."
         let thread = a.thread.map(|t| self.thread(Some(t))).transpose()?;
         let inbox = self
             .api
-            .inbox(&me, thread.as_ref(), a.all.unwrap_or(false))
+            .inbox_page(&me, thread.as_ref(), a.all.unwrap_or(false), a.after)
             .await
             .map_err(err)?;
         Ok(text::inbox(&inbox, &me))

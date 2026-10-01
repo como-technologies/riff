@@ -174,6 +174,11 @@ pub trait Store: Send + Sync {
         known: Option<Version>,
     ) -> BoxFuture<'a, Result<Version, StoreError>>;
 
+    /// Deletes the object `name`. A delete of a missing object is done.
+    /// Only the checkpoint rule deletes objects: old checkpoints, and the
+    /// chunks that no kept checkpoint needs (see [`crate::checkpoint`]).
+    fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>>;
+
     /// The full name of the object `name`, for a person, for example
     /// `gs://BUCKET/tokens`.
     fn locate(&self, name: &str) -> String {
@@ -240,6 +245,11 @@ impl Store for Memory {
             Err(StoreError::Conflict(name.to_owned()))
         };
         futures::future::ready(result).boxed()
+    }
+
+    fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        self.objects().objects.remove(name);
+        futures::future::ready(Ok(())).boxed()
     }
 }
 
@@ -352,6 +362,14 @@ impl Store for Dir {
         known: Option<Version>,
     ) -> BoxFuture<'a, Result<Version, StoreError>> {
         futures::future::ready(self.write(name, &bytes, known)).boxed()
+    }
+
+    fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+        let deleted = match std::fs::remove_file(self.path(name)) {
+            Err(e) if e.kind() != ErrorKind::NotFound => Err(self.failed(name, &e)),
+            _ => Ok(()),
+        };
+        futures::future::ready(deleted).boxed()
     }
 
     fn locate(&self, name: &str) -> String {
@@ -475,6 +493,22 @@ mod tests {
             assert_eq!(a.load(TOKENS).await.unwrap().unwrap().version, v2);
             assert!(a.load("missing").await.unwrap().is_none());
         });
+    }
+
+    #[test]
+    fn a_delete_removes_the_object_and_a_missing_one_is_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let stores: [Box<dyn Store>; 2] =
+            [Box::new(Memory::default()), Box::new(Dir::new(dir.path()))];
+        for store in stores {
+            block_on(async {
+                store.save("log/a", b"1".to_vec(), None).await.unwrap();
+                store.delete("log/a").await.unwrap();
+                assert!(store.load("log/a").await.unwrap().is_none());
+                assert!(store.list("log/").await.unwrap().is_empty());
+                store.delete("log/a").await.unwrap();
+            });
+        }
     }
 
     #[test]

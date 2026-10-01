@@ -81,7 +81,12 @@
 //!   chunk, and writes it outside the lock of the state. When a write
 //!   fails for good, the server stops for good: each waiting call gets
 //!   503, and `main` exits.
-//! - [`Service::load`] replays the log of a [`store::Store`] (R30).
+//! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
+//!   and replays the log after it (R30). A timer writes a checkpoint, and
+//!   deletes the old checkpoints and the chunks that no kept checkpoint
+//!   needs (see [`checkpoint`]).
+//! - A timer forgets each session with no sign of life for
+//!   [`state::SESSION_EXPIRY`], each [`FORGET_EVERY`].
 //!   [`Service::new`] keeps its log in memory, and saves nothing (R34).
 //!   [`Service::save`] waits until the queue is written, and saves the
 //!   token store; `main` calls it on SIGTERM (R129).
@@ -117,6 +122,7 @@
 //! ```
 
 pub mod auth;
+pub mod checkpoint;
 pub mod gcs;
 pub mod idle;
 pub mod lease;
@@ -173,6 +179,10 @@ const EVENT_BUFFER: usize = 1024;
 /// The server saves the changed token store at most this often (R127).
 pub const SAVE_EVERY: Duration = Duration::from_secs(1);
 
+/// The server looks for sessions to forget this often
+/// ([`state::State::forget_expired`]).
+pub const FORGET_EVERY: Duration = Duration::from_secs(60 * 60);
+
 type Shared = Arc<Server>;
 type Reply<T> = Result<Json<T>, (StatusCode, String)>;
 
@@ -199,6 +209,31 @@ struct Server {
     /// Each delivery that waits for the write of its record, with the
     /// position of that record.
     deliveries: Mutex<Vec<(u64, Delivery)>>,
+    /// The checkpoints of this server.
+    checkpoints: Mutex<Checkpoints>,
+}
+
+/// The last checkpoint, and why the server writes none.
+struct Checkpoints {
+    /// The position of the last checkpoint, or of the start of the log.
+    position: u64,
+    /// The time of the last checkpoint, or of the start.
+    at: Instant,
+    /// Why this server writes no checkpoint (01M3TBZBQDF0ES4KM54FJQF6Z8).
+    blocked: Option<String>,
+}
+
+impl Checkpoints {
+    fn new(position: u64, blocked: Option<String>) -> Self {
+        if let Some(why) = &blocked {
+            tracing::warn!("this server writes no checkpoint: {why}");
+        }
+        Checkpoints {
+            position,
+            at: Instant::now(),
+            blocked,
+        }
+    }
 }
 
 impl Drop for Server {
@@ -467,6 +502,52 @@ impl Server {
         })
     }
 
+    /// Writes a checkpoint when one is due, then prunes. See
+    /// [`Service::keep_checkpoints`].
+    async fn checkpoint(&self, settings: &checkpoint::Settings) {
+        let snapshot = {
+            let marks = self.checkpoints();
+            if marks.blocked.is_some() {
+                return;
+            }
+            let state = self.state();
+            let written = state.written_position();
+            let came = written.saturating_sub(marks.position);
+            if came == 0 || (came < settings.every_records && marks.at.elapsed() < settings.every) {
+                return;
+            }
+            state.snapshot(Instant::now(), now_ms())
+        };
+        let position = snapshot.position;
+        let checkpoint = checkpoint::Checkpoint::new(&settings.build, now_ms(), snapshot);
+        match checkpoint::write(&*self.log, &checkpoint).await {
+            Ok(name) => {
+                tracing::info!(position, "wrote the checkpoint {name}");
+                let mut marks = self.checkpoints();
+                marks.position = position;
+                marks.at = Instant::now();
+            }
+            Err(error) => {
+                tracing::error!("the checkpoint at position {position} was not written: {error}");
+                return;
+            }
+        }
+        match checkpoint::prune(&*self.log, settings, now_ms()).await {
+            Ok(pruned) => tracing::info!(
+                checkpoints = pruned.checkpoints.len(),
+                chunks = pruned.chunks.len(),
+                "deleted the old checkpoints and chunks"
+            ),
+            Err(error) => tracing::warn!("the delete of old checkpoints failed: {error}"),
+        }
+    }
+
+    fn checkpoints(&self) -> MutexGuard<'_, Checkpoints> {
+        self.checkpoints
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
     /// Waits until the record at `position` is written. When the server
     /// stops first, the call gets 503.
     async fn written(&self, position: Option<u64>) -> Result<(), (StatusCode, String)> {
@@ -703,6 +784,7 @@ impl Service {
             Arc::new(Memory::default()),
             None,
             now_ms() / 1000,
+            Checkpoints::new(0, None),
         )
     }
 
@@ -755,16 +837,28 @@ impl Service {
             None => Tokens::default(),
         };
         let replayed = Instant::now();
-        let log::Replayed { records, last } = log::replay(&*store).await?;
+        let found = checkpoint::load(&*store, &config.checkpoint.build).await?;
+        let snapshot = found.checkpoint.map(|c| c.state);
+        let from = snapshot.as_ref().map_or(0, |s| s.position);
+        let log::Replayed {
+            records,
+            last,
+            skipped,
+        } = log::replay_after(&*store, from).await?;
         let count = records.len();
-        let mut state = State::replay(records, Instant::now(), now_ms());
+        let mut state = State::load(snapshot, records, Instant::now(), now_ms());
         state.continue_after(last);
         tracing::info!(
+            checkpoint = from,
             records = count,
             position = state.position(),
-            "replayed the log in {:?}",
+            "loaded the checkpoint and replayed the log after it in {:?}",
             replayed.elapsed()
         );
+        let blocked = found.blocked.or_else(|| {
+            skipped.map(|position| format!("this build skipped the record at position {position}"))
+        });
+        let checkpoints = Checkpoints::new(from, blocked);
         let asked = Instant::now();
         if !lease.held().await? {
             return Err(StoreError::Conflict(store::LEASE.into()));
@@ -783,6 +877,7 @@ impl Service {
             store,
             Some(until),
             start,
+            checkpoints,
         );
         // Save the tokens once, so that a new riff ID stays
         // (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
@@ -805,6 +900,7 @@ impl Service {
         log: Arc<dyn Store>,
         until: Option<Instant>,
         start: u64,
+        checkpoints: Checkpoints,
     ) -> Self {
         let mut tokens = tokens;
         if let Some(owner) = &config.owner {
@@ -835,8 +931,11 @@ impl Service {
             written,
             queued: Arc::new(tokio::sync::Notify::new()),
             deliveries: Mutex::new(Vec::new()),
+            checkpoints: Mutex::new(checkpoints),
         }));
         service.write_log();
+        service.keep_checkpoints();
+        service.forget_sessions();
         service.watch_owner();
         service.watch_idle_workers();
         service
@@ -889,6 +988,73 @@ impl Service {
                         s.stop(&format!("the write of the chunk {chunk} failed"));
                         break;
                     }
+                }
+            }
+        });
+    }
+
+    /// Starts the task that writes a checkpoint each
+    /// [`checkpoint::Settings::every_records`] records, or each
+    /// [`checkpoint::Settings::every`] when records came, while the server
+    /// serves. It takes a snapshot of the written state under the lock,
+    /// and encodes and writes it outside the lock. Then it deletes the old
+    /// checkpoints and the chunks that no kept checkpoint needs. A server
+    /// with no async runtime starts no task. The task ends when the
+    /// service ends.
+    fn keep_checkpoints(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        let settings = self.0.config.checkpoint.clone();
+        runtime.spawn(async move {
+            let mut tick = tokio::time::interval(settings.check_every);
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(s) = server.upgrade() else {
+                    break;
+                };
+                if s.is_stopped() {
+                    break;
+                }
+                if s.leased() {
+                    s.checkpoint(&settings).await;
+                }
+            }
+        });
+    }
+
+    /// Starts the task that forgets each session with no sign of life for
+    /// [`state::SESSION_EXPIRY`], each [`FORGET_EVERY`]. A server with no
+    /// async runtime starts no task. The task ends when the service ends.
+    fn forget_sessions(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        runtime.spawn(async move {
+            let mut tick = tokio::time::interval(FORGET_EVERY);
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(s) = server.upgrade() else {
+                    break;
+                };
+                if s.is_stopped() {
+                    break;
+                }
+                if s.serving() {
+                    let before = s.state().position();
+                    let forgotten = s.state().forget_expired(Instant::now());
+                    if forgotten > 0 {
+                        tracing::info!(
+                            sessions = forgotten,
+                            "forgot the sessions with no sign of life"
+                        );
+                    }
+                    let state = s.state();
+                    s.made(&state, before);
                 }
             }
         });
@@ -1399,17 +1565,25 @@ async fn read(
 ) -> Reply<ReadReply> {
     let signed = caller.is_some();
     called(&s, caller, &r.me).await?;
-    let messages = s
+    let page = s
         .state()
-        .read(&r.me, &r.thread, r.all, Instant::now())
+        .read_page(
+            &r.me,
+            &r.thread,
+            r.all,
+            r.after,
+            state::PAGE,
+            Instant::now(),
+        )
         .map_err(not_found)?;
     let keys = if signed {
-        s.keys(messages.iter().map(|m| m.from.who().user()))
+        s.keys(page.messages.iter().map(|m| m.from.who().user()))
     } else {
         Keys::new()
     };
     Ok(Json(ReadReply {
-        messages,
+        messages: page.messages,
+        next: page.next,
         keys,
         trusted: s.config.trusted(),
     }))
@@ -2165,6 +2339,10 @@ mod tests {
                 self.store.save(name, bytes, known).await
             })
         }
+
+        fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+            self.store.delete(name)
+        }
     }
 
     fn mike() -> SessionUri {
@@ -2185,9 +2363,50 @@ mod tests {
         config
     }
 
+    /// A config that writes a checkpoint each `every_records` records,
+    /// as the build `build`.
+    fn with_checkpoints(every_records: u64, build: &str) -> Config {
+        let mut config = config();
+        config.checkpoint.every_records = every_records;
+        config.checkpoint.check_every = Duration::from_millis(50);
+        config.checkpoint.build = build.into();
+        config
+    }
+
+    /// The names of the checkpoints in `store`.
+    async fn checkpoints(store: &Gated) -> Vec<String> {
+        store.store.list(checkpoint::CHECKPOINT).await.unwrap()
+    }
+
+    /// Posts `n` messages of mike, and waits until they are written.
+    async fn post_n(service: &Service, n: usize, prefix: &str) {
+        for i in 0..n {
+            let _ = post_message(
+                AxumState(service.0.clone()),
+                None,
+                Json(post_body(&mike(), &format!("{prefix}{i}"))),
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    /// The state that the log gives in `service`, as a state with no
+    /// sessions.
+    fn log_state(service: &Service) -> State {
+        let snapshot = service.0.state().snapshot(Instant::now(), 0);
+        State::load(Some(snapshot), [], Instant::now(), 0)
+    }
+
     /// A server on `store` with mike and brett in a running riff.
     async fn running(store: Arc<Gated>) -> Service {
-        let service = Service::load(config(), store).await.unwrap();
+        running_with(config(), store).await
+    }
+
+    /// A server with `config` on `store`, with mike and brett in a
+    /// running riff.
+    async fn running_with(config: Config, store: Arc<Gated>) -> Service {
+        let service = Service::load(config, store).await.unwrap();
         for me in [mike(), brett()] {
             let _ = register(
                 AxumState(service.0.clone()),
@@ -2347,11 +2566,110 @@ mod tests {
         drop(next);
         let again = Service::load(config(), store).await.unwrap();
         let read = Read {
+            after: None,
             me: brett(),
             thread: mike().default_thread().unwrap(),
             all: true,
         };
         assert_eq!(read_messages(&again, read).await, ["after"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_new_server_starts_from_the_checkpoint_and_the_chunks_after_it() {
+        let store = Arc::new(Gated::default());
+        let config = with_checkpoints(5, "0.8.0");
+        let service = running_with(config.clone(), store.clone()).await;
+        post_n(&service, 12, "m").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!checkpoints(&store).await.is_empty());
+        post_n(&service, 2, "late").await;
+        let before = log_state(&service);
+        drop(service);
+
+        // The delete took the first chunks, so a full replay from the
+        // start is not possible: the start uses the checkpoint.
+        assert!(log::replay(&store.store).await.is_err());
+        let next = Service::load(config, store.clone()).await.unwrap();
+        assert!(next.0.state().same_log_state(&before));
+        let read = Read {
+            after: None,
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: true,
+        };
+        let messages = read_messages(&next, read).await;
+        assert_eq!(messages.len(), 14);
+        assert_eq!(messages.last().unwrap(), "late1");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn new_build_old_build_new_build_loses_no_record() {
+        let store = Arc::new(Gated::default());
+        let new = with_checkpoints(3, "0.9.0");
+        let service = running_with(new.clone(), store.clone()).await;
+        post_n(&service, 4, "new").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let written = checkpoints(&store).await;
+        assert!(!written.is_empty());
+        drop(service);
+
+        // A rollback: the old build writes records, but no checkpoint
+        // past the checkpoint of the later version.
+        let old = Service::load(with_checkpoints(3, "0.8.0"), store.clone())
+            .await
+            .unwrap();
+        post_n(&old, 6, "old").await;
+        let _ = claim(
+            AxumState(old.0.clone()),
+            None,
+            Json(Claim {
+                me: brett(),
+                thread: mike().default_thread().unwrap(),
+                item: "issue-9".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(checkpoints(&store).await, written);
+        let before = log_state(&old);
+        drop(old);
+
+        // The new build again: each record of the old build is there.
+        let again = Service::load(new, store.clone()).await.unwrap();
+        assert!(again.0.state().same_log_state(&before));
+        assert_eq!(
+            again.0.state().uri(brett().who(), Instant::now()).claims(),
+            ["issue-9"]
+        );
+        // The new build writes checkpoints again.
+        post_n(&again, 3, "again").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_ne!(checkpoints(&store).await, written);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_build_that_skipped_a_record_writes_no_checkpoint_past_it() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let last = service.0.state().position();
+        drop(service);
+        let later = format!(
+            "{{\"format\":1,\"first\":{n}}}\n{{\"position\":{n},\"written_at_ms\":0,\"change\":{{\"reacted\":{{}}}}}}\n",
+            n = last + 1
+        );
+        store
+            .store
+            .save(&log::chunk_name(last + 1), later.into_bytes(), None)
+            .await
+            .unwrap();
+
+        let next = Service::load(with_checkpoints(1, "0.8.0"), store.clone())
+            .await
+            .unwrap();
+        post_n(&next, 3, "m").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(checkpoints(&store).await.is_empty());
     }
 
     #[tokio::test(start_paused = true)]
@@ -2383,6 +2701,7 @@ mod tests {
         *store.fail.lock().unwrap() = None;
         let next = Service::load(config(), store.clone()).await.unwrap();
         let read = Read {
+            after: None,
             me: brett(),
             thread: mike().default_thread().unwrap(),
             all: true,

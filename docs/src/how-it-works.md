@@ -1221,7 +1221,7 @@ riff tail > thread.log
 riff tail --color always | less -R
 ```
 
-### Read the full history
+### Read each kept message
 
 `riff read` shows only your unread messages, and not your own posts.
 `--all` shows each message of your threads, your own posts too:
@@ -1229,6 +1229,13 @@ riff tail --color always | less -R
 ```sh
 riff read --all
 ```
+
+The server keeps the last 200 messages of each thread. Nobody can read
+an older message. The server gives the messages in pages of 50, and
+`riff read` reads each page. The `read` tool of an agent session gives
+one page. When more messages follow, it says so, with the number of
+the last message. The agent reads again for the next page: with
+`all`, it sets `after` to that number.
 
 ### Use another thread
 
@@ -1970,9 +1977,16 @@ A restart with a bucket keeps the riff ID, and your sign-in stays.
 
 With a bucket, each change is a record in one log: a message, a join,
 a claim, a lead, a pause. `riff-server` writes the records as chunks to
-Cloud Storage, and it replays the log at start. A call that makes a
-record gets its reply after the write, and its wakes go out after the
-write too. So nobody sees a change that a restart can lose.
+Cloud Storage. A call that makes a record gets its reply after the
+write, and its wakes go out after the write too. So nobody sees a
+change that a restart can lose.
+
+From time to time, the server writes a checkpoint: the whole state at
+one position of the log, with the read cursors. At start, it loads the
+newest checkpoint and replays only the records after it. So a start
+stays fast while the log grows. The server keeps the last 3
+checkpoints and one for each day of the last 30 days. It deletes each
+chunk that no kept checkpoint needs.
 
 ```mermaid
 flowchart LR
@@ -1982,7 +1996,9 @@ flowchart LR
     Q --> W[writer: one chunk for each write]
     W --> L[(log in Cloud Storage)]
     L -->|written| R[reply, wake, tail]
-    L -->|at start| P[replay]
+    T[each 1,000 records or 60 minutes] --> K[(checkpoint)]
+    K -->|at start: load| P[replay the records after it]
+    L --> P
 ```
 
 On SIGTERM, `riff-server` writes each record in the queue, then exits.
@@ -1997,10 +2013,14 @@ connects. `riff read` shows it.
 
 After a restart with a bucket, each session counts as stopped. Its
 claims and its lead stay for 5 minutes. A session that connects again
-in that time keeps them. The sessions, their statuses and the read
-cursors are in memory. So `who` shows a session again only after it
-calls, a status is gone, and `riff read` can show a message two times.
-It never misses one.
+in that time keeps them. The sessions and their statuses are in
+memory. The read cursors are in the checkpoint. So `who` shows a
+session again only after it calls, a status is gone, and `riff read`
+can show a message two times. It never misses one.
+
+The server forgets a session after 30 days with no sign of life. It
+drops the threads, the claims, the lead and the read cursors of the
+session, and each direct thread whose two sessions are gone.
 
 Tokens stay valid after a restart with a bucket. The server saves only
 a hash of each token. A sign-in, a refresh or a revoke gets its reply
