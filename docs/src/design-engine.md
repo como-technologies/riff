@@ -136,6 +136,16 @@ flowchart TD
   own. The client and the server are one release.
 - A kind is never renamed, and the name of a removed command is never
   used again. A file in the fixtures lists each kind of each release.
+- Each group has one file in `crates/riff-server/src/state/`, with its
+  part of the riff, its `apply` arms, its part of the checkpoint and
+  its commands. The record `session_forgotten` of `forget` changes
+  each part, so its arm calls each part. The rustdoc of the module
+  `state` says where each part lives.
+- The wire type of a post is its command type. Each other command has
+  a type of its own in the server until E1b.
+- The lead of a user frees the claim of another session of that user
+  with `ReleaseFor`, a type of the group work. E1b decides its kind and
+  its row in `permits`.
 
 ### Who can send a command
 
@@ -186,10 +196,19 @@ fails, and the worker asks in its own terminal.
   log gives) and the presence (memory). `View` holds the two, read
   only. `Engine::signal` gets `&mut Presence` only. So a signal cannot
   change a claim or a lead.
-- A record also changes the presence: a `session_forgotten` record
-  removes the session and its cursors, and a `claimed` record sets the
-  time of the last change of the claims. The writer calls
-  `apply(&mut riff, record)` and then `Presence::applied(record)`.
+- A record changes the presence only in `Presence::applied`: a
+  `session_forgotten` record removes the session and its cursors, a
+  `claimed` or a `released` record sets the time of the last change of
+  the claims, and a `riff_state_set` record sets the time for a stale
+  status. The writer calls `apply(&mut riff, record)` and then
+  `Presence::applied`, with the record, the riff after the `apply`,
+  and the time of the call that made the record. A replay gives no
+  time, and then `Presence::applied` sets no time.
+- Until E2, `Presence::applied` also gets the session that held the
+  item before a `claimed` record: its claims change too. E2 gives the
+  old holder a `released` record, and this part goes.
+- `who` shows the time of a change after the write of its record: each
+  reader sees the written copy.
 - A status is a signal. The wire type refuses a bad text. A `register`
   is a signal (the place) and a command (the join of the repository
   thread). An `end` is a command (it frees the claims) and a signal
@@ -568,8 +587,13 @@ The envelope of each record: `position`, `written_at_ms`, `by`,
 
 The three rules of the store design stay. These rules come with them:
 
-- `apply` only stores what a record says. It derives no rule from
-  other records. So a new policy changes only `handle`.
+- `apply` only stores what a record says
+  (01M3WNQQWA7XGK4Y9ET8HJZ8NN). It reads only the record and the riff,
+  and no clock, no presence and no setting. It makes no decision. So a
+  new policy changes only `handle`, and the same log gives the same
+  riff on each build that knows the records. The table below has each
+  place where `apply` reads the riff. A new place needs a line in the
+  list of `state/riff.rs`.
 - `by` and `command` are fields of the envelope with a default: a
   record with no `by` has a cause that is not known.
 - A new record kind after 1.0.0 gets a new name. An old build skips it,
@@ -585,6 +609,14 @@ The three rules of the store design stay. These rules come with them:
   values and no `other`.
 - A new command needs no change of the format: `command` is text. A
   reader takes a `command` that it does not know as text.
+
+| Record | Where `apply` reads the riff | It stays |
+|---|---|---|
+| `session_forgotten` | It removes each thing of the session: its entry, its places in the threads, its claims, its lead, and each direct thread whose other session is not known. | Yes. E4 gives the claims their `released` records first. |
+| `left_thread` | It ends the place of the session in the thread, with its lead of that thread. The lead of a thread is a member of it. | Yes. |
+| `posted` | A thread keeps its last 200 messages. The number is a constant of the format: a change of it follows the rules for a change of a record. | Yes. |
+| `claimed` | The new holder replaces the old one. | Until E2. Then the old holder gets a `released` record first. |
+| `released` | A record of a session that does not hold the item changes nothing. `handle` refuses such a release, so the engine does not write this record. | Yes. |
 
 ### The checkpoint
 

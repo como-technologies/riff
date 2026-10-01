@@ -6,11 +6,11 @@
 //!
 //! | Part | Fields |
 //! |---|---|
-//! | [`the_riff::Saved`] | `riff`, `idle` |
-//! | [`threads::Saved`] | `threads` |
-//! | [`work::Saved`] | `claims`, `leads` |
-//! | [`sessions::Saved`] | `sessions` |
-//! | [`presence::Saved`] | `cursors` |
+//! | `the_riff::Saved` | `riff`, `idle` |
+//! | `threads::Saved` | `threads` |
+//! | `work::Saved` | `claims`, `leads` |
+//! | `sessions::Saved` | `sessions` |
+//! | `presence::Saved` | `cursors` |
 //!
 //! A group that adds a part to the state adds a field to its own
 //! `Saved`, with a default (01M3T4111PFM0C6KPREWFS9EQQ). This file does

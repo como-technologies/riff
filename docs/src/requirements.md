@@ -602,6 +602,23 @@
   plus 1. A gap, a repeat, a line that does not read, or a chunk of a
   later format stops the start. The error names the chunk
   (01M3MMXYS1V8CA89D2XHKPR6C4).
+- **01M3WNQRCBP0PHSA0H3THDH5NJ** The state of `riff-server` has two
+  types: the riff (the state that the log gives) and the presence
+  (memory). Only `apply` changes the riff. A record changes the
+  presence only in `Presence::applied`. Each command is a type with
+  its `handle` rule, in the file of its group: sessions, threads,
+  work, or the riff.
+- **01M3WNQQWA7XGK4Y9ET8HJZ8NN** `apply` reads only the record and the
+  riff, and no clock. It makes no decision. The places where it reads
+  the riff are in a list in `state/riff.rs`, and a new place needs a
+  line there. Three places stay for good: a `session_forgotten` record
+  removes each thing of the session, a `left_thread` record ends the
+  lead of the session in that thread, and a thread keeps its last 200
+  messages. A `released` record of a session that does not hold the
+  item changes nothing. A `claimed` record replaces the old holder.
+- **01M3WNQR41K41TV832GRQZ2CQS** A log and a checkpoint that an earlier
+  build wrote read with no change. A test reads a log and a checkpoint
+  that `main` wrote, and compares the state and the bytes.
 
 - **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
   Its name is `checkpoint/`, the position in 20 digits, `-`, and the

@@ -3,13 +3,13 @@
 //!
 //! - Part of the riff: [`Work`]. The holder of each claimed item, and
 //!   the lead of each user in each repository thread (R175).
-//! - `apply`: [`Work::claimed`], [`Work::released`] and
-//!   [`Work::lead_set`] for the records of these names. [`Work::left`]
-//!   for a `left_thread` record, and [`Work::forgotten`] for a
+//! - `apply`: `Work::claimed`, `Work::released` and
+//!   `Work::lead_set` for the records of these names. `Work::left`
+//!   for a `left_thread` record, and `Work::forgotten` for a
 //!   `session_forgotten` record: see [`super::riff`].
-//! - Checkpoint: [`Saved`], the fields `claims` and `leads`.
-//! - The rules of a lead for `handle`: [`View::lead_of`],
-//!   [`View::is_lead`] and [`View::lead_if_first`].
+//! - Checkpoint: `Saved`, the fields `claims` and `leads`.
+//! - The rules of a lead for `handle`: `View::lead_of`,
+//!   `View::is_lead` and `View::lead_if_first`.
 
 use std::collections::BTreeMap;
 use std::time::Instant;

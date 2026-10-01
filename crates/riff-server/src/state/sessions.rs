@@ -4,9 +4,9 @@
 //! - Part of the riff: [`Sessions`]. Each session that a record names,
 //!   with its URI and the time of the last record that names it. A
 //!   replay makes a session in the presence for each.
-//! - `apply`: [`Sessions::named`] for each record, and
-//!   [`Sessions::forgotten`] for a `session_forgotten` record.
-//! - Checkpoint: [`Saved`], the field `sessions`.
+//! - `apply`: `Sessions::named` for each record, and
+//!   `Sessions::forgotten` for a `session_forgotten` record.
+//! - Checkpoint: `Saved`, the field `sessions`.
 //!
 //! The session in memory (its place, its signs of life) is in
 //! [`super::presence`].

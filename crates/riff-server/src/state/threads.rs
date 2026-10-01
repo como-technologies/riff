@@ -4,13 +4,13 @@
 //! - Part of the riff: [`Threads`]. The members and the last
 //!   [`KEEP_MESSAGES`] messages of each thread, and the index of the
 //!   signed messages for the copy check (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
-//! - `apply`: [`Threads::posted`], [`Threads::joined`] and
-//!   [`Threads::left`] for the records `posted`, `joined_thread` and
-//!   `left_thread`. [`Threads::forgotten`] for a `session_forgotten`
+//! - `apply`: `Threads::posted`, `Threads::joined` and
+//!   `Threads::left` for the records `posted`, `joined_thread` and
+//!   `left_thread`. `Threads::forgotten` for a `session_forgotten`
 //!   record: see [`super::riff`].
-//! - Checkpoint: [`Saved`], the field `threads`.
+//! - Checkpoint: `Saved`, the field `threads`.
 //! - The rules of a post for `handle`: which thread it goes to, and
-//!   which sessions it wakes ([`View::thread_of`], [`View::selected`]).
+//!   which sessions it wakes (`View::thread_of`, `View::selected`).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Instant;

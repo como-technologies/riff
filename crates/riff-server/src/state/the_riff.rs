@@ -3,11 +3,11 @@
 //!
 //! - Part of the riff: [`TheRiff`]. Paused or running, and the settings
 //!   of idle workers.
-//! - `apply`: [`TheRiff::state_set`] for a `riff_state_set` record, and
-//!   [`TheRiff::setting_changed`] for a `setting_changed` record. The
+//! - `apply`: `TheRiff::state_set` for a `riff_state_set` record, and
+//!   `TheRiff::setting_changed` for a `setting_changed` record. The
 //!   `session_forgotten` record of [`Forget`] changes each part: see
 //!   [`super::riff`].
-//! - Checkpoint: [`Saved`], the fields `riff` and `idle`.
+//! - Checkpoint: `Saved`, the fields `riff` and `idle`.
 
 use riff_core::name::SessionUri;
 use riff_core::record::{Change, Forgotten, RiffStateSet, SettingChanged};

@@ -7,7 +7,7 @@
 //!
 //! No record is needed to change the presence: a keep-alive, a status
 //! and a read change it. A record changes it only in
-//! [`Presence::applied`] (01M3WNQRCBP0PHSA0H3THDH5NJ).
+//! `Presence::applied` (01M3WNQRCBP0PHSA0H3THDH5NJ).
 
 use std::collections::BTreeMap;
 use std::time::Instant;
