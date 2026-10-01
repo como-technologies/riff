@@ -2590,9 +2590,10 @@ a free item with a request. The server stops idle workers.
 #### Which machine gets a worker
 
 Each machine tells five numbers: its CPU cores, its CPU speed, its
-memory, its available memory and its 1-minute load average. From them riff makes a score:
-the number of workers that the machine runs well. One worker needs one
-core and 2 GB of memory. A core at 3000 MHz counts 1:
+memory, its available memory and its 1-minute load average. From them
+riff makes a score: the number of workers that the machine runs well.
+One worker needs one core and 2 GB of memory. A core at 3000 MHz
+counts 1:
 
 ```text
 score = min(cores, memory GB / 2) × MHz / 3000
@@ -2603,8 +2604,9 @@ starts the next worker on the machine with the most free capacity. A
 small machine gets workers only when a big machine has less room. riff
 starts no worker on a machine whose load average is more than its
 cores, or whose available memory is less than its floor (see
-[Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs)). `riff workers` shows the numbers and the score of each machine
-(see [List the workers](#list-the-workers)).
+[Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs)).
+`riff workers` shows the numbers and the score of each machine (see
+[List the workers](#list-the-workers)).
 
 #### Change the rate of the rollout
 

@@ -1986,8 +1986,9 @@
   worker that did not join yet counts.
 - **01M3Q5QE4SQ8VYN2PSF42KB3QJ** Each machine that runs workers tells
   its CPU cores, its CPU speed, its memory, its available memory and
-  its 1-minute load average. A workers host puts them in its status. `riff workers` shows
-  the numbers and the score of this machine and of each host.
+  its 1-minute load average. A workers host puts them in its status.
+  `riff workers` shows the numbers and the score of this machine and of
+  each host.
 - **01M3Q5QE76BZ27SZ14FFE8HM1G** The score of a machine is
   `min(cores, memory GB / 2) × MHz / 3000`. Its free capacity is the
   score less its workers. The rollout starts a worker on the machine
