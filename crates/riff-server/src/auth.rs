@@ -76,7 +76,7 @@ pub const TOKEN_PATH: &str = "/v1/token";
 
 /// Each grant type that the token endpoint takes. A token exchange
 /// swaps an ID token of the provider for a person pair, or a person
-/// access token for a session pair.
+/// access token for a session token.
 pub const GRANT_TYPES: &[&str] = &["refresh_token", TOKEN_EXCHANGE];
 
 /// The settings of one `riff-server`.

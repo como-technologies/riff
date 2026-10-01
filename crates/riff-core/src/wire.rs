@@ -247,8 +247,7 @@ pub struct ServerFacts {
     /// The number of read cursors.
     pub cursors: u64,
     pub threads: u64,
-    /// The number of live token chains: one for each sign-in, and one
-    /// for each session with a live session pair.
+    /// The number of live token chains: one for each sign-in.
     pub sign_ins: u64,
     /// The memory that the server uses, in bytes. `None` when the
     /// system does not tell.
@@ -1050,7 +1049,7 @@ pub const TOKEN_EXCHANGE: &str = "urn:ietf:params:oauth:grant-type:token-exchang
 pub const ID_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:id_token";
 
 /// The subject token type of a [`TOKEN_EXCHANGE`] request that swaps a
-/// person access token for a session pair (R19).
+/// person access token for a session access token (R19).
 pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 
 /// `POST /v1/token`, as `application/x-www-form-urlencoded`.
@@ -1069,7 +1068,7 @@ pub struct TokenRequest {
     pub subject_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_token_type: Option<String>,
-    /// The session ID of a session pair.
+    /// The session ID of a session token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     /// The server that the token is for (RFC 8707). When it is set, it
@@ -1081,6 +1080,19 @@ pub struct TokenRequest {
 /// A new pair of riff tokens. Send `access_token` with the `DPoP`
 /// scheme and a proof from the device key. Use `refresh_token` once, to
 /// get the next pair.
+///
+/// The reply to a swap for a session token has an empty
+/// `refresh_token`: a session token has none
+/// (01M3WFVAB44T8EP4QZD4KS7DRF).
+///
+/// ```
+/// use riff_core::wire::TokenReply;
+///
+/// let json = r#"{"access_token":"a","token_type":"DPoP","expires_in":600,
+///     "refresh_token":"","user":"mike"}"#;
+/// let session: TokenReply = serde_json::from_str(json).unwrap();
+/// assert!(session.refresh_token.is_empty());
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenReply {
     pub access_token: String,
@@ -1088,6 +1100,7 @@ pub struct TokenReply {
     pub token_type: String,
     /// Seconds until the access token expires.
     pub expires_in: u64,
+    /// Empty for a session token.
     pub refresh_token: String,
     /// The user part of the session URI, from the sign-in (R36).
     pub user: String,

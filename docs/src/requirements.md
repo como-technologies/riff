@@ -1606,17 +1606,19 @@
   generation before it. A refresh token of an older generation is
   reused (R17), at any time. A refresh token with a wrong secret is not
   known, and changes nothing.
-- **01M3TFG4PN1DWY1FXX0SVB3H3R** A sign-in has at most one live chain
-  for the person, and one for each session. A new session token for a
-  session ends the old chain of that session.
+- **01M3TFG4PN1DWY1FXX0SVB3H3R** Replaced by 01M3WFVAB44T8EP4QZD4KS7DRF.
+- **01M3WFVAB44T8EP4QZD4KS7DRF** A sign-in has one chain: the chain of
+  the person. A session token has no refresh token and no chain: the
+  reply to the swap has an access token and an empty `refresh_token`.
+  A new session token ends no other token, so each process of a
+  session keeps its own. The token store keeps nothing of a session
+  token.
 - **01M3TFG4WE7CZQ4TCJE2NTC52E** After a start, the saved token store
   can be one generation behind. So the first refresh of each chain
   after a start takes the current generation of the saved store, or
   the next one, as good. `riff-server` checks the device key first
   (R110).
-- **01M3TFG4ZCWS98R7W6RYZFWZXF** A session chain ends when its refresh
-  token is not used for 24 hours. `riff` then swaps the person token
-  for a new session token (R103).
+- **01M3TFG4ZCWS98R7W6RYZFWZXF** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
 - **01M3TFG551C76BP4TRA32P7VC3** `riff-server` keeps each access token
   only in memory. After a restart, each client refreshes one time.
 - **01M3MX4TG7PNNETZ986DQS10JJ** A used refresh token counts as
@@ -1692,9 +1694,11 @@
   keyring.
 - **R19** Each session gets its own token. The token works only for that
   session.
-- **R103** A session gets its token by token exchange (RFC 8693): it
-  sends a person access token and its session ID. The session token
-  has its own refresh token. A refresh keeps the session.
+- **R103** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
+- **01M3WFVADCDZM8XX590KAEMEYG** A session gets its token by token
+  exchange (RFC 8693): it sends a person access token and its session
+  ID. Before the session token expires, `riff` swaps the person token
+  for a new one.
 - **R104** A token acts only as its caller. The user and the session ID
   in `me` must match the token, or `riff-server` replies 403. A person
   token acts only as the person, with no session ID.

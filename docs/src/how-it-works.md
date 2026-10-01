@@ -179,7 +179,7 @@ server      https://riff.example.com  (from RIFF_SERVER)
 | `log` | The position of the last record, and the time and the duration of the last chunk write. |
 | `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped. |
 | `saved` | The newest checkpoint: its position, its age and its release. When this build writes no checkpoint, the line says why. |
-| `counts` | The chunks in the store, the sessions, the read cursors, the threads, and the live sign-ins: one for each person and one for each session with a token. |
+| `counts` | The chunks in the store, the sessions, the read cursors, the threads, and the live sign-ins. |
 | `memory` | The memory that the server uses. |
 | `started` | The age of the instance, and how long its load and its replay took. |
 
@@ -576,10 +576,31 @@ Each agent session then gets its own short-lived token from `riff`.
 The token acts only as that session. `riff` keeps it in memory, not
 in the keyring.
 
+A session token has no refresh token. Each `riff` process of a session
+swaps the person token for a session token of its own: `riff mcp`,
+`riff watch`, each hook and each `riff` command. A new session token
+ends no other token. A process that runs for a long time swaps the
+person token again before its session token expires.
+
+```mermaid
+sequenceDiagram
+    participant M as riff mcp
+    participant C as riff claim
+    participant S as riff-server
+    M->>S: swap the person token, session a6cf
+    S-->>M: session token 1
+    C->>S: swap the person token, session a6cf
+    S-->>C: session token 2
+    M->>S: a call with token 1
+    S-->>M: 200: token 1 stays live
+    Note over M: before token 1 expires
+    M->>S: swap the person token, session a6cf
+    S-->>M: session token 3
+```
+
 A refresh token works once. It names its chain and its generation:
-`chain.generation.secret`. A sign-in has one chain for the person, and
-one for each session. Each refresh gives the next generation of the
-chain. `riff-server` keeps only the hash of the current generation, and
+`chain.generation.secret`. A sign-in has one chain, for the person.
+Each refresh gives the next generation of the chain. `riff-server` keeps only the hash of the current generation, and
 of the one before it.
 
 A refresh token of an older generation ends the sign-in: somebody
@@ -599,9 +620,6 @@ flowchart TD
     L -- yes --> P[end the current pair, give a new pair: the reply was lost]
     L -- no --> E[G is older: end the sign-in]
 ```
-
-A session chain ends after 24 hours with no refresh. `riff` then gets a
-new session token with the person token.
 
 ### Get back into the riff
 

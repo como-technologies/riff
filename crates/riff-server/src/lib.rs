@@ -98,8 +98,9 @@
 //!   revoke and a change of the people get their reply only after the
 //!   write (R128). When that write fails, the reply is 503, and a task
 //!   writes the store again.
-//! - A refresh and a new session pair get their reply before the write
-//!   (01M3TFG527M04TA7ESM970X3B8). So after a crash, the object can be
+//! - A refresh and a new session token get their reply before the write
+//!   (01M3TFG527M04TA7ESM970X3B8). A session token changes nothing in
+//!   the object (01M3WFVAB44T8EP4QZD4KS7DRF). So after a crash, the object can be
 //!   one generation behind, and [`token::Tokens::refresh`] takes the next
 //!   generation as good. While the last write failed, a refresh first
 //!   writes the store again, and gets 503 when that write fails too.
@@ -1944,7 +1945,7 @@ const UNAVAILABLE: &str = "temporarily_unavailable";
 
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
 /// A sign-in gets its reply after the write of the token store (R128).
-/// A refresh and a session pair do not wait for it
+/// A refresh and a session token do not wait for it
 /// (01M3TFG527M04TA7ESM970X3B8).
 async fn token(
     AxumState(s): AxumState<Shared>,
@@ -2371,7 +2372,9 @@ async fn exchange(
     Ok(pair)
 }
 
-/// Swaps a person access token for a session pair (R19).
+/// Swaps a person access token for a session access token (R19). The
+/// token store keeps nothing of a session token, so the swap counts no
+/// change of it (01M3WFVAB44T8EP4QZD4KS7DRF).
 async fn for_session(
     s: &Server,
     r: &TokenRequest,
@@ -2386,7 +2389,7 @@ async fn for_session(
     }
     s.tokens_written().await?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
-    s.tokens_change()
+    s.tokens()
         .for_session(token, &proof.jkt, session, now)
         .map_err(|_| no("invalid_grant"))
 }

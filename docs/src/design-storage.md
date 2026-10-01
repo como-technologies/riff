@@ -342,8 +342,11 @@ does not call `who` for the whole riff.
 - A refresh with the current generation gives the next generation. A
   refresh with an older generation is reuse: the server ends the
   sign-in. The server checks the DPoP key before the generation.
-- Each (sign-in, session) has at most one live chain. A session chain
-  ends after 24 hours with no refresh.
+- A sign-in has one chain: the chain of the person. A session token
+  has no refresh token and no chain. The server gives a session an
+  access token only. Each process of a session swaps the person token
+  for a token of its own, and a swap ends no other token. A swap
+  changes nothing in `signins.json`.
 - The server writes `signins.json` at most one time each second, when
   something changed. A sign-in and a revoke wait for the write. A
   refresh does not. After a crash, the snapshot can be one generation

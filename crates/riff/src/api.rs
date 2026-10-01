@@ -13,11 +13,22 @@
 //! | A session | A session token, see [`login::session_token`] | The memory of the process |
 //!
 //! A session token comes from a token exchange the first time that the
-//! client needs it. After that, the client refreshes it with its own
-//! refresh token. When the refresh fails, it does a new exchange. When
-//! the server refuses the refresh, the client drops the pair, so it
-//! sends a refused refresh token one time only
-//! (01M3W947QF6PFBWR28ZVXCVQHG). See [`login`] for the person pair.
+//! client needs it. It has no refresh token
+//! (01M3WFVAB44T8EP4QZD4KS7DRF). Before it expires, the client does a
+//! new exchange with the person token
+//! (01M3WFVADCDZM8XX590KAEMEYG). Each process of a session holds a
+//! token of its own, and a new token ends no other token. See
+//! [`login`] for the person pair.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     C[a call of a session] --> L{session token live for 60 s more?}
+//!     L -- yes --> U[use it]
+//!     L -- no --> P[the person access token, see login::access_token]
+//!     P --> X[POST /v1/token: swap for a session token]
+//!     X -- token --> K[keep it in memory] --> U
+//!     X -- invalid_grant --> R[refresh the person pair once, swap again]
+//! ```
 //!
 //! When the server replies 401 to a call with a token, the client drops
 //! that token, gets a new one, and sends the call once more
@@ -431,15 +442,16 @@ struct Auth {
     key: Key,
     /// The session of a session client. `None` for a person.
     session: Option<String>,
-    /// The session pair, once the client has one.
-    pair: Mutex<Option<Pair>>,
+    /// The session token, once the client has one.
+    held: Mutex<Option<Held>>,
     /// Set once [`Api::check_riff`] passed.
     riff_checked: tokio::sync::OnceCell<()>,
 }
 
-struct Pair {
+/// A session access token. It has no refresh token
+/// (01M3WFVAB44T8EP4QZD4KS7DRF).
+struct Held {
     access_token: String,
-    refresh_token: String,
     /// Seconds since the Unix epoch.
     expires_at: u64,
 }
@@ -591,7 +603,7 @@ impl Api {
         self.auth = Some(Arc::new(Auth {
             key: device::key(&self.base)?,
             session: session.map(str::to_owned),
-            pair: Mutex::new(None),
+            held: Mutex::new(None),
             riff_checked: tokio::sync::OnceCell::new(),
         }));
         Ok(self)
@@ -624,11 +636,11 @@ impl Api {
 
     /// A live access token for the caller, from a task of its own
     /// (01M3ND6R8YXN1KTRTRAV5A7F14). [`Api::access_token`] holds the
-    /// lock of the pair, and the first check of the riff, across its
-    /// requests. A caller can stop polling its future, for example a
+    /// lock of the session token, and the first check of the riff,
+    /// across its requests. A caller can stop polling its future, for example a
     /// `select!` that runs another branch, and the other branch can then
     /// wait for the same lock. The runtime polls the task, so the lock
-    /// is always given back, and one refresh still runs at a time.
+    /// is always given back, and one swap still runs at a time.
     ///
     /// The return type says `Send`: `access_token` comes back here
     /// through `session_token`, so the compiler cannot infer it.
@@ -641,7 +653,9 @@ impl Api {
         async move { task.await.context("the task of the access token failed")? }
     }
 
-    /// A live access token for the caller.
+    /// A live access token for the caller. A session swaps the person
+    /// token for a new session token before the old one expires
+    /// (01M3WFVADCDZM8XX590KAEMEYG).
     async fn access_token(&self, auth: &Auth) -> Result<String> {
         auth.riff_checked
             .get_or_try_init(|| self.check_riff())
@@ -649,42 +663,18 @@ impl Api {
         let Some(session) = &auth.session else {
             return login::access_token(&self.anonymous()).await;
         };
-        let mut pair = auth.pair.lock().await;
-        if let Some(live) = pair
+        let mut held = auth.held.lock().await;
+        if let Some(live) = held
             .as_ref()
-            .filter(|p| now() + login::REFRESH_MARGIN.as_secs() < p.expires_at)
+            .filter(|h| now() + login::REFRESH_MARGIN.as_secs() < h.expires_at)
         {
             return Ok(live.access_token.clone());
         }
-        let refreshed = match pair.as_ref() {
-            Some(old) => {
-                let request = TokenRequest {
-                    grant_type: "refresh_token".into(),
-                    refresh_token: Some(old.refresh_token.clone()),
-                    ..TokenRequest::default()
-                };
-                let refreshed = self.token(&request, &auth.key).await;
-                // The server refused the pair: never send it again
-                // (01M3W947QF6PFBWR28ZVXCVQHG).
-                if refreshed.as_ref().is_err_and(|e| {
-                    e.downcast_ref::<TokenRefused>()
-                        .is_some_and(TokenRefused::ended)
-                }) {
-                    *pair = None;
-                }
-                refreshed.ok()
-            }
-            None => None,
-        };
-        let reply = match refreshed {
-            Some(reply) => reply,
-            None => login::session_token(&self.anonymous(), session).await?,
-        };
+        let reply = login::session_token(&self.anonymous(), session).await?;
         let access_token = reply.access_token.clone();
-        *pair = Some(Pair {
+        *held = Some(Held {
             expires_at: now() + reply.expires_in,
             access_token: reply.access_token,
-            refresh_token: reply.refresh_token,
         });
         Ok(access_token)
     }
@@ -695,10 +685,10 @@ impl Api {
         if auth.session.is_none() {
             return login::forget(&self.base, token).await;
         }
-        if let Some(pair) = auth.pair.lock().await.as_mut()
-            && pair.access_token == token
+        if let Some(held) = auth.held.lock().await.as_mut()
+            && held.access_token == token
         {
-            pair.expires_at = 0;
+            held.expires_at = 0;
         }
         Ok(())
     }

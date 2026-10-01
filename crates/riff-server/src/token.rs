@@ -4,10 +4,9 @@
 //!
 //! ```text
 //!  sign-in (user, device key, last use)
-//!    ├─ person chain        generation 7
-//!    │    └─ access tokens  each expires after ACCESS_TTL
-//!    └─ session chain a6cf  generation 3
-//!         └─ access tokens
+//!    ├─ person chain           generation 7
+//!    ├─ person access tokens   each expires after ACCESS_TTL
+//!    └─ session access tokens  each for one session, with no chain
 //! ```
 //!
 //! A sign-in holds the user and the thumbprint of the device key (R18).
@@ -16,15 +15,38 @@
 //! email that signs in with a USER holds it (R209, see
 //! [`Tokens::sign_in`]).
 //!
-//! A pair is a *person* pair or a *session* pair (R19). `riff login`
-//! gets a person pair. [`Tokens::for_session`] swaps a live person
-//! access token for a session pair. So [`Tokens::caller`] gives a
-//! [`Who`] with the user and, for a session pair, the session ID.
+//! An access token is a *person* token or a *session* token (R19).
+//! `riff login` gets a person pair: an access token and a refresh
+//! token. [`Tokens::for_session`] swaps a live person access token for
+//! a session access token. So [`Tokens::caller`] gives a [`Who`] with
+//! the user and, for a session token, the session ID.
 //!
-//! Each pair belongs to a *chain* of its sign-in: the person chain, or
-//! the chain of one session. A sign-in has at most one live chain for
-//! the person and for each session (01M3TFG4PN1DWY1FXX0SVB3H3R). A
-//! refresh token names its chain and its generation:
+//! A sign-in has one *chain* of refresh tokens: the person chain. A
+//! session token has no refresh token and no chain
+//! (01M3WFVAB44T8EP4QZD4KS7DRF). One session has many processes: `riff
+//! mcp`, `riff watch`, each hook and each `riff` command. Each process
+//! swaps the person token for an access token of its own, and a swap
+//! ends no other token. A long process swaps again before its token
+//! expires.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant L as riff mcp (long)
+//!     participant H as riff claim (short)
+//!     participant S as riff-server
+//!     L->>S: swap the person token, session a6cf
+//!     S-->>L: access token 1
+//!     H->>S: swap the person token, session a6cf
+//!     S-->>H: access token 2
+//!     Note over S: token 1 stays live
+//!     L->>S: a call with token 1
+//!     S-->>L: 200
+//!     Note over L: before token 1 expires
+//!     L->>S: swap the person token, session a6cf
+//!     S-->>L: access token 3
+//! ```
+//!
+//! A refresh token names its chain and its generation:
 //! `chain.generation.secret`. The chain ID and the secret are random
 //! bytes in URL-safe base64. Each refresh gives the next generation.
 //!
@@ -60,15 +82,11 @@
 //!   (01M3TFG4WE7CZQ4TCJE2NTC52E). The server has no hash of that
 //!   token. The device key of the sign-in is the check.
 //! - A sign-in expires when no refresh token of it is used for
-//!   [`REFRESH_IDLE`]. A session chain ends when its refresh token is
-//!   not used for [`SESSION_IDLE`]. The session then swaps the person
-//!   token again.
-//! - A refresh gives a pair of the same chain: a session pair stays for
-//!   its session.
-//! - Only a person access token gives a session pair (R105). A new
-//!   session pair ends the old chain of that session.
+//!   [`REFRESH_IDLE`].
+//! - Only a person access token gives a session token (R105). A new
+//!   session token ends no other token.
 //! - [`Tokens::revoke_user`] ends each sign-in of one person at once
-//!   (R20). This ends the session pairs too. It leaves the USER of the
+//!   (R20). This ends the session tokens too. It leaves the USER of the
 //!   person: only that email signs in as that USER again.
 //! - A token that the server does not know is refused. A refresh token
 //!   with a wrong secret is not known, and changes nothing.
@@ -208,10 +226,11 @@
 //! assert_eq!(part(&second.refresh_token, 1), "2");
 //! assert_eq!(tokens.check(&second.access_token, "jkt-laptop", now).unwrap(), "mike");
 //!
-//! // A session pair acts only as its session.
+//! // A session token acts only as its session. It has no refresh token.
 //! let session = tokens.for_session(&second.access_token, "jkt-laptop", "a6cf", now).unwrap();
 //! let who = tokens.caller(&session.access_token, "jkt-laptop", now).unwrap();
 //! assert_eq!(who.to_string(), "mike/a6cf");
+//! assert_eq!(session.refresh_token, "");
 //!
 //! // A second use before the next refresh is a lost reply: it ends the
 //! // pair of the first use and gives a new one.
@@ -242,10 +261,6 @@ pub const ACCESS_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// A sign-in ends when no refresh token of it is used this long (R80).
 pub const REFRESH_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-
-/// A session chain ends when its refresh token is not used this long
-/// (01M3TFG4ZCWS98R7W6RYZFWZXF).
-pub const SESSION_IDLE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The USER of the riff server itself. The server posts its own notes as
 /// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
@@ -399,12 +414,9 @@ struct Access {
     expires: Instant,
 }
 
-/// One chain of refresh tokens: the person chain of a sign-in, or the
-/// chain of one session (01M3TFG4SJ5C96NH8W7XRXJG6Z).
+/// The chain of refresh tokens of a sign-in (01M3TFG4SJ5C96NH8W7XRXJG6Z).
 struct Chain {
     sign_in: u64,
-    /// The session of a session chain. `None` for the person chain.
-    session: Option<String>,
     /// The current generation. The first pair has generation 1.
     generation: u64,
     /// The hash of the refresh token of the current generation.
@@ -418,9 +430,6 @@ struct Chain {
     /// True from the load until the first refresh: the saved form can be
     /// one generation behind (01M3TFG4WE7CZQ4TCJE2NTC52E).
     loaded: bool,
-    /// A session chain ends at this time, unless a refresh comes first.
-    /// `None` for the person chain: it ends with its sign-in.
-    idle_until: Option<Instant>,
 }
 
 /// A refresh token in its parts. The hash is of the whole token.
@@ -513,7 +522,7 @@ impl Tokens {
                 idle_until: now + REFRESH_IDLE,
             },
         );
-        Ok(self.start_chain(id, None, now))
+        Ok(self.start_chain(id, now))
     }
 
     /// Signs in a person from the provider, when the person may join the
@@ -1164,11 +1173,11 @@ impl Tokens {
         Ok(self.issue(&chain_id, generation, before, now))
     }
 
-    /// Swaps a live person access token for a session pair in the same
-    /// sign-in (R19). The session pair works only for `session`, and
-    /// only with the device key `jkt`. It starts a new chain, and ends
-    /// the old chain of that session in the sign-in
-    /// (01M3TFG4PN1DWY1FXX0SVB3H3R).
+    /// Swaps a live person access token for a session access token in
+    /// the same sign-in (R19). The session token works only for
+    /// `session`, and only with the device key `jkt`. The reply has no
+    /// refresh token, and the swap ends no other token: each process of
+    /// the session keeps its own (01M3WFVAB44T8EP4QZD4KS7DRF).
     ///
     /// ```
     /// use std::time::Instant;
@@ -1177,10 +1186,18 @@ impl Tokens {
     /// let now = Instant::now();
     /// let mut tokens = Tokens::default();
     /// let person = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
-    /// let old = tokens.for_session(&person.access_token, "k", "a6cf", now).unwrap();
-    /// let new = tokens.for_session(&person.access_token, "k", "a6cf", now).unwrap();
-    /// assert_eq!(tokens.refresh(&old.refresh_token, "k", now), Err(Refused::Unknown));
-    /// assert!(tokens.refresh(&new.refresh_token, "k", now).is_ok());
+    /// let long = tokens.for_session(&person.access_token, "k", "a6cf", now).unwrap();
+    /// let short = tokens.for_session(&person.access_token, "k", "a6cf", now).unwrap();
+    /// for token in [&long, &short] {
+    ///     let who = tokens.caller(&token.access_token, "k", now).unwrap();
+    ///     assert_eq!(who.to_string(), "mike/a6cf");
+    ///     assert_eq!(token.refresh_token, "");
+    /// }
+    /// assert_eq!(tokens.chains(), 1);
+    ///
+    /// // The end of the sign-in ends each session token.
+    /// tokens.revoke_user("mike");
+    /// assert_eq!(tokens.caller(&long.access_token, "k", now), Err(Refused::Unknown));
     /// ```
     pub fn for_session(
         &mut self,
@@ -1196,18 +1213,17 @@ impl Tokens {
         Who::new(who.user(), Some(session)).map_err(|_| Refused::Unknown)?;
         self.sweep(now);
         let id = self.access[&hash(token)].sign_in;
-        let old = |c: &Chain| c.sign_in == id && c.session.as_deref() == Some(session);
-        for chain in self.chains.values().filter(|c| old(c)) {
-            if let Some(access) = chain.access {
-                self.access.remove(&access);
-            }
-        }
-        self.chains.retain(|_, c| !old(c));
-        Ok(self.start_chain(id, Some(session.to_owned()), now))
+        let access_token = self.issue_access(id, Some(session.to_owned()), now);
+        Ok(TokenReply {
+            access_token,
+            token_type: "DPoP".into(),
+            expires_in: ACCESS_TTL.as_secs(),
+            refresh_token: String::new(),
+            user: who.user().to_owned(),
+        })
     }
 
-    /// The number of live chains: one for each sign-in, and one for each
-    /// session with a live session pair.
+    /// The number of live chains: one for each sign-in.
     pub fn chains(&self) -> usize {
         self.chains.len()
     }
@@ -1340,27 +1356,20 @@ impl Tokens {
             chains: self
                 .chains
                 .iter()
-                .filter_map(|(id, c)| {
-                    Some(SavedChain {
-                        id: id.clone(),
-                        sign_in: c.sign_in,
-                        session: c.session.clone(),
-                        generation: c.generation,
-                        hash: URL_SAFE_NO_PAD.encode(c.hash),
-                        before: c.before.map(|h| URL_SAFE_NO_PAD.encode(h)),
-                        idle_until: match c.idle_until {
-                            Some(idle) => Some(live(idle)?),
-                            None => None,
-                        },
-                    })
+                .map(|(id, c)| SavedChain {
+                    id: id.clone(),
+                    sign_in: c.sign_in,
+                    generation: c.generation,
+                    hash: URL_SAFE_NO_PAD.encode(c.hash),
+                    before: c.before.map(|h| URL_SAFE_NO_PAD.encode(h)),
                 })
                 .collect(),
         };
         serde_json::to_vec(&saved).expect("the saved form is JSON")
     }
 
-    /// Loads a store from [`Tokens::to_bytes`]. It drops each chain and
-    /// sign-in that ended while the server was down. The first refresh
+    /// Loads a store from [`Tokens::to_bytes`]. It drops each sign-in
+    /// that ended while the server was down, with its chain. The first refresh
     /// of each loaded chain takes the next generation as good too
     /// (01M3TFG4WE7CZQ4TCJE2NTC52E).
     pub fn from_bytes(bytes: &[u8], now: Instant, wall: SystemTime) -> Result<Tokens, LoadError> {
@@ -1399,22 +1408,13 @@ impl Tokens {
             }
         }
         for c in saved.chains {
-            let idle_until = match c.idle_until {
-                None => None,
-                Some(idle) => match clock.load(idle) {
-                    Some(idle) => Some(idle),
-                    None => continue,
-                },
-            };
             let chain = Chain {
                 sign_in: c.sign_in,
-                session: c.session,
                 generation: c.generation,
                 hash: unhash(&c.hash)?,
                 before: c.before.as_deref().map(unhash).transpose()?,
                 access: None,
                 loaded: true,
-                idle_until,
             };
             tokens.chains.insert(c.id, chain);
         }
@@ -1422,29 +1422,25 @@ impl Tokens {
         Ok(tokens)
     }
 
-    /// Starts a chain of `sign_in` and gives its first pair. `session`
-    /// is `None` for the person chain.
-    fn start_chain(&mut self, sign_in: u64, session: Option<String>, now: Instant) -> TokenReply {
+    /// Starts the chain of `sign_in` and gives its first pair.
+    fn start_chain(&mut self, sign_in: u64, now: Instant) -> TokenReply {
         let id = random_id();
-        let idle_until = session.is_some().then(|| now + SESSION_IDLE);
         self.chains.insert(
             id.clone(),
             Chain {
                 sign_in,
-                session,
                 generation: 0,
                 hash: Hash::default(),
                 before: None,
                 access: None,
                 loaded: false,
-                idle_until,
             },
         );
         self.issue(&id, 1, None, now)
     }
 
-    /// Gives the pair of `generation` of a chain. `before` is the hash
-    /// of the refresh token of the generation before it.
+    /// Gives the person pair of `generation` of a chain. `before` is the
+    /// hash of the refresh token of the generation before it.
     fn issue(
         &mut self,
         chain_id: &str,
@@ -1452,33 +1448,22 @@ impl Tokens {
         before: Option<Hash>,
         now: Instant,
     ) -> TokenReply {
-        let access_token = random_token();
         let refresh_token = format!("{chain_id}.{generation}.{}", random_token());
-        let access = hash(&access_token);
-        let Some(chain) = self.chains.get_mut(chain_id) else {
+        let Some(sign_in) = self.chains.get(chain_id).map(|c| c.sign_in) else {
             unreachable!("the caller found the chain")
         };
-        chain.generation = generation;
-        chain.hash = hash(&refresh_token);
-        chain.before = before;
-        chain.access = Some(access);
-        chain.loaded = false;
-        if chain.session.is_some() {
-            chain.idle_until = Some(now + SESSION_IDLE);
+        let access_token = self.issue_access(sign_in, None, now);
+        if let Some(chain) = self.chains.get_mut(chain_id) {
+            chain.generation = generation;
+            chain.hash = hash(&refresh_token);
+            chain.before = before;
+            chain.access = Some(hash(&access_token));
+            chain.loaded = false;
         }
-        let (sign_in, session) = (chain.sign_in, chain.session.clone());
         let user = self
             .sign_ins
             .get(&sign_in)
             .map_or_else(String::new, |s| s.user.clone());
-        self.access.insert(
-            access,
-            Access {
-                sign_in,
-                session,
-                expires: now + ACCESS_TTL,
-            },
-        );
         TokenReply {
             access_token,
             token_type: "DPoP".into(),
@@ -1488,6 +1473,21 @@ impl Tokens {
         }
     }
 
+    /// Gives a new access token of `sign_in`. `session` is `None` for a
+    /// person token.
+    fn issue_access(&mut self, sign_in: u64, session: Option<String>, now: Instant) -> String {
+        let access_token = random_token();
+        self.access.insert(
+            hash(&access_token),
+            Access {
+                sign_in,
+                session,
+                expires: now + ACCESS_TTL,
+            },
+        );
+        access_token
+    }
+
     /// Ends one sign-in and each token of it.
     fn revoke(&mut self, sign_in: u64) {
         self.sign_ins.remove(&sign_in);
@@ -1495,16 +1495,14 @@ impl Tokens {
         self.chains.retain(|_, c| c.sign_in != sign_in);
     }
 
-    /// Forgets expired access tokens, idle sign-ins and idle session
+    /// Forgets expired access tokens, and idle sign-ins with their
     /// chains.
     fn sweep(&mut self, now: Instant) {
         self.sign_ins.retain(|_, s| now < s.idle_until);
         let live = &self.sign_ins;
         self.access
             .retain(|_, a| now < a.expires && live.contains_key(&a.sign_in));
-        self.chains.retain(|_, c| {
-            live.contains_key(&c.sign_in) && c.idle_until.is_none_or(|idle| now < idle)
-        });
+        self.chains.retain(|_, c| live.contains_key(&c.sign_in));
     }
 }
 
@@ -1571,12 +1569,9 @@ struct SavedSignIn {
 struct SavedChain {
     id: String,
     sign_in: u64,
-    session: Option<String>,
     generation: u64,
     hash: String,
     before: Option<String>,
-    /// For a session chain: it ends at this time.
-    idle_until: Option<u64>,
 }
 
 /// One time on the two clocks. It turns a deadline into a wall-clock
@@ -1770,20 +1765,18 @@ mod tests {
         );
     }
 
+    /// A lost reply ends the person access token of the lost pair.
+    /// The session tokens of the sign-in stay.
     #[test]
-    fn a_lost_reply_of_a_session_refresh_keeps_the_session() {
+    fn a_lost_reply_of_a_person_refresh_keeps_the_session_tokens() {
         let (mut tokens, person, now) = signed_in();
-        let first = tokens
+        let session = tokens
             .for_session(&person.access_token, "k", "a", now)
             .unwrap();
-        tokens.refresh(&first.refresh_token, "k", now).unwrap();
-        let again = tokens.refresh(&first.refresh_token, "k", now).unwrap();
-        let who = tokens.caller(&again.access_token, "k", now).unwrap();
+        tokens.refresh(&person.refresh_token, "k", now).unwrap();
+        tokens.refresh(&person.refresh_token, "k", now).unwrap();
+        let who = tokens.caller(&session.access_token, "k", now).unwrap();
         assert_eq!(who.to_string(), "mike/a");
-        assert_eq!(
-            tokens.check(&person.access_token, "k", now),
-            Ok("mike".to_owned())
-        );
     }
 
     #[test]
@@ -1985,66 +1978,137 @@ mod tests {
         assert!(tokens.refresh(&second.refresh_token, "k", now).is_ok());
     }
 
+    /// The fault of #381: a new token for a session ended the token of
+    /// each other process of that session.
     #[test]
-    fn a_sign_in_has_one_chain_for_the_person_and_one_for_each_session() {
+    fn a_new_session_token_ends_no_other_token() {
+        let (mut tokens, person, now) = signed_in();
+        let long = tokens
+            .for_session(&person.access_token, "k", "a", now)
+            .unwrap();
+        let other = tokens
+            .for_session(&person.access_token, "k", "b", now)
+            .unwrap();
+        for _ in 0..10 {
+            let short = tokens
+                .for_session(&person.access_token, "k", "a", now)
+                .unwrap();
+            assert_ne!(short.access_token, long.access_token);
+            let who = |t: &str| tokens.caller(t, "k", now).unwrap().to_string();
+            assert_eq!(who(&short.access_token), "mike/a");
+            assert_eq!(who(&long.access_token), "mike/a");
+            assert_eq!(who(&other.access_token), "mike/b");
+            assert_eq!(who(&person.access_token), "mike");
+        }
+    }
+
+    #[test]
+    fn a_session_token_has_no_refresh_token_and_no_chain() {
         let (mut tokens, person, now) = signed_in();
         let a = tokens
             .for_session(&person.access_token, "k", "a", now)
             .unwrap();
-        let b = tokens
-            .for_session(&person.access_token, "k", "b", now)
-            .unwrap();
-        assert_eq!(tokens.chains(), 3);
-        // A new pair for the session `a` ends its old chain.
-        let again = tokens
-            .for_session(&person.access_token, "k", "a", now)
-            .unwrap();
-        assert_eq!(tokens.chains(), 3);
-        assert_ne!(parts(&again.refresh_token).0, parts(&a.refresh_token).0);
+        assert_eq!(a.refresh_token, "");
+        assert_eq!(a.expires_in, ACCESS_TTL.as_secs());
+        assert_eq!(tokens.chains(), 1, "only the person chain");
+        assert_eq!(tokens.refresh("", "k", now), Err(Refused::Unknown));
+        // A session token is no refresh token.
         assert_eq!(
-            tokens.refresh(&a.refresh_token, "k", now),
+            tokens.refresh(&a.access_token, "k", now),
             Err(Refused::Unknown)
         );
-        assert_eq!(
-            tokens.check(&a.access_token, "k", now),
-            Err(Refused::Unknown)
-        );
-        // The other chains go on, and a refresh makes no new chain.
-        for pair in [&person, &b, &again] {
-            assert!(tokens.refresh(&pair.refresh_token, "k", now).is_ok());
-        }
-        assert_eq!(tokens.chains(), 3);
-        // A second sign-in of the person has its own chains.
+        // The saved form holds nothing of the session.
+        let text = String::from_utf8(tokens.to_bytes(now, SystemTime::now())).unwrap();
+        assert!(!text.contains("session"), "{text}");
+        // A second sign-in of the person has its own chain.
         let other = tokens
             .sign_in("mike@comotechnologies.io", "k", now)
             .unwrap();
         tokens
             .for_session(&other.access_token, "k", "a", now)
             .unwrap();
-        assert_eq!(tokens.chains(), 5);
+        assert_eq!(tokens.chains(), 2);
     }
 
     #[test]
-    fn an_idle_session_chain_ends_and_the_sign_in_stays() {
+    fn a_session_token_expires_and_the_person_token_gives_a_new_one() {
         let (mut tokens, person, now) = signed_in();
         let a = tokens
             .for_session(&person.access_token, "k", "a", now)
             .unwrap();
-        let almost = now + SESSION_IDLE - Duration::from_secs(1);
-        let second = tokens.refresh(&a.refresh_token, "k", almost).unwrap();
-        let idle = almost + SESSION_IDLE;
+        let later = now + ACCESS_TTL;
         assert_eq!(
-            tokens.refresh(&second.refresh_token, "k", idle),
+            tokens.caller(&a.access_token, "k", later),
+            Err(Refused::Expired)
+        );
+        let person = tokens.refresh(&person.refresh_token, "k", later).unwrap();
+        let again = tokens
+            .for_session(&person.access_token, "k", "a", later)
+            .unwrap();
+        let who = tokens.caller(&again.access_token, "k", later).unwrap();
+        assert_eq!(who.to_string(), "mike/a");
+        // The sweep of the swap forgot the expired token.
+        assert_eq!(
+            tokens.caller(&a.access_token, "k", later),
             Err(Refused::Unknown)
         );
-        assert_eq!(tokens.chains(), 1);
-        // The person token still works, and gives a new session pair.
-        let person = tokens.refresh(&person.refresh_token, "k", idle).unwrap();
-        assert!(
-            tokens
-                .for_session(&person.access_token, "k", "a", idle)
-                .is_ok()
+    }
+
+    /// Each end of a sign-in ends its session tokens at once (R20): a
+    /// revoke of the person, a removed member, and a reused refresh
+    /// token.
+    #[test]
+    fn the_end_of_a_sign_in_ends_each_session_token_at_once() {
+        let now = Instant::now();
+        let session = |tokens: &mut Tokens, person: &TokenReply, key: &str| {
+            let a = tokens
+                .for_session(&person.access_token, key, "a", now)
+                .unwrap();
+            let b = tokens
+                .for_session(&person.access_token, key, "a", now)
+                .unwrap();
+            assert!(tokens.caller(&a.access_token, key, now).is_ok());
+            [a.access_token, b.access_token]
+        };
+        let gone = |tokens: &Tokens, held: &[String], key: &str| {
+            for token in held {
+                assert_eq!(tokens.caller(token, key, now), Err(Refused::Unknown));
+            }
+        };
+
+        // A revoke of the person.
+        let (mut tokens, person, _) = signed_in();
+        let held = session(&mut tokens, &person, "k");
+        assert_eq!(tokens.revoke_user("mike"), 1);
+        gone(&tokens, &held, "k");
+        assert_eq!(
+            tokens.for_session(&person.access_token, "k", "a", now),
+            Err(Refused::Unknown)
         );
+
+        // A removed member.
+        let mut tokens = Tokens::default();
+        tokens
+            .admit("ada@gmail.com", false, &[], "k1", now)
+            .unwrap();
+        tokens.invite("bob@gmail.com").unwrap();
+        let bob = tokens
+            .admit("bob@gmail.com", false, &[], "k2", now)
+            .unwrap();
+        let held = session(&mut tokens, &bob, "k2");
+        tokens.remove("bob@gmail.com").unwrap();
+        gone(&tokens, &held, "k2");
+
+        // A reused refresh token.
+        let (mut tokens, first, _) = signed_in();
+        let held = session(&mut tokens, &first, "k");
+        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        tokens.refresh(&second.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            tokens.refresh(&first.refresh_token, "k", now),
+            Err(Refused::Reused)
+        );
+        gone(&tokens, &held, "k");
     }
 
     /// The server stopped after a refresh and before it saved the
@@ -2204,7 +2268,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_pair_acts_only_as_its_session() {
+    fn a_session_token_acts_only_as_its_session() {
         let (mut tokens, person, now) = signed_in();
         let a = tokens
             .for_session(&person.access_token, "k", "a", now)
@@ -2220,18 +2284,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_refresh_keeps_the_session() {
-        let (mut tokens, person, now) = signed_in();
-        let first = tokens
-            .for_session(&person.access_token, "k", "a", now)
-            .unwrap();
-        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
-        let who = tokens.caller(&second.access_token, "k", now).unwrap();
-        assert_eq!(who.session(), Some("a"));
-    }
-
-    #[test]
-    fn only_a_person_token_gives_a_session_pair() {
+    fn only_a_person_token_gives_a_session_token() {
         let (mut tokens, person, now) = signed_in();
         let a = tokens
             .for_session(&person.access_token, "k", "a", now)
@@ -2394,7 +2447,10 @@ mod tests {
         let who = |t: &Tokens, token: &str| t.caller(token, "k", now).unwrap().to_string();
         let third = loaded.refresh(&second.refresh_token, "k", now).unwrap();
         assert_eq!(who(&loaded, &third.access_token), "mike");
-        let next = loaded.refresh(&session.refresh_token, "k", now).unwrap();
+        // The new person token gives the session a new token.
+        let next = loaded
+            .for_session(&third.access_token, "k", "a", now)
+            .unwrap();
         assert_eq!(who(&loaded, &next.access_token), "mike/a");
         assert_eq!(
             loaded.check(&third.access_token, "thief", now),
@@ -2463,8 +2519,8 @@ mod tests {
         tokens
             .for_session(&person.access_token, "k", "a", now)
             .unwrap();
-        let (loaded, _) = restart(&tokens, now, SESSION_IDLE);
-        assert_eq!(loaded.chains(), 1, "only the person chain");
+        let (loaded, _) = restart(&tokens, now, REFRESH_IDLE - Duration::from_secs(1));
+        assert_eq!(loaded.chains(), 1, "the person chain");
         let (loaded, _) = restart(&tokens, now, REFRESH_IDLE);
         assert!(loaded.sign_ins.is_empty() && loaded.chains.is_empty());
     }
@@ -2492,27 +2548,11 @@ mod tests {
         let empty = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"chains":[]}"#;
         assert!(Tokens::from_bytes(empty, now, wall).is_ok());
         let bad_hash = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"chains":[
-            {"id":"c","sign_in":0,"session":null,"generation":1,"hash":"abc",
-             "before":null,"idle_until":null}]}"#;
+            {"id":"c","sign_in":0,"generation":1,"hash":"abc","before":null}]}"#;
         assert!(Tokens::from_bytes(bad_hash, now, wall).is_err());
         let bad_id = br#"{"next_sign_in":0,"users":{},"sign_ins":[
             {"id":0,"user":"mike","jkt":"k","idle_until":18446744073709551615}],
             "chains":[]}"#;
         assert!(Tokens::from_bytes(bad_id, now, wall).is_err());
-    }
-
-    #[test]
-    fn reuse_of_a_session_refresh_revokes_the_sign_in() {
-        let (mut tokens, person, now) = signed_in();
-        let first = tokens
-            .for_session(&person.access_token, "k", "a", now)
-            .unwrap();
-        let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
-        tokens.refresh(&second.refresh_token, "k", now).unwrap();
-        tokens.refresh(&first.refresh_token, "k", now).unwrap_err();
-        assert_eq!(
-            tokens.check(&person.access_token, "k", now),
-            Err(Refused::Unknown)
-        );
     }
 }
