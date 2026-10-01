@@ -120,7 +120,10 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
     for part in [
         "riff sets your step by itself",
         "`tell`, `post`, `pause`, `resume` and `lead`",
-        "told 075ff6a7: request: claim issue-302",
+        "told 075ff6a7",
+        "posted a note: Waves: new item #314",
+        "The\nstep shows no text of a direct message",
+        "it keeps your `blocked`\nreason",
         "Set your status for\nwork that riff cannot see",
     ] {
         assert!(
@@ -132,7 +135,9 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
     for part in [
         "### See what the lead does",
         "```sh\nriff who\n```",
-        "told 075ff6a7: request: claim issue-302",
+        "told 075ff6a7",
+        "the step of a `tell` shows\nonly the session",
+        "A `blocked` reason of the lead stays",
         "posted a note: Waves: new item #314",
         "asked for status",
         "paused the riff",
@@ -144,7 +149,7 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
     // The book shows the words that the tools give.
     use riff_core::wire::{Kind, RiffState};
     for step in [
-        riff::text::told_step("075ff6a7-aaaa", "request: claim issue-302"),
+        riff::text::told_step("075ff6a7-aaaa"),
         riff::text::posted_step(Kind::Note, "Waves: new item #314"),
         riff::text::posted_step(Kind::Status, ""),
         riff::text::riff_step(RiffState::Paused).to_owned(),
@@ -152,5 +157,12 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
         riff::text::LEAD_STEP.to_owned(),
     ] {
         assert!(book.contains(&step), "\"A status\" has no {step:?}");
+    }
+    // 01M3WKCYM623M66ATHCH3QGMKP: no text of a direct message.
+    for (name, text) in [("the skill", status), ("\"A status\"", book.as_str())] {
+        assert!(
+            !text.contains("request: claim issue-302"),
+            "{name} shows the text of a tell in a step"
+        );
     }
 }

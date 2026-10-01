@@ -10,7 +10,7 @@ use futures::StreamExt;
 use isolated::Isolated;
 use riff::api::Api;
 use riff::mcp::Tools;
-use riff_core::name::SessionUri;
+use riff_core::name::{SessionUri, ThreadName, Who};
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
@@ -73,6 +73,15 @@ async fn call(client: &RunningService<RoleClient, ()>, tool: &str, args: serde_j
         .with_arguments(args.as_object().unwrap().clone());
     let result = client.call_tool(params).await.unwrap();
     assert_ne!(result.is_error, Some(true), "{tool}: {result:?}");
+}
+
+/// Calls a tool. The call must fail.
+async fn refused(client: &RunningService<RoleClient, ()>, tool: &str, args: serde_json::Value) {
+    let params = CallToolRequestParams::new(tool.to_owned())
+        .with_arguments(args.as_object().unwrap().clone());
+    if let Ok(result) = client.call_tool(params).await {
+        assert_eq!(result.is_error, Some(true), "{tool}: {result:?}");
+    }
 }
 
 /// The row of the session `id` in `riff who`, as the person mike sees
@@ -151,10 +160,7 @@ async fn who_shows_the_tell_of_the_lead_as_its_step() {
     let tell = serde_json::json!({ "session": "b2", "body": "request: claim issue-302" });
     call(&riff.lead, "tell", tell).await;
     let row = riff.row("a1").await;
-    assert!(
-        row.ends_with(" ago: told b2: request: claim issue-302"),
-        "{row}"
-    );
+    assert!(row.ends_with(" ago: told b2"), "{row}");
 
     // A step is one line.
     let note = serde_json::json!({
@@ -202,7 +208,7 @@ async fn a_status_call_of_the_lead_replaces_the_automatic_step() {
     let tell = serde_json::json!({ "session": "b2", "body": "request: claim issue-302" });
     call(&riff.lead, "tell", tell.clone()).await;
     let row = riff.row("a1").await;
-    assert!(row.contains("told b2: request: claim issue-302"), "{row}");
+    assert!(row.ends_with(" ago: told b2"), "{row}");
 
     let step = serde_json::json!({ "step": "read the review report" });
     call(&riff.lead, "status", step).await;
@@ -213,10 +219,7 @@ async fn a_status_call_of_the_lead_replaces_the_automatic_step() {
     // The step of the lead wins only until its next call.
     call(&riff.lead, "tell", tell).await;
     let row = riff.row("a1").await;
-    assert!(
-        row.ends_with(" ago: told b2: request: claim issue-302"),
-        "{row}"
-    );
+    assert!(row.ends_with(" ago: told b2"), "{row}");
 }
 
 #[tokio::test]
@@ -225,4 +228,101 @@ async fn a_new_lead_shows_that_it_became_the_lead() {
     call(&riff.other, "lead", serde_json::json!({})).await;
     let row = riff.row("b2").await;
     assert!(row.ends_with(" ago: became the lead"), "{row}");
+}
+
+/// 01M3WKCYM623M66ATHCH3QGMKP: a direct thread is private to its two
+/// sessions, and each member of the riff reads `who`.
+#[tokio::test]
+async fn who_shows_no_text_of_a_direct_message_of_the_lead() {
+    let riff = Riff::start().await;
+    let secret = "the token of brett is in the log of the server";
+    let tell = serde_json::json!({ "session": "b2", "body": secret });
+    call(&riff.lead, "tell", tell).await;
+    let row = riff.row("a1").await;
+    assert!(row.ends_with(" ago: told b2"), "{row}");
+
+    // A post to the direct thread shows no text also.
+    let who = |id| Who::new("mike", Some(id)).unwrap();
+    let direct = ThreadName::direct(&who("a1"), &who("b2")).to_string();
+    let post = serde_json::json!({
+        "thread": direct,
+        "body": secret,
+        "to": [{ "session": "b2" }]
+    });
+    call(&riff.lead, "post", post).await;
+    let row = riff.row("a1").await;
+    assert!(row.ends_with(" ago: posted a message"), "{row}");
+
+    // A post to the repository thread keeps its text.
+    let post = serde_json::json!({ "body": "the board of Wave 17" });
+    call(&riff.lead, "post", post).await;
+    let row = riff.row("a1").await;
+    assert!(
+        row.ends_with(" ago: posted a message: the board of Wave 17"),
+        "{row}"
+    );
+}
+
+/// 01M3WKCYM623M66ATHCH3QGMKP
+#[tokio::test]
+async fn an_automatic_step_keeps_the_blocked_reason_of_the_lead() {
+    let riff = Riff::start().await;
+    let blocked = serde_json::json!({ "step": "release", "blocked": "waits for Mike" });
+    call(&riff.lead, "status", blocked).await;
+    let row = riff.row("a1").await;
+    assert!(row.contains("waits for Mike"), "{row}");
+    assert!(row.contains("release"), "{row}");
+
+    let tell = serde_json::json!({ "session": "b2", "body": "request: claim issue-302" });
+    call(&riff.lead, "tell", tell).await;
+    let row = riff.row("a1").await;
+    assert!(row.contains("waits for Mike"), "{row}");
+    assert!(row.contains("told b2"), "{row}");
+    assert!(!row.contains("release"), "{row}");
+
+    // The lead removes the reason with its next status.
+    let step = serde_json::json!({ "step": "read the review report" });
+    call(&riff.lead, "status", step).await;
+    let note = serde_json::json!({ "body": "the board", "kind": "note" });
+    call(&riff.lead, "post", note).await;
+    let row = riff.row("a1").await;
+    assert!(!row.contains("waits for Mike"), "{row}");
+    assert!(row.ends_with(" ago: posted a note: the board"), "{row}");
+}
+
+/// 01M3WKCYM623M66ATHCH3QGMKP: a control character is a space in the
+/// step, so the server accepts the step.
+#[tokio::test]
+async fn a_message_with_a_control_character_gives_a_step() {
+    let riff = Riff::start().await;
+    let note = serde_json::json!({
+        "body": "the\u{7}board\u{1b}[0m of\tWave 17",
+        "kind": "note"
+    });
+    call(&riff.lead, "post", note).await;
+    let row = riff.row("a1").await;
+    assert!(
+        row.ends_with(" ago: posted a note: the board [0m of Wave 17"),
+        "{row}"
+    );
+}
+
+/// 01M3WKCYM623M66ATHCH3QGMKP
+#[tokio::test]
+async fn a_call_that_the_server_refuses_sets_no_step() {
+    let riff = Riff::start().await;
+    let step = serde_json::json!({ "step": "read the review report" });
+    call(&riff.lead, "status", step).await;
+
+    // No session `zz` is in the riff.
+    let tell = serde_json::json!({ "session": "zz", "body": "request: claim issue-302" });
+    refused(&riff.lead, "tell", tell).await;
+    let row = riff.row("a1").await;
+    assert!(row.ends_with(" ago: read the review report"), "{row}");
+
+    // An empty message.
+    let post = serde_json::json!({ "body": " ", "kind": "note" });
+    refused(&riff.lead, "post", post).await;
+    let row = riff.row("a1").await;
+    assert!(row.ends_with(" ago: read the review report"), "{row}");
 }

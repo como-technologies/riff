@@ -1862,22 +1862,28 @@ riff who
 
 ```text
 SESSION                  STATE  ROLE  DETAIL
-mike@thelio:riff (4e54)  idle   lead  monitoring work for 2m  12s ago: told 075ff6a7: request: claim issue-302
+mike@thelio:riff (4e54)  idle   lead  monitoring work for 2m  12s ago: told 075ff6a7
 ```
 
 | The lead calls | The step |
 |---|---|
-| `tell` | `told 075ff6a7: request: claim issue-302` |
+| `tell` | `told 075ff6a7` |
 | `post` | `posted a message: …` or `posted a note: Waves: new item #314` |
 | `post` with kind `status` | `asked for status` |
 | `pause`, `resume` | `paused the riff`, `resumed the riff` |
 | `lead` | `became the lead` |
 
-The step shows the message in one line of at most 80 characters. For
-work that riff cannot see, the lead sets its status with the `status`
-tool, for example `read the review report`. That status stays until
-the next of these calls. The step of each other session changes only
-when the session sets it.
+The step of a post shows the message in one line of at most 80
+characters. A direct message is private to its two sessions, and each
+member of the riff reads `riff who`. So the step of a `tell` shows
+only the session, and the step of a post to a direct thread shows no
+text.
+
+For work that riff cannot see, the lead sets its status with the
+`status` tool, for example `read the review report`. That status stays
+until the next of these calls. A `blocked` reason of the lead stays
+until the lead sets its status again. The step of each other session
+changes only when the session sets it.
 
 ## The lead
 

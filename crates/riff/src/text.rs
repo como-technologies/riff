@@ -1675,10 +1675,17 @@ pub fn status_set(status: &riff_core::wire::Status) -> String {
 /// of the lead (01M3W8AYDFPZNZ898WAJS7JEZA).
 pub const STEP_TEXT_CHARS: usize = 80;
 
-/// `text` in one short line: each run of white space is one space, and
-/// a text of more than [`STEP_TEXT_CHARS`] characters ends with `…`.
+/// `text` in one short line: each run of white space or control
+/// characters is one space, and a text of more than
+/// [`STEP_TEXT_CHARS`] characters ends with `…`. So each text gives a
+/// step that [`riff_core::wire::Status::check`] accepts
+/// (01M3WKCYM623M66ATHCH3QGMKP).
 fn one_line(text: &str) -> String {
-    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = text
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     if line.chars().count() <= STEP_TEXT_CHARS {
         return line;
     }
@@ -1697,32 +1704,28 @@ fn step_of(action: &str, body: &str) -> String {
 
 /// The automatic step of the lead after a `tell` to `session`
 /// (01M3W8AYDFPZNZ898WAJS7JEZA). It shows the start of the session ID,
-/// as [`name`] does, and the message in one short line.
+/// as [`name`] does. It shows no text of the message: a direct thread
+/// is private to its two sessions, and each member of the riff reads
+/// the step (01M3WKCYM623M66ATHCH3QGMKP).
 ///
 /// ```
-/// use riff::text::{STEP_TEXT_CHARS, told_step};
+/// use riff::text::told_step;
 ///
-/// assert_eq!(
-///     told_step("075ff6a7-0000-4000-8000-000000000000", "request: claim issue-302"),
-///     "told 075ff6a7: request: claim issue-302"
-/// );
-/// // A long message, or one with more than one line, is one short line.
-/// let step = told_step("b2", &format!("request:\n  stop\n{}", "x".repeat(200)));
-/// assert!(step.starts_with("told b2: request: stop xxx"), "{step}");
-/// assert!(step.ends_with('…'), "{step}");
-/// assert_eq!(step.chars().count(), "told b2: ".len() + STEP_TEXT_CHARS);
+/// assert_eq!(told_step("075ff6a7-0000-4000-8000-000000000000"), "told 075ff6a7");
+/// assert_eq!(told_step("b2"), "told b2");
 /// ```
-pub fn told_step(session: &str, body: &str) -> String {
+pub fn told_step(session: &str) -> String {
     let short: String = session.chars().take(ID_CHARS).collect();
-    step_of(&format!("told {short}"), body)
+    format!("told {short}")
 }
 
 /// The automatic step of the lead after a `post` of `kind`
-/// (01M3W8AYDFPZNZ898WAJS7JEZA).
+/// (01M3W8AYDFPZNZ898WAJS7JEZA), with the message in one short line.
+/// The caller gives an empty `body` for a post to a direct thread.
 ///
 /// ```
-/// use riff::text::posted_step;
-/// use riff_core::wire::Kind;
+/// use riff::text::{STEP_TEXT_CHARS, posted_step};
+/// use riff_core::wire::{Kind, Status};
 ///
 /// assert_eq!(
 ///     posted_step(Kind::Note, "Waves: new item #314"),
@@ -1732,6 +1735,16 @@ pub fn told_step(session: &str, body: &str) -> String {
 /// // A status request needs no text.
 /// assert_eq!(posted_step(Kind::Status, ""), "asked for status");
 /// assert_eq!(posted_step(Kind::Status, "now"), "asked for status: now");
+/// // A long message, or one with more than one line, is one short line.
+/// let step = posted_step(Kind::Note, &format!("Waves:\n  new\n{}", "x".repeat(200)));
+/// assert!(step.starts_with("posted a note: Waves: new xxx"), "{step}");
+/// assert!(step.ends_with('…'), "{step}");
+/// assert_eq!(step.chars().count(), "posted a note: ".len() + STEP_TEXT_CHARS);
+/// // A control character is a space, so the server accepts the step.
+/// let step = posted_step(Kind::Note, "the\u{7}board\u{1b}[0m\tnow");
+/// assert_eq!(step, "posted a note: the board [0m now");
+/// let status = Status { step, blocked: None };
+/// assert!(status.check().is_ok());
 /// ```
 pub fn posted_step(kind: riff_core::wire::Kind, body: &str) -> String {
     use riff_core::wire::Kind;

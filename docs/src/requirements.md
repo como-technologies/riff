@@ -1233,14 +1233,20 @@
   `seen` and the time since the last call.
 - **01M3W8AYDFPZNZ898WAJS7JEZA** `riff mcp` sets the step of the lead
   from each `tell`, `post`, `pause`, `resume` and `lead` call of the
-  lead that `riff-server` accepts: `told SESSION: TEXT` with the short
+  lead that `riff-server` accepts: `told SESSION` with the short
   session ID, `posted a message: TEXT`, `posted a note: TEXT`, `asked
   for status`, `paused the riff`, `resumed the riff` and `became the
   lead`. TEXT is the message in one line, cut to 80 characters with
-  `…`. The step replaces the status of the lead. A `status` call of
+  `…`. The step replaces the step of the lead. A `status` call of
   the lead replaces the step until the next of these calls. The step
   of a session that is not the lead does not change. The skill tells
   the lead to set its status for work that riff cannot see.
+- **01M3WKCYM623M66ATHCH3QGMKP** The automatic step of the lead shows
+  no text of a direct message: the step of a `tell` is `told SESSION`,
+  and the step of a `post` to a direct thread has no TEXT. In TEXT,
+  each run of white space or control characters is one space. An
+  automatic step keeps the `blocked` reason that the lead set. A call
+  that `riff-server` refuses sets no step.
 - **01M3Q555NV8ZCQ8PVPBXQ7J82C** The skill, the start hook and the
   `status` tool do not tell a session to set its status for a fact
   that riff derives: a claim, a release, a pause, or an idle worker.
