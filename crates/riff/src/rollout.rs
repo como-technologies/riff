@@ -35,9 +35,10 @@
 //! - **Idle workers** ([`idle`]). A worker pane of the user with no
 //!   claim, also one that did not join yet, and a live worker of
 //!   another user with no claim. A worker that the server asked to stop
-//!   is not idle. riff starts a worker only when no worker is idle
-//!   (01M3Q5QEJNP1JGQM7VXXEBJ9J9). So a new worker must claim before
-//!   the next one starts. When no worker takes the counted work, one
+//!   is not idle. A worker in another repository is not idle: it cannot
+//!   take the free work (01M3W27BJYFQCHY5MTZ2J4SKW4). riff starts a worker only when no
+//!   worker is idle (01M3Q5QEJNP1JGQM7VXXEBJ9J9). So a new worker must
+//!   claim before the next one starts. When no worker takes the counted work, one
 //!   worker waits idle, the server keeps it (#259), and riff starts no
 //!   more: no loop of starts and stops.
 //! - **Machines** ([`Place`], [`pick`], 01M3Q5QE76BZ27SZ14FFE8HM1G).
@@ -425,25 +426,54 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
         .collect()
 }
 
-/// The idle workers: each worker pane of `user` in `panes` whose session
-/// holds no claim, also one that is not in `sessions` yet, and each
-/// live worker of another user with no claim. A worker that the server
-/// asked to stop is not idle: it goes away. A pane can hold the short
-/// session ID of a host status.
-pub fn idle(sessions: &[SessionInfo], user: &str, panes: &[WorkerPane]) -> usize {
+/// The idle workers for the lead `me`: each worker pane in `panes` whose
+/// session holds no claim, also one that is not in `sessions` yet, and
+/// each live worker of another user with no claim. A worker that the
+/// server asked to stop is not idle: it goes away. A worker in another
+/// repository than `me` is not idle: it cannot take the free work
+/// (01M3W27BJYFQCHY5MTZ2J4SKW4). A pane can hold the short session ID of a host status.
+///
+/// ```
+/// use riff::rollout::idle;
+/// use riff_core::wire::SessionInfo;
+///
+/// let worker = |uri: &str| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+///     worker: true,
+///     stopping: false,
+///     claims_secs: 0,
+///     state: None,
+/// };
+/// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
+/// let strata = worker("riff://brett@kadomony/o/strata?session=w1");
+/// assert_eq!(idle(&[strata], &me, &[]), 0);
+/// let riff = worker("riff://brett@kadomony/o/riff?session=w2");
+/// assert_eq!(idle(&[riff], &me, &[]), 1);
+/// ```
+pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> usize {
+    let (user, repo) = (me.who().user(), me.place().repo());
     // A worker that holds a claim is busy. A worker that the server
-    // asked to stop goes away.
-    let busy = |id: &str| {
-        sessions.iter().any(|s| {
-            s.uri.who().session().is_some_and(|s| s.starts_with(id))
-                && (!s.uri.claims().is_empty() || s.stopping)
-        })
+    // asked to stop goes away. A worker in another repository cannot
+    // take the free work.
+    let away =
+        |s: &SessionInfo| !s.uri.claims().is_empty() || s.stopping || s.uri.place().repo() != repo;
+    let of = |pane: &WorkerPane, s: &SessionInfo| {
+        s.uri
+            .who()
+            .session()
+            .is_some_and(|id| id.starts_with(&pane.session))
     };
-    let mine = panes.iter().filter(|p| !busy(&p.session)).count();
+    let mine = panes
+        .iter()
+        .filter(|p| !sessions.iter().any(|s| of(p, s) && away(s)))
+        .count();
     let others = sessions
         .iter()
         .filter(|s| s.worker && s.live && s.uri.who().user() != user)
-        .filter(|s| s.uri.claims().is_empty() && !s.stopping)
+        .filter(|s| !away(s))
         .count();
     mine + others
 }
@@ -553,7 +583,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 session: short.clone(),
             }));
         }
-        let idle = idle(&sessions, user, &panes);
+        let idle = idle(&sessions, &me, &panes);
         if !places.iter().any(Place::room) {
             return Ok(Some(View {
                 running: true,
@@ -1008,14 +1038,63 @@ mod tests {
             pane("%2", "bbbb2222-x"),
             pane("%3", "ffff6666-not-joined"),
         ];
+        let me: SessionUri = "riff://mike@thelio/o/r?session=l1&lead=true"
+            .parse()
+            .unwrap();
         // bbbb and ffff of mike, cccc of brett.
-        assert_eq!(idle(&sessions, "mike", &panes), 3);
+        assert_eq!(idle(&sessions, &me, &panes), 3);
         // A worker that the server asks to stop is not idle.
         let mut stopping = sessions.clone();
         stopping[1].stopping = true;
         stopping[2].stopping = true;
-        assert_eq!(idle(&stopping, "mike", &panes), 1);
+        assert_eq!(idle(&stopping, &me, &panes), 1);
         assert_eq!(claims(&sessions).len(), 2);
+    }
+
+    /// An idle worker counts only when it can take the free work: a
+    /// worker in the repository of the lead (01M3W27BJYFQCHY5MTZ2J4SKW4).
+    #[test]
+    fn idle_counts_only_workers_in_the_repository_of_the_lead() {
+        let me: SessionUri = "riff://mike@pangolin/o/riff?session=l1&lead=true"
+            .parse()
+            .unwrap();
+        let other = info("riff://brett@kadomony/o/strata?session=cccc3333-x", true);
+        assert_eq!(idle(std::slice::from_ref(&other), &me, &[]), 0);
+        // A repository with the same name of another owner is another
+        // repository.
+        let owner = info("riff://brett@kadomony/p/riff?session=cccc3333-x", true);
+        assert_eq!(idle(&[owner], &me, &[]), 0);
+        let same = info("riff://brett@kadomony/o/riff?session=dddd4444-x", true);
+        assert_eq!(idle(&[other, same.clone()], &me, &[]), 1);
+        // The worktree does not change the repository.
+        let worktree = info(
+            "riff://brett@kadomony/o/riff?session=eeee5555-x#issue-7",
+            true,
+        );
+        assert_eq!(idle(&[same, worktree], &me, &[]), 2);
+    }
+
+    /// A worker pane of the user that joined in another repository does
+    /// not count. A pane that did not join yet counts.
+    #[test]
+    fn idle_skips_a_pane_of_the_user_in_another_repository() {
+        let me: SessionUri = "riff://mike@pangolin/o/riff?session=l1&lead=true"
+            .parse()
+            .unwrap();
+        let sessions = [
+            info("riff://mike@pangolin/o/dotfiles?session=aaaa1111-x", true),
+            info("riff://mike@pangolin/o/riff?session=bbbb2222-x", true),
+        ];
+        let pane = |p: &str, s: &str| WorkerPane {
+            pane: p.into(),
+            session: s.into(),
+        };
+        let panes = [
+            pane("%1", "aaaa1111"),
+            pane("%2", "bbbb2222"),
+            pane("%3", "cccc3333-not-joined"),
+        ];
+        assert_eq!(idle(&sessions, &me, &panes), 2);
     }
 
     #[test]
