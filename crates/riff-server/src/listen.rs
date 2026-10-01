@@ -35,8 +35,83 @@
 //! `riff-server` runs [`check()`] at start. The owner is in the state,
 //! so `riff-server` checks again after it loads its bucket. Before that,
 //! a bucket counts as an owner.
+//!
+//! # The port
+//!
+//! `riff-server` opens its port only after the load and the wait for
+//! the lease (01M3THEE31H5QVV3JAFC4ZRGFR). Cloud Run sends calls to a
+//! new revision only when its port is open. So a build that cannot load
+//! gets no call, and the old revision serves on. A [`Port`] holds the
+//! address from the start, and takes no connection until [`Port::open`].
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant M as main
+//!     participant P as Port
+//!     participant S as Service
+//!     M->>P: reserve (bind, do not listen)
+//!     M->>S: load, take the lease, wait
+//!     Note over P: each connect is refused
+//!     M->>P: open (listen)
+//!     Note over P: takes connections
+//! ```
 
 use std::net::SocketAddr;
+
+use tokio::net::{TcpListener, TcpSocket};
+
+/// The connections that wait for the server at one time.
+const BACKLOG: u32 = 1024;
+
+/// The address of a server that does not listen yet.
+///
+/// ```
+/// # #[tokio::main] async fn main() -> std::io::Result<()> {
+/// use riff_server::listen::Port;
+/// use tokio::net::TcpStream;
+///
+/// let port = Port::reserve("127.0.0.1:0".parse().unwrap())?;
+/// let addr = port.addr();
+/// // The port is not open during the load.
+/// assert!(TcpStream::connect(addr).await.is_err());
+/// let listener = port.open()?;
+/// assert_eq!(listener.local_addr()?, addr);
+/// assert!(TcpStream::connect(addr).await.is_ok());
+/// # Ok(()) }
+/// ```
+pub struct Port {
+    socket: TcpSocket,
+    addr: SocketAddr,
+}
+
+impl Port {
+    /// Takes the address `listen`, and does not listen on it. It fails
+    /// when another process has the address. With port 0, the OS gives
+    /// a free port: see [`Port::addr`].
+    pub fn reserve(listen: SocketAddr) -> std::io::Result<Port> {
+        let socket = if listen.is_ipv4() {
+            TcpSocket::new_v4()?
+        } else {
+            TcpSocket::new_v6()?
+        };
+        // As `TcpListener::bind`: a new start gets the address of a
+        // server that stopped a moment ago.
+        socket.set_reuseaddr(true)?;
+        socket.bind(listen)?;
+        let addr = socket.local_addr()?;
+        Ok(Port { socket, addr })
+    }
+
+    /// The address, with the real port.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Opens the port: the server takes connections from now on.
+    pub fn open(self) -> std::io::Result<TcpListener> {
+        self.socket.listen(BACKLOG)
+    }
+}
 
 /// Checks the listen address of a server. `trusted` is true for a riff
 /// with no sign-in. `owned` is true when the riff has an owner. It

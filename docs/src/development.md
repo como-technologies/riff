@@ -623,17 +623,20 @@ The server gets its access token from the metadata server of Cloud
 Run. So the flag works only on Cloud Run. The service account of the
 server must have write access to the bucket.
 
-With a bucket, the server takes the lease at start, waits 15 seconds,
-and then loads the checkpoint and replays the log. Only one server
-serves from a bucket. When a
-new server takes the lease, the old one replies 503 and exits after 60
-seconds.
+With a bucket, the server loads the checkpoint and replays the log at
+start. Then it takes the lease, waits 15 seconds, and opens its port.
+Only one server serves from a bucket. When a new server takes the
+lease, the old one replies 503 and exits after 60 seconds. A server
+that cannot load takes no lease, and the old one serves on. See
+[how it works](how-it-works.md#wait-while-the-server-starts).
 
 ### Start again with an empty state
 
 `riff-server` does not migrate saved state of an old format. When it
-cannot read an object of the bucket, it stops at start. Cloud Run starts
-it again and again, and each call gets 503. The log shows
+cannot read an object of the bucket, it stops at start, before it takes
+the lease. An old instance that still runs serves on. With no old
+instance, Cloud Run starts the server again and again, and each call
+gets 503. The log shows
 `riff-server stops: cannot read the saved object`, with the name of the
 object and the reason (see [See the shared log](#see-the-shared-log)).
 
@@ -654,8 +657,8 @@ and the owner invites each member again.
 
 For local work, `--dir` (`RIFF_DIR`) keeps the log, the checkpoints,
 the sign-ins (`signins.json`) and the lease as files in a directory. It
-works as a bucket: the server waits 15 seconds for the lease, then
-loads the checkpoint and replays the log:
+works as a bucket: the server loads the checkpoint and replays the
+log, then waits 15 seconds for the lease, and then opens its port:
 
 ```sh
 riff-server --dir ~/.local/state/riff-server

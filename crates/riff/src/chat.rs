@@ -46,7 +46,7 @@
 
 use std::fmt::Write as _;
 use std::io::{IsTerminal, Write as _};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -316,7 +316,18 @@ where
 /// and no line up to `after`, the last line that the old chat showed.
 /// On a new binary, it runs it in place, between two lines
 /// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+///
+/// While `riff-server` starts again, it shows the line
+/// [`crate::api::WAITING`] above the prompt, and keeps its screen
+/// (01M3THEE5V3RFHF9QTA8MA8QDF).
 pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
+    // The wait line goes to the screen, once there is one.
+    let lines = Arc::new(OnceLock::<Lines>::new());
+    let screen_lines = Arc::clone(&lines);
+    let api = &api.clone().waits_to(move |line| match screen_lines.get() {
+        Some(lines) => lines.warn(line),
+        None => anstream::eprintln!("{line}"),
+    });
     let thread = thread();
     api.join(me, &thread).await?;
     if after.is_none() {
@@ -339,6 +350,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     let first = connect().await?;
     let mut stream = Box::pin(first.chain(follow(connect, RETRY)));
     let (screen, mut input) = Screen::start()?;
+    let _ = lines.set(screen.lines.clone());
     let mut shown = Shown::after(after.unwrap_or(0));
     let mut link = Reconnect::default();
     let follow = Follow::this();
@@ -386,17 +398,48 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
 /// The printer of the line editor: it prints above the prompt.
 type Printer = Arc<Mutex<Box<dyn ExternalPrinter + Send>>>;
 
-/// Where the chat prints.
-enum Screen {
+/// Where the chat prints its lines.
+#[derive(Clone)]
+enum Lines {
     /// A pipe or a file: no prompt and no line editor.
     Plain,
-    /// A terminal: a line editor with the prompt [`PROMPT`], and the
-    /// mode of the terminal before it.
-    Editor {
-        printer: Printer,
-        color: bool,
-        normal: Option<Termios>,
-    },
+    /// A terminal: a line editor with the prompt [`PROMPT`].
+    Editor { printer: Printer, color: bool },
+}
+
+impl Lines {
+    /// Prints a chat line.
+    fn print(&self, text: &str) {
+        match self {
+            Lines::Plain => anstream::println!("{text}"),
+            Lines::Editor { printer, color } => {
+                let text = if *color {
+                    text.to_owned()
+                } else {
+                    anstream::adapter::strip_str(text).to_string()
+                };
+                if let Ok(mut printer) = printer.lock() {
+                    let _ = printer.print(format!("{text}\n"));
+                }
+            }
+        }
+    }
+
+    /// Prints a line of riff itself: on stderr with a pipe, above the
+    /// prompt in a terminal.
+    fn warn(&self, text: &str) {
+        match self {
+            Lines::Plain => anstream::eprintln!("{text}"),
+            Lines::Editor { .. } => self.print(text),
+        }
+    }
+}
+
+/// The screen of the chat.
+struct Screen {
+    lines: Lines,
+    /// The mode of the terminal before the line editor.
+    normal: Option<Termios>,
 }
 
 impl Screen {
@@ -417,7 +460,11 @@ impl Screen {
                     }
                 }
             });
-            return Ok((Screen::Plain, rx));
+            let screen = Screen {
+                lines: Lines::Plain,
+                normal: None,
+            };
+            return Ok((screen, rx));
         }
         let normal = tcgetattr(std::io::stdin()).ok();
         let mut editor = rustyline::DefaultEditor::new()?;
@@ -440,14 +487,11 @@ impl Screen {
         });
         let color =
             anstream::AutoStream::choice(&std::io::stdout()) != anstream::ColorChoice::Never;
-        Ok((
-            Screen::Editor {
-                printer,
-                color,
-                normal,
-            },
-            rx,
-        ))
+        let screen = Screen {
+            lines: Lines::Editor { printer, color },
+            normal,
+        };
+        Ok((screen, rx))
     }
 
     /// Makes the terminal ready for another program: it clears the
@@ -455,10 +499,7 @@ impl Screen {
     /// line editor waits on, so this is only for the last moment of the
     /// chat.
     fn leave(&self) {
-        let Screen::Editor {
-            printer, normal, ..
-        } = self
-        else {
+        let Lines::Editor { printer, .. } = &self.lines else {
             return;
         };
         // No chat line prints after the clear.
@@ -466,35 +507,19 @@ impl Screen {
         let mut out = std::io::stdout();
         let _ = write!(out, "\r\x1b[K");
         let _ = out.flush();
-        if let Some(normal) = normal {
+        if let Some(normal) = &self.normal {
             let _ = tcsetattr(std::io::stdin(), SetArg::TCSANOW, normal);
         }
     }
 
     /// Prints a chat line.
     fn print(&self, text: &str) {
-        match self {
-            Screen::Plain => anstream::println!("{text}"),
-            Screen::Editor { printer, color, .. } => {
-                let text = if *color {
-                    text.to_owned()
-                } else {
-                    anstream::adapter::strip_str(text).to_string()
-                };
-                if let Ok(mut printer) = printer.lock() {
-                    let _ = printer.print(format!("{text}\n"));
-                }
-            }
-        }
+        self.lines.print(text);
     }
 
-    /// Prints a line of riff itself: on stderr with a pipe, above the
-    /// prompt in a terminal.
+    /// Prints a line of riff itself.
     fn warn(&self, text: &str) {
-        match self {
-            Screen::Plain => anstream::eprintln!("{text}"),
-            Screen::Editor { .. } => self.print(text),
-        }
+        self.lines.warn(text);
     }
 }
 

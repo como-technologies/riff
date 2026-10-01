@@ -2065,7 +2065,8 @@ sequenceDiagram
 
 During a deploy, Cloud Run starts the new instance before it stops the
 old one. A lease in Cloud Storage makes sure that only one instance
-serves:
+serves. The new instance loads the state first. It takes the lease and
+opens its port only when the load works:
 
 ```mermaid
 sequenceDiagram
@@ -2073,19 +2074,44 @@ sequenceDiagram
     participant S as Cloud Storage
     participant N as new instance
     participant W as riff watch
-    N->>S: write the lease (new ID)
-    Note over N: waits 15 s
-    O->>S: read the lease (every 2 s)
-    S-->>O: new ID
-    O-->>W: close the stream
-    Note over O: replies 503, saves nothing, exits after 60 s
-    N->>S: load the state
-    W->>N: connect again
-    N-->>W: one line, if an addressed message is unread
+    N->>S: load the sign-ins, the checkpoint and the log
+    alt the load fails
+        Note over N: exits: no lease, no open port
+        Note over O: serves on
+    else the load works
+        N->>S: write the lease (new ID)
+        Note over N: waits 15 s
+        O->>S: read the lease (every 2 s)
+        S-->>O: new ID
+        O-->>W: close the stream
+        Note over O: replies 503, saves nothing, exits after 60 s
+        N->>S: read the chunks that came since the load
+        Note over N: opens its port
+        W->>N: connect again
+        N-->>W: one line, if an addressed message is unread
+    end
 ```
 
-`riff` tries each call again while the server replies 503. A deploy
-stops riff for less than one minute.
+A new build that cannot read the state never serves. Cloud Run sends
+calls to a new instance only when its port is open, so the old instance
+serves on.
+
+The claims of each session come back with the log. Each session has 5
+minutes from the load to call again. After that, its claims are free.
+
+### Wait while the server starts
+
+Each start of the server has a gap of about 15 seconds. `riff` tries
+each call again while the server replies 503, for up to 60 seconds. You
+do nothing. When a call waits for more than 1 second, `riff` shows one
+line:
+
+```text
+(waits for riff-server…)
+```
+
+`riff chat` shows the line above its prompt. `riff top` keeps its table,
+and shows the line below it.
 
 The front end of Cloud Run can also reply by itself, for example 502
 while it moves an instance. Such a reply has no `riff-build` header.

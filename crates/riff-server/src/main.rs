@@ -5,11 +5,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use clap::Parser;
+use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
+use riff_server::listen::{self, Port};
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
 use riff_server::store::{Dir, Store};
-use riff_server::{Service, listen};
 use tokio::signal::unix::{SignalKind, signal};
 
 /// The central service that sessions connect to. It runs in the
@@ -174,10 +175,11 @@ async fn run() -> std::io::Result<()> {
     }
     // Catch SIGTERM before the server says that it listens.
     let mut terminate = signal(SignalKind::terminate())?;
-    let listener = tokio::net::TcpListener::bind(cli.listen).await?;
+    // The port opens only after the load (01M3THEE31H5QVV3JAFC4ZRGFR).
+    let port = Port::reserve(cli.listen)?;
     let public_url = cli
         .public_url
-        .unwrap_or_else(|| format!("http://{}", listener.local_addr().unwrap_or(cli.listen)));
+        .unwrap_or_else(|| format!("http://{}", port.addr()));
     let mut config = Config::new(&public_url);
     // A riff with a provider requires sign-in (01M3JZN1XQVVNVD0MJVM8J91HC).
     config.require_sign_in = cli.require_sign_in || cli.client_id.is_some();
@@ -193,7 +195,6 @@ async fn run() -> std::io::Result<()> {
             tracing::warn!("the admin {admin} is not an email: it names nobody (R210)");
         }
     }
-    tracing::info!("riff-server listens on {}", listener.local_addr()?);
     if let Some(client_id) = cli.client_id {
         tracing::info!("sign-in with {}", cli.issuer);
         let provider = Provider {
@@ -236,6 +237,8 @@ async fn run() -> std::io::Result<()> {
     let owned = service.tokens().owned();
     listen::check(cli.listen, trusted, cli.insecure, owned)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    let listener = port.open()?;
+    tracing::info!("riff-server listens on {}", listener.local_addr()?);
     let stop = async {
         tokio::select! {
             _ = terminate.recv() => {}
