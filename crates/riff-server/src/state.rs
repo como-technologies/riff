@@ -11,7 +11,7 @@
 //! | Claims | thread and item | [`Riff`] | The log. The session that holds the item. |
 //! | Leads | user and repository thread | [`Riff`] | The log. The lead session of the user. |
 //! | Riff state | none: one for the server | [`Riff`] | The log. Paused or running, and the settings of idle workers. |
-//! | Known sessions | who | [`Riff`] | The log. The URI and the time of the last record that names the session. |
+//! | Known sessions | who | [`Riff`] | The log. The URI and the time of the last record that names the session, and its life cycle: the worker mark, the MustClear mark and the time of its last fresh start (see [`sessions`]). |
 //! | Sessions | who | [`Presence`] | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
 //! | Read cursors | who and thread | [`Presence`] | Memory and the checkpoint. The last sequence number that the session read. |
 //!
@@ -36,7 +36,7 @@
 //!
 //! | Group | File | Part of the riff | Commands |
 //! |---|---|---|---|
-//! | sessions | [`sessions`] | [`Sessions`](sessions::Sessions) | [`Register`], [`Start`], [`End`] |
+//! | sessions | [`sessions`] | [`Sessions`](sessions::Sessions) | [`Register`], [`Arrive`], [`Start`], [`End`] |
 //! | threads | [`threads`] | [`Threads`](threads::Threads) | [`Join`], [`Leave`], [`Post`], [`Announce`] |
 //! | work | [`work`] | [`Work`](work::Work) | [`Claim`], [`Release`], [`ReleaseFor`], [`Lead`] |
 //! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`MakeRiff`], [`Pause`], [`Resume`], [`SetIdle`], [`Forget`] |
@@ -83,7 +83,8 @@
 //!
 //! - Each call records the session as seen at `now`. A call from a
 //!   session that the server does not know registers it first, in the
-//!   place from its URI ([`State::check`]). Only a `register` changes
+//!   place from its URI ([`State::check`], [`Arrive`]). That register
+//!   makes no lead (01M3X9XA3H6YF0QCYSNB2P0CT2). Only a `register` changes
 //!   the place of a known session (R55, R64). A person has no session ID, so each call of a
 //!   person gives it the place of that call (01M3MWW8KYJ3ZV91X22RBSAF33).
 //! - A session keeps the user of its first call. [`State::check_user`]
@@ -128,6 +129,11 @@
 //! - [`State::start`] is a new start of a session: a new agent process,
 //!   a resume or a `/clear`. It frees the claims of the session at once,
 //!   and keeps its lead (01M3JEE1QQCFS5TMZW5N2DAD2D).
+//! - A worker that releases its last claim must clear its context before
+//!   its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS). The reply to that release and to each
+//!   keep-alive carries the ask (01M3X9XB37TQCXWPNFZRMRGJB4). The server sends it no wake
+//!   until a start with a fresh context. That start gives it the wake
+//!   that it missed (01M3X9XBMB3R718Z81BYXTHMZ0).
 //! - A call or a keep-alive from a gone session makes it live again, with
 //!   the same ID, threads and cursors. After a stop with no end, it gets
 //!   back each claim that no other session took. After an end, it has no
@@ -157,8 +163,9 @@
 //!   A claim of a free item succeeds.
 //! - Each user has at most one lead in each repository thread. Its URI
 //!   has `lead=true` (R175).
-//! - A session with a session ID becomes the lead when it arrives in a
-//!   repository and no other session of its user there holds (R176).
+//! - A session with a session ID becomes the lead when it registers or
+//!   starts in a repository, it is not a worker, and no other session
+//!   of its user there holds (R176, 01M3X9XA3H6YF0QCYSNB2P0CT2).
 //!   [`State::lead`] makes a session the lead and replaces the old lead
 //!   (R177).
 //! - A lead counts while it holds, as a claim does, and while it works
@@ -242,8 +249,8 @@ use riff_core::record::{Change, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     AliveReply, Claim, End, Freed, Idle, Join, Keys, Kind, Lead, LeadReply, Leave, Message, Pause,
-    Post, Register, Release, ReleaseFor, Resume, RiffReply, RiffState, SessionInfo, SessionState,
-    SetIdle, Start, Status, StatusInfo, Tailed, ThreadInfo, Wake,
+    Post, Register, Release, ReleaseFor, ReleaseReply, Resume, RiffReply, RiffState, SessionInfo,
+    SessionState, SetIdle, Start, StartReason, Status, StatusInfo, Tailed, ThreadInfo, Wake,
 };
 
 pub mod command;
@@ -260,10 +267,11 @@ pub use command::{Caller, Cause, Class, Code, Command, CommandKind, Now, Refused
 pub use presence::{Presence, Signal};
 pub use riff::{Riff, apply};
 pub use snapshot::Snapshot;
+pub use sessions::Arrive;
 pub use the_riff::{Forget, MakeRiff};
 pub use threads::{Announce, may_read};
 pub use view::View;
-pub use work::released_for;
+pub use work::{MUST_CLEAR, released_for};
 
 use presence::Session;
 use threads::wake;
@@ -349,7 +357,8 @@ pub struct Stopping {
 /// The server sends it after the chunk of the message is written.
 #[derive(Clone, Debug)]
 pub struct Delivery {
-    /// Each session to wake, with its event.
+    /// Each session to wake, with its event. A session that must clear
+    /// its context gets none (01M3X9XBMB3R718Z81BYXTHMZ0): see [`State::keep_wakes`].
     pub wakes: Vec<(Who, Wake)>,
     /// Each woken session, for the sender.
     pub woken: Vec<Who>,
@@ -579,10 +588,21 @@ impl State {
 
     /// Applies a record to the written copy, and then to the presence
     /// ([`Presence::applied`]). `at` is the time of the call that made
-    /// the record, or `None` in a replay.
-    fn apply_written(&mut self, record: &Record, at: Option<Instant>) {
+    /// the record, or `None` in a replay. When the record takes its
+    /// session out of MustClear, it gives the wake that the session
+    /// missed.
+    fn apply_written(&mut self, record: &Record, at: Option<Instant>) -> Option<(Who, Wake)> {
+        let cleared = match &record.change {
+            Change::SessionStarted(started) if self.must_clear(started.session.who()) => {
+                Some(started.session.who().clone())
+            }
+            _ => None,
+        };
         apply(&mut self.written, record);
         self.presence.applied(record, &self.written, at);
+        let who = cleared.filter(|who| !self.must_clear(who))?;
+        let wake = self.missed(&who)?;
+        Some((who, wake))
     }
 
     /// True when the state that the log gives is the same in both
@@ -649,14 +669,30 @@ impl State {
 
     /// Applies the records of a written chunk to the written copy. A
     /// state with no writer counts each record as written at once, so it
-    /// skips them.
-    pub fn written(&mut self, records: &[Record]) {
+    /// skips them. It gives the wake of each session that a record takes
+    /// out of MustClear: the wake that it missed (01M3X9XBMB3R718Z81BYXTHMZ0).
+    pub fn written(&mut self, records: &[Record]) -> Vec<(Who, Wake)> {
+        let mut wakes = Vec::new();
         if self.writer {
             for record in records {
                 let at = self.made.remove(&record.position);
-                self.apply_written(record, at);
+                wakes.extend(self.apply_written(record, at));
             }
         }
+        wakes
+    }
+
+    /// True when the session `who` must clear its context before its
+    /// next claim, in the written copy (01M3X9XAK1KPZZVM1AJR2H8DSS).
+    pub fn must_clear(&self, who: &Who) -> bool {
+        self.written.sessions().must_clear(who)
+    }
+
+    /// Removes the wake of each session that must clear its context
+    /// (01M3X9XBMB3R718Z81BYXTHMZ0). The message is in its thread, and its `posted` record
+    /// names the session.
+    pub fn keep_wakes(&self, wakes: &mut Vec<(Who, Wake)>) {
+        wakes.retain(|(who, _)| !self.must_clear(who));
     }
 
     /// Checks a command of `caller` against the pending copy. It is the
@@ -666,10 +702,11 @@ impl State {
     /// 1. A session ID that the state knows under another user is
     ///    refused ([`State::check_user`]).
     /// 2. A caller that the state does not know registers first: the
-    ///    state runs [`Register`] for it, and queues its records
+    ///    state runs [`Arrive`] for it, and queues its records
     ///    ([`Check::registered`]). A `register` and an `end` do not
     ///    register first. A known caller is seen now.
-    /// 3. The caller gets its worker mark. [`permits`] and
+    /// 3. The caller gets its worker mark from the pending copy. A
+    ///    session that the riff does not know is not a worker. [`permits`] and
     ///    [`Command::handle`] run. They change nothing.
     /// 4. A command that is not refused sets its signal
     ///    ([`Command::signal`], 01M3WRD97EZJK3AABXECXEY133).
@@ -715,23 +752,15 @@ impl State {
             if self.presence.knows(who) {
                 Signal::Called { place }.set(&mut self.presence, who, now);
             } else if !matches!(C::KIND, CommandKind::Register | CommandKind::End) {
-                let register = Register {
-                    me: me.clone(),
-                    worker: false,
-                };
-                let (changes, ()) = register
+                let arrive = Arrive { me: me.clone() };
+                let (changes, ()) = arrive
                     .handle(&caller, &self.pending_view(), self.now(now))
                     .expect("a register is never refused");
-                Signal::Place {
-                    place,
-                    worker: None,
-                }
-                .set(&mut self.presence, who, now);
+                Signal::Place { place }.set(&mut self.presence, who, now);
                 let cause = Cause::of(&caller, CommandKind::Register);
                 registered = Some(self.queue(&cause, &changes, now));
             }
-            let worker = self.presence.sessions.get(who).is_some_and(|s| s.worker);
-            caller = caller.with_worker(worker);
+            caller = caller.with_worker(self.pending.sessions().worker(who));
         }
         let result = permits(C::KIND, &caller, command.needs())
             .and_then(|()| command.handle(&caller, &self.pending_view(), self.now(now)));
@@ -786,7 +815,8 @@ impl State {
             if self.writer {
                 self.made.insert(record.position, now);
             } else {
-                self.apply_written(&record, Some(now));
+                // The sync form sends no wake.
+                let _ = self.apply_written(&record, Some(now));
             }
             records.push(record);
         }
@@ -873,9 +903,15 @@ impl State {
 
     /// Sets a signal of the session `who` in the presence
     /// (01M3WRD97EZJK3AABXECXEY133). It makes no record, and it cannot
-    /// change the riff. See [`Signal::set`].
+    /// change the riff. See [`Signal::set`]. The reply also says if the
+    /// session must clear its context (01M3X9XB37TQCXWPNFZRMRGJB4): the written copy has
+    /// that mark.
     pub fn signal(&mut self, who: &Who, signal: Signal, now: Instant) -> AliveReply {
-        signal.set(&mut self.presence, who, now)
+        let reply = signal.set(&mut self.presence, who, now);
+        AliveReply {
+            clear: self.must_clear(who),
+            ..reply
+        }
     }
 
     /// True when the state knows the session `who` in memory.
@@ -926,11 +962,7 @@ impl State {
     /// of its repository. A session registers when it starts and when it
     /// moves. It keeps its worker mark.
     pub fn register(&mut self, me: &SessionUri, now: Instant) {
-        let worker = self
-            .presence
-            .sessions
-            .get(me.who())
-            .is_some_and(|s| s.worker);
+        let worker = self.pending.sessions().worker(me.who());
         let register = Register {
             me: me.clone(),
             worker,
@@ -963,8 +995,8 @@ impl State {
     /// let mut state = State::default();
     /// state.register(&lead, now);
     /// state.set_idle(&lead, Some(0), None, now).unwrap();
+    /// state.worker(&w1, true, now);
     /// state.watch_started(&w1, now);
-    /// state.worker(w1.who(), true);
     ///
     /// let later = now + Duration::from_secs(80);
     /// assert_eq!(state.stop_idle_workers(later).len(), 1);
@@ -1048,12 +1080,14 @@ impl State {
     /// A new start of `me`: a new agent process, a resume or a `/clear`
     /// (01M3JEE1QQCFS5TMZW5N2DAD2D). The session is live, with its ID,
     /// threads, cursors and lead. Each of its claims is free at once. It
-    /// gives the claims that it freed.
+    /// gives the claims that it freed. The session keeps its worker
+    /// mark. A start with a fresh context (`process`, `clear`) ends
+    /// MustClear.
     ///
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_core::wire::RiffState;
+    /// use riff_core::wire::{RiffState, StartReason};
     /// use riff_server::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
@@ -1064,15 +1098,20 @@ impl State {
     /// let thread = mike.default_thread().unwrap();
     /// state.claim(&mike, &thread, "issue-12", now).unwrap();
     ///
-    /// let freed = state.start(&mike, now);
+    /// let freed = state.start(&mike, StartReason::Resume, now);
     /// assert_eq!(freed[0].item, "issue-12");
     /// let me = state.uri(mike.who(), now);
     /// assert!(me.claims().is_empty());
     /// assert!(me.lead(), "the lead stays the lead");
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn start(&mut self, me: &SessionUri, now: Instant) -> Vec<Freed> {
-        self.ask(me, &Start { me: me.clone() }, now)
+    pub fn start(&mut self, me: &SessionUri, reason: StartReason, now: Instant) -> Vec<Freed> {
+        let start = Start {
+            me: me.clone(),
+            reason,
+            worker: self.pending.sessions().worker(me.who()),
+        };
+        self.ask(me, &start, now)
             .map(|started| started.freed)
             .unwrap_or_default()
     }
@@ -1149,10 +1188,13 @@ impl State {
         let blocked = status
             .as_ref()
             .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
+        let sessions = self.written.sessions();
+        let must_clear = sessions.must_clear(who);
         let state = SessionState::of(
             live,
             self.written.the_riff().state == RiffState::Paused,
             blocked,
+            must_clear,
             !uri.claims().is_empty(),
         );
         SessionInfo {
@@ -1160,35 +1202,52 @@ impl State {
             live,
             idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
             status,
-            worker: session.worker,
+            worker: sessions.worker(who),
             stopping: session.stopping,
             claims_secs: now
                 .saturating_duration_since(session.claims_changed)
                 .as_secs(),
+            must_clear,
+            fresh_secs: sessions
+                .fresh_ms(who)
+                .map(|fresh_ms| now_ms.saturating_sub(fresh_ms) / 1000),
             state: Some(state),
         }
     }
 
-    /// Records whether the session `who` is a worker. A register call
-    /// sets it (01M3NT4M159EHN5W8JRTQ417N4).
+    /// Registers the session `me` with this worker mark
+    /// (01M3NT4M159EHN5W8JRTQ417N4). The mark goes to the log: a
+    /// `session_started` record with the reason `join` has it
+    /// (01M3X9X9M079WGFPJZHNXH9VEP).
     ///
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
+    /// use riff_core::record::Change;
     /// use riff_server::state::State;
     ///
     /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
     /// let now = Instant::now();
     /// let mut state = State::default();
-    /// state.register(&w1, now);
-    /// state.worker(w1.who(), true);
+    /// state.worker(&w1, true, now);
     /// assert!(state.who(now, 0, false)[0].worker);
+    /// // A worker is never the first lead.
+    /// assert!(!state.uri(w1.who(), now).lead());
+    ///
+    /// // The mark is in the log, so a replay has it.
+    /// let log = state.take_queue();
+    /// assert!(matches!(&log[1].change, Change::SessionStarted(s) if s.worker));
+    /// let replayed = State::replay(log, now, 0);
+    /// assert!(replayed.who(now, 0, true)[0].worker);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn worker(&mut self, who: &Who, worker: bool) {
-        if let Some(session) = self.presence.sessions.get_mut(who) {
-            session.worker = worker;
-        }
+    pub fn worker(&mut self, me: &SessionUri, worker: bool, now: Instant) {
+        let register = Register {
+            me: me.clone(),
+            worker,
+        };
+        self.ask(me, &register, now)
+            .expect("a register is never refused");
     }
 
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
@@ -1228,7 +1287,7 @@ impl State {
         let mut workers: BTreeMap<(String, String), Vec<(Duration, Who)>> = BTreeMap::new();
         let view = self.written_view();
         for (who, session) in &self.presence.sessions {
-            let free = session.worker
+            let free = self.written.sessions().worker(who)
                 && session.watching(now)
                 && !session.stopping
                 && !view.holds_claim(who)
@@ -1273,8 +1332,8 @@ impl State {
     /// state.register(&worker("lead"), now);
     /// for (id, at) in [("w1", 10), ("w2", 5), ("w3", 0)] {
     ///     let w = worker(id);
+    ///     state.worker(&w, true, now);
     ///     state.watch_started(&w, now + Duration::from_secs(at));
-    ///     state.worker(w.who(), true);
     /// }
     /// let later = now + Duration::from_secs(80);
     /// let stopped: Vec<_> = state.stop_idle_workers(later).iter().map(|s| s.worker.to_string()).collect();
@@ -1479,8 +1538,13 @@ impl State {
     }
 
     /// The wake for the newest unread message that woke `who`, if there
-    /// is one. A watch sends it when it starts.
+    /// is one. A watch sends it when it starts. A session that must
+    /// clear its context gets none: the wake waits until its start with
+    /// a fresh context (01M3X9XBMB3R718Z81BYXTHMZ0).
     pub fn missed(&self, who: &Who) -> Option<Wake> {
+        if self.must_clear(who) {
+            return None;
+        }
         self.written
             .threads()
             .by_name
@@ -1504,7 +1568,7 @@ impl State {
     /// number of forgotten sessions.
     pub fn forget_expired(&mut self, now: Instant) -> usize {
         self.run(&Caller::server(), &Forget, now)
-            .map_or(0, |(made, ())| made.len())
+            .map_or(0, |(made, ())| the_riff::forgotten(&made))
     }
 
     /// Adds a session to a thread. It makes the thread if it is new.
@@ -1546,7 +1610,7 @@ impl State {
             ..post
         };
         let (made, unmatched) = self.run(&trusted(&me), &post, now).map_err(|r| r.reason)?;
-        Ok(State::delivery(&made, unmatched))
+        Ok(self.delivery(&made, unmatched))
     }
 
     /// Posts a note or a message of the riff server itself
@@ -1596,7 +1660,7 @@ impl State {
         };
         let caller = Caller::of(me).with_class(Class::Server);
         let (made, ()) = self.run(&caller, &announce, now).map_err(|r| r.reason)?;
-        Ok(State::delivery(&made, Vec::new()))
+        Ok(self.delivery(&made, Vec::new()))
     }
 
     /// The live lead of `user` in each repository, sorted: a lead that
@@ -1813,14 +1877,41 @@ impl State {
         }
     }
 
-    /// Frees a claim. Only its holder can.
+    /// Frees a claim. Only its holder can. The reply says if the session
+    /// must clear its context now: a worker that released its last claim
+    /// (01M3X9XAK1KPZZVM1AJR2H8DSS).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::{RiffState, StartReason};
+    /// use riff_server::state::{MUST_CLEAR, State};
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=1ead".parse()?;
+    /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
+    /// state.worker(&w1, true, now);
+    /// let thread = lead.default_thread().unwrap();
+    /// state.claim(&w1, &thread, "issue-12", now).unwrap();
+    ///
+    /// // The worker releases its last claim: it must clear its context.
+    /// assert!(state.release(&w1, &thread, "issue-12", now).unwrap().must_clear);
+    /// assert_eq!(state.claim(&w1, &thread, "issue-13", now).unwrap_err(), MUST_CLEAR);
+    /// // A start with a fresh context ends it.
+    /// state.start(&w1, StartReason::Clear, now);
+    /// assert!(state.claim(&w1, &thread, "issue-13", now).unwrap().0);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn release(
         &mut self,
         me: &SessionUri,
         thread: &ThreadName,
         item: &str,
         now: Instant,
-    ) -> Result<(), String> {
+    ) -> Result<ReleaseReply, String> {
         let command = Release {
             me: me.clone(),
             thread: thread.clone(),
@@ -1915,22 +2006,24 @@ impl State {
     }
 
     /// What the records of a post cause, with each selector that matched
-    /// no session.
-    fn delivery(made: &[Record], unmatched: Vec<Selector>) -> Delivery {
+    /// no session. A session that must clear its context gets no wake.
+    fn delivery(&self, made: &[Record], unmatched: Vec<Selector>) -> Delivery {
         let Some(Change::Posted(posted)) = made.last().map(|record| &record.change) else {
             unreachable!("the records of a post end with the message");
         };
-        Delivery {
+        let mut delivery = Delivery {
             unmatched,
             ..Delivery::of(posted)
-        }
+        };
+        self.keep_wakes(&mut delivery.wakes);
+        delivery
     }
 
     /// Records that a session called, in the sync form. A session that
     /// the state does not know registers: it starts in the place from
-    /// its URI, joins the thread of its repository, and becomes the lead
-    /// when it is the first ([`Register`]). A person has one entry for
-    /// all its hosts, so it takes the place of each call
+    /// its URI, and joins the thread of its repository ([`Arrive`]). It
+    /// does not become the lead. A person has one entry for all its
+    /// hosts, so it takes the place of each call
     /// (01M3MWW8KYJ3ZV91X22RBSAF33).
     fn arrive(&mut self, me: &SessionUri, now: Instant) -> Who {
         let who = me.who().clone();
@@ -1938,11 +2031,7 @@ impl State {
             let place = me.place().clone();
             self.signal(&who, Signal::Called { place }, now);
         } else {
-            let register = Register {
-                me: me.clone(),
-                worker: false,
-            };
-            self.ask(me, &register, now)
+            self.ask(me, &Arrive { me: me.clone() }, now)
                 .expect("a register is never refused");
         }
         who
@@ -2053,7 +2142,6 @@ mod tests {
         // The second entry comes from before the rule: no command made it.
         let place = Signal::Place {
             place: sandman.place().clone(),
-            worker: None,
         };
         state.signal(sandman.who(), place, now);
         assert!(state.check_user(&mike).is_ok());
@@ -2306,7 +2394,7 @@ mod tests {
         let mut state = setup(now);
         let t = repo();
         state.watch_started(&api(), now);
-        state.worker(api().who(), true);
+        state.worker(&api(), true, now);
         assert!(state.claim(&api(), &t, "issue-12", now).unwrap().0);
         // The kill: no end call, no close of the stream, no keep-alive.
         let soon = now + GONE - Duration::from_secs(1);
@@ -2458,7 +2546,7 @@ mod tests {
         let taken = state.claim(&docs(), &repo(), "issue-12", now).unwrap();
         assert!(taken.0);
         // A resume brings the session back as the lead, with no claims.
-        state.start(&api(), now);
+        state.start(&api(), StartReason::Resume, now);
         assert!(is_lead(&state, &api(), now));
         assert!(state.uri(api().who(), now).claims().is_empty());
     }
@@ -2474,7 +2562,7 @@ mod tests {
             .unwrap();
         post(&mut state, &tests(), "como-technologies/riff", &[], "one");
 
-        let freed = state.start(&api(), now);
+        let freed = state.start(&api(), StartReason::Clear, now);
         let items: Vec<&str> = freed.iter().map(|f| f.item.as_str()).collect();
         assert_eq!(items, ["issue-7", "issue-12"]);
         assert!(state.uri(api().who(), now).claims().is_empty());
@@ -2482,7 +2570,7 @@ mod tests {
         assert_eq!(state.read(&api(), &repo(), false, now).unwrap().len(), 1);
         let taken = state.claim(&docs(), &repo(), "issue-12", now).unwrap();
         assert!(taken.0, "the item is free at once");
-        assert!(state.start(&api(), now).is_empty());
+        assert!(state.start(&api(), StartReason::Clear, now).is_empty());
     }
 
     #[test]
@@ -3322,8 +3410,8 @@ mod tests {
         let w = uri(&format!(
             "riff://mike@{host}/como-technologies/riff?session={id}"
         ));
+        state.worker(&w, true, at);
         state.watch_started(&w, at);
-        state.worker(w.who(), true);
         w
     }
 
@@ -3350,8 +3438,10 @@ mod tests {
         let mut state = State::default();
         running(&mut state).unwrap();
         let lead = uri("riff://mike@pangolin/como-technologies/riff?session=lead");
+        // The lead became the lead before it got the worker mark.
+        state.register(&lead, now);
         state.watch_started(&lead, now);
-        state.worker(lead.who(), true);
+        state.worker(&lead, true, now);
         let busy = idle_worker(&mut state, "pangolin", "busy", now);
         state.claim(&busy, &repo(), "issue-12", now).unwrap();
         idle_worker(&mut state, "pangolin", "w1", now);
@@ -3588,8 +3678,160 @@ mod tests {
 
         // A new start frees the claims: a change.
         state.claim(&docs(), &repo(), "issue-12", t(170)).unwrap();
-        state.start(&docs(), t(200));
+        state.start(&docs(), StartReason::Process, t(200));
         assert_eq!(info(&state, &docs(), t(230)).claims_secs, 30);
+    }
+
+    /// A state with a clock, so that each record has a time: three
+    /// sessions in a running riff, and the worker `w1` of mike.
+    fn with_worker(now: Instant) -> (State, SessionUri) {
+        let mut state = State {
+            clock: Some((now, T0)),
+            ..State::default()
+        };
+        for n in [api(), tests(), docs()] {
+            state.register(&n, now);
+        }
+        state.riff(&api(), Some(RiffState::Running), now).unwrap();
+        let w1 = uri("riff://mike@pangolin/como-technologies/riff?session=w1#issue-12");
+        state.worker(&w1, true, now);
+        state.watch_started(&w1, now);
+        (state, w1)
+    }
+
+    /// 01M3X9XC99KY4RQY36A7CYWY11: `who` shows MustClear, and the time
+    /// since the last fresh start.
+    #[test]
+    fn who_shows_must_clear_and_the_time_since_the_last_fresh_start() {
+        let now = Instant::now();
+        let (mut state, w1) = with_worker(now);
+        let t = |secs| now + Duration::from_secs(secs);
+        let shown = |state: &State, secs: u64| {
+            let all = state.who(t(secs), T0 + secs * 1000, false);
+            let found = all.into_iter().find(|s| s.uri.who() == w1.who());
+            found.unwrap()
+        };
+        // The log has no fresh start of the worker yet: a register only.
+        let first = shown(&state, 5);
+        assert!(first.worker && !first.must_clear);
+        assert_eq!(first.fresh_secs, None);
+        assert_eq!(first.state, Some(SessionState::Idle));
+
+        state.start(&w1, StartReason::Process, t(10));
+        state.claim(&w1, &repo(), "issue-12", t(20)).unwrap();
+        let busy = shown(&state, 40);
+        assert_eq!(busy.fresh_secs, Some(30));
+        assert_eq!(busy.state, Some(SessionState::Busy));
+
+        state.release(&w1, &repo(), "issue-12", t(50)).unwrap();
+        let waits = shown(&state, 60);
+        assert!(waits.must_clear);
+        assert_eq!(waits.state, Some(SessionState::MustClear));
+        assert_eq!(waits.fresh_secs, Some(50));
+
+        // A resume is no fresh start. A clear is one.
+        state.start(&w1, StartReason::Resume, t(70));
+        assert!(shown(&state, 80).must_clear);
+        assert_eq!(shown(&state, 80).fresh_secs, Some(70));
+        state.start(&w1, StartReason::Clear, t(90));
+        let ready = shown(&state, 100);
+        assert!(!ready.must_clear);
+        assert_eq!(ready.fresh_secs, Some(10));
+        assert_eq!(ready.state, Some(SessionState::Idle));
+    }
+
+    /// 01M3X9XB37TQCXWPNFZRMRGJB4: the reply to a keep-alive of a worker
+    /// in MustClear carries the ask to clear.
+    #[test]
+    fn the_reply_to_a_keep_alive_of_a_worker_in_must_clear_asks_it_to_clear() {
+        let now = Instant::now();
+        let (mut state, w1) = with_worker(now);
+        assert!(!state.alive(&w1, now).clear);
+        state.claim(&w1, &repo(), "issue-12", now).unwrap();
+        assert!(!state.alive(&w1, now).clear);
+        assert!(
+            state
+                .release(&w1, &repo(), "issue-12", now)
+                .unwrap()
+                .must_clear
+        );
+        assert!(state.alive(&w1, now).clear);
+        assert!(state.alive(&w1, now).clear, "each keep-alive says it");
+        assert!(!state.alive(&api(), now).clear);
+        state.start(&w1, StartReason::Clear, now);
+        assert!(!state.alive(&w1, now).clear);
+    }
+
+    /// 01M3X9XBMB3R718Z81BYXTHMZ0: no wake goes to a session in
+    /// MustClear. The message stays unread, and its record names the
+    /// session.
+    #[test]
+    fn a_post_to_a_worker_in_must_clear_gives_no_wake_until_its_fresh_start() {
+        let now = Instant::now();
+        let (mut state, w1) = with_worker(now);
+        state.claim(&w1, &repo(), "issue-12", now).unwrap();
+        state.release(&w1, &repo(), "issue-12", now).unwrap();
+        let request = Post::new(&api(), None, to(&["session=w1"]), "request: claim issue-7");
+        let delivery = state.post(request, now, 0).unwrap();
+        assert!(delivery.wakes.is_empty(), "no wake");
+        assert_eq!(delivery.woken, [w1.who().clone()], "the record names it");
+        assert!(state.missed(w1.who()).is_none());
+
+        state.start(&w1, StartReason::Clear, now);
+        let wake = state.missed(w1.who()).unwrap();
+        assert_eq!(wake.from.who(), api().who());
+    }
+
+    /// 01M3X9XD8QWHS2CXTFSQK0PN1Y: the checkpoint holds the worker mark,
+    /// the MustClear mark and the time of the last fresh start of each
+    /// session.
+    #[test]
+    fn a_start_from_a_checkpoint_gives_the_life_cycle_of_a_full_replay() {
+        let now = Instant::now();
+        let (mut state, w1) = with_worker(now);
+        let t = |secs| now + Duration::from_secs(secs);
+        state.start(&w1, StartReason::Process, t(10));
+        state.claim(&w1, &repo(), "issue-12", t(20)).unwrap();
+        state.release(&w1, &repo(), "issue-12", t(30)).unwrap();
+        state.start(&w1, StartReason::Resume, t(40));
+        state.start(&w1, StartReason::Clear, t(50));
+        state.claim(&w1, &repo(), "issue-13", t(60)).unwrap();
+        state.release(&w1, &repo(), "issue-13", t(70)).unwrap();
+        let log: Vec<Record> = state.take_queue();
+        let full = State::replay(log.clone(), now, T0);
+        let sessions = full.written.sessions();
+        assert!(sessions.worker(w1.who()) && sessions.must_clear(w1.who()));
+        assert_eq!(sessions.fresh_ms(w1.who()), Some(T0 + 50_000));
+
+        // At each position, also in MustClear and after a fresh start.
+        let life = |state: &State| {
+            let sessions = state.written.sessions();
+            let who = w1.who();
+            (
+                sessions.worker(who),
+                sessions.must_clear(who),
+                sessions.fresh_ms(who),
+            )
+        };
+        let mut seen = BTreeSet::new();
+        for at in 0..=log.len() {
+            let head = State::replay(log[..at].to_vec(), now, T0);
+            seen.insert(life(&head));
+            let loaded = State::load(Some(through_json(&head, now)), log[at..].to_vec(), now, T0);
+            assert!(loaded.same_log_state(&full), "a checkpoint at {at}");
+            assert_eq!(life(&loaded), life(&full), "a checkpoint at {at}");
+            // The checkpoint alone has the life cycle of its position.
+            let alone = State::load(Some(through_json(&head, now)), [], now, T0);
+            assert_eq!(life(&alone), life(&head), "a checkpoint at {at}");
+            let shown = |state: &State| {
+                let all = state.who(now, T0, true);
+                let found = all.into_iter().find(|s| s.uri.who() == w1.who());
+                found.map(|s| (s.worker, s.must_clear, s.fresh_secs))
+            };
+            assert_eq!(shown(&alone), shown(&head), "a checkpoint at {at}");
+        }
+        assert!(seen.contains(&(true, true, Some(T0 + 10_000))));
+        assert!(seen.contains(&(true, false, Some(T0 + 50_000))));
     }
 }
 

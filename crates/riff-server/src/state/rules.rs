@@ -13,7 +13,9 @@
 //!
 //! The tests do no I/O.
 
-use riff_core::record::{By, Claimed, Forgotten, Member, RiffStateSet, SettingChanged};
+use riff_core::record::{
+    By, Claimed, Forgotten, Member, Released, RiffStateSet, SessionStarted, SettingChanged,
+};
 use riff_core::wire;
 
 use super::*;
@@ -73,10 +75,29 @@ fn claimed(me: &SessionUri, item: &str) -> Change {
 }
 
 fn released(me: &SessionUri, item: &str) -> Change {
-    Change::Released(Claimed {
+    Change::Released(Released {
         session: me.clone(),
         thread: repo(),
         item: item.into(),
+        must_clear: false,
+    })
+}
+
+/// The release of the last claim of a worker, by the worker.
+fn last_released(me: &SessionUri, item: &str) -> Change {
+    Change::Released(Released {
+        session: me.clone(),
+        thread: repo(),
+        item: item.into(),
+        must_clear: true,
+    })
+}
+
+fn started(me: &SessionUri, reason: StartReason, worker: bool) -> Change {
+    Change::SessionStarted(SessionStarted {
+        session: me.clone(),
+        reason,
+        worker,
     })
 }
 
@@ -154,11 +175,26 @@ macro_rules! asks {
 
 asks! {
     Register => wire::Register, |me| wire::Register { me, worker: false };
-    Start => wire::Start, |me| wire::Start { me };
+    RegisterWorker => wire::Register, |me| wire::Register { me, worker: true };
+    Arrive => super::Arrive, |me| super::Arrive { me };
     End => wire::End, |me| wire::End { me };
     Lead => wire::Lead, |me| wire::Lead { me };
     Pause => wire::Pause, |me| wire::Pause { me };
     Resume => wire::Resume, |me| wire::Resume { me };
+}
+
+/// A start with its reason and its worker mark.
+struct Start(StartReason, bool);
+
+impl Ask for Start {
+    type Command = wire::Start;
+    fn of(self, me: &SessionUri) -> wire::Start {
+        wire::Start {
+            me: me.clone(),
+            reason: self.0,
+            worker: self.1,
+        }
+    }
 }
 
 struct Join(ThreadName);
@@ -396,7 +432,11 @@ impl When {
 fn a_new_session_joins_its_repository_and_is_the_first_lead() {
     given(&[])
         .when(&ann(), Register)
-        .then(&[joined(&ann(), &repo()), lead_set(&ann())]);
+        .then(&[
+            joined(&ann(), &repo()),
+            started(&ann(), StartReason::Join, false),
+            lead_set(&ann()),
+        ]);
 }
 
 #[test]
@@ -404,7 +444,10 @@ fn a_second_session_of_a_user_is_not_the_lead_while_the_first_holds() {
     given(&[joined(&ann(), &repo()), lead_set(&ann())])
         .live(&[ann()])
         .when(&ann2(), Register)
-        .then(&[joined(&ann2(), &repo())]);
+        .then(&[
+            joined(&ann2(), &repo()),
+            started(&ann2(), StartReason::Join, false),
+        ]);
 }
 
 #[test]
@@ -412,7 +455,11 @@ fn a_second_session_is_the_lead_when_the_first_stopped_long_ago() {
     given(&[joined(&ann(), &repo()), lead_set(&ann())])
         .after(CLAIM_GRACE)
         .when(&ann2(), Register)
-        .then(&[joined(&ann2(), &repo()), lead_set(&ann2())]);
+        .then(&[
+            joined(&ann2(), &repo()),
+            started(&ann2(), StartReason::Join, false),
+            lead_set(&ann2()),
+        ]);
 }
 
 #[test]
@@ -812,8 +859,12 @@ fn an_end_and_a_new_start_free_each_claim() {
         .when(&ann(), End)
         .then(&[released(&ann(), "issue-7"), released(&ann(), "issue-8")]);
     given(&records)
-        .when(&ann(), Start)
-        .then(&[released(&ann(), "issue-7"), released(&ann(), "issue-8")]);
+        .when(&ann(), Start(StartReason::Resume, false))
+        .then(&[
+            released(&ann(), "issue-7"),
+            released(&ann(), "issue-8"),
+            started(&ann(), StartReason::Resume, false),
+        ]);
 }
 
 #[test]
@@ -909,6 +960,25 @@ fn a_session_with_no_sign_of_life_for_the_expiry_is_forgotten() {
         .live(&[carol()])
         .when(&crate::owner::server_uri(), Forget)
         .then(&[forgotten(&ann()), forgotten(&bob())]);
+}
+
+/// 01M3X9XCSBR11ACD86FNXKF8JH: each claim of a forgotten session gets
+/// its `released` record first.
+#[test]
+fn a_forget_gives_one_released_record_for_each_claim_then_session_forgotten() {
+    let mut records = three_with_direct_threads();
+    records.extend([claimed(&ann(), "issue-7"), claimed(&ann(), "issue-8")]);
+    records.push(claimed(&carol(), "issue-9"));
+    given(&records)
+        .after(SESSION_EXPIRY)
+        .live(&[carol()])
+        .when(&crate::owner::server_uri(), Forget)
+        .then(&[
+            released(&ann(), "issue-7"),
+            released(&ann(), "issue-8"),
+            forgotten(&ann()),
+            forgotten(&bob()),
+        ]);
 }
 
 #[test]
@@ -1013,10 +1083,8 @@ fn a_member_cannot_change_the_idle_settings() {
 /// adds the worker mark of the caller before `permits`.
 #[test]
 fn a_worker_cannot_send_lead() {
-    let mut given = given(&team()).live(&[ann(), ann2()]);
-    let sessions = &mut given.state.presence.sessions;
-    sessions.get_mut(ann2().who()).unwrap().worker = true;
-    given
+    worker_team()
+        .live(&[ann()])
         .when(&ann2(), Lead)
         .then_refused_as(Code::NotAllowed, "a worker cannot be the lead");
 }
@@ -1060,7 +1128,9 @@ fn a_call_of_a_new_session_registers_it_first_but_an_end_does_not() {
         .into_iter()
         .map(|record| record.change)
         .collect();
-    assert_eq!(registered, [joined(&ann(), &repo()), lead_set(&ann())]);
+    // That register makes no lead (01M3X9XA3H6YF0QCYSNB2P0CT2).
+    let join_start = started(&ann(), StartReason::Join, false);
+    assert_eq!(registered, [joined(&ann(), &repo()), join_start]);
     assert_eq!(check.result.unwrap().0, [joined(&ann(), &design())]);
     assert!(state.knows(ann().who()));
 }
@@ -1074,4 +1144,235 @@ fn a_known_session_id_under_another_user_is_refused_as_other_user() {
         .live(&[ann()])
         .when_new(&other, Register)
         .then_refused_as(Code::OtherUser, "known as user ann");
+}
+
+/// The team, with ann2 as a worker of ann.
+fn worker_records() -> Vec<Change> {
+    let mut records = team();
+    records.push(joined(&ann2(), &repo()));
+    records.push(started(&ann2(), StartReason::Process, true));
+    records
+}
+
+fn worker_team() -> Given {
+    given(&worker_records())
+}
+
+/// The team, with the worker ann2 after the release of its last claim.
+fn must_clear_records() -> Vec<Change> {
+    let mut records = worker_records();
+    records.push(claimed(&ann2(), "issue-7"));
+    records.push(last_released(&ann2(), "issue-7"));
+    records
+}
+
+fn release(item: &str) -> Release {
+    Release {
+        thread: repo(),
+        item: item.into(),
+    }
+}
+
+/// 01M3X9X9M079WGFPJZHNXH9VEP: the worker mark of a register goes to
+/// the log when it is not the mark of the riff.
+#[test]
+fn a_register_with_another_worker_mark_makes_session_started_with_the_reason_join() {
+    given(&team())
+        .when(&ann(), RegisterWorker)
+        .then(&[started(&ann(), StartReason::Join, true)]);
+    worker_team()
+        .when(&ann2(), RegisterWorker)
+        .then(&[]);
+    worker_team()
+        .live(&[ann()])
+        .when(&ann2(), Register)
+        .then(&[started(&ann2(), StartReason::Join, false)]);
+}
+
+/// 01M3X9XA3H6YF0QCYSNB2P0CT2: a worker is never the first lead.
+#[test]
+fn a_register_of_a_worker_makes_no_lead() {
+    given(&[]).when(&ann(), RegisterWorker).then(&[
+        joined(&ann(), &repo()),
+        started(&ann(), StartReason::Join, true),
+    ]);
+}
+
+/// 01M3X9XA3H6YF0QCYSNB2P0CT2: the register that the engine runs first
+/// keeps the mark of the riff, and makes no lead.
+#[test]
+fn the_register_that_the_engine_runs_first_makes_no_lead_and_keeps_the_worker_mark() {
+    given(&[]).when(&ann(), Arrive).then(&[
+        joined(&ann(), &repo()),
+        started(&ann(), StartReason::Join, false),
+    ]);
+    // The riff knows the worker: no record.
+    worker_team().when(&ann2(), Arrive).then(&[]);
+    // A person has no life cycle.
+    given(&[]).when(&person(), Arrive).then(&[]);
+    given(&[]).when(&person(), Register).then(&[]);
+}
+
+/// 01M3X9X9M079WGFPJZHNXH9VEP: a start gives its reason and its worker
+/// mark to the log, after the `released` record of each claim.
+#[test]
+fn a_start_makes_session_started_with_its_reason_and_its_worker_mark() {
+    let mut records = worker_records();
+    records.push(claimed(&ann2(), "issue-7"));
+    for reason in [
+        StartReason::Process,
+        StartReason::Resume,
+        StartReason::Clear,
+    ] {
+        given(&records)
+            .live(&[ann()])
+            .when(&ann2(), Start(reason, true))
+            .then(&[released(&ann2(), "issue-7"), started(&ann2(), reason, true)]);
+    }
+}
+
+/// 01M3X9XA3H6YF0QCYSNB2P0CT2: a start makes the first lead, and never
+/// for a worker.
+#[test]
+fn a_start_makes_the_first_lead_but_not_for_a_worker() {
+    let alone = [joined(&ann(), &repo())];
+    given(&alone)
+        .when(&ann(), Start(StartReason::Process, false))
+        .then(&[started(&ann(), StartReason::Process, false), lead_set(&ann())]);
+    given(&alone)
+        .when(&ann(), Start(StartReason::Process, true))
+        .then(&[started(&ann(), StartReason::Process, true)]);
+    // A lead that starts again stays the lead: no record.
+    given(&team())
+        .when(&ann(), Start(StartReason::Clear, false))
+        .then(&[started(&ann(), StartReason::Clear, false)]);
+}
+
+#[test]
+fn a_start_with_a_reason_that_is_no_start_is_refused() {
+    for reason in [StartReason::Join, StartReason::Other] {
+        given(&team())
+            .when(&ann(), Start(reason, false))
+            .then_refused_as(Code::BadRequest, "process, resume or clear");
+    }
+}
+
+/// 01M3X9XAK1KPZZVM1AJR2H8DSS: `handle` decides, and the record holds
+/// the decision.
+#[test]
+fn the_release_of_the_last_claim_of_a_worker_has_must_clear() {
+    let mut records = worker_records();
+    records.push(claimed(&ann2(), "issue-7"));
+    given(&records)
+        .when(&ann2(), release("issue-7"))
+        .then(&[last_released(&ann2(), "issue-7")]);
+
+    // A claim is left: no mark.
+    records.push(claimed(&ann2(), "issue-8"));
+    given(&records)
+        .when(&ann2(), release("issue-7"))
+        .then(&[released(&ann2(), "issue-7")]);
+}
+
+#[test]
+fn the_release_of_the_last_claim_of_a_session_that_is_no_worker_has_no_must_clear() {
+    let mut records = team();
+    records.push(claimed(&ann(), "issue-7"));
+    given(&records)
+        .when(&ann(), release("issue-7"))
+        .then(&[released(&ann(), "issue-7")]);
+}
+
+/// 01M3X9XAK1KPZZVM1AJR2H8DSS: only the own release of the worker gives
+/// the mark. A start, an end, a release by the lead and a claim of
+/// another session leave the worker Ready.
+#[test]
+fn a_claim_of_a_worker_that_goes_in_another_way_has_no_must_clear() {
+    let mut records = worker_records();
+    records.push(claimed(&ann2(), "issue-7"));
+    let free = released(&ann2(), "issue-7");
+    given(&records)
+        .when(&ann2(), Start(StartReason::Resume, true))
+        .then(&[free.clone(), started(&ann2(), StartReason::Resume, true)]);
+    given(&records)
+        .when(&ann2(), End)
+        .then(std::slice::from_ref(&free));
+    // The worker is gone for the time of the claim timer, and bob takes
+    // its item.
+    given(&records)
+        .after(CLAIM_GRACE)
+        .when(&bob(), claim("issue-7"))
+        .then(&[free.clone(), claimed(&bob(), "issue-7")]);
+    let When(result) = given(&records).when(
+        &ann(),
+        ReleaseFor {
+            thread: repo(),
+            item: "issue-7".into(),
+            holder: "a2".into(),
+        },
+    );
+    assert_eq!(result.unwrap()[0], free);
+}
+
+/// 01M3X9XAK1KPZZVM1AJR2H8DSS: the refusal comes first, also in a paused
+/// riff.
+#[test]
+fn a_claim_of_a_session_in_must_clear_is_refused_as_must_clear() {
+    let text = "clear your context first: type /clear, or run riff workers next";
+    given(&must_clear_records())
+        .when(&ann2(), claim("issue-9"))
+        .then_refused_as(Code::MustClear, text);
+    let mut paused = must_clear_records();
+    paused.push(riff_set(RiffState::Paused));
+    given(&paused)
+        .when(&ann2(), claim("issue-9"))
+        .then_refused_as(Code::MustClear, text);
+    assert_eq!(MUST_CLEAR, text);
+}
+
+#[test]
+fn a_fresh_start_ends_must_clear_and_a_resume_does_not() {
+    for fresh in [StartReason::Process, StartReason::Clear] {
+        let mut records = must_clear_records();
+        records.push(started(&ann2(), fresh, true));
+        given(&records)
+            .when(&ann2(), claim("issue-9"))
+            .then(&[claimed(&ann2(), "issue-9")]);
+    }
+    for stays in [StartReason::Resume, StartReason::Join] {
+        let mut records = must_clear_records();
+        records.push(started(&ann2(), stays, true));
+        given(&records)
+            .when(&ann2(), claim("issue-9"))
+            .then_refused_as(Code::MustClear, "clear your context first");
+    }
+}
+
+/// A worker stops in the middle of an item. A resume frees its claim,
+/// and it claims the item again (01M3X9XAK1KPZZVM1AJR2H8DSS).
+#[test]
+fn a_worker_that_resumes_in_the_middle_of_an_item_claims_it_again() {
+    let now = Instant::now();
+    let mut state = State::default();
+    state.register(&ann(), now);
+    state.riff(&ann(), Some(RiffState::Running), now).unwrap();
+    state.worker(&ann2(), true, now);
+    assert!(state.claim(&ann2(), &repo(), "issue-7", now).unwrap().0);
+
+    // The worker stops. A person resumes it.
+    let later = now + Duration::from_secs(60);
+    let freed = state.start(&ann2(), StartReason::Resume, later);
+    assert_eq!(freed[0].item, "issue-7");
+    assert!(!state.must_clear(ann2().who()));
+    assert!(state.claim(&ann2(), &repo(), "issue-7", later).unwrap().0);
+    assert_eq!(state.uri(ann2().who(), later).claims(), ["issue-7"]);
+
+    // The item is done: the release of the worker gives MustClear.
+    assert!(
+        state
+            .release(&ann2(), &repo(), "issue-7", later)
+            .unwrap()
+            .must_clear
+    );
+    assert!(state.must_clear(ann2().who()));
 }

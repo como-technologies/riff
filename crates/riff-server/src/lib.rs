@@ -3104,8 +3104,9 @@ mod tests {
         assert!(service.save().await.is_ok());
         let chunks = service.0.log.list(log::LOG).await.unwrap();
         assert!(!chunks.is_empty());
-        // The pause of `make_riff`, the join of the thread, the message.
-        assert_eq!(position(&service), 3);
+        // The pause of `make_riff`, the start of the session, the join
+        // of the thread, the message.
+        assert_eq!(position(&service), 4);
     }
 
     /// The claims of mike, as `who` shows them: the written copy.
@@ -3298,10 +3299,14 @@ mod tests {
         .await
         .unwrap();
         assert!(!reply.stop);
-        // The join of the repository thread is written.
+        // The join of the repository thread and the start of the
+        // session are written. That register makes no lead.
         let chunks = store.chunks().await;
         assert_eq!(chunks.len(), before + 1);
-        assert!(matches!(chunks[before][..], [Change::JoinedThread(_)]));
+        assert!(matches!(
+            chunks[before][..],
+            [Change::JoinedThread(_), Change::SessionStarted(_)]
+        ));
         let known = service
             .0
             .engine
@@ -3309,30 +3314,108 @@ mod tests {
         assert_eq!(known.unwrap().uri.place(), new.place());
     }
 
-    /// The signal of a `register` sets the place and the worker mark of
-    /// the session, also when the command makes no record
-    /// (01M3WRD97EZJK3AABXECXEY133).
+    /// The signal of a `register` sets the place of the session, also
+    /// when the command makes no record (01M3WRD97EZJK3AABXECXEY133). A
+    /// new worker mark goes to the log (01M3X9X9M079WGFPJZHNXH9VEP).
     #[tokio::test(start_paused = true)]
-    async fn a_register_sets_the_place_and_the_worker_mark() {
+    async fn a_register_sets_the_place_and_writes_a_new_worker_mark() {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
         let last = position(&service);
         let moved: SessionUri = "riff://brett@heron/como-technologies/riff?session=b#api"
             .parse()
             .unwrap();
-        let register = Register {
+        let register = |worker| Register {
             me: moved.clone(),
+            worker,
+        };
+        send(&service, register(false)).await.unwrap();
+        assert_eq!(position(&service), last, "no record");
+        let shown = |service: &Service| {
+            let read = |state: &State| state.me(brett().who(), Instant::now(), now_ms());
+            service.0.engine.read(read).unwrap()
+        };
+        assert!(!shown(&service).worker);
+        assert_eq!(shown(&service).uri.place(), moved.place());
+
+        send(&service, register(true)).await.unwrap();
+        assert_eq!(position(&service), last + 1, "the worker mark is a record");
+        let chunks = store.chunks().await;
+        assert!(matches!(
+            &chunks[chunks.len() - 1][..],
+            [Change::SessionStarted(started)] if started.worker
+        ));
+        assert!(shown(&service).worker);
+        send(&service, register(true)).await.unwrap();
+        assert_eq!(position(&service), last + 1, "the same mark: no record");
+    }
+
+    /// The server sends no wake to a worker that must clear its context.
+    /// The request of a lead waits through the clear: the start with a
+    /// fresh context gives the worker the wake that it missed
+    /// (01M3X9XBMB3R718Z81BYXTHMZ0).
+    #[tokio::test(start_paused = true)]
+    async fn the_request_of_a_lead_waits_through_the_clear_of_a_worker() {
+        use riff_core::wire::StartReason;
+
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1"
+            .parse()
+            .unwrap();
+        let start = |reason| Start {
+            me: worker.clone(),
+            reason,
             worker: true,
         };
-        send(&service, register).await.unwrap();
-        assert_eq!(position(&service), last, "no record");
-        let shown = service
-            .0
-            .engine
-            .read(|state| state.me(brett().who(), Instant::now(), now_ms()))
-            .unwrap();
-        assert!(shown.worker);
-        assert_eq!(shown.uri.place(), moved.place());
+        send(&service, start(StartReason::Process)).await.unwrap();
+        send(&service, claim_of(&worker, "issue-7")).await.unwrap();
+        let release = Release {
+            me: worker.clone(),
+            thread: worker.default_thread().unwrap(),
+            item: "issue-7".into(),
+        };
+        // The reply to the release carries the ask to clear.
+        assert!(send(&service, release).await.unwrap().must_clear);
+        let alive = |service: &Service| {
+            alive(
+                AxumState(service.0.clone()),
+                Proof::none(),
+                Json(Alive { me: worker.clone() }),
+            )
+        };
+        // The reply to a keep-alive carries it too.
+        assert!(alive(&service).await.unwrap().clear);
+
+        // The lead sends a request. The worker gets no wake.
+        let mut wakes = service.0.engine.wakes();
+        let to = vec![Selector::session("w1")];
+        let request = Post::new(&mike(), None, to, "request: claim issue-12");
+        let posted = send(&service, request).await.unwrap();
+        assert_eq!(posted.woken[0].who(), worker.who(), "the record names it");
+        assert!(wakes.try_recv().is_err(), "no wake in MustClear");
+        let missed = |service: &Service| service.0.engine.read(|state| state.missed(worker.who()));
+        assert!(missed(&service).is_none(), "a watch that starts gets none");
+        let refused = send(&service, claim_of(&worker, "issue-12")).await;
+        let Err(Failed::Refused(refused)) = refused else {
+            panic!("a refusal");
+        };
+        assert_eq!(refused.code, state::Code::MustClear);
+        assert_eq!(refused.reason, state::MUST_CLEAR);
+
+        // A resume is no fresh context: the wake still waits.
+        send(&service, start(StartReason::Resume)).await.unwrap();
+        assert!(wakes.try_recv().is_err(), "no wake after a resume");
+
+        // The clear: the worker gets the wake that it missed.
+        send(&service, start(StartReason::Clear)).await.unwrap();
+        let (to, wake) = wakes.recv().await.unwrap();
+        assert_eq!(&to, worker.who());
+        assert_eq!(wake.from.who(), mike().who());
+        // A watch that starts after the clear gets it too.
+        assert_eq!(missed(&service).unwrap().seq, wake.seq);
+        assert!(!alive(&service).await.unwrap().clear);
+        send(&service, claim_of(&worker, "issue-12")).await.unwrap();
     }
 
     /// A worker is never the lead: `permits` refuses the command with
@@ -3670,7 +3753,13 @@ mod tests {
             panic!("a refusal: {refused:?}");
         };
         assert_eq!(refused.code, state::Code::NotAllowed);
-        // A command that needs a member goes on.
+        // A command that needs a member goes on. The session is the
+        // lead after its register.
+        let register = Register {
+            me: mike(),
+            worker: false,
+        };
+        send(&service, register).await.unwrap();
         assert!(send(&service, Resume { me: mike() }).await.is_ok());
     }
 
@@ -3756,7 +3845,11 @@ mod tests {
                 per_host: Some(1),
                 after_secs: None,
             }),
-            of(Start { me: me() }),
+            of(Start {
+                me: me(),
+                reason: riff_core::wire::StartReason::Process,
+                worker: false,
+            }),
             of(End { me: me() }),
         ]
     }

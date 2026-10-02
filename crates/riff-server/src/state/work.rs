@@ -16,9 +16,10 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
-use riff_core::record::{Change, Claimed, Member, Record};
+use riff_core::record::{Change, Claimed, Member, Record, Released};
 use riff_core::wire::{
-    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, RiffState,
+    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply,
+    RiffState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,9 +45,9 @@ impl Work {
     }
 
     /// The item is free, when the session of the record holds it.
-    pub(super) fn released(&mut self, claimed: &Claimed) -> Result<(), &'static str> {
-        let key = (claimed.thread.clone(), claimed.item.clone());
-        if self.claims.get(&key) == Some(claimed.session.who()) {
+    pub(super) fn released(&mut self, released: &Released) -> Result<(), &'static str> {
+        let key = (released.thread.clone(), released.item.clone());
+        if self.claims.get(&key) == Some(released.session.who()) {
             self.claims.remove(&key);
             Ok(())
         } else {
@@ -222,10 +223,11 @@ impl View<'_> {
             .iter()
             .filter(|(_, holder)| *holder == who)
             .map(|((thread, item), _)| {
-                Change::Released(Claimed {
+                Change::Released(Released {
                     session: self.plain(who),
                     thread: thread.clone(),
                     item: item.clone(),
+                    must_clear: false,
                 })
             })
             .collect()
@@ -239,6 +241,8 @@ impl View<'_> {
 /// reason names the holder (01M3WRD9JBQMNN96TXJH8EAJ3W). A claim that
 /// takes the item of a holder that is gone gives a `released` record
 /// for the old holder, then the `claimed` record (01M3X4Z6BKM251H7CS2CEGR205).
+/// A worker that must clear its context is refused first, with the code
+/// `must_clear` (01M3X9XAK1KPZZVM1AJR2H8DSS).
 impl Command for Claim {
     const KIND: CommandKind = CommandKind::Claim;
     type Reply = ClaimReply;
@@ -252,6 +256,9 @@ impl Command for Claim {
     ) -> Result<(Vec<Change>, ()), Refused> {
         let who = caller.who();
         let Claim { thread, item, .. } = self;
+        if view.riff.sessions().must_clear(who) {
+            return Err(Refused::new(Code::MustClear, MUST_CLEAR));
+        }
         check("claim", item).map_err(|e| e.to_string())?;
         if view.riff.the_riff().state == RiffState::Paused {
             return Err(Refused::new(
@@ -282,7 +289,7 @@ impl Command for Claim {
             // The holder is gone: its claim ends first, in the same
             // chunk (01M3X4Z6BKM251H7CS2CEGR205).
             Some(gone) => {
-                changes.push(Change::Released(claim(gone)));
+                changes.push(Change::Released(Released::of(claim(gone))));
                 changes.push(Change::Claimed(claim(who)));
             }
             None => changes.push(Change::Claimed(claim(who))),
@@ -304,10 +311,17 @@ impl Command for Claim {
     }
 }
 
-/// Frees a claim. Only its holder can.
+/// The reason of a claim that is refused with the code `must_clear`
+/// (01M3X9XAK1KPZZVM1AJR2H8DSS).
+pub const MUST_CLEAR: &str = "clear your context first: type /clear, or run riff workers next";
+
+/// Frees a claim. Only its holder can. The `released` record of the last
+/// claim of a worker has `must_clear`: the worker must clear its context
+/// before its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS). The reply carries the ask to clear
+/// (01M3X9XB37TQCXWPNFZRMRGJB4).
 impl Command for Release {
     const KIND: CommandKind = CommandKind::Release;
-    type Reply = ();
+    type Reply = ReleaseReply;
     type Note = ();
 
     fn handle(
@@ -320,10 +334,11 @@ impl Command for Release {
         let Release { thread, item, .. } = self;
         match view.riff.work().holder(thread, item) {
             Some(holder) if holder == who => Ok((
-                vec![Change::Released(Claimed {
+                vec![Change::Released(Released {
                     session: view.plain(who),
                     thread: thread.clone(),
                     item: item.clone(),
+                    must_clear: caller.worker() && view.riff.work().items_of(who).len() == 1,
                 })],
                 (),
             )),
@@ -338,7 +353,12 @@ impl Command for Release {
         }
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> ReleaseReply {
+        let must_clear = made
+            .iter()
+            .any(|record| matches!(&record.change, Change::Released(r) if r.must_clear));
+        ReleaseReply { must_clear }
+    }
 }
 
 /// The lead of a user frees the claim of another session of that user
@@ -400,10 +420,11 @@ impl Command for ReleaseFor {
                 ),
             ));
         }
-        let mut changes = vec![Change::Released(Claimed {
+        let mut changes = vec![Change::Released(Released {
             session: view.plain(holder),
             thread: thread.clone(),
             item: item.clone(),
+            must_clear: false,
         })];
         let server = crate::owner::server_uri();
         let news = released_for(&view.uri(who, now.at), item, &view.uri(holder, now.at));

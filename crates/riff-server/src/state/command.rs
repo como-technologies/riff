@@ -7,7 +7,7 @@
 //!
 //! | Group | File | Commands |
 //! |---|---|---|
-//! | sessions | [`super::sessions`] | [`Register`](riff_core::wire::Register), [`Start`](riff_core::wire::Start), [`End`](riff_core::wire::End) |
+//! | sessions | [`super::sessions`] | [`Register`](riff_core::wire::Register), [`Arrive`](super::Arrive), [`Start`](riff_core::wire::Start), [`End`](riff_core::wire::End) |
 //! | threads | [`super::threads`] | [`Join`](riff_core::wire::Join), [`Leave`](riff_core::wire::Leave), [`Post`](riff_core::wire::Post), [`Announce`](super::Announce) |
 //! | work | [`super::work`] | [`Claim`](riff_core::wire::Claim), [`Release`](riff_core::wire::Release), [`ReleaseFor`](riff_core::wire::ReleaseFor), [`Lead`](riff_core::wire::Lead) |
 //! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget) |
@@ -298,7 +298,7 @@ impl fmt::Display for CommandKind {
 /// | `not_member` | The command names a person who is not a member (E3, #393). | 403 |
 /// | `held` | Another session holds the item. | 409 |
 /// | `paused` | The riff is paused. | 409 |
-/// | `must_clear` | A worker must clear its context first (E4, #394). | 409 |
+/// | `must_clear` | A worker must clear its context first. | 409 |
 /// | `not_holder` | The caller does not hold the item. | 409 |
 /// | `other_user` | The session ID is known under another user. | 409 |
 /// | `bad_request` | The fields of the call do not agree. | 400 |
@@ -404,7 +404,8 @@ impl From<&str> for Refused {
 /// Says if `caller` can send a command of `kind` that needs the role
 /// `needs` (01M3WRD959DYNZHDKP5ZT9Q1C7). It reads only the caller: its
 /// class, its worker mark and its role. It does not read the state.
-/// Each kind has a row: a kind with no row does not compile.
+/// Each kind has a row: a kind with no row does not compile. The life
+/// cycle of a session is a check of `handle`, not of this table.
 ///
 /// ```
 /// use riff_core::name::SessionUri;
@@ -430,7 +431,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
     let class = caller.class();
     let classes: &[Class] = match kind {
         // The engine registers the first call of a person too. A person
-        // has no life cycle: E4 (#394) keeps this row.
+        // has no life cycle.
         CommandKind::Register => &[Person, Session],
         CommandKind::Start | CommandKind::End => &[Session],
         CommandKind::Join | CommandKind::Leave | CommandKind::Post => &[Person, Session],
@@ -584,7 +585,7 @@ mod tests {
     fn needs(kind: CommandKind) -> Role {
         use riff_core::wire::{
             Claim, End, Join, Kind, Lead, Leave, Pause, Post, Register, Release, ReleaseFor,
-            Resume, SetIdle, Start,
+            Resume, SetIdle, Start, StartReason,
         };
 
         use crate::state::{Announce, Forget, MakeRiff};
@@ -598,7 +599,14 @@ mod tests {
         let item = "issue-7".to_owned();
         match kind {
             CommandKind::Register => of(Register { me, worker: false }, kind),
-            CommandKind::Start => of(Start { me }, kind),
+            CommandKind::Start => {
+                let start = Start {
+                    me,
+                    reason: StartReason::Process,
+                    worker: false,
+                };
+                of(start, kind)
+            }
             CommandKind::End => of(End { me }, kind),
             CommandKind::Join => of(Join { me, thread }, kind),
             CommandKind::Leave => of(Leave { me, thread }, kind),
