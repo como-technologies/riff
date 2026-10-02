@@ -536,9 +536,11 @@ pub fn riff_set(
     out
 }
 
-/// The result of `riff connect claude`.
+/// The result of `riff connect claude`: what it did, and the next step
+/// last (01M3XY2SYKG91SAB2FS1QNCZ2H).
 ///
 /// ```
+/// use riff::enable::{Place, Scope, Scoped, State};
 /// use riff::plugin::{Connected, Statusline};
 ///
 /// let mut done = Connected {
@@ -546,24 +548,52 @@ pub fn riff_set(
 ///     removed_old: true,
 ///     statusline: Statusline::Added("/h/.claude/settings.json".into()),
 /// };
+/// let off = State { on: false, by: None, forced: false, repo: None };
+/// let mut scoped = Scoped { answer: None, moved: None, state: off.clone(), global: false };
 /// assert_eq!(
-///     riff::text::connected(&done),
+///     riff::text::connected(&done, &scoped),
 ///     "Removed the old riff MCP server entry.\n\
-///      Installed the riff plugin from /d. Start a new Claude Code session to use it.\n\
-///      Added the riff status line to /h/.claude/settings.json."
+///      Added the riff plugin from /d to Claude Code.\n\
+///      Added the riff status line to /h/.claude/settings.json.\n\
+///      riff is installed but off. To turn it on in a repository: cd REPO && riff enable"
 /// );
 /// done.statusline = Statusline::Set;
-/// assert!(riff::text::connected(&done).ends_with("to use it."));
+/// done.removed_old = false;
+/// let by = Some((Place::Local, "/r/.claude/settings.local.json".into()));
+/// scoped.state = State { on: true, by, ..off.clone() };
+/// assert_eq!(
+///     riff::text::connected(&done, &scoped),
+///     "Added the riff plugin from /d to Claude Code.\n\
+///      riff is on in this repository (/r/.claude/settings.local.json). Start a new Claude \
+///      Code session there to use it. To turn it off: riff disable"
+/// );
 /// done.statusline = Statusline::Other("/s.json".into());
-/// assert!(riff::text::connected(&done).contains("\"Find the pane of a session\""));
+/// let text = riff::text::connected(&done, &scoped);
+/// assert!(text.contains("\"Find the pane of a session\""));
+/// assert!(text.contains("`riff statusline`"));
+///
+/// // An old install: riff was on in each repository.
+/// scoped = Scoped { answer: None, moved: Some(vec!["/r".into()]), state: off.clone(), global: false };
+/// let text = riff::text::connected(&done, &scoped);
+/// assert!(text.contains("Now it is on only where you turn it on."), "{text}");
+/// assert!(text.contains("\n  cd /r && riff enable\n"), "{text}");
+/// assert!(text.ends_with("cd REPO && riff enable"), "{text}");
+///
+/// scoped = Scoped { answer: Some(Scope::Global), moved: None, state: off.clone(), global: true };
+/// assert!(riff::text::connected(&done, &scoped).ends_with("To turn it off: riff disable --global"));
+/// scoped = Scoped { answer: Some(Scope::Repo), moved: None, state: off, global: false };
+/// assert!(riff::text::connected(&done, &scoped).contains("This directory is not in a git repository."));
 /// ```
-pub fn connected(done: &Connected) -> String {
+pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
+    use crate::enable::Scope;
+
     let old = if done.removed_old {
         "Removed the old riff MCP server entry.\n"
     } else {
         ""
     };
-    let how = "To use the riff status line, see \"Find the pane of a session\" in How It Works.";
+    let how = "To use the riff status line, see \"Find the pane of a session\" in How It Works: \
+               your status line command calls `riff statusline`.";
     let statusline = match &done.statusline {
         Statusline::Added(path) => {
             format!("\nAdded the riff status line to {}.", path.display())
@@ -575,11 +605,171 @@ pub fn connected(done: &Connected) -> String {
         ),
         Statusline::Failed(why) => format!("\nriff did not set the status line: {why}. {how}"),
     };
-    format!(
-        "{old}Installed the riff plugin from {}. Start a new Claude Code session to use it.\
-         {statusline}",
+    let mut out = format!(
+        "{old}Added the riff plugin from {} to Claude Code.{statusline}",
         done.dir.display()
-    )
+    );
+    if let Some(repos) = &scoped.moved {
+        out.push_str(
+            "\nriff was on in each repository on this machine. Now it is on only where you \
+             turn it on.",
+        );
+        if !repos.is_empty() {
+            out.push_str(" To turn it on again where you used it:");
+            for repo in repos {
+                let _ = write!(out, "\n  cd {} && riff enable", repo.display());
+            }
+        }
+    }
+    out.push('\n');
+    if scoped.state.on {
+        let file = match &scoped.state.by {
+            Some((_, file)) => format!(" ({})", file.display()),
+            None => String::new(),
+        };
+        let _ = write!(
+            out,
+            "riff is on in this repository{file}. Start a new Claude Code session there to use \
+             it. To turn it off: riff disable"
+        );
+    } else if scoped.global {
+        out.push_str(
+            "riff is on in each repository on this machine. Start a new Claude Code session \
+             in a repository to use it. To turn it off: riff disable --global",
+        );
+    } else {
+        if scoped.answer == Some(Scope::Repo) && scoped.state.repo.is_none() {
+            out.push_str("This directory is not in a git repository. ");
+        }
+        out.push_str(
+            "riff is installed but off. To turn it on in a repository: cd REPO && riff enable",
+        );
+    }
+    out
+}
+
+/// Whether riff is on in the working directory, and the command to
+/// change it (01M3XY2SYKG91SAB2FS1QNCZ2H). `riff server` shows it.
+///
+/// ```
+/// use riff::enable::{Place, Repo, State};
+///
+/// let repo = Some(Repo { top: "/r".into(), main: None });
+/// let mut state = State { on: false, by: None, forced: false, repo: None };
+/// assert_eq!(
+///     riff::text::riff_here(&state),
+///     "riff off: this directory is not in a git repository. To turn riff on in a \
+///      repository: cd REPO && riff enable"
+/// );
+/// state.repo = repo;
+/// assert_eq!(riff::text::riff_here(&state), "riff off. To turn it on: riff enable");
+/// state.by = Some((Place::Local, "/r/.claude/settings.local.json".into()));
+/// assert_eq!(
+///     riff::text::riff_here(&state),
+///     "riff off (/r/.claude/settings.local.json says no). To turn it on: riff enable"
+/// );
+/// state.on = true;
+/// assert_eq!(
+///     riff::text::riff_here(&state),
+///     "riff on (/r/.claude/settings.local.json). To turn it off: riff disable"
+/// );
+/// state.forced = true;
+/// assert_eq!(riff::text::riff_here(&state), "riff on (RIFF_ON=1)");
+/// ```
+pub fn riff_here(state: &crate::enable::State) -> String {
+    match (&state.by, state.on) {
+        _ if state.forced => "riff on (RIFF_ON=1)".into(),
+        (Some((_, file)), true) => format!(
+            "riff on ({}). To turn it off: riff disable",
+            file.display()
+        ),
+        (None, true) => "riff on. To turn it off: riff disable".into(),
+        _ if state.repo.is_none() => "riff off: this directory is not in a git repository. To \
+                                      turn riff on in a repository: cd REPO && riff enable"
+            .into(),
+        (Some((_, file)), false) => format!(
+            "riff off ({} says no). To turn it on: riff enable",
+            file.display()
+        ),
+        (None, false) => "riff off. To turn it on: riff enable".into(),
+    }
+}
+
+/// The result of `riff enable` (`on` true) or `riff disable`
+/// (01M3XY2SKQ27K3TE4NV28FHTVV).
+///
+/// ```
+/// use riff::enable::{Changed, Place, Repo, State};
+///
+/// let file: std::path::PathBuf = "/r/.claude/settings.local.json".into();
+/// let repo = Some(Repo { top: "/r".into(), main: None });
+/// let by = Some((Place::Local, file.clone()));
+/// let on = State { on: true, by, forced: false, repo: repo.clone() };
+/// let mut done = Changed { file: file.clone(), changed: true, denied: None, state: on.clone() };
+/// assert_eq!(
+///     riff::text::enabled(&done, true),
+///     "Turned riff on in /r/.claude/settings.local.json.\n\
+///      Start a new Claude Code session to use it. For the permission rules of riff work, \
+///      run: riff setup"
+/// );
+/// done.changed = false;
+/// assert!(riff::text::enabled(&done, true).starts_with("riff was on in /r/"));
+///
+/// let off = State { on: false, by: None, repo, ..on.clone() };
+/// done = Changed { changed: true, state: off.clone(), ..done };
+/// assert_eq!(
+///     riff::text::enabled(&done, false),
+///     "Turned riff off in /r/.claude/settings.local.json.\n\
+///      A session that runs keeps the riff tools until it ends. To take it out now, run \
+///      /riff:leave in it."
+/// );
+/// done.denied = Some(file);
+/// assert!(riff::text::enabled(&done, false).starts_with("Wrote a no for this repository to /r/"));
+/// done = Changed { denied: None, state: on, ..done };
+/// assert!(riff::text::enabled(&done, false).contains("riff is still on here"));
+/// ```
+pub fn enabled(done: &crate::enable::Changed, on: bool) -> String {
+    let file = done.file.display();
+    let first = match (on, done.changed, &done.denied) {
+        (true, true, _) => format!("Turned riff on in {file}."),
+        (true, false, _) => format!("riff was on in {file} already."),
+        (false, _, Some(denied)) => format!(
+            "Wrote a no for this repository to {}: another file turns riff on.",
+            denied.display()
+        ),
+        (false, true, None) => format!("Turned riff off in {file}."),
+        (false, false, None) => format!("{file} did not turn riff on."),
+    };
+    let then = match (on, done.state.on) {
+        (true, true) => "Start a new Claude Code session to use it. For the permission rules of \
+                         riff work, run: riff setup"
+            .to_owned(),
+        (true, false) => format!("riff is still off here: {}", riff_here(&done.state)),
+        (false, true) => format!("riff is still on here: {}", riff_here(&done.state)),
+        (false, false) => "A session that runs keeps the riff tools until it ends. To take it \
+                           out now, run /riff:leave in it."
+            .to_owned(),
+    };
+    format!("{first}\n{then}")
+}
+
+/// The instructions of `riff mcp` in a directory where riff is off
+/// (01M3XY2ST8R67SKTXJECAYJZRX). It serves no tool.
+pub const MCP_OFF: &str = "riff is off in this directory, so riff gives no tools here. Your user \
+turns it on in a terminal: `riff enable` in the repository. Then a new session has the riff tools.";
+
+/// The status line of a session in a project where a person turned the
+/// riff server off in `/mcp` (01M3XY2T0R2Q39XYX8AYV7T0RK).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::statusline_mcp_off("2a880834-aaaa"),
+///     "riff 2a880834 (no tools: the riff server is off, turn it on in /mcp)"
+/// );
+/// ```
+pub fn statusline_mcp_off(id: &str) -> String {
+    let short: String = id.chars().take(ID_CHARS).collect();
+    format!("riff {short} (no tools: the riff server is off, turn it on in /mcp)")
 }
 
 /// One line for each rule of `rules`: `allow RULE` or `deny RULE`.
@@ -2317,7 +2507,7 @@ where
 ///     answer: Ok(Probe { build: Some(this.clone()), sign_in: Some(false) }),
 ///     user: None,
 /// };
-/// let view = View { source: Source::Default, used: local.clone(), local: None, facts: None };
+/// let view = View { source: Source::Default, used: local.clone(), local: None, facts: None, here: None };
 /// assert_eq!(
 ///     plain(&view),
 ///     format!(
@@ -2336,7 +2526,7 @@ where
 ///     user: None,
 /// };
 /// let down = Seen { answer: Err("refused".into()), ..local };
-/// let view = View { source: Source::Env, used: shared, local: Some(down), facts: None };
+/// let view = View { source: Source::Env, used: shared, local: Some(down), facts: None, here: None };
 /// let text = plain(&view);
 /// assert!(text.contains("\nserver      https://riff.example.com  (from RIFF_SERVER)\n"), "{text}");
 /// assert!(text.contains("\n  sign-in   yes, you are not signed in\n"), "{text}");
@@ -2379,7 +2569,7 @@ where
 ///     now_ms,
 ///     ..ServerFacts::default()
 /// };
-/// let mut view = View { source: Source::Default, used, local: None, facts: Some(facts.clone()) };
+/// let mut view = View { source: Source::Default, used, local: None, facts: Some(facts.clone()), here: None };
 /// let text = anstream::adapter::strip_str(&riff::text::server_view(&view)).to_string();
 /// let rows: Vec<&str> = text.lines().skip(4).collect();
 /// assert_eq!(
@@ -2435,6 +2625,10 @@ pub fn server_view(view: &crate::lifecycle::View) -> String {
         out.push('\n');
         out.push_str(&row("local", &safe(&local.url)));
         seen_rows(&mut out, local, &mut Need::default());
+    }
+    if let Some(here) = &view.here {
+        out.push('\n');
+        out.push_str(&row("repository", &riff_here(here)));
     }
     if let Some(style) = need.style {
         let run = format!("Run {}", need.run.join(", then "));

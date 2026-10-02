@@ -50,7 +50,9 @@ pub struct Group {
 pub const GROUPS: &[Group] = &[
     Group {
         heading: "Get started",
-        commands: &["connect", "setup", "login", "logout", "update", "server"],
+        commands: &[
+            "connect", "enable", "disable", "setup", "login", "logout", "update", "server",
+        ],
     },
     Group {
         heading: "Work in the riff",

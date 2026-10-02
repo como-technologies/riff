@@ -10,15 +10,33 @@
 //!
 //! 1. `claude mcp remove --scope user riff` removes an old entry, if any.
 //! 2. `claude plugin marketplace add DIR` adds the marketplace `riff`.
-//! 3. `claude plugin install --scope user riff@riff` installs the plugin.
-//!
-//! 4. It adds the riff status line to the user settings of Claude Code
+//! 3. It adds the riff status line to the user settings of Claude Code
 //!    when they have no `statusLine` ([`add_statusline`]). A plugin
 //!    cannot set it.
 //!
+//! It does not turn the plugin on. The marketplace makes the plugin
+//! known on the machine, and the entry `riff@riff` in the key
+//! `enabledPlugins` of a settings file turns it on: for one repository
+//! in its local or project settings, or for each repository in the user
+//! settings. `riff enable` writes that entry (see [`crate::enable`]).
+//! Claude Code then loads the plugin with no `claude plugin install`.
+//! This is what Claude Code 2 does with the entry (tested with a config
+//! directory of its own):
+//!
+//! | The entry | The plugin loads |
+//! |---|---|
+//! | `true` in the local or project settings of a project, no install | Only in that project. |
+//! | `false` or none in the user settings, `true` in a project | Only in that project. |
+//! | `true` in the user settings, `false` in the local settings of a project | In each directory but that project. |
+//!
+//! `claude plugin install --scope local` writes the same entry, but it
+//! also keeps a record of the install for each scope, and `claude plugin
+//! enable --scope project` then fails for a plugin with a local
+//! install. So riff writes the entry itself.
+//!
 //! Claude Code loads a plugin from a local marketplace in place. So a new
 //! `riff` binary and one more `riff connect claude` update the plugin.
-//! Both `claude` steps succeed when they have nothing to do.
+//! The `marketplace add` step succeeds when it has nothing to do.
 //!
 //! | File | Gives the session |
 //! |---|---|
@@ -217,6 +235,14 @@ pub fn settings_from(
     }
 }
 
+/// [`settings_from`] with the values from the environment.
+pub fn user_settings() -> Option<PathBuf> {
+    settings_from(
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+        std::env::var_os("HOME"),
+    )
+}
+
 /// The settings text with the riff status line, or None when the
 /// settings have a `statusLine` already. It adds the key as text before
 /// the last `}`, so each other key keeps its place and its format
@@ -283,12 +309,13 @@ pub fn add_statusline(path: &Path) -> Statusline {
     }
 }
 
-/// Writes the marketplace to `dir` and installs the plugin in user scope
-/// with the `claude` command at `claude` (R53). It first removes an old
+/// Writes the marketplace to `dir` and adds it to Claude Code with the
+/// `claude` command at `claude` (R53). It first removes an old
 /// user-scope MCP server entry named `riff`, from `claude mcp add`, so a
 /// session does not get the riff tools twice (R75). Then it adds the
 /// riff status line to the settings at `settings`
-/// ([`add_statusline`]).
+/// ([`add_statusline`]). It turns the plugin on nowhere: see
+/// [`crate::enable::scope`].
 pub fn connect(claude: &Path, dir: &Path, settings: Option<&Path>) -> Result<Connected> {
     write(dir).with_context(|| format!("write the plugin to {}", dir.display()))?;
     let removed_old = run(
@@ -304,11 +331,6 @@ pub fn connect(claude: &Path, dir: &Path, settings: Option<&Path>) -> Result<Con
             OsStr::new("add"),
             dir.as_os_str(),
         ],
-    )?;
-    let plugin = format!("{NAME}@{NAME}");
-    run(
-        claude,
-        ["plugin", "install", "--scope", "user", &plugin].map(OsStr::new),
     )?;
     let statusline = match settings {
         Some(path) => add_statusline(path),

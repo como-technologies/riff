@@ -123,6 +123,9 @@ pub struct View {
     /// The facts of the riff that `riff` uses, when it gives them
     /// (01M3TJWJ12WEDCXW3W0529KRP2).
     pub facts: Option<ServerFacts>,
+    /// Whether riff is on in the working directory
+    /// (01M3XY2SYKG91SAB2FS1QNCZ2H).
+    pub here: Option<crate::enable::State>,
 }
 
 /// Asks the riff of `api` about itself, within [`PROBE_WAIT`].
@@ -175,6 +178,7 @@ pub async fn view(server: &str, local: &str, source: Source) -> View {
         used,
         local,
         facts,
+        here: Some(crate::enable::State::here()),
     }
 }
 
