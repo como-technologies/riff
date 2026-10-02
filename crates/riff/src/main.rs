@@ -1619,13 +1619,13 @@ fn usage_text(issue: Option<&str>, wave: Option<&str>) -> Result<String> {
         let number: u64 = number
             .parse()
             .with_context(|| format!("{issue} is no issue: name it as 12, #12 or issue-12"))?;
-        let counted = usage::counted(&forge.comments(number)?);
+        let counted = usage::counted(number, &forge.comments(number)?);
         return Ok(usage::issue_text(number, &counted));
     }
     let wave = wave.unwrap_or_default();
     let mut rows = Vec::new();
     for (number, title) in forge.wave(wave)? {
-        let counted = usage::counted(&forge.comments(number)?);
+        let counted = usage::counted(number, &forge.comments(number)?);
         rows.push((number, title, usage::sum(&counted)));
     }
     Ok(usage::wave_text(wave, &rows))

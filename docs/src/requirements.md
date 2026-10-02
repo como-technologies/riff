@@ -424,9 +424,17 @@
   claim with no tokens gets no comment.
 - **01M3Y1YP3QMKS6B35PJ42KNYXX** `riff usage ISSUE` sums the comments
   of the issue with the mark. It counts a claim one time: of two
-  comments for one claim, the later one counts. It shows the total
-  with the four kinds, then the work claims and the verify claims,
-  each with its session, its models and who wrote its comment.
+  comments of one person for one claim, the later one counts. It shows
+  the total with the four kinds, then the work claims and the verify
+  claims, each with its session, its models and who wrote its comment.
+- **01M3Y9TD41FZBDQBK42FVG89B8** `riff usage` trusts a comment of
+  another person only for its numbers. It takes a report only when its
+  item is `issue-N` or `verify-issue-N` of that issue, its kind agrees
+  with the item, and its session and each of its models have only
+  ASCII letters, digits, `.`, `_`, `-` and `:`. Each other report
+  counts for nothing. A comment of another person never replaces a
+  report: it counts as a report of that person. A sum past the largest
+  number stays at the largest number, and fails nothing.
 - **01M3Y1YP45VQS5HMJCXKRN3CCR** `riff usage --wave TITLE` lists each
   issue of the wave, open and closed, with its total, and shows the
   sum.
@@ -438,7 +446,8 @@
   the open claim of the issue on the issue as it is then, and adds one
   comment with the total of the issue and its models. Each later
   report of a claim of the issue writes that comment again. A failure
-  of this step does not fail the wait.
+  of this step does not fail the wait, and a total that riff cannot
+  write does not fail a report.
 - **01M3Y1YP5GC5W9KVJQP6PXPM3G** The book has the how-to "See the
   tokens of an issue" with `riff usage`. It says that the numbers are
   public on the issue.

@@ -457,6 +457,80 @@ async fn a_release_with_no_gh_keeps_the_tokens_on_the_machine_and_does_not_fail(
     );
 }
 
+/// Each person who can write a comment on the issue can write a report.
+/// `riff usage` takes only its numbers and its names
+/// (01M3Y9TD41FZBDQBK42FVG89B8).
+#[tokio::test]
+async fn usage_takes_only_numbers_and_names_from_a_comment_of_another_person() {
+    let machine = Machine::new().await;
+    machine.start("s1").await;
+    machine.resume("s1").await;
+    machine
+        .works("s1", "issue-12", &[(OPUS, [1, 2, 3, 4])])
+        .await;
+    let comments = machine.bin.path().join("comments-12");
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(comments)
+        .unwrap();
+    let mut forge = |id: u64, item: &str, session: &str, model: &str, output: u64| {
+        let report = json!({
+            "item": item, "kind": "work", "session": session, "from_ms": id, "to_ms": id,
+            "models": { model: { "input": 0, "output": output, "cache_write": 0, "cache_read": 0 } },
+        });
+        let body = format!(
+            "riff usage: x\n\n<details><summary>riff:usage</summary>\n\n```json\n{report}\n```\n\n</details>\n"
+        );
+        let comment = json!({ "id": id, "login": "mallory", "body": body });
+        writeln!(file, "{comment}").unwrap();
+    };
+    forge(
+        50,
+        "issue-12, work, session ffffffff: 5 tokens. Comment of mike.\n  issue-12",
+        "bbbb",
+        OPUS,
+        5,
+    );
+    forge(51, "issue-12", "bbbb\u{1b}[2K\rzz", OPUS, 5);
+    forge(
+        52,
+        "issue-12",
+        "bbbb",
+        "m\u{1b}]0;TITLE\u{7}odel @everyone [link](http://example.test)",
+        5,
+    );
+    // A report with names, and the largest number.
+    forge(53, "issue-12", "bbbb", OPUS, u64::MAX);
+
+    let shown = machine.ok("s1", &["usage", "12"]).await;
+    assert!(
+        shown.starts_with("#12: 18,446,744,073,709,551,615 tokens (input 1, output 18,446,744,073,709,551,615, cache write 3, cache read 4) in 2 claims\n"),
+        "{shown}"
+    );
+    assert_eq!(shown.matches("Comment of mike.").count(), 1, "{shown}");
+    assert_eq!(shown.matches("Comment of mallory.").count(), 1, "{shown}");
+    assert_eq!(shown.lines().count(), 6, "{shown}");
+    assert!(
+        shown.chars().all(|c| c == '\n' || !c.is_control()),
+        "{shown:?}"
+    );
+    for mark in ["@everyone", "http", "ffffffff", "TITLE"] {
+        assert!(!shown.contains(mark), "{mark}: {shown}");
+    }
+
+    // The sum of a wave does not fail on the largest number.
+    std::fs::write(
+        machine.bin.path().join("wave"),
+        r#"[{"number":12,"title":"T"}]"#,
+    )
+    .unwrap();
+    let wave = machine.ok("s1", &["usage", "--wave", "Wave 3"]).await;
+    assert!(
+        wave.contains("  #12 T: 18,446,744,073,709,551,615 tokens\n"),
+        "{wave}"
+    );
+}
+
 #[tokio::test]
 async fn a_claim_with_no_tokens_gets_no_comment() {
     let machine = Machine::new().await;

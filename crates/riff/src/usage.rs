@@ -86,7 +86,18 @@
 //!
 //! Each person who can write a comment on the issue can write one with
 //! the mark. So `riff usage ISSUE` names who wrote each comment that it
-//! sums.
+//! sums, and it trusts such a comment only for its numbers
+//! (01M3Y9TD41FZBDQBK42FVG89B8):
+//!
+//! - It takes a report only when its item is a claim of that issue and
+//!   its session and its models are names ([`Report::valid`]). So a
+//!   comment cannot put a line, a control character, a mention or a
+//!   link into the text of `riff usage` or into the total comment.
+//! - A comment replaces only an earlier comment of the same person for
+//!   the same claim ([`counted`]). A comment of another person for that
+//!   claim counts as a report of that person.
+//! - A sum never fails on a large number: it stays at the largest
+//!   number ([`Tokens::total`]).
 //!
 //! After the merge, `riff pr wait` adds one comment with the total of
 //! the issue ([`Forge::total`], 01M3Y1YP514MPX8DTKMTWDHE8Q). Each later
@@ -141,6 +152,37 @@ pub const TOTAL_MARK: &str = "<!-- riff:usage-total -->";
 /// The characters of the session ID that a comment shows.
 const ID_CHARS: usize = 8;
 
+/// The longest name of a model in a report, in characters.
+const NAME_CHARS: usize = 100;
+
+/// The most models in a report.
+const MODELS: usize = 32;
+
+/// True for a character of a name in a report: an ASCII letter, a
+/// digit, `.`, `_`, `-` or `:`.
+fn name_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':')
+}
+
+/// True when `text` is a name of at most `most` characters.
+fn is_name(text: &str, most: usize) -> bool {
+    !text.is_empty() && text.len() <= most && text.chars().all(name_char)
+}
+
+/// The first `most` characters of `text` as a name: each character that
+/// a name cannot hold is `-`.
+fn name(text: &str, most: usize) -> String {
+    let name: String = text
+        .chars()
+        .take(most)
+        .map(|c| if name_char(c) { c } else { '-' })
+        .collect();
+    match name.is_empty() {
+        true => "-".into(),
+        false => name,
+    }
+}
+
 /// The four kinds of tokens of a reply of the model. A cache read costs
 /// much less than an output token, so each kind has its own count.
 ///
@@ -163,9 +205,14 @@ pub struct Tokens {
 }
 
 impl Tokens {
-    /// The sum of the four kinds.
+    /// The sum of the four kinds. A sum past the largest number stays
+    /// at the largest number: a comment of another person can hold each
+    /// number, and the sum never fails.
     pub fn total(&self) -> u64 {
-        self.input + self.output + self.cache_write + self.cache_read
+        self.input
+            .saturating_add(self.output)
+            .saturating_add(self.cache_write)
+            .saturating_add(self.cache_read)
     }
 
     /// The total, then each kind.
@@ -193,10 +240,10 @@ impl Tokens {
 
 impl std::ops::AddAssign for Tokens {
     fn add_assign(&mut self, other: Tokens) {
-        self.input += other.input;
-        self.output += other.output;
-        self.cache_write += other.cache_write;
-        self.cache_read += other.cache_read;
+        self.input = self.input.saturating_add(other.input);
+        self.output = self.output.saturating_add(other.output);
+        self.cache_write = self.cache_write.saturating_add(other.cache_write);
+        self.cache_read = self.cache_read.saturating_add(other.cache_read);
     }
 }
 
@@ -640,6 +687,14 @@ pub fn issue_of(item: &str) -> Option<(u64, Kind)> {
     Some((rest.strip_prefix("issue-")?.parse().ok()?, kind))
 }
 
+/// The item of the claim of `kind` of `issue`.
+fn claim_item(issue: u64, kind: Kind) -> String {
+    match kind {
+        Kind::Work => format!("issue-{issue}"),
+        Kind::Verify => format!("verify-issue-{issue}"),
+    }
+}
+
 /// The sum of one claim, as a comment on its issue holds it
 /// (01M3Y1YP2CSNHCWV7T4CE9HZ4Y). It holds only numbers and names.
 ///
@@ -681,15 +736,61 @@ impl Report {
     /// `None` when the item names no issue, or the claim is open.
     pub fn of(claim: &Claim, session: &str) -> Option<(u64, Report)> {
         let (issue, kind) = issue_of(&claim.item)?;
+        let mut models = Models::new();
+        for (model, tokens) in &claim.models {
+            *models.entry(name(model, NAME_CHARS)).or_default() += *tokens;
+        }
         let report = Report {
             item: claim.item.clone(),
             kind,
-            session: session.chars().take(ID_CHARS).collect(),
+            session: name(session, ID_CHARS),
             from_ms: claim.from_ms,
             to_ms: claim.to_ms?,
-            models: claim.models.clone(),
+            models,
         };
         Some((issue, report))
+    }
+
+    /// True when the report is a report of a claim of `issue`, and its
+    /// texts are names (01M3Y9TD41FZBDQBK42FVG89B8). Each person who can
+    /// write a comment on the issue can write the JSON of a report. So
+    /// `riff usage` takes a report only when its item is `issue-N` or
+    /// `verify-issue-N` of that issue, its kind agrees with the item,
+    /// and its session and each of its models have only the characters
+    /// of a name. Then a report cannot hold a line break, a control
+    /// character, a mention or a link.
+    ///
+    /// ```
+    /// use riff::usage::{Kind, Report, Tokens};
+    ///
+    /// let report = Report {
+    ///     item: "issue-7".into(),
+    ///     kind: Kind::Work,
+    ///     session: "a6cf0123".into(),
+    ///     from_ms: 1,
+    ///     to_ms: 2,
+    ///     models: [("us.claude-opus-5-5:0".to_owned(), Tokens::default())].into(),
+    /// };
+    /// assert!(report.valid(7));
+    /// assert!(!report.valid(8), "a report of another issue");
+    /// let other = |change: fn(&mut Report)| {
+    ///     let mut other = report.clone();
+    ///     change(&mut other);
+    ///     other
+    /// };
+    /// assert!(!other(|r| r.kind = Kind::Verify).valid(7));
+    /// assert!(!other(|r| r.item = "issue-7, work\n  issue-7".into()).valid(7));
+    /// assert!(!other(|r| r.session = "a6cf\u{1b}[2K".into()).valid(7));
+    /// assert!(!other(|r| r.session = "a6cf01234".into()).valid(7));
+    /// assert!(!other(|r| r.models = [("m @everyone".to_owned(), Tokens::default())].into()).valid(7));
+    /// assert!(!other(|r| r.models = [("[x](http://e.test)".to_owned(), Tokens::default())].into()).valid(7));
+    /// ```
+    pub fn valid(&self, issue: u64) -> bool {
+        issue_of(&self.item) == Some((issue, self.kind))
+            && self.item == claim_item(issue, self.kind)
+            && is_name(&self.session, ID_CHARS)
+            && self.models.len() <= MODELS
+            && self.models.keys().all(|model| is_name(model, NAME_CHARS))
     }
 
     /// The line for a person: the claim, its times and its tokens.
@@ -721,7 +822,8 @@ impl Report {
     }
 
     /// The report in the body of a comment. `None` for a comment with
-    /// no mark, or whose JSON does not read.
+    /// no mark, or whose JSON does not read. Its texts are as the
+    /// writer of the comment gave them: see [`Report::valid`].
     pub fn parse(body: &str) -> Option<Report> {
         let (_, block) = body.split_once(&format!("<summary>{MARK}</summary>"))?;
         block
@@ -764,20 +866,30 @@ pub struct Counted {
     pub login: String,
 }
 
-/// The reports in `comments`, each claim one time
-/// (01M3Y1YP3QMKS6B35PJ42KNYXX): of two comments for one claim, the
-/// later one counts.
-pub fn counted(comments: &[Comment]) -> Vec<Counted> {
+/// The reports of `issue` in `comments`, each claim of each person one
+/// time (01M3Y1YP3QMKS6B35PJ42KNYXX): of two comments of one person for
+/// one claim, the later one counts. A comment of another person never
+/// replaces a report: it counts as a report of that person. A report
+/// that is not valid for the issue counts for nothing
+/// ([`Report::valid`]).
+pub fn counted(issue: u64, comments: &[Comment]) -> Vec<Counted> {
     let mut out: Vec<Counted> = Vec::new();
     for comment in comments {
-        let Some(report) = Report::parse(&comment.body) else {
+        let Some(report) = Report::parse(&comment.body).filter(|r| r.valid(issue)) else {
             continue;
         };
-        out.retain(|c| !c.report.same_claim(&report));
-        out.push(Counted {
-            report,
-            login: comment.login.clone(),
-        });
+        // GitHub gives the login. It is a name too, with `[bot]` for an app.
+        let login: String = comment
+            .login
+            .chars()
+            .take(NAME_CHARS)
+            .map(|c| match name_char(c) || matches!(c, '[' | ']') {
+                true => c,
+                false => '-',
+            })
+            .collect();
+        out.retain(|c| !(c.login == login && c.report.same_claim(&report)));
+        out.push(Counted { report, login });
     }
     out
 }
@@ -842,7 +954,8 @@ impl<'a> Forge<'a> {
     /// Puts `report` on `issue`: it replaces the comment of the same
     /// claim that this person wrote, else it adds a comment
     /// (01M3Y1YP2TVYQC7GCCAMN6111K). Then it writes the total of the
-    /// issue again, when the issue has one.
+    /// issue again, when the issue has one. A total that it cannot
+    /// write does not fail the report.
     pub fn publish(&self, issue: u64, report: &Report) -> Result<()> {
         let comments = self.comments(issue)?;
         let same: Vec<&Comment> = comments
@@ -860,8 +973,11 @@ impl<'a> Forge<'a> {
             Some(comment) => self.edit(comment.id, &report.comment())?,
             None => self.add(issue, &report.comment())?,
         }
+        // The comment of the claim is on the issue. GitHub can refuse
+        // the edit of a total that another person wrote: that is no
+        // failure of the report.
         if comments.iter().any(|c| c.body.starts_with(TOTAL_MARK)) {
-            self.total(issue)?;
+            let _ = self.total(issue);
         }
         Ok(())
     }
@@ -872,7 +988,7 @@ impl<'a> Forge<'a> {
     /// no report gets no comment.
     pub fn total(&self, issue: u64) -> Result<Tokens> {
         let comments = self.comments(issue)?;
-        let counted = counted(&comments);
+        let counted = counted(issue, &comments);
         if counted.is_empty() {
             return Ok(Tokens::default());
         }
@@ -1493,10 +1609,119 @@ mod tests {
             comment(3, "brett", &a_report("b2000000", 10, 7)),
             comment(4, "mike", &a_report("a6cf0123", 10, 50)),
         ];
-        let counted = counted(&comments);
+        let counted = counted(7, &comments);
         assert_eq!(sum(&counted).output, 57);
         let logins: Vec<&str> = counted.iter().map(|c| c.login.as_str()).collect();
         assert_eq!(logins, ["brett", "mike"]);
+    }
+
+    #[test]
+    fn a_comment_of_another_person_for_my_claim_does_not_replace_my_numbers() {
+        let comments = [
+            comment(1, "mike", &a_report("a6cf0123", 10, 5)),
+            comment(2, "mallory", &a_report("a6cf0123", 10, 0)),
+        ];
+        let counted = counted(7, &comments);
+        let rows: Vec<(&str, u64)> = counted
+            .iter()
+            .map(|c| (c.login.as_str(), total(&c.report.models).output))
+            .collect();
+        assert_eq!(rows, [("mike", 5), ("mallory", 0)]);
+    }
+
+    /// The comment of the verify of PR #440: a forged line, control
+    /// characters, a mention and a link (01M3Y9TD41FZBDQBK42FVG89B8).
+    #[test]
+    fn a_report_with_a_text_that_is_no_name_counts_for_nothing() {
+        let forged = |change: fn(&mut Report)| {
+            let mut report = a_report("bbbb", 20, 5);
+            change(&mut report);
+            comment(9, "mallory", &report)
+        };
+        let comments = [
+            comment(1, "mike", &a_report("a6cf0123", 10, 1_000)),
+            forged(|r| {
+                r.item = "issue-7, work, session ffffffff, 2026-10-02 09:00 to 2026-10-02 10:00 \
+                          UTC: 5 tokens. Models: x. Comment of mike.\n  issue-7"
+                    .into()
+            }),
+            forged(|r| r.session = "bbbb\u{1b}[2K\rzz".into()),
+            forged(|r| {
+                let tokens = r.models.pop_first().unwrap().1;
+                let model = "m\u{1b}]0;TITLE\u{7}odel @everyone [link](http://example.test)";
+                r.models.insert(model.into(), tokens);
+            }),
+            // A report of another issue, and a kind that is not the kind of the item.
+            forged(|r| r.item = "issue-8".into()),
+            forged(|r| r.kind = Kind::Verify),
+            forged(|r| r.item = "issue-07".into()),
+        ];
+        let counted = counted(7, &comments);
+        assert_eq!(counted.len(), 1, "{counted:?}");
+        let text = issue_text(7, &counted);
+        assert_eq!(text.lines().count(), 4, "{text}");
+        assert_eq!(text.matches("Comment of").count(), 1, "{text}");
+        assert!(
+            text.chars().all(|c| c == '\n' || !c.is_control()),
+            "{text:?}"
+        );
+        let total = total_comment(7, &counted);
+        for mark in ["@", "http", "\u{1b}", "["] {
+            assert!(
+                !total.replace(TOTAL_MARK, "").contains(mark),
+                "{mark}: {total}"
+            );
+        }
+        // A login with a character that GitHub does not give.
+        let odd = [comment(1, "mi\u{1b}ke\nx", &a_report("a6cf0123", 10, 1))];
+        assert_eq!(super::counted(7, &odd)[0].login, "mi-ke-x");
+    }
+
+    #[test]
+    fn the_largest_number_in_a_comment_does_not_stop_the_sum() {
+        let mut large = a_report("bbbb", 20, u64::MAX);
+        large.models.get_mut("opus").unwrap().input = u64::MAX;
+        let comments = [
+            comment(1, "mike", &a_report("a6cf0123", 10, 1_000)),
+            comment(2, "mallory", &large),
+        ];
+        let counted = counted(7, &comments);
+        assert_eq!(sum(&counted).output, u64::MAX);
+        assert_eq!(sum(&counted).total(), u64::MAX);
+        assert!(issue_text(7, &counted).starts_with("#7: 18,446,744,073,709,551,615 tokens"));
+        assert!(total_comment(7, &counted).contains("18,446,744,073,709,551,615 tokens"));
+    }
+
+    #[test]
+    fn my_report_has_names_also_for_a_model_with_other_characters() {
+        let claim = Claim {
+            thread: "acme/app".into(),
+            item: "issue-7".into(),
+            from_ms: 1,
+            to_ms: Some(2),
+            models: [
+                (
+                    "<synthetic model>".to_owned(),
+                    Tokens {
+                        output: 1,
+                        ..Tokens::default()
+                    },
+                ),
+                (
+                    "-synthetic-model-".to_owned(),
+                    Tokens {
+                        output: 2,
+                        ..Tokens::default()
+                    },
+                ),
+            ]
+            .into(),
+        };
+        let (issue, report) = Report::of(&claim, "a~b/c d").unwrap();
+        assert_eq!(report.session, "a-b-c-d");
+        assert_eq!(report.models["-synthetic-model-"].output, 3);
+        assert!(report.valid(issue));
+        assert_eq!(Report::parse(&report.comment()), Some(report));
     }
 
     #[test]

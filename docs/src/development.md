@@ -306,7 +306,9 @@ sequenceDiagram
   times, the models and the tokens. It holds no text of a transcript,
   no path and no email.
 - Each person who can write a comment can write one with numbers. So
-  `riff usage 12` names who wrote each comment that it sums.
+  `riff usage 12` names who wrote each comment that it sums. It takes
+  only numbers and names from a comment, and a comment of another
+  person never replaces your numbers.
 - Tokens in a time with two claims of one session count for the claim
   that started last.
 - With no `gh`, or for an item that names no issue, the release still
