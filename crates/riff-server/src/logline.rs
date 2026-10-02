@@ -19,6 +19,7 @@
 //! | `time` | the UTC time of the line |
 //! | `message` | the text |
 //! | `target` | the module that wrote the line |
+//! | `caller`, `named` | a caller of a call as JSON, for example `{"session":"mike/84cf"}` ([`crate::trace`]) |
 //! | each other field | a value of the event, for example `position` |
 //!
 //! [`JsonLines`] is the event format for `tracing_subscriber`. [`init`]
@@ -51,6 +52,11 @@ use tracing_subscriber::registry::LookupSpan;
 
 /// The names that an event field cannot take: the line has them.
 const OWN: [&str; 4] = ["severity", "time", "message", "target"];
+
+/// The fields whose value is JSON: a caller of a call, as a record
+/// names it ([`crate::trace`]). The line holds the value as JSON, not
+/// as text. A value that is not JSON stays text.
+const JSON: [&str; 2] = ["caller", "named"];
 
 /// The `severity` of Cloud Logging for a level.
 ///
@@ -119,9 +125,16 @@ impl Fields {
                 Value::String(text) => text,
                 other => other.to_string(),
             };
-        } else {
-            self.fields.push((field.name().to_owned(), value));
+            return;
         }
+        // The event gives a caller as the text of its JSON.
+        let value = match value {
+            Value::String(text) if JSON.contains(&field.name()) => {
+                serde_json::from_str(&text).unwrap_or(Value::String(text))
+            }
+            other => other,
+        };
+        self.fields.push((field.name().to_owned(), value));
     }
 }
 
@@ -188,12 +201,18 @@ pub fn init() {
         .init();
 }
 
+/// The log lines of a test: the events of the thread of the test, in
+/// the format of the server.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod testing {
     use std::sync::{Arc, Mutex};
 
-    /// A writer that keeps each byte, for a test.
+    use serde_json::Value;
+    use tracing::subscriber::DefaultGuard;
+
+    use super::JsonLines;
+
+    /// A writer that keeps each byte.
     #[derive(Clone, Default)]
     struct Kept(Arc<Mutex<Vec<u8>>>);
 
@@ -208,25 +227,87 @@ mod tests {
         }
     }
 
+    /// Keeps each log line of this thread while it lives. An async test
+    /// needs a runtime with one thread, so that each task writes here.
+    pub(crate) struct Capture {
+        kept: Kept,
+        _guard: DefaultGuard,
+    }
+
+    impl Capture {
+        pub(crate) fn start() -> Capture {
+            let kept = Kept::default();
+            let writer = kept.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .event_format(JsonLines)
+                .with_writer(move || writer.clone())
+                .finish();
+            Capture {
+                kept,
+                _guard: tracing::subscriber::set_default(subscriber),
+            }
+        }
+
+        /// The text of the lines so far.
+        pub(crate) fn text(&self) -> String {
+            String::from_utf8(self.kept.0.lock().unwrap().clone()).unwrap()
+        }
+
+        /// Each line so far, as JSON. A line that is not one JSON object
+        /// fails the test.
+        pub(crate) fn lines(&self) -> Vec<Value> {
+            let text = self.text();
+            text.lines()
+                .map(|line| {
+                    let value: Value = serde_json::from_str(line)
+                        .unwrap_or_else(|error| panic!("{error}: {line}"));
+                    assert!(value.is_object(), "{line}");
+                    value
+                })
+                .collect()
+        }
+
+        /// Each line so far with this `result`: the lines of a trace
+        /// ([`crate::trace`]).
+        pub(crate) fn results(&self, result: &str) -> Vec<Value> {
+            let mut lines = self.lines();
+            lines.retain(|line| line["result"] == result);
+            lines
+        }
+    }
+
+    /// The log lines of `run`.
+    pub(crate) fn capture(run: impl FnOnce()) -> Vec<Value> {
+        let capture = Capture::start();
+        run();
+        capture.lines()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::capture;
+
+    #[test]
+    fn a_field_with_a_caller_is_json_in_the_line() {
+        let lines = capture(|| {
+            tracing::info!(caller = r#"{"session":"mike/84cf"}"#, "refused");
+            tracing::info!(named = "no json", other = r#"{"a":1}"#, "denied");
+        });
+        assert_eq!(lines[0]["caller"]["session"], "mike/84cf");
+        assert_eq!(lines[1]["named"], "no json");
+        // Each other field stays text.
+        assert_eq!(lines[1]["other"], r#"{"a":1}"#);
+    }
+
     #[test]
     fn each_event_is_one_line_of_json_with_a_severity() {
-        let kept = Kept::default();
-        let writer = kept.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .event_format(JsonLines)
-            .with_writer(move || writer.clone())
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
+        let lines = capture(|| {
             tracing::info!(position = 7, name = "a\nb", "wrote the \"checkpoint\"");
             tracing::error!("riff-server stops: {}", "why");
             tracing::warn!(severity = "x", "a field with a name of the line");
         });
-        let text = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
-        let lines: Vec<Value> = text
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(lines.len(), 3, "{text}");
+        assert_eq!(lines.len(), 3, "{lines:?}");
         assert_eq!(lines[0]["severity"], "INFO");
         assert_eq!(lines[0]["message"], "wrote the \"checkpoint\"");
         assert_eq!(lines[0]["position"], 7);

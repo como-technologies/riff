@@ -11,15 +11,15 @@
 //! ```mermaid
 //! flowchart TD
 //!     C[call with a token] --> A["Engine::authenticate:<br/>Authenticated&lt;C&gt;"]
-//!     A -->|denied| E0[403]
+//!     A -->|denied| D[log line: denied] --> E0[401 or 403]
 //!     A --> K{sort of call}
 //!     K -->|query| Q["Engine::query:<br/>the written copy"] --> QR[reply]
 //!     K -->|signal| P["Engine::signal:<br/>the presence"] --> QR
 //!     K -->|command| H["Engine::check: permits, then handle<br/>under the lock: Checked"]
 //!     H -->|"accepted, or refused"| U["Checked::queue: positions, the entry,<br/>the pending copy: Queued"]
 //!     U --> W["the writer writes the chunk<br/>outside the lock"]
-//!     W -->|failed for good| S[503, the instance stops]
-//!     W --> AP["Engine::finish: the written copy,<br/>in order, then the effects"]
+//!     W -->|failed for good| J["Engine::fail:<br/>log line: failed"] --> S[503, the instance stops]
+//!     W -->|"Written"| AP["Engine::finish: the written copy, in order,<br/>the log line of a command with no record,<br/>then the effects"]
 //!     AP -->|"Applied, accepted"| R[the call makes the reply<br/>from the written copy]
 //!     AP -->|"Applied, refused"| E[error to the caller]
 //! ```
@@ -57,12 +57,25 @@
 //!
 //! The writer is one task of the server (01M3WRD90WBBCWTDGVQCBR6MNT).
 //! It takes each entry of the queue ([`Engine::take`]), writes their
-//! records as one chunk outside the lock, and gives the chunk back
-//! ([`Engine::finish`]). `finish` applies the records to the written
-//! copy in the order of their positions, sends the wakes and the `tail`
-//! events of each `posted` record, and then tells each call that its
-//! entry is done. The call only waits, and makes the reply. A call that
-//! the client drops loses only its reply.
+//! records as one chunk outside the lock, and gives the chunk back with
+//! the proof of the write ([`Engine::finish`],
+//! [`Written`](crate::log::Written)). So the types show that only a
+//! written chunk reaches the written copy (RID_WRITTEN). `finish`
+//! applies the records to the written copy in the order of their
+//! positions, sends the wakes and the `tail` events of each `posted`
+//! record, and then tells each call that its entry is done. The call
+//! only waits, and makes the reply. A call that the client drops loses
+//! only its reply.
+//!
+//! # The trace of a command
+//!
+//! Each command leaves one trace (RID_TRACE): its records, or one log
+//! line. The records of one command are in one chunk, one after
+//! another, and each one names the caller and the kind of the command
+//! (RID_CAUSE). The writer writes the line of a command with no record
+//! in `finish`: `refused` or `no_change`. A chunk that is not written
+//! goes to [`Engine::fail`]: one line `failed` for each of its
+//! commands. See [`crate::trace`] for the lines.
 //!
 //! Each command has one entry, also a command that makes no record, and
 //! a command that is refused (01M3WRD933ESXF33WDEDFCRFB8). The queue is
@@ -76,16 +89,27 @@
 //! use std::time::Instant;
 //! use riff_core::wire::{Join, Resume};
 //! use riff_server::engine::{Engine, Open};
+//! use riff_server::log::{Timing, write};
 //! use riff_server::state::State;
+//! use riff_server::store::Memory;
 //!
 //! let engine = Engine::new(State::with_writer(Instant::now(), 0), Open);
-//! // The writer: the server writes each chunk to the log here.
-//! let writer = engine.clone();
+//! // The writer: it writes each chunk to the log, here in memory. Only
+//! // the proof of the write lets it finish the chunk.
+//! let (writer, store) = (engine.clone(), Memory::default());
 //! tokio::spawn(async move {
 //!     loop {
-//!         match writer.take() {
-//!             Some(chunk) => writer.finish(chunk),
-//!             None => writer.queued().notified().await,
+//!         let Some(chunk) = writer.take() else {
+//!             writer.queued().notified().await;
+//!             continue;
+//!         };
+//!         match write(&store, &chunk.records(), &Timing::default(), || true).await {
+//!             Ok(written) => writer.finish(chunk, written),
+//!             Err(_) => {
+//!                 writer.fail(chunk);
+//!                 writer.stop();
+//!                 break;
+//!             }
 //!         }
 //!     }
 //! });
@@ -118,9 +142,11 @@ use riff_core::wire::{
 use tokio::sync::{Notify, broadcast, oneshot};
 
 use crate::auth::SignedIn;
+use crate::log::Written;
+use crate::trace::{Denied, DeniedCode, Outcome, Traced};
 use crate::state::{
-    Announce, Caller, Cause, Check, Code, Command, Delivery, Forget, MakeRiff, Refused, Role,
-    Signal, State, Stopping,
+    Announce, Caller, Cause, Check, Code, Command, CommandKind, Delivery, Forget, MakeRiff,
+    Refused, Role, Signal, State, Stopping,
 };
 
 /// Events that a slow stream may miss before it drops them.
@@ -227,8 +253,9 @@ impl Routed for Post {
 /// Why a call gets no reply.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failed {
-    /// The token layer refused the call: 403.
-    Denied(String),
+    /// The token layer refused the call: 403. The token check of the
+    /// router gives 401 before the engine gets the call.
+    Denied(Denied),
     /// `permits` or `handle` refused the command: 400, 403 or 409, by
     /// its code (01M3WRD9JBQMNN96TXJH8EAJ3W).
     Refused(Refused),
@@ -248,15 +275,28 @@ impl Failed {
     /// let held = Failed::Refused(Refused::new(Code::Held, "issue-7 is held"));
     /// assert_eq!(held.status(), StatusCode::CONFLICT);
     /// assert_eq!(Failed::Stopped.status(), StatusCode::SERVICE_UNAVAILABLE);
+    ///
+    /// // Each code of a refusal has its status.
+    /// for code in Code::ALL {
+    ///     let status = Failed::Refused(Refused::new(code, "")).status();
+    ///     let expected = match code.as_str() {
+    ///         "not_allowed" | "no_sign_in" | "not_member" => StatusCode::FORBIDDEN,
+    ///         "bad_request" => StatusCode::BAD_REQUEST,
+    ///         _ => StatusCode::CONFLICT,
+    ///     };
+    ///     assert_eq!(status, expected, "{}", code.as_str());
+    /// }
     /// ```
     pub fn status(&self) -> StatusCode {
         match self {
             Failed::Denied(_) => StatusCode::FORBIDDEN,
             Failed::Refused(refused) => match refused.code {
-                Code::NotAllowed => StatusCode::FORBIDDEN,
-                Code::Held | Code::Paused | Code::NotHolder | Code::OtherUser => {
-                    StatusCode::CONFLICT
-                }
+                Code::NotAllowed | Code::NoSignIn | Code::NotMember => StatusCode::FORBIDDEN,
+                Code::Held
+                | Code::Paused
+                | Code::MustClear
+                | Code::NotHolder
+                | Code::OtherUser => StatusCode::CONFLICT,
                 Code::BadRequest => StatusCode::BAD_REQUEST,
             },
             Failed::Stopped => StatusCode::SERVICE_UNAVAILABLE,
@@ -266,7 +306,7 @@ impl Failed {
     /// The text for the caller.
     pub fn text(&self) -> String {
         match self {
-            Failed::Denied(why) => why.clone(),
+            Failed::Denied(denied) => denied.reason.clone(),
             Failed::Refused(refused) => refused.reason.clone(),
             Failed::Stopped => "the server stopped before it wrote the change. Try again.".into(),
         }
@@ -305,9 +345,11 @@ impl IntoResponse for Failed {
 #[derive(Clone, Debug)]
 pub struct Admitted {
     caller: Caller,
-    /// True when a token proved the caller. If not, the riff took the
-    /// call with no token: the caller has the role of an admin.
-    proved: bool,
+    /// The thumbprint of the device key of the token that proved the
+    /// caller. `None` when the riff took the call with no token: the
+    /// role of the caller then comes from the trust of the riff
+    /// (RID_TRUST).
+    key: Option<String>,
 }
 
 impl Admitted {
@@ -358,6 +400,8 @@ pub struct Checked<'s, C: Command> {
     core: MutexGuard<'s, Core>,
     command: C,
     check: Check<C::Note>,
+    /// The key of the token of the caller, for the log line.
+    key: Option<String>,
     now: Instant,
 }
 
@@ -388,9 +432,19 @@ pub struct Applied<C: Command> {
 /// or none) or refused (no record).
 struct Entry {
     made: Vec<Record>,
+    /// Who sent the command, for its log line. An entry of
+    /// [`Engine::settle`] is no command, and has none.
+    sent: Option<Sent>,
     /// Tells the call that the entry is done. The `register` that the
     /// engine runs first for a caller has no call of its own.
     done: Option<oneshot::Sender<Done>>,
+}
+
+/// The trace of a command that makes no record: who sent it, and why it
+/// is refused (RID_TRACE).
+struct Sent {
+    traced: Traced,
+    refused: Option<Refused>,
 }
 
 /// The word of the writer to the call: the entry is done.
@@ -401,8 +455,9 @@ struct Done {
 
 /// The entries that the writer took from the queue: the records of one
 /// chunk of the log. The writer writes [`Chunk::records`], and gives the
-/// chunk to [`Engine::finish`]. A chunk that is dropped tells each of
-/// its calls that the server stopped.
+/// chunk to [`Engine::finish`] with the proof of the write, or to
+/// [`Engine::fail`]. A chunk that is dropped tells each of its calls
+/// that the server stopped.
 pub struct Chunk {
     entries: Vec<Entry>,
 }
@@ -473,22 +528,26 @@ impl Engine {
     /// session than the token (R104).
     ///
     /// A riff with no sign-in trusts its network, and takes a call with
-    /// no proof: the caller is then the `me` of the body, with the role
-    /// of an admin (01M3WRD9G5GAF65EX8P6D5DMQM). A riff with sign-in
-    /// refuses such a call.
+    /// no proof: the caller is then the `me` of the body
+    /// (01M3WRD9G5GAF65EX8P6D5DMQM). A riff that needs a sign-in refuses
+    /// such a call. The caller of the reply writes the line `denied` of
+    /// a refusal ([`crate::trace::denied`]): it knows the path.
     pub fn admit(&self, proof: Option<&SignedIn>, me: &SessionUri) -> Result<Admitted, Failed> {
         match proof {
-            Some(proof) => proof.may_act_as(me.who()).map_err(Failed::Denied)?,
+            Some(proof) => proof
+                .may_act_as(me.who())
+                .map_err(|why| Failed::Denied(Denied::new(DeniedCode::NotYou, why)))?,
             None if self.0.people.needs_sign_in() => {
-                return Err(Failed::Denied(
-                    "this riff needs a sign-in: the call has no token".into(),
-                ));
+                return Err(Failed::Denied(Denied::new(
+                    DeniedCode::NoToken,
+                    "this riff needs a sign-in: the call has no token",
+                )));
             }
             None => {}
         }
         Ok(Admitted {
             caller: Caller::of(me),
-            proved: proof.is_some(),
+            key: proof.map(|proof| proof.jkt.clone()),
         })
     }
 
@@ -509,13 +568,16 @@ impl Engine {
                 SessionUri::new(proof.who.clone(), place)
             }
             (None, None) => {
-                return Err(Failed::Denied(
-                    "a call that names no sender needs a token".into(),
-                ));
+                return Err(Failed::Denied(Denied::new(
+                    DeniedCode::NoToken,
+                    "a call that names no sender needs a token",
+                )));
             }
         };
         let admitted = self.admit(proof, &me)?;
-        command.prepare(proof, now_ms()).map_err(Failed::Denied)?;
+        command
+            .prepare(proof, now_ms())
+            .map_err(|why| Failed::Denied(Denied::new(DeniedCode::BadProof, why)))?;
         Ok(Authenticated { admitted, command })
     }
 
@@ -524,7 +586,7 @@ impl Engine {
         Authenticated {
             admitted: Admitted {
                 caller: Caller::server(),
-                proved: false,
+                key: None,
             },
             command,
         }
@@ -552,10 +614,18 @@ impl Engine {
     ///      |                                    ---- ^^^^^^^^^^^^^^^^^^^ the trait `Handler<_, _>` is not implemented for fn item `fn(State<Engine>, Authenticated<Register>) -> ... {command::<...>}`
     /// ```
     pub async fn dispatch<C: Command>(&self, call: Authenticated<C>) -> Result<C::Reply, Failed> {
-        let checked: Checked<'_, C> = self.check(call); // lock, permits, handle, signal
-        let queued: Queued<C> = checked.queue(); // positions, the entry
+        let queued: Queued<C> = self.send(call); // the check and the entry
         let applied: Applied<C> = queued.applied().await?; // the writer did the rest
         applied.reply() // the reply, or the refusal
+    }
+
+    /// The first stages of [`Engine::dispatch`], with no `await`: the
+    /// check under the lock, and the entry in the queue. The writer
+    /// finishes the command, also when nobody waits for it: a call that
+    /// is gone loses only its reply.
+    fn send<C: Command>(&self, call: Authenticated<C>) -> Queued<C> {
+        let checked: Checked<'_, C> = self.check(call); // lock, permits, handle, signal
+        checked.queue() // positions, the entry
     }
     // ANCHOR_END: dispatch
 
@@ -575,32 +645,33 @@ impl Engine {
             core,
             command,
             check,
+            key: admitted.key,
             now,
         }
     }
 
     /// The caller of `admitted` with its role. Until E3 (#393), the
-    /// role comes from the token store.
+    /// role of a caller with a token comes from the token store. The
+    /// role of a caller with no token comes from the trust of the riff
+    /// (RID_TRUST): an admin in a riff with no sign-in
+    /// ([`People::trusted`]), else a member.
     fn with_role(&self, admitted: &Admitted) -> Caller {
-        let role = if admitted.proved {
-            self.0.people.role(admitted.who().user())
-        } else {
-            Role::Admin
+        let people = &self.0.people;
+        let role = match &admitted.key {
+            Some(_) => people.role(admitted.who().user()),
+            None if people.trusted() => Role::Admin,
+            None => Role::Member,
         };
         admitted.caller.clone().with_role(role)
     }
 
-    /// Sends a command, and does not wait for the writer. The writer
-    /// finishes the command: a call that is gone loses only its reply.
-    fn send<C: Command>(&self, call: Authenticated<C>) {
-        drop(self.check(call).queue());
-    }
-
     /// The first start of a riff: sends the command `make_riff` of the
     /// server (01M3WRD99M99PNGP8ME50KC6WS). It changes nothing in a riff
-    /// that has a record. It does not wait for the write.
+    /// that has a record. It goes through the stages of
+    /// [`Engine::dispatch`], and it does not wait for the write: the
+    /// build of a service is not async.
     pub fn make_riff(&self) {
-        self.send(Engine::as_server(MakeRiff));
+        drop(self.send(Engine::as_server(MakeRiff)));
     }
 
     /// Posts a note or a message of the server itself: the command
@@ -627,6 +698,7 @@ impl Engine {
             }
             core.queue.push(Entry {
                 made: Vec::new(),
+                sent: None,
                 done: Some(tx),
             });
         }
@@ -745,12 +817,22 @@ impl Engine {
 
     // ANCHOR: finish
     /// Finishes each command of a chunk that the writer wrote
-    /// (01M3WRD90WBBCWTDGVQCBR6MNT). It applies the records to the
-    /// written copy in the order of their positions, under the lock.
-    /// Then, for each entry in order, it sends the effects and tells the
-    /// call that the entry is done. The call can be gone: the change is
-    /// done.
-    pub fn finish(&self, chunk: Chunk) {
+    /// (01M3WRD90WBBCWTDGVQCBR6MNT). `written` is the proof of the
+    /// write: only [`crate::log::write`] makes it (RID_WRITTEN). It
+    /// applies the records to the written copy in the order of their
+    /// positions, under the lock. Then, for each entry in order, it
+    /// writes the log line of a command with no record (RID_TRACE),
+    /// sends the effects and tells the call that the entry is done. The
+    /// call can be gone: the change is done.
+    ///
+    /// A proof of other records is an error of the writer: the chunk
+    /// fails, and the engine stops.
+    pub fn finish(&self, chunk: Chunk, written: Written) {
+        if !written.covers(&chunk.records()) {
+            self.fail(chunk);
+            self.stop();
+            return;
+        }
         {
             let mut core = self.core();
             for entry in &chunk.entries {
@@ -758,6 +840,12 @@ impl Engine {
             }
         }
         for entry in chunk.entries {
+            if let (true, Some(sent)) = (entry.made.is_empty(), &entry.sent) {
+                sent.traced.line(match &sent.refused {
+                    Some(refused) => Outcome::Refused(refused),
+                    None => Outcome::NoChange,
+                });
+            }
             self.effects(&entry.made);
             if let Some(done) = entry.done {
                 let _ = done.send(Done { made: entry.made });
@@ -765,6 +853,24 @@ impl Engine {
         }
     }
     // ANCHOR_END: finish
+
+    /// Ends each command of a chunk that the writer did not write: one
+    /// log line `failed` for each (RID_TRACE). Each call of the chunk
+    /// fails with [`Failed::Stopped`]. The writer then stops the server
+    /// for good.
+    pub fn fail(&self, chunk: Chunk) {
+        Engine::failed(chunk.entries);
+    }
+
+    /// Writes the line `failed` of each command of `entries`, and drops
+    /// them: each call fails.
+    fn failed(entries: Vec<Entry>) {
+        for entry in entries {
+            if let Some(sent) = &entry.sent {
+                sent.traced.line(Outcome::Failed);
+            }
+        }
+    }
 
     /// Sends the effects of the written records of one command: the
     /// wakes and the `tail` event of each `posted` record. With
@@ -792,13 +898,14 @@ impl Engine {
 
     /// Stops for good: no entry is done from now on. Each call that
     /// waits, and each later command, fails with [`Failed::Stopped`].
+    /// Each command that waits in the queue gets the log line `failed`.
     pub fn stop(&self) {
         let waiting = {
             let mut core = self.core();
             core.stopped = true;
             std::mem::take(&mut core.queue)
         };
-        drop(waiting);
+        Engine::failed(waiting);
     }
 }
 
@@ -813,6 +920,7 @@ impl<'s, C: Command> Checked<'s, C> {
             mut core,
             command,
             check,
+            key,
             now,
         } = self;
         let Check {
@@ -820,6 +928,14 @@ impl<'s, C: Command> Checked<'s, C> {
             caller,
             result,
         } = check;
+        let sent = |command, refused| Sent {
+            traced: Traced {
+                caller: caller.by(),
+                key: key.clone(),
+                command,
+            },
+            refused,
+        };
         let (tx, done) = oneshot::channel();
         let (made, outcome) = match result {
             Ok((changes, note)) => {
@@ -831,10 +947,15 @@ impl<'s, C: Command> Checked<'s, C> {
         // A stopped engine drops the sender: the call fails as stopped.
         if !core.stopped {
             if let Some(made) = registered {
-                core.queue.push(Entry { made, done: None });
+                core.queue.push(Entry {
+                    made,
+                    sent: Some(sent(CommandKind::Register, None)),
+                    done: None,
+                });
             }
             core.queue.push(Entry {
                 made,
+                sent: Some(sent(C::KIND, outcome.as_ref().err().cloned())),
                 done: Some(tx),
             });
         }

@@ -168,6 +168,7 @@ pub mod state;
 pub mod store;
 pub mod token;
 pub mod tools;
+pub mod trace;
 
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1209,30 +1210,31 @@ impl Service {
                     continue;
                 };
                 let records = chunk.records();
-                // A chunk of commands with no record needs no write.
-                if records.is_empty() {
-                    s.engine.finish(chunk);
-                    continue;
-                }
                 let log = s.log.clone();
                 let timing = s.config.log;
                 let began = Instant::now();
                 let failed = AtomicU64::new(0);
+                // A chunk of commands with no record needs no object:
+                // the write gives its proof at once.
                 let wrote =
                     log::write_counted(&*log, &records, &timing, || s.leased(), &failed).await;
                 s.facts().write_errors += failed.into_inner();
                 match wrote {
-                    Ok(()) => {
-                        s.engine.finish(chunk);
-                        let mut facts = s.facts();
-                        facts.chunks += 1;
-                        facts.chunk_written_at_ms = Some(now_ms());
-                        facts.chunk_write = Some(began.elapsed());
+                    Ok(written) => {
+                        s.engine.finish(chunk, written);
+                        if !records.is_empty() {
+                            let mut facts = s.facts();
+                            facts.chunks += 1;
+                            facts.chunk_written_at_ms = Some(now_ms());
+                            facts.chunk_write = Some(began.elapsed());
+                        }
                     }
                     Err(error) => {
                         // The calls of the chunk fail: the server stopped.
-                        drop(chunk);
-                        let chunk = log::chunk_name(records[0].position);
+                        // Each command of the chunk gets the line `failed`.
+                        s.engine.fail(chunk);
+                        let first = records.first().map_or(0, |record| record.position);
+                        let chunk = log::chunk_name(first);
                         s.error(format!(
                             "the write of the chunk {chunk} failed for good: {error}"
                         ));

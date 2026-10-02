@@ -192,18 +192,58 @@ pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<Line>), String> {
     Ok((header, lines))
 }
 
+/// The proof that the records of a chunk are in the log (RID_WRITTEN).
+/// Only [`write()`] and [`write_counted`] make it, so only a written
+/// chunk reaches the written copy of the state:
+/// [`Engine::finish`](crate::engine::Engine::finish) takes it. A chunk
+/// with no record needs no object: a write of no record gives the proof
+/// with no I/O.
+///
+/// ```
+/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// use riff_server::log::{Timing, write};
+/// use riff_server::store::{Memory, Store};
+///
+/// let store = Memory::default();
+/// let written = write(&store, &[], &Timing::default(), || true).await?;
+/// assert!(written.covers(&[]));
+/// assert!(store.list("log/").await?.is_empty());
+/// # Ok(()) }
+/// ```
+#[derive(Debug, PartialEq, Eq)]
+pub struct Written {
+    /// The position of the first record, and the number of records.
+    first: Option<u64>,
+    count: usize,
+}
+
+impl Written {
+    fn of(records: &[Record]) -> Written {
+        Written {
+            first: records.first().map(|record| record.position),
+            count: records.len(),
+        }
+    }
+
+    /// True when this is the proof of the write of `records`.
+    pub fn covers(&self, records: &[Record]) -> bool {
+        *self == Written::of(records)
+    }
+}
+
 /// Writes `records` as one new chunk. See "A failed write" in the module
 /// docs. Before each try, it asks `may_write` whether the instance still
 /// holds the lease (R155). A try without the lease counts as a failed
 /// try. So each try ends at most [`Timing::attempt`] after the lease
 /// ends, far less than the wait of a new instance. An error means that
-/// the instance must stop for good.
+/// the instance must stop for good. It gives the proof of the write
+/// ([`Written`]).
 pub async fn write(
     store: &dyn Store,
     records: &[Record],
     timing: &Timing,
     may_write: impl Fn() -> bool,
-) -> Result<(), StoreError> {
+) -> Result<Written, StoreError> {
     write_counted(store, records, timing, may_write, &AtomicU64::new(0)).await
 }
 
@@ -240,7 +280,10 @@ pub async fn write_counted(
     timing: &Timing,
     may_write: impl Fn() -> bool,
     failed: &AtomicU64,
-) -> Result<(), StoreError> {
+) -> Result<Written, StoreError> {
+    if records.is_empty() {
+        return Ok(Written::of(records));
+    }
     let name = chunk_name(records[0].position);
     let bytes = encode(records);
     let start = tokio::time::Instant::now();
@@ -255,14 +298,14 @@ pub async fn write_counted(
             ))))
         };
         let error = match tried {
-            Ok(Ok(_)) => return Ok(()),
+            Ok(Ok(_)) => return Ok(Written::of(records)),
             Ok(Err(error @ StoreError::Conflict(_))) if first => {
                 failed.fetch_add(1, Ordering::SeqCst);
                 return Err(error);
             }
             Ok(Err(StoreError::Conflict(_))) => {
                 return match store.load(&name).await {
-                    Ok(Some(loaded)) if loaded.bytes == bytes => Ok(()),
+                    Ok(Some(loaded)) if loaded.bytes == bytes => Ok(Written::of(records)),
                     Ok(_) => {
                         failed.fetch_add(1, Ordering::SeqCst);
                         Err(StoreError::Conflict(name))
