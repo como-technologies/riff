@@ -620,8 +620,9 @@ impl ServerHandler for Off {
     }
 }
 
-/// `riff mcp` in a directory where riff is off. It serves [`Off`] over
-/// stdio until the agent tool closes the stream. It makes no call to
+/// `riff mcp` in a directory where riff is off. It serves a server with
+/// no tool, whose instructions are [`text::MCP_OFF`], over stdio until
+/// the agent tool closes the stream. It makes no call to
 /// `riff-server`, and keeps no file of the session.
 pub async fn serve_off() -> Result<()> {
     let service = Off.serve(rmcp::transport::stdio()).await?;
