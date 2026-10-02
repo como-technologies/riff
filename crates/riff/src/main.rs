@@ -2484,7 +2484,8 @@ async fn draw_top(
         let Some(((pauses, who), at)) = &last else {
             continue;
         };
-        let fault = failed.map(|e| text::top_fault(&e.to_string(), at, &chrono::Local::now()));
+        let now = chrono::Local::now();
+        let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
         let server = riff::api::server_build();
         let top = riff::top::Top {
             pauses,

@@ -190,7 +190,8 @@ async fn pr_wait_goes_on_after_a_look_that_fails() {
 /// (01M3Z8GG5EGEYAVEXG0HS46ACT).
 #[tokio::test]
 async fn pr_wait_ends_when_the_first_look_fails() {
-    let away = r#"*'pr view 40 --json state,mergeCommit'*) echo 'no pull requests found' >&2; exit 1 ;;"#;
+    let away =
+        r#"*'pr view 40 --json state,mergeCommit'*) echo 'no pull requests found' >&2; exit 1 ;;"#;
     let machine = Machine::new(away).await;
     let out = machine
         .run("s1", &["pr", "wait", "40", "--every", "1"])

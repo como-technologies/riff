@@ -999,7 +999,7 @@ A laptop sleeps, or the Wi-Fi drops. `riff top` stays open. It keeps
 the last table, and its first line is red:
 
 ```text
-riff: the last good look was at 21:35:07. riff tries again: cannot reach riff-server at http://127.0.0.1:7878
+riff: no good look since 21:35:07: cannot reach riff-server
 ```
 
 The line has the time of the last good look, then the fault. The table
@@ -1458,8 +1458,9 @@ GitHub merges it, and then prints the merge commit. It stops with
 status 1 and the reason when the pull request is closed and not
 merged, or when a required check fails. A session runs it as a
 background task. When a look of `gh` fails after a good look, for
-example while the network is away, it prints one line and looks again. After the merge, it adds the total of the tokens to
-the issue: see
+example while the network is away, it prints one line and looks
+again. After the merge, it adds the total of the tokens to the issue:
+see
 [See the tokens of an issue](development.md#see-the-tokens-of-an-issue).
 
 ### Report a verify

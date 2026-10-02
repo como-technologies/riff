@@ -23,7 +23,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
 /// The start of the line of a look that failed.
-const FAULT: &str = "riff: the last good look was at ";
+const FAULT: &str = "riff: no good look since ";
 
 /// What the gate does with a new connection.
 #[derive(Clone, Copy)]
@@ -223,7 +223,12 @@ impl Live {
 
     /// Waits until a table from the index `from` on passes `found`, and
     /// gives its index and the table. It fails after 40 seconds.
-    async fn view(&mut self, from: usize, what: &str, found: impl Fn(&str) -> bool) -> (usize, String) {
+    async fn view(
+        &mut self,
+        from: usize,
+        what: &str,
+        found: impl Fn(&str) -> bool,
+    ) -> (usize, String) {
         let end = Instant::now() + Duration::from_secs(40);
         loop {
             let views = self.views();
@@ -309,13 +314,16 @@ async fn stays_open(away: Option<Mode>) {
     let kept = |v: &str| v.starts_with(FAULT) && has(v, "b2");
     let (at, view) = live.view(0, "the line and the last table", kept).await;
     let line = view.lines().next().unwrap();
-    let time = line.strip_prefix(FAULT).unwrap();
-    let (time, fault) = time.split_once(". riff tries again: ").expect(line);
-    assert_eq!(time.len(), "21:35:07".len(), "{line}");
+    let (time, fault) = line.strip_prefix(FAULT).unwrap().split_at("21:35:07".len());
     assert!(
-        fault.contains(&format!("riff-server at {}", gate.url())),
+        chrono::NaiveTime::parse_from_str(time, "%H:%M:%S").is_ok(),
         "{line}"
     );
+    let faults = [
+        ": cannot reach riff-server",
+        ": riff-server gave no reply in 10 seconds",
+    ];
+    assert!(faults.contains(&fault), "{line}");
     assert!(!view.contains("─ d4  "), "{view}");
     assert!(
         view.lines().filter(|l| l.starts_with("riff: ")).count() == 1,
@@ -356,7 +364,7 @@ async fn top_ends_on_a_fault_that_a_new_try_cannot_repair() {
     gate.open(Mode::Other).await;
     assert!(!live.ended().await, "the status is not 0");
     let stderr = live.stderr.lock().unwrap().clone();
-    assert!(stderr.contains("status 404 from"), "{stderr}");
+    assert!(stderr.contains("do not match"), "{stderr}");
     let views = live.views();
     assert!(!views.iter().any(|v| v.starts_with(FAULT)), "{views:?}");
 }

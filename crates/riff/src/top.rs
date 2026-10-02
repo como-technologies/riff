@@ -494,7 +494,7 @@ impl Top<'_> {
     /// // table of the last good look stays.
     /// top.width = 80;
     /// let table = anstream::adapter::strip_str(&top.view()).to_string();
-    /// top.fault = Some("riff: the last good look was at 21:35:07. riff tries again: no reply");
+    /// top.fault = Some("riff: no good look since 21:35:07: cannot reach riff-server");
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// assert_eq!(text, format!("{}\n{table}", top.fault.unwrap()));
     /// ```
