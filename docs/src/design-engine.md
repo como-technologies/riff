@@ -89,6 +89,14 @@ flowchart TD
   makes the `Authenticated` value inside the engine module. E3 adds
   the command `admit` of the token path, with the proof of the
   sign-in.
+- `Engine::make_riff` goes through the same stages as
+  `Engine::dispatch` (`Engine::send`: the check and the entry), and
+  does not wait for the write: the build of a service is not async.
+- Two signals of the server are no call of `Engine::signal`: the end
+  of a watch stream (`Engine::watch_ended`) and the ask to stop an
+  idle worker (`Engine::stop_idle_workers`). They are no call of a
+  session, so they register nothing and they count as no call. Each
+  one changes only the presence, under the lock of the engine.
 - The first start of a riff sends the command `make_riff` of the
   server. It makes the `riff_made` record, and a `pause_set` record
   that pauses the riff. Until E3 and E5, it makes one `riff_state_set`
@@ -102,6 +110,11 @@ flowchart TD
   write, then reads the view. A signal of such a session first sends
   `register` through `Engine::dispatch` and waits for it, then sets
   the signal. An `end` of such a session registers nothing.
+- The first `register` of a caller that the state does not know runs
+  before `permits` of its command. So the session is registered also
+  when its command is refused. A caller that the state knows gets the
+  signal `Called` at the check, also when its command is refused: a
+  refused call is a sign of life.
 
 ### The callers
 
@@ -122,6 +135,9 @@ flowchart TD
   command of the group "people". A call whose body names no `me` needs
   a token: the caller is then the caller of the token. So a riff with
   no sign-in takes no such call (01M3WRD9G5GAF65EX8P6D5DMQM).
+- The role of a caller with no token comes from the trust of the riff
+  (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in, else
+  a member.
 
 ### The commands
 
@@ -236,9 +252,9 @@ fails, and the worker asks in its own terminal.
   `Presence::applied`, with the record, the riff after the `apply`,
   and the time of the call that made the record. A replay gives no
   time, and then `Presence::applied` sets no time.
-- Until E2, `Presence::applied` also gets the session that held the
-  item before a `claimed` record: its claims change too. E2 gives the
-  old holder a `released` record, and this part goes.
+- A session whose item another session takes has a `released` record of
+  its own (01M3X4Z6BKM251H7CS2CEGR205). So `Presence::applied` reads
+  only the record and the riff.
 - `who` shows the time of a change after the write of its record: each
   reader sees the written copy.
 - A status is a signal. The wire type refuses a bad text. A `register`
@@ -273,7 +289,13 @@ envelope has the caller (`by`) and the kind of the command
 {"position":1234,"written_at_ms":1790000000000,"by":{"session":"mike/a6cf"},"command":"claim","change":{"claimed":{"session":"riff://mike@pangolin/como-technologies/riff?session=a6cf","thread":"como-technologies/riff","item":"issue-355"}}}
 ```
 
-- The records of one command are in one chunk, one after another.
+- The records of one command are in one chunk, one after another
+  (01M3X4Z60G1FXQTDC5XDJ05BAX). `State::queue` gives the records of a
+  command their positions and their cause under one lock, and the writer
+  takes whole entries of the queue.
+- A record from before E2 has no `by` and no `command`. It reads, and
+  its cause is not known. `riff-server log` prints the cause of each
+  record.
 - A note of the server that a command causes is a `posted` record in
   the chunk of that command, with the `by` and the `command` of the
   cause. The sender of the message is the server.
@@ -292,11 +314,23 @@ line has the format of each other log line (`severity`, `time`,
 |---|---|---|
 | `refused` | `permits` or `handle` refused the command. | `INFO` |
 | `no_change` | `handle` accepted the command, and it made no record. | `INFO` |
-| `failed` | The chunk was not written, and the instance stopped. | `ERROR` |
+| `failed` | The write of the chunk of the command failed, and the instance stopped. | `ERROR` |
+| `failed` | The command waited in the queue when the server stopped. The line has the `reason` of the stop. | `WARNING` |
 | `denied` | The token layer refused the call: a command, a query or a signal. | `INFO` |
 
-- The writer makes the lines `refused`, `no_change` and `failed`. The
-  token layer makes the line `denied`.
+- The writer makes the lines `refused`, `no_change` and `failed`
+  (`Engine::finish` and `Engine::fail`, 01M3X4Z62RJREQ5H8F18Y85T6V). The
+  token layer makes the line `denied` (01M3X4Z64ZNRD0G0F4JV1M64FN). The
+  module `crates/riff-server/src/trace.rs` holds each line.
+- `failed`: one line with the severity `ERROR` for each command of a
+  chunk whose write failed. A command that waits in the queue when the
+  server stops gets a `failed` line with the severity `WARNING`, and
+  the reason of the stop: its chunk did not fail. So a stop for a lost
+  lease, as at a deploy, sends no alert email.
+- At a stop signal, the server first writes what waits: `shutdown`
+  closes the gate, and then waits until the writer is done with each
+  entry of the queue (`Engine::settle`), while the instance holds the
+  lease. So a normal stop gives no `failed` line.
 - A refusal has a `code` and a `reason` as text. A test of a refusal
   compares the code. The codes of this release: `not_allowed` (the
   class or the role of the caller), `no_sign_in` (a command of the
@@ -304,18 +338,46 @@ line has the format of each other log line (`severity`, `time`,
   `not_holder`, `other_user`, `not_member` (the command names a person
   who is not a member), `bad_request` (the fields of the call do not
   agree, for example the signed fields of a post). A release can add a
-  code. A reader takes a code that it does not know as text. E1b has
-  the codes `not_allowed`, `held`, `paused`, `not_holder`, `other_user`
-  and `bad_request`. The reply to a refused command has the code in
-  the header `riff-refused`, and the reason as its text
-  (01M3WRD9JBQMNN96TXJH8EAJ3W).
+  code. A reader takes a code that it does not know as text. The enum
+  `Code` has each code of this list. `no_sign_in` and `not_member` get
+  their first use in E3, and `must_clear` in E4. The reply to a
+  refused command has the code in the header `riff-refused`, and the
+  reason as its text (01M3WRD9JBQMNN96TXJH8EAJ3W).
+- The HTTP status of a refused command comes from its code
+  (01M3X4Z69CFV23V4QZBE8RP1GJ):
+
+  | Status | Codes |
+  |---|---|
+  | 403 | `not_allowed`, `no_sign_in`, `not_member` |
+  | 409 | `held`, `paused`, `must_clear`, `not_holder`, `other_user` |
+  | 400 | `bad_request` |
+
 - A `denied` line has no `caller`. It has `named` (the caller that the
-  call named, not proved), `path` in the place of `command`, and a
-  code: `no_token`, `bad_proof`, `not_you` (the token may not act as
-  the `me` of the body), `old_build`.
+  call named), `proved` with the value `false` (no token proved the
+  name), `path` in the place of `command`, and a code. It has no
+  `reason`. These codes are codes of the token layer only. They are
+  not codes of a refused command:
+
+  | Code | When | Status |
+  |---|---|---|
+  | `no_token` | The call has no token. | 401 |
+  | `bad_token` | The server does not know the token, or the token expired. | 401 |
+  | `bad_proof` | The proof of the device key is refused: 401. The signature of a post is refused: 403. | 401, 403 |
+  | `not_you` | The token may not act as the `me` of the body. | 403 |
+  | `old_build` | The build of the client is too old or too new. | 409 |
+
+- `named` is the `me` of the body, or the `uri` of the query. The
+  server reads the body for it only after it refused the call, and at
+  most 64 KiB of it. A call with a longer body, or with no name, gives
+  a line with no `named`. A name that is no session URI is text:
+  `{"text":"..."}`. A name of more than 200 characters is cut, and the
+  line then has `named_cut` with the value `true`. A line break in a
+  name is escaped, so the line stays one line.
 - `key` is the thumbprint of the device key of the token. It is not a
-  secret.
-- A line never holds the body of a post, a token or a key.
+  secret. A call with no token has no `key`.
+- A line never holds the body of a post, a token or a key
+  (01M3X4Z675D0ZQX93E93F3M8FA). A test runs each command with a marked
+  body and a marked token, and finds no mark in the lines.
 - A command with records gets no line. A signal and a query that the
   token layer accepts get no line. The request log of Cloud Run holds
   each call with its path and its status.
@@ -449,6 +511,13 @@ so no command can make a stage or lock the state.
 | `Queued<C>` | `Checked::queue`, in the call | The records have positions. The entry of the command is in the queue, and its records are in the pending copy. The lock is free. |
 | `Applied<C>` | `Queued::applied`, from the word of the writer | The chunk of each record is in the log, and the written copy has the records, in order. The log line and the effects of the command are done. |
 
+The writer has a proof too (01M3X4Z6DSWKMJ2R549R4TSYP0). `log::write`
+gives the value `Written`, and only the module `log` makes it.
+`Engine::finish` takes the chunk and its `Written`. So the types show
+that only a written chunk reaches the written copy. A chunk with no
+record needs no object: a write of no record gives its `Written` with no
+I/O. A chunk that is not written goes to `Engine::fail`.
+
 - Only `Applied` gives the reply. So a handler cannot reply before the
   write. The writer sends the effects, so no wake goes out for a record
   that is not written.
@@ -529,7 +598,8 @@ The router has one line for each routed command:
 
 The writer is one task of the server. It takes each entry of the
 queue (`Engine::take`), writes their records as one chunk outside the
-lock, and gives the chunk to `Engine::finish`:
+lock, and gives the chunk and the proof of its write to
+`Engine::finish`:
 
 ```rust,ignore
 {{#include ../../crates/riff-server/src/engine.rs:finish}}
@@ -608,7 +678,7 @@ The three rules of the store design stay. These rules come with them:
 | `session_forgotten` | It removes each thing of the session: its entry, its places in the threads, its claims, its lead, and each direct thread whose other session is not known. | Yes. E4 gives the claims their `released` records first. |
 | `left_thread` | It ends the place of the session in the thread, with its lead of that thread. The lead of a thread is a member of it. | Yes. |
 | `posted` | A thread keeps its last 200 messages. The number is a constant of the format: a change of it follows the rules for a change of a record. | Yes. |
-| `claimed` | The new holder replaces the old one. | Until E2. Then the old holder gets a `released` record first. |
+| `claimed` | The new holder replaces the old one. | Yes, for a log from before E2. Since E2, the old holder gets a `released` record first. |
 | `released` | A record of a session that does not hold the item changes nothing. `handle` refuses such a release, so the engine does not write this record. | Yes. |
 | `lead_set` | The session of the record replaces the old lead of its user in the thread. | Yes. |
 | `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check. A `posted` record adds the hash of its payload, and removes the hash of the message that goes at 200. A `session_forgotten` record removes the hashes of each direct thread that goes. | Yes. |
@@ -737,6 +807,10 @@ for a state with no writer: the tests, the examples and the tools use
 them. Each one runs the same steps as the engine: `State::check`,
 `State::queue` and `State::written`. The server cannot call them: the
 state is a private field of the engine.
+
+E2 is built: the cause in each record (`riff_core::record::By`), the
+lines of the module `crates/riff-server/src/trace.rs`, and the proof
+of a write (`log::Written`).
 
 Other items:
 

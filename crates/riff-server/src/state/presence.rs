@@ -206,27 +206,18 @@ impl Presence {
     /// after its last record.
     ///
     /// - `claimed` and `released`: the time of the last change of the
-    ///   claims of the session (01M3Q551WCMPQRCNJ8FXQEBFY4). `lost` is
-    ///   the session that held the item of a `claimed` record before
-    ///   it: its claims change too.
+    ///   claims of the session (01M3Q551WCMPQRCNJ8FXQEBFY4). A session
+    ///   whose item another session takes has a `released` record of
+    ///   its own, before the `claimed` record (01M3X4Z6BKM251H7CS2CEGR205).
     /// - `riff_state_set`: the time for a stale status
     ///   (01M3Q551YHYZBFV2NDS1QCYXCD).
     /// - `session_forgotten`: the session leaves memory, with its read
     ///   cursors, and each cursor of a thread that is gone.
-    pub(super) fn applied(
-        &mut self,
-        record: &Record,
-        riff: &Riff,
-        lost: Option<&Who>,
-        at: Option<Instant>,
-    ) {
+    pub(super) fn applied(&mut self, record: &Record, riff: &Riff, at: Option<Instant>) {
         match &record.change {
-            Change::Claimed(claimed) => {
-                for holder in lost.into_iter().chain([claimed.session.who()]) {
-                    self.claims_changed(holder, at);
-                }
+            Change::Claimed(claimed) | Change::Released(claimed) => {
+                self.claims_changed(claimed.session.who(), at);
             }
-            Change::Released(claimed) => self.claims_changed(claimed.session.who(), at),
             Change::RiffStateSet(_) => self.riff_changed = at.or(self.riff_changed),
             Change::SessionForgotten(forgotten) => {
                 let who = forgotten.session.who();
@@ -459,6 +450,8 @@ mod tests {
         Record {
             position: 1,
             written_at_ms: 0,
+            by: None,
+            command: None,
             change,
         }
     }
@@ -478,23 +471,12 @@ mod tests {
     }
 
     #[test]
-    fn a_claimed_record_sets_the_time_of_the_new_holder_and_of_the_old_one() {
+    fn a_claimed_record_sets_only_the_time_of_its_session() {
         let since = Instant::now();
         let at = since + Duration::from_secs(9);
         let mut presence = presence(since);
         let record = record(Change::Claimed(claim_of(&bob())));
-        presence.applied(&record, &Riff::default(), Some(ann().who()), Some(at));
-        assert_eq!(claims_changed(&presence, &bob()), at);
-        assert_eq!(claims_changed(&presence, &ann()), at);
-    }
-
-    #[test]
-    fn a_claimed_record_with_no_old_holder_sets_only_the_time_of_its_session() {
-        let since = Instant::now();
-        let at = since + Duration::from_secs(9);
-        let mut presence = presence(since);
-        let record = record(Change::Claimed(claim_of(&bob())));
-        presence.applied(&record, &Riff::default(), None, Some(at));
+        presence.applied(&record, &Riff::default(), Some(at));
         assert_eq!(claims_changed(&presence, &bob()), at);
         assert_eq!(claims_changed(&presence, &ann()), since);
     }
@@ -505,7 +487,7 @@ mod tests {
         let at = since + Duration::from_secs(9);
         let mut presence = presence(since);
         let record = record(Change::Released(claim_of(&ann())));
-        presence.applied(&record, &Riff::default(), None, Some(at));
+        presence.applied(&record, &Riff::default(), Some(at));
         assert_eq!(claims_changed(&presence, &ann()), at);
         assert_eq!(claims_changed(&presence, &bob()), since);
     }
@@ -518,7 +500,7 @@ mod tests {
         let record = record(Change::RiffStateSet(RiffStateSet {
             state: RiffState::Running,
         }));
-        presence.applied(&record, &Riff::default(), None, Some(at));
+        presence.applied(&record, &Riff::default(), Some(at));
         assert_eq!(presence.riff_changed, Some(at));
     }
 
@@ -535,7 +517,7 @@ mod tests {
             }),
         ];
         for change in changes {
-            presence.applied(&record(change), &Riff::default(), Some(ann().who()), None);
+            presence.applied(&record(change), &Riff::default(), None);
         }
         assert_eq!(claims_changed(&presence, &ann()), since);
         assert_eq!(claims_changed(&presence, &bob()), since);
@@ -555,7 +537,7 @@ mod tests {
         let mut riff = Riff::default();
         apply(&mut riff, &record(joined(&bob(), &repo())));
         let forgotten = record(Change::SessionForgotten(Forgotten { session: ann() }));
-        presence.applied(&forgotten, &riff, None, Some(now));
+        presence.applied(&forgotten, &riff, Some(now));
         assert!(!presence.sessions.contains_key(ann().who()));
         assert!(presence.sessions.contains_key(bob().who()));
         let cursors: Vec<_> = presence.cursors.keys().cloned().collect();
@@ -573,7 +555,6 @@ mod tests {
         presence.applied(
             &record(joined(&ann(), &design())),
             &Riff::default(),
-            None,
             Some(at),
         );
         assert_eq!(presence.sessions.len(), 2);

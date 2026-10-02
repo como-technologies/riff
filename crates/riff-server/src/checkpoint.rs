@@ -375,6 +375,8 @@ mod tests {
         Record {
             position,
             written_at_ms: 0,
+            by: None,
+            command: None,
             change: Change::RiffStateSet(RiffStateSet {
                 state: RiffState::Running,
             }),

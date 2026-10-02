@@ -34,7 +34,7 @@
 //! | `session_forgotten` | It removes each thing of the session: its entry, its places in the threads, its claims, its lead, and each direct thread whose other session is not known. | Yes. |
 //! | `left_thread` | It ends the place of the session in the thread, with its lead of that thread: the lead of a thread is a member of it. | Yes. |
 //! | `posted` | A thread keeps its last [`KEEP_MESSAGES`](super::KEEP_MESSAGES) messages, so the oldest one goes (01M3TBZBT7MME9BG1RWX5SZAZ6). The number is a constant of the format. | Yes. |
-//! | `claimed` | The new holder replaces the old one. | Until E2 (#392): then the old holder gets a `released` record first. |
+//! | `claimed` | The new holder replaces the old one. | Yes, for a log from before the `released` record of a taken item (01M3X4Z6BKM251H7CS2CEGR205). A new claim gives the old holder that record first. |
 //! | `released` | It frees the claim only when the session of the record holds it. If not, the record changes nothing. `handle` refuses such a release, so only a fault or an old build writes this record. | Yes. |
 //! | `lead_set` | The session of the record replaces the old lead of its user in the thread. | Yes. |
 //! | `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check: a `posted` record adds the hash of its payload, and removes the hash of the message that goes at the limit. A `session_forgotten` record removes the hashes of each direct thread that goes. | Yes. |
@@ -68,7 +68,7 @@ use super::work::Work;
 ///
 /// let mut riff = Riff::default();
 /// let change = Change::RiffStateSet(RiffStateSet { state: RiffState::Running });
-/// apply(&mut riff, &Record { position: 7, written_at_ms: 0, change });
+/// apply(&mut riff, &Record { position: 7, written_at_ms: 0, by: None, command: None, change });
 /// assert_eq!(riff.position(), 7);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -143,13 +143,14 @@ impl Riff {
 ///     item: "issue-7".into(),
 /// };
 /// let mut riff = Riff::default();
-/// apply(&mut riff, &Record { position: 1, written_at_ms: 0, change: Change::Claimed(claimed.clone()) });
+/// let record = |position, change| Record { position, written_at_ms: 0, by: None, command: None, change };
+/// apply(&mut riff, &record(1, Change::Claimed(claimed.clone())));
 /// assert_eq!(riff.position(), 1);
 ///
 /// // A release of a claim that the session does not hold changes nothing
 /// // but the position.
 /// let other = Claimed { item: "issue-8".into(), ..claimed };
-/// apply(&mut riff, &Record { position: 2, written_at_ms: 0, change: Change::Released(other) });
+/// apply(&mut riff, &record(2, Change::Released(other)));
 /// assert_eq!(riff.position(), 2);
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -228,6 +229,8 @@ mod tests {
             let record = Record {
                 position: u64::try_from(n).unwrap() + 1,
                 written_at_ms: 5,
+                by: None,
+                command: None,
                 change: change.clone(),
             };
             apply(&mut riff, &record);

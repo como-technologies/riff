@@ -35,7 +35,8 @@ pub struct Work {
 
 impl Work {
     /// The session of the record holds the item. It replaces the old
-    /// holder.
+    /// holder: a log from before the `released` record of a taken item
+    /// (01M3X4Z6BKM251H7CS2CEGR205) has such records.
     pub(super) fn claimed(&mut self, claimed: &Claimed) -> Result<(), &'static str> {
         let key = (claimed.thread.clone(), claimed.item.clone());
         self.claims.insert(key, claimed.session.who().clone());
@@ -235,7 +236,9 @@ impl View<'_> {
 /// [`CLAIM_GRACE`](super::CLAIM_GRACE) ago. While the riff is paused, a
 /// claim fails (01M3JCG3WBHDF0ZWM06XV94ZDC). A claim of an item that
 /// another session holds is refused with the code `held`, and the
-/// reason names the holder (01M3WRD9JBQMNN96TXJH8EAJ3W).
+/// reason names the holder (01M3WRD9JBQMNN96TXJH8EAJ3W). A claim that
+/// takes the item of a holder that is gone gives a `released` record
+/// for the old holder, then the `claimed` record (01M3X4Z6BKM251H7CS2CEGR205).
 impl Command for Claim {
     const KIND: CommandKind = CommandKind::Claim;
     type Reply = ClaimReply;
@@ -259,6 +262,11 @@ impl Command for Claim {
                 ),
             ));
         }
+        let claim = |holder: &Who| Claimed {
+            session: view.plain(holder),
+            thread: thread.clone(),
+            item: item.clone(),
+        };
         let mut changes = Vec::new();
         match view.riff.work().holder(thread, item) {
             Some(holder) if holder == who => {}
@@ -271,11 +279,13 @@ impl Command for Claim {
                     ),
                 ));
             }
-            _ => changes.push(Change::Claimed(Claimed {
-                session: view.plain(who),
-                thread: thread.clone(),
-                item: item.clone(),
-            })),
+            // The holder is gone: its claim ends first, in the same
+            // chunk (01M3X4Z6BKM251H7CS2CEGR205).
+            Some(gone) => {
+                changes.push(Change::Released(claim(gone)));
+                changes.push(Change::Claimed(claim(who)));
+            }
+            None => changes.push(Change::Claimed(claim(who))),
         }
         Ok((changes, ()))
     }

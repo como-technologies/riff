@@ -8,27 +8,34 @@ use std::path::Path;
 use std::time::Instant;
 
 use isolated::Isolated;
-use riff_core::record::{Change, Claimed, Record, RiffStateSet};
+use riff_core::name::Who;
+use riff_core::record::{By, Change, Claimed, Record, RiffStateSet};
 use riff_core::wire::RiffState;
 use riff_server::checkpoint::{self, Checkpoint};
 use riff_server::log::{self, chunk_name};
 use riff_server::state::State;
 use riff_server::store::Dir;
 
+/// A record from before the cause.
 fn running(position: u64) -> Record {
     Record {
         position,
         written_at_ms: 1_790_000_000_000,
+        by: None,
+        command: None,
         change: Change::RiffStateSet(RiffStateSet {
             state: RiffState::Running,
         }),
     }
 }
 
+/// A record with its cause: a claim of the session.
 fn claimed(position: u64) -> Record {
     Record {
         position,
         written_at_ms: 1_790_000_000_000,
+        by: Some(By::Session(Who::new("ann", Some("s1")).unwrap())),
+        command: Some("claim".into()),
         change: Change::Claimed(Claimed {
             session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
             thread: "acme/app".parse().unwrap(),
@@ -91,11 +98,14 @@ async fn log_prints_the_records_as_text() {
     assert!(ok, "{stderr}");
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines.len(), 6, "{stdout}");
-    assert_eq!(lines[0], "1  2026-09-21T14:13:20Z  riff_state_set  running");
+    assert_eq!(
+        lines[0],
+        "1  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)"
+    );
     assert_eq!(
         lines[1],
         "2  2026-09-21T14:13:20Z  claimed  issue-2 in acme/app by \
-         riff://ann@heron/acme/app?session=s1"
+         riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)"
     );
 
     // From a position.
@@ -174,10 +184,10 @@ async fn log_cut_removes_the_chunks_after_a_position_and_names_the_records() {
         lines,
         [
             "4  2026-09-21T14:13:20Z  claimed  issue-4 in acme/app by \
-             riff://ann@heron/acme/app?session=s1",
-            "5  2026-09-21T14:13:20Z  riff_state_set  running",
+             riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
+            "5  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)",
             "6  2026-09-21T14:13:20Z  claimed  issue-6 in acme/app by \
-             riff://ann@heron/acme/app?session=s1",
+             riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
             "Removed 3 records and 1 checkpoint after position 3. Threads: acme/app.",
         ]
     );

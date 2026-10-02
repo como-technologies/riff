@@ -6,13 +6,14 @@
 //! - `when` runs [`State::check`] with one command. The caller is live.
 //!   A test names a command in a short form with no `me` ([`Ask`]):
 //!   `when` puts the caller in it.
-//! - `then` compares the changes, or `then_refused` the error.
+//! - `then` compares the changes, or `then_refused_as` the code and
+//!   the reason of the refusal.
 //! - `apply` writes more records to the state of `given`, and gives the
 //!   state, so that a test can look at it.
 //!
 //! The tests do no I/O.
 
-use riff_core::record::{Claimed, Forgotten, Member, RiffStateSet, SettingChanged};
+use riff_core::record::{By, Claimed, Forgotten, Member, RiffStateSet, SettingChanged};
 use riff_core::wire;
 
 use super::*;
@@ -282,6 +283,8 @@ fn given(changes: &[Change]) -> Given {
     let records = changes.iter().enumerate().map(|(n, change)| Record {
         position: u64::try_from(n).unwrap() + 1,
         written_at_ms: 0,
+        by: None,
+        command: None,
         change: change.clone(),
     });
     Given {
@@ -318,7 +321,8 @@ impl Given {
 
     /// Commits `changes` as records, writes them, and gives the state.
     fn apply(mut self, changes: &[Change]) -> State {
-        let records = self.state.queue(changes, self.now);
+        let cause = Cause::of(&Caller::server(), CommandKind::Forget);
+        let records = self.state.queue(&cause, changes, self.now);
         self.state.written(&records);
         self.state
     }
@@ -375,14 +379,8 @@ impl When {
         assert_eq!(self.0.as_deref(), Ok(changes));
     }
 
-    fn then_refused(self, part: &str) {
-        match self.0 {
-            Err(refused) => assert!(refused.reason.contains(part), "{refused}"),
-            Ok(changes) => panic!("not refused: {changes:?}"),
-        }
-    }
-
-    /// As `then_refused`, and it compares the code of the refusal.
+    /// The command is refused with `code`, and its reason has `part`. A
+    /// test of a refusal compares the code (01M3WRD9JBQMNN96TXJH8EAJ3W).
     fn then_refused_as(self, code: Code, part: &str) {
         match self.0 {
             Err(refused) => {
@@ -543,7 +541,7 @@ fn a_direct_message_goes_to_the_direct_thread_of_the_two_sessions() {
 fn a_direct_message_to_a_gone_session_is_refused() {
     given(&team())
         .when(&ann(), post(&ann(), None, &["session=b1"], "psst"))
-        .then_refused("is gone");
+        .then_refused_as(Code::BadRequest, "is gone");
 }
 
 #[test]
@@ -552,7 +550,7 @@ fn a_direct_message_needs_one_selector_with_a_session_or_the_lead() {
         given(&team())
             .live(&[bob()])
             .when(&ann(), post(&ann(), None, to, "psst"))
-            .then_refused(part);
+            .then_refused_as(Code::BadRequest, part);
     };
     refused(&["session=b1", "user=bob"], "exactly one selector");
     refused(&["user=bob"], "a session or lead=true");
@@ -566,7 +564,7 @@ fn a_post_to_a_named_direct_thread_is_refused() {
     given(&team())
         .live(&[bob()])
         .when(&ann(), post(&ann(), Some(&direct), &["session=b1"], "psst"))
-        .then_refused("leave out the thread");
+        .then_refused_as(Code::BadRequest, "leave out the thread");
 }
 
 #[test]
@@ -579,7 +577,7 @@ fn a_signed_post_with_the_lead_mark_of_a_session_that_is_not_the_lead_is_refused
     };
     given(&team())
         .when(&ann2().with_lead(true), signed)
-        .then_refused("not the lead");
+        .then_refused_as(Code::BadRequest, "not the lead");
 }
 
 #[test]
@@ -597,7 +595,7 @@ fn a_copy_of_a_signed_payload_is_refused() {
     };
     given(&records)
         .when(&ann(), copy)
-        .then_refused("a copy of message 1");
+        .then_refused_as(Code::BadRequest, "a copy of message 1");
 }
 
 #[test]
@@ -645,7 +643,32 @@ fn a_claim_of_an_item_whose_holder_stopped_long_ago_is_granted() {
     given(&records)
         .after(CLAIM_GRACE)
         .when(&ann(), claim("issue-7"))
-        .then(&[claimed(&ann(), "issue-7")]);
+        .then(&[released(&bob(), "issue-7"), claimed(&ann(), "issue-7")]);
+}
+
+/// The old holder gets its `released` record first, in the chunk of the
+/// claim, with the cause of the claim (01M3X4Z6BKM251H7CS2CEGR205).
+#[test]
+fn a_claim_that_takes_an_item_gives_the_old_holder_a_released_record_in_one_chunk() {
+    let mut records = team();
+    records.push(claimed(&bob(), "issue-7"));
+    let Given { mut state, now } = given(&records).after(CLAIM_GRACE);
+    let command = claim("issue-7").of(&ann());
+    let (made, ()) = state.run(&Caller::of(&ann()), &command, now).unwrap();
+    let kinds: Vec<&Change> = made.iter().map(|record| &record.change).collect();
+    assert_eq!(
+        kinds,
+        [&released(&bob(), "issue-7"), &claimed(&ann(), "issue-7")]
+    );
+    assert_eq!(made[1].position, made[0].position + 1);
+    for record in &made {
+        assert_eq!(record.by, Some(By::Session(ann().who().clone())));
+        assert_eq!(record.command.as_deref(), Some("claim"));
+    }
+    // The item has one holder, and the old holder has no claim.
+    state.written(&made);
+    assert_eq!(state.uri(ann().who(), now).claims(), ["issue-7"]);
+    assert!(state.uri(bob().who(), now).claims().is_empty());
 }
 
 #[test]
@@ -666,7 +689,7 @@ fn a_claim_in_a_paused_riff_is_refused() {
 fn a_claim_that_does_not_fit_in_a_uri_is_refused() {
     given(&team())
         .when(&ann(), claim("issue 7"))
-        .then_refused("claim");
+        .then_refused_as(Code::BadRequest, "claim");
 }
 
 #[test]
@@ -692,7 +715,7 @@ fn only_the_holder_releases_a_claim() {
                 item: "issue-7".into(),
             },
         )
-        .then_refused("is held by bob");
+        .then_refused_as(Code::NotHolder, "is held by bob");
     given(&team())
         .when(
             &ann(),
@@ -701,7 +724,7 @@ fn only_the_holder_releases_a_claim() {
                 item: "issue-7".into(),
             },
         )
-        .then_refused("nobody holds issue-7");
+        .then_refused_as(Code::NotHolder, "nobody holds issue-7");
 }
 
 fn release_for(holder: &str) -> ReleaseFor {
@@ -754,11 +777,11 @@ fn a_session_that_is_not_the_lead_releases_no_claim_of_another_session() {
     records.push(claimed(&ann2(), "issue-7"));
     given(&records)
         .when(&third, release_for("a2"))
-        .then_refused("Only the lead of your user");
+        .then_refused_as(Code::NotAllowed, "Only the lead of your user");
     // The lead of another user is refused too.
     given(&records)
         .when(&bob(), release_for("a2"))
-        .then_refused("Only the lead of its user");
+        .then_refused_as(Code::NotAllowed, "Only the lead of its user");
     // A person is no lead: `permits` refuses it.
     given(&records)
         .when(&person(), release_for("a2"))
@@ -774,10 +797,10 @@ fn a_release_for_a_session_names_the_holder() {
     records.push(claimed(&ann2(), "issue-7"));
     given(&records)
         .when(&ann(), release_for("b1"))
-        .then_refused("not by the session b1");
+        .then_refused_as(Code::NotHolder, "not by the session b1");
     given(&team())
         .when(&ann(), release_for("a2"))
-        .then_refused("nobody holds issue-7");
+        .then_refused_as(Code::NotHolder, "nobody holds issue-7");
 }
 
 #[test]
@@ -806,11 +829,11 @@ fn a_lead_call_makes_the_session_the_lead() {
 fn a_person_or_a_session_outside_git_is_never_the_lead() {
     given(&[])
         .when(&person(), Lead)
-        .then_refused("only an agent session");
+        .then_refused_as(Code::NotAllowed, "only an agent session");
     let outside: SessionUri = "riff://ann@heron/-?session=a9".parse().unwrap();
     given(&[])
         .when(&outside, Lead)
-        .then_refused("needs a git repository");
+        .then_refused_as(Code::BadRequest, "needs a git repository");
 }
 
 #[test]

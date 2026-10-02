@@ -22,7 +22,7 @@ use std::fmt;
 use std::time::Instant;
 
 use riff_core::name::{SessionUri, Who};
-use riff_core::record::{Change, Record};
+use riff_core::record::{By, Change, Record};
 
 use super::presence::Signal;
 use super::view::View;
@@ -167,6 +167,50 @@ impl Caller {
     pub fn role(&self) -> Role {
         self.role
     }
+
+    /// The caller as a record and a log line name it: its class, with
+    /// the user and the session ID (01M3X4Z60G1FXQTDC5XDJ05BAX).
+    ///
+    /// ```
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::record::By;
+    /// use riff_server::state::Caller;
+    ///
+    /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// assert_eq!(Caller::of(&me).by().json().to_string(), r#"{"session":"mike/a6cf"}"#);
+    /// let person: SessionUri = "riff://mike@pangolin".parse()?;
+    /// assert_eq!(Caller::of(&person).by(), By::Person("mike".into()));
+    /// assert_eq!(Caller::server().by(), By::Server);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn by(&self) -> By {
+        let who = self.who();
+        match self.class {
+            Class::Person => By::Person(who.user().to_owned()),
+            Class::Session => By::Session(who.clone()),
+            Class::SignIn => By::SignIn(who.user().to_owned()),
+            Class::Server => By::Server,
+        }
+    }
+}
+
+/// The cause of a record: the caller and the kind of its command
+/// (01M3X4Z60G1FXQTDC5XDJ05BAX). [`State::queue`](super::State::queue) writes it in the
+/// envelope of each record of the command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Cause {
+    pub by: By,
+    pub command: CommandKind,
+}
+
+impl Cause {
+    /// The cause of each record of a command of `kind` from `caller`.
+    pub fn of(caller: &Caller, kind: CommandKind) -> Cause {
+        Cause {
+            by: caller.by(),
+            command: kind,
+        }
+    }
 }
 
 /// The kind of a command: its name in a record and in a log line. A
@@ -241,16 +285,40 @@ impl fmt::Display for CommandKind {
     }
 }
 
-/// The code of a refusal (01M3WRD9JBQMNN96TXJH8EAJ3W). A test of a
-/// refusal compares the code. E2 (#392) adds the log line of a refusal.
+/// The code of a refusal (01M3WRD9JBQMNN96TXJH8EAJ3W): the fixed set of
+/// this release. A test of a refusal compares the code. The log line
+/// of a refused command and the header `riff-refused` of its reply
+/// have the name of the code. A release can add a code, and a reader
+/// takes a code that it does not know as text.
+///
+/// | Code | When | HTTP status |
+/// |---|---|---|
+/// | `not_allowed` | The class or the role of the caller cannot send the command. | 403 |
+/// | `no_sign_in` | A command of the people in a riff with no sign-in (E3, #393). | 403 |
+/// | `not_member` | The command names a person who is not a member (E3, #393). | 403 |
+/// | `held` | Another session holds the item. | 409 |
+/// | `paused` | The riff is paused. | 409 |
+/// | `must_clear` | A worker must clear its context first (E4, #394). | 409 |
+/// | `not_holder` | The caller does not hold the item. | 409 |
+/// | `other_user` | The session ID is known under another user. | 409 |
+/// | `bad_request` | The fields of the call do not agree. | 400 |
+///
+/// [`Failed::status`](crate::engine::Failed::status) gives the status
+/// (01M3X4Z69CFV23V4QZBE8RP1GJ).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
     /// The class or the role of the caller cannot send the command.
     NotAllowed,
+    /// A command of the people in a riff with no sign-in.
+    NoSignIn,
+    /// The command names a person who is not a member.
+    NotMember,
     /// Another session holds the item.
     Held,
     /// The riff is paused.
     Paused,
+    /// A worker must clear its context before it claims.
+    MustClear,
     /// The caller does not hold the item.
     NotHolder,
     /// The session ID is known under another user.
@@ -260,12 +328,28 @@ pub enum Code {
 }
 
 impl Code {
+    /// Each code of this release.
+    pub const ALL: [Code; 9] = [
+        Code::NotAllowed,
+        Code::NoSignIn,
+        Code::NotMember,
+        Code::Held,
+        Code::Paused,
+        Code::MustClear,
+        Code::NotHolder,
+        Code::OtherUser,
+        Code::BadRequest,
+    ];
+
     /// The name of the code.
     pub fn as_str(self) -> &'static str {
         match self {
             Code::NotAllowed => "not_allowed",
+            Code::NoSignIn => "no_sign_in",
+            Code::NotMember => "not_member",
             Code::Held => "held",
             Code::Paused => "paused",
+            Code::MustClear => "must_clear",
             Code::NotHolder => "not_holder",
             Code::OtherUser => "other_user",
             Code::BadRequest => "bad_request",
@@ -494,11 +578,66 @@ mod tests {
         }
     }
 
-    /// The role that each command of the kind needs.
+    /// The role that the command of `kind` needs: [`Command::needs`] of
+    /// one command of its type. So the test reads the role from the
+    /// command, as the engine does.
     fn needs(kind: CommandKind) -> Role {
+        use riff_core::wire::{
+            Claim, End, Join, Kind, Lead, Leave, Pause, Post, Register, Release, ReleaseFor,
+            Resume, SetIdle, Start,
+        };
+
+        use crate::state::{Announce, Forget, MakeRiff};
+
+        fn of<C: Command>(command: C, kind: CommandKind) -> Role {
+            assert_eq!(C::KIND, kind);
+            command.needs()
+        }
+        let me: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+        let thread = me.default_thread().unwrap();
+        let item = "issue-7".to_owned();
         match kind {
-            CommandKind::SetIdle => Role::Admin,
-            _ => Role::Member,
+            CommandKind::Register => of(Register { me, worker: false }, kind),
+            CommandKind::Start => of(Start { me }, kind),
+            CommandKind::End => of(End { me }, kind),
+            CommandKind::Join => of(Join { me, thread }, kind),
+            CommandKind::Leave => of(Leave { me, thread }, kind),
+            CommandKind::Post => of(Post::new(&me, Some(thread), vec![], "hi"), kind),
+            CommandKind::Announce => {
+                let announce = Announce {
+                    thread: Some(thread),
+                    to: Vec::new(),
+                    body: "hi".into(),
+                    kind: Kind::Note,
+                    at_ms: 0,
+                };
+                of(announce, kind)
+            }
+            CommandKind::Claim => of(Claim { me, thread, item }, kind),
+            CommandKind::Release => of(Release { me, thread, item }, kind),
+            CommandKind::ReleaseFor => {
+                let session = "a2".to_owned();
+                let release = ReleaseFor {
+                    me,
+                    thread,
+                    item,
+                    session,
+                };
+                of(release, kind)
+            }
+            CommandKind::Lead => of(Lead { me }, kind),
+            CommandKind::MakeRiff => of(MakeRiff, kind),
+            CommandKind::Pause => of(Pause { me }, kind),
+            CommandKind::Resume => of(Resume { me }, kind),
+            CommandKind::SetIdle => {
+                let set = SetIdle {
+                    me,
+                    per_host: Some(1),
+                    after_secs: None,
+                };
+                of(set, kind)
+            }
+            CommandKind::Forget => of(Forget, kind),
         }
     }
 
@@ -539,6 +678,14 @@ mod tests {
         let member = caller(Class::Person);
         let refused = permits(CommandKind::SetIdle, &member, Role::Admin).unwrap_err();
         assert!(refused.reason.contains("ann is not an admin"), "{refused}");
+    }
+
+    #[test]
+    fn each_code_has_a_name_of_its_own() {
+        let mut names: Vec<&str> = Code::ALL.iter().map(|code| code.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), Code::ALL.len());
     }
 
     #[test]

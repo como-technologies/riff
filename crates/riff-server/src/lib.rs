@@ -168,13 +168,15 @@ pub mod state;
 pub mod store;
 pub mod token;
 pub mod tools;
+pub mod trace;
 
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Form, FromRef, Query, Request, State as AxumState};
+use axum::extract::{Form, FromRef, FromRequestParts, Query, Request, State as AxumState};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -206,6 +208,7 @@ use crate::owner::{Check, Checks};
 use crate::state::{Announce, Role, Signal, State, may_read};
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
+use crate::trace::{DeniedCode, Named};
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -620,7 +623,7 @@ impl Server {
             tracing::warn!("stopped for good: {why}");
             self.facts().stopped = Some(why.to_owned());
         }
-        self.engine.stop();
+        self.engine.stop(why);
     }
 
     fn facts(&self) -> MutexGuard<'_, Facts> {
@@ -1209,30 +1212,31 @@ impl Service {
                     continue;
                 };
                 let records = chunk.records();
-                // A chunk of commands with no record needs no write.
-                if records.is_empty() {
-                    s.engine.finish(chunk);
-                    continue;
-                }
                 let log = s.log.clone();
                 let timing = s.config.log;
                 let began = Instant::now();
                 let failed = AtomicU64::new(0);
+                // A chunk of commands with no record needs no object:
+                // the write gives its proof at once.
                 let wrote =
                     log::write_counted(&*log, &records, &timing, || s.leased(), &failed).await;
                 s.facts().write_errors += failed.into_inner();
                 match wrote {
-                    Ok(()) => {
-                        s.engine.finish(chunk);
-                        let mut facts = s.facts();
-                        facts.chunks += 1;
-                        facts.chunk_written_at_ms = Some(now_ms());
-                        facts.chunk_write = Some(began.elapsed());
+                    Ok(written) => {
+                        s.engine.finish(chunk, written);
+                        if !records.is_empty() {
+                            let mut facts = s.facts();
+                            facts.chunks += 1;
+                            facts.chunk_written_at_ms = Some(now_ms());
+                            facts.chunk_write = Some(began.elapsed());
+                        }
                     }
                     Err(error) => {
                         // The calls of the chunk fail: the server stopped.
-                        drop(chunk);
-                        let chunk = log::chunk_name(records[0].position);
+                        // Each command of the chunk gets the line `failed`.
+                        s.engine.fail(chunk);
+                        let first = records.first().map_or(0, |record| record.position);
+                        let chunk = log::chunk_name(first);
                         s.error(format!(
                             "the write of the chunk {chunk} failed for good: {error}"
                         ));
@@ -1477,6 +1481,9 @@ impl Service {
             .route(Lead::PATH, post(command::<Lead>))
             .route(Pause::PATH, post(command::<Pause>))
             .route(Resume::PATH, post(command::<Resume>));
+        // `set_idle` has a router of its own: in a riff with sign-in,
+        // its route always has the token check.
+        let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));
         // ANCHOR_END: routes
         // The signals and the queries.
         let mut routes = commands
@@ -1492,23 +1499,20 @@ impl Service {
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
         // The settings of idle workers: the query, and the command
         // `set_idle` on a path of its own (01M3WRD9BSBKS9TN66H29TGTBV).
-        let idle = |routes: Router<Shared>| {
-            routes
-                .route(IdleQuery::PATH, post(idle_workers))
-                .route(SetIdle::PATH, post(command::<SetIdle>))
-        };
+        let idle = Router::new()
+            .route(IdleQuery::PATH, post(idle_workers))
+            .merge(set_idle);
         // A riff with sign-in knows who changes the idle workers
-        // (01M3Q5A0TF9K49V8Z1ZY9NDF74).
-        let trusted = self.0.config.trusted();
-        if trusted {
-            routes = idle(routes);
+        // (01M3Q5A0TF9K49V8Z1ZY9NDF74): there, the routes of the idle
+        // workers have the token check.
+        let mut admin_routes = Router::new();
+        if self.0.config.trusted() {
+            routes = routes.merge(idle);
+        } else {
+            admin_routes = admin_routes.merge(idle);
         }
         if self.0.config.require_sign_in {
             routes = routes.route_layer(guard());
-        }
-        let mut admin_routes = Router::new();
-        if !trusted {
-            admin_routes = idle(admin_routes);
         }
         let admin_routes = admin_routes
             .route("/v1/revoke", post(revoke))
@@ -1564,13 +1568,42 @@ pub fn router() -> Router {
 
 /// The proof of the token layer in a request, when the route has the
 /// token check.
-type Proof = Option<Extension<SignedIn>>;
+struct Proof {
+    signed_in: Option<SignedIn>,
+    /// The path of the call, for the line of a refusal.
+    path: String,
+}
+
+#[cfg(test)]
+impl Proof {
+    /// The proof of a call with no token, for a test that calls a
+    /// handler.
+    fn none() -> Proof {
+        Proof {
+            signed_in: None,
+            path: String::new(),
+        }
+    }
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for Proof {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Proof, Infallible> {
+        Ok(Proof {
+            signed_in: parts.extensions.get::<SignedIn>().cloned(),
+            path: parts.uri.path().to_owned(),
+        })
+    }
+}
 
 /// Admits the caller of a signal or of a query that acts as `me`
-/// ([`Engine::admit`]).
+/// ([`Engine::admit`]). A refusal gives the line `denied`
+/// (01M3X4Z64ZNRD0G0F4JV1M64FN).
 fn admit(s: &Server, proof: &Proof, me: &SessionUri) -> Result<Admitted, Failed> {
-    let proof = proof.as_ref().map(|Extension(proof)| proof);
-    s.engine.admit(proof, me)
+    s.engine
+        .admit(proof.signed_in.as_ref(), me)
+        .inspect_err(|failed| failed.trace_denied(&proof.path, Some(me)))
 }
 
 /// A keep-alive: a sign of life that is not a call (R204). It is a
@@ -1690,7 +1723,7 @@ async fn read(
     proof: Proof,
     Json(r): Json<Read>,
 ) -> Reply<ReadReply> {
-    let signed = proof.is_some();
+    let signed = proof.signed_in.is_some();
     let caller = admit(&s, &proof, &r.me)?;
     let (page, read) = s
         .engine
@@ -2053,13 +2086,23 @@ async fn require_token(
     let method = request.method().as_str().to_owned();
     let path = request.uri().path().to_owned();
     let checked = s.authenticate(request.headers(), &method, &path);
-    let challenge = match checked {
+    let refusal = match checked {
         Ok(user) => {
             request.extensions_mut().insert(user);
             return next.run(request).await;
         }
-        Err(refusal) => s.config.challenge(refusal.as_ref()),
+        Err(refusal) => refusal,
     };
+    let challenge = s.config.challenge(refusal.as_ref());
+    let code = match &refusal {
+        None => DeniedCode::NoToken,
+        Some(refusal) if refusal.code == Refusal::TOKEN => DeniedCode::BadToken,
+        Some(_) => DeniedCode::BadProof,
+    };
+    // The server reads the body only now, after the refusal, to name
+    // the caller in the line (01M3X4Z64ZNRD0G0F4JV1M64FN).
+    let named = Named::in_request(request).await;
+    trace::denied(&path, named.as_ref(), code);
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, challenge)],
@@ -2068,7 +2111,8 @@ async fn require_token(
 }
 
 /// Refuses a call from a `riff` of a version that this server cannot
-/// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T). A `riff`
+/// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T), with
+/// the line `denied` and the code `old_build` (01M3X4Z64ZNRD0G0F4JV1M64FN). A `riff`
 /// of the line of this server, or of the line before, goes on
 /// (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). The OAuth
 /// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
@@ -2084,6 +2128,9 @@ async fn check_build(request: Request, next: Next) -> Response {
         server: Some(this),
         seen: None,
     };
+    let path = request.uri().path().to_owned();
+    let named = Named::in_request(request).await;
+    trace::denied(&path, named.as_ref(), DeniedCode::OldBuild);
     (StatusCode::CONFLICT, mismatch.to_string()).into_response()
 }
 
@@ -2353,6 +2400,7 @@ fn not_found(message: String) -> (StatusCode, String) {
 mod tests {
     use super::*;
     use crate::engine::Routed;
+    use crate::logline::testing::Capture;
     use crate::store::Memory;
     use futures::future::BoxFuture;
     use riff_core::record::{Change, Line};
@@ -2563,7 +2611,7 @@ mod tests {
             me: me.clone(),
             all: false,
         };
-        let who = who(AxumState(service.0.clone()), None, Json(request))
+        let who = who(AxumState(service.0.clone()), Proof::none(), Json(request))
             .await
             .unwrap();
         who.sessions
@@ -2812,7 +2860,9 @@ mod tests {
         store.tried(tries + 1).await;
         let claims = || async {
             let query = Query(WatchQuery { uri: mike() });
-            let reply = me(AxumState(service.0.clone()), None, query).await.unwrap();
+            let reply = me(AxumState(service.0.clone()), Proof::none(), query)
+                .await
+                .unwrap();
             let session = reply.session.clone().expect("the server knows mike");
             session.uri.claims().to_vec()
         };
@@ -2915,7 +2965,7 @@ mod tests {
     }
 
     async fn read_messages(service: &Service, request: Read) -> Vec<String> {
-        let reply = read(AxumState(service.0.clone()), None, Json(request))
+        let reply = read(AxumState(service.0.clone()), Proof::none(), Json(request))
             .await
             .unwrap();
         reply.messages.iter().map(|m| m.body.clone()).collect()
@@ -3144,7 +3194,7 @@ mod tests {
             status: step.clone(),
         };
         // The reply comes while the write of the post waits.
-        let _ = status(AxumState(service.0.clone()), None, Json(set))
+        let _ = status(AxumState(service.0.clone()), Proof::none(), Json(set))
             .await
             .unwrap();
         assert!(!posting.is_finished());
@@ -3173,7 +3223,7 @@ mod tests {
             .unwrap();
         let reply = alive(
             AxumState(service.0.clone()),
-            None,
+            Proof::none(),
             Json(Alive { me: new.clone() }),
         )
         .await
@@ -3285,5 +3335,579 @@ mod tests {
             .await
             .unwrap();
         assert!(Service::load(config(), store).await.is_ok());
+    }
+
+    /// The records of each chunk of the log, in order.
+    async fn records(store: &Gated) -> Vec<Vec<riff_core::record::Record>> {
+        let mut chunks = Vec::new();
+        for name in store.store.list(log::LOG).await.unwrap() {
+            let bytes = store.store.load(&name).await.unwrap().unwrap().bytes;
+            let (_, lines) = log::decode(&bytes).unwrap();
+            let records = lines
+                .into_iter()
+                .map(|line| match line {
+                    Line::Record(record) => *record,
+                    Line::Unknown { .. } => panic!("a known kind"),
+                })
+                .collect();
+            chunks.push(records);
+        }
+        chunks
+    }
+
+    /// A second session of mike. Mike's first session is the lead.
+    fn mike2() -> SessionUri {
+        "riff://mike@pangolin/como-technologies/riff?session=a2"
+            .parse()
+            .unwrap()
+    }
+
+    /// Each record names its cause, and the records of one command are
+    /// in one chunk, one after another (01M3X4Z60G1FXQTDC5XDJ05BAX). The note of the
+    /// server that a command causes is a `posted` record of that
+    /// command (01M3WRD9MGSC3FTBAANT4ZSMKY).
+    #[tokio::test(start_paused = true)]
+    async fn the_records_of_one_command_are_in_one_chunk_and_name_its_cause() {
+        use riff_core::record::By;
+
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        send(&service, claim_of(&mike2(), "issue-9")).await.unwrap();
+        // Two commands wait for one write: they go in one chunk.
+        store.hold.store(true, Ordering::SeqCst);
+        let tries = store.tries.load(Ordering::SeqCst);
+        let first = tokio::spawn(send(&service, post_body(&brett(), "one")));
+        store.tried(tries + 1).await;
+        let release = ReleaseFor {
+            me: mike(),
+            thread: mike().default_thread().unwrap(),
+            item: "issue-9".into(),
+            session: "a2".into(),
+        };
+        let freed = tokio::spawn(send(&service, release));
+        let second = tokio::spawn(send(&service, post_body(&brett(), "two")));
+        sleep(Duration::from_millis(50)).await;
+        store.release();
+        first.await.unwrap().unwrap();
+        freed.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+
+        let chunks = records(&store).await;
+        let mut last = 0;
+        for record in chunks.iter().flatten() {
+            assert_eq!(record.position, last + 1);
+            assert!(
+                record.by.is_some() && record.command.is_some(),
+                "{record:?}"
+            );
+            last = record.position;
+        }
+        // The first record of the log is of the server.
+        let made = &chunks[0][0];
+        assert_eq!(made.by, Some(By::Server));
+        assert_eq!(made.command.as_deref(), Some("make_riff"));
+        // The first call of a session registers it: a command of its own.
+        let all: Vec<_> = chunks.iter().flatten().collect();
+        let mut registered: Vec<_> = all
+            .iter()
+            .filter(|record| record.by == Some(By::Session(mike2().who().clone())))
+            .map(|record| record.command.as_deref().unwrap())
+            .collect();
+        registered.dedup();
+        assert_eq!(registered, ["register", "claim"]);
+
+        // The release and its note: one chunk, one after another, with
+        // the lead as the cause of the two. The sender of the note is
+        // the server.
+        let chunk = chunks.last().unwrap();
+        let of_release: Vec<_> = chunk
+            .iter()
+            .filter(|record| record.command.as_deref() == Some("release_for"))
+            .collect();
+        assert_eq!(of_release.len(), 2, "{chunk:?}");
+        let (released, note) = (of_release[0], of_release[1]);
+        assert_eq!(note.position, released.position + 1);
+        assert!(matches!(released.change, Change::Released(_)));
+        let Change::Posted(posted) = &note.change else {
+            panic!("a note: {note:?}");
+        };
+        assert_eq!(posted.message.from, owner::server_uri());
+        for record in [released, note] {
+            assert_eq!(record.by, Some(By::Session(mike().who().clone())));
+        }
+        // The post that came after it is in the same chunk, after it.
+        let after: Vec<_> = chunk
+            .iter()
+            .filter(|record| record.position > note.position)
+            .map(|record| record.command.as_deref().unwrap())
+            .collect();
+        assert_eq!(after, ["post"]);
+    }
+
+    /// A command that makes records gives no line. A refused command
+    /// and a command with no change give one line each. A signal and a
+    /// query give no line (01M3X4Z62RJREQ5H8F18Y85T6V).
+    #[tokio::test(start_paused = true)]
+    async fn only_a_command_with_no_record_gives_a_log_line() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let capture = Capture::start();
+        let traced = |capture: &Capture| -> Vec<serde_json::Value> {
+            let mut lines = capture.lines();
+            lines.retain(|line| line.get("result").is_some());
+            lines
+        };
+
+        // Records: no line.
+        send(&service, claim_of(&mike(), "issue-7")).await.unwrap();
+        send(&service, post_body(&mike(), "hello")).await.unwrap();
+        assert!(traced(&capture).is_empty());
+
+        // A signal and a query: no line.
+        let Json(reply) = alive(
+            AxumState(service.0.clone()),
+            Proof::none(),
+            Json(Alive { me: mike() }),
+        )
+        .await
+        .unwrap();
+        assert!(!reply.stop);
+        assert_eq!(claims(&service, &brett()).await, ["issue-7"]);
+        assert!(traced(&capture).is_empty());
+
+        // A refusal: one line, after the reply has its code.
+        let refused = send(&service, claim_of(&brett(), "issue-7"))
+            .await
+            .unwrap_err();
+        let Failed::Refused(refused) = refused else {
+            panic!("a refusal");
+        };
+        assert_eq!(refused.code, state::Code::Held);
+        let lines = traced(&capture);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let line = lines[0].as_object().unwrap();
+        assert_eq!(line["severity"], "INFO");
+        assert_eq!(line["target"], "engine");
+        assert_eq!(line["caller"], serde_json::json!({"session": "brett/b"}));
+        assert_eq!(line["command"], "claim");
+        assert_eq!(line["result"], "refused");
+        assert_eq!(line["code"], "held");
+        assert_eq!(line["reason"], refused.reason);
+        // The call had no token, so the line has no key.
+        assert!(!line.contains_key("key"));
+
+        // No change: one line, with no code.
+        send(&service, claim_of(&mike(), "issue-7")).await.unwrap();
+        let lines = traced(&capture);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        let line = lines[1].as_object().unwrap();
+        assert_eq!(line["caller"], serde_json::json!({"session": "mike/a"}));
+        assert_eq!(line["command"], "claim");
+        assert_eq!(line["result"], "no_change");
+        assert!(!line.contains_key("code") && !line.contains_key("reason"));
+
+        // A command of the server with no change names the server.
+        assert_eq!(service.0.engine.forget().await, Ok(0));
+        let lines = traced(&capture);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert_eq!(lines[2]["caller"], "server");
+        assert_eq!(lines[2]["command"], "forget");
+        assert_eq!(lines[2]["result"], "no_change");
+    }
+
+    /// A chunk that is not written gives one line `failed` with the
+    /// severity `ERROR` for each of its commands (01M3X4Z62RJREQ5H8F18Y85T6V).
+    #[tokio::test(start_paused = true)]
+    async fn a_chunk_that_is_not_written_gives_a_failed_line_for_each_command() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let capture = Capture::start();
+        *store.fail.lock().unwrap() = Some(StoreError::Failed("503 from the bucket".into()));
+        let lost = send(&service, post_body(&mike(), "lost")).await;
+        assert_eq!(lost.unwrap_err(), Failed::Stopped);
+        let lines = capture.results("failed");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["severity"], "ERROR");
+        assert_eq!(lines[0]["caller"], serde_json::json!({"session": "mike/a"}));
+        assert_eq!(lines[0]["command"], "post");
+        assert!(capture.results("refused").is_empty());
+        assert!(capture.results("no_change").is_empty());
+    }
+
+    /// A command that waits in the queue when the server stops for a
+    /// lost lease gives the line `failed` with the severity `WARNING`
+    /// and the reason of the stop: no alert goes out
+    /// (01M3X4Z62RJREQ5H8F18Y85T6V).
+    #[tokio::test(start_paused = true)]
+    async fn a_command_that_waits_at_a_stop_gives_a_failed_line_that_is_no_error() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let capture = Capture::start();
+        // The writer waits in a write, and a second command waits in
+        // the queue.
+        store.hold.store(true, Ordering::SeqCst);
+        let tries = store.tries.load(Ordering::SeqCst);
+        let first = tokio::spawn(send(&service, post_body(&mike(), "one")));
+        store.tried(tries + 1).await;
+        let second = tokio::spawn(send(&service, claim_of(&brett(), "issue-8")));
+        sleep(Duration::from_millis(50)).await;
+        service.0.stop("another instance holds the lease");
+        assert_eq!(second.await.unwrap().unwrap_err(), Failed::Stopped);
+        let lines = capture.results("failed");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["severity"], "WARNING");
+        assert_eq!(
+            lines[0]["caller"],
+            serde_json::json!({"session": "brett/b"})
+        );
+        assert_eq!(lines[0]["command"], "claim");
+        assert_eq!(lines[0]["reason"], "another instance holds the lease");
+        store.release();
+        let _ = first.await;
+        let errors: Vec<_> = capture
+            .lines()
+            .into_iter()
+            .filter(|line| line["severity"] == "ERROR")
+            .collect();
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    /// The role of a caller with no token comes from the trust of the
+    /// riff (01M3X4Z6G0TG0B4FT2N1FSPDHS).
+    #[tokio::test(start_paused = true)]
+    async fn the_role_of_a_caller_with_no_token_comes_from_the_trust_of_the_riff() {
+        let set = || SetIdle {
+            me: mike(),
+            per_host: Some(2),
+            after_secs: None,
+        };
+        // A riff with no sign-in trusts its network.
+        let trusted = Service::new(config());
+        assert!(trusted.config().trusted());
+        assert!(send(&trusted, set()).await.is_ok());
+
+        // A riff with a provider that takes a call with no token.
+        let mut config = config();
+        config.provider = Some(oidc::Provider {
+            issuer: "https://accounts.google.com".into(),
+            client_id: "riff".into(),
+            client_secret: None,
+            allowed_domains: vec!["comotechnologies.io".into()],
+        });
+        assert!(!config.require_sign_in && !config.trusted());
+        let service = Service::new(config);
+        let refused = send(&service, set()).await.unwrap_err();
+        let Failed::Refused(refused) = refused else {
+            panic!("a refusal: {refused:?}");
+        };
+        assert_eq!(refused.code, state::Code::NotAllowed);
+        // A command that needs a member goes on.
+        assert!(send(&service, Resume { me: mike() }).await.is_ok());
+    }
+
+    /// A marker that no log line may hold.
+    const MARK: &str = "MARK-7f3a";
+
+    /// Sends one call to the router of `service`, as `riff` does. With
+    /// `token`, the call has that access token and a proof for it.
+    async fn call(
+        service: &Service,
+        method: &str,
+        path: &str,
+        token: Option<(&str, String)>,
+        body: String,
+    ) -> StatusCode {
+        use tower::ServiceExt;
+
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(build::HEADER, Build::this().to_string())
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some((token, proof)) = token {
+            request = request
+                .header(header::AUTHORIZATION, format!("DPoP {token}"))
+                .header("dpop", proof);
+        }
+        let request = request.body(axum::body::Body::from(body)).unwrap();
+        let response = service.router().oneshot(request).await.unwrap();
+        response.status()
+    }
+
+    /// One call of each routed command of mike, with a marked body in
+    /// the post, and one more post that the state refuses.
+    fn each_command() -> Vec<(&'static str, String)> {
+        fn of<C: Routed + serde::Serialize>(command: C) -> (&'static str, String) {
+            (C::PATH, serde_json::to_string(&command).unwrap())
+        }
+        let me = mike;
+        let thread = || mike().default_thread().unwrap();
+        let design = || "design".parse::<ThreadName>().unwrap();
+        let item = || "issue-7".to_owned();
+        let body = format!("{MARK} is the body");
+        let gone = vec![Selector::session("no-such-session")];
+        vec![
+            of(Register {
+                me: me(),
+                worker: false,
+            }),
+            of(Join {
+                me: me(),
+                thread: design(),
+            }),
+            of(Post::new(&me(), Some(thread()), vec![], &body)),
+            // A direct message to a session that is not there: refused.
+            of(Post::new(&me(), None, gone, &body)),
+            of(Leave {
+                me: me(),
+                thread: design(),
+            }),
+            of(Resume { me: me() }),
+            of(Claim {
+                me: me(),
+                thread: thread(),
+                item: item(),
+            }),
+            of(Release {
+                me: me(),
+                thread: thread(),
+                item: item(),
+            }),
+            // Nobody holds the item now: refused.
+            of(ReleaseFor {
+                me: me(),
+                thread: thread(),
+                item: item(),
+                session: "a2".into(),
+            }),
+            of(Lead { me: me() }),
+            of(Pause { me: me() }),
+            of(SetIdle {
+                me: me(),
+                per_host: Some(1),
+                after_secs: None,
+            }),
+            of(Start { me: me() }),
+            of(End { me: me() }),
+        ]
+    }
+
+    /// No line holds the body of a post or a token (01M3X4Z675D0ZQX93E93F3M8FA). The
+    /// test runs each command with a marked body and a marked token: in
+    /// a riff with no sign-in, which takes them, and in a riff with
+    /// sign-in, which refuses each one.
+    #[tokio::test(start_paused = true)]
+    async fn no_log_line_holds_the_body_of_a_post_or_a_token() {
+        let key = riff_core::dpop::Key::generate();
+        let token = format!("{MARK}-token");
+        let now_secs = now_ms() / 1000;
+        let proof = |config: &Config, path: &str| {
+            let url = config.url(path);
+            let proof = key.proof("POST", &url, Some(&token), now_secs);
+            (token.as_str(), proof)
+        };
+        let commands = each_command();
+        // Each of the 13 routed commands is there.
+        let mut paths: Vec<&str> = commands.iter().map(|(path, _)| *path).collect();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(paths.len(), 13);
+
+        let capture = Capture::start();
+        let open = Service::new(config());
+        let mut refused = 0;
+        for (path, body) in &commands {
+            let token = Some(proof(open.config(), path));
+            let status = call(&open, "POST", path, token, body.clone()).await;
+            assert!(
+                status.is_success() || [400, 403, 409].contains(&status.as_u16()),
+                "{path}: {status}"
+            );
+            refused += usize::from(!status.is_success());
+        }
+        open.save().await.unwrap();
+        assert!(refused >= 2, "some commands are refused");
+        assert_eq!(capture.results("refused").len(), refused);
+        assert!(!capture.results("no_change").is_empty());
+        // A note of the server with a marked body.
+        let body = format!("{MARK} is the body of a note");
+        let thread = mike().default_thread();
+        let note = Server::news(thread, Vec::new(), &body, Kind::Note);
+        open.0.engine.announce(note).await.unwrap();
+
+        let mut config = config();
+        config.require_sign_in = true;
+        let closed = Service::new(config);
+        for (path, body) in &commands {
+            // A token that the server does not know, with a good proof.
+            let good = Some(proof(closed.config(), path));
+            let status = call(&closed, "POST", path, good, body.clone()).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+            // The same token with a proof that does not read.
+            let bad = Some((token.as_str(), format!("{MARK}-proof")));
+            let status = call(&closed, "POST", path, bad, body.clone()).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+            // No token.
+            let status = call(&closed, "POST", path, None, body.clone()).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
+        }
+        let denied = capture.results("denied");
+        assert_eq!(denied.len(), 3 * commands.len());
+        let mut codes: Vec<&str> = denied
+            .iter()
+            .map(|line| line["code"].as_str().unwrap())
+            .collect();
+        codes.dedup();
+        assert_eq!(&codes[..3], ["bad_token", "bad_proof", "no_token"]);
+        for line in &denied {
+            let line = line.as_object().unwrap();
+            assert_eq!(line["severity"], "INFO");
+            assert_eq!(line["named"], serde_json::json!({"session": "mike/a"}));
+            assert_eq!(line["proved"], false);
+            assert!(line["path"].as_str().unwrap().starts_with("/v1/"));
+            for absent in ["caller", "command", "key", "reason"] {
+                assert!(!line.contains_key(absent), "{absent}");
+            }
+        }
+
+        let text = capture.text();
+        assert!(!text.contains(MARK), "{text}");
+    }
+
+    /// The line `denied` of a call that names its caller in the query,
+    /// of a call from an old build, and of a call whose `me` is long or
+    /// has a line break (01M3X4Z64ZNRD0G0F4JV1M64FN). The line stays one line, and a
+    /// long name is cut.
+    #[tokio::test(start_paused = true)]
+    async fn a_denied_line_names_the_caller_of_the_call_with_a_limit() {
+        let mut config = config();
+        config.require_sign_in = true;
+        let service = Service::new(config);
+        let capture = Capture::start();
+        let body = |me: &str| serde_json::json!({ "me": me }).to_string();
+
+        // The stream of a session names it in the query.
+        let path =
+            "/v1/watch?uri=riff%3A%2F%2Fmike%40pangolin%2Fcomo-technologies%2Friff%3Fsession%3Da";
+        let status = call(&service, "GET", path, None, String::new()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        // A `me` of 32 KiB is cut.
+        let status = call(
+            &service,
+            "POST",
+            "/v1/claim",
+            None,
+            body(&"x".repeat(32 * 1024)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        // A `me` of 64 KiB makes a body past the limit: no name.
+        let status = call(
+            &service,
+            "POST",
+            "/v1/claim",
+            None,
+            body(&"x".repeat(64 * 1024)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        // A `me` with a line break.
+        let broken = "riff://mike@pangolin\n{\"severity\":\"ERROR\"}";
+        let status = call(&service, "POST", "/v1/claim", None, body(broken)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        // A call with no body.
+        let status = call(&service, "POST", "/v1/claim", None, String::new()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // `lines` reads each line of the output as one JSON object.
+        let lines = capture.results("denied");
+        assert_eq!(lines.len(), 5, "{lines:?}");
+        for line in &lines {
+            assert_eq!(line["severity"], "INFO");
+            assert_eq!(line["code"], "no_token");
+            assert!(line.to_string().len() < 600, "{line}");
+        }
+        let has = |line: &serde_json::Value, field: &str| line.get(field).is_some();
+        assert_eq!(lines[0]["path"], "/v1/watch");
+        assert_eq!(lines[0]["named"], serde_json::json!({"session": "mike/a"}));
+        assert_eq!(lines[0]["proved"], false);
+        let cut = lines[1]["named"]["text"].as_str().unwrap();
+        assert_eq!(cut.len(), trace::NAMED_MAX);
+        assert_eq!(lines[1]["named_cut"], true);
+        assert!(!has(&lines[2], "named") && !has(&lines[2], "proved"));
+        assert_eq!(lines[3]["named"]["text"], broken);
+        assert!(!has(&lines[3], "named_cut"));
+        assert!(!has(&lines[4], "named"));
+    }
+
+    /// A call from a build that the server cannot talk to gives the
+    /// line `denied` with the code `old_build`, and a token that acts
+    /// as another session the code `not_you` (01M3X4Z64ZNRD0G0F4JV1M64FN).
+    #[tokio::test(start_paused = true)]
+    async fn a_denied_line_has_the_code_of_the_refusal() {
+        use tower::ServiceExt;
+
+        let service = Service::new(config());
+        let capture = Capture::start();
+        let body = serde_json::to_string(&Lead { me: mike() }).unwrap();
+        let request = Request::builder()
+            .method("POST")
+            .uri(Lead::PATH)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let response = service.router().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let lines = capture.results("denied");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["code"], "old_build");
+        assert_eq!(lines[0]["path"], Lead::PATH);
+        assert_eq!(lines[0]["named"], serde_json::json!({"session": "mike/a"}));
+
+        // The token of brett names mike in the body.
+        let proof = Proof {
+            signed_in: Some(SignedIn {
+                who: brett().who().clone(),
+                jkt: "key-of-brett".into(),
+            }),
+            path: Alive::PATH.to_owned(),
+        };
+        let refused = alive(
+            AxumState(service.0.clone()),
+            proof,
+            Json(Alive { me: mike() }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(refused.0, StatusCode::FORBIDDEN);
+        let lines = capture.results("denied");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[1]["code"], "not_you");
+        assert_eq!(lines[1]["path"], Alive::PATH);
+        assert_eq!(lines[1]["named"], serde_json::json!({"session": "mike/a"}));
+        assert_eq!(lines[1]["proved"], false);
+    }
+
+    /// The line of a command with a token has the thumbprint of the
+    /// device key of the token, and not the token.
+    #[tokio::test(start_paused = true)]
+    async fn the_line_of_a_command_with_a_token_has_its_key() {
+        let service = Service::new(config());
+        let capture = Capture::start();
+        let proof = SignedIn {
+            who: mike().who().clone(),
+            jkt: "thumbprint-of-mike".into(),
+        };
+        let engine = &service.0.engine;
+        // A new riff is paused: the claim is refused.
+        let call = engine
+            .authenticate(Some(&proof), claim_of(&mike(), "issue-7"))
+            .unwrap();
+        let refused = engine.dispatch(call).await.unwrap_err();
+        assert!(matches!(&refused, Failed::Refused(r) if r.code == state::Code::Paused));
+        let lines = capture.results("refused");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["key"], "thumbprint-of-mike");
+        assert_eq!(lines[0]["code"], "paused");
     }
 }

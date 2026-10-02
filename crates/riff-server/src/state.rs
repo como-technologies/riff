@@ -256,7 +256,7 @@ pub mod threads;
 pub mod view;
 pub mod work;
 
-pub use command::{Caller, Class, Code, Command, CommandKind, Now, Refused, Role, permits};
+pub use command::{Caller, Cause, Class, Code, Command, CommandKind, Now, Refused, Role, permits};
 pub use presence::{Presence, Signal};
 pub use riff::{Riff, apply};
 pub use snapshot::Snapshot;
@@ -581,17 +581,8 @@ impl State {
     /// ([`Presence::applied`]). `at` is the time of the call that made
     /// the record, or `None` in a replay.
     fn apply_written(&mut self, record: &Record, at: Option<Instant>) {
-        let lost = match &record.change {
-            Change::Claimed(claimed) => self
-                .written
-                .work()
-                .holder(&claimed.thread, &claimed.item)
-                .cloned(),
-            _ => None,
-        };
         apply(&mut self.written, record);
-        self.presence
-            .applied(record, &self.written, lost.as_ref(), at);
+        self.presence.applied(record, &self.written, at);
     }
 
     /// True when the state that the log gives is the same in both
@@ -736,7 +727,8 @@ impl State {
                     worker: None,
                 }
                 .set(&mut self.presence, who, now);
-                registered = Some(self.queue(&changes, now));
+                let cause = Cause::of(&caller, CommandKind::Register);
+                registered = Some(self.queue(&cause, &changes, now));
             }
             let worker = self.presence.sessions.get(who).is_some_and(|s| s.worker);
             caller = caller.with_worker(worker);
@@ -755,16 +747,39 @@ impl State {
         }
     }
 
-    /// Gives each change its position and time, and applies the records
-    /// to the pending copy. It is the second step of a command, after
-    /// [`State::check`]. A state with no writer applies them to the
-    /// written copy too.
-    pub fn queue(&mut self, changes: &[Change], now: Instant) -> Vec<Record> {
+    /// Gives each change its position, its time and its cause, and
+    /// applies the records to the pending copy. It is the second step
+    /// of a command, after [`State::check`]. The records of one command
+    /// have positions one after another, and each one names the caller
+    /// and the kind of the command (01M3X4Z60G1FXQTDC5XDJ05BAX). A state with no writer
+    /// applies them to the written copy too.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::record::By;
+    /// use riff_core::wire::Join;
+    /// use riff_server::state::{Caller, State};
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let mut state = State::default();
+    /// let join = Join { me: mike.clone(), thread: "design".parse()? };
+    /// let (made, ()) = state.run(&Caller::of(&mike), &join, Instant::now()).unwrap();
+    /// assert_eq!(made[0].by, Some(By::Session(mike.who().clone())));
+    /// assert_eq!(made[0].command.as_deref(), Some("join"));
+    /// // The register that the state ran first is a command of its own.
+    /// let log = state.take_queue();
+    /// assert_eq!(log[0].command.as_deref(), Some("register"));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn queue(&mut self, cause: &Cause, changes: &[Change], now: Instant) -> Vec<Record> {
         let mut records = Vec::with_capacity(changes.len());
         for change in changes {
             let record = Record {
                 position: self.position() + 1,
                 written_at_ms: self.ms(now),
+                by: Some(cause.by.clone()),
+                command: Some(cause.command.as_str().to_owned()),
                 change: change.clone(),
             };
             apply(&mut self.pending, &record);
@@ -840,7 +855,7 @@ impl State {
         } = self.check(caller, command, now);
         self.queue.extend(registered.into_iter().flatten());
         let (changes, note) = result?;
-        let made = self.queue(&changes, now);
+        let made = self.queue(&Cause::of(&caller, C::KIND), &changes, now);
         self.queue.extend(made.iter().cloned());
         Ok((caller, made, note))
     }
@@ -2801,6 +2816,7 @@ mod tests {
         state.lead(&docs(), now).unwrap();
         state.set_idle(&docs(), Some(3), None, now).unwrap();
         let forgotten = state.queue(
+            &Cause::of(&Caller::server(), CommandKind::Forget),
             &[Change::SessionForgotten(Forgotten { session: docs() })],
             now,
         );
