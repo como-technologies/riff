@@ -1482,17 +1482,20 @@ flowchart TD
     P --> T[push the tag v1.0.0: the deploy]
     T --> I[the new server imports the old objects, then opens its port]
     I --> C[check: riff server, the log line of the import]
-    C --> R[resume the whole riff, start the workers]
+    C --> U[each machine updates itself: check riff server again]
+    U --> R[resume the whole riff, start the workers]
     R --> D[after the first wave: delete the old objects]
 ```
 
 1. Agree on the time of the deploy with the lead of each other
    repository of the riff. Post the time in each repository thread.
 2. Pause the whole riff. Each session pushes its work, and keeps its
-   claims. Then stop the workers of your machine:
+   claims. Then stop the workers of your machine. Each machine still
+   has riff 0.8.0: its `riff pause` pauses the whole riff, and it has
+   no `--riff` flag:
 
    ```sh
-   riff pause --riff
+   riff pause
    riff workers stop
    ```
 
@@ -1513,10 +1516,24 @@ flowchart TD
    just cloud log --log-filter 'jsonPayload.message:"imported the objects"'
    ```
 
-   `riff server` shows the new release and the riff ID of before.
-   When an old object does not read, the new server does not start,
-   and the old server serves on. The log names the object.
-5. Each machine updates itself. No person runs `riff login`.
+   riff 0.8.0 shows the release of the new server on its `release`
+   line: `v1.0.0 … another build; this riff cannot talk to it`. Its
+   last line is `Run riff update`. When an old object does not read,
+   the new server does not start, and the old server serves on: the
+   line shows `v0.8.0  same build ✓`. The log names the object.
+5. Each machine updates itself. No person runs `riff login`. Then
+   check the riff ID on each machine:
+
+   ```sh
+   riff who
+   riff server
+   ```
+
+   `riff who` checks the riff ID of your sign-in against the riff ID
+   of the server. Another riff ID removes the sign-in. So when
+   `riff server` then shows `v1.0.0  same build ✓` on the `release`
+   line and `yes, signed in as USER` on the `sign-in` line, the riff
+   ID is the one of before.
 6. The whole riff is paused after the import. The owner or an admin
    resumes it. riff then starts the workers by itself:
 
