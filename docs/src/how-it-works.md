@@ -90,8 +90,10 @@ Your choice [1]:
 riff keeps your answer, and asks no more. With no terminal, it asks
 nothing and changes nothing. `riff update` asks nothing too, also in a
 terminal: an update never turns riff on in more repositories, and
-never turns it off. The last line of the command says where riff is
-on, and the command to change it.
+never turns it off. On a machine where a release up to v0.8.0 turned
+riff on in each repository, the command asks nothing and keeps that.
+The last line of the command says where riff is on, and the command
+to change it.
 
 ### Turn riff on or off for a repository
 
@@ -204,8 +206,9 @@ repository  riff off. To turn it on: riff enable
 ### After an update from a release before the opt-in
 
 A release up to v0.8.0 turned riff on in each repository: it wrote the
-entry to the user settings. An update keeps that choice. riff stays on
-in each repository of the machine, and you run no command.
+entry to the user settings. An update keeps that choice, and asks
+nothing, in a terminal and with no terminal. riff stays on in each
+repository of the machine, and you run no command.
 
 To have riff only in some repositories, take the entry out, and turn
 riff on in each one:

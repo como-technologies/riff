@@ -337,27 +337,28 @@ fn old_install(machine: &Machine) -> (PathBuf, PathBuf) {
 
 /// 01M3XY2SR3VJZAKEPC6CBCS292: an old install, of a release up to
 /// v0.8.0, has the entry in the user settings, and no answer. Its
-/// choice is each repository. With no terminal, as in an update, riff
-/// keeps it: riff stays on in each repository, and riff records no
-/// answer. A person who then answers "this repository" takes the entry
-/// out, and riff names the repositories that used riff.
+/// choice is each repository. riff keeps it: riff stays on in each
+/// repository, and riff records the answer `global`. `--scope repo`
+/// then takes the entry out, and riff names the repositories that used
+/// riff.
 #[test]
-fn an_old_install_stays_on_and_an_answer_takes_the_entry_out() {
+fn an_old_install_stays_on_and_scope_repo_takes_the_entry_out() {
     let machine = Machine::new();
     let (used, other) = old_install(&machine);
 
-    for _ in 0..2 {
+    let lines = [
+        "riff stays on in each repository on this machine, as before this release. To change \
+         it: riff disable --global\n",
+        "riff is on in each repository on this machine. Start a new Claude Code session in a \
+         repository to use it. To turn it off: riff disable --global\n",
+    ];
+    for last in lines {
         let out = machine.connect(&other, &[]);
         assert_eq!(riff::enable::entry_at(&machine.user()), Some(true));
         assert!(!out.contains("Now it is on only"), "{out}");
-        assert!(
-            out.ends_with(
-                "riff is on in each repository on this machine. Start a new Claude Code \
-                 session in a repository to use it. To turn it off: riff disable --global\n"
-            ),
-            "{out}"
-        );
-        assert_eq!(machine.riff_settings(), "", "nobody answered");
+        assert!(out.ends_with(last), "{out}");
+        let settings = machine.riff_settings();
+        assert!(settings.contains("scope = \"global\""), "{settings}");
         assert!(!local(&other).exists() && !local(&used).exists());
     }
 
@@ -377,6 +378,45 @@ fn an_old_install_stays_on_and_an_answer_takes_the_entry_out() {
     let out = machine.connect(&other, &[]);
     assert_eq!(riff::enable::entry_at(&machine.user()), None);
     assert!(!out.contains("Now it is on only"), "{out}");
+}
+
+/// 01M3XY2SR3VJZAKEPC6CBCS292: the first update of a machine from
+/// v0.8.0 runs the old `riff update`. It gives the new
+/// `riff connect claude` the terminal of the person, in the home
+/// directory. On an old install the command asks nothing there: Enter
+/// changes nothing, the entry stays, and `riff server` in a repository
+/// shows `riff on`.
+#[test]
+fn connect_in_a_terminal_asks_nothing_on_an_old_install() {
+    let machine = Machine::new();
+    let (used, _) = old_install(&machine);
+    let before: Value = read(&machine.user());
+    let home = machine.env.home();
+
+    let shown = connect_in_a_terminal(&machine, &home, "\n\n");
+    assert!(!shown.contains("Where do you want riff on?"), "{shown}");
+    assert!(!shown.contains("Your choice"), "{shown}");
+    assert!(!shown.contains("Now it is on only"), "{shown}");
+    assert!(
+        shown.contains("riff stays on in each repository on this machine"),
+        "{shown}"
+    );
+    assert!(shown.contains("riff disable --global"), "{shown}");
+    let after: Value = read(&machine.user());
+    assert_eq!(after["enabledPlugins"], before["enabledPlugins"]);
+    assert_eq!(riff::enable::entry_at(&machine.user()), Some(true));
+    let settings = machine.riff_settings();
+    assert!(settings.contains("scope = \"global\""), "{settings}");
+    let server = machine.run(&used, &["server"]);
+    assert!(
+        server.contains(&format!("riff on ({})", machine.user().display())),
+        "{server}"
+    );
+    // A later run in a terminal asks nothing too.
+    let shown = connect_in_a_terminal(&machine, &used, "\n\n");
+    assert!(!shown.contains("Where do you want riff on?"), "{shown}");
+    assert_eq!(riff::enable::entry_at(&machine.user()), Some(true));
+    assert!(!local(&used).exists());
 }
 
 /// 01M3XY2SR3VJZAKEPC6CBCS292: `riff update` asks nothing, also when a
@@ -415,7 +455,12 @@ fn riff_update_in_a_terminal_asks_nothing_and_keeps_the_choice() {
 
         assert!(!shown.contains("Where do you want riff on?"), "{shown}");
         assert!(!shown.contains("Your choice"), "{shown}");
-        assert_eq!(machine.riff_settings(), "", "nobody answered: {shown}");
+        // A new install has no answer. An old install keeps its choice.
+        let settings = machine.riff_settings();
+        match old {
+            true => assert!(settings.contains("scope = \"global\""), "{settings}"),
+            false => assert_eq!(settings, "", "nobody answered: {shown}"),
+        }
         assert!(!local(&repo).exists(), "{shown}");
         assert_eq!(
             riff::enable::entry_at(&machine.user()),
@@ -423,7 +468,7 @@ fn riff_update_in_a_terminal_asks_nothing_and_keeps_the_choice() {
             "{shown}"
         );
         let last = match old {
-            true => "riff is on in each repository on this machine.",
+            true => "riff stays on in each repository on this machine, as before this release.",
             false => {
                 "riff is installed but off. To turn it on in a repository: cd REPO && riff enable"
             }
@@ -557,6 +602,19 @@ fn enable_in_a_worktree_asks_git_for_the_main_clone() {
             .unwrap();
         assert!(git.status.success(), "git {args:?}: {git:?}");
     }
+    // A second tree whose `.git` file names the entry of that worktree:
+    // git gives the common directory of `app`, but `app` names the
+    // worktree, not this tree.
+    let copy = machine.plain("copy");
+    let entry = main.join(".git/worktrees/issue-12");
+    assert!(entry.is_dir(), "git made the entry");
+    std::fs::write(copy.join(".git"), format!("gitdir: {}\n", entry.display())).unwrap();
+    let out = machine.riff(&copy, &["enable"]).output().unwrap();
+    assert!(!out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("git does not confirm"), "{stderr}");
+    assert!(!local(&main).exists(), "riff wrote in the main clone");
+
     let out = machine.run(&wt, &["enable"]);
     assert!(
         out.starts_with(&format!("Turned riff on in {}.", local(&main).display())),

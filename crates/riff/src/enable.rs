@@ -188,10 +188,16 @@ impl Repo {
     }
 }
 
+/// The entry of the linked worktree at `top` in its main clone, from
+/// the text of its `.git` file: `gitdir: MAIN/.git/worktrees/NAME`.
+fn entry_of(top: &Path, text: &str) -> Option<PathBuf> {
+    Some(top.join(text.strip_prefix("gitdir:")?.trim()))
+}
+
 /// The top of the main clone from the text of the `.git` file of the
 /// linked worktree at `top`: `gitdir: MAIN/.git/worktrees/NAME`.
 fn main_of(top: &Path, text: &str) -> Option<PathBuf> {
-    let gitdir = top.join(text.strip_prefix("gitdir:")?.trim());
+    let gitdir = entry_of(top, text)?;
     let worktrees = gitdir.parent()?;
     if worktrees.file_name()? != "worktrees" {
         return None;
@@ -637,10 +643,17 @@ pub fn real(file: &Path) -> PathBuf {
 /// The local settings of a linked worktree are in the main clone, and
 /// [`Repo::of`] takes the main clone from the text of the `.git` file.
 /// A tree from an archive can have a `.git` file that names each
-/// directory. So before riff writes the settings of a main clone, git
-/// must confirm the worktree: the common directory of the worktree
-/// ([`crate::identity::common_dir`]) is the `.git` of that main clone
-/// (01M3YCGKGP3VC93S8FA1G4K3QK). If not, the command refuses and says why.
+/// directory. So before riff writes the settings of a main clone, two
+/// checks must pass (01M3YCGKGP3VC93S8FA1G4K3QK), else the command
+/// refuses and says why:
+///
+/// - git confirms the worktree: the common directory of the worktree
+///   ([`crate::identity::common_dir`]) is the `.git` of that main
+///   clone.
+/// - The main clone names this tree: the file `gitdir` of the entry
+///   `MAIN/.git/worktrees/NAME` names the `.git` file of the tree. git
+///   writes that file when it makes the worktree. So a `.git` file that
+///   names the entry of another worktree of the main clone is refused.
 fn for_write(dir: &Path, place: Place) -> Result<Option<Repo>> {
     let repo = Repo::of(dir);
     if let (
@@ -653,7 +666,17 @@ fn for_write(dir: &Path, place: Place) -> Result<Option<Repo>> {
     {
         let same = |a: &Path, b: &Path| matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b);
         let common = crate::identity::common_dir(top);
-        if !common.is_some_and(|common| same(&common, &main.join(".git"))) {
+        let confirmed = common.is_some_and(|common| same(&common, &main.join(".git")));
+        let git_file = top.join(".git");
+        // The path in `gitdir` can be relative to the entry.
+        let named = std::fs::read_to_string(&git_file)
+            .ok()
+            .and_then(|text| entry_of(top, &text))
+            .and_then(|entry| {
+                let back = std::fs::read_to_string(entry.join("gitdir")).ok()?;
+                Some(entry.join(back.trim()))
+            });
+        if !confirmed || !named.is_some_and(|named| same(&named, &git_file)) {
             anyhow::bail!(
                 "git does not confirm that {} is a worktree of {}, so riff writes no settings \
                  there. Run the command in the main clone, or use --shared",
@@ -845,6 +868,9 @@ pub struct Scoped {
     pub state: State,
     /// True when the user settings turn riff on after the change.
     pub global: bool,
+    /// True when the install is old, and riff kept its choice with no
+    /// question: each repository.
+    pub kept: bool,
 }
 
 /// The files that [`scope`] reads and writes.
@@ -867,7 +893,9 @@ pub struct Files<'a> {
 ///     F{"--scope?"} -- yes --> A[apply it, keep it in the settings of riff]
 ///     F -- no --> R{"an earlier answer<br/>in the settings of riff?"}
 ///     R -- yes --> K[change nothing]
-///     R -- no --> T{a terminal?}
+///     R -- no --> O{"user settings<br/>turn riff on?"}
+///     O -- "yes: an old install" --> G2["keep the entry, record the answer global"]
+///     O -- no --> T{a terminal?}
 ///     T -- yes --> Q[ask] --> A
 ///     T -- "no: an update" --> K
 ///     A --> G{"the answer is repo or none,<br/>and the user settings turn riff on?"}
@@ -881,9 +909,13 @@ pub struct Files<'a> {
 ///   and keeps an earlier choice (01M3XY2SR3VJZAKEPC6CBCS292).
 /// - An old install, of a release up to v0.8.0, has `true` in the user
 ///   settings and no answer: that release installed the plugin in the
-///   user scope. Its choice is each repository. With no terminal, riff
-///   keeps the entry: riff stays on in each repository of the machine.
-/// - A person who answers `repo` or `none` takes the entry of the user
+///   user scope. Its choice is each repository. riff asks nothing, with
+///   a terminal and with no terminal: it keeps the entry, and records
+///   the answer `global`, so that no later run asks. The first update
+///   from v0.8.0 runs the old `riff update`, which gives this command
+///   the terminal of the person: a question there, with Enter for
+///   "this repository", would turn riff off in each repository.
+/// - `--scope repo` or `--scope none` takes the entry of the user
 ///   settings out. riff then names each repository that used riff
 ///   ([`used`]).
 ///
@@ -893,16 +925,20 @@ pub struct Files<'a> {
 /// let dir = tempfile::tempdir()?;
 /// let user = dir.path().join("user.json");
 /// let files = Files { user: Some(&user), riff: &dir.path().join("config.toml"), claude: None };
-/// // An old install, and nobody to ask: riff stays on in each repository.
+/// // An old install: riff asks nothing, and stays on in each repository.
 /// set(&user, Some(true))?;
-/// let done = scope(dir.path(), files, None, || Ok(None))?;
-/// assert_eq!((done.answer, done.moved, done.global), (None, None, true));
-/// // The person answers: not now. The entry of the user settings goes.
-/// let done = scope(dir.path(), files, None, || Ok(Some(Scope::None)))?;
-/// assert_eq!((done.moved, done.global), (Some(vec![]), false));
-/// // The answer is kept, so riff asks no more, and an update changes nothing.
 /// let done = scope(dir.path(), files, None, || unreachable!())?;
-/// assert_eq!((done.answer, done.moved, done.global), (None, None, false));
+/// assert_eq!((done.answer, done.kept, done.global), (Some(Scope::Global), true, true));
+/// // The answer is kept: the next run changes nothing, and asks nothing.
+/// let done = scope(dir.path(), files, None, || unreachable!())?;
+/// assert_eq!((done.answer, done.kept, done.global), (None, false, true));
+/// // `--scope none`: the entry of the user settings goes.
+/// let done = scope(dir.path(), files, Some(Scope::None), || unreachable!())?;
+/// assert_eq!((done.moved, done.global), (Some(vec![]), false));
+/// // A new install with a terminal gets the question.
+/// let new = Files { riff: &dir.path().join("new.toml"), ..files };
+/// let done = scope(dir.path(), new, None, || Ok(Some(Scope::None)))?;
+/// assert_eq!((done.answer, done.kept), (Some(Scope::None), false));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn scope(
@@ -912,14 +948,15 @@ pub fn scope(
     ask: impl FnOnce() -> Result<Option<Scope>>,
 ) -> Result<Scoped> {
     let earlier = crate::settings::connect_scope(files.riff)?;
+    let global = || files.user.and_then(entry_at) == Some(true);
+    // An old install: its choice is each repository. riff asks nothing.
+    let kept = flag.is_none() && earlier.is_none() && global();
     let answer = match (flag, earlier) {
         (Some(flag), _) => Some(flag),
         (None, Some(_)) => None,
+        (None, None) if kept => Some(Scope::Global),
         (None, None) => ask()?,
     };
-    let global = || files.user.and_then(entry_at) == Some(true);
-    // With no answer now, the entries stay: an old install keeps its
-    // choice, each repository.
     let take_out = matches!(answer, Some(Scope::Repo | Scope::None));
     let mut moved = None;
     if take_out && global() {
@@ -946,6 +983,7 @@ pub fn scope(
         moved,
         state: State::of(dir, files.user, false),
         global: global(),
+        kept,
     })
 }
 
@@ -1064,6 +1102,7 @@ mod tests {
 
     /// A main clone and a linked worktree of it, both made by git.
     fn git_worktree(dir: &Path) -> (PathBuf, PathBuf) {
+        std::fs::create_dir_all(dir).unwrap();
         let main = dir.canonicalize().unwrap().join("app");
         let tree = main.join(".claude/worktrees/issue-12");
         std::fs::create_dir(&main).unwrap();
@@ -1122,6 +1161,21 @@ mod tests {
         // The shared settings are in the tree itself: no main clone.
         let done = enable(&tree, Place::Shared, None).unwrap();
         assert_eq!(done.file, real(&tree.join(".claude/settings.json")));
+
+        // A `.git` file that names the entry of a real worktree of
+        // another repository: git gives the common directory of that
+        // repository, but the entry names its own worktree.
+        let (victim, worktree) = git_worktree(&dir.path().join("v"));
+        let copy = dir.path().join("copy");
+        std::fs::create_dir(&copy).unwrap();
+        let entry = victim.join(".git/worktrees/issue-12");
+        std::fs::write(copy.join(".git"), format!("gitdir: {}\n", entry.display())).unwrap();
+        assert_eq!(Repo::of(&copy).unwrap().main, Some(victim.clone()));
+        let error = enable(&copy, Place::Local, None).unwrap_err();
+        assert!(format!("{error:#}").contains("git does not confirm"));
+        assert!(!victim.join(".claude/settings.local.json").exists());
+        // The worktree that git made passes.
+        assert!(enable(&worktree, Place::Local, None).unwrap().state.on);
     }
 
     /// 01M3YCGKGP3VC93S8FA1G4K3QK: riff writes through a symbolic link,

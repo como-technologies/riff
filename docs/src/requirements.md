@@ -235,7 +235,9 @@
   that they wrote. Before they write the local settings of the main
   clone of a linked worktree, git must confirm the worktree: its
   common directory (`git rev-parse --git-common-dir`) is the `.git` of
-  that main clone. If not, the command writes nothing, and says why.
+  that main clone, and the file `gitdir` of the entry of the worktree
+  in the main clone names the `.git` file of the tree. If not, the
+  command writes nothing, and says why.
 - **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
   marketplace to Claude Code with the `claude` command on the PATH.
   `--claude PATH` names another one. It installs the plugin in no
@@ -250,14 +252,18 @@
   each repository: only the answer `global` writes the entry `true` to
   the user settings. `riff update` asks nothing, also in a terminal:
   it runs `riff connect claude` with no terminal. With no terminal,
-  `riff connect claude` changes no entry and records no answer. So a
-  new install stays off. An install of a release up to v0.8.0 has the
-  entry `true` in the user settings, because that release installed
-  the plugin in the user scope: its choice is each repository, and it
-  stays on in each repository. When a person answers `repo` or `none`,
-  `riff connect claude` removes that entry, and names each repository
-  of the Claude Code state file whose settings have a riff permission
-  rule, with the command `riff enable`.
+  `riff connect claude` asks nothing, and a new install stays off. An
+  install of a release up to v0.8.0 is an old install: the user
+  settings have the entry `true`, because that release installed the
+  plugin in the user scope, and riff has no answer. Its choice is each
+  repository. On an old install `riff connect claude` asks nothing,
+  with a terminal and with no terminal: it keeps the entry, records
+  the answer `global`, and says in one line that riff stays on in each
+  repository and that `riff disable --global` changes it. So no person
+  does a thing at the update from v0.8.0. With `--scope repo` or
+  `--scope none`, `riff connect claude` removes that entry, and names
+  each repository of the Claude Code state file whose settings have a
+  riff permission rule, with the command `riff enable`.
 - **01M3XY2ST8R67SKTXJECAYJZRX** Where riff is off, each entry of the
   plugin does nothing: `riff hook` and `riff statusline` make no call
   to the server, run no `git`, and print nothing. `riff mcp` serves no

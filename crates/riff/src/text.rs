@@ -549,7 +549,7 @@ pub fn riff_set(
 ///     statusline: Statusline::Added("/h/.claude/settings.json".into()),
 /// };
 /// let off = State { on: false, by: None, forced: false, repo: None };
-/// let mut scoped = Scoped { answer: None, moved: None, state: off.clone(), global: false };
+/// let mut scoped = Scoped { answer: None, moved: None, state: off.clone(), global: false, kept: false };
 /// assert_eq!(
 ///     riff::text::connected(&done, &scoped),
 ///     "Removed the old riff MCP server entry.\n\
@@ -574,15 +574,21 @@ pub fn riff_set(
 ///
 /// // A person took the entry of the user settings out: riff was on in
 /// // each repository.
-/// scoped = Scoped { answer: None, moved: Some(vec!["/r".into()]), state: off.clone(), global: false };
+/// scoped = Scoped { answer: None, moved: Some(vec!["/r".into()]), state: off.clone(), global: false, kept: false };
 /// let text = riff::text::connected(&done, &scoped);
 /// assert!(text.contains("Now it is on only where you turn it on."), "{text}");
 /// assert!(text.contains("\n  cd /r && riff enable\n"), "{text}");
 /// assert!(text.ends_with("cd REPO && riff enable"), "{text}");
 ///
-/// scoped = Scoped { answer: Some(Scope::Global), moved: None, state: off.clone(), global: true };
+/// scoped = Scoped { answer: Some(Scope::Global), moved: None, state: off.clone(), global: true, kept: false };
 /// assert!(riff::text::connected(&done, &scoped).ends_with("To turn it off: riff disable --global"));
-/// scoped = Scoped { answer: Some(Scope::Repo), moved: None, state: off, global: false };
+/// // An old install: riff kept its choice, and asked nothing.
+/// scoped.kept = true;
+/// assert!(riff::text::connected(&done, &scoped).ends_with(
+///     "\nriff stays on in each repository on this machine, as before this release. To \
+///      change it: riff disable --global"
+/// ));
+/// scoped = Scoped { answer: Some(Scope::Repo), moved: None, state: off, global: false, kept: false };
 /// assert!(riff::text::connected(&done, &scoped).contains("This directory is not in a git repository."));
 /// ```
 pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
@@ -633,6 +639,11 @@ pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
             out,
             "riff is on in this repository{file}. Start a new Claude Code session there to use \
              it. To turn it off: riff disable"
+        );
+    } else if scoped.kept {
+        out.push_str(
+            "riff stays on in each repository on this machine, as before this release. To \
+             change it: riff disable --global",
         );
     } else if scoped.global {
         out.push_str(
