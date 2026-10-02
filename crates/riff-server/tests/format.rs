@@ -19,8 +19,9 @@
 //!   cursors, which no record gives.
 //! - `later.jsonl`: one chunk of a later build. Each record has a value
 //!   that this build does not know: a scope and a class of a caller, as
-//!   a text and as an object, and a reason of a start as a text, an
-//!   object, a number and `null`.
+//!   a text and as an object, a reason of a start as a text, an
+//!   object, a number and `null`, a kind of a message, and a field of a
+//!   selector (01M3XSF90E9JYYTC13D9THY4WE).
 //!
 //! Never write `log.jsonl`, `replayed.json` or `checkpoint.json` again
 //! with a later build.
@@ -251,10 +252,14 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
     let later = records("later.jsonl");
     let fields: Vec<_> = later.iter().map(Record::other).collect();
     let expected = [
-        "scope", "scope", "reason", "reason", "reason", "reason", "by", "by",
+        "scope", "scope", "reason", "reason", "reason", "reason", "by", "by", "kind", "to",
     ]
     .map(Some);
     assert_eq!(fields, expected);
+    // This build writes each field of the selector of the later build
+    // again.
+    let selector = r#""to":[{"user":"bob","wave":"17"}]"#;
+    assert!(serde_json::to_string(&later[9]).unwrap().contains(selector));
 
     let store = Memory::default();
     let known = records("log.jsonl");
@@ -270,8 +275,22 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
 
     let replayed = log::replay(&store).await.unwrap();
     assert_eq!(replayed.records.len(), known.len() + moved.len());
-    assert_eq!((replayed.skipped, replayed.skips), (Some(first), 8));
+    assert_eq!((replayed.skipped, replayed.skips), (Some(first), 10));
     // A start after the first such record counts the rest.
     let rest = log::replay_after(&store, first).await.unwrap();
-    assert_eq!((rest.skipped, rest.skips), (Some(first + 1), 7));
+    assert_eq!((rest.skipped, rest.skips), (Some(first + 1), 9));
+
+    // The state takes each record. The two messages are in their
+    // thread, and a reader gets each one with its text.
+    let now = Instant::now();
+    let mut state = State::replay(replayed.records, now, 0);
+    let bob = "riff://bob@kite/acme/app?session=b1".parse().unwrap();
+    state.register(&bob, now);
+    let thread = "acme/app".parse().unwrap();
+    let messages = state.read(&bob, &thread, true, now).unwrap();
+    let texts: Vec<&str> = messages.iter().map(|m| m.body.as_str()).collect();
+    assert!(
+        texts.ends_with(&["which wave is next?", "the wave starts"]),
+        "{texts:?}"
+    );
 }

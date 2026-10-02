@@ -42,8 +42,32 @@
 //!   skipped record ([`Record::other`]): the build writes no checkpoint
 //!   past it (01M3XM2C18TT8VSKGD77YPZG53). The `state` of a `pause_set`
 //!   has two values and no `other`.
+//! - A `posted` record has two such parts too
+//!   (01M3XSF90E9JYYTC13D9THY4WE): the kind of the message
+//!   ([`Kind`](crate::wire::Kind)), and each selector of its `to`
+//!   ([`Selector`](crate::selector::Selector)). A selector with a field
+//!   that the build does not know is a selector `other`: it keeps the
+//!   field, and it matches no session. The message stays in its thread,
+//!   and a reader shows it as a message.
 //! - `command` is text. A reader takes a kind of command that it does
 //!   not know as text.
+//!
+//! # Each type with named values in a record
+//!
+//! The list has each enum that a record holds, and each struct that
+//! refused a field that it does not know. A struct that is not in the
+//! list skips such a field. A new type of these two sorts in a record
+//! needs a line here.
+//!
+//! | Type | Where | A value that the build does not know |
+//! |---|---|---|
+//! | [`Change`] | `change` | The record is skipped ([`Line::Unknown`]). |
+//! | [`By`] | `by` | `other` |
+//! | [`Scope`] | `pause_set` | `other` |
+//! | [`StartReason`] | `session_started` | `other` |
+//! | [`Kind`](crate::wire::Kind) | the message of `posted` | `other` |
+//! | [`Selector`](crate::selector::Selector) | the `to` of the message of `posted` | `other`, for a new field |
+//! | [`RiffState`] | `pause_set` | The line does not read. The set never grows: a pause is set or ended. A new sort of pause is a new [`Scope`]. |
 //!
 //! # Example
 //!
@@ -81,6 +105,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::name::{SessionUri, ThreadName, Who};
+use crate::selector::Selector;
 use crate::wire::{Idle, Message, RiffState, StartReason};
 
 /// Makes the enum [`Change`], the list [`Change::KINDS`] and
@@ -319,9 +344,10 @@ impl<'de> Deserialize<'de> for By {
 
 impl Record {
     /// The field of this record whose value this build read as `other`:
-    /// `by`, `scope` or `reason`. `None` when the build knows each
-    /// value. A record with such a value counts as a skipped record:
-    /// the build writes no checkpoint past it (01M3XM2C18TT8VSKGD77YPZG53).
+    /// `by`, `scope`, `reason`, or the `kind` or the `to` of a message.
+    /// `None` when the build knows each value. A record with such a
+    /// value counts as a skipped record: the build writes no checkpoint
+    /// past it (01M3XM2C18TT8VSKGD77YPZG53).
     ///
     /// ```
     /// use riff_core::record::{Change, Line};
@@ -340,6 +366,12 @@ impl Record {
     /// assert_eq!(read(&known.replace("person", "robot")).other(), Some("by"));
     /// // The state of a pause has no `other`: the line does not read.
     /// assert!(Line::parse(&known.replace(r#""paused""#, r#""slow""#)).is_err());
+    ///
+    /// // A message of a later build: a kind, and a field of a selector.
+    /// let post = r#"{"position":3,"written_at_ms":1,"change":{"posted":{"thread":"acme/app","message":{"seq":1,"from":"riff://ann@heron/acme/app?session=s1","to":[{"user":"bob"}],"body":"hi","at_ms":1,"kind":"note"}}}}"#;
+    /// assert_eq!(read(post).other(), None);
+    /// assert_eq!(read(&post.replace("note", "poll")).other(), Some("kind"));
+    /// assert_eq!(read(&post.replace(r#"{"user":"bob"}"#, r#"{"user":"bob","wave":"17"}"#)).other(), Some("to"));
     /// ```
     pub fn other(&self) -> Option<&'static str> {
         if self.by == Some(By::Other) {
@@ -349,6 +381,10 @@ impl Record {
             Change::PauseSet(set) if set.scope == Scope::Other => Some("scope"),
             Change::SessionStarted(started) if started.reason == StartReason::Other => {
                 Some("reason")
+            }
+            Change::Posted(posted) if !posted.message.kind.is_post() => Some("kind"),
+            Change::Posted(posted) if posted.message.to.iter().any(Selector::is_other) => {
+                Some("to")
             }
             _ => None,
         }
@@ -944,6 +980,67 @@ mod tests {
                 panic!("a known kind");
             };
             assert_eq!(record.other(), Some("reason"), "{later}");
+        }
+    }
+
+    /// A `posted` record with the message `message`, as JSON.
+    fn posted(message: &str) -> Record {
+        let line = format!(
+            r#"{{"position":2,"written_at_ms":1,"change":{{"posted":{{"thread":"acme/app","message":{message},"woken":[{{"user":"bob","session":"b1"}}]}}}}}}"#
+        );
+        match Line::parse(&line).unwrap() {
+            Line::Record(record) => *record,
+            Line::Unknown { .. } => panic!("a known kind"),
+        }
+    }
+
+    const MESSAGE: &str = r#"{"seq":1,"from":"riff://ann@heron/acme/app?session=s1","to":[{"user":"bob"}],"body":"the text","at_ms":5,"kind":"status"}"#;
+
+    #[test]
+    fn a_kind_of_a_message_that_the_build_does_not_know_reads_as_other() {
+        assert_eq!(posted(MESSAGE).other(), None);
+        // A message with no kind is a message.
+        let plain = posted(&MESSAGE.replace(r#","kind":"status""#, ""));
+        assert_eq!(plain.other(), None);
+        // A kind of a later build can have each form of JSON.
+        for later in [
+            r#""poll""#,
+            r#"{"poll":"wave"}"#,
+            "7",
+            "null",
+            r#"["note"]"#,
+        ] {
+            let record = posted(&MESSAGE.replace(r#""status""#, later));
+            assert_eq!(record.other(), Some("kind"), "{later}");
+            let Change::Posted(posted) = &record.change else {
+                panic!("a post");
+            };
+            assert_eq!(posted.message.kind, Kind::Other);
+            // The message keeps its text, its address and its wakes.
+            assert_eq!(posted.message.body, "the text");
+            assert_eq!(posted.message.to, ["user=bob".parse().unwrap()]);
+            assert_eq!(posted.woken.len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_selector_with_a_field_that_the_build_does_not_know_reads_as_other() {
+        for later in [
+            r#"[{"user":"bob","wave":"17"}]"#,
+            r#"[{"user":"bob"},{"wave":17}]"#,
+            r#"[{"wave":{"n":17},"lead":true}]"#,
+        ] {
+            let record = posted(&MESSAGE.replace(r#"[{"user":"bob"}]"#, later));
+            assert_eq!(record.other(), Some("to"), "{later}");
+            let Change::Posted(posted) = &record.change else {
+                panic!("a post");
+            };
+            assert_eq!(posted.message.kind, Kind::Status);
+            assert_eq!(posted.message.body, "the text");
+            // The record writes each field of the selector again.
+            let written = serde_json::to_value(&posted.message.to).unwrap();
+            let read: serde_json::Value = serde_json::from_str(later).unwrap();
+            assert_eq!(written, read);
         }
     }
 

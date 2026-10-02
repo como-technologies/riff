@@ -2890,6 +2890,122 @@ mod tests {
         }
     }
 
+    /// A rollback before the new build wrote a checkpoint: the new
+    /// build wrote a message with a kind, or with a field of a
+    /// selector, that the old build does not know. The old build reads
+    /// each one as `other`, keeps the message with its text, and writes
+    /// no checkpoint past the record. So the new build has the message
+    /// again as it wrote it (01M3XSF90E9JYYTC13D9THY4WE).
+    #[tokio::test(start_paused = true)]
+    async fn new_build_old_build_new_build_keeps_a_message_with_a_value_that_the_old_build_does_not_know()
+     {
+        let thread = mike().default_thread().unwrap();
+        // The last message of the thread: its kind, its address and its
+        // text.
+        let last_message = |service: &Service| {
+            let request = Read {
+                after: None,
+                me: brett(),
+                thread: thread.clone(),
+                all: true,
+            };
+            let state = AxumState(service.0.clone());
+            async move {
+                let reply = read(state, Proof::none(), Json(request)).await.unwrap();
+                let message = reply.messages.last().unwrap().clone();
+                (message.kind, message.to, message.body)
+            }
+        };
+        let to_brett = vec![Selector {
+            user: Some("brett".into()),
+            ..Selector::default()
+        }];
+        let kind = (r#""kind":"note""#, r#""kind":"poll""#);
+        let field = (
+            r#""to":[{"user":"brett"}]"#,
+            r#""to":[{"user":"brett","wave":"17"}]"#,
+        );
+        for (view, sent) in [(kind, Kind::Note), (field, Kind::Message)] {
+            let store = Arc::new(Gated::default());
+            let new = running_with(with_checkpoints(1000, "0.9.0"), store.clone()).await;
+            let post = Post {
+                kind: sent,
+                ..Post::new(&mike(), Some(thread.clone()), to_brett.clone(), "for brett")
+            };
+            send(&new, post).await.unwrap();
+            let in_new = (sent, to_brett.clone(), "for brett".to_owned());
+            assert_eq!(last_message(&new).await, in_new);
+            let last = position(&new);
+            assert!(checkpoints(&store).await.is_empty());
+            // The records that the view of the old build changes.
+            let records = store
+                .chunks()
+                .await
+                .concat()
+                .iter()
+                .filter(|change| match change {
+                    Change::Posted(posted) if view == kind => posted.message.kind == Kind::Note,
+                    Change::Posted(posted) => posted.message.to == to_brett,
+                    _ => false,
+                })
+                .count() as u64;
+            assert!(records >= 1);
+            drop(new);
+
+            // The old build does not know the value: it keeps the
+            // message with its text, and writes no checkpoint past the
+            // record.
+            *store.later.lock().unwrap() = Some(view);
+            let old = Service::load(with_checkpoints(1, "0.8.0"), store.clone())
+                .await
+                .unwrap();
+            let (old_kind, old_to, text) = last_message(&old).await;
+            assert_eq!(text, "for brett");
+            if view == kind {
+                assert_eq!((old_kind, &old_to), (Kind::Other, &to_brett));
+            } else {
+                assert_eq!(old_kind, Kind::Message);
+                assert!(old_to[0].is_other() && !old_to[0].matches(&brett()));
+            }
+            post_n(&old, 3, "old").await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(checkpoints(&store).await.is_empty());
+            let facts = old.0.server_facts();
+            assert_eq!(facts.skipped_records, records);
+            let why = facts.no_checkpoint.expect("the build writes no checkpoint");
+            assert!(why.contains("this build skipped the record at"), "{why}");
+            assert_eq!(position(&old), last + 3);
+            drop(old);
+
+            // The new build again: it has the message as it wrote it,
+            // and each record of the old build. It writes checkpoints.
+            *store.later.lock().unwrap() = None;
+            let again = Service::load(with_checkpoints(1, "0.9.0"), store.clone())
+                .await
+                .unwrap();
+            let request = Read {
+                after: None,
+                me: brett(),
+                thread: thread.clone(),
+                all: true,
+            };
+            let reply = read(AxumState(again.0.clone()), Proof::none(), Json(request))
+                .await
+                .unwrap();
+            let message = &reply.messages[reply.messages.len() - 4];
+            assert_eq!(
+                (message.kind, message.to.clone(), message.body.clone()),
+                in_new
+            );
+            assert_eq!(position(&again), last + 3);
+            let facts = again.0.server_facts();
+            assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+            post_n(&again, 2, "again").await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(!checkpoints(&store).await.is_empty());
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_build_that_skipped_a_record_writes_no_checkpoint_past_it() {
         let store = Arc::new(Gated::default());

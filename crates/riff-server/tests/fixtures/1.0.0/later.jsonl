@@ -7,3 +7,5 @@
 {"position":6,"written_at_ms":1800000002300,"by":{"session":"ann/a1"},"command":"start","change":{"session_started":{"session":"riff://ann@heron/acme/app?session=a1","reason":null}}}
 {"position":7,"written_at_ms":1800000003000,"by":"cron","command":"sweep","change":{"setting_changed":{"idle":{"per_host":2,"after_secs":300}}}}
 {"position":8,"written_at_ms":1800000004000,"by":{"robot":"r2"},"command":"invite","change":{"member_invited":{"email":"gina@acme.io"}}}
+{"position":9,"written_at_ms":1800000005000,"by":{"session":"ann/a1"},"command":"post","change":{"posted":{"thread":"acme/app","message":{"seq":301,"from":"riff://ann@heron/acme/app?session=a1","to":[{"user":"bob"}],"body":"which wave is next?","at_ms":1800000005000,"kind":"poll"},"woken":[{"user":"bob","session":"b1"}]}}}
+{"position":10,"written_at_ms":1800000006000,"by":{"session":"ann/a1"},"command":"post","change":{"posted":{"thread":"acme/app","message":{"seq":302,"from":"riff://ann@heron/acme/app?session=a1","to":[{"user":"bob","wave":"17"}],"body":"the wave starts","at_ms":1800000006000},"woken":[{"user":"bob","session":"b1"}]}}}

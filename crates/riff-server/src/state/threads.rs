@@ -469,6 +469,18 @@ impl Command for Post {
         let me = &post.me;
         let now = now.at;
         let from = caller.who();
+        // Only the read of the log takes a value of a later build
+        // (01M3XSF90E9JYYTC13D9THY4WE).
+        if !post.kind.is_post() {
+            return Err("no such kind: use message, status or note".into());
+        }
+        if let Some(later) = post.to.iter().find(|selector| selector.is_other()) {
+            return Err(format!(
+                "the selector {later} has a field that this server does not know. \
+                 Use user, session, host, repo, worktree, claim or lead."
+            )
+            .into());
+        }
         let signed = post.sig.is_some();
         if signed && me.lead() && !view.is_lead(from, now) {
             return Err(

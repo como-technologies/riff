@@ -22,6 +22,30 @@
 //! On the command line, a selector is `FIELD=VALUE` pairs with commas
 //! between them.
 //!
+//! # A field of a later build (01M3XSF90E9JYYTC13D9THY4WE)
+//!
+//! The set of fields can grow. A selector keeps each field that this
+//! build does not know ([`Selector::other`]), with its value. Such a
+//! selector is a selector `other`: it matches no session, because a
+//! field that the build cannot check never makes a selector wider. It
+//! writes each field again, so a reader of a later build gets the
+//! selector as it was. A `post` call with such a selector is refused.
+//!
+//! ```
+//! use riff_core::name::SessionUri;
+//! use riff_core::selector::Selector;
+//!
+//! let uri: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+//! let json = r#"{"user":"mike","wave":"17"}"#;
+//! let later: Selector = serde_json::from_str(json).unwrap();
+//! assert!(later.is_other() && !later.matches(&uri));
+//! assert_eq!(later.to_string(), "user=mike,wave=17");
+//! assert_eq!(serde_json::to_string(&later).unwrap(), json);
+//! // The same selector with only the field that the build knows.
+//! assert!("user=mike".parse::<Selector>()?.matches(&uri));
+//! # Ok::<(), riff_core::name::NameError>(())
+//! ```
+//!
 //! # Example
 //!
 //! ```
@@ -46,6 +70,7 @@
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -57,7 +82,7 @@ use crate::name::{NameError, SessionUri};
 /// Picks sessions by who they are, where they work, and what they hold.
 /// Each field that is set must match. Set one or more fields.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[schemars(deny_unknown_fields)]
 pub struct Selector {
     /// The user, for example `mike`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,9 +106,20 @@ pub struct Selector {
     /// `user` and `repo`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<bool>,
+    /// Each field that this build does not know, with its value. A
+    /// selector with such a field matches no session.
+    #[serde(flatten)]
+    #[schemars(skip)]
+    pub other: BTreeMap<String, serde_json::Value>,
 }
 
 impl Selector {
+    /// True for a selector `other`: it has a field that this build does
+    /// not know.
+    pub fn is_other(&self) -> bool {
+        !self.other.is_empty()
+    }
+
     /// A selector for one session.
     pub fn session(id: &str) -> Self {
         Self {
@@ -104,10 +140,11 @@ impl Selector {
 
     /// True when the selector names no field.
     pub fn is_empty(&self) -> bool {
-        self.lead.is_none() && self.fields().iter().all(|(_, v)| v.is_none())
+        self.lead.is_none() && !self.is_other() && self.fields().iter().all(|(_, v)| v.is_none())
     }
 
-    /// True when each named field matches the session.
+    /// True when each named field matches the session. A selector
+    /// `other` matches no session.
     pub fn matches(&self, uri: &SessionUri) -> bool {
         let place = uri.place();
         let who = uri.who();
@@ -115,6 +152,7 @@ impl Selector {
             want.as_deref().is_none_or(|w| Some(w) == have)
         };
         !self.is_empty()
+            && !self.is_other()
             && eq(&self.user, Some(who.user()))
             && eq(&self.session, who.session())
             && eq(&self.host, Some(place.host()))
@@ -143,6 +181,10 @@ impl fmt::Display for Selector {
             .iter()
             .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}={v}")))
             .chain(self.lead.map(|l| format!("lead={l}")))
+            .chain(self.other.iter().map(|(k, v)| match v.as_str() {
+                Some(text) => format!("{k}={text}"),
+                None => format!("{k}={v}"),
+            }))
             .collect();
         f.write_str(&pairs.join(","))
     }
@@ -281,6 +323,54 @@ mod tests {
     fn json_leaves_out_unset_fields() {
         let s = Selector::session("a6cf");
         assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"session":"a6cf"}"#);
-        assert!(serde_json::from_str::<Selector>(r#"{"colour":"blue"}"#).is_err());
+        assert!(!s.is_other());
+    }
+
+    #[test]
+    fn a_selector_with_a_field_of_a_later_build_matches_no_session() {
+        let u = uri("riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6#api")
+            .with_lead(true);
+        for json in [
+            r#"{"colour":"blue"}"#,
+            r#"{"user":"mike","wave":"17"}"#,
+            r#"{"session":"a6cf","wave":17}"#,
+            r#"{"lead":true,"wave":{"n":17}}"#,
+            r#"{"claim":"issue-6","wave":null}"#,
+        ] {
+            let later: Selector = serde_json::from_str(json).unwrap();
+            assert!(later.is_other() && !later.is_empty(), "{json}");
+            assert!(!later.matches(&u), "{json}");
+            // The selector writes each field again.
+            let again: serde_json::Value = serde_json::to_value(&later).unwrap();
+            assert_eq!(
+                again,
+                serde_json::from_str::<serde_json::Value>(json).unwrap()
+            );
+            // The same selector with only the fields that the build
+            // knows is wider: it matches the session.
+            let known = Selector {
+                other: BTreeMap::new(),
+                ..later
+            };
+            assert!(known.is_empty() || known.matches(&u), "{json}");
+        }
+        let later: Selector = serde_json::from_str(r#"{"user":"mike","wave":17}"#).unwrap();
+        assert_eq!(later.to_string(), "user=mike,wave=17");
+        // The command line still takes only the fields of this build.
+        assert!("user=mike,wave=17".parse::<Selector>().is_err());
+    }
+
+    #[test]
+    fn the_schema_of_a_selector_has_only_the_fields_of_this_build() {
+        let schema = serde_json::to_value(schemars::schema_for!(Selector)).unwrap();
+        assert_eq!(schema["additionalProperties"], false);
+        let mut fields: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
+        fields.sort();
+        assert_eq!(
+            fields,
+            [
+                "claim", "host", "lead", "repo", "session", "user", "worktree"
+            ]
+        );
     }
 }

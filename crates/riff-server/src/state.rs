@@ -3027,6 +3027,144 @@ mod tests {
         assert_eq!(state.missed(tests().who()).unwrap().kind, Kind::Message);
     }
 
+    /// A selector of a later build, from its JSON.
+    fn later(json: &str) -> Selector {
+        serde_json::from_str(json).unwrap()
+    }
+
+    /// Only the read of the log takes a value of a later build
+    /// (01M3XSF90E9JYYTC13D9THY4WE).
+    #[test]
+    fn a_post_with_a_kind_or_a_selector_field_of_a_later_build_is_refused() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let position = state.position();
+        let kind = Post {
+            kind: Kind::Other,
+            ..Post::new(&api(), Some(repo()), to(&["user=brett"]), "hi")
+        };
+        let why = state.post(kind, now, 0).unwrap_err();
+        assert_eq!(why, "no such kind: use message, status or note");
+        let field = vec![later(r#"{"user":"brett","wave":"17"}"#)];
+        let why = state
+            .post(Post::new(&api(), Some(repo()), field.clone(), "hi"), now, 0)
+            .unwrap_err();
+        assert!(why.starts_with("the selector user=brett,wave=17 has a field"));
+        // A direct message too.
+        let why = state
+            .post(Post::new(&api(), None, field, "hi"), now, 0)
+            .unwrap_err();
+        assert!(why.starts_with("the selector user=brett,wave=17 has a field"));
+        assert_eq!(state.position(), position, "a refused post makes no record");
+        let refused = state
+            .run(
+                &trusted(&api()),
+                &Post {
+                    kind: Kind::Other,
+                    ..Post::new(&api(), Some(repo()), Vec::new(), "hi")
+                },
+                now,
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, Code::BadRequest);
+    }
+
+    /// A field that the build does not know never makes a selector
+    /// wider (01M3XSF90E9JYYTC13D9THY4WE). The server posts with such a
+    /// selector here, because a `post` call with it is refused.
+    #[test]
+    fn a_selector_with_a_field_of_a_later_build_wakes_nobody() {
+        let now = Instant::now();
+        let server = crate::owner::server_uri();
+        for (json, known) in [
+            (r#"{"user":"brett","wave":"17"}"#, "user=brett"),
+            (
+                r#"{"repo":"como-technologies/riff","wave":17}"#,
+                "repo=como-technologies/riff",
+            ),
+            // A selector for a lead falls back to the free sessions of
+            // the user when the user has no lead.
+            (
+                r#"{"user":"mike","repo":"como-technologies/riff","lead":true,"wave":"17"}"#,
+                "user=mike,repo=como-technologies/riff,lead=true",
+            ),
+        ] {
+            let mut state = setup(now);
+            let design = thread("design");
+            let selector = later(json);
+            let delivery = state
+                .announce(
+                    &server,
+                    Some(design.clone()),
+                    vec![selector.clone()],
+                    "for the wave",
+                    Kind::Message,
+                    now,
+                    0,
+                )
+                .unwrap();
+            assert!(
+                delivery.wakes.is_empty() && delivery.woken.is_empty(),
+                "{json}"
+            );
+            for session in [api(), tests(), docs()] {
+                assert_eq!(state.missed(session.who()), None, "{json}");
+                // The message makes no session a member of the thread.
+                let threads = state.threads(&session, now);
+                assert!(threads.iter().all(|t| t.thread != design), "{json}");
+            }
+            // The message keeps the selector as it came.
+            assert_eq!(delivery.tailed.message.to, [selector]);
+
+            // The same selector with only the fields that the build
+            // knows wakes its sessions.
+            let delivery = state
+                .announce(
+                    &server,
+                    Some(design),
+                    to(&[known]),
+                    "for all",
+                    Kind::Message,
+                    now,
+                    0,
+                )
+                .unwrap();
+            assert!(!delivery.wakes.is_empty(), "{json}");
+        }
+    }
+
+    /// A message of a later build stays in its thread: a reader gets it
+    /// as a message, with its text (01M3XSF90E9JYYTC13D9THY4WE).
+    #[test]
+    fn a_replay_keeps_a_message_with_a_kind_or_a_selector_field_of_a_later_build() {
+        let now = Instant::now();
+        let line = |position: u64, kind: &str, to: &str| {
+            let line = format!(
+                r#"{{"position":{position},"written_at_ms":1,"change":{{"posted":{{"thread":"como-technologies/riff","message":{{"seq":{position},"from":"{}","to":[{to}],"body":"text {position}","at_ms":1,"kind":{kind}}}}}}}}}"#,
+                api()
+            );
+            match riff_core::record::Line::parse(&line).unwrap() {
+                riff_core::record::Line::Record(record) => *record,
+                riff_core::record::Line::Unknown { .. } => panic!("a known kind"),
+            }
+        };
+        let records = vec![
+            line(1, r#""poll""#, r#"{"user":"brett"}"#),
+            line(2, r#""note""#, r#"{"user":"brett","wave":"17"}"#),
+        ];
+        assert_eq!(records[0].other(), Some("kind"));
+        assert_eq!(records[1].other(), Some("to"));
+        let mut state = State::replay(records, now, 0);
+        state.register(&tests(), now);
+        // The records name no woken session, so no session has a wake.
+        assert_eq!(state.missed(tests().who()), None);
+        let messages = state.read(&tests(), &repo(), true, now).unwrap();
+        let shown: Vec<(Kind, &str)> = messages.iter().map(|m| (m.kind, m.body.as_str())).collect();
+        assert_eq!(shown, [(Kind::Other, "text 1"), (Kind::Note, "text 2")]);
+        assert!(messages[1].to[0].is_other());
+        assert!(!messages[1].to[0].matches(&tests()));
+    }
+
     /// A time in milliseconds since the Unix epoch.
     const T0: u64 = 1_800_000_000_000;
 
