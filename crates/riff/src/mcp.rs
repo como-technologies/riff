@@ -49,6 +49,14 @@
 //! new process answers the next request with no new handshake
 //! (01M3NT6WZTKAFKGDWGCFKC8TB5). See [`crate::relay`].
 //!
+//! # The tokens of a claim
+//!
+//! A granted `claim` records the start time of the claim on this
+//! machine. A `release` of the claim of the session, and a `leave`, end
+//! it, sum its tokens, and put the sum on the issue of the claim
+//! (01M3Y1YP1ZA5TBRA01MKWM3VC6). The result of the tool has one line
+//! with the sum. The sum never fails the tool. See [`crate::usage`].
+//!
 //! # The step of the lead
 //!
 //! A person sees in `riff who` what the lead does, with no `status`
@@ -98,6 +106,7 @@ use serde::Deserialize;
 
 use crate::api::{Api, PauseScope};
 use crate::binary::{Follow, with_last, with_place};
+use crate::usage::{self, Meter};
 use crate::{dropped, identity, leave, relay, text};
 
 /// The hidden option that gives a new `riff mcp` the initialize request
@@ -120,6 +129,9 @@ pub struct Tools {
     /// The process ID of the `riff workers run` wrapper of a worker. The
     /// tools stop it when the server asks (01M3Q5A0QZTSTXHHNYCE8HFJSB).
     wrapper: Option<u32>,
+    /// What counts the tokens of each claim of the session
+    /// ([`crate::usage`]). `None` counts nothing.
+    meter: Option<Arc<Meter>>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -229,7 +241,17 @@ impl Tools {
             earlier: false,
             worker: false,
             wrapper: None,
+            meter: None,
         }
+    }
+
+    /// Counts the tokens of each claim of the session with `meter`
+    /// (01M3Y1YP1ZA5TBRA01MKWM3VC6). `riff mcp` turns it on with the
+    /// meter of the machine, and a test only with a directory and a `gh`
+    /// of its own.
+    pub fn with_meter(mut self, meter: Option<Meter>) -> Self {
+        self.meter = meter.map(Arc::new);
+        self
     }
 
     /// Stops the process `wrapper`, the `riff workers run` of this
@@ -374,7 +396,15 @@ commit and pushes the branch. Then it frees your claims, and you leave `who`. Ea
             .leave_riff(&me)
             .await
             .map_err(|e| format!("{}{e:#}", text::LEAVE_FAILED))?;
-        Ok(text::left(wip.as_deref(), &claims))
+        let mut out = text::left(wip.as_deref(), &claims);
+        let counted = self
+            .count(&me, |meter, id| meter.release_all(id, usage::now_ms()))
+            .await;
+        for line in counted.unwrap_or_default() {
+            out.push('\n');
+            out.push_str(&line);
+        }
+        Ok(out)
     }
 
     #[tool(
@@ -455,12 +485,14 @@ names the pushed branch and the worktree of an earlier session on the item, when
     )]
     async fn claim(&self, Parameters(a): Parameters<ClaimArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
-        let reply = self
-            .api
-            .claim(&self.here()?, &thread, &a.item)
-            .await
-            .map_err(err)?;
+        let me = self.here()?;
+        let reply = self.api.claim(&me, &thread, &a.item).await.map_err(err)?;
         let mut out = text::claimed(&reply, &thread, &a.item);
+        if reply.granted {
+            let (thread, item) = (thread.to_string(), a.item.clone());
+            self.count(&me, move |meter, id| meter.started(id, &thread, &item))
+                .await;
+        }
         if reply.granted && self.earlier {
             let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
             if let Some(line) = dropped::at_claim(&dir, &a.item).await {
@@ -488,7 +520,16 @@ the claim of another session of your user, for example one that is gone or that 
             }
             None => {
                 let reply = self.api.release(&me, &thread, &a.item).await.map_err(err)?;
-                Ok(text::released(&thread, &a.item, reply))
+                let mut out = text::released(&thread, &a.item, reply);
+                let (thread, item) = (thread.to_string(), a.item);
+                let counted = self
+                    .count(&me, move |meter, id| meter.release(id, &thread, &item))
+                    .await;
+                if let Some(line) = counted.flatten() {
+                    out.push('\n');
+                    out.push_str(&line);
+                }
+                Ok(out)
             }
         }
     }
@@ -596,6 +637,21 @@ impl Tools {
             let blocked = lead.status.and_then(|s| s.status.blocked);
             let _ = self.api.status(me, &Status { step, blocked }).await;
         }
+    }
+
+    /// Runs `count` with the meter and the session ID of `me`, off the
+    /// runtime: it reads the transcripts, and it can run `gh`. `None`
+    /// with no meter.
+    async fn count<T: Send + 'static>(
+        &self,
+        me: &SessionUri,
+        count: impl FnOnce(&Meter, &str) -> T + Send + 'static,
+    ) -> Option<T> {
+        let meter = self.meter.clone()?;
+        let id = me.who().session()?.to_owned();
+        tokio::task::spawn_blocking(move || count(&meter, &id))
+            .await
+            .ok()
     }
 
     fn me(&self) -> SessionUri {
@@ -785,6 +841,7 @@ pub async fn serve(
     let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
         .with_earlier_work()
+        .with_meter(Meter::here())
         .as_worker(worker)
         .in_wrapper(crate::worker::wrapper());
     // Start even if the server is down: each tool call reports the error.

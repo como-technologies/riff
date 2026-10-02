@@ -117,6 +117,15 @@
 //!
 //! In the main worktree, the context has no such line.
 //!
+//! # The tokens of a claim
+//!
+//! Each hook gets the path of the transcript of the session. The start
+//! hook, the Stop hook and the end hook record it for the session
+//! (01M3Y1YP15C7AT2N70BWQP8PE2). A new start and the end of a session
+//! free each claim. So the start hook at a new start, and the end hook,
+//! start `riff hook usage`, detached: it ends each open claim in the
+//! marks of the session, and reports its tokens. See [`crate::usage`].
+//!
 //! ```
 //! use riff::hook::{Source, StartInput};
 //!
@@ -357,6 +366,9 @@ pub struct EndInput {
     /// `prompt_input_exit`.
     #[serde(default)]
     pub reason: String,
+    /// The transcript of the session ([`crate::usage`]).
+    #[serde(default)]
+    pub transcript_path: Option<PathBuf>,
 }
 
 impl EndInput {
@@ -450,6 +462,10 @@ pub struct StartInput {
     /// Why the session started.
     #[serde(default)]
     pub source: Source,
+    /// The transcript of the session. `/clear` starts a new one
+    /// ([`crate::usage`]).
+    #[serde(default)]
+    pub transcript_path: Option<PathBuf>,
 }
 
 /// The context that the start hook adds. `uri` is the session, when the
@@ -835,6 +851,7 @@ mod tests {
             let input = EndInput {
                 session_id: None,
                 reason: reason.into(),
+                transcript_path: None,
             };
             assert!(input.ends_the_session(), "{reason}");
         }

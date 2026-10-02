@@ -61,7 +61,7 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Pull requests",
-        commands: &["pr", "verify"],
+        commands: &["pr", "verify", "usage"],
     },
     Group {
         heading: "Lead",

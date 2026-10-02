@@ -16,6 +16,7 @@
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
+//! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
 //!
 //! `riff --help` lists the commands under headings (see [`help`]).
 //!
@@ -95,6 +96,7 @@ pub mod style;
 pub mod terminal;
 pub mod text;
 pub mod top;
+pub mod usage;
 pub mod view;
 pub mod worker;
 pub mod worker_mcp;

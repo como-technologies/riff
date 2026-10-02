@@ -11,7 +11,7 @@
 //! | Command | `gh` calls |
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
-//! | `riff pr wait N` | `pr view`, `pr checks --required`, again each `--every` seconds |
+//! | `riff pr wait N` | `pr view`, `pr checks --required`, again each `--every` seconds. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
 //! | `riff verify pass\|fail N` | `pr view`, `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
@@ -437,6 +437,17 @@ pub fn trailer_issue(body: &str) -> Option<u64> {
         .iter()
         .find(|(key, _)| key == "Issue")
         .and_then(|(_, value)| hygiene::issue_ref(value))
+}
+
+/// The issue of pull request `number`: the `Issue:` trailer of its body.
+pub fn issue_of(gh: &Gh, number: u64) -> Result<u64> {
+    #[derive(Deserialize)]
+    struct Body {
+        body: String,
+    }
+    let pr: Body = gh.json(&["pr", "view", &number.to_string(), "--json", "body"])?;
+    trailer_issue(&pr.body)
+        .with_context(|| format!("pull request #{number} has no trailer `Issue: #N`"))
 }
 
 /// The comment of a verify on the pull request: it names the commit.
