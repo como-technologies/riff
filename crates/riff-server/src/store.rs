@@ -7,7 +7,7 @@
 //! | Name | Holds |
 //! |---|---|
 //! | [`crate::log::LOG`] and the first position | One chunk of the log. See [`crate::log`]. |
-//! | [`SIGN_INS`] | The token store: the people, the sign-ins and their chains. See [`crate::token`]. |
+//! | [`SIGN_INS`] | The token store: the sign-ins and their chains. See [`crate::token`]. The people are in the log. |
 //! | [`LEASE`] | The ID of the instance that may serve (R137). |
 //!
 //! # Stores
@@ -38,10 +38,10 @@
 //! ```
 //! use riff_server::store::{Memory, SIGN_INS, StoreError};
 //!
-//! let error = StoreError::not_valid(&Memory::default(), SIGN_INS, "missing field `users`");
+//! let error = StoreError::not_valid(&Memory::default(), SIGN_INS, "missing field `sign_ins`");
 //! assert_eq!(
 //!     error.to_string(),
-//!     "cannot read the saved object signins.json: missing field `users`. \
+//!     "cannot read the saved object signins.json: missing field `sign_ins`. \
 //!      It can be state of an old format. To start again with an empty state, \
 //!      stop each server of this store and remove the old state."
 //! );

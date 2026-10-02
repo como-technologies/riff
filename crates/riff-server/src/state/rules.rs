@@ -14,12 +14,14 @@
 //! The tests do no I/O.
 
 use riff_core::record::{
-    By, Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet, Scope, SessionStarted,
-    SettingChanged,
+    By, Claimed, Forgotten, Member, PauseSet, Released, RiffMade, RiffStateSet, Scope,
+    SessionStarted, SettingChanged,
 };
 use riff_core::wire;
 
 use super::*;
+
+mod people;
 
 fn ann() -> SessionUri {
     "riff://ann@heron/acme/app?session=a1".parse().unwrap()
@@ -100,6 +102,18 @@ fn started(me: &SessionUri, reason: StartReason, worker: bool) -> Change {
         reason,
         worker,
     })
+}
+
+fn riff_made(riff_id: &str) -> Change {
+    Change::RiffMade(RiffMade {
+        riff_id: riff_id.into(),
+    })
+}
+
+fn make_riff(riff_id: &str) -> MakeRiff {
+    MakeRiff {
+        riff_id: riff_id.into(),
+    }
 }
 
 /// The pause of the whole riff is set or ended.
@@ -344,7 +358,23 @@ macro_rules! whole {
     };
 }
 
-whole!(Post, Announce, Forget, MakeRiff);
+whole!(
+    Post,
+    Announce,
+    Forget,
+    MakeRiff,
+    Admit,
+    GrantOwner,
+    EndOwner,
+    NameOwner,
+    wire::Invite,
+    wire::Remove,
+    wire::SetAdmin,
+    wire::PassOwner,
+    wire::TakeOwner,
+    wire::DenyOwner,
+    wire::Revoke
+);
 
 fn claim(item: &str) -> Claim {
     Claim {
@@ -432,10 +462,11 @@ impl Given {
     fn when_as<A: Ask>(self, caller: &Caller, ask: A) -> When {
         let now = self.now;
         let me = caller.me().clone();
-        let mut this = if caller.class() == Class::Server {
-            self
-        } else {
+        let known = matches!(caller.class(), Class::Person | Class::Session);
+        let mut this = if known && !A::Command::KIND.of_people() {
             self.live(std::slice::from_ref(&me))
+        } else {
+            self
         };
         let command = ask.of(&me);
         let check = this.state.check(caller, &command, now);
@@ -1234,9 +1265,25 @@ fn a_forgotten_session_loses_its_claims_and_its_lead() {
 fn make_riff_pauses_only_a_riff_with_no_record() {
     let server = crate::owner::server_uri();
     given(&[])
-        .when(&server, MakeRiff)
-        .then(&[riff_set(RiffState::Paused)]);
-    given(&team()).when(&server, MakeRiff).then(&[]);
+        .when(&server, make_riff("r1"))
+        .then(&[riff_made("r1"), riff_set(RiffState::Paused)]);
+    // A log from before the riff ID gets only the ID.
+    given(&team())
+        .when(&server, make_riff("r1"))
+        .then(&[riff_made("r1")]);
+}
+
+/// `make_riff` never replaces an ID that the riff has
+/// (01M3XA87HE06Z6M32ZJPSYSYRZ).
+#[test]
+fn make_riff_keeps_the_id_that_the_riff_has() {
+    let server = crate::owner::server_uri();
+    given(&[riff_made("r1"), riff_set(RiffState::Paused)])
+        .when(&server, make_riff("r2"))
+        .then(&[]);
+    // `apply` keeps the first ID too.
+    let state = given(&[riff_made("r1")]).apply(&[riff_made("r2")]);
+    assert_eq!(state.riff_id().as_deref(), Some("r1"));
 }
 
 /// Only the server sends a command of the server
@@ -1247,7 +1294,7 @@ fn a_session_cannot_send_a_command_of_the_server() {
         .when(&ann(), Forget)
         .then_refused_as(Code::NotAllowed, "a session cannot send the command forget");
     given(&team())
-        .when(&person(), MakeRiff)
+        .when(&person(), make_riff("r1"))
         .then_refused_as(Code::NotAllowed, "a person cannot send");
 }
 

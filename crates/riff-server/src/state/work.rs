@@ -16,13 +16,13 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
-use riff_core::record::{Change, Claimed, Member, Record, Released, Scope};
+use riff_core::record::{Change, Claimed, Member, Released, Scope};
 use riff_core::wire::{
     Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply,
 };
 use serde::{Deserialize, Serialize};
 
-use super::command::{Caller, Code, Command, CommandKind, Now, Refused};
+use super::command::{Caller, Code, Command, CommandKind, Done, Now, Refused};
 use super::view::View;
 
 /// The claims and the leads.
@@ -303,14 +303,7 @@ impl Command for Claim {
         Ok((changes, ()))
     }
 
-    fn reply(
-        &self,
-        caller: &Caller,
-        view: &View<'_>,
-        _: &[Record],
-        (): (),
-        now: Now,
-    ) -> ClaimReply {
+    fn reply(&self, caller: &Caller, view: &View<'_>, _: &Done, (): (), now: Now) -> ClaimReply {
         ClaimReply {
             holder: view.uri(caller.who(), now.at),
         }
@@ -359,8 +352,9 @@ impl Command for Release {
         }
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> ReleaseReply {
-        let must_clear = made
+    fn reply(&self, _: &Caller, _: &View<'_>, done: &Done, (): (), _: Now) -> ReleaseReply {
+        let must_clear = done
+            .made
             .iter()
             .any(|record| matches!(&record.change, Change::Released(r) if r.must_clear));
         ReleaseReply { must_clear }
@@ -449,8 +443,8 @@ impl Command for ReleaseFor {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) {
-        for record in made {
+    fn reply(&self, _: &Caller, _: &View<'_>, done: &Done, (): (), _: Now) {
+        for record in &done.made {
             if let Change::Posted(posted) = &record.change {
                 tracing::info!("{}", posted.message.body);
             }
@@ -495,7 +489,7 @@ impl Command for Lead {
         &self,
         caller: &Caller,
         view: &View<'_>,
-        _: &[Record],
+        _: &Done,
         old: Option<Who>,
         now: Now,
     ) -> LeadReply {

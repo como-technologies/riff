@@ -10,6 +10,7 @@
 //! | [`Threads`] | [`super::threads`] | The members and the kept messages of each thread. |
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
 //! | [`TheRiff`] | [`super::the_riff`] | The pauses, and the settings. |
+//! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role. |
 //!
 //! # Only `apply` changes the riff
 //!
@@ -42,9 +43,15 @@
 //! | `session_started` | It stores the worker mark. A record with the reason `process` or `clear` also stores its time, and ends MustClear. A record with the reason `other` changes nothing. | Yes. |
 //! | `released` | A record with `must_clear` sets the MustClear mark of its session. | Yes. |
 //! | `pause_set`, `riff_state_set` | It keeps the `by` and the time of the record with the pause: who set it, and when (01M3XAHZBGSSJB3YX23K88W01K). A `riff_state_set` record of an old log sets the pause of the whole riff. A scope that this build does not know changes nothing. | Yes. |
+//! | `riff_made` | A riff keeps its first ID: a second record changes nothing. `handle` makes the record only for a riff with no ID. | Yes. |
+//! | `person_joined` | The first email keeps a USER (R209): a record for a USER that another email holds changes nothing. `handle` refuses such a sign-in. | Yes. |
+//! | `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins (01M3XA87A9GGFA89RQXWSKY0V6). | Yes. |
+//! | `signins_ended` | It keeps the position of the record for the USER. | Yes. |
+//! | `owner_set` | It ends the request for the owner role that waits. A record with no email says that the owner is gone. | Yes. |
 
 use riff_core::record::{Change, Record, Scope};
 
+use super::people::People;
 use super::sessions::Sessions;
 use super::snapshot::LoadPath;
 use super::the_riff::TheRiff;
@@ -80,6 +87,7 @@ pub struct Riff {
     threads: Threads,
     work: Work,
     the_riff: TheRiff,
+    people: People,
     /// The position of the last record.
     position: u64,
 }
@@ -95,12 +103,14 @@ impl Riff {
         threads: Threads,
         work: Work,
         the_riff: TheRiff,
+        people: People,
     ) -> Riff {
         Riff {
             sessions,
             threads,
             work,
             the_riff,
+            people,
             position,
         }
     }
@@ -128,6 +138,11 @@ impl Riff {
     /// The pauses, and the settings.
     pub(super) fn the_riff(&self) -> &TheRiff {
         &self.the_riff
+    }
+
+    /// The people: who may join the riff, and with which role.
+    pub fn people(&self) -> &People {
+        &self.people
     }
 }
 
@@ -193,6 +208,15 @@ pub fn apply(riff: &mut Riff, record: &Record) {
                 Err("the session is not known")
             }
         }
+        Change::RiffMade(made) => riff.people.made(made),
+        Change::PersonJoined(joined) => riff.people.joined(joined),
+        Change::MemberInvited(invited) => riff.people.invited(invited),
+        Change::MemberRemoved(removed) => riff.people.removed(removed, record.position),
+        Change::AdminSet(set) => riff.people.admin_set(set),
+        Change::OwnerSet(set) => riff.people.owner_set(set),
+        Change::OwnerAsked(asked) => riff.people.owner_asked(asked),
+        Change::OwnerDenied(denied) => riff.people.owner_denied(denied),
+        Change::SigninsEnded(ended) => riff.people.signins_ended(ended, record.position),
     };
     if let Err(what) = taken {
         tracing::warn!(

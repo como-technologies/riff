@@ -1234,7 +1234,15 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
         }
         Some(Workers::Idle { per_host, after }) => {
             let here = identity::place(&identity::working_dir()?)?;
-            let me = identity::me(&here, server)?;
+            // Only a person changes the settings: a change goes as the
+            // person, also inside an agent session
+            // (01M3WRD959DYNZHDKP5ZT9Q1C7). A read goes as the caller.
+            let set = per_host.is_some() || after.is_some();
+            let me = if set {
+                identity::person(&Place::host_only(here.host())?, server)?
+            } else {
+                identity::me(&here, server)?
+            };
             let api = Api::new(server).signed_in(me.who().session())?;
             let idle = api.idle(&me, *per_host, *after).await?;
             println!("{}", text::idle_workers(&idle));

@@ -4,7 +4,7 @@
 mod common;
 
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
@@ -40,13 +40,12 @@ impl Caller {
     async fn new(service: &Service, base: &str, me: &str) -> Caller {
         let me: SessionUri = me.parse().unwrap();
         let key = Key::generate();
+        // The sign-in of a person, as the provider does it: the log
+        // knows the person, so the sign-in stays after a restart.
+        let email = format!("{}@comotechnologies.io", me.who().user());
         let person = service
-            .tokens()
-            .sign_in(
-                &format!("{}@comotechnologies.io", me.who().user()),
-                &key.thumbprint(),
-                Instant::now(),
-            )
+            .admit(&email, true, &key.thumbprint())
+            .await
             .unwrap();
         let caller = Caller {
             key,

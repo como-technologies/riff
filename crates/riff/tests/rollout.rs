@@ -632,7 +632,9 @@ async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
     lead.api.status(&host, &status(3)).await.unwrap();
     lead.reads("note: workers: limit 2 to 3 on b.").await;
 
-    lead.api.idle(&lead.me, Some(2), Some(300)).await.unwrap();
+    // Only a person changes the settings of idle workers.
+    let mike: SessionUri = "riff://mike@a".parse().unwrap();
+    lead.api.idle(&mike, Some(2), Some(300)).await.unwrap();
     lead.reads("note: workers: idle on the server: per host 1 to 2, after 60 to 300 seconds.")
         .await;
 

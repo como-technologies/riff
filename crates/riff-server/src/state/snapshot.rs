@@ -11,6 +11,7 @@
 //! | `work::Saved` | `claims`, `leads` |
 //! | `sessions::Saved` | `sessions` |
 //! | `presence::Saved` | `cursors` |
+//! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` |
 //!
 //! A group that adds a part to the state adds a field to its own
 //! `Saved`, with a default (01M3T4111PFM0C6KPREWFS9EQQ). This file does
@@ -22,7 +23,7 @@ use riff_core::name::{ThreadName, Who};
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
-use super::{presence, sessions, the_riff, threads, work};
+use super::{people, presence, sessions, the_riff, threads, work};
 
 /// The state that a checkpoint keeps: the state that the log gives up to
 /// [`Snapshot::position`], the read cursors, and the last call of each
@@ -42,6 +43,8 @@ pub struct Snapshot {
     sessions: sessions::Saved,
     #[serde(flatten)]
     presence: presence::Saved,
+    #[serde(flatten)]
+    people: people::Saved,
 }
 
 /// The proof that a call comes from the load of a checkpoint. Only this
@@ -65,6 +68,7 @@ impl Snapshot {
             work: riff.work().saved(),
             sessions: riff.sessions().saved(seen),
             presence: presence.saved(),
+            people: riff.people().saved(),
         }
     }
 
@@ -80,6 +84,7 @@ impl Snapshot {
             self.threads.restore(),
             self.work.restore(),
             self.the_riff.restore(),
+            self.people.restore(),
         );
         (riff, self.presence.restore(), seen)
     }

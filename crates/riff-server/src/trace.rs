@@ -39,7 +39,7 @@
 //! | `caller` | `refused`, `no_change`, `failed` | The caller, as `by` in a record: `{"session":"mike/84cf"}`. |
 //! | `key` | `refused`, `no_change`, `failed` | The thumbprint of the device key of the token. It is not a secret. A call with no token has none. |
 //! | `command` | `refused`, `no_change`, `failed` | The kind of the command. |
-//! | `code`, `reason` | `refused` | The code of the refusal ([`Code`](crate::state::Code)) and its reason as text. |
+//! | `code`, `reason` | `refused` | The code of the refusal ([`Code`](crate::state::Code)) and its reason as text. The line of a command of the people has no `reason`. |
 //! | `reason` | `failed` with `WARNING` | Why the server stopped. |
 //! | `named` | `denied` | The caller that the call named: the `me` of the body, or the `uri` of the query. |
 //! | `proved` | `denied` | `false`: no token proved the name. |
@@ -52,6 +52,11 @@
 //! - A line never holds the body of a post, a token or a key
 //!   (01M3X4Z675D0ZQX93E93F3M8FA). The reason of a refusal names items, threads and
 //!   sessions only.
+//! - A line never holds an email (01M3XA87CJHCGZX283ZQAFKARZ). The
+//!   people are personal data: an email is in a record, and in a reply
+//!   to a member. So the line of a refused command of the people has
+//!   its code and no reason, and the line of a sign-in names its USER:
+//!   `{"sign_in":"mike"}`.
 //! - A command with records gets no line. A signal and a query that the
 //!   token layer accepts get no line.
 //! - The lines are best effort: a stop between the result and the line
@@ -124,16 +129,22 @@ impl Traced {
         let key = self.key.as_deref();
         let command = self.command.as_str();
         match outcome {
-            Outcome::Refused(refused) => tracing::info!(
-                target: TARGET,
-                caller,
-                key,
-                command,
-                result = "refused",
-                code = refused.code.as_str(),
-                reason = refused.reason.as_str(),
-                "refused"
-            ),
+            Outcome::Refused(refused) => {
+                // The reason of a command of the people can name an
+                // email: its line has only the code
+                // (01M3XA87CJHCGZX283ZQAFKARZ).
+                let reason = (!self.command.of_people()).then_some(refused.reason.as_str());
+                tracing::info!(
+                    target: TARGET,
+                    caller,
+                    key,
+                    command,
+                    result = "refused",
+                    code = refused.code.as_str(),
+                    reason,
+                    "refused"
+                );
+            }
             Outcome::NoChange => tracing::info!(
                 target: TARGET,
                 caller,

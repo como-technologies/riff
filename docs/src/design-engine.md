@@ -85,10 +85,11 @@ flowchart TD
   role, end the role of an owner who is gone, post a note of the
   server, name the owner of the settings. The engine has one function
   for each command of the server: `Engine::make_riff`,
-  `Engine::announce` and `Engine::forget` are built. The function
-  makes the `Authenticated` value inside the engine module. E3 adds
-  the command `admit` of the token path, with the proof of the
-  sign-in.
+  `Engine::announce`, `Engine::forget`, `Engine::name_owner`,
+  `Engine::grant_owner` and `Engine::end_owner`. The function makes
+  the `Authenticated` value inside the engine module.
+  `Engine::sign_in` sends the command `admit` of the token path, with
+  the proof of the sign-in (01M3XA877YZQ649SWB5TN60V5P).
 - `Engine::make_riff` goes through the same stages as
   `Engine::dispatch` (`Engine::send`: the check and the entry), and
   does not wait for the write: the build of a service is not async.
@@ -98,9 +99,12 @@ flowchart TD
   session, so they register nothing and they count as no call. Each
   one changes only the presence, under the lock of the engine.
 - The first start of a riff sends the command `make_riff` of the
-  server. It makes the `riff_made` record, and a `pause_set` record
-  that pauses the riff. Until E3 and E5, it makes one `riff_state_set`
-  record that pauses the riff.
+  server, with the ID of the riff. It makes the `riff_made` record,
+  and a `pause_set` record that pauses the riff. `make_riff` never
+  replaces an
+  ID that the riff has (01M3XA87HE06Z6M32ZJPSYSYRZ): in a log with
+  records and no ID, it makes only `riff_made`. The import of go-live
+  gives the ID of the riff of today.
 - A call from a session that the state does not know first runs the
   command `register` for that session, also when the call is a query
   or a signal. It is a command of its own, with an entry of its own:
@@ -130,13 +134,21 @@ flowchart TD
 - The token layer makes the caller, with its class. `Engine::check`
   adds the worker mark and the role (member, admin or owner) under the
   lock, before `permits`. A session that the state does not know is
-  not a worker. Until E3, the role comes from the token store.
+  not a worker.
+- The role of a command comes from the people of the pending copy,
+  with the admins of the settings (01M3XA87F70CD3WH4STADSCW6S). The
+  queue is in order. So a command that comes after `admin_set` in the
+  queue gets the new role, and the log never shows a change by a
+  person who had no role for it. A query reads the people of the
+  written copy.
 - A build reads a class of caller that it does not know as `other`.
 - A riff with no sign-in trusts its network. The caller is then the
-  `me` of the body, with the role of an admin. Such a riff refuses each
-  command of the group "people". A call whose body names no `me` needs
-  a token: the caller is then the caller of the token. So a riff with
-  no sign-in takes no such call (01M3WRD9G5GAF65EX8P6D5DMQM).
+  `me` of the body, with the role of an admin. Such a riff has no
+  people: `Engine::check` refuses each command of the group "people"
+  there, before `permits`, with the code `no_sign_in`. The refused
+  command has its entry in the queue, as each refused command. A call
+  whose body names no `me` needs a token: the caller is then the
+  caller of the token (01M3WRD9G5GAF65EX8P6D5DMQM).
 - The role of a caller with no token comes from the trust of the riff
   (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in, else
   a member.
@@ -207,12 +219,14 @@ of the caller.
 | `admit` | a sign-in | |
 
 The engine registers the first call of a person too, so `register`
-has the class of a person. One row of the code differs from this
-table until a later item:
+has the class of a person.
 
-- Until E3: a session can send `set_idle` too, with the role of an
-  admin. The commands of the people are not commands yet: they change
-  only the token store.
+`Command::needs` gets the caller, only to know if the command names
+the caller: a `revoke` with no name, or with the name of the caller,
+ends the own sign-ins. A command that needs the owner in a riff with
+no owner gets the text "the riff has no owner; an admin takes the
+owner role with: riff owner --take". `permits` reads only the caller,
+so `State::check` puts that text in its refusal.
 
 ```rust,ignore
 {{#include ../../crates/riff-server/src/state/command.rs:permits}}
@@ -269,16 +283,67 @@ fails, and the worker asks in its own terminal.
   the chain. `admit` makes no record for a person that the state
   knows.
 - A `remove` and a `revoke` end sign-ins. The end of the sign-ins is an
-  effect after the write. Each sign-in keeps the position of the log at
-  its start. When a load finds a sign-in whose position is less than
-  the position of the last `member_removed` or `signins_ended` record
-  of its user, it drops the sign-in. So a stop between the write and
-  the effect lets no removed person in.
+  effect after the write: the writer does it, and its word to the call
+  has the number of sign-ins that ended, for the reply
+  (01M3XA87A9GGFA89RQXWSKY0V6).
+- Each sign-in keeps the position of the log at its start: the
+  position of the pending copy at the check of its `admit`. The effect
+  ends each sign-in of the person from before the position of the
+  record. In the same step, under the lock of the token store, the
+  store keeps that position for the person, and it starts no sign-in
+  of the person below it. So a sign-in that is in flight when a
+  `remove` comes does not stay, at each point of the removal.
+- When a load finds a sign-in whose position is less than the position
+  of the last `member_removed` or `signins_ended` record of its user,
+  it drops the sign-in. So a stop between the write and the effect
+  lets no removed person in.
+- A load also drops each sign-in that the log does not hold
+  (01M3XGNZYD1E35DXYTHHJT1CR7): its position is after the position of
+  the log, or the people do not know its user. A log that went back to
+  an earlier position gives such sign-ins, for example after
+  `log cut`. The person signs in again.
+- The token layer gives the engine the position of the sign-in of each
+  token. `Engine::check` refuses each command of a caller whose
+  sign-in started before the last end of the sign-ins of its user in
+  the pending copy, before `permits`
+  (01M3XGP03RDF6S15JYS718WWFC). So between the entry of a removal in
+  the queue and the effect, the removed person changes nothing, also
+  not through a session.
+- `admit` checks first if the person may join, and then the USER of
+  the email (01M3XGP011KGXDP9D1FNMT374F). A person who may not join
+  gets `not_member`.
+
+```mermaid
+sequenceDiagram
+    participant P as sign-in of bob
+    participant E as engine
+    participant W as writer
+    participant T as token store
+    P->>E: admit: checked at the position 7
+    Note over E: an admin sends remove (bob)
+    E->>W: member_removed at the position 8
+    W->>T: end (bob, 8): the position of bob is 8
+    P->>T: start (bob, 7)
+    T-->>P: refused: 7 is before 8
+```
+
 - The setting `--owner` is the command `name_owner` of the server. It
   runs one time after the load, and makes an `owner_set` record when
-  the riff has no owner and had none. The admins of the settings are
-  not in the log: `View` holds them, and the token layer adds them to
-  the role of the caller.
+  the riff has no owner and had none. The server sends it only in a
+  riff with sign-in.
+- The settings that `handle` and `reply` read are not in the log: the
+  admins of the settings, the public address (the reply to an invite
+  names it) and the times of the owner role. `View` holds them. The
+  admins of the settings add to the role of the caller.
+- "The old owner stays an admin" is a decision, so `handle` makes it
+  (01M3XA87KQ6ESMQ4W1W1PTW766): `member_invited` and `admin_set` for
+  the old owner come before `owner_set`, in the same chunk. `apply` of
+  `owner_set` stores only the owner. `set_admin` for a person who is
+  not a member gives `member_invited`, then `admin_set`.
+- `take_owner`, `deny_owner`, `grant_owner` and `end_owner` put their
+  notes in their chunk as `posted` records. `pass_owner` posts no note
+  of the server: `riff` posts it. The warning to the owner is an
+  `announce`: it is no change of the people.
 
 ## The trace of a command
 
@@ -341,8 +406,8 @@ line has the format of each other log line (`severity`, `time`,
   who is not a member), `bad_request` (the fields of the call do not
   agree, for example the signed fields of a post). A release can add a
   code. A reader takes a code that it does not know as text. The enum
-  `Code` has each code of this list. `no_sign_in` and `not_member` get
-  their first use in E3, and `must_clear` in E4. The reply to a
+  `Code` has each code of this list. `must_clear` gets its first use
+  in E4. The reply to a
   refused command has the code in the header `riff-refused`, and the
   reason as its text (01M3WRD9JBQMNN96TXJH8EAJ3W).
 - The HTTP status of a refused command comes from its code
@@ -380,6 +445,12 @@ line has the format of each other log line (`severity`, `time`,
 - A line never holds the body of a post, a token or a key
   (01M3X4Z675D0ZQX93E93F3M8FA). A test runs each command with a marked
   body and a marked token, and finds no mark in the lines.
+- A line never holds an email (01M3XA87CJHCGZX283ZQAFKARZ): the people
+  are personal data. An email is in a record, and in a reply to a
+  member. The reason of a refused command of the people can name an
+  email, so its line has the code and no reason. The line of a sign-in
+  names its USER: `{"sign_in":"mike"}`. A test runs each command of the
+  people with a marked email, and finds no mark in the lines.
 - A command with records gets no line. A signal and a query that the
   token layer accepts get no line. The request log of Cloud Run holds
   each call with its path and its status.
@@ -706,6 +777,10 @@ The three rules of the store design stay. These rules come with them:
 | `released` | A record of a session that does not hold the item changes nothing. `handle` refuses such a release, so the engine does not write this record. | Yes. |
 | `lead_set` | The session of the record replaces the old lead of its user in the thread. | Yes. |
 | `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check. A `posted` record adds the hash of its payload, and removes the hash of the message that goes at 200. A `session_forgotten` record removes the hashes of each direct thread that goes. | Yes. |
+| `riff_made` | A riff keeps its first ID: a second record changes nothing. | Yes. |
+| `person_joined` | The first email keeps a USER: a record for a USER that another email holds changes nothing. | Yes. |
+| `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins. | Yes. |
+| `owner_set` | It ends the request for the owner role that waits. | Yes. |
 
 ### The checkpoint
 
@@ -847,6 +922,12 @@ E5 is built: the type `Pauses` in
 E2 is built: the cause in each record (`riff_core::record::By`), the
 lines of the module `crates/riff-server/src/trace.rs`, and the proof
 of a write (`log::Written`).
+
+E3 is built: the people of the module
+`crates/riff-server/src/state/people.rs`, with their 9 kinds and their
+11 commands. `crates/riff-server/src/token.rs` holds only the sign-ins.
+A `signins.json` from before E3 reads, and its people are lost: `main`
+was never deployed.
 
 E4 is built: the life cycle is in the part `Sessions` of the riff
 (`crates/riff-server/src/state/sessions.rs`), with its checkpoint

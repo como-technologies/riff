@@ -228,10 +228,7 @@ async fn a_server_starts_with_no_old_sign_in_at_its_url() {
 async fn login_says_that_another_account_holds_the_user() {
     let (service, api) = start().await;
     // Another email signed in as `ada` first.
-    service
-        .tokens()
-        .sign_in("ada@other.test", "k", Instant::now())
-        .unwrap();
+    service.admit("ada@other.test", false, "k").await.unwrap();
     let error = login::login(&api, browser).await.unwrap_err();
     assert!(
         error
@@ -315,12 +312,13 @@ async fn a_new_riff_at_the_same_url_asks_for_riff_login() {
     let old = Service::new(front.config());
     front.serve(&old);
     let sign_in = login::login(&api, browser).await.unwrap();
-    assert_eq!(sign_in.riff_id.as_deref(), Some(old.tokens().riff_id()));
+    assert!(sign_in.riff_id.is_some());
+    assert_eq!(sign_in.riff_id, old.riff_id());
     let person = api.clone().signed_in(None).unwrap();
     person.who(&ada(), false).await.unwrap();
 
     let new = Service::new(front.config());
-    assert_ne!(new.tokens().riff_id(), old.tokens().riff_id());
+    assert_ne!(new.riff_id(), old.riff_id());
     front.serve(&new);
     let person = api.clone().signed_in(None).unwrap();
     let error = person.who(&ada(), false).await.unwrap_err();
@@ -343,7 +341,8 @@ async fn ensure_signs_in_again_at_a_new_riff() {
     let new = Service::new(front.config());
     front.serve(&new);
     let again = login::ensure(&api, browser).await.unwrap().unwrap();
-    assert_eq!(again.riff_id.as_deref(), Some(new.tokens().riff_id()));
+    assert!(again.riff_id.is_some());
+    assert_eq!(again.riff_id, new.riff_id());
 }
 
 /// A restart on the same store keeps the riff ID, and the sign-in stays.
@@ -361,7 +360,8 @@ async fn a_restart_on_the_same_store_keeps_the_sign_in() {
     let new = Service::load(front.config(), Arc::new(store))
         .await
         .unwrap();
-    assert_eq!(new.tokens().riff_id(), old.tokens().riff_id());
+    assert!(new.riff_id().is_some());
+    assert_eq!(new.riff_id(), old.riff_id());
     front.serve(&new);
     let person = api.clone().signed_in(None).unwrap();
     person.who(&ada(), false).await.unwrap();

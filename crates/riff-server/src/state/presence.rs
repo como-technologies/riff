@@ -240,7 +240,16 @@ impl Presence {
             | Change::LeftThread(_)
             | Change::LeadSet(_)
             | Change::SessionStarted(_)
-            | Change::SettingChanged(_) => {}
+            | Change::SettingChanged(_)
+            | Change::RiffMade(_)
+            | Change::PersonJoined(_)
+            | Change::MemberInvited(_)
+            | Change::MemberRemoved(_)
+            | Change::AdminSet(_)
+            | Change::OwnerSet(_)
+            | Change::OwnerAsked(_)
+            | Change::OwnerDenied(_)
+            | Change::SigninsEnded(_) => {}
         }
     }
 

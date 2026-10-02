@@ -30,7 +30,7 @@
 //! Workspace domain of the account, is one of
 //! [`Provider::allowed_domains`] (R15, R94). An account with no `hd` is
 //! not in an allowed domain. The members decide the rest: see
-//! [`crate::token::Tokens::admit`].
+//! [`crate::state::Admit`].
 //!
 //! At start, the server checks its client with the provider (R146, see
 //! [`Provider::check_client`]).
@@ -40,7 +40,7 @@
 //! the same USER, for example `o'brien@x.io` and `o-brien@x.io`. The
 //! first email that signs in with a USER holds it, and the server
 //! refuses each other email that gives it (R209, see
-//! [`crate::token::Tokens::sign_in`]).
+//! [`crate::state::Admit`]).
 //!
 //! The server fetches the discovery document and the JWKS at each
 //! sign-in. A person signs in about once a month, so there is no
@@ -123,6 +123,28 @@ impl fmt::Display for SignInError {
 }
 
 impl std::error::Error for SignInError {}
+
+impl SignInError {
+    /// The error for a log line (01M3XA87CJHCGZX283ZQAFKARZ). The
+    /// reason of an ID token that is not valid can name a part of an
+    /// email, so the line has only the kind of the error.
+    ///
+    /// ```
+    /// use riff_server::oidc::{SignInError, user_of};
+    ///
+    /// let error = user_of("mark.example").unwrap_err();
+    /// assert!(error.to_string().contains("mark.example"));
+    /// assert_eq!(error.for_log(), "the ID token is not valid");
+    /// let provider = SignInError::Provider("https://x/jwks: timeout".into());
+    /// assert!(provider.for_log().ends_with("timeout"));
+    /// ```
+    pub fn for_log(&self) -> String {
+        match self {
+            SignInError::Invalid(_) => "the ID token is not valid".to_owned(),
+            other => other.to_string(),
+        }
+    }
+}
 
 /// The code that [`Provider::check_client`] sends. No provider issued it.
 pub const CHECK_CODE: &str = "riff-client-check";
@@ -238,7 +260,7 @@ impl Provider {
 /// The USER of `email`: the part before the `@`, in lower case, with
 /// each character that a URI part cannot hold replaced by `-` (R208).
 /// Two emails can give the same USER. Only
-/// [`crate::token::Tokens::sign_in`] tells which email holds it (R209).
+/// [`crate::state::Admit`] tells which email holds it (R209).
 pub fn user_of(email: &str) -> Result<String, SignInError> {
     let local = email
         .rsplit_once('@')

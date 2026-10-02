@@ -121,6 +121,26 @@ pub enum Change {
     /// A pause is set or ended: the pause of the whole riff, or the
     /// pause of one repository (01M3XAHZG26ECNARX35JD73YXJ).
     PauseSet(PauseSet),
+    /// The riff has its ID. It is the first record of a new log.
+    RiffMade(RiffMade),
+    /// An email signed in for the first time, and holds its USER.
+    PersonJoined(PersonJoined),
+    /// An email is a member of the riff.
+    MemberInvited(Email),
+    /// An email is no member of the riff. Each sign-in of its USER from
+    /// before this record is ended.
+    MemberRemoved(Email),
+    /// An email is an admin that the owner made, or it is not.
+    AdminSet(AdminSet),
+    /// An email is the owner. With no email, the owner is gone, and the
+    /// riff has no owner. The request for the owner role ends.
+    OwnerSet(OwnerSet),
+    /// An admin asks for the owner role.
+    OwnerAsked(OwnerAsked),
+    /// The owner keeps the owner role that an admin asked for.
+    OwnerDenied(Email),
+    /// Each sign-in of a USER from before this record is ended.
+    SigninsEnded(SigninsEnded),
 }
 // ANCHOR_END: record
 
@@ -273,6 +293,15 @@ impl Change {
         "session_forgotten",
         "session_started",
         "pause_set",
+        "riff_made",
+        "person_joined",
+        "member_invited",
+        "member_removed",
+        "admin_set",
+        "owner_set",
+        "owner_asked",
+        "owner_denied",
+        "signins_ended",
     ];
 }
 
@@ -512,6 +541,67 @@ pub struct Forgotten {
     pub session: SessionUri,
 }
 
+/// The ID of a riff (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RiffMade {
+    pub riff_id: String,
+}
+
+/// The first sign-in of a person: the verified email holds the USER
+/// (R209).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonJoined {
+    pub user: String,
+    /// The verified email, in lower case.
+    pub email: String,
+}
+
+/// A person, by the verified email in lower case. A record of the
+/// people names a person by the email: the state finds the USER.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Email {
+    pub email: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminSet {
+    pub email: String,
+    /// True: the person is an admin. False: the person is a member
+    /// again.
+    pub admin: bool,
+}
+
+/// The owner of the riff.
+///
+/// ```
+/// use riff_core::record::OwnerSet;
+///
+/// let gone = OwnerSet { email: None };
+/// assert_eq!(serde_json::to_string(&gone).unwrap(), "{}");
+/// assert_eq!(serde_json::from_str::<OwnerSet>("{}").unwrap(), gone);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerSet {
+    /// The email of the owner. `None`: the owner is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
+/// A request for the owner role.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerAsked {
+    /// The email of the admin that asks.
+    pub email: String,
+    /// With no answer before this time, the admin is the owner. In
+    /// milliseconds since the Unix epoch.
+    pub due_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SigninsEnded {
+    pub user: String,
+}
+
 /// One line of the log, as this build reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
@@ -599,6 +689,9 @@ mod tests {
             thread: thread(),
             item: "issue-7".into(),
         };
+        let email = Email {
+            email: "ann@acme.io".into(),
+        };
         vec![
             Change::Posted(Box::new(Posted {
                 thread: thread(),
@@ -638,6 +731,26 @@ mod tests {
                 scope: Scope::Repository(thread()),
                 state: RiffState::Paused,
             }),
+            Change::RiffMade(RiffMade {
+                riff_id: "r1".into(),
+            }),
+            Change::PersonJoined(PersonJoined {
+                user: "ann".into(),
+                email: email.email.clone(),
+            }),
+            Change::MemberInvited(email.clone()),
+            Change::MemberRemoved(email.clone()),
+            Change::AdminSet(AdminSet {
+                email: email.email.clone(),
+                admin: true,
+            }),
+            Change::OwnerSet(OwnerSet { email: None }),
+            Change::OwnerAsked(OwnerAsked {
+                email: email.email.clone(),
+                due_ms: 9,
+            }),
+            Change::OwnerDenied(email),
+            Change::SigninsEnded(SigninsEnded { user: "ann".into() }),
         ]
     }
 

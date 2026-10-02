@@ -97,10 +97,24 @@ pub async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
 /// As [`start_on`], with `save_every` between two writes of the token
 /// store.
 pub async fn start_on_every(store: Arc<dyn Store>, save_every: Duration) -> (Service, String) {
+    start_on_with(store, save_every, false).await
+}
+
+/// As [`start_on`], for a riff with sign-in: each call needs a token.
+pub async fn start_signed_on(store: Arc<dyn Store>) -> (Service, String) {
+    start_on_with(store, SAVE_EVERY, true).await
+}
+
+async fn start_on_with(
+    store: Arc<dyn Store>,
+    save_every: Duration,
+    require_sign_in: bool,
+) -> (Service, String) {
     client();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
+        require_sign_in,
         lease: LEASE,
         save_every,
         ..Config::new(&url)

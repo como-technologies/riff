@@ -256,15 +256,12 @@ async fn a_person_who_is_not_a_member_cannot_read_or_post_the_chat() {
 
     // The first sign-in makes the owner. Then an email that is not a
     // member gets no sign-in.
-    service
-        .tokens()
-        .admit("ada@gmail.com", false, &[], "jkt", Instant::now())
-        .unwrap();
+    service.admit("ada@gmail.com", false, "jkt").await.unwrap();
     let error = service
-        .tokens()
-        .admit("eve@evil.example", false, &[], "jkt", Instant::now())
+        .admit("eve@evil.example", false, "jkt")
+        .await
         .unwrap_err();
-    assert!(error.to_string().contains("not a member"), "{error}");
+    assert!(error.contains("not a member"), "{error}");
 
     // With no sign-in, the chat refuses each call.
     let eve: SessionUri = "riff://eve@evil".parse().unwrap();

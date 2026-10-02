@@ -25,7 +25,7 @@ use riff_core::wire::{self, Join, Kind, Leave, Message, Post, Wake};
 use serde::{Deserialize, Serialize};
 
 use super::KEEP_MESSAGES;
-use super::command::{Caller, Command, CommandKind, Now, Refused};
+use super::command::{Caller, Command, CommandKind, Done, Now, Refused};
 use super::sessions::Sessions;
 use super::view::View;
 
@@ -413,7 +413,7 @@ impl Command for Join {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 }
 
 /// Removes a session from a thread. It is no longer the lead there.
@@ -442,7 +442,7 @@ impl Command for Leave {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 }
 
 /// A post of a session. Its `at_ms` is the time of the message. The
@@ -518,11 +518,11 @@ impl Command for Post {
         &self,
         _: &Caller,
         view: &View<'_>,
-        made: &[Record],
+        done: &Done,
         unmatched: Vec<Selector>,
         now: Now,
     ) -> wire::Posted {
-        let posted = message_of(made).expect("the records of a post end with the message");
+        let posted = message_of(&done.made).expect("the records of a post end with the message");
         wire::Posted {
             thread: posted.thread.clone(),
             seq: posted.message.seq,
@@ -578,8 +578,8 @@ impl Command for Announce {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> Vec<Who> {
-        message_of(made)
+    fn reply(&self, _: &Caller, _: &View<'_>, done: &Done, (): (), _: Now) -> Vec<Who> {
+        message_of(&done.made)
             .map(|posted| posted.woken.iter().cloned().collect())
             .unwrap_or_default()
     }

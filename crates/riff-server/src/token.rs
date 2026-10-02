@@ -9,11 +9,14 @@
 //!    └─ session access tokens  each for one session, with no chain
 //! ```
 //!
-//! A sign-in holds the user and the thumbprint of the device key (R18).
-//! A person signs in with a verified email. The USER comes from the
-//! email (R208), and the store keeps the email of each USER: the first
-//! email that signs in with a USER holds it (R209, see
-//! [`Tokens::sign_in`]).
+//! A sign-in holds the user, the thumbprint of the device key (R18),
+//! and the position of the log at its start
+//! (01M3XA87A9GGFA89RQXWSKY0V6). A person signs in with a verified
+//! email. The USER comes from the email (R208). The people are not in
+//! this store: who may sign in, the email of each USER (R209) and the
+//! roles are state of the log (see [`crate::state::people`]). The
+//! command `admit` decides, and then [`Tokens::start`] makes the
+//! sign-in.
 //!
 //! An access token is a *person* token or a *session* token (R19).
 //! `riff login` gets a person pair: an access token and a refresh
@@ -85,9 +88,29 @@
 //!   [`REFRESH_IDLE`].
 //! - Only a person access token gives a session token (R105). A new
 //!   session token ends no other token.
-//! - [`Tokens::revoke_user`] ends each sign-in of one person at once
-//!   (R20). This ends the session tokens too. It leaves the USER of the
-//!   person: only that email signs in as that USER again.
+//! - [`Tokens::end`] ends each sign-in of one person that started
+//!   before a position of the log (R20). This ends the session tokens
+//!   too. It is the effect of a `member_removed` or a `signins_ended`
+//!   record. The store keeps that position for the USER, and
+//!   [`Tokens::start`] refuses a sign-in that started before it. The
+//!   two are one step, under the lock of the store: no sign-in of the
+//!   person starts between them. [`Tokens::drop_ended`] does the same
+//!   at a load, so a stop between the write of the record and the
+//!   effect lets no removed person in.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant P as sign-in of bob
+//!     participant E as engine
+//!     participant W as writer
+//!     participant T as token store
+//!     P->>E: admit: checked at the position 7
+//!     Note over E: an admin sends remove (bob)
+//!     E->>W: member_removed at the position 8
+//!     W->>T: end (bob, 8): the position of bob is 8
+//!     P->>T: start (bob, 7)
+//!     T-->>P: refused: 7 is before 8
+//! ```
 //! - A token that the server does not know is refused. A refresh token
 //!   with a wrong secret is not known, and changes nothing.
 //!
@@ -108,77 +131,13 @@
 //!
 //! The store does no I/O and reads no clock. The caller passes `now`.
 //!
-//! # Riff ID
-//!
-//! Each store has a riff ID: random, made with the store
-//! (01M3JNVBPMZ1K9WX7Q7DP6Y0DH). It is in the saved form, so a restart
-//! on the same store keeps it. A new store is a new riff with a new ID.
-//! `riff` keeps the ID with its sign-in, and so finds a sign-in of a
-//! riff that is gone.
-//!
-//! ```
-//! use std::time::{Instant, SystemTime};
-//! use riff_server::token::Tokens;
-//!
-//! let (now, wall) = (Instant::now(), SystemTime::now());
-//! let tokens = Tokens::default();
-//! assert_ne!(tokens.riff_id(), Tokens::default().riff_id());
-//! let loaded = Tokens::from_bytes(&tokens.to_bytes(now, wall), now, wall).unwrap();
-//! assert_eq!(loaded.riff_id(), tokens.riff_id());
-//! ```
-//!
-//! # Owner and members
-//!
-//! The store also keeps who may join the riff, by verified email in
-//! lower case. [`Tokens::admit`] is the sign-in of a person from the
-//! provider. It lets a person in when one of these is true:
-//!
-//! - The person is the owner, a member or an admin.
-//! - The account is in an allowed domain (R15).
-//! - The riff is new, with no owner and no admin: the person becomes
-//!   the owner. A riff whose owner was gone is not new.
-//!
-//! The first person that [`Tokens::admit`] lets in is the owner
-//! (01M3JN3AD44CC98AGMVP43F56G). On a riff with admins, only an admin
-//! becomes the owner. The owner is an admin. An admin adds a member
-//! with [`Tokens::invite`] and removes one with [`Tokens::remove`]. A
-//! removal ends each sign-in of that person (R20). The owner makes a
-//! person an admin with [`Tokens::add_admin`], and a member again with
-//! [`Tokens::remove_admin`]. The store keeps these admins; the admins
-//! of the settings (R210) add to them. An admin that the owner made
-//! is removed only after the owner takes the role back. The owner
-//! passes the owner role to a member or an admin with
-//! [`Tokens::pass_owner`]; the old owner stays an admin. A riff has one
-//! owner at a time.
-//!
-//! An admin asks for the owner role with [`Tokens::take_owner`]. The
-//! request waits for the owner: [`Tokens::pass_owner`] and
-//! [`Tokens::deny_owner`] answer it, and [`Tokens::owner_due`] grants it
-//! when its time ends. [`Tokens::owner_gone`] ends the role of an owner
-//! who is gone. The riff then has no owner: a sign-in and
-//! [`Tokens::name_owner`] make none, and the next request makes its
-//! admin the owner at once. [`crate::owner`] has the times and the
-//! checks of the owner.
-//!
-//! ```mermaid
-//! flowchart TD
-//!     A[verified email] --> O{owner, member or admin?}
-//!     O -- yes --> IN[sign in]
-//!     O -- no --> D{allowed domain?}
-//!     D -- yes --> IN
-//!     D -- no --> N{no owner and no admin?}
-//!     N -- yes --> IN
-//!     N -- no --> R[refuse: ask the owner for an invite]
-//!     IN --> F{no owner yet, and an admin or no admins?}
-//!     F -- yes --> OW[the person is the owner]
-//! ```
-//!
 //! # Saved form
 //!
 //! [`Tokens::to_bytes`] gives the store as JSON, and [`Tokens::from_bytes`]
-//! loads it again (R124). The JSON holds the people, the sign-ins and
-//! the chains, with only the hashes of the refresh tokens (R81). It holds
-//! no access token (01M3TFG551C76BP4TRA32P7VC3). Each time in it is a
+//! loads it again (R124). The JSON holds only the sign-ins and the
+//! chains, with only the hashes of the refresh tokens (R81). It holds
+//! no access token (01M3TFG551C76BP4TRA32P7VC3), and no person: the
+//! people are in the log. Each time in it is a
 //! wall-clock time, so the time that the server was down counts. The
 //! store keeps each time as a deadline in the future, so a new process
 //! can always hold it.
@@ -250,7 +209,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use riff_core::name::Who;
-use riff_core::wire::{PersonRole, RiffOwner, TokenReply};
+use riff_core::wire::TokenReply;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -265,11 +224,6 @@ pub const REFRESH_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// The USER of the riff server itself. The server posts its own notes as
 /// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
 pub const SERVER_USER: &str = "riff";
-
-/// The refusal of an action of the owner on a riff with no owner
-/// (01M3Q63NNC6SC03BFCG80M7B4D).
-pub const NO_OWNER: &str =
-    "the riff has no owner; an admin takes the owner role with: riff owner --take";
 
 /// Why the server refuses a token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -305,24 +259,19 @@ impl std::error::Error for Refused {}
 pub enum NoSignIn {
     /// The email gives no valid USER (R208).
     Email(String),
-    /// Another email holds the USER (R209). It names the USER.
-    Taken(String),
-    /// The person may not join the riff. It names the email.
-    NotMember(String),
+    /// The sign-ins of the USER ended after the start of this sign-in:
+    /// a removal or a revoke came while the person signed in
+    /// (01M3XA87A9GGFA89RQXWSKY0V6).
+    Ended,
 }
 
 impl fmt::Display for NoSignIn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             NoSignIn::Email(why) => f.write_str(why),
-            NoSignIn::Taken(user) => write!(
-                f,
-                "the user {user} belongs to another account; ask an admin"
-            ),
-            NoSignIn::NotMember(email) => write!(
-                f,
-                "{email} is not a member of this riff; ask its owner to run: riff invite {email}"
-            ),
+            NoSignIn::Ended => {
+                f.write_str("each sign-in of this person ended a moment ago; sign in again")
+            }
         }
     }
 }
@@ -340,72 +289,19 @@ pub struct Tokens {
     /// The chains of refresh tokens, by chain ID.
     chains: HashMap<String, Chain>,
     next_sign_in: u64,
-    /// The verified email of each USER, in lower case (R209).
-    users: BTreeMap<String, String>,
-    /// The email of the owner, in lower case.
-    owner: Option<String>,
-    /// The email of each member, in lower case.
-    members: BTreeSet<String>,
-    /// The email of each admin that the owner made, in lower case.
-    admins: BTreeSet<String>,
-    /// True when the owner was gone and no admin took the role yet
-    /// (01M3Q63NNC6SC03BFCG80M7B4D). A sign-in then makes no owner.
-    no_owner: bool,
-    /// The request for the owner role that waits for the owner
-    /// (01M3N7K3ZAZFGABN7032AYJWEM).
-    take: Option<Take>,
-    riff_id: RiffId,
-}
-
-/// A request for the owner role that waits for the answer of the owner.
-#[derive(Clone, Debug)]
-struct Take {
-    /// The email of the admin that asked, in lower case.
-    admin: String,
-    /// With no answer before this time, the admin is the owner.
-    until: Instant,
-}
-
-/// The answer to [`Tokens::take_owner`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Took {
-    /// The riff had no owner. The admin is the owner now.
-    Owner { owner: String },
-    /// The request waits for the answer of `owner`.
-    Asked { owner: String, admin: String },
-    /// The caller is the `owner` already. Nothing changed
-    /// (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
-    Already { owner: String },
-}
-
-/// A change of the owner role that no person made: the server makes it
-/// when a time ends (01M3N7K41N03P26BEFFNX5617K,
-/// 01M3Q546335NBTKG5BHQ27QC93).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum OwnerChange {
-    /// The owner `old` did not answer the request in time. The admin
-    /// that asked is the `owner` now. `old` stays an admin.
-    Granted { owner: String, old: String },
-    /// The owner `old` is gone and stays an admin. The admin of a
-    /// request that waited is the `owner` now. With no request, the
-    /// riff has no owner.
-    Gone { old: String, owner: Option<String> },
-}
-
-/// The ID of one riff. [`Default`] makes a new, random one.
-#[derive(Clone)]
-struct RiffId(String);
-
-impl Default for RiffId {
-    fn default() -> Self {
-        RiffId(random_token())
-    }
+    /// The position of the log of the last end of the sign-ins of each
+    /// USER. No sign-in of the USER starts below it
+    /// (01M3XA87A9GGFA89RQXWSKY0V6). It is only in memory: a load gets
+    /// it from the people of the log ([`Tokens::drop_ended`]).
+    ended: HashMap<String, u64>,
 }
 
 struct SignIn {
     user: String,
     /// The thumbprint of the device key.
     jkt: String,
+    /// The position of the log at the start of the sign-in.
+    position: u64,
     /// The sign-in ends at this time, unless a refresh comes first.
     idle_until: Instant,
 }
@@ -471,29 +367,20 @@ enum Step {
 }
 
 impl Tokens {
-    /// Starts a sign-in for the verified email `email` on the device key
-    /// `jkt`, and issues its first pair. The caller has checked the
-    /// email and the proof of the key.
-    ///
-    /// The USER of the pair comes from the email (R208). The first email
-    /// that signs in with a USER holds it. Another email that gives the
-    /// same USER gets [`NoSignIn::Taken`] (R209).
+    /// Starts a sign-in for the USER that the email `email` gives (R208)
+    /// on the device key `jkt`, and issues its first pair. It asks the
+    /// people nothing: it is for a test, or for a riff with no people.
+    /// The server uses [`Tokens::start`], after the command `admit`.
     ///
     /// ```
     /// use std::time::Instant;
-    /// use riff_server::token::{NoSignIn, Tokens};
+    /// use riff_server::token::Tokens;
     ///
     /// let now = Instant::now();
     /// let mut tokens = Tokens::default();
     /// let pair = tokens.sign_in("O'Brien@comotechnologies.io", "k", now).unwrap();
     /// assert_eq!(pair.user, "o-brien");
-    ///
-    /// // Another email that gives the same USER cannot sign in.
-    /// let taken = tokens.sign_in("o-brien@comotechnologies.io", "k", now);
-    /// assert_eq!(taken, Err(NoSignIn::Taken("o-brien".into())));
-    ///
-    /// // The email that holds the USER signs in again, on each device.
-    /// assert!(tokens.sign_in("o'brien@comotechnologies.io", "k2", now).is_ok());
+    /// assert!(tokens.sign_in("not-an-email", "k", now).is_err());
     /// ```
     pub fn sign_in(
         &mut self,
@@ -508,11 +395,43 @@ impl Tokens {
                 "the user {SERVER_USER} is the riff server; sign in with another email"
             )));
         }
-        match self.users.get(&user) {
-            Some(held) if held != &email => return Err(NoSignIn::Taken(user)),
-            _ => {
-                self.users.insert(user.clone(), email);
-            }
+        self.start(&user, jkt, 0, now)
+    }
+
+    /// Starts a sign-in of `user` on the device key `jkt`, and issues
+    /// its first pair. The caller has checked the person (the command
+    /// `admit`) and the proof of the key. `position` is the position of
+    /// the log at that check: the sign-in keeps it
+    /// (01M3XA87A9GGFA89RQXWSKY0V6).
+    ///
+    /// It refuses a sign-in that started before the last end of the
+    /// sign-ins of `user` ([`Tokens::end`]): the removal or the revoke
+    /// came after the check of the person.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{NoSignIn, Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let old = tokens.start("bob", "k", 7, now).unwrap();
+    /// // A removal of bob is the record at the position 8.
+    /// assert_eq!(tokens.end("bob", 8), 1);
+    /// assert_eq!(tokens.check(&old.access_token, "k", now), Err(Refused::Unknown));
+    /// // A sign-in that the people checked before the removal does not start.
+    /// assert_eq!(tokens.start("bob", "k", 7, now), Err(NoSignIn::Ended));
+    /// // A sign-in that the people checked after it starts.
+    /// assert!(tokens.start("bob", "k", 8, now).is_ok());
+    /// ```
+    pub fn start(
+        &mut self,
+        user: &str,
+        jkt: &str,
+        position: u64,
+        now: Instant,
+    ) -> Result<TokenReply, NoSignIn> {
+        if self.ended.get(user).is_some_and(|ended| position < *ended) {
+            return Err(NoSignIn::Ended);
         }
         self.sweep(now);
         let id = self.next_sign_in;
@@ -520,594 +439,115 @@ impl Tokens {
         self.sign_ins.insert(
             id,
             SignIn {
-                user,
+                user: user.to_owned(),
                 jkt: jkt.to_owned(),
+                position,
                 idle_until: now + REFRESH_IDLE,
             },
         );
         Ok(self.start_chain(id, now))
     }
 
-    /// Signs in a person from the provider, when the person may join the
-    /// riff (see "Owner and members" in the module docs).
-    /// `allowed_domain` is true when the account is in an allowed domain
-    /// (R15). `admins` are the admin emails of the settings (R210).
+    /// Ends each sign-in of `user` that started before `position` of
+    /// the log, and each token of them (R20): the effect of a
+    /// `member_removed` or a `signins_ended` record at `position`. In
+    /// the same step, it keeps `position` for `user`: from now on,
+    /// [`Tokens::start`] refuses a sign-in of `user` below it
+    /// (01M3XA87A9GGFA89RQXWSKY0V6). Returns the number of sign-ins
+    /// that ended.
     ///
     /// ```
     /// use std::time::Instant;
-    /// use riff_server::token::{NoSignIn, Tokens};
-    ///
-    /// let now = Instant::now();
-    /// let mut tokens = Tokens::default();
-    /// // The first person is the owner, from any domain.
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// assert_eq!(tokens.owner(), Some("ada@gmail.com"));
-    ///
-    /// // A person with no invite and no allowed domain is refused.
-    /// let refused = tokens.admit("bob@gmail.com", false, &[], "k2", now);
-    /// assert_eq!(refused, Err(NoSignIn::NotMember("bob@gmail.com".into())));
-    ///
-    /// // After an invite, the person signs in.
-    /// tokens.invite("Bob@gmail.com").unwrap();
-    /// assert!(tokens.admit("bob@gmail.com", false, &[], "k2", now).is_ok());
-    /// ```
-    pub fn admit(
-        &mut self,
-        email: &str,
-        allowed_domain: bool,
-        admins: &[String],
-        jkt: &str,
-        now: Instant,
-    ) -> Result<TokenReply, NoSignIn> {
-        let email = email.trim().to_lowercase();
-        let admin =
-            self.admins.contains(&email) || admins.iter().any(|a| a.trim().to_lowercase() == email);
-        let new_riff = self.owner.is_none() && !self.no_owner && admins.is_empty();
-        let may_join = admin
-            || allowed_domain
-            || new_riff
-            || self.owner.as_ref() == Some(&email)
-            || self.members.contains(&email);
-        if !may_join {
-            return Err(NoSignIn::NotMember(email));
-        }
-        let pair = self.sign_in(&email, jkt, now)?;
-        if self.owner.is_none() && !self.no_owner && (admins.is_empty() || admin) {
-            self.owner = Some(email);
-        }
-        Ok(pair)
-    }
-
-    /// Names the owner of a new riff, for example from a setting
-    /// (01M3JN3ASSV9SA0QZKXXJ0RTEV). A riff that has an owner keeps it.
-    /// A riff whose owner was gone keeps no owner
-    /// (01M3N7K4GAKJ621V5AWJRQVF3M). Returns the owner.
-    ///
-    /// ```
-    /// use riff_server::token::Tokens;
-    ///
-    /// let mut tokens = Tokens::default();
-    /// assert_eq!(tokens.name_owner(" Ada@X.io"), Some("ada@x.io"));
-    /// assert_eq!(tokens.name_owner("bob@x.io"), Some("ada@x.io"));
-    /// ```
-    pub fn name_owner(&mut self, email: &str) -> Option<&str> {
-        if self.owner.is_none() && !self.no_owner {
-            self.owner = Some(email.trim().to_lowercase());
-        }
-        self.owner.as_deref()
-    }
-
-    /// True when the riff has an owner, or had one: a riff whose owner
-    /// was gone counts (01M3JN3AQMHZHT6JP3P6GM9PWZ).
-    pub fn owned(&self) -> bool {
-        self.owner.is_some() || self.no_owner
-    }
-
-    /// The USER that holds `email`, or `None` when nobody signed in with
-    /// it.
-    pub fn user_of_email(&self, email: &str) -> Option<&str> {
-        self.users
-            .iter()
-            .find(|(_, held)| *held == email)
-            .map(|(user, _)| user.as_str())
-    }
-
-    /// The USER of the owner, or `None` when the riff has no owner or the
-    /// owner never signed in.
-    pub fn owner_user(&self) -> Option<&str> {
-        self.user_of_email(self.owner.as_deref()?)
-    }
-
-    /// The USER of each admin that is not the owner, sorted: the admins
-    /// that the owner made and the admins of `admins` (R210). An admin
-    /// who never signed in has no USER, and is not in it.
-    pub fn admin_users(&self, admins: &[String]) -> Vec<String> {
-        let (_, admins, _) = self.roles(admins);
-        self.users
-            .iter()
-            .filter(|(_, email)| admins.contains(email))
-            .map(|(user, _)| user.clone())
-            .collect()
-    }
-
-    /// The USER and the role of each member with a USER, sorted by USER
-    /// (01M3NT4M3A4E3K5S2NM7MS6PQD). `admins` are the admin emails of
-    /// the settings (R210). A member who never signed in has no USER,
-    /// and is not in it.
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_core::wire::PersonRole;
     /// use riff_server::token::Tokens;
     ///
     /// let now = Instant::now();
     /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// tokens.invite("bob@gmail.com").unwrap();
-    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
-    /// // An admin who never signed in has no USER.
-    /// tokens.add_admin("cy@gmail.com").unwrap();
-    /// assert_eq!(
-    ///     tokens.people(&[]),
-    ///     [("ada".to_string(), PersonRole::Owner), ("bob".to_string(), PersonRole::Member)]
-    /// );
+    /// tokens.start("bob", "laptop", 3, now).unwrap();
+    /// tokens.start("bob", "desktop", 9, now).unwrap();
+    /// tokens.start("ada", "k", 1, now).unwrap();
+    /// // Only the sign-in of bob from before the position 8 ends.
+    /// assert_eq!(tokens.end("bob", 8), 1);
+    /// assert_eq!(tokens.keys("bob", now), ["desktop"]);
+    /// assert_eq!(tokens.keys("ada", now), ["k"]);
     /// ```
-    pub fn people(&self, admins: &[String]) -> Vec<(String, PersonRole)> {
-        let (owner, admins, members) = self.roles(admins);
-        let mut people: Vec<(String, PersonRole)> = owner
-            .into_iter()
-            .map(|email| (email, PersonRole::Owner))
-            .chain(admins.into_iter().map(|email| (email, PersonRole::Admin)))
-            .chain(members.into_iter().map(|email| (email, PersonRole::Member)))
-            .filter_map(|(email, role)| Some((self.user_of_email(&email)?.to_owned(), role)))
+    pub fn end(&mut self, user: &str, position: u64) -> usize {
+        let ended = self.ended.entry(user.to_owned()).or_default();
+        *ended = (*ended).max(position);
+        let ids: Vec<u64> = self
+            .sign_ins
+            .iter()
+            .filter(|(_, s)| s.user == user && s.position < position)
+            .map(|(id, _)| *id)
             .collect();
-        people.sort();
-        people
-    }
-
-    /// An admin asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM).
-    /// `user` is the USER of the caller, `admins` the admin emails of the
-    /// settings (R210), and `wait` the time that the owner has to answer
-    /// (01M3Q5460YESBSQHTV3M15PE53).
-    ///
-    /// On a riff with no owner, the admin is the owner at once
-    /// (01M3Q63NNC6SC03BFCG80M7B4D). Else the request waits: the owner
-    /// answers with [`Tokens::pass_owner`] or [`Tokens::deny_owner`], and
-    /// [`Tokens::owner_due`] grants it when `wait` ends. One request
-    /// waits at a time: a second request is refused, with the email of
-    /// the admin that asked first. The owner is the owner already: the
-    /// call changes nothing (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
-    ///
-    /// ```
-    /// use std::time::{Duration, Instant};
-    /// use riff_server::token::{OwnerChange, Took, Tokens};
-    ///
-    /// let now = Instant::now();
-    /// let wait = Duration::from_secs(600);
-    /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// tokens.add_admin("bob@gmail.com").unwrap();
-    /// tokens.add_admin("carol@gmail.com").unwrap();
-    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
-    /// tokens.admit("carol@gmail.com", false, &[], "k3", now).unwrap();
-    ///
-    /// let asked = tokens.take_owner("bob", &[], wait, now).unwrap();
-    /// assert_eq!(
-    ///     asked,
-    ///     Took::Asked { owner: "ada@gmail.com".into(), admin: "bob@gmail.com".into() }
-    /// );
-    /// // A second request waits for the first.
-    /// let refused = tokens.take_owner("carol", &[], wait, now).unwrap_err();
-    /// assert!(refused.contains("bob@gmail.com asked for the owner role first"), "{refused}");
-    /// // The owner has the role already. The request of bob still waits.
-    /// let already = tokens.take_owner("ada", &[], wait, now).unwrap();
-    /// assert_eq!(already, Took::Already { owner: "ada@gmail.com".into() });
-    /// assert_eq!(tokens.asks(), Some("bob@gmail.com"));
-    ///
-    /// // With no answer in time, bob is the owner.
-    /// assert_eq!(tokens.owner_due(now), None);
-    /// assert_eq!(tokens.owner_due(now + wait), Some(OwnerChange::Granted {
-    ///     owner: "bob@gmail.com".into(),
-    ///     old: "ada@gmail.com".into(),
-    /// }));
-    /// assert!(tokens.is_owner("bob") && tokens.is_admin("ada", &[]));
-    /// ```
-    pub fn take_owner(
-        &mut self,
-        user: &str,
-        admins: &[String],
-        wait: Duration,
-        now: Instant,
-    ) -> Result<Took, String> {
-        if !self.is_admin(user, admins) {
-            return Err(format!(
-                "{user} is not an admin; only an admin takes the owner role"
-            ));
+        for id in &ids {
+            self.revoke(*id);
         }
-        // An admin has an email: is_admin checks it.
-        let email = self.email_of(user).unwrap_or_default().to_owned();
-        let Some(owner) = self.owner.clone() else {
-            self.make_owner(&email);
-            return Ok(Took::Owner { owner: email });
-        };
-        if owner == email {
-            return Ok(Took::Already { owner });
-        }
-        if let Some(take) = &self.take {
-            return Err(format!(
-                "{} asked for the owner role first; wait for the answer of the owner",
-                take.admin
-            ));
-        }
-        self.take = Some(Take {
-            admin: email.clone(),
-            until: now + wait,
-        });
-        Ok(Took::Asked {
-            owner,
-            admin: email,
-        })
+        ids.len()
     }
 
-    /// The owner keeps the owner role that an admin asks for
-    /// (01M3N7K41N03P26BEFFNX5617K). `user` is the USER of the caller.
-    /// Returns the email of the admin that asked.
+    /// Drops each sign-in that started before the last end of the
+    /// sign-ins of its USER: [`Tokens::end`] for each USER of `ended`,
+    /// the positions that the people of the log keep. The server calls
+    /// it after a load. So a stop between the write of a removal and
+    /// the end of the sign-ins lets no removed person in
+    /// (01M3XA87A9GGFA89RQXWSKY0V6). Returns the number of sign-ins
+    /// that it dropped.
     ///
     /// ```
-    /// use std::time::{Duration, Instant};
-    /// use riff_server::token::Tokens;
-    ///
-    /// let now = Instant::now();
-    /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// tokens.add_admin("bob@gmail.com").unwrap();
-    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
-    /// assert!(tokens.deny_owner("ada").is_err(), "no request waits");
-    ///
-    /// let wait = Duration::from_secs(600);
-    /// tokens.take_owner("bob", &[], wait, now).unwrap();
-    /// assert!(tokens.deny_owner("bob").is_err(), "only the owner denies");
-    /// assert_eq!(tokens.deny_owner("ada").unwrap(), "bob@gmail.com");
-    /// assert_eq!(tokens.owner_due(now + wait), None);
-    /// assert!(tokens.is_owner("ada"));
-    /// ```
-    pub fn deny_owner(&mut self, user: &str) -> Result<String, String> {
-        if self.owner.is_none() {
-            return Err(NO_OWNER.into());
-        }
-        if !self.is_owner(user) {
-            return Err(format!(
-                "{user} is not the owner; only the owner denies the owner role"
-            ));
-        }
-        let take = self
-            .take
-            .take()
-            .ok_or("no admin asks for the owner role now")?;
-        Ok(take.admin)
-    }
-
-    /// The email of the admin whose request waits, or `None`.
-    pub fn asks(&self) -> Option<&str> {
-        self.take.as_ref().map(|t| t.admin.as_str())
-    }
-
-    /// Grants a request whose time ended with no answer of the owner
-    /// (01M3N7K41N03P26BEFFNX5617K). The old owner stays an admin.
-    /// `None` when no request waits, or its time did not end yet.
-    pub fn owner_due(&mut self, now: Instant) -> Option<OwnerChange> {
-        if self.take.as_ref().is_none_or(|t| now < t.until) {
-            return None;
-        }
-        let take = self.take.take()?;
-        let old = self.owner.clone()?;
-        self.make_owner(&take.admin);
-        Some(OwnerChange::Granted {
-            owner: take.admin,
-            old,
-        })
-    }
-
-    /// True when a request waits and its time ended at `now`.
-    pub fn is_due(&self, now: Instant) -> bool {
-        self.take.as_ref().is_some_and(|t| t.until <= now)
-    }
-
-    /// The owner is gone (01M3Q546335NBTKG5BHQ27QC93). The old owner
-    /// stays an admin. The admin of a request that waits is the owner at
-    /// once. With no request, the riff has no owner
-    /// (01M3Q63NNC6SC03BFCG80M7B4D). `None` when the riff has no owner.
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_server::token::{OwnerChange, Tokens};
-    ///
-    /// let now = Instant::now();
-    /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// assert_eq!(tokens.owner_gone(), Some(OwnerChange::Gone {
-    ///     old: "ada@gmail.com".into(),
-    ///     owner: None,
-    /// }));
-    /// assert_eq!(tokens.owner(), None);
-    /// assert!(tokens.is_admin("ada", &[]));
-    ///
-    /// // A riff with no owner gets none at a sign-in, nor from a setting.
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// assert_eq!(tokens.name_owner("ada@gmail.com"), None);
-    /// assert!(tokens.owned());
-    /// ```
-    pub fn owner_gone(&mut self) -> Option<OwnerChange> {
-        let old = self.owner.take()?;
-        self.members.insert(old.clone());
-        self.admins.insert(old.clone());
-        let owner = self.take.take().map(|take| {
-            self.make_owner(&take.admin);
-            take.admin
-        });
-        self.no_owner = owner.is_none();
-        Some(OwnerChange::Gone { old, owner })
-    }
-
-    /// Makes `email` the owner, and ends a request that waits. The old
-    /// owner, if any, stays an admin and a member.
-    fn make_owner(&mut self, email: &str) {
-        self.members.remove(email);
-        self.admins.remove(email);
-        if let Some(old) = self.owner.take() {
-            self.members.insert(old.clone());
-            self.admins.insert(old);
-        }
-        self.owner = Some(email.to_owned());
-        self.no_owner = false;
-        self.take = None;
-    }
-
-    /// The ID of this riff (see "Riff ID" in the module docs).
-    pub fn riff_id(&self) -> &str {
-        &self.riff_id.0
-    }
-
-    /// The email of the owner, or `None` before the first sign-in.
-    pub fn owner(&self) -> Option<&str> {
-        self.owner.as_deref()
-    }
-
-    /// The owner for `who` (01M3Q63NK0AHM25MB258B0K8XP): the USER that
-    /// holds the email of the owner, or else the USER that the email
-    /// gives. [`RiffOwner::Nobody`] before the first sign-in.
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_core::wire::RiffOwner;
-    /// use riff_server::token::Tokens;
-    ///
-    /// let mut tokens = Tokens::default();
-    /// assert_eq!(tokens.riff_owner(), RiffOwner::Nobody);
-    /// tokens.name_owner("Ada.L@X.io");
-    /// let named = RiffOwner::Owner { user: "ada.l".into(), email: "ada.l@x.io".into() };
-    /// assert_eq!(tokens.riff_owner(), named);
-    /// tokens.admit("ada.l@x.io", false, &[], "k", Instant::now()).unwrap();
-    /// assert_eq!(tokens.riff_owner(), named);
-    /// ```
-    pub fn riff_owner(&self) -> RiffOwner {
-        let Some(email) = self.owner.clone() else {
-            return RiffOwner::Nobody;
-        };
-        let user = self
-            .user_of_email(&email)
-            .map(str::to_owned)
-            .or_else(|| user_of(&email).ok())
-            .unwrap_or_else(|| email.clone());
-        RiffOwner::Owner { user, email }
-    }
-
-    /// The emails of the members, sorted.
-    pub fn members(&self) -> impl Iterator<Item = &str> {
-        self.members.iter().map(String::as_str)
-    }
-
-    /// True when `user` is an admin: the owner, an admin that the owner
-    /// made ([`Tokens::add_admin`]), or an email in `admins` (R210).
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_server::token::Tokens;
-    ///
-    /// let now = Instant::now();
-    /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k", now).unwrap();
-    /// tokens.sign_in("bob@x.io", "k", now).unwrap();
-    /// assert!(tokens.is_admin("ada", &[]));
-    /// assert!(!tokens.is_admin("bob", &[]));
-    /// assert!(tokens.is_admin("bob", &[" Bob@X.io".into()]));
-    /// ```
-    pub fn is_admin(&self, user: &str, admins: &[String]) -> bool {
-        let Some(email) = self.email_of(user) else {
-            return false;
-        };
-        self.owner.as_deref() == Some(email)
-            || self.admins.contains(email)
-            || admins.iter().any(|a| a.trim().to_lowercase() == email)
-    }
-
-    /// True when `user` is the owner.
-    pub fn is_owner(&self, user: &str) -> bool {
-        self.email_of(user).is_some() && self.email_of(user) == self.owner.as_deref()
-    }
-
-    /// The emails of the admins that the owner made, sorted. The admins
-    /// of the settings (R210) are not in it.
-    pub fn admins(&self) -> impl Iterator<Item = &str> {
-        self.admins.iter().map(String::as_str)
-    }
-
-    /// Each person once, with the highest role: the owner, the admins
-    /// and the members, each sorted (01M3MN157X8N9QKER1AJEPEJVX).
-    /// `admins` are the admin emails of the settings (R210).
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_server::token::Tokens;
-    ///
-    /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k", Instant::now()).unwrap();
-    /// tokens.add_admin("bob@gmail.com").unwrap();
-    /// tokens.invite("carol@gmail.com").unwrap();
-    /// tokens.pass_owner("carol@gmail.com", &[]).unwrap();
-    /// let (owner, admins, members) = tokens.roles(&[" Dan@X.io".into()]);
-    /// assert_eq!(owner.as_deref(), Some("carol@gmail.com"));
-    /// assert_eq!(admins, ["ada@gmail.com", "bob@gmail.com", "dan@x.io"]);
-    /// assert!(members.is_empty());
-    /// ```
-    pub fn roles(&self, admins: &[String]) -> (Option<String>, Vec<String>, Vec<String>) {
-        let owner = self.owner.clone();
-        let mut all: BTreeSet<String> = self.admins.clone();
-        all.extend(admins.iter().map(|a| a.trim().to_lowercase()));
-        let not_owner = |email: &String| Some(email) != owner.as_ref();
-        let members = self
-            .members
-            .iter()
-            .filter(|m| not_owner(m) && !all.contains(*m))
-            .cloned()
-            .collect();
-        let admins = all.into_iter().filter(not_owner).collect();
-        (owner, admins, members)
-    }
-
-    /// Makes a person an admin, by verified email
-    /// (01M3JY7T109BR860EQBSKEFDHY). The person is also a member, so
-    /// stays a member after [`Tokens::remove_admin`]. Returns the email
-    /// in lower case. The caller checks that the owner asks.
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_server::token::Tokens;
-    ///
-    /// let now = Instant::now();
-    /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// assert_eq!(tokens.add_admin(" Bob@gmail.com").unwrap(), "bob@gmail.com");
-    /// tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
-    /// assert!(tokens.is_admin("bob", &[]));
-    ///
-    /// assert_eq!(tokens.remove_admin("bob@gmail.com").unwrap(), "bob@gmail.com");
-    /// assert!(!tokens.is_admin("bob", &[]));
-    /// assert_eq!(tokens.members().collect::<Vec<_>>(), ["bob@gmail.com"]);
-    ///
-    /// // The owner stays an admin.
-    /// assert!(tokens.remove_admin("ada@gmail.com").is_err());
-    /// ```
-    pub fn add_admin(&mut self, email: &str) -> Result<String, NoSignIn> {
-        let email = self.invite(email)?;
-        self.admins.insert(email.clone());
-        Ok(email)
-    }
-
-    /// Makes an admin a member again. The owner stays an admin. Returns
-    /// the email in lower case. The caller checks that the owner asks.
-    pub fn remove_admin(&mut self, email: &str) -> Result<String, String> {
-        let email = email.trim().to_lowercase();
-        if self.owner.as_ref() == Some(&email) {
-            return Err(format!(
-                "{email} is the owner of this riff; the owner stays an admin"
-            ));
-        }
-        if !self.admins.remove(&email) {
-            return Err(format!("{email} is not an admin that the owner made"));
-        }
-        Ok(email)
-    }
-
-    /// Passes the owner role to a member or an admin
-    /// (01M3JYX8NPZASQY6031R35H39P). `admins` are the admin emails of
-    /// the settings (R210). The old owner stays an admin and a member.
-    /// Returns the email of the new owner in lower case. The caller
-    /// checks that the owner asks.
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_server::token::Tokens;
-    ///
-    /// let now = Instant::now();
-    /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// tokens.invite("bob@gmail.com").unwrap();
-    /// assert_eq!(tokens.pass_owner(" Bob@gmail.com", &[]).unwrap(), "bob@gmail.com");
-    /// assert_eq!(tokens.owner(), Some("bob@gmail.com"));
-    /// assert_eq!(tokens.admins().collect::<Vec<_>>(), ["ada@gmail.com"]);
-    ///
-    /// // Only to a member or an admin.
-    /// assert!(tokens.pass_owner("carol@gmail.com", &[]).is_err());
-    /// ```
-    pub fn pass_owner(&mut self, email: &str, admins: &[String]) -> Result<String, String> {
-        let email = email.trim().to_lowercase();
-        let Some(old) = self.owner.as_ref() else {
-            return Err(NO_OWNER.into());
-        };
-        if *old == email {
-            return Err(format!("{email} is the owner of this riff already"));
-        }
-        let admin = admins.iter().any(|a| a.trim().to_lowercase() == email);
-        if !self.members.contains(&email) && !self.admins.contains(&email) && !admin {
-            return Err(format!(
-                "{email} is not a member of this riff; run riff invite {email} first"
-            ));
-        }
-        self.make_owner(&email);
-        Ok(email)
-    }
-
-    /// Adds a member by verified email. Returns the email in lower case.
-    /// The caller checks that an admin asks.
-    pub fn invite(&mut self, email: &str) -> Result<String, NoSignIn> {
-        let email = email.trim().to_lowercase();
-        user_of(&email).map_err(|e| NoSignIn::Email(e.to_string()))?;
-        self.members.insert(email.clone());
-        Ok(email)
-    }
-
-    /// Removes a member by verified email, and ends each sign-in of that
-    /// person (R20). A person of an allowed domain can still sign in.
-    /// The owner cannot go. Returns the email in lower case and the
-    /// number of sign-ins that ended. The caller checks that an admin
-    /// asks.
-    ///
-    /// ```
-    /// use std::time::Instant;
+    /// use std::collections::BTreeMap;
+    /// use std::time::{Instant, SystemTime};
     /// use riff_server::token::{Refused, Tokens};
     ///
+    /// let (now, wall) = (Instant::now(), SystemTime::now());
+    /// let mut tokens = Tokens::default();
+    /// let bob = tokens.start("bob", "k", 7, now).unwrap();
+    /// // The server stops after the write of the removal at the
+    /// // position 8, and before the end of the sign-ins.
+    /// let mut loaded = Tokens::from_bytes(&tokens.to_bytes(now, wall), now, wall).unwrap();
+    /// assert_eq!(loaded.drop_ended(&BTreeMap::from([("bob".to_owned(), 8)])), 1);
+    /// assert_eq!(loaded.refresh(&bob.refresh_token, "k", now), Err(Refused::Unknown));
+    /// ```
+    pub fn drop_ended(&mut self, ended: &BTreeMap<String, u64>) -> usize {
+        ended
+            .iter()
+            .map(|(user, position)| self.end(user, *position))
+            .sum()
+    }
+
+    /// Drops each sign-in that the log does not hold
+    /// (01M3XGNZYD1E35DXYTHHJT1CR7): a sign-in whose position is after
+    /// `end`, the position of the log, and a sign-in of a USER that
+    /// `known` does not know. The server calls it after a load. A log
+    /// that goes back to an earlier position, for example after
+    /// `log cut`, keeps no record of what such a sign-in came from, so
+    /// a later removal has no position to compare. The person signs in
+    /// again. Returns the number of sign-ins that it dropped.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
     /// let now = Instant::now();
     /// let mut tokens = Tokens::default();
-    /// tokens.admit("ada@gmail.com", false, &[], "k1", now).unwrap();
-    /// tokens.invite("bob@gmail.com").unwrap();
-    /// let bob = tokens.admit("bob@gmail.com", false, &[], "k2", now).unwrap();
-    /// assert_eq!(tokens.remove("bob@gmail.com").unwrap(), ("bob@gmail.com".into(), 1));
-    /// assert_eq!(tokens.check(&bob.access_token, "k2", now), Err(Refused::Unknown));
-    /// assert!(tokens.admit("bob@gmail.com", false, &[], "k2", now).is_err());
-    /// assert!(tokens.remove("ada@gmail.com").is_err());
+    /// tokens.start("bob", "laptop", 5, now).unwrap();
+    /// tokens.start("bob", "desktop", 9, now).unwrap();
+    /// tokens.start("eve", "k", 3, now).unwrap();
+    /// // The log ends at the position 7, and it does not know eve.
+    /// assert_eq!(tokens.drop_outside(7, |user| user == "bob"), 2);
+    /// assert_eq!(tokens.keys("bob", now), ["laptop"]);
+    /// assert!(tokens.keys("eve", now).is_empty());
     /// ```
-    pub fn remove(&mut self, email: &str) -> Result<(String, usize), String> {
-        let email = email.trim().to_lowercase();
-        if self.owner.as_ref() == Some(&email) {
-            return Err(format!(
-                "{email} is the owner of this riff; the owner stays"
-            ));
-        }
-        if self.admins.contains(&email) {
-            return Err(format!(
-                "{email} is an admin; the owner runs riff admin remove {email} first"
-            ));
-        }
-        self.members.remove(&email);
-        let users: Vec<String> = self
-            .users
+    pub fn drop_outside(&mut self, end: u64, known: impl Fn(&str) -> bool) -> usize {
+        let ids: Vec<u64> = self
+            .sign_ins
             .iter()
-            .filter(|(_, held)| **held == email)
-            .map(|(user, _)| user.clone())
+            .filter(|(_, s)| s.position > end || !known(&s.user))
+            .map(|(id, _)| *id)
             .collect();
-        let sign_ins = users.iter().map(|user| self.revoke_user(user)).sum();
-        Ok((email, sign_ins))
+        for id in &ids {
+            self.revoke(*id);
+        }
+        ids.len()
     }
 
     /// True when `token` names a chain of a live sign-in on the device
@@ -1246,6 +686,25 @@ impl Tokens {
     /// Returns who a live access token acts as, used with the device key
     /// `jkt`: the user, and the session of a session token.
     pub fn caller(&self, token: &str, jkt: &str, now: Instant) -> Result<Who, Refused> {
+        self.signed_in(token, jkt, now).map(|(who, _)| who)
+    }
+
+    /// As [`Tokens::caller`], with the position of the log at the start
+    /// of the sign-in of the token (01M3XA87A9GGFA89RQXWSKY0V6). The
+    /// engine refuses a command of a sign-in from before the last end
+    /// of the sign-ins of its user (01M3XGP03RDF6S15JYS718WWFC).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let pair = tokens.start("bob", "k", 7, now).unwrap();
+    /// let (who, started) = tokens.signed_in(&pair.access_token, "k", now).unwrap();
+    /// assert_eq!((who.user(), started), ("bob", 7));
+    /// ```
+    pub fn signed_in(&self, token: &str, jkt: &str, now: Instant) -> Result<(Who, u64), Refused> {
         let access = self.access.get(&hash(token)).ok_or(Refused::Unknown)?;
         let sign_in = self.sign_ins.get(&access.sign_in).ok_or(Refused::Unknown)?;
         if sign_in.jkt != jkt {
@@ -1255,11 +714,13 @@ impl Tokens {
             return Err(Refused::Expired);
         }
         // The store checked both parts when it issued the token.
-        Who::new(&sign_in.user, access.session.as_deref()).map_err(|_| Refused::Unknown)
+        let who = Who::new(&sign_in.user, access.session.as_deref());
+        Ok((who.map_err(|_| Refused::Unknown)?, sign_in.position))
     }
 
-    /// Ends each sign-in of `user` and each token of them (R20).
-    /// Returns the number of sign-ins that ended.
+    /// Ends each sign-in of `user` and each token of them, with no
+    /// position: for a test. The server uses [`Tokens::end`]. Returns
+    /// the number of sign-ins that ended.
     ///
     /// ```
     /// use std::time::Instant;
@@ -1284,22 +745,6 @@ impl Tokens {
             self.revoke(*id);
         }
         ids.len()
-    }
-
-    /// The verified email that holds `user` (R209). It is `None` when no
-    /// email signed in as `user`.
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_server::token::Tokens;
-    ///
-    /// let mut tokens = Tokens::default();
-    /// tokens.sign_in("Mike@comotechnologies.io", "k", Instant::now()).unwrap();
-    /// assert_eq!(tokens.email_of("mike"), Some("mike@comotechnologies.io"));
-    /// assert_eq!(tokens.email_of("brett"), None);
-    /// ```
-    pub fn email_of(&self, user: &str) -> Option<&str> {
-        self.users.get(user).map(String::as_str)
     }
 
     /// The thumbprints of the device keys of the live sign-ins of
@@ -1339,16 +784,6 @@ impl Tokens {
         let live = |t: Instant| (now < t).then(|| clock.save(t));
         let saved = Saved {
             next_sign_in: self.next_sign_in,
-            users: self.users.clone(),
-            owner: self.owner.clone(),
-            members: self.members.clone(),
-            admins: self.admins.clone(),
-            riff_id: Some(self.riff_id.0.clone()),
-            no_owner: self.no_owner,
-            take: self.take.as_ref().map(|t| SavedTake {
-                admin: t.admin.clone(),
-                until: clock.save(t.until),
-            }),
             sign_ins: self
                 .sign_ins
                 .iter()
@@ -1357,6 +792,7 @@ impl Tokens {
                         id: *id,
                         user: s.user.clone(),
                         jkt: s.jkt.clone(),
+                        position: s.position,
                         idle_until: live(s.idle_until)?,
                     })
                 })
@@ -1385,18 +821,6 @@ impl Tokens {
         let clock = Clock { now, wall };
         let mut tokens = Tokens {
             next_sign_in: saved.next_sign_in,
-            users: saved.users,
-            owner: saved.owner,
-            members: saved.members,
-            admins: saved.admins,
-            // A saved form from before the riff ID gets a new one.
-            riff_id: saved.riff_id.map(RiffId).unwrap_or_default(),
-            no_owner: saved.no_owner,
-            // A time that ended while the server was down ends now.
-            take: saved.take.map(|t| Take {
-                admin: t.admin,
-                until: clock.load(t.until).unwrap_or(now),
-            }),
             ..Tokens::default()
         };
         for s in saved.sign_ins {
@@ -1410,6 +834,7 @@ impl Tokens {
                 let sign_in = SignIn {
                     user: s.user,
                     jkt: s.jkt,
+                    position: s.position,
                     idle_until,
                 };
                 tokens.sign_ins.insert(s.id, sign_in);
@@ -1527,40 +952,14 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-/// The saved form. Each time is in milliseconds since the Unix epoch.
+/// The saved form: only the sign-ins and their chains. Each time is in
+/// milliseconds since the Unix epoch. A form from before the people
+/// moved to the log reads: its other fields are skipped.
 #[derive(Serialize, Deserialize)]
 struct Saved {
     next_sign_in: u64,
-    /// The verified email of each USER (R209).
-    users: BTreeMap<String, String>,
-    /// The owner and the members (01M3JN3ANE676DT5WQ2NTG47DK). A saved form from
-    /// before them has none.
-    #[serde(default)]
-    owner: Option<String>,
-    #[serde(default)]
-    members: BTreeSet<String>,
-    /// The admins that the owner made (01M3JY7T3645CMQ8CS4T4ABZTP). A
-    /// saved form from before them has none.
-    #[serde(default)]
-    admins: BTreeSet<String>,
-    /// The riff ID (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
-    #[serde(default)]
-    riff_id: Option<String>,
-    /// A riff whose owner was gone, and the request for the owner role
-    /// that waits (01M3N7K4GAKJ621V5AWJRQVF3M). A saved form from before
-    /// them has neither.
-    #[serde(default)]
-    no_owner: bool,
-    #[serde(default)]
-    take: Option<SavedTake>,
     sign_ins: Vec<SavedSignIn>,
     chains: Vec<SavedChain>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SavedTake {
-    admin: String,
-    until: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1568,6 +967,10 @@ struct SavedSignIn {
     id: u64,
     user: String,
     jkt: String,
+    /// The position of the log at the start of the sign-in
+    /// (01M3XA87A9GGFA89RQXWSKY0V6). A form from before it has 0.
+    #[serde(default)]
+    position: u64,
     idle_until: u64,
 }
 
@@ -1621,7 +1024,9 @@ fn random_id() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn random_token() -> String {
+/// A new random token: 32 random bytes in URL-safe base64. The ID of a
+/// new riff is one too.
+pub(crate) fn random_token() -> String {
     let mut bytes = [0u8; 32];
     // The OS random source fails only when the OS is broken.
     getrandom::fill(&mut bytes).expect("the OS gives random bytes");
@@ -2096,15 +1501,10 @@ mod tests {
 
         // A removed member.
         let mut tokens = Tokens::default();
-        tokens
-            .admit("ada@gmail.com", false, &[], "k1", now)
-            .unwrap();
-        tokens.invite("bob@gmail.com").unwrap();
-        let bob = tokens
-            .admit("bob@gmail.com", false, &[], "k2", now)
-            .unwrap();
+        tokens.start("ada", "k1", 1, now).unwrap();
+        let bob = tokens.start("bob", "k2", 3, now).unwrap();
         let held = session(&mut tokens, &bob, "k2");
-        tokens.remove("bob@gmail.com").unwrap();
+        assert_eq!(tokens.end("bob", 4), 1);
         gone(&tokens, &held, "k2");
 
         // A reused refresh token.
@@ -2210,53 +1610,6 @@ mod tests {
     }
 
     #[test]
-    fn a_user_belongs_to_one_email() {
-        let now = Instant::now();
-        let mut tokens = Tokens::default();
-        let first = tokens.sign_in("o'brien@a.io", "k", now).unwrap();
-        assert_eq!(first.user, "o-brien");
-        // A second email that gives the same USER does not get it.
-        let taken = tokens.sign_in("o-brien@a.io", "k", now);
-        assert_eq!(taken, Err(NoSignIn::Taken("o-brien".into())));
-        // The email that holds the USER still signs in, in any case.
-        let again = tokens.sign_in("O'Brien@A.io", "k", now).unwrap();
-        assert_eq!(again.user, "o-brien");
-        assert_eq!(tokens.email_of("o-brien"), Some("o'brien@a.io"));
-    }
-
-    #[test]
-    fn two_domains_do_not_share_a_user() {
-        let now = Instant::now();
-        let mut tokens = Tokens::default();
-        tokens.sign_in("alice@a.io", "k", now).unwrap();
-        let taken = tokens.sign_in("alice@b.io", "k", now);
-        assert_eq!(taken, Err(NoSignIn::Taken("alice".into())));
-        assert_eq!(tokens.email_of("alice"), Some("alice@a.io"));
-    }
-
-    #[test]
-    fn a_revoke_leaves_the_user_of_the_person() {
-        let now = Instant::now();
-        let mut tokens = Tokens::default();
-        tokens.sign_in("alice@a.io", "k", now).unwrap();
-        assert_eq!(tokens.revoke_user("alice"), 1);
-        assert_eq!(tokens.email_of("alice"), Some("alice@a.io"));
-        assert!(tokens.sign_in("alice@b.io", "k", now).is_err());
-        assert!(tokens.sign_in("alice@a.io", "k", now).is_ok());
-    }
-
-    #[test]
-    fn a_restart_keeps_the_user_of_each_email() {
-        let (tokens, _, now) = signed_in();
-        let (mut loaded, now) = restart(&tokens, now, REFRESH_IDLE);
-        // Each sign-in ended, and the USER still belongs to its email.
-        assert!(loaded.sign_ins.is_empty());
-        assert_eq!(loaded.email_of("mike"), Some("mike@comotechnologies.io"));
-        let taken = loaded.sign_in("mike@other.io", "k", now);
-        assert_eq!(taken, Err(NoSignIn::Taken("mike".into())));
-    }
-
-    #[test]
     fn bad_emails_are_refused() {
         let mut tokens = Tokens::default();
         assert!(tokens.sign_in("", "k", Instant::now()).is_err());
@@ -2327,76 +1680,6 @@ mod tests {
     }
 
     #[test]
-    fn the_admins_stay_after_a_restart() {
-        let now = Instant::now();
-        let mut tokens = Tokens::default();
-        tokens
-            .admit("ada@gmail.com", false, &[], "k1", now)
-            .unwrap();
-        tokens.add_admin("bob@gmail.com").unwrap();
-        tokens
-            .admit("bob@gmail.com", false, &[], "k2", now)
-            .unwrap();
-        let (loaded, _) = restart(&tokens, now, Duration::from_secs(5));
-        assert_eq!(loaded.admins().collect::<Vec<_>>(), ["bob@gmail.com"]);
-        assert!(loaded.is_admin("bob", &[]));
-        assert!(loaded.is_owner("ada"));
-        assert!(!loaded.is_owner("bob"));
-    }
-
-    #[test]
-    fn a_passed_owner_role_stays_after_a_restart_with_the_old_setting() {
-        let now = Instant::now();
-        let mut tokens = Tokens::default();
-        tokens.name_owner("ada@gmail.com");
-        tokens.invite("bob@gmail.com").unwrap();
-        tokens.pass_owner("bob@gmail.com", &[]).unwrap();
-        let (mut loaded, _) = restart(&tokens, now, Duration::from_secs(5));
-        // The old `--owner` setting names the owner only of a new riff.
-        assert_eq!(loaded.name_owner("ada@gmail.com"), Some("bob@gmail.com"));
-        assert_eq!(loaded.admins().collect::<Vec<_>>(), ["ada@gmail.com"]);
-        assert_eq!(loaded.members().collect::<Vec<_>>(), ["ada@gmail.com"]);
-    }
-
-    /// A riff with no owner, and a request that waits, stay after a
-    /// restart (01M3N7K4GAKJ621V5AWJRQVF3M).
-    #[test]
-    fn no_owner_and_a_request_stay_after_a_restart() {
-        let now = Instant::now();
-        let wait = Duration::from_secs(600);
-        let mut tokens = Tokens::default();
-        tokens
-            .admit("ada@gmail.com", false, &[], "k1", now)
-            .unwrap();
-        tokens.add_admin("bob@gmail.com").unwrap();
-        tokens
-            .admit("bob@gmail.com", false, &[], "k2", now)
-            .unwrap();
-        tokens.take_owner("bob", &[], wait, now).unwrap();
-
-        let (mut loaded, later) = restart(&tokens, now, Duration::from_secs(5));
-        assert_eq!(loaded.asks(), Some("bob@gmail.com"));
-        assert!(!loaded.is_due(later));
-        assert!(loaded.is_due(later + wait));
-
-        // A request whose time ended while the server was down is due at
-        // the load.
-        let (loaded_late, late) = restart(&tokens, now, wait * 2);
-        assert!(loaded_late.is_due(late));
-
-        loaded.deny_owner("ada").unwrap();
-        loaded.owner_gone().unwrap();
-        let (mut again, _) = restart(&loaded, later, Duration::from_secs(5));
-        assert_eq!(again.owner(), None);
-        assert!(again.owned());
-        assert_eq!(again.name_owner("ada@gmail.com"), None);
-        again
-            .admit("carol@gmail.com", true, &[], "k3", later)
-            .unwrap();
-        assert_eq!(again.owner(), None, "a sign-in makes no owner");
-    }
-
-    #[test]
     fn nobody_signs_in_as_the_riff_server() {
         let mut tokens = Tokens::default();
         let refused = tokens.sign_in("Riff@gmail.com", "k", Instant::now());
@@ -2404,41 +1687,6 @@ mod tests {
             matches!(&refused, Err(NoSignIn::Email(why)) if why.contains("the riff server")),
             "{refused:?}"
         );
-    }
-
-    #[test]
-    fn the_owner_role_passes_only_to_a_member_or_an_admin() {
-        let mut tokens = Tokens::default();
-        assert!(tokens.pass_owner("bob@gmail.com", &[]).is_err());
-        tokens.name_owner("ada@gmail.com");
-        let refused = tokens.pass_owner("bob@gmail.com", &[]).unwrap_err();
-        assert!(refused.contains("riff invite"), "{refused}");
-        assert!(tokens.pass_owner("ada@gmail.com", &[]).is_err());
-        // An admin of the settings may take the role.
-        let admins = ["Bob@gmail.com".to_owned()];
-        assert_eq!(
-            tokens.pass_owner("bob@gmail.com", &admins).unwrap(),
-            "bob@gmail.com"
-        );
-        // The role goes back: the admin that the owner made takes it.
-        tokens.pass_owner("ada@gmail.com", &[]).unwrap();
-        assert_eq!(tokens.owner(), Some("ada@gmail.com"));
-        assert_eq!(tokens.admins().collect::<Vec<_>>(), ["bob@gmail.com"]);
-    }
-
-    #[test]
-    fn an_admin_is_removed_only_after_the_role() {
-        let now = Instant::now();
-        let mut tokens = Tokens::default();
-        tokens
-            .admit("ada@gmail.com", false, &[], "k1", now)
-            .unwrap();
-        tokens.add_admin("bob@gmail.com").unwrap();
-        let refused = tokens.remove("bob@gmail.com").unwrap_err();
-        assert!(refused.contains("riff admin remove"), "{refused}");
-        tokens.remove_admin("bob@gmail.com").unwrap();
-        assert!(tokens.remove("bob@gmail.com").is_ok());
-        assert!(tokens.remove_admin("bob@gmail.com").is_err());
     }
 
     #[test]
@@ -2550,15 +1798,50 @@ mod tests {
     }
 
     #[test]
+    fn a_sign_in_keeps_its_position_over_a_restart() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        let early = tokens.start("bob", "k", 3, now).unwrap();
+        let late = tokens.start("bob", "k", 9, now).unwrap();
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        // The removal of bob is the record at the position 8.
+        assert_eq!(
+            loaded.drop_ended(&BTreeMap::from([("bob".to_owned(), 8)])),
+            1
+        );
+        assert_eq!(
+            loaded.refresh(&early.refresh_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        assert!(loaded.refresh(&late.refresh_token, "k", now).is_ok());
+        // After the load, a sign-in from before the removal does not start.
+        assert_eq!(loaded.start("bob", "k", 7, now), Err(NoSignIn::Ended));
+    }
+
+    #[test]
+    fn an_end_at_an_older_position_does_not_lower_the_position_of_the_user() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        assert_eq!(tokens.end("bob", 8), 0);
+        assert_eq!(tokens.end("bob", 5), 0);
+        assert_eq!(tokens.start("bob", "k", 7, now), Err(NoSignIn::Ended));
+        // Another person is not ended.
+        assert!(tokens.start("ada", "k", 0, now).is_ok());
+    }
+
+    #[test]
     fn a_bad_saved_form_does_not_load() {
         let (now, wall) = (Instant::now(), SystemTime::now());
         assert!(Tokens::from_bytes(b"{", now, wall).is_err());
-        let empty = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"chains":[]}"#;
+        let empty = br#"{"next_sign_in":1,"sign_ins":[],"chains":[]}"#;
         assert!(Tokens::from_bytes(empty, now, wall).is_ok());
-        let bad_hash = br#"{"next_sign_in":1,"users":{},"sign_ins":[],"chains":[
+        // A form from before the people moved to the log reads.
+        let old = br#"{"next_sign_in":1,"users":{"mike":"mike@x.io"},"owner":"mike@x.io","sign_ins":[],"chains":[]}"#;
+        assert!(Tokens::from_bytes(old, now, wall).is_ok());
+        let bad_hash = br#"{"next_sign_in":1,"sign_ins":[],"chains":[
             {"id":"c","sign_in":0,"generation":1,"hash":"abc","before":null}]}"#;
         assert!(Tokens::from_bytes(bad_hash, now, wall).is_err());
-        let bad_id = br#"{"next_sign_in":0,"users":{},"sign_ins":[
+        let bad_id = br#"{"next_sign_in":0,"sign_ins":[
             {"id":0,"user":"mike","jkt":"k","idle_until":18446744073709551615}],
             "chains":[]}"#;
         assert!(Tokens::from_bytes(bad_id, now, wall).is_err());

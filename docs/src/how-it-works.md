@@ -2311,7 +2311,8 @@ The command after it runs with no sign-in, so it gives no other error.
 A restart with a bucket keeps the riff ID, and your sign-in stays.
 
 With a bucket, each change is a record in one log: a message, a join,
-a claim, a lead, a pause. `riff-server` writes the records as chunks to
+a claim, a lead, a pause, and each change of the people.
+`riff-server` writes the records as chunks to
 Cloud Storage. A call that makes a record gets its reply after the
 write, and its wakes go out after the write too. So nobody sees a
 change that a restart can lose. Each record names its cause: the
@@ -2360,13 +2361,39 @@ drops the threads, the claims, the lead and the read cursors of the
 session, and each direct thread whose two sessions are gone.
 
 A sign-in stays valid after a restart with a bucket. The server saves
-the people, the sign-ins and their chains in the object `signins.json`,
-with only a hash of each refresh token. It writes the object at most one
-time each second. The access tokens are only in memory: after a
-restart, `riff` refreshes one time by itself.
+the sign-ins and their chains in the object `signins.json`, with only a
+hash of each refresh token. It writes the object at most one time each
+second. The access tokens are only in memory: after a restart, `riff`
+refreshes one time by itself.
 
-A sign-in or a revoke gets its reply only after the server wrote the
-object. A refresh gets its reply before the write. So after a crash,
+The people are not in that object. Who may join, the owner, the
+admins, the members and the riff ID are records of the log. So they
+stay after a restart, and the log shows who changed them. See
+[Find who changed the people](development.md#find-who-changed-the-people).
+
+A removal ends each sign-in of the person. The server writes the
+record first, and then ends the sign-ins. Each sign-in keeps the
+position of the log at its start. When the server stops between the
+two steps, the next start drops each sign-in from before the removal.
+So a removed person never gets in again with an old sign-in.
+
+```mermaid
+sequenceDiagram
+    participant A as admin
+    participant E as riff-server
+    participant L as log
+    participant S as signins.json
+    A->>E: riff remove bob@gmail.com
+    E->>L: member_removed, position 8
+    Note over E: stop before the end of the sign-ins
+    Note over S: holds the sign-in of bob, from position 5
+    E->>L: new instance: replay
+    E->>S: load
+    Note over E: 5 is before 8: drop the sign-in of bob
+```
+
+A sign-in gets its reply only after the server wrote the object. A
+refresh gets its reply before the write. So after a crash,
 the object can be one generation behind. The first refresh of each
 chain after a start takes the saved generation, or the next one, as
 good. While a write of the object fails, a refresh gets 503, and `riff`

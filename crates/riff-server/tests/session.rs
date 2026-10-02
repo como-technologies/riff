@@ -181,16 +181,17 @@ async fn two_processes_of_one_session_keep_their_tokens() {
 /// once (R20).
 #[tokio::test]
 async fn the_end_of_a_sign_in_ends_each_session_token_at_once() {
+    // mike is an admin of the settings. brett is of an allowed domain.
     let (service, base) = common::start(true, &["mike@comotechnologies.io"]).await;
     let (mike_key, brett_key) = (Key::generate(), Key::generate());
-    let sign_in = |email: &str, key: &Key| {
-        service
-            .tokens()
-            .sign_in(email, &key.thumbprint(), Instant::now())
-            .unwrap()
-    };
-    let mike = sign_in("mike@comotechnologies.io", &mike_key);
-    let brett = sign_in("brett@comotechnologies.io", &brett_key);
+    let mike = service
+        .admit("mike@comotechnologies.io", false, &mike_key.thumbprint())
+        .await
+        .unwrap();
+    let brett = service
+        .admit("brett@comotechnologies.io", true, &brett_key.thumbprint())
+        .await
+        .unwrap();
     let brett_b = "riff://brett@kadomony/como-technologies/riff?session=b";
 
     // Two processes of one session, each with its own token.

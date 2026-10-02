@@ -34,8 +34,19 @@
 //!   written copy. They get the state as `&State`, so they change
 //!   nothing.
 //! - The server is a caller too. The engine has one function for each
-//!   command of the server: [`Engine::make_riff`], [`Engine::announce`]
-//!   and [`Engine::forget`]. No HTTP call can send them.
+//!   command of the server: [`Engine::make_riff`], [`Engine::announce`],
+//!   [`Engine::forget`], [`Engine::name_owner`], [`Engine::grant_owner`]
+//!   and [`Engine::end_owner`]. No HTTP call can send them.
+//! - The token path sends the command `admit` for the first step of a
+//!   sign-in ([`Engine::sign_in`], 01M3XA877YZQ649SWB5TN60V5P). Its
+//!   caller is the sign-in: the verified email of the provider.
+//! - The role of a caller comes from the people of the pending copy,
+//!   under the lock (01M3XA87F70CD3WH4STADSCW6S). A riff with no sign-in
+//!   refuses each command of the people, before `permits`, with the
+//!   code `no_sign_in`.
+//! - The end of the sign-ins of a person is an effect of the writer,
+//!   after the write of a `member_removed` or a `signins_ended` record
+//!   (01M3XA87A9GGFA89RQXWSKY0V6).
 //!
 //! # The stages
 //!
@@ -140,15 +151,18 @@ use axum::response::{IntoResponse, Response};
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, Call, Claim, End, Join, Keys, Lead, Leave, Pause, Post, REFUSED_HEADER, Register,
-    Release, ReleaseFor, Resume, SetIdle, Start, Tailed, Wake,
+    AliveReply, Call, Claim, DenyOwner, End, Invite, Join, Keys, Lead, Leave, PassOwner, Pause,
+    Post, REFUSED_HEADER, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle,
+    Start, Tailed, TakeOwner, Wake,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
 use crate::auth::SignedIn;
 use crate::log::Written;
+use crate::oidc::Identity;
 use crate::state::{
-    Announce, Arrive, Caller, Cause, Check, Code, Command, CommandKind, Delivery, Forget, MakeRiff,
+    Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
+    CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, MakeRiff, NameOwner, OwnerChange,
     Refused, Role, Signal, State, Stopping,
 };
 use crate::trace::{Denied, DeniedCode, Named, Outcome, Traced};
@@ -156,9 +170,9 @@ use crate::trace::{Denied, DeniedCode, Named, Outcome, Traced};
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
 
-/// What the engine asks about the people of the riff. Until E3 (#393),
-/// the roles and the keys come from the token store.
-pub trait People: Send + Sync + 'static {
+/// What the engine asks the token layer about the sign-ins of the
+/// riff. The people and their roles are in the state.
+pub trait SignIns: Send + Sync + 'static {
     /// True when a call needs the proof of the token layer.
     fn needs_sign_in(&self) -> bool;
 
@@ -166,20 +180,24 @@ pub trait People: Send + Sync + 'static {
     /// as verified (R211).
     fn trusted(&self) -> bool;
 
-    /// The role of `user`.
-    fn role(&self, user: &str) -> Role;
-
     /// The thumbprints of the device keys of the live sign-ins of
     /// `user` (R199).
     fn keys(&self, user: &str) -> Vec<String>;
+
+    /// Ends each sign-in of `user` that started before `position` of
+    /// the log, and each token of them (R20,
+    /// 01M3XA87A9GGFA89RQXWSKY0V6). From now on, no sign-in of `user`
+    /// starts below `position`. Gives the number of sign-ins that
+    /// ended.
+    fn end(&self, user: &str, position: u64) -> usize;
 }
 
-/// The people of a riff with no sign-in: it trusts its network. Each
+/// The sign-ins of a riff with no sign-in: it trusts its network. Each
 /// caller has the role of an admin (01M3WRD9G5GAF65EX8P6D5DMQM).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Open;
 
-impl People for Open {
+impl SignIns for Open {
     fn needs_sign_in(&self) -> bool {
         false
     }
@@ -188,12 +206,12 @@ impl People for Open {
         true
     }
 
-    fn role(&self, _user: &str) -> Role {
-        Role::Admin
-    }
-
     fn keys(&self, _user: &str) -> Vec<String> {
         Vec::new()
+    }
+
+    fn end(&self, _user: &str, _position: u64) -> usize {
+        0
     }
 }
 
@@ -227,6 +245,22 @@ macro_rules! routed {
 
 routed!(
     Register, Start, End, Join, Leave, Claim, Release, ReleaseFor, Lead, Pause, Resume, SetIdle
+);
+
+/// Gives each command of the people its [`Routed`]. Its body names no
+/// `me`: the caller is the caller of the token.
+macro_rules! routed_by_token {
+    ($($command:ty),*) => {
+        $(impl Routed for $command {
+            fn me(&self) -> Option<&SessionUri> {
+                None
+            }
+        })*
+    };
+}
+
+routed_by_token!(
+    Invite, Remove, SetAdmin, PassOwner, TakeOwner, DenyOwner, Revoke
 );
 
 /// With sign-in, a post needs a valid signature from the key of its
@@ -364,6 +398,9 @@ pub struct Admitted {
     /// role of the caller then comes from the trust of the riff
     /// (01M3X4Z6G0TG0B4FT2N1FSPDHS).
     key: Option<String>,
+    /// The position of the log at the start of the sign-in of that
+    /// token.
+    started: Option<u64>,
 }
 
 impl Admitted {
@@ -437,7 +474,7 @@ pub struct Applied<C: Command> {
     caller: Caller,
     command: C,
     outcome: Result<C::Note, Refused>,
-    made: Vec<Record>,
+    done: Done,
     now: Instant,
 }
 
@@ -461,10 +498,6 @@ struct Sent {
     refused: Option<Refused>,
 }
 
-/// The word of the writer to the call: the entry is done.
-struct Done {
-    made: Vec<Record>,
-}
 // ANCHOR_END: entry
 
 /// The entries that the writer took from the queue: the records of one
@@ -501,7 +534,7 @@ struct Shared {
     queued: Arc<Notify>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
-    people: Box<dyn People>,
+    sign_ins: Box<dyn SignIns>,
 }
 
 /// The command engine of one `riff-server`. Clones share the same
@@ -510,9 +543,9 @@ struct Shared {
 pub struct Engine(Arc<Shared>);
 
 impl Engine {
-    /// An engine that owns `state`. `people` gives the roles and the
-    /// keys.
-    pub fn new(state: State, people: impl People) -> Engine {
+    /// An engine that owns `state`. `sign_ins` gives the keys, and ends
+    /// the sign-ins of a person.
+    pub fn new(state: State, sign_ins: impl SignIns) -> Engine {
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
         Engine(Arc::new(Shared {
@@ -524,7 +557,7 @@ impl Engine {
             queued: Arc::new(Notify::new()),
             wakes,
             tail,
-            people: Box::new(people),
+            sign_ins: Box::new(sign_ins),
         }))
     }
 
@@ -551,7 +584,7 @@ impl Engine {
             Some(proof) => proof
                 .may_act_as(me.who())
                 .map_err(|why| Failed::Denied(Denied::new(DeniedCode::NotYou, why)))?,
-            None if self.0.people.needs_sign_in() => {
+            None if self.0.sign_ins.needs_sign_in() => {
                 return Err(Failed::Denied(Denied::new(
                     DeniedCode::NoToken,
                     "this riff needs a sign-in: the call has no token",
@@ -562,6 +595,7 @@ impl Engine {
         Ok(Admitted {
             caller: Caller::of(me),
             key: proof.map(|proof| proof.jkt.clone()),
+            started: proof.map(|proof| proof.started),
         })
     }
 
@@ -601,6 +635,7 @@ impl Engine {
             admitted: Admitted {
                 caller: Caller::server(),
                 key: None,
+                started: None,
             },
             command,
         }
@@ -648,12 +683,51 @@ impl Engine {
     /// layer. The engine adds its role here, under the lock, and the
     /// state adds its worker mark, before `permits`
     /// (01M3WRD959DYNZHDKP5ZT9Q1C7).
+    ///
+    /// A caller whose sign-in started before the last end of the
+    /// sign-ins of its user is refused here too, before `permits`
+    /// ([`State::ended_since`], 01M3XGP03RDF6S15JYS718WWFC). So between
+    /// the entry of a removal in the queue and the end of the sign-ins
+    /// after its write, the removed person changes nothing: also not
+    /// through a session.
+    ///
+    /// A riff with no sign-in refuses each command of the people here,
+    /// before `permits`, with the code `no_sign_in`
+    /// (01M3WRD9G5GAF65EX8P6D5DMQM). The refused command has its entry
+    /// in the queue, as each refused command.
     fn check<C: Command>(&self, call: Authenticated<C>) -> Checked<'_, C> {
         let now = Instant::now();
         let Authenticated { admitted, command } = call;
         let mut core = self.core();
-        let caller = self.with_role(&admitted);
-        let check = core.state.check(&caller, &command, now);
+        let caller = self.with_role(&admitted, &core.state);
+        // A sign-in from before the last end of the sign-ins of its user
+        // sends no command (01M3XGP03RDF6S15JYS718WWFC): the record of
+        // the end can wait in the queue, and the writer ends the
+        // sign-in only after its write.
+        let ended = admitted
+            .started
+            .and_then(|started| core.state.ended_since(admitted.who().user(), started));
+        let check = if let Some(refused) = ended {
+            Check {
+                registered: None,
+                caller,
+                result: Err(refused),
+            }
+        } else if C::KIND.of_people() && self.0.sign_ins.trusted() {
+            Check {
+                registered: None,
+                caller,
+                result: Err(Refused::new(
+                    Code::NoSignIn,
+                    format!(
+                        "this riff has no sign-in, so it has no people: it refuses the command {}",
+                        C::KIND
+                    ),
+                )),
+            }
+        } else {
+            core.state.check(&caller, &command, now)
+        };
         Checked {
             engine: self,
             core,
@@ -664,28 +738,80 @@ impl Engine {
         }
     }
 
-    /// The caller of `admitted` with its role. Until E3 (#393), the
-    /// role of a caller with a token comes from the token store. The
-    /// role of a caller with no token comes from the trust of the riff
-    /// (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in
-    /// ([`People::trusted`]), else a member.
-    fn with_role(&self, admitted: &Admitted) -> Caller {
-        let people = &self.0.people;
+    /// The caller of `admitted` with its role. The role of a caller
+    /// with a token comes from the people of the pending copy, with the
+    /// admins of the settings ([`State::role`],
+    /// 01M3XA87F70CD3WH4STADSCW6S). The role of a caller with no token
+    /// comes from the trust of the riff (01M3X4Z6G0TG0B4FT2N1FSPDHS): an
+    /// admin in a riff with no sign-in ([`SignIns::trusted`]), else a
+    /// member.
+    fn with_role(&self, admitted: &Admitted, state: &State) -> Caller {
         let role = match &admitted.key {
-            Some(_) => people.role(admitted.who().user()),
-            None if people.trusted() => Role::Admin,
+            Some(_) => state.role(admitted.who().user()),
+            None if self.0.sign_ins.trusted() => Role::Admin,
             None => Role::Member,
         };
         admitted.caller.clone().with_role(role)
     }
 
     /// The first start of a riff: sends the command `make_riff` of the
-    /// server (01M3WRD99M99PNGP8ME50KC6WS). It changes nothing in a riff
-    /// that has a record. It goes through the stages of
+    /// server (01M3WRD99M99PNGP8ME50KC6WS). `riff_id` is the ID for a
+    /// riff that has none (01M3XA87HE06Z6M32ZJPSYSYRZ). It changes
+    /// nothing in a riff that has an ID. It goes through the stages of
     /// [`Engine::dispatch`], and it does not wait for the write: the
     /// build of a service is not async.
-    pub fn make_riff(&self) {
-        drop(self.send(Engine::as_server(MakeRiff)));
+    pub fn make_riff(&self, riff_id: String) {
+        drop(self.send(Engine::as_server(MakeRiff { riff_id })));
+    }
+
+    /// The setting `--owner`: sends the command `name_owner` of the
+    /// server, one time after the load (01M3JN3ASSV9SA0QZKXXJ0RTEV). As
+    /// [`Engine::make_riff`], it does not wait for the write.
+    pub fn name_owner(&self, email: &str) {
+        let email = email.to_owned();
+        drop(self.send(Engine::as_server(NameOwner { email })));
+    }
+
+    /// Grants a request for the owner role whose time ended: the command
+    /// `grant_owner` of the server. Gives the change that it made.
+    pub async fn grant_owner(&self) -> Result<Option<OwnerChange>, Failed> {
+        self.dispatch(Engine::as_server(GrantOwner)).await
+    }
+
+    /// Ends the role of an owner who is gone: the command `end_owner`
+    /// of the server. Gives the change that it made.
+    pub async fn end_owner(&self) -> Result<Option<OwnerChange>, Failed> {
+        self.dispatch(Engine::as_server(EndOwner)).await
+    }
+
+    /// The first step of a sign-in: sends the command `admit` for the
+    /// person that the provider verified (01M3XA877YZQ649SWB5TN60V5P).
+    /// `identity` is the proof of the sign-in. The caller is the
+    /// sign-in: no token is there yet. Gives the USER, and the position
+    /// of the log that the sign-in keeps
+    /// (01M3XA87A9GGFA89RQXWSKY0V6). The token layer then makes the
+    /// chain.
+    pub async fn sign_in(&self, identity: &Identity) -> Result<SignedInAs, Failed> {
+        let email = crate::state::people::email(&identity.email);
+        let user = crate::oidc::user_of(&email)
+            .map_err(|e| Refused::new(Code::BadRequest, e.to_string()))
+            .and_then(|user| {
+                riff_core::name::Who::new(&user, None)
+                    .map_err(|e| Refused::new(Code::BadRequest, e.to_string()))
+            })?;
+        let admit = Admit {
+            email: email.clone(),
+            allowed_domain: identity.allowed_domain,
+        };
+        self.dispatch(Authenticated {
+            admitted: Admitted {
+                caller: Caller::sign_in(&user, &email),
+                key: None,
+                started: None,
+            },
+            command: admit,
+        })
+        .await
     }
 
     /// Posts a note or a message of the server itself: the command
@@ -864,9 +990,10 @@ impl Engine {
                     None => Outcome::NoChange,
                 });
             }
-            self.effects(&entry.made);
+            let ended = self.effects(&entry.made);
             if let Some(done) = entry.done {
-                let _ = done.send(Done { made: entry.made });
+                let made = entry.made;
+                let _ = done.send(Done { made, ended });
             }
         }
     }
@@ -890,23 +1017,44 @@ impl Engine {
         }
     }
 
-    /// Sends the effects of the written records of one command: the
-    /// wakes and the `tail` event of each `posted` record. With
-    /// sign-in, the event holds the keys of the sender, so that a
-    /// reader verifies the message (R199). A session that must clear its
-    /// context gets no wake (01M3X9XBMB3R718Z81BYXTHMZ0): the message waits in its thread.
-    fn effects(&self, made: &[Record]) {
+    /// Sends the effects of the written records of one command, and
+    /// gives the number of sign-ins that ended:
+    ///
+    /// - The wakes and the `tail` event of each `posted` record. With
+    ///   sign-in, the event holds the keys of the sender, so that a
+    ///   reader verifies the message (R199). A session that must clear
+    ///   its context gets no wake (01M3X9XBMB3R718Z81BYXTHMZ0): the
+    ///   message waits in its thread.
+    /// - The end of the sign-ins of the person of a `member_removed`
+    ///   record, and of the USER of a `signins_ended` record: each
+    ///   sign-in that started before the position of the record (R20,
+    ///   01M3XA87A9GGFA89RQXWSKY0V6). A stop before this effect ends no
+    ///   sign-in now: the next load drops them by the same rule.
+    fn effects(&self, made: &[Record]) -> usize {
+        let mut ended = 0;
         for record in made {
-            let Change::Posted(posted) = &record.change else {
-                continue;
+            let posted = match &record.change {
+                Change::Posted(posted) => posted,
+                Change::MemberRemoved(removed) => {
+                    let users = self.read(|state| state.users_of(&removed.email));
+                    for user in users {
+                        ended += self.0.sign_ins.end(&user, record.position);
+                    }
+                    continue;
+                }
+                Change::SigninsEnded(signins) => {
+                    ended += self.0.sign_ins.end(&signins.user, record.position);
+                    continue;
+                }
+                _ => continue,
             };
             let mut delivery = Delivery::of(posted);
             let from = posted.message.from.who().user();
             if posted.message.sig.is_some() {
-                let keys = self.0.people.keys(from);
+                let keys = self.0.sign_ins.keys(from);
                 delivery.tailed.keys = Keys::from([(from.to_owned(), keys)]);
             }
-            delivery.tailed.trusted = self.0.people.trusted();
+            delivery.tailed.trusted = self.0.sign_ins.trusted();
             self.core().state.keep_wakes(&mut delivery.wakes);
             // A send fails only when nobody listens. That is not an error.
             for wake in delivery.wakes {
@@ -914,6 +1062,7 @@ impl Engine {
             }
             let _ = self.0.tail.send(delivery.tailed);
         }
+        ended
     }
 
     /// Stops for good: no entry is done from now on. Each call that
@@ -951,9 +1100,11 @@ impl<'s, C: Command> Checked<'s, C> {
             caller,
             result,
         } = check;
+        // A log line names a sign-in by its USER: an email is in no log
+        // line (01M3XA87CJHCGZX283ZQAFKARZ).
         let sent = |command, refused| Sent {
             traced: Traced {
-                caller: caller.by(),
+                caller: caller.traced(),
                 key: key.clone(),
                 command,
             },
@@ -999,13 +1150,13 @@ impl<C: Command> Queued<C> {
     /// Waits for the word of the writer: the entry is done. When the
     /// server stops first, the call fails.
     async fn applied(self) -> Result<Applied<C>, Failed> {
-        let Done { made } = self.done.await.map_err(|_| Failed::Stopped)?;
+        let done = self.done.await.map_err(|_| Failed::Stopped)?;
         Ok(Applied {
             engine: self.engine,
             caller: self.caller,
             command: self.command,
             outcome: self.outcome,
-            made,
+            done,
             now: self.now,
         })
     }
@@ -1018,7 +1169,7 @@ impl<C: Command> Applied<C> {
         let core = self.engine.core();
         Ok(core
             .state
-            .reply(&self.caller, &self.command, &self.made, note, self.now))
+            .reply(&self.caller, &self.command, &self.done, note, self.now))
     }
 }
 

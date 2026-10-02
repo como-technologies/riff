@@ -307,7 +307,7 @@ async fn a_hangup_stops_the_worker_with_no_message() {
 async fn the_server_stops_an_idle_worker_through_its_wrapper() {
     let api = start_server().await;
     let lead = lead(&api).await;
-    let idle = api.idle(&lead, Some(0), Some(1)).await.unwrap();
+    let idle = api.idle(&person(&lead), Some(0), Some(1)).await.unwrap();
     assert_eq!((idle.per_host, idle.after_secs), (0, 1));
     let dir = repo();
     let claude = fake_claude(dir.path(), "exec \"$RIFF_BIN\" mcp");
@@ -382,7 +382,7 @@ async fn a_wake_of_the_lead_takes_back_the_ask_to_stop() {
 
     let api = start_server().await;
     let lead = lead(&api).await;
-    api.idle(&lead, Some(0), Some(1)).await.unwrap();
+    api.idle(&person(&lead), Some(0), Some(1)).await.unwrap();
     let w7: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w7"
         .parse()
         .unwrap();
@@ -488,4 +488,12 @@ async fn the_start_hook_tells_a_worker() {
         "{worker}"
     );
     assert!(!context(false).contains("You are a worker"));
+}
+
+/// The person of `me` on the command line: no session. Only a person
+/// changes the settings of idle workers.
+fn person(me: &SessionUri) -> SessionUri {
+    format!("riff://{}@pangolin", me.who().user())
+        .parse()
+        .unwrap()
 }
