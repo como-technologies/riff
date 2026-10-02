@@ -1032,8 +1032,14 @@
 - **01M3X342ARX5Y7R9ZJDT12R9A1** On a shutdown (R129), an instance that
   holds the lease marks the lease as ended, after it saved.
 - **01M3X342DH98YEZ3X5CND43DGD** A lease is live until its instance
-  ends it, and for 90 seconds after its time. A lease with no time is
-  not live.
+  ends it, and for 90 seconds after its time. A tool reads the time
+  with its own clock, which can be at most 50 seconds ahead of the
+  clock of the instance. A lease with no time is from an older build.
+  It is live until a person deletes the object. The refusal of a tool
+  names the object.
+- **01M3X342RCXX2GGK879VYK06TS** The shared server runs with CPU always
+  on and with exactly one instance. So an instance writes the time to
+  the lease also when it gets no call.
 
 ## Sessions
 

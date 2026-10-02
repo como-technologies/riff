@@ -12,6 +12,7 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::lease::{Timing, holder, now_ms};
 use riff_server::store::{LEASE, Loaded, Memory, Store, StoreError, Version};
+use riff_server::tools::{Mode, cut};
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout};
 
@@ -268,6 +269,50 @@ async fn a_server_writes_the_time_to_the_lease_and_ends_it_at_its_shutdown() {
     assert_eq!(holder(&store, now_ms(), &timing).await.unwrap(), None);
     // The lease stays ended: the instance writes it no more.
     sleep(RENEW_EVERY * 4).await;
+    assert_eq!(holder(&store, now_ms(), &timing).await.unwrap(), None);
+}
+
+/// A deploy: the old and the new instance run at the same time for a
+/// short time. The lease is live all the time, so a cut refuses. The
+/// old instance does not write the time over the lease of the new one,
+/// and its shutdown does not end that lease.
+#[tokio::test]
+async fn in_a_deploy_the_lease_stays_live_and_names_the_new_instance() {
+    let store = Memory::default();
+    let timing = Timing::default();
+    let (old, old_base) = start_renewing(Arc::new(store.clone())).await;
+    let old_id = lease_json(&store).await["id"].as_str().unwrap().to_owned();
+    let held = holder(&store, now_ms(), &timing).await.unwrap().unwrap();
+    assert_eq!(held.id, old_id);
+
+    let (new, new_base) = start_renewing(Arc::new(store.clone())).await;
+    timeout(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    let new_id = lease_json(&store).await["id"].as_str().unwrap().to_owned();
+    assert_ne!(new_id, old_id);
+    // The old instance still runs, and writes no time: each write of the
+    // lease is from the new instance.
+    sleep(RENEW_EVERY * 4).await;
+    let held = holder(&store, now_ms(), &timing).await.unwrap().unwrap();
+    assert_eq!(held.id, new_id);
+    let who = json!({ "me": "riff://mike@pangolin" });
+    assert_eq!(status(&old_base, "who", who.clone()).await, 503);
+    assert_eq!(status(&new_base, "who", who).await, 200);
+
+    // The shutdown of the old instance does not end the lease.
+    old.shutdown().await.unwrap();
+    let held = holder(&store, now_ms(), &timing).await.unwrap().unwrap();
+    assert_eq!(held.id, new_id);
+    let refused = cut(&store, 0, Mode::Remove).await.unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains(&format!("the server instance {new_id} holds the lease")),
+        "{refused}"
+    );
+
+    new.shutdown().await.unwrap();
     assert_eq!(holder(&store, now_ms(), &timing).await.unwrap(), None);
 }
 

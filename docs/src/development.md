@@ -957,6 +957,22 @@ stateDiagram-v2
   wait 90 seconds. Then run the command again.
 - The server logs the ID of its instance at start: `took the lease
   as`.
+- The command reads the time in the lease with the clock of your
+  machine. Your clock can be at most 50 seconds ahead of the clock of
+  the server. Check your clock before a cut on the bucket.
+- A lease from riff-server 0.8.0 or older has no time, so it does not
+  end. The refusal names the lease object. Stop the server, delete the
+  object, and run the command again:
+
+  ```sh
+  gcloud storage rm gs://como-riff-state/lease
+  ```
+
+  A server that still runs stops when the object is gone.
+
+On Cloud Run, the server needs CPU that is always on
+(`--no-cpu-throttling`) and exactly one instance. Then it writes the
+time also when it gets no call. `deploy/deploy.sh` sets both.
 
 Start no server during a cut. The command reads the lease again after
 the cut. When a server started during the cut, the command names it and

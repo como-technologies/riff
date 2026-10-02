@@ -80,7 +80,13 @@
 //! seconds of [`Timing::ends_after`] are for the difference between the
 //! clock of the instance and the clock of the tool.
 //!
-//! A lease of an older build has no time. It counts as ended.
+//! The tool compares the time in the lease with its own clock. So the
+//! clock of the tool must be less than 50 seconds ahead of the clock of
+//! the instance.
+//!
+//! A lease of an older build has no time. The tool cannot know that
+//! its instance stopped, so the lease is live until a person deletes
+//! the object. An instance that still runs then stops for good (R140).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -154,14 +160,15 @@ pub struct Held {
     /// lease.
     pub id: String,
     /// The time of its last write of the lease, in milliseconds since
-    /// the Unix epoch.
+    /// the Unix epoch. 0 for a lease of an older build, with no time.
     pub renewed_at_ms: u64,
 }
 
 /// The instance that holds the lease of `store` at the time `now_ms`.
 /// `None` when the store has no lease, or when the lease ended: its
 /// holder ended it, or its time is [`Timing::ends_after`] old
-/// (01M3X342DH98YEZ3X5CND43DGD). See "A live lease" in the module docs.
+/// (01M3X342DH98YEZ3X5CND43DGD). A lease with no time is live. See "A
+/// live lease" in the module docs.
 ///
 /// ```
 /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
@@ -195,7 +202,10 @@ pub async fn holder(
     };
     let holder = parse(&lease.bytes)?;
     let age = u128::from(now_ms.saturating_sub(holder.renewed_at_ms));
-    let live = !holder.ended && age < timing.ends_after.as_millis();
+    // A lease with no time never ends by its age: an instance of an
+    // older build can still write the store.
+    let fresh = holder.renewed_at_ms == 0 || age < timing.ends_after.as_millis();
+    let live = !holder.ended && fresh;
     Ok(live.then_some(Held {
         id: holder.id,
         renewed_at_ms: holder.renewed_at_ms,
@@ -321,8 +331,9 @@ impl Lease {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::Memory;
+    use crate::store::{Loaded, Memory, Version};
     use futures::executor::block_on;
+    use futures::future::{BoxFuture, FutureExt};
 
     fn lease(store: &Memory, id: &str) -> Lease {
         Lease {
@@ -340,6 +351,76 @@ mod tests {
             let b = Lease::take(store.clone()).await.unwrap();
             assert_ne!(a.id(), b.id());
             assert_eq!(a.id().len(), 32);
+        });
+    }
+
+    /// A memory store in which another holder takes the lease after the
+    /// next load of the lease: between the load and the save of a
+    /// renewal.
+    struct Taken {
+        store: Memory,
+        armed: AtomicBool,
+    }
+
+    impl Store for Taken {
+        fn load<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+            async move {
+                let loaded = self.store.load(name).await?;
+                if name == LEASE && self.armed.swap(false, Ordering::SeqCst) {
+                    let known = loaded.as_ref().map(|lease| lease.version);
+                    let other = br#"{"id":"other","renewed_at_ms":1}"#.to_vec();
+                    self.store.save(LEASE, other, known).await?;
+                }
+                Ok(loaded)
+            }
+            .boxed()
+        }
+
+        fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+            self.store.list(prefix)
+        }
+
+        fn save<'a>(
+            &'a self,
+            name: &'a str,
+            bytes: Vec<u8>,
+            known: Option<Version>,
+        ) -> BoxFuture<'a, Result<Version, StoreError>> {
+            self.store.save(name, bytes, known)
+        }
+
+        fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+            self.store.delete(name)
+        }
+    }
+
+    /// 01M3X34282SG0DJ6X34F90HS26: the write of the time names the
+    /// version of the lease that the instance read. So an instance never
+    /// writes over the lease of another holder: the write fails, and
+    /// the instance finds the other ID.
+    #[test]
+    fn a_renewal_and_an_end_never_write_over_the_lease_of_another_holder() {
+        let memory = Memory::default();
+        let store = Arc::new(Taken {
+            store: memory.clone(),
+            armed: AtomicBool::new(false),
+        });
+        block_on(async {
+            for end in [false, true] {
+                let lease = Lease::take(store.clone()).await.unwrap();
+                assert!(lease.renew().await.unwrap());
+                // Another holder takes the lease after the load of the
+                // next write.
+                store.armed.store(true, Ordering::SeqCst);
+                if end {
+                    lease.end().await.unwrap();
+                } else {
+                    assert!(!lease.renew().await.unwrap(), "the lease has another ID");
+                }
+                let now = memory.load(LEASE).await.unwrap().unwrap();
+                assert_eq!(now.bytes, br#"{"id":"other","renewed_at_ms":1}"#);
+                assert!(!lease.held().await.unwrap());
+            }
         });
     }
 
@@ -374,7 +455,8 @@ mod tests {
         let attempt = crate::log::Timing::default().attempt;
         let writes = t.renew_every + t.read_every + t.valid_for + attempt;
         assert_eq!(writes, Duration::from_secs(40));
-        assert!(writes < t.ends_after);
+        // The difference of the two clocks that the rule allows.
+        assert_eq!(t.ends_after - writes, Duration::from_secs(50));
     }
 
     #[test]
@@ -410,13 +492,15 @@ mod tests {
     }
 
     #[test]
-    fn a_lease_with_no_time_ended_and_a_time_in_the_future_is_live() {
+    fn a_lease_with_no_time_and_a_time_in_the_future_are_live() {
         let store = Memory::default();
         let timing = Timing::default();
         block_on(async {
+            // The lease of an older build: its instance can still run.
             let old = br#"{"id":"old"}"#.to_vec();
             let version = store.save(LEASE, old, None).await.unwrap();
-            assert_eq!(holder(&store, now_ms(), &timing).await.unwrap(), None);
+            let held = holder(&store, now_ms(), &timing).await.unwrap().unwrap();
+            assert_eq!((held.id.as_str(), held.renewed_at_ms), ("old", 0));
             // The old lease still reads for an instance.
             assert!(lease(&store, "old").held().await.unwrap());
 

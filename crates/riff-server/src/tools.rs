@@ -690,6 +690,12 @@ pub fn verified_text(verified: &Verified) -> String {
 
 /// A live lease as text, for a cut.
 fn held_text(held: &Held) -> String {
+    if held.renewed_at_ms == 0 {
+        return format!(
+            "the server instance {} holds the lease, and the lease has no time",
+            held.id
+        );
+    }
     format!(
         "the server instance {} holds the lease, and wrote it at {}",
         held.id,
@@ -832,6 +838,16 @@ pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolE
     let timing = lease::Timing::default();
     let held = lease::holder(store, lease::now_ms(), &timing).await?;
     if let (Mode::Remove, Some(held)) = (mode, &held) {
+        if held.renewed_at_ms == 0 {
+            // A riff-server from before the time in the lease wrote it.
+            return Err(ToolError::Refused(format!(
+                "cannot cut: {}. An older riff-server wrote it, so the lease does not end. \
+                 Stop that server, delete the object {}, and run the command again. A \
+                 server that still runs stops when the object is gone.",
+                held_text(held),
+                store.locate(crate::store::LEASE)
+            )));
+        }
         return Err(ToolError::Refused(format!(
             "cannot cut: {}. Stop the server first. A lease ends when its server shuts \
              down, or {} seconds after its last write.",
@@ -1134,6 +1150,23 @@ mod tests {
             text.contains("the server instance abc123 holds the lease"),
             "{text}"
         );
+
+        // The lease of an older riff-server has no time: it does not
+        // end, and the refusal names the object to delete.
+        store.delete(crate::store::LEASE).await.unwrap();
+        let old = br#"{"id":"old080"}"#.to_vec();
+        let saved = store.save(crate::store::LEASE, old, None);
+        saved.await.unwrap();
+        let error = cut(&store, 4, Mode::Remove).await.unwrap_err().to_string();
+        assert!(
+            error.starts_with(
+                "cannot cut: the server instance old080 holds the lease, and the lease has \
+                 no time."
+            ),
+            "{error}"
+        );
+        assert!(error.contains("delete the object lease"), "{error}");
+        assert_eq!(objects(&store).await.len(), before.len());
 
         // The lease ended: 90 seconds with no new time.
         lease_of(&store, "abc123", 90_000, false).await;
