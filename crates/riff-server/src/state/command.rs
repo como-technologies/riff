@@ -297,7 +297,7 @@ impl fmt::Display for CommandKind {
 /// | `no_sign_in` | A command of the people in a riff with no sign-in (E3, #393). | 403 |
 /// | `not_member` | The command names a person who is not a member (E3, #393). | 403 |
 /// | `held` | Another session holds the item. | 409 |
-/// | `paused` | The riff is paused. | 409 |
+/// | `paused` | The riff or the repository is paused. | 409 |
 /// | `must_clear` | A worker must clear its context first. | 409 |
 /// | `not_holder` | The caller does not hold the item. | 409 |
 /// | `other_user` | The session ID is known under another user. | 409 |
@@ -315,7 +315,7 @@ pub enum Code {
     NotMember,
     /// Another session holds the item.
     Held,
-    /// The riff is paused.
+    /// The riff or the repository is paused.
     Paused,
     /// A worker must clear its context before it claims.
     MustClear,
@@ -440,8 +440,8 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // the holder.
         CommandKind::ReleaseFor => &[Session],
         CommandKind::Lead => &[Session],
-        // Until E5 (#364): a pause of the whole riff then needs an
-        // admin. Today `handle` lets a person or a lead pause.
+        // The command gives the role: an admin for the whole riff.
+        // `handle` checks that a session is a lead.
         CommandKind::Pause | CommandKind::Resume => &[Person, Session],
         // Until E3 (#393): then only a person changes the settings.
         CommandKind::SetIdle => &[Person, Session],
@@ -465,6 +465,10 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         let reason = match (kind, needs) {
             (CommandKind::SetIdle, _) => format!(
                 "{user} is not an admin; only an admin can change the settings of idle workers"
+            ),
+            (CommandKind::Pause | CommandKind::Resume, _) => format!(
+                "{user} is not an admin; only the owner or an admin can {kind} the whole riff \
+                 or a repository by its name"
             ),
             (_, Role::Owner) => format!("{user} is not the owner; the command {kind} needs it"),
             _ => format!("{user} is not an admin; the command {kind} needs an admin"),
@@ -635,8 +639,8 @@ mod tests {
             }
             CommandKind::Lead => of(Lead { me }, kind),
             CommandKind::MakeRiff => of(MakeRiff, kind),
-            CommandKind::Pause => of(Pause { me }, kind),
-            CommandKind::Resume => of(Resume { me }, kind),
+            CommandKind::Pause => of(Pause::here(me), kind),
+            CommandKind::Resume => of(Resume::here(me), kind),
             CommandKind::SetIdle => {
                 let set = SetIdle {
                     me,
@@ -686,6 +690,32 @@ mod tests {
         let member = caller(Class::Person);
         let refused = permits(CommandKind::SetIdle, &member, Role::Admin).unwrap_err();
         assert!(refused.reason.contains("ann is not an admin"), "{refused}");
+    }
+
+    /// A pause of the whole riff, or of a repository by its name, needs
+    /// an admin (01M3XAHZDSQR263QZVB41CK0MX).
+    #[test]
+    fn a_pause_of_the_whole_riff_or_of_a_named_repository_needs_an_admin() {
+        use riff_core::wire::{Pause, Resume};
+
+        let me: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+        let pause = |riff, repository: Option<&str>| Pause {
+            me: me.clone(),
+            riff,
+            repository: repository.map(|r| r.parse().unwrap()),
+        };
+        assert_eq!(pause(false, None).needs(), Role::Member);
+        assert_eq!(pause(true, None).needs(), Role::Admin);
+        assert_eq!(pause(false, Some("acme/lib")).needs(), Role::Admin);
+        assert_eq!(Resume::whole(me.clone()).needs(), Role::Admin);
+        assert_eq!(Resume::here(me.clone()).needs(), Role::Member);
+
+        let member = caller(Class::Session);
+        let refused = permits(CommandKind::Pause, &member, Role::Admin).unwrap_err();
+        assert_eq!(refused.code, Code::NotAllowed);
+        assert!(refused.reason.contains("ann is not an admin"), "{refused}");
+        let admin = member.with_role(Role::Admin);
+        assert!(permits(CommandKind::Pause, &admin, Role::Admin).is_ok());
     }
 
     #[test]

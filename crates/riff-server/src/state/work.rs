@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
-use riff_core::record::{Change, Claimed, Member, Record, Released};
+use riff_core::record::{Change, Claimed, Member, Record, Released, Scope};
 use riff_core::wire::{
-    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply, RiffState,
+    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply,
 };
 use serde::{Deserialize, Serialize};
 
@@ -234,8 +234,10 @@ impl View<'_> {
 }
 
 /// Takes a claim if nobody holds it, or if its holder stopped more than
-/// [`CLAIM_GRACE`](super::CLAIM_GRACE) ago. While the riff is paused, a
-/// claim fails (01M3JCG3WBHDF0ZWM06XV94ZDC). A claim of an item that
+/// [`CLAIM_GRACE`](super::CLAIM_GRACE) ago. While the riff or the
+/// repository of the thread is paused, a claim fails
+/// (01M3JCG3WBHDF0ZWM06XV94ZDC). The refusal names the pause and who
+/// set it. A claim of an item that
 /// another session holds is refused with the code `held`, and the
 /// reason names the holder (01M3WRD9JBQMNN96TXJH8EAJ3W). A claim that
 /// takes the item of a holder that is gone gives a `released` record
@@ -259,13 +261,18 @@ impl Command for Claim {
             return Err(Refused::new(Code::MustClear, MUST_CLEAR));
         }
         check("claim", item).map_err(|e| e.to_string())?;
-        if view.riff.the_riff().state == RiffState::Paused {
+        if let Some((scope, pause)) = view.riff.the_riff().pauses.check(thread) {
+            let by = pause
+                .by
+                .as_ref()
+                .map_or_else(String::new, |by| format!(" by {by}"));
+            let who = match scope {
+                Scope::Riff => "the owner or an admin resumes it with `riff resume --riff`",
+                Scope::Repository(_) | Scope::Other => "your user or the lead resumes it",
+            };
             return Err(Refused::new(
                 Code::Paused,
-                format!(
-                    "the riff is paused, so nobody claims {item}. Wait until your user or \
-                     the lead resumes it."
-                ),
+                format!("{scope} is paused{by}, so nobody claims {item}. Wait until {who}."),
             ));
         }
         let claim = |holder: &Who| Claimed {

@@ -390,20 +390,61 @@
 
 ## Pause
 
-- **01M3JCFTWCR72HQB8CBTQKXJNF** A riff is paused or running. The
-  state is one for each `riff-server`. It is a record in the log, so it
-  stays when the sessions and the server restart. A new riff starts
-  paused.
-- **01M3JCG3T8AJZN31SZQQTP3FAF** Only a person (a call with no session
-  ID, for example `riff pause` in a shell) or a lead can pause or
-  resume the riff. A call from another session fails.
-- **01M3JCG3WBHDF0ZWM06XV94ZDC** While the riff is paused, a claim
-  fails. The sessions keep the claims that they hold. A release still
-  works.
+- **01M3JCFTWCR72HQB8CBTQKXJNF** The whole riff is paused or running.
+  The state is one for each `riff-server`. It is a record in the log,
+  so it stays when the sessions and the server restart. A new riff
+  starts paused.
+- **01M3XAHZBGSSJB3YX23K88W01K** Each repository has a pause of its
+  own. A session is paused when the whole riff is paused, or when the
+  repository of its place is paused. A thread is paused when the whole
+  riff is paused, or when it is the thread of a repository that is
+  paused. A pause of one repository does not stop a session or a claim
+  of another repository. `riff pause` and `riff resume`, and the MCP
+  tools, name the repository of the call. `--riff` (the tools: `riff`
+  true) names the whole riff. `--repo OWNER/REPO` names a repository.
+  A resume of a repository while the whole riff is paused changes only
+  the pause of the repository.
+- **01M3JCG3T8AJZN31SZQQTP3FAF** Replaced by
+  01M3XAHZDSQR263QZVB41CK0MX.
+- **01M3XAHZDSQR263QZVB41CK0MX** A person (a call with no session ID,
+  for example `riff pause` in a shell) or the lead of a repository can
+  pause and resume the repository of the call. Only the owner or an
+  admin can pause and resume the whole riff, or a repository that the
+  call names: as a person, or as a session that is a lead. The server
+  refuses each other caller with the code `not_allowed` and a reason.
+  In a riff with no sign-in, each caller has the role of an admin.
+- **01M3JCG3WBHDF0ZWM06XV94ZDC** While a thread is paused, a claim in
+  it fails. The refusal says which pause stops it (the riff or the
+  repository), who set it, and who can end it. The sessions keep the
+  claims that they hold. A release still works.
 - **01M3JCG3YD7C2Y3V0QJPF082YH** A pause or a resume that changes the
-  state wakes each session of the riff that is not gone: the client
-  posts to the thread of each repository of such a session, to that
-  repository.
+  state wakes each session that it stops or starts, and that is not
+  gone: the client posts to the thread of the repository, to that
+  repository. For the whole riff, it posts to the thread of each
+  repository of such a session.
+- **01M3XAHZSJ5914BRQBZ2G4ZBSA** A session that another pause still
+  stops does not wake: a resume of a repository in a paused riff wakes
+  nobody, and a pause or a resume of the whole riff does not wake the
+  sessions of a repository that has a pause of its own. The answer to
+  a resume names each pause that still stops work.
+- **01M3XAHZG26ECNARX35JD73YXJ** The record `pause_set` holds a pause
+  that is set or ended: `scope` (`"riff"`, or
+  `{"repository":"OWNER/REPO"}`) and `state` (`paused` or `running`).
+  A build reads a scope that it does not know as `other`, and such a
+  record changes no pause.
+  `make_riff` makes a `pause_set` record. A `riff_state_set` record of
+  an older log reads as a pause of the whole riff. No command makes
+  one.
+- **01M3XAHZQ92GGFHBC50FQ7FQ0K** The state keeps who set each pause
+  (the `by` of its record) and when (the time of its record). The
+  checkpoint holds each pause with the two. A start from a checkpoint
+  gives the pauses of a full replay. A checkpoint from before the
+  pause of a repository reads.
+- **01M3XAHZJAF6YVDJ7WX74X8RBX** `riff whoami`, `riff who`, `riff top`,
+  the MCP tools `whoami` and `who`, and the start hook show which
+  pause stops a session and who set it. The reply to `/v1/riff` has
+  the state for the place of the caller, the pause of the whole riff,
+  and each repository that is paused.
 - **01M3JCG40FN0DP135EHHF403TY** While the riff is paused, a new
   session says hello to the lead, waits, and claims nothing.
 - **01M3JCG42FYS8FJ0V6WK89KXAP** While the riff is paused, a session
@@ -1286,7 +1327,8 @@
 - **01M3MEW73CDSJDSKX32XW80WZH** Replaced by 01M3Q63MVZ74WPNBA3QJYQGHFG.
 - **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the
   riff, then a table with a row for each session. The facts are
-  `riff` (`running` green, `paused` yellow), `owner` and `build`. The
+  `riff` (`running` green, `paused` yellow, with who set the pause),
+  `paused` for each repository that is paused, `owner` and `build`. The
   columns are SESSION, STATE, ROLE and DETAIL. SESSION is the name
   with the short session ID, bold, in the same color as in `riff
   tail`. STATE and DETAIL are the state of the session and its detail
@@ -1451,7 +1493,8 @@
   claim is idle for this time.
 - **01M3Q551YHYZBFV2NDS1QCYXCD** A status is stale when the session set
   it before the last change of its state: a claim or a release of the
-  session, or a pause or a resume of the riff. `who` marks a stale
+  session, or a pause or a resume of the riff or of the repository
+  of the session. `who` marks a stale
   status. A claim that the session holds already, and a set of the
   riff to its state, are no change. A status is in memory: a start of
   `riff-server` has no status.
@@ -1463,9 +1506,10 @@
   When a `who` reply has no state, riff derives it the same way from
   the other facts of the reply.
   The first state that matches wins: `offline` (no open watch stream),
-  `paused` (the riff is paused), `blocked` (a current blocked status),
-  `must_clear` (01M3X9XC99KY4RQY36A7CYWY11), `busy` (a claim), `idle`
-  (each other session). `riff top`, `riff
+  `paused` (the riff or the repository of the session is paused),
+  `blocked` (a current blocked status), `must_clear`
+  (01M3X9XC99KY4RQY36A7CYWY11), `busy` (a claim), `idle` (each other
+  session). `riff top`, `riff
   who`, the MCP `who` tool and `riff workers` show the word of the
   state, then its detail: for `offline`, `seen 2h ago`; for `paused`,
   the claims and `stopped at:` the step; for `blocked`, the reason and
@@ -1483,10 +1527,11 @@
   from each `tell`, `post`, `pause`, `resume` and `lead` call of the
   lead that `riff-server` accepts: `told SESSION` with the short
   session ID, `posted a message: TEXT`, `posted a note: TEXT`, `asked
-  for status`, `paused the riff`, `resumed the riff` and `became the
-  lead`. TEXT is the message in one line, cut to 80 characters with
-  `…`. The step replaces the step of the lead. A `status` call of
-  the lead replaces the step until the next of these calls. The step
+  for status`, `paused the repository`, `resumed the repository`,
+  `paused the riff`, `resumed the riff` and `became the lead`. TEXT is
+  the message in one line, cut to 80 characters with `…`. The step
+  replaces the step of the lead. A `status` call of the lead replaces
+  the step until the next of these calls. The step
   of a session that is not the lead does not change. The skill tells
   the lead to set its status for work that riff cannot see.
 - **01M3WKCYM623M66ATHCH3QGMKP** The automatic step of the lead shows
@@ -2196,6 +2241,10 @@
   stop. It asks each worker once. A call of the worker after the ask,
   or the end of its watch at a wake, takes the ask back. So a worker
   that the lead wakes, or that claims work, goes on.
+- **01M3XAHZMN8P0PRD0Q7881TEF9** The rule for idle workers is for each
+  user, host and repository. An idle worker in one repository does not
+  stop the idle worker of the same user and host in another
+  repository.
 - **01M3Q5A0QZTSTXHHNYCE8HFJSB** The reply to a keep-alive tells a
   worker that the server asks it to stop. `riff mcp` in a worker sends
   a keep-alive each 10 seconds. On the ask, it sends SIGTERM to the
@@ -2302,8 +2351,9 @@
   shows it and sets it.
 - **01M3Q5QEBTNM90SPYXNVTT7RJA** A pause stops the rollout within one
   look. A look that started before the pause can start one more
-  worker. After it, the rollout starts no worker while the riff is
-  paused. The resume starts the rollout again.
+  worker. After it, the rollout starts no worker while the riff or the
+  repository of the lead is paused. The resume starts the rollout
+  again. A pause of another repository does not stop the rollout.
 - **01M3Q5QEE4MQNCRKVJK3D54G9Z** Each start of the rollout gives the
   lead a note with the host, the pane and the session of the new
   worker. A note wakes nobody. On the machine of the lead, the person

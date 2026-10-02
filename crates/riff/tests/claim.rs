@@ -18,17 +18,15 @@ async fn start_server() -> String {
 /// A git repository with a GitHub origin, so the default thread is
 /// `como-technologies/riff`.
 fn repo() -> tempfile::TempDir {
+    repo_named("riff")
+}
+
+/// A git repository with the GitHub origin `como-technologies/NAME`.
+fn repo_named(name: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     git(dir.path(), &["init", "-q"]);
-    git(
-        dir.path(),
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/como-technologies/riff.git",
-        ],
-    );
+    let origin = format!("https://github.com/como-technologies/{name}.git");
+    git(dir.path(), &["remote", "add", "origin", &origin]);
     dir
 }
 
@@ -89,7 +87,7 @@ async fn run(
 
 /// Resumes the new riff as the person mike, in a shell.
 async fn resume(server: &str, dir: &Path) {
-    let (out, code) = run(server, dir, "mike", None, &["resume"]).await;
+    let (out, code) = run(server, dir, "mike", None, &["resume", "--riff"]).await;
     assert_eq!(code, 0, "{out}");
 }
 
@@ -101,14 +99,25 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
 
     let (out, code) = run(&server, dir, "mike", None, &["who"]).await;
     assert_eq!(code, 0);
-    assert!(out.starts_with("riff   paused\n"), "{out}");
+    assert!(out.starts_with("riff   paused by the server\n"), "{out}");
     let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_ne!(code, 0, "a paused riff refuses a claim");
 
+    // A resume of the repository leaves the new riff paused.
     let (out, code) = run(&server, dir, "mike", None, &["resume"]).await;
     assert_eq!(code, 0);
+    assert_eq!(
+        out,
+        "The repository como-technologies/riff was running already. The whole riff is still \
+         paused: the owner or an admin resumes it with `riff resume --riff`.\n"
+    );
+    let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
+    assert_ne!(code, 0, "the riff is still paused");
+
+    let (out, code) = run(&server, dir, "mike", None, &["resume", "--riff"]).await;
+    assert_eq!(code, 0);
     assert_eq!(out, "The riff is running now. No other session woke.\n");
-    let (out, _) = run(&server, dir, "mike", None, &["resume"]).await;
+    let (out, _) = run(&server, dir, "mike", None, &["resume", "--riff"]).await;
     assert_eq!(out, "The riff was running already.\n");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
     assert!(out.contains("\nriff     running\n"), "{out}");
@@ -123,11 +132,89 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
     assert!(out.contains("\nriff     running\n"), "{out}");
 
-    let (out, code) = run(&server, dir, "mike", None, &["pause"]).await;
+    let (out, code) = run(&server, dir, "mike", None, &["pause", "--riff"]).await;
     assert_eq!(code, 0);
     assert!(out.starts_with("The riff is paused now."), "{out}");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
+    assert!(
+        out.contains("\nriff     paused by the person mike\n"),
+        "{out}"
+    );
     assert!(out.contains("The riff is paused."), "{out}");
+}
+
+/// Two repositories. The lead of strata runs `riff pause`: only strata
+/// stops, and `whoami` and `who` show which pause it is and who set it
+/// (01M3XAHZBGSSJB3YX23K88W01K, 01M3XAHZJAF6YVDJ7WX74X8RBX). `--repo`
+/// names a repository from another directory.
+#[tokio::test]
+async fn pause_and_resume_name_the_repository_of_the_directory() {
+    let server = start_server().await;
+    let (here, strata) = (repo(), repo_named("strata"));
+    let (here, strata) = (here.path(), strata.path());
+    resume(&server, here).await;
+    agent(&server, here, "mike", "a1", &["lead"]).await;
+    agent(&server, strata, "brett", "b1", &["lead"]).await;
+
+    let (out, code) = agent(&server, strata, "brett", "b1", &["pause"]).await;
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        out,
+        "The repository como-technologies/strata is paused now. No other session woke.\n"
+    );
+
+    // The session in strata is paused, and its claim is refused.
+    let (out, _) = agent(&server, strata, "brett", "b1", &["whoami"]).await;
+    assert!(out.contains("\nriff     running\n"), "{out}");
+    let fact = "\npaused   como-technologies/strata by the session brett/b1\n";
+    assert!(out.contains(fact), "{out}");
+    assert!(
+        out.contains(
+            "The repository como-technologies/strata is paused. Nobody claims work there. Your \
+             user or the lead resumes it with: riff resume"
+        ),
+        "{out}"
+    );
+    let (_, code) = agent(&server, strata, "brett", "b1", &["claim", "issue-7"]).await;
+    assert_ne!(code, 0, "a paused repository refuses a claim");
+
+    // The other repository goes on. It sees the pause, with no action.
+    let (out, code) = agent(&server, here, "mike", "a1", &["claim", "issue-12"]).await;
+    assert_eq!(code, 0, "{out}");
+    let (out, _) = agent(&server, here, "mike", "a1", &["whoami"]).await;
+    assert!(out.contains("\nriff     running\n"), "{out}");
+    assert!(out.contains(fact), "{out}");
+    assert!(!out.contains("Nobody claims work"), "{out}");
+    let (out, _) = agent(&server, here, "mike", "a1", &["who"]).await;
+    assert!(out.starts_with("riff    running\n"), "{out}");
+    assert!(
+        out.contains("\npaused  como-technologies/strata by the session brett/b1\n"),
+        "{out}"
+    );
+
+    // A person resumes strata by its name, from another directory.
+    let resume = ["resume", "--repo", "como-technologies/strata"];
+    let (out, code) = run(&server, here, "mike", None, &resume).await;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.starts_with("The repository como-technologies/strata is running now."),
+        "{out}"
+    );
+    let (out, code) = agent(&server, strata, "brett", "b1", &["claim", "issue-7"]).await;
+    assert_eq!(code, 0, "{out}");
+
+    // A person in a shell pauses the repository of the directory.
+    let (out, code) = run(&server, strata, "brett", None, &["pause"]).await;
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        out,
+        "The repository como-technologies/strata is paused now. Woke \
+         brett@pangolin:strata (b1).\n"
+    );
+    let (out, _) = agent(&server, here, "mike", "a1", &["whoami"]).await;
+    let fact = "\npaused   como-technologies/strata by the person brett\n";
+    assert!(out.contains(fact), "{out}");
+    assert!(out.contains("\nriff     running\n"), "{out}");
 }
 
 #[tokio::test]
@@ -469,7 +556,7 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
         "{out}"
     );
     // A running riff, so that paused does not hide the steps.
-    let (_, code) = agent(&server, dir, "mike", "a1", &["resume"]).await;
+    let (_, code) = agent(&server, dir, "mike", "a1", &["resume", "--riff"]).await;
     assert_eq!(code, 0);
     let (out, code) = agent(
         &server,

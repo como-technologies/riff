@@ -790,9 +790,9 @@ riff-server log --dir ~/.local/state/riff-server
 ```
 
 ```text
-1  2026-09-30T12:00:00Z  riff_state_set  paused  (make_riff, the server)
+1  2026-09-30T12:00:00Z  pause_set  the riff  paused  (make_riff, the server)
 2  2026-09-30T12:00:01Z  joined_thread  acme/app by riff://ann@heron/acme/app?session=s1  (register, the session ann/s1)
-3  2026-09-30T12:00:02Z  riff_state_set  running  (resume, the session ann/s1)
+3  2026-09-30T12:00:02Z  pause_set  the riff  running  (resume, the session ann/s1)
 4  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)
 5  2026-09-30T12:00:09Z  posted  acme/app #1 note from riff://ann@heron/acme/app?session=s1, woke 0: "started: issue-7"  (post, the session ann/s1)
 ```

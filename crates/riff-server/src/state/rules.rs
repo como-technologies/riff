@@ -14,7 +14,8 @@
 //! The tests do no I/O.
 
 use riff_core::record::{
-    By, Claimed, Forgotten, Member, Released, RiffStateSet, SessionStarted, SettingChanged,
+    By, Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet, Scope, SessionStarted,
+    SettingChanged,
 };
 use riff_core::wire;
 
@@ -101,8 +102,51 @@ fn started(me: &SessionUri, reason: StartReason, worker: bool) -> Change {
     })
 }
 
+/// The pause of the whole riff is set or ended.
 fn riff_set(state: RiffState) -> Change {
-    Change::RiffStateSet(RiffStateSet { state })
+    pause_set(Scope::Riff, state)
+}
+
+fn pause_set(scope: Scope, state: RiffState) -> Change {
+    Change::PauseSet(PauseSet { scope, state })
+}
+
+/// The pause of the repository `acme/app` is set or ended.
+fn repo_set(state: RiffState) -> Change {
+    pause_set(Scope::Repository(repo()), state)
+}
+
+/// The short form of a pause of the whole riff.
+struct PauseRiff;
+
+impl Ask for PauseRiff {
+    type Command = wire::Pause;
+    fn of(self, me: &SessionUri) -> wire::Pause {
+        wire::Pause::whole(me.clone())
+    }
+}
+
+/// The short form of a resume of the whole riff.
+struct ResumeRiff;
+
+impl Ask for ResumeRiff {
+    type Command = wire::Resume;
+    fn of(self, me: &SessionUri) -> wire::Resume {
+        wire::Resume::whole(me.clone())
+    }
+}
+
+/// The short form of a pause of a repository by its name.
+struct PauseNamed(ThreadName);
+
+impl Ask for PauseNamed {
+    type Command = wire::Pause;
+    fn of(self, me: &SessionUri) -> wire::Pause {
+        wire::Pause {
+            repository: Some(self.0),
+            ..wire::Pause::here(me.clone())
+        }
+    }
 }
 
 /// Ann and bob in the repository thread of a running riff, each the lead
@@ -179,8 +223,8 @@ asks! {
     Arrive => super::Arrive, |me| super::Arrive { me };
     End => wire::End, |me| wire::End { me };
     Lead => wire::Lead, |me| wire::Lead { me };
-    Pause => wire::Pause, |me| wire::Pause { me };
-    Resume => wire::Resume, |me| wire::Resume { me };
+    Pause => wire::Pause, wire::Pause::here;
+    Resume => wire::Resume, wire::Resume::here;
 }
 
 /// A start with its reason and its worker mark.
@@ -885,19 +929,169 @@ fn a_person_or_a_session_outside_git_is_never_the_lead() {
         .then_refused_as(Code::BadRequest, "needs a git repository");
 }
 
+/// The person `ann`, with a call from the repository `acme/app`.
+fn person_here() -> SessionUri {
+    "riff://ann@heron/acme/app".parse().unwrap()
+}
+
+/// A member: a caller with no role of an admin.
+fn member(me: &SessionUri) -> Caller {
+    Caller::of(me)
+}
+
+/// A person or the lead pauses the repository of the call
+/// (01M3XAHZDSQR263QZVB41CK0MX).
 #[test]
-fn only_a_person_or_the_lead_sets_the_riff_state() {
+fn a_person_or_the_lead_pauses_the_repository_of_the_call() {
     given(&team())
-        .when(&ann(), Pause)
-        .then(&[riff_set(RiffState::Paused)]);
+        .when_as(&member(&ann()), Pause)
+        .then(&[repo_set(RiffState::Paused)]);
     given(&team())
-        .when(&person(), Pause)
-        .then(&[riff_set(RiffState::Paused)]);
+        .when_as(&member(&person_here()), Pause)
+        .then(&[repo_set(RiffState::Paused)]);
     given(&team())
         .live(&[ann()])
         .when(&ann2(), Pause)
         .then_refused_as(Code::NotAllowed, "only your user or the lead");
+    // The repository runs: a resume changes nothing.
     given(&team()).when(&ann(), Resume).then(&[]);
+    // A person outside a repository names no repository.
+    given(&team())
+        .when(&person(), Pause)
+        .then_refused_as(Code::BadRequest, "no repository");
+}
+
+/// A resume of a repository while the riff is paused changes only the
+/// pause of the repository (01M3XAHZBGSSJB3YX23K88W01K).
+#[test]
+fn a_resume_of_a_repository_leaves_the_pause_of_the_riff() {
+    let paused = [
+        joined(&ann(), &repo()),
+        lead_set(&ann()),
+        repo_set(RiffState::Paused),
+    ];
+    // The riff of `paused` has no resume: the whole riff is paused too.
+    given(&paused)
+        .when(&ann(), Resume)
+        .then(&[repo_set(RiffState::Running)]);
+    given(&paused)
+        .when(&ann(), claim("issue-7"))
+        .then_refused_as(Code::Paused, "the riff is paused");
+}
+
+/// Only an admin pauses the whole riff: as a person, or as a lead
+/// (01M3XAHZDSQR263QZVB41CK0MX).
+#[test]
+fn only_an_admin_pauses_the_whole_riff() {
+    given(&team())
+        .when(&ann(), PauseRiff)
+        .then(&[riff_set(RiffState::Paused)]);
+    given(&team())
+        .when(&person(), PauseRiff)
+        .then(&[riff_set(RiffState::Paused)]);
+    given(&team()).when(&ann(), ResumeRiff).then(&[]);
+    // A lead that is not an admin.
+    given(&team())
+        .when_as(&member(&ann()), PauseRiff)
+        .then_refused_as(Code::NotAllowed, "ann is not an admin");
+    given(&team())
+        .when_as(&member(&person()), ResumeRiff)
+        .then_refused_as(Code::NotAllowed, "ann is not an admin");
+    // An admin whose session is not a lead.
+    given(&team())
+        .live(&[ann()])
+        .when(&ann2(), PauseRiff)
+        .then_refused_as(Code::NotAllowed, "only your user or the lead");
+}
+
+/// Only an admin pauses a repository by its name
+/// (01M3XAHZDSQR263QZVB41CK0MX).
+#[test]
+fn only_an_admin_pauses_a_repository_by_its_name() {
+    let lib: ThreadName = "acme/lib".parse().unwrap();
+    let set = pause_set(Scope::Repository(lib.clone()), RiffState::Paused);
+    given(&team())
+        .when(&person(), PauseNamed(lib.clone()))
+        .then(std::slice::from_ref(&set));
+    given(&team())
+        .when(&ann(), PauseNamed(lib.clone()))
+        .then(&[set]);
+    given(&team())
+        .when_as(&member(&ann()), PauseNamed(lib.clone()))
+        .then_refused_as(Code::NotAllowed, "ann is not an admin");
+    let both = wire::Pause {
+        repository: Some(lib),
+        ..wire::Pause::whole(person())
+    };
+    given(&team())
+        .when(&person(), Whole(both))
+        .then_refused_as(Code::BadRequest, "not the two");
+}
+
+/// A command as it is.
+struct Whole<C>(C);
+
+impl<C: Command> Ask for Whole<C> {
+    type Command = C;
+    fn of(self, _: &SessionUri) -> C {
+        self.0
+    }
+}
+
+/// A pause in one repository stops no claim in another repository
+/// (01M3XAHZBGSSJB3YX23K88W01K).
+#[test]
+fn a_pause_of_one_repository_stops_no_claim_in_another() {
+    let dave: SessionUri = "riff://dave@crow/acme/lib?session=d1".parse().unwrap();
+    let lib: ThreadName = "acme/lib".parse().unwrap();
+    let mut records = team();
+    records.push(joined(&dave, &lib));
+    records.push(repo_set(RiffState::Paused));
+    given(&records)
+        .when(&ann(), claim("issue-7"))
+        .then_refused_as(Code::Paused, "the repository acme/app is paused");
+    let claim_in_lib = wire::Claim {
+        me: dave.clone(),
+        thread: lib.clone(),
+        item: "issue-7".into(),
+    };
+    given(&records)
+        .when(&dave, Whole(claim_in_lib))
+        .then(&[Change::Claimed(Claimed {
+            session: dave.clone(),
+            thread: lib,
+            item: "issue-7".into(),
+        })]);
+    // A thread that is not a repository thread sees only the pause of
+    // the riff.
+    let claim_in_design = wire::Claim {
+        me: ann(),
+        thread: design(),
+        item: "issue-7".into(),
+    };
+    given(&records)
+        .when(&ann(), Whole(claim_in_design))
+        .then(&[Change::Claimed(Claimed {
+            session: ann(),
+            thread: design(),
+            item: "issue-7".into(),
+        })]);
+}
+
+/// A `riff_state_set` record of an old log sets the pause of the whole
+/// riff, and a scope that the build does not know changes no pause
+/// (01M3XAHZG26ECNARX35JD73YXJ).
+#[test]
+fn an_old_record_sets_the_pause_of_the_riff_and_an_unknown_scope_changes_nothing() {
+    let old = |state| Change::RiffStateSet(RiffStateSet { state });
+    let state = given(&[old(RiffState::Running)]).state;
+    assert!(state.pauses().riff().is_none());
+    let state = given(&[old(RiffState::Running), old(RiffState::Paused)]).state;
+    assert!(state.pauses().riff().is_some());
+    let other = pause_set(Scope::Other, RiffState::Paused);
+    let state = given(&[old(RiffState::Running), other]).state;
+    assert!(state.pauses().check(&repo()).is_none());
+    assert_eq!(state.position(), 2);
 }
 
 #[test]

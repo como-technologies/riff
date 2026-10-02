@@ -19,8 +19,9 @@ use riff_core::selector::Selector;
 use crate::api::{Checked, Claimed, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
-    AdminSet, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, Posted, ReleaseReply,
-    Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    AdminSet, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted,
+    ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo,
+    ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -282,21 +283,108 @@ pub fn posted(posted: &Posted) -> String {
     out
 }
 
-/// The state of the riff, in one line (01M3JCG4AV80MHFP73CWDY5E3M).
+/// Who set a pause, for example ` by the person mike`. Empty when it is
+/// not known.
+fn pause_by(pause: &PauseInfo) -> String {
+    pause
+        .by
+        .as_ref()
+        .map_or_else(String::new, |by| format!(" by {}", safe(&by.to_string())))
+}
+
+/// The pause that stops a session in the repository `here`, and who set
+/// it (01M3XAHZJAF6YVDJ7WX74X8RBX): the pause of the riff, else the
+/// pause of the repository. `None` when the session runs.
 ///
 /// ```
-/// use riff_core::wire::RiffState;
+/// use riff_core::record::By;
+/// use riff_core::wire::{PauseInfo, RepositoryPause, RiffReply, RiffState};
 ///
-/// assert_eq!(riff::text::riff_state(RiffState::Running), "The riff is running.");
-/// assert!(riff::text::riff_state(RiffState::Paused).contains("Nobody claims work"));
+/// let strata = "como-technologies/strata".parse()?;
+/// let by = Some(By::Session(riff_core::name::Who::new("brett", Some("62b2"))?));
+/// let pause = RepositoryPause { repository: strata, pause: PauseInfo { by, at_ms: 7 } };
+/// let pauses = RiffReply { repositories: vec![pause.clone()], ..RiffState::Paused.into() };
+/// let riff = RiffReply { riff: None, ..pauses.clone() };
+/// assert_eq!(
+///     riff::text::paused(&riff, Some(&pause.repository)).unwrap(),
+///     "The repository como-technologies/strata is paused by the session brett/62b2"
+/// );
+/// assert_eq!(riff::text::paused(&pauses, Some(&pause.repository)).unwrap(), "The riff is paused");
+/// assert!(riff::text::paused(&RiffState::Running.into(), None).is_none());
+/// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn riff_state(state: RiffState) -> String {
-    match state {
-        RiffState::Running => "The riff is running.".into(),
-        RiffState::Paused => "The riff is paused. Nobody claims work. Your user or the lead \
-                              resumes it with `riff resume`."
-            .into(),
+pub fn paused(pauses: &RiffReply, here: Option<&ThreadName>) -> Option<String> {
+    if let Some(pause) = &pauses.riff {
+        return Some(format!("The riff is paused{}", pause_by(pause)));
     }
+    match here.and_then(|here| pauses.repository(here).map(|pause| (here, pause))) {
+        Some((here, pause)) => Some(format!(
+            "The repository {here} is paused{}",
+            pause_by(pause)
+        )),
+        None if pauses.state == RiffState::Paused => {
+            Some("The repository of this session is paused".into())
+        }
+        None => None,
+    }
+}
+
+/// The pauses of the riff as a session in the repository `here` sees
+/// them (01M3JCG4AV80MHFP73CWDY5E3M, 01M3XAHZJAF6YVDJ7WX74X8RBX): the
+/// pause that stops it, who set it and how to end it, then a line for
+/// each other repository that is paused.
+///
+/// ```
+/// use riff_core::record::By;
+/// use riff_core::wire::{PauseInfo, RepositoryPause, RiffReply, RiffState};
+///
+/// assert_eq!(riff::text::riff_state(&RiffState::Running.into(), None), "The riff is running.");
+/// let paused = riff::text::riff_state(&RiffState::Paused.into(), None);
+/// assert!(paused.contains("Nobody claims work"));
+/// assert!(paused.ends_with("resumes it with `riff resume --riff`."), "{paused}");
+///
+/// let riff = "como-technologies/riff".parse()?;
+/// let strata = "como-technologies/strata".parse()?;
+/// let by = Some(By::Session(riff_core::name::Who::new("brett", Some("62b2"))?));
+/// let pause = RepositoryPause { repository: strata, pause: PauseInfo { by, at_ms: 7 } };
+/// let pauses = RiffReply { repositories: vec![pause.clone()], ..RiffState::Running.into() };
+/// assert_eq!(
+///     riff::text::riff_state(&pauses, Some(&riff)),
+///     "The riff is running.\n\
+///      The repository como-technologies/strata is paused by the session brett/62b2."
+/// );
+/// let there = RiffReply { state: RiffState::Paused, ..pauses };
+/// assert_eq!(
+///     riff::text::riff_state(&there, Some(&pause.repository)),
+///     "The repository como-technologies/strata is paused by the session brett/62b2. Nobody \
+///      claims work there. Your user or the lead resumes it with `riff resume`."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn riff_state(pauses: &RiffReply, here: Option<&ThreadName>) -> String {
+    let stops_here = here.filter(|_| pauses.riff.is_none());
+    let mut out = match paused(pauses, here) {
+        None => "The riff is running.".to_owned(),
+        Some(text) if pauses.riff.is_some() => format!(
+            "{text}. Nobody claims work. The owner or an admin resumes it with `riff resume \
+             --riff`."
+        ),
+        Some(text) => format!(
+            "{text}. Nobody claims work there. Your user or the lead resumes it with `riff \
+             resume`."
+        ),
+    };
+    for other in &pauses.repositories {
+        if Some(&other.repository) != stops_here {
+            let _ = write!(
+                out,
+                "\nThe repository {} is paused{}.",
+                other.repository,
+                pause_by(&other.pause)
+            );
+        }
+    }
+    out
 }
 
 /// The builds of `riff` and of `server`, its `riff-server`, after a call
@@ -327,33 +415,51 @@ pub fn build_line(server: Option<&Build>) -> String {
     }
 }
 
+/// The riff, or the repository `repository`: the subject of a pause.
+fn pause_subject(repository: Option<&ThreadName>) -> String {
+    match repository {
+        Some(repository) => format!("The repository {repository}"),
+        None => "The riff".to_owned(),
+    }
+}
+
 /// The message that wakes the sessions after a pause or a resume
-/// (01M3JCG3YD7C2Y3V0QJPF082YH).
+/// (01M3JCG3YD7C2Y3V0QJPF082YH): of the repository `repository`, or of
+/// the whole riff.
 ///
 /// ```
 /// use riff_core::wire::RiffState;
 ///
-/// assert!(riff::text::riff_news(RiffState::Paused).contains("\"Pause\""));
-/// assert!(riff::text::riff_news(RiffState::Running).contains("from where you stopped"));
+/// assert!(riff::text::riff_news(None, RiffState::Paused).contains("\"Pause\""));
+/// assert!(riff::text::riff_news(None, RiffState::Running).contains("from where you stopped"));
+/// let strata = "como-technologies/strata".parse()?;
+/// let news = riff::text::riff_news(Some(&strata), RiffState::Paused);
+/// assert!(news.starts_with("The repository como-technologies/strata is paused. Stop"), "{news}");
+/// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn riff_news(state: RiffState) -> String {
+pub fn riff_news(repository: Option<&ThreadName>, state: RiffState) -> String {
+    let subject = pause_subject(repository);
     match state {
-        RiffState::Paused => "The riff is paused. Stop at your next step and wait: see \
-                              \"Pause\" in the riff skill."
-            .into(),
-        RiffState::Running => "The riff is running again. Go on from where you stopped. A \
-                               session with no work follows the start routine."
-            .into(),
+        RiffState::Paused => format!(
+            "{subject} is paused. Stop at your next step and wait: see \"Pause\" in the riff \
+             skill."
+        ),
+        RiffState::Running => format!(
+            "{subject} is running again. Go on from where you stopped. A session with no work \
+             follows the start routine."
+        ),
     }
 }
 
-/// The answer to `riff pause` and `riff resume`: the state, and the
-/// sessions that woke.
+/// The answer to `riff pause` and `riff resume`: the new state of the
+/// repository `repository` or of the whole riff, the sessions that
+/// woke, and each pause that still stops work
+/// (01M3XAHZSJ5914BRQBZ2G4ZBSA).
 ///
 /// ```
 /// use riff_core::wire::{Posted, RiffReply, RiffState};
 ///
-/// let reply = RiffReply { state: RiffState::Paused, changed: true };
+/// let reply = RiffReply { changed: true, ..RiffState::Paused.into() };
 /// let posted = Posted {
 ///     thread: "como-technologies/riff".parse()?,
 ///     seq: 3,
@@ -361,23 +467,61 @@ pub fn riff_news(state: RiffState) -> String {
 ///     unmatched: vec![],
 /// };
 /// assert_eq!(
-///     riff::text::riff_set(&reply, &[posted]),
+///     riff::text::riff_set(None, RiffState::Paused, &reply, &[posted]),
 ///     "The riff is paused now. Woke brett@heron:riff#tests (77e0)."
 /// );
-/// let again = RiffReply { state: RiffState::Paused, changed: false };
-/// assert_eq!(riff::text::riff_set(&again, &[]), "The riff was paused already.");
+/// let again = RiffReply::from(RiffState::Paused);
+/// assert_eq!(
+///     riff::text::riff_set(None, RiffState::Paused, &again, &[]),
+///     "The riff was paused already."
+/// );
+/// // A resume of a repository while the whole riff is paused.
+/// let riff = "como-technologies/riff".parse()?;
+/// assert_eq!(
+///     riff::text::riff_set(Some(&riff), RiffState::Running, &reply, &[]),
+///     "The repository como-technologies/riff is running now. No other session woke. The \
+///      whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
+/// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn riff_set(reply: &RiffReply, posted: &[Posted]) -> String {
-    if !reply.changed {
-        return format!("The riff was {} already.", reply.state);
-    }
-    let mut out = format!("The riff is {} now.", reply.state);
-    let names: Vec<String> = posted.iter().flat_map(|p| &p.woken).map(name).collect();
-    if names.is_empty() {
-        out.push_str(" No other session woke.");
+pub fn riff_set(
+    repository: Option<&ThreadName>,
+    state: RiffState,
+    reply: &RiffReply,
+    posted: &[Posted],
+) -> String {
+    let subject = pause_subject(repository);
+    let mut out = if reply.changed {
+        let mut out = format!("{subject} is {state} now.");
+        let names: Vec<String> = posted.iter().flat_map(|p| &p.woken).map(name).collect();
+        if names.is_empty() {
+            out.push_str(" No other session woke.");
+        } else {
+            let _ = write!(out, " Woke {}.", names.join(", "));
+        }
+        out
     } else {
-        let _ = write!(out, " Woke {}.", names.join(", "));
+        format!("{subject} was {state} already.")
+    };
+    if state == RiffState::Running {
+        if repository.is_some() && reply.riff.is_some() {
+            out.push_str(
+                " The whole riff is still paused: the owner or an admin resumes it with `riff \
+                 resume --riff`.",
+            );
+        }
+        if repository.is_none() && !reply.repositories.is_empty() {
+            let names: Vec<String> = reply
+                .repositories
+                .iter()
+                .map(|r| r.repository.to_string())
+                .collect();
+            let _ = write!(
+                out,
+                " Still paused: {}. Its user or its lead resumes it with `riff resume`.",
+                names.join(", ")
+            );
+        }
     }
     out
 }
@@ -2001,13 +2145,17 @@ pub fn posted_step(kind: riff_core::wire::Kind, body: &str) -> String {
 /// ```
 /// use riff_core::wire::RiffState;
 ///
-/// assert_eq!(riff::text::riff_step(RiffState::Paused), "paused the riff");
-/// assert_eq!(riff::text::riff_step(RiffState::Running), "resumed the riff");
+/// assert_eq!(riff::text::riff_step(true, RiffState::Paused), "paused the riff");
+/// assert_eq!(riff::text::riff_step(true, RiffState::Running), "resumed the riff");
+/// assert_eq!(riff::text::riff_step(false, RiffState::Paused), "paused the repository");
+/// assert_eq!(riff::text::riff_step(false, RiffState::Running), "resumed the repository");
 /// ```
-pub fn riff_step(state: RiffState) -> &'static str {
-    match state {
-        RiffState::Paused => "paused the riff",
-        RiffState::Running => "resumed the riff",
+pub fn riff_step(whole: bool, state: RiffState) -> &'static str {
+    match (whole, state) {
+        (true, RiffState::Paused) => "paused the riff",
+        (true, RiffState::Running) => "resumed the riff",
+        (false, RiffState::Paused) => "paused the repository",
+        (false, RiffState::Running) => "resumed the repository",
     }
 }
 

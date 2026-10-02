@@ -44,7 +44,7 @@ use std::time::Duration;
 
 use riff_core::build::Build;
 use riff_core::name::Repo;
-use riff_core::wire::{Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState};
+use riff_core::wire::{Person, PersonRole, RiffOwner, RiffReply, SessionInfo, SessionState};
 use serde::Deserialize;
 
 use crate::state;
@@ -198,7 +198,8 @@ pub fn issue_of(claim: &str) -> Option<u64> {
 
 /// What `riff top` shows.
 pub struct Top<'a> {
-    pub state: RiffState,
+    /// The pauses of the riff, as the caller sees them.
+    pub pauses: &'a RiffReply,
     pub owner: &'a RiffOwner,
     pub server: Option<&'a Build>,
     pub sessions: &'a [SessionInfo],
@@ -410,8 +411,9 @@ impl Top<'_> {
     ///         {"number": 14, "title": "Free", "milestone": {"title": "Wave 3"}}]"#,
     /// );
     /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
+    /// let running = RiffState::Running.into();
     /// let mut top = Top {
-    ///     state: RiffState::Running,
+    ///     pauses: &running,
     ///     owner: &owner,
     ///     server: None,
     ///     sessions: &sessions,
@@ -452,8 +454,8 @@ impl Top<'_> {
     /// assert!(text.lines().all(|l| l.chars().count() <= 40), "{text}");
     /// ```
     pub fn view(&self) -> String {
-        let (fact, paused) = view::state_fact(self.state);
-        let mut facts = vec![fact];
+        let here = self.repo.and_then(|repo| repo.parse().ok());
+        let (mut facts, paused) = view::state_facts(self.pauses, here.as_ref());
         match self.owner {
             RiffOwner::NoSignIn => {}
             RiffOwner::Nobody => facts.push(("owner", "none".into())),

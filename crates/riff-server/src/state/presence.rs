@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use riff_core::name::{Place, ThreadName, Who};
-use riff_core::record::{Change, Record};
+use riff_core::record::{Change, Record, Scope};
 use riff_core::wire::{AliveReply, Status};
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +55,9 @@ pub struct Presence {
     /// The last pause or resume of the riff, or the replay. A status
     /// from before it is stale (01M3Q551YHYZBFV2NDS1QCYXCD).
     pub(super) riff_changed: Option<Instant>,
+    /// The last pause or resume of each repository. A status of a
+    /// session of that repository from before it is stale.
+    pub(super) repository_changed: BTreeMap<ThreadName, Instant>,
     /// The time of the replay. A session that did not call since then
     /// holds its claims and its lead until [`CLAIM_GRACE`] after it.
     pub(super) loaded: Option<Instant>,
@@ -209,8 +212,9 @@ impl Presence {
     ///   claims of the session (01M3Q551WCMPQRCNJ8FXQEBFY4). A session
     ///   whose item another session takes has a `released` record of
     ///   its own, before the `claimed` record (01M3X4Z6BKM251H7CS2CEGR205).
-    /// - `riff_state_set`: the time for a stale status
-    ///   (01M3Q551YHYZBFV2NDS1QCYXCD).
+    /// - `pause_set`, and `riff_state_set` of an old log: the time for a
+    ///   stale status (01M3Q551YHYZBFV2NDS1QCYXCD), for the riff or for
+    ///   the repository of the record.
     /// - `session_forgotten`: the session leaves memory, with its read
     ///   cursors, and each cursor of a thread that is gone.
     pub(super) fn applied(&mut self, record: &Record, riff: &Riff, at: Option<Instant>) {
@@ -218,6 +222,13 @@ impl Presence {
             Change::Claimed(claimed) => self.claims_changed(claimed.session.who(), at),
             Change::Released(released) => self.claims_changed(released.session.who(), at),
             Change::RiffStateSet(_) => self.riff_changed = at.or(self.riff_changed),
+            Change::PauseSet(set) => match (&set.scope, at) {
+                (Scope::Riff, _) => self.riff_changed = at.or(self.riff_changed),
+                (Scope::Repository(thread), Some(at)) => {
+                    self.repository_changed.insert(thread.clone(), at);
+                }
+                (Scope::Repository(_), None) | (Scope::Other, _) => {}
+            },
             Change::SessionForgotten(forgotten) => {
                 let who = forgotten.session.who();
                 self.sessions.remove(who);
@@ -405,7 +416,7 @@ mod tests {
     use std::time::Duration;
 
     use riff_core::name::SessionUri;
-    use riff_core::record::{Claimed, Forgotten, Member, Released, RiffStateSet};
+    use riff_core::record::{Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet};
     use riff_core::wire::RiffState;
 
     use super::super::riff::apply;
@@ -498,6 +509,33 @@ mod tests {
         }));
         presence.applied(&record, &Riff::default(), Some(at));
         assert_eq!(presence.riff_changed, Some(at));
+    }
+
+    #[test]
+    fn a_pause_set_record_sets_the_time_for_its_scope() {
+        let since = Instant::now();
+        let at = since + Duration::from_secs(9);
+        let repo: ThreadName = "acme/app".parse().unwrap();
+        let set = |scope| {
+            record(Change::PauseSet(PauseSet {
+                scope,
+                state: RiffState::Paused,
+            }))
+        };
+        let mut presence = presence(since);
+        let of_repo = set(Scope::Repository(repo.clone()));
+        presence.applied(&of_repo, &Riff::default(), Some(at));
+        assert_eq!(presence.repository_changed.get(&repo), Some(&at));
+        assert_eq!(presence.riff_changed, None);
+        presence.applied(&set(Scope::Other), &Riff::default(), Some(at));
+        assert_eq!(presence.riff_changed, None);
+        presence.applied(&set(Scope::Riff), &Riff::default(), Some(at));
+        assert_eq!(presence.riff_changed, Some(at));
+        // A replay sets no time.
+        let other: ThreadName = "acme/lib".parse().unwrap();
+        let replayed = set(Scope::Repository(other.clone()));
+        presence.applied(&replayed, &Riff::default(), None);
+        assert_eq!(presence.repository_changed.get(&other), None);
     }
 
     #[test]

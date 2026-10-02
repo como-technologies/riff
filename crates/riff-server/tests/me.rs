@@ -41,7 +41,7 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
     for uri in [A, B] {
         call(&base, "register", json!({ "me": uri })).await;
     }
-    call(&base, "resume", json!({ "me": A })).await;
+    call(&base, "resume", json!({ "me": A, "riff": true })).await;
     let thread = "como-technologies/riff";
     for (uri, item) in [(A, "issue-1"), (B, "issue-2")] {
         let reply = call(

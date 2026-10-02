@@ -194,8 +194,10 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
         riff::text::told_step("075ff6a7-aaaa"),
         riff::text::posted_step(Kind::Note, "Waves: new item #314"),
         riff::text::posted_step(Kind::Status, ""),
-        riff::text::riff_step(RiffState::Paused).to_owned(),
-        riff::text::riff_step(RiffState::Running).to_owned(),
+        riff::text::riff_step(true, RiffState::Paused).to_owned(),
+        riff::text::riff_step(false, RiffState::Paused).to_owned(),
+        riff::text::riff_step(false, RiffState::Running).to_owned(),
+        riff::text::riff_step(true, RiffState::Running).to_owned(),
         riff::text::LEAD_STEP.to_owned(),
     ] {
         assert!(book.contains(&step), "\"A status\" has no {step:?}");

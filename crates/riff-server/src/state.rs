@@ -10,7 +10,7 @@
 //! | Threads | thread name | [`Riff`] | The log. Members, and the last [`KEEP_MESSAGES`] messages with a sequence number that starts at 1. |
 //! | Claims | thread and item | [`Riff`] | The log. The session that holds the item. |
 //! | Leads | user and repository thread | [`Riff`] | The log. The lead session of the user. |
-//! | Riff state | none: one for the server | [`Riff`] | The log. Paused or running, and the settings of idle workers. |
+//! | Riff state | none: one for the server | [`Riff`] | The log. The pause of the riff and of each repository, and the settings of idle workers. |
 //! | Known sessions | who | [`Riff`] | The log. The URI and the time of the last record that names the session, and its life cycle: the worker mark, the MustClear mark and the time of its last fresh start (see [`sessions`]). |
 //! | Sessions | who | [`Presence`] | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
 //! | Read cursors | who and thread | [`Presence`] | Memory and the checkpoint. The last sequence number that the session read. |
@@ -171,13 +171,15 @@
 //! - A lead counts while it holds, as a claim does, and while it works
 //!   in that repository. A lead that leaves the repository thread stops
 //!   being the lead (R178).
-//! - The riff is paused or running. A new state is paused.
+//! - The riff has a pause of the whole riff and a pause for each
+//!   repository ([`Pauses`]). A new state is paused.
 //!   [`State::riff`] reads it, and sets it for a person or a lead
 //!   (01M3JCFTWCR72HQB8CBTQKXJNF, 01M3JCG3T8AJZN31SZQQTP3FAF).
 //! - [`State::stop_idle_workers`] asks each idle worker past the limit
 //!   to stop. The reply to its keep-alive carries the ask. A call of the
 //!   worker takes it back (01M3Q5A0NKY1FCS0YH6N6YD3GN).
-//! - While the riff is paused, a claim fails. A held claim stays, and a
+//! - While the riff or the repository of a thread is paused, a claim
+//!   there fails. A held claim stays, and a
 //!   release works (01M3JCG3WBHDF0ZWM06XV94ZDC).
 //! - A signed post with the payload of a message in the thread is a
 //!   copy, and is refused. So a session gets each request of its lead
@@ -268,7 +270,7 @@ pub use presence::{Presence, Signal};
 pub use riff::{Riff, apply};
 pub use sessions::Arrive;
 pub use snapshot::Snapshot;
-pub use the_riff::{Forget, MakeRiff};
+pub use the_riff::{Forget, MakeRiff, Pauses};
 pub use threads::{Announce, may_read};
 pub use view::View;
 pub use work::{MUST_CLEAR, released_for};
@@ -1180,10 +1182,18 @@ impl State {
     fn info(&self, who: &Who, session: &Session, now: Instant, now_ms: u64) -> SessionInfo {
         let uri = self.uri(who, now);
         let live = session.watching(now);
+        let repository = session.place.default_thread();
         let status = session.status.as_ref().map(|s| StatusInfo {
             status: s.status.clone(),
             age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
-            stale: s.before(Some(session.claims_changed)) || s.before(self.presence.riff_changed),
+            stale: s.before(Some(session.claims_changed))
+                || s.before(self.presence.riff_changed)
+                || s.before(
+                    repository
+                        .as_ref()
+                        .and_then(|r| self.presence.repository_changed.get(r))
+                        .copied(),
+                ),
         });
         let blocked = status
             .as_ref()
@@ -1192,7 +1202,7 @@ impl State {
         let must_clear = sessions.must_clear(who);
         let state = SessionState::of(
             live,
-            self.written.the_riff().state == RiffState::Paused,
+            self.pauses().at(repository.as_ref()).is_some(),
             blocked,
             must_clear,
             !uri.claims().is_empty(),
@@ -1284,7 +1294,10 @@ impl State {
     pub fn idle_workers(&self, now: Instant) -> Vec<Stopping> {
         let idle = self.written.the_riff().idle;
         let after = Duration::from_secs(idle.after_secs);
-        let mut workers: BTreeMap<(String, String), Vec<(Duration, Who)>> = BTreeMap::new();
+        // One limit for each user, host and repository
+        // (01M3XAHZMN8P0PRD0Q7881TEF9).
+        type Key = (String, String, Option<ThreadName>);
+        let mut workers: BTreeMap<Key, Vec<(Duration, Who)>> = BTreeMap::new();
         let view = self.written_view();
         for (who, session) in &self.presence.sessions {
             let free = self.written.sessions().worker(who)
@@ -1293,13 +1306,17 @@ impl State {
                 && !view.holds_claim(who)
                 && !view.is_lead(who, now);
             if free {
-                let key = (who.user().to_owned(), session.place.host().to_owned());
+                let key = (
+                    who.user().to_owned(),
+                    session.place.host().to_owned(),
+                    session.place.default_thread(),
+                );
                 let time = now.saturating_duration_since(session.last_seen);
                 workers.entry(key).or_default().push((time, who.clone()));
             }
         }
         let mut stopping = Vec::new();
-        for ((_, host), mut list) in workers {
+        for ((_, host, _), mut list) in workers {
             list.sort();
             for (time, who) in list.into_iter().skip(usize::from(idle.per_host)) {
                 if time < after {
@@ -1416,14 +1433,71 @@ impl State {
             .map_err(|r| r.reason)
     }
 
-    /// The state of the riff: paused or running.
-    pub fn riff_state(&self) -> RiffState {
-        self.written.the_riff().state
+    /// The pauses of the written copy: the pause of the whole riff, and
+    /// the pause of each repository (01M3XAHZBGSSJB3YX23K88W01K).
+    pub fn pauses(&self) -> &Pauses {
+        &self.written.the_riff().pauses
     }
 
-    /// The state of the riff. With `set`, it pauses or resumes the riff
-    /// first. Only a person (`me` with no session ID) or a lead can set
-    /// it (01M3JCG3T8AJZN31SZQQTP3FAF).
+    /// The pauses as a caller at the place of `me` sees them
+    /// (01M3XAHZJAF6YVDJ7WX74X8RBX): for a session that the state
+    /// knows, the place in the state; for each other caller, the place
+    /// of `me`.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::RiffState;
+    /// use riff_server::state::State;
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
+    /// let brett: SessionUri = "riff://brett@kadomony/como-technologies/strata?session=b1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// // The first session of its user that registers is the lead.
+    /// state.register(&lead, now);
+    /// state.register(&brett, now);
+    /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
+    /// state.pause_repository(&brett, RiffState::Paused, now).unwrap();
+    ///
+    /// // The session of the other repository goes on.
+    /// assert_eq!(state.pauses_at(&lead).state, RiffState::Running);
+    /// let seen = state.pauses_at(&brett);
+    /// assert_eq!(seen.state, RiffState::Paused);
+    /// assert!(seen.riff.is_none());
+    /// assert_eq!(seen.repositories[0].repository.to_string(), "como-technologies/strata");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn pauses_at(&self, me: &SessionUri) -> RiffReply {
+        let place = match self.presence.sessions.get(me.who()) {
+            Some(session) if me.who().session().is_some() => &session.place,
+            _ => me.place(),
+        };
+        self.pauses().reply(place.default_thread().as_ref(), false)
+    }
+
+    /// Pauses or resumes the repository of `me`
+    /// (01M3XAHZBGSSJB3YX23K88W01K). A person (`me` with no session ID)
+    /// or the lead of that repository can
+    /// (01M3XAHZDSQR263QZVB41CK0MX).
+    pub fn pause_repository(
+        &mut self,
+        me: &SessionUri,
+        set: RiffState,
+        now: Instant,
+    ) -> Result<RiffReply, String> {
+        let reply = match set {
+            RiffState::Paused => self.ask(me, &Pause::here(me.clone()), now),
+            RiffState::Running => self.ask(me, &Resume::here(me.clone()), now),
+        };
+        reply.map_err(|r| r.reason)
+    }
+
+    /// The pauses as `me` sees them. With `set`, it pauses or resumes
+    /// the whole riff first. Only an admin can set it: as a person
+    /// (`me` with no session ID), or as a lead
+    /// (01M3XAHZDSQR263QZVB41CK0MX). This sync form has the role of an
+    /// admin, as the caller in a riff with no sign-in.
     ///
     /// ```
     /// use std::time::Instant;
@@ -1456,19 +1530,12 @@ impl State {
         let reply = match set {
             None => {
                 self.arrive(me, now);
-                return Ok(RiffReply {
-                    state: self.riff_state(),
-                    changed: false,
-                });
+                return Ok(self.pauses_at(me));
             }
-            Some(RiffState::Paused) => self.ask(me, &Pause { me: me.clone() }, now),
-            Some(RiffState::Running) => self.ask(me, &Resume { me: me.clone() }, now),
+            Some(RiffState::Paused) => self.ask(me, &Pause::whole(me.clone()), now),
+            Some(RiffState::Running) => self.ask(me, &Resume::whole(me.clone()), now),
         };
-        let reply = reply.map_err(|r| r.reason)?;
-        Ok(RiffReply {
-            state: set.unwrap_or(reply.state),
-            changed: reply.changed,
-        })
+        reply.map_err(|r| r.reason)
     }
 
     /// Sets the status of `me` at `now_ms`, in milliseconds since the
@@ -3832,6 +3899,205 @@ mod tests {
         }
         assert!(seen.contains(&(true, true, Some(T0 + 10_000))));
         assert!(seen.contains(&(true, false, Some(T0 + 50_000))));
+    }
+
+    /// A session of the repository `como-technologies/strata`.
+    fn strata(id: &str) -> SessionUri {
+        uri(&format!(
+            "riff://brett@kadomony/como-technologies/strata?session={id}"
+        ))
+    }
+
+    /// 01M3XAHZBGSSJB3YX23K88W01K: two repositories. A pause in one, and
+    /// a claim in the other that works.
+    #[test]
+    fn a_pause_of_one_repository_lets_the_other_repository_go_on() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let brett = strata("b1");
+        state.register(&brett, now);
+        state.watch_started(&brett, now);
+        state.watch_started(&docs(), now);
+        let other = thread("como-technologies/strata");
+
+        let reply = state
+            .pause_repository(&brett, RiffState::Paused, now)
+            .unwrap();
+        assert!(reply.changed);
+        assert_eq!(reply.state, RiffState::Paused);
+        assert!(reply.riff.is_none());
+        assert_eq!(reply.repositories[0].repository, other);
+
+        // The paused repository: no claim, and its session is paused.
+        let refused = state.claim(&brett, &other, "issue-3", now).unwrap_err();
+        assert!(
+            refused.contains(
+                "the repository como-technologies/strata is paused by the session brett/b1"
+            ),
+            "{refused}"
+        );
+        assert_eq!(info(&state, &brett, now).state, Some(SessionState::Paused));
+        // The other repository goes on.
+        state.claim(&docs(), &repo(), "issue-12", now).unwrap();
+        assert_eq!(info(&state, &docs(), now).state, Some(SessionState::Busy));
+        assert_eq!(state.pauses_at(&docs()).state, RiffState::Running);
+
+        // A second pause changes nothing. A resume ends the pause.
+        let again = state
+            .pause_repository(&brett, RiffState::Paused, now)
+            .unwrap();
+        assert!(!again.changed);
+        let resumed = state
+            .pause_repository(&brett, RiffState::Running, now)
+            .unwrap();
+        assert!(resumed.changed && resumed.repositories.is_empty());
+        state.claim(&brett, &other, "issue-3", now).unwrap();
+    }
+
+    /// 01M3XAHZBGSSJB3YX23K88W01K: a resume of a repository while the
+    /// riff is paused changes only the pause of the repository, and the
+    /// reply has the pause of the riff.
+    #[test]
+    fn a_resume_of_a_repository_in_a_paused_riff_leaves_the_riff_paused() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        state
+            .pause_repository(&api(), RiffState::Paused, now)
+            .unwrap();
+        state.riff(&api(), Some(RiffState::Paused), now).unwrap();
+        let reply = state
+            .pause_repository(&api(), RiffState::Running, now)
+            .unwrap();
+        assert!(reply.changed);
+        assert_eq!(reply.state, RiffState::Paused);
+        assert_eq!(
+            reply.riff.unwrap().by.unwrap().to_string(),
+            "the session mike/a1"
+        );
+        assert!(reply.repositories.is_empty());
+        let refused = state.claim(&docs(), &repo(), "issue-12", now).unwrap_err();
+        assert!(refused.contains("the riff is paused by"), "{refused}");
+    }
+
+    /// 01M3XAHZQ92GGFHBC50FQ7FQ0K: the checkpoint holds each pause, with
+    /// who set it and when. A start from a checkpoint gives the state of
+    /// a full replay.
+    #[test]
+    fn a_start_from_a_checkpoint_gives_the_pauses_of_a_full_replay() {
+        let now = Instant::now();
+        let mut state = State::with_writer(now, T0);
+        state.run(&Caller::server(), &MakeRiff, now).unwrap();
+        let brett = strata("b1");
+        for me in [api(), brett.clone()] {
+            state.register(&me, now);
+        }
+        let later = now + Duration::from_secs(5);
+        state
+            .pause_repository(&brett, RiffState::Paused, later)
+            .unwrap();
+        state.riff(&api(), Some(RiffState::Running), later).unwrap();
+        state
+            .pause_repository(&api(), RiffState::Paused, later)
+            .unwrap();
+        state
+            .pause_repository(&brett, RiffState::Running, later)
+            .unwrap();
+        state.riff(&api(), Some(RiffState::Paused), later).unwrap();
+        let log: Vec<Record> = state.take_queue();
+        let full = State::replay(log.clone(), now, T0);
+        let pauses = full.pauses().clone();
+        let by = |pause: &riff_core::wire::PauseInfo| pause.by.as_ref().unwrap().to_string();
+        assert_eq!(by(pauses.riff().unwrap()), "the session mike/a1");
+        assert_eq!(pauses.riff().unwrap().at_ms, T0 + 5000);
+        assert_eq!(
+            by(pauses.repository(&repo()).unwrap()),
+            "the session mike/a1"
+        );
+        assert!(
+            pauses
+                .repository(&thread("como-technologies/strata"))
+                .is_none()
+        );
+
+        for at in 0..=log.len() {
+            let head = State::replay(log[..at].to_vec(), now, T0);
+            let loaded = State::load(Some(through_json(&head, now)), log[at..].to_vec(), now, T0);
+            assert!(loaded.same_log_state(&full), "a checkpoint at {at}");
+            assert_eq!(loaded.pauses(), &pauses, "a checkpoint at {at}");
+            // The pauses of the checkpoint alone.
+            let alone = State::load(Some(through_json(&head, now)), [], now, T0);
+            assert_eq!(alone.pauses(), head.pauses(), "a checkpoint at {at}");
+        }
+    }
+
+    /// 01M3XAHZQ92GGFHBC50FQ7FQ0K: a checkpoint from before the pause of
+    /// a repository reads. Nobody is known to have set its pause.
+    #[test]
+    fn a_checkpoint_from_before_the_pause_of_a_repository_reads() {
+        let now = Instant::now();
+        for (riff, paused) in [("paused", true), ("running", false)] {
+            let json = format!(r#"{{"position":3,"riff":"{riff}"}}"#);
+            let old: Snapshot = serde_json::from_str(&json).unwrap();
+            let state = State::load(Some(old), [], now, T0);
+            assert_eq!(state.pauses().riff().is_some(), paused);
+            assert!(state.pauses().riff().is_none_or(|p| p.by.is_none()));
+            // This build writes the same fields for it.
+            let written = serde_json::to_string(&state.snapshot(now, T0)).unwrap();
+            assert!(
+                !written.contains("riff_pause") && !written.contains("pauses"),
+                "{written}"
+            );
+        }
+    }
+
+    /// 01M3XAHZMN8P0PRD0Q7881TEF9: the idle rule is for each user, host
+    /// and repository. An idle worker in one repository does not stop
+    /// the idle worker of the same user and host in another repository.
+    #[test]
+    fn an_idle_worker_in_one_repository_does_not_stop_one_in_another() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        let in_repo = |repo: &str, id: &str| {
+            uri(&format!(
+                "riff://mike@pangolin/como-technologies/{repo}?session={id}"
+            ))
+        };
+        for (repo, id, at) in [("riff", "r1", 0), ("dotfiles", "d1", 1)] {
+            let lead = in_repo(repo, &format!("lead-{repo}"));
+            state.register(&lead, now);
+            let worker = in_repo(repo, id);
+            let at = now + Duration::from_secs(at);
+            state.watch_started(&worker, at);
+            state.worker(&worker, true, at);
+        }
+        let later = now + Duration::from_secs(90);
+        assert!(stopped(&mut state, later).is_empty());
+
+        // A second idle worker in one of the two repositories stops.
+        let second = in_repo("riff", "r2");
+        let at = now + Duration::from_secs(2);
+        state.watch_started(&second, at);
+        state.worker(&second, true, at);
+        assert_eq!(stopped(&mut state, later), ["r1"]);
+    }
+
+    /// A status of a session from before a pause of its repository is
+    /// stale. A pause of another repository does not change it.
+    #[test]
+    fn a_status_from_before_a_pause_of_its_repository_is_stale() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let brett = strata("b1");
+        state.register(&brett, now);
+        let t = |secs| now + Duration::from_secs(secs);
+        set_step(&mut state, &docs(), "tests", t(1));
+        set_step(&mut state, &brett, "docs", t(1));
+        state
+            .pause_repository(&brett, RiffState::Paused, t(2))
+            .unwrap();
+        assert!(stale(&state, &brett, t(2)));
+        assert!(!stale(&state, &docs(), t(2)));
     }
 }
 

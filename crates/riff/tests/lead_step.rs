@@ -135,7 +135,7 @@ impl Riff {
         let lead = connect(&api, "a1").await;
         let other = connect(&api, "b2").await;
         // A paused riff hides the current step.
-        call(&lead, "resume", serde_json::json!({})).await;
+        call(&lead, "resume", serde_json::json!({ "riff": true })).await;
         watch(&api, "a1").await;
         watch(&api, "b2").await;
         Riff {
@@ -175,7 +175,15 @@ async fn who_shows_the_tell_of_the_lead_as_its_step() {
         "{row}"
     );
 
+    // With no argument, the tools name the repository of the lead.
     call(&riff.lead, "pause", serde_json::json!({})).await;
+    let row = riff.row("a1").await;
+    assert!(row.ends_with("stopped at: paused the repository"), "{row}");
+    call(&riff.lead, "resume", serde_json::json!({})).await;
+    let row = riff.row("a1").await;
+    assert!(row.ends_with(" ago: resumed the repository"), "{row}");
+
+    call(&riff.lead, "pause", serde_json::json!({ "riff": true })).await;
     let row = riff.row("a1").await;
     assert!(row.ends_with("stopped at: paused the riff"), "{row}");
 }

@@ -113,7 +113,7 @@ async fn the_status_line_shows_the_session_and_its_claims() {
     let server = start_server().await;
     let dir = repo();
     // A new riff is paused. The person resumes it.
-    let (_, code) = riff(&server, dir.path(), None, "", &["resume"]).await;
+    let (_, code) = riff(&server, dir.path(), None, "", &["resume", "--riff"]).await;
     assert_eq!(code, 0);
     let (_, code) = riff(&server, dir.path(), Some(ID), "", &["lead"]).await;
     assert_eq!(code, 0);
@@ -164,7 +164,7 @@ async fn line(server: &str, dir: &Path) -> String {
 /// Resumes the riff at `server`, and the session [`ID`] joins it as
 /// the lead.
 async fn join(server: &str, dir: &Path) {
-    let (_, code) = riff(server, dir, None, "", &["resume"]).await;
+    let (_, code) = riff(server, dir, None, "", &["resume", "--riff"]).await;
     assert_eq!(code, 0);
     let (_, code) = riff(server, dir, Some(ID), "", &["lead"]).await;
     assert_eq!(code, 0);

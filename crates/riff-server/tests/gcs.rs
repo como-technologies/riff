@@ -291,7 +291,7 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     call(&base, "register", json!({ "me": mike })).await;
     call(&base, "register", json!({ "me": brett })).await;
     // Mike's session is the lead: it resumes the new riff.
-    call(&base, "resume", json!({ "me": mike })).await;
+    call(&base, "resume", json!({ "me": mike, "riff": true })).await;
     let post = json!({ "me": mike, "thread": repo, "body": "saved" });
     call(&base, "post", post).await;
     let claim = json!({ "me": brett, "thread": repo, "item": "issue-44" });

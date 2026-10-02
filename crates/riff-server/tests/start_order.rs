@@ -132,7 +132,7 @@ async fn a_good_start_applies_the_chunks_written_between_the_load_and_the_lease(
     call(&old_base, "register", json!({ "me": MIKE })).await;
     // A new riff is paused. Mike, a person, resumes it.
     let mike = "riff://mike@pangolin/como-technologies/riff";
-    call(&old_base, "resume", json!({ "me": mike })).await;
+    call(&old_base, "resume", json!({ "me": mike, "riff": true })).await;
     old.save().await.unwrap();
     let chunks = store.list("log/").await.unwrap().len();
 

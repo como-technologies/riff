@@ -105,7 +105,9 @@ pub enum Change {
     Released(Released),
     /// A session became the lead of its user in a repository thread.
     LeadSet(Member),
-    /// The riff is paused or running.
+    /// The whole riff is paused or running. A log from before the kind
+    /// `pause_set` has it. No command makes it
+    /// (01M3XAHZG26ECNARX35JD73YXJ).
     RiffStateSet(RiffStateSet),
     /// A setting of the riff changed.
     SettingChanged(SettingChanged),
@@ -116,6 +118,9 @@ pub enum Change {
     /// A session started, or came with no new start. The record has the
     /// worker mark of the session (01M3X9X9M079WGFPJZHNXH9VEP).
     SessionStarted(SessionStarted),
+    /// A pause is set or ended: the pause of the whole riff, or the
+    /// pause of one repository (01M3XAHZG26ECNARX35JD73YXJ).
+    PauseSet(PauseSet),
 }
 // ANCHOR_END: record
 
@@ -228,6 +233,18 @@ impl std::fmt::Display for By {
     }
 }
 
+/// The schema takes each value: [`By`] reads a class that it does not
+/// know as [`By::Other`].
+impl schemars::JsonSchema for By {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "By".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({})
+    }
+}
+
 impl Serialize for By {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.json().serialize(serializer)
@@ -255,6 +272,7 @@ impl Change {
         "setting_changed",
         "session_forgotten",
         "session_started",
+        "pause_set",
     ];
 }
 
@@ -362,6 +380,124 @@ pub struct SessionStarted {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RiffStateSet {
     pub state: RiffState,
+}
+
+/// A pause that a command set or ended. The envelope of the record
+/// names who did it, and when.
+///
+/// ```
+/// use riff_core::record::{Change, PauseSet, Scope};
+/// use riff_core::wire::RiffState;
+///
+/// let set = Change::PauseSet(PauseSet {
+///     scope: Scope::Repository("como-technologies/strata".parse()?),
+///     state: RiffState::Paused,
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&set).unwrap(),
+///     r#"{"pause_set":{"scope":{"repository":"como-technologies/strata"},"state":"paused"}}"#
+/// );
+/// let riff = PauseSet { scope: Scope::Riff, state: RiffState::Running };
+/// assert_eq!(serde_json::to_string(&riff).unwrap(), r#"{"scope":"riff","state":"running"}"#);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseSet {
+    pub scope: Scope,
+    /// `paused` sets the pause, and `running` ends it.
+    pub state: RiffState,
+}
+
+/// What a pause stops: the whole riff, or one repository
+/// (01M3XAHZG26ECNARX35JD73YXJ).
+///
+/// | Scope | JSON |
+/// |---|---|
+/// | the whole riff | `"riff"` |
+/// | a repository | `{"repository":"como-technologies/strata"}` |
+///
+/// The set of scopes can grow. A build reads a scope that it does not
+/// know as [`Scope::Other`], and such a record changes no pause.
+///
+/// ```
+/// use riff_core::record::Scope;
+///
+/// let read = |json: &str| serde_json::from_str::<Scope>(json).unwrap();
+/// assert_eq!(read(r#""riff""#), Scope::Riff);
+/// assert_eq!(read(r#"{"repository":"acme/app"}"#), Scope::Repository("acme/app".parse()?));
+/// // A scope of a later build.
+/// assert_eq!(read(r#"{"wave":"17"}"#), Scope::Other);
+/// assert_eq!(read(r#""host""#), Scope::Other);
+/// assert_eq!(Scope::Riff.to_string(), "the riff");
+/// assert_eq!(read(r#"{"repository":"acme/app"}"#).to_string(), "the repository acme/app");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// The whole riff.
+    Riff,
+    /// One repository, by its thread.
+    Repository(ThreadName),
+    /// A scope that this build does not know.
+    Other,
+}
+
+impl Scope {
+    const RIFF: &str = "riff";
+    const REPOSITORY: &str = "repository";
+    const OTHER: &str = "other";
+
+    fn read(value: &serde_json::Value) -> Scope {
+        if let Some(text) = value.as_str() {
+            return if text == Scope::RIFF {
+                Scope::Riff
+            } else {
+                Scope::Other
+            };
+        }
+        let Some(map) = value.as_object() else {
+            return Scope::Other;
+        };
+        let mut fields = map.iter();
+        let (Some((kind, name)), None) = (fields.next(), fields.next()) else {
+            return Scope::Other;
+        };
+        match (kind.as_str(), name.as_str()) {
+            (Scope::REPOSITORY, Some(name)) => {
+                ThreadName::try_from(name.to_owned()).map_or(Scope::Other, Scope::Repository)
+            }
+            _ => Scope::Other,
+        }
+    }
+}
+
+/// The scope for people, for example `the repository acme/app`.
+impl std::fmt::Display for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Scope::Riff => f.write_str("the riff"),
+            Scope::Repository(thread) => write!(f, "the repository {thread}"),
+            Scope::Other => f.write_str("a scope that this build does not know"),
+        }
+    }
+}
+
+impl Serialize for Scope {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Scope::Riff => Scope::RIFF.serialize(serializer),
+            Scope::Repository(thread) => {
+                serde_json::json!({ Scope::REPOSITORY: thread }).serialize(serializer)
+            }
+            Scope::Other => Scope::OTHER.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Scope {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Scope, D::Error> {
+        Ok(Scope::read(&serde_json::Value::deserialize(deserializer)?))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -498,6 +634,10 @@ mod tests {
                 reason: StartReason::Process,
                 worker: true,
             }),
+            Change::PauseSet(PauseSet {
+                scope: Scope::Repository(thread()),
+                state: RiffState::Paused,
+            }),
         ]
     }
 
@@ -575,6 +715,48 @@ mod tests {
         assert_eq!(record.by, Some(By::Other));
         // The kind of a command is text: a kind of a later build reads.
         assert_eq!(record.command.as_deref(), Some("sweep"));
+    }
+
+    #[test]
+    fn each_scope_of_a_pause_reads_back() {
+        for (scope, json) in [
+            (Scope::Riff, r#""riff""#),
+            (Scope::Repository(thread()), r#"{"repository":"acme/app"}"#),
+            (Scope::Other, r#""other""#),
+        ] {
+            assert_eq!(serde_json::to_string(&scope).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Scope>(json).unwrap(), scope);
+        }
+    }
+
+    #[test]
+    fn a_scope_that_the_build_does_not_know_reads_as_other() {
+        for json in [
+            r#"{"wave":"17"}"#,
+            r#""host""#,
+            r#"{"repository":"acme/app","more":"x"}"#,
+            r#"{"repository":7}"#,
+            r#"{"repository":"two words"}"#,
+            "7",
+            "{}",
+        ] {
+            assert_eq!(
+                serde_json::from_str::<Scope>(json).unwrap(),
+                Scope::Other,
+                "{json}"
+            );
+        }
+        let line = r#"{"position":2,"written_at_ms":1,"by":{"person":"ann"},"command":"pause","change":{"pause_set":{"scope":{"wave":"17"},"state":"paused"}}}"#;
+        let Line::Record(record) = Line::parse(line).unwrap() else {
+            panic!("a known kind");
+        };
+        assert_eq!(
+            record.change,
+            Change::PauseSet(PauseSet {
+                scope: Scope::Other,
+                state: RiffState::Paused
+            })
+        );
     }
 
     #[test]

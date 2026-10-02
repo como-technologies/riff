@@ -122,6 +122,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dpop::Key;
 use crate::name::{SessionUri, ThreadName};
+use crate::record::By;
 use crate::selector::Selector;
 use crate::signed::Content;
 
@@ -545,7 +546,8 @@ impl SessionInfo {
 /// this order:
 ///
 /// 1. `offline`: the session has no open watch stream.
-/// 2. `paused`: the riff is paused.
+/// 2. `paused`: the riff is paused, or the repository of the session is
+///    paused (01M3XAHZBGSSJB3YX23K88W01K).
 /// 3. `blocked`: its current status, not a stale one, is blocked.
 /// 4. `must_clear`: it is a worker that must clear its context before
 ///    its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS).
@@ -1177,34 +1179,185 @@ pub struct Freed {
     pub item: String,
 }
 
-/// `POST /v1/riff`: reads the state of the riff. It changes nothing
-/// (01M3WRD9BSBKS9TN66H29TGTBV).
+/// `POST /v1/riff`: reads the pauses of the riff, for the place of
+/// `me`. It changes nothing (01M3WRD9BSBKS9TN66H29TGTBV).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RiffQuery {
     pub me: SessionUri,
 }
 
-/// `POST /v1/pause`: pauses the riff. Only a person (a `me` with no
-/// session ID) or a lead can (01M3JCG3T8AJZN31SZQQTP3FAF).
+/// `POST /v1/pause`: pauses the repository of `me`, or with `riff` the
+/// whole riff (01M3XAHZBGSSJB3YX23K88W01K). See
+/// 01M3XAHZDSQR263QZVB41CK0MX for who can.
+///
+/// ```
+/// use riff_core::wire::Pause;
+///
+/// let me = "riff://mike@pangolin/como-technologies/riff".parse()?;
+/// let pause = Pause::here(me);
+/// assert_eq!(
+///     serde_json::to_string(&pause).unwrap(),
+///     r#"{"me":"riff://mike@pangolin/como-technologies/riff"}"#
+/// );
+/// let json = serde_json::to_string(&Pause::whole("riff://mike@pangolin".parse()?)).unwrap();
+/// assert_eq!(json, r#"{"me":"riff://mike@pangolin","riff":true}"#);
+/// let whole: Pause = serde_json::from_str(r#"{"me":"riff://mike@pangolin","riff":true}"#).unwrap();
+/// assert!(whole.riff);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Pause {
     pub me: SessionUri,
+    /// True pauses the whole riff, not the repository of `me`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub riff: bool,
+    /// Pauses this repository, not the repository of `me`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<ThreadName>,
 }
 
-/// `POST /v1/resume`: resumes the riff. Only a person (a `me` with no
-/// session ID) or a lead can (01M3JCG3T8AJZN31SZQQTP3FAF).
+impl Pause {
+    /// The pause of the repository of `me`.
+    pub fn here(me: SessionUri) -> Pause {
+        Pause {
+            me,
+            riff: false,
+            repository: None,
+        }
+    }
+
+    /// The pause of the whole riff.
+    pub fn whole(me: SessionUri) -> Pause {
+        Pause {
+            riff: true,
+            ..Pause::here(me)
+        }
+    }
+}
+
+/// `POST /v1/resume`: resumes the repository of `me`, or with `riff`
+/// the whole riff (01M3XAHZBGSSJB3YX23K88W01K). See
+/// 01M3XAHZDSQR263QZVB41CK0MX for who can.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Resume {
     pub me: SessionUri,
+    /// True resumes the whole riff, not the repository of `me`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub riff: bool,
+    /// Resumes this repository, not the repository of `me`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<ThreadName>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+impl Resume {
+    /// The resume of the repository of `me`.
+    pub fn here(me: SessionUri) -> Resume {
+        Resume {
+            me,
+            riff: false,
+            repository: None,
+        }
+    }
+
+    /// The resume of the whole riff.
+    pub fn whole(me: SessionUri) -> Resume {
+        Resume {
+            riff: true,
+            ..Resume::here(me)
+        }
+    }
+}
+
+/// The pauses of the riff, as the caller sees them
+/// (01M3XAHZJAF6YVDJ7WX74X8RBX): the reply to `/v1/riff`, `/v1/pause`
+/// and `/v1/resume`.
+///
+/// ```
+/// use riff_core::wire::{RiffReply, RiffState};
+///
+/// // The reply of a server from before the pause of a repository.
+/// let old: RiffReply = serde_json::from_str(r#"{"state":"paused"}"#).unwrap();
+/// assert_eq!(old.state, RiffState::Paused);
+/// assert!(old.riff.is_none() && old.repositories.is_empty());
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RiffReply {
-    /// The state now.
+    /// The state for the place of the caller: paused when the whole
+    /// riff is paused, or when the repository of the caller is paused.
     pub state: RiffState,
-    /// True when the call changed the state.
+    /// True when the call changed a pause.
     #[serde(default)]
     pub changed: bool,
+    /// The pause of the whole riff. `None` when the riff runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub riff: Option<PauseInfo>,
+    /// Each repository that is paused, in the order of the names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repositories: Vec<RepositoryPause>,
+}
+
+/// The pauses of a riff with no pause of a repository: `paused` is a
+/// pause of the whole riff that no caller set.
+///
+/// ```
+/// use riff_core::wire::{RiffReply, RiffState};
+///
+/// let paused = RiffReply::from(RiffState::Paused);
+/// assert!(paused.riff.is_some());
+/// assert!(RiffReply::from(RiffState::Running).riff.is_none());
+/// ```
+impl From<RiffState> for RiffReply {
+    fn from(state: RiffState) -> RiffReply {
+        RiffReply {
+            state,
+            changed: false,
+            riff: (state == RiffState::Paused).then(PauseInfo::default),
+            repositories: Vec::new(),
+        }
+    }
+}
+
+impl RiffReply {
+    /// The pause of the repository `thread`, when it is paused.
+    pub fn repository(&self, thread: &ThreadName) -> Option<&PauseInfo> {
+        self.repositories
+            .iter()
+            .find(|r| &r.repository == thread)
+            .map(|r| &r.pause)
+    }
+}
+
+/// A pause that holds: who set it, and when
+/// (01M3XAHZBGSSJB3YX23K88W01K).
+///
+/// ```
+/// use riff_core::record::By;
+/// use riff_core::wire::PauseInfo;
+///
+/// let pause = PauseInfo { by: Some(By::Person("mike".into())), at_ms: 7 };
+/// let json = r#"{"by":{"person":"mike"},"at_ms":7}"#;
+/// assert_eq!(serde_json::to_string(&pause).unwrap(), json);
+/// assert_eq!(serde_json::from_str::<PauseInfo>(json).unwrap(), pause);
+/// // The pause of a new riff: no caller set it.
+/// assert_eq!(serde_json::to_string(&PauseInfo::default()).unwrap(), r#"{"at_ms":0}"#);
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PauseInfo {
+    /// The caller that set the pause. `None` when it is not known: the
+    /// pause of a new riff, or of a record with no cause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
+    /// The time of the pause, in milliseconds since the Unix epoch.
+    #[serde(default)]
+    pub at_ms: u64,
+}
+
+/// A repository that is paused, with its pause.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RepositoryPause {
+    pub repository: ThreadName,
+    #[serde(flatten)]
+    pub pause: PauseInfo,
 }
 
 /// `POST /v1/idle`: reads the settings of idle workers

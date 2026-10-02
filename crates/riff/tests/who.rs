@@ -163,7 +163,7 @@ async fn a_blocked_status_is_red() {
     let dir = dir.path();
     let blocked = ["status", "--blocked", "waits for a review", "merge"];
     output(riff(&server, dir, Some("a1"), &["lead"])).await;
-    output(riff(&server, dir, Some("a1"), &["resume"])).await;
+    output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     output(riff(&server, dir, Some("a1"), &blocked)).await;
     // A watch makes a1 live, so its state is blocked.
     let a1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"

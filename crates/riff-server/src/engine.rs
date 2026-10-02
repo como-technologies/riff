@@ -120,11 +120,12 @@
 //! let call = engine.authenticate(None, join).unwrap();
 //! engine.dispatch(call).await.unwrap();
 //!
-//! // The first session of its user that registers is the lead: it
-//! // resumes.
+//! // The first session of its user that registers is the lead. In a
+//! // riff with no sign-in it has the role of an admin: it resumes the
+//! // riff.
 //! let register = Register { me: me.clone(), worker: false };
 //! engine.dispatch(engine.authenticate(None, register).unwrap()).await.unwrap();
-//! let call = engine.authenticate(None, Resume { me }).unwrap();
+//! let call = engine.authenticate(None, Resume::whole(me)).unwrap();
 //! assert!(engine.dispatch(call).await.unwrap().changed);
 //! # }
 //! ```

@@ -202,9 +202,22 @@ async fn the_tools_carry_a_conversation() {
     assert!(is_error, "{refused}");
     assert!(refused.contains("the riff is paused"), "{refused}");
     let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
-    assert!(me.contains("The riff is paused. Nobody claims work. Your user or the lead resumes it with `riff resume`.\n"), "{me}");
+    assert!(
+        me.contains(
+            "The riff is paused by the server. Nobody claims work. The owner or an admin \
+             resumes it with `riff resume --riff`.\n"
+        ),
+        "{me}"
+    );
     assert!(me.ends_with(&riff::text::build_line(None)), "{me}");
+    // With no argument, the tool names the repository of the lead.
     let (resumed, _) = call(&brett, "resume", serde_json::json!({})).await;
+    assert_eq!(
+        resumed,
+        "The repository como-technologies/riff was running already. The whole riff is still \
+         paused: the owner or an admin resumes it with `riff resume --riff`."
+    );
+    let (resumed, _) = call(&brett, "resume", serde_json::json!({ "riff": true })).await;
     assert_eq!(
         resumed,
         "The riff is running now. Woke mike@pangolin:riff#api (a1)."
@@ -334,7 +347,7 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
 async fn move_changes_the_place_and_keeps_the_claims() {
     let api = start_server().await;
     let mike = connect(&api, MIKE).await;
-    call(&mike, "resume", serde_json::json!({})).await;
+    call(&mike, "resume", serde_json::json!({ "riff": true })).await;
     call(&mike, "claim", serde_json::json!({ "item": "issue-6" })).await;
 
     let dir = tempfile::tempdir().unwrap();

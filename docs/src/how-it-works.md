@@ -727,7 +727,7 @@ STATE is the state of the session, and DETAIL tells more about it. See
 `riff workers` and the `who` tool use the same words.
 
 When you must act, the last line says so, in yellow: for example when
-the riff is paused, or when the riff has no owner.
+the riff or your repository is paused, or when the riff has no owner.
 
 In a terminal, `riff who` has the colors of `riff tail`: each session
 has the same color in both. `running` is green and `paused` is yellow.
@@ -1707,7 +1707,8 @@ sequenceDiagram
     A->>E: release issue-12
 ```
 
-While the riff is paused, each claim fails.
+While the riff or the repository is paused, each claim there fails.
+The answer names the pause, who set it, and who can end it.
 
 ### Claim an item by hand
 
@@ -1724,8 +1725,15 @@ riff release issue-12
 
 ## Pause the riff
 
-A riff is paused or running. A new riff is paused, so no session takes
-work before you say so. While the riff is paused:
+riff has two pauses:
+
+- The pause of one repository. It stops the sessions of that
+  repository. The other repositories go on.
+- The pause of the whole riff. It stops each session. A new riff is
+  paused, so no session takes work before you say so.
+
+A session is paused when its repository is paused, or the whole riff
+is paused. While a session is paused:
 
 - Each claim fails. The sessions keep the claims that they hold.
 - A new session says hello to the lead, and waits.
@@ -1741,43 +1749,88 @@ sequenceDiagram
     participant E as riff-server
     participant W as session with work
     P->>E: riff pause
-    E-->>W: wake: the riff is paused
+    E-->>W: wake: the repository is paused
     W->>W: finish the command, WIP commit, push the branch
     W->>E: keep the claims, wait
     P->>E: riff resume
-    E-->>W: wake: the riff is running again
+    E-->>W: wake: the repository is running again
     W->>W: go on from where it stopped
 ```
 
-Only you, in a shell, or your lead can pause or resume the riff. A
-pause and a resume wake each session. The state stays when
-`riff-server` saves its state in a bucket (see [A restart](#a-restart)).
+| Pause | Who can set and end it |
+|---|---|
+| your repository | you, in a shell in that repository, or your lead there |
+| a repository that you name | the owner or an admin |
+| the whole riff | the owner or an admin |
 
-### Resume the riff
+A riff with no sign-in has no owner: each person there can set each
+pause. A pause and a resume wake each session that they stop or start.
+The pauses stay when `riff-server` saves its state in a bucket (see
+[A restart](#a-restart)).
 
-Run it in a terminal, not in an agent session:
+### Pause your repository
 
-```sh
-riff resume
-```
-
-You can also ask your lead: *"Resume the riff."*
-
-### Pause the riff now
+Run it in a terminal in your repository, not in an agent session:
 
 ```sh
 riff pause
 ```
 
-You can also ask your lead: *"Pause the riff."*
+You can also ask your lead: *"Pause the repository."*
 
-### See the state of the riff
+### Resume your repository
+
+```sh
+riff resume
+```
+
+You can also ask your lead: *"Resume the repository."* When the whole
+riff is paused too, the answer says so. Then the sessions wait for the
+resume of the riff.
+
+### Pause the whole riff
+
+Only the owner or an admin can. Use it for example for a release:
+
+```sh
+riff pause --riff
+```
+
+When your lead is your session and you are an admin, you can also ask
+it: *"Pause the whole riff."*
+
+### Resume the whole riff
+
+```sh
+riff resume --riff
+```
+
+A repository that has a pause of its own stays paused. The answer
+names it.
+
+### Pause a repository of another person
+
+Only the owner or an admin can. Name the repository:
+
+```sh
+riff pause --repo acme/app
+riff resume --repo acme/app
+```
+
+### See the pauses
 
 ```sh
 riff whoami
 ```
 
-`riff who` shows the state in its first line too.
+```text
+riff     running
+paused   como-technologies/strata by the session brett/62b2
+```
+
+The fact `riff` is the pause of the whole riff, with who set it. Each
+fact `paused` is a repository that is paused, with who set its pause.
+`riff who` and `riff top` show the same facts.
 
 ## A status
 
@@ -1830,7 +1883,7 @@ show it. The first state that matches wins:
 | State | Color | When | Detail |
 |---|---|---|---|
 | `offline` | grey | the session has no open watch | `seen 2h ago` |
-| `paused` | yellow | the riff is paused | the claims, and `stopped at:` the step |
+| `paused` | yellow | the riff or the repository of the session is paused | the claims, and `stopped at:` the step |
 | `blocked` | red | the session set a blocked status | the reason and the step, then the claims |
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
 | `busy` | green | the session holds a claim | `working on #7`, or `reviewing #7` for a verify claim, then the step |
@@ -1847,7 +1900,7 @@ the other facts that the server sends. For `must clear`, see
 flowchart TD
     S[session] --> L{open watch?}
     L -- no --> Off[offline]
-    L -- yes --> P{riff paused?}
+    L -- yes --> P{riff or repository paused?}
     P -- yes --> Pa[paused]
     P -- no --> B{current status blocked?}
     B -- yes --> Bl[blocked]
@@ -1918,7 +1971,8 @@ mike@thelio:riff (4e54)  idle   lead  monitoring work for 2m  12s ago: told 075f
 | `tell` | `told 075ff6a7` |
 | `post` | `posted a message: …` or `posted a note: Waves: new item #314` |
 | `post` with kind `status` | `asked for status` |
-| `pause`, `resume` | `paused the riff`, `resumed the riff` |
+| `pause`, `resume` | `paused the repository`, `resumed the repository` |
+| `pause`, `resume` of the whole riff | `paused the riff`, `resumed the riff` |
 | `lead` | `became the lead` |
 
 The step of a post shows the message in one line of at most 80
@@ -2231,7 +2285,7 @@ With no bucket and no directory, for example the riff of
 [Start a Riff](start-a-riff.md), a restart forgets each thread, session,
 claim and lead. The riff is
 paused again. Start your Claude Code sessions again after it, and run
-`riff resume` when you want them to work.
+`riff resume --riff` when you want them to work.
 
 ### After a restart with no bucket, run riff login
 

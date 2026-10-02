@@ -9,7 +9,7 @@
 //! | [`Sessions`] | [`super::sessions`] | Each session that a record names. |
 //! | [`Threads`] | [`super::threads`] | The members and the kept messages of each thread. |
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
-//! | [`TheRiff`] | [`super::the_riff`] | Paused or running, and the settings. |
+//! | [`TheRiff`] | [`super::the_riff`] | The pauses, and the settings. |
 //!
 //! # Only `apply` changes the riff
 //!
@@ -41,8 +41,9 @@
 //! | each record that names a session | It keeps the URI of the session and the time of the record. | Yes. |
 //! | `session_started` | It stores the worker mark. A record with the reason `process` or `clear` also stores its time, and ends MustClear. A record with the reason `other` changes nothing. | Yes. |
 //! | `released` | A record with `must_clear` sets the MustClear mark of its session. | Yes. |
+//! | `pause_set`, `riff_state_set` | It keeps the `by` and the time of the record with the pause: who set it, and when (01M3XAHZBGSSJB3YX23K88W01K). A `riff_state_set` record of an old log sets the pause of the whole riff. A scope that this build does not know changes nothing. | Yes. |
 
-use riff_core::record::{Change, Record};
+use riff_core::record::{Change, Record, Scope};
 
 use super::sessions::Sessions;
 use super::snapshot::LoadPath;
@@ -124,7 +125,7 @@ impl Riff {
         &self.work
     }
 
-    /// Paused or running, and the settings.
+    /// The pauses, and the settings.
     pub(super) fn the_riff(&self) -> &TheRiff {
         &self.the_riff
     }
@@ -178,7 +179,8 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         }
         Change::SessionStarted(started) => riff.sessions.started(started, record.written_at_ms),
         Change::LeadSet(member) => riff.work.lead_set(member),
-        Change::RiffStateSet(set) => riff.the_riff.state_set(set),
+        Change::RiffStateSet(set) => riff.the_riff.pause_set(&Scope::Riff, set.state, record),
+        Change::PauseSet(set) => riff.the_riff.pause_set(&set.scope, set.state, record),
         Change::SettingChanged(changed) => riff.the_riff.setting_changed(changed),
         Change::SessionForgotten(forgotten) => {
             let who = forgotten.session.who();
