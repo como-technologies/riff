@@ -220,7 +220,7 @@ use crate::owner::{Check, Checks};
 use crate::state::{Announce, Code, OwnerChange, Refused, Settings, Signal, State, may_read};
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
-use crate::trace::{DeniedCode, Named};
+use crate::trace::DeniedCode;
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -1477,6 +1477,9 @@ impl Service {
         {
             tracing::warn!("the lease was not ended: {error}");
         }
+        // The window of the `denied` lines ends here, so its count is
+        // not lost (01M3Z67DZX9BC3TYF3PWGFGZJ7).
+        self.0.engine.limit().close();
         saved
     }
 
@@ -1658,7 +1661,7 @@ impl Service {
         }
         routes
             .merge(admin_routes)
-            .route_layer(middleware::from_fn(check_build))
+            .route_layer(middleware::from_fn_with_state(self.0.clone(), check_build))
             // `riff login` and a refresh work with each version
             // (01M3MX4V43SF2XFCZWANHD19WV).
             .route(auth::TOKEN_PATH, post(token))
@@ -1828,7 +1831,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Proof {
 fn admit(s: &Server, proof: &Proof, me: &SessionUri) -> Result<Admitted, Failed> {
     s.engine
         .admit(proof.signed_in.as_ref(), me)
-        .inspect_err(|failed| failed.trace_denied(&proof.path, Some(me)))
+        .inspect_err(|failed| failed.trace_denied(s.engine.limit(), &proof.path, Some(me)))
 }
 
 /// A keep-alive: a sign of life that is not a call (R204). It is a
@@ -2094,13 +2097,24 @@ async fn require_token(
     };
     // The server reads the body only now, after the refusal, to name
     // the caller in the line (01M3X4Z64ZNRD0G0F4JV1M64FN).
-    let named = Named::in_request(request).await;
-    trace::denied(&path, named.as_ref(), code);
-    (
+    let whole = s.engine.limit().refuse(request, code).await;
+    let reply = (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, challenge)],
-    )
-        .into_response()
+    );
+    closed(reply.into_response(), whole)
+}
+
+/// The reply to a call that the token layer refused. When the server
+/// did not read the whole body of the call (`whole` is false), the
+/// reply closes the call: the server reads no more of it
+/// (01M3Z67B9RMVKY7TCXCG8HEZT4).
+fn closed(mut reply: Response, whole: bool) -> Response {
+    if !whole {
+        let close = header::HeaderValue::from_static("close");
+        reply.headers_mut().insert(header::CONNECTION, close);
+    }
+    reply
 }
 
 /// Refuses a call from a `riff` of a version that this server cannot
@@ -2110,7 +2124,7 @@ async fn require_token(
 /// (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). The OAuth
 /// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
 /// (01M3MX4V43SF2XFCZWANHD19WV).
-async fn check_build(request: Request, next: Next) -> Response {
+async fn check_build(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
     let this = Build::this();
     let riff = Build::from_header(request.headers().get(build::HEADER).map(|v| v.as_bytes()));
     if riff.as_ref().is_some_and(|r| build::compatible(r, &this)) {
@@ -2121,10 +2135,9 @@ async fn check_build(request: Request, next: Next) -> Response {
         server: Some(this),
         seen: None,
     };
-    let path = request.uri().path().to_owned();
-    let named = Named::in_request(request).await;
-    trace::denied(&path, named.as_ref(), DeniedCode::OldBuild);
-    (StatusCode::CONFLICT, mismatch.to_string()).into_response()
+    let whole = s.engine.limit().refuse(request, DeniedCode::OldBuild).await;
+    let reply = (StatusCode::CONFLICT, mismatch.to_string());
+    closed(reply.into_response(), whole)
 }
 
 /// Names the build of this server in each reply
@@ -4273,6 +4286,149 @@ mod tests {
         assert_eq!(lines[3]["named"]["text"], broken);
         assert!(!has(&lines[3], "named_cut"));
         assert!(!has(&lines[4], "named"));
+    }
+
+    /// A refused call whose body does not end gets its reply at the
+    /// time limit (01M3Z67B9RMVKY7TCXCG8HEZT4): the line has no `named`,
+    /// and the reply closes the call.
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_call_with_a_slow_body_ends_at_the_time_limit() {
+        use tower::ServiceExt;
+
+        let mut config = config();
+        config.require_sign_in = true;
+        let service = Service::new(config);
+        let capture = Capture::start();
+        let send = |body: axum::body::Body| {
+            let request = Request::builder()
+                .method("POST")
+                .uri("/v1/claim")
+                .header(build::HEADER, Build::this().to_string())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body)
+                .unwrap();
+            service.router().oneshot(request)
+        };
+
+        // The body gives its start, and then nothing.
+        let start = r#"{"me":"riff://mike@pangolin/como-technologies/riff?session=a"#;
+        let first = tokio_stream::once(Ok::<_, Infallible>(start));
+        let slow = tokio_stream::StreamExt::chain(first, tokio_stream::pending());
+        let slow = axum::body::Body::from_stream(slow);
+        let began = Instant::now();
+        let response = send(slow).await.unwrap();
+        assert_eq!(began.elapsed(), trace::BODY_TIME);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(response.headers().contains_key(header::WWW_AUTHENTICATE));
+        assert_eq!(response.headers()[header::CONNECTION], "close");
+
+        // A call with a whole body keeps its connection.
+        let whole = format!("{start}\"}}");
+        let response = send(whole.into()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!response.headers().contains_key(header::CONNECTION));
+
+        let lines = capture.results("denied");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0]["code"], "no_token");
+        assert!(lines[0].get("named").is_none(), "{}", lines[0]);
+        assert_eq!(lines[1]["named"], serde_json::json!({"session": "mike/a"}));
+    }
+
+    /// 1000 refused calls in one second give no more `denied` lines
+    /// than the limit, and one line with the count
+    /// (01M3Z67DZX9BC3TYF3PWGFGZJ7). Each call gets the same refusal, with
+    /// a line and with no line. The limit also holds for the calls of
+    /// an old build and for a token that acts as another session.
+    #[tokio::test(start_paused = true)]
+    async fn a_thousand_refused_calls_give_the_lines_of_the_limit_and_one_count() {
+        use tower::ServiceExt;
+
+        let mut config = config();
+        config.require_sign_in = true;
+        let service = Service::new(config);
+        let capture = Capture::start();
+        let body = serde_json::to_string(&Lead { me: mike() }).unwrap();
+        let proof = || Proof {
+            signed_in: Some(SignedIn {
+                who: brett().who().clone(),
+                jkt: "key-of-brett".into(),
+                started: 0,
+            }),
+            path: Alive::PATH.to_owned(),
+        };
+        for call_number in 0..1000 {
+            match call_number % 3 {
+                // No token.
+                0 => {
+                    let status = call(&service, "POST", Lead::PATH, None, body.clone()).await;
+                    assert_eq!(status, StatusCode::UNAUTHORIZED);
+                }
+                // No build.
+                1 => {
+                    let request = Request::builder()
+                        .method("POST")
+                        .uri(Lead::PATH)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(axum::body::Body::from(body.clone()))
+                        .unwrap();
+                    let response = service.router().oneshot(request).await.unwrap();
+                    assert_eq!(response.status(), StatusCode::CONFLICT);
+                    assert!(!response.headers().contains_key(header::CONNECTION));
+                }
+                // The token of brett names mike.
+                _ => {
+                    let refused = alive(
+                        AxumState(service.0.clone()),
+                        proof(),
+                        Json(Alive { me: mike() }),
+                    )
+                    .await
+                    .unwrap_err();
+                    assert_eq!(refused.0, StatusCode::FORBIDDEN);
+                }
+            }
+            sleep(Duration::from_millis(1)).await;
+        }
+        let max = usize::try_from(trace::DENIED_MAX).unwrap();
+        assert_eq!(capture.results("denied").len(), max);
+        assert!(capture.results("dropped").is_empty());
+
+        sleep(trace::DENIED_INTERVAL).await;
+        let dropped = capture.results("dropped");
+        assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert_eq!(dropped[0]["severity"], "WARNING");
+        assert_eq!(dropped[0]["count"], 1000 - max);
+        assert_eq!(capture.results("denied").len(), max);
+    }
+
+    /// A stop of the server ends the window of the limit of rate: the
+    /// line with the count comes at once (01M3Z67DZX9BC3TYF3PWGFGZJ7).
+    #[tokio::test(start_paused = true)]
+    async fn a_stop_writes_the_count_of_the_denied_lines_that_were_not_written() {
+        let max = usize::try_from(trace::DENIED_MAX).unwrap();
+        for stop_for_good in [false, true] {
+            let mut config = config();
+            config.require_sign_in = true;
+            let service = Service::new(config);
+            let capture = Capture::start();
+            for _ in 0..max + 5 {
+                let status = call(&service, "POST", Lead::PATH, None, String::new()).await;
+                assert_eq!(status, StatusCode::UNAUTHORIZED);
+            }
+            assert!(capture.results("dropped").is_empty());
+            if stop_for_good {
+                service.0.stop("another instance holds the lease");
+            } else {
+                service.shutdown().await.unwrap();
+            }
+            let dropped = capture.results("dropped");
+            assert_eq!(dropped.len(), 1, "{dropped:?}");
+            assert_eq!(dropped[0]["count"], 5);
+            // The timer of the window writes no second line.
+            sleep(trace::DENIED_INTERVAL * 2).await;
+            assert_eq!(capture.results("dropped").len(), 1);
+        }
     }
 
     /// A call from a build that the server cannot talk to gives the

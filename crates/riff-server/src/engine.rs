@@ -165,7 +165,7 @@ use crate::state::{
     CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, MakeRiff, NameOwner, OwnerChange,
     Refused, Role, Signal, State, Stopping,
 };
-use crate::trace::{Denied, DeniedCode, Named, Outcome, Traced};
+use crate::trace::{Denied, DeniedCode, Limit, Named, Outcome, Traced};
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
@@ -351,12 +351,13 @@ impl Failed {
 
 impl Failed {
     /// Writes the line `denied` when the token layer refused the call
-    /// (01M3X4Z64ZNRD0G0F4JV1M64FN). `path` is the path of the call, and `me` the
-    /// caller that it named.
-    pub fn trace_denied(&self, path: &str, me: Option<&SessionUri>) {
+    /// (01M3X4Z64ZNRD0G0F4JV1M64FN), within the limit of rate `limit`
+    /// (01M3Z67DZX9BC3TYF3PWGFGZJ7). `path` is the path of the call, and
+    /// `me` the caller that it named.
+    pub fn trace_denied(&self, limit: &Limit, path: &str, me: Option<&SessionUri>) {
         if let Failed::Denied(denied) = self {
             let named = me.map(Named::of);
-            crate::trace::denied(path, named.as_ref(), denied.code);
+            limit.denied(path, named.as_ref(), denied.code);
         }
     }
 }
@@ -535,6 +536,8 @@ struct Shared {
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
     sign_ins: Box<dyn SignIns>,
+    /// The limit of rate of the `denied` lines of this server.
+    limit: Limit,
 }
 
 /// The command engine of one `riff-server`. Clones share the same
@@ -558,7 +561,14 @@ impl Engine {
             wakes,
             tail,
             sign_ins: Box::new(sign_ins),
+            limit: Limit::default(),
         }))
+    }
+
+    /// The limit of rate of the `denied` lines of this server
+    /// (01M3Z67DZX9BC3TYF3PWGFGZJ7).
+    pub fn limit(&self) -> &Limit {
+        &self.0.limit
     }
 
     fn core(&self) -> MutexGuard<'_, Core> {
@@ -1095,6 +1105,7 @@ impl Engine {
             std::mem::take(&mut core.queue)
         };
         Engine::failed(waiting, Outcome::Stopped(why));
+        self.0.limit.close();
     }
 }
 
@@ -1209,7 +1220,7 @@ where
         let me = command.me().cloned();
         engine
             .authenticate(proof.as_ref(), command)
-            .inspect_err(|failed| failed.trace_denied(C::PATH, me.as_ref()))
+            .inspect_err(|failed| failed.trace_denied(engine.limit(), C::PATH, me.as_ref()))
             .map_err(IntoResponse::into_response)
     }
 }
