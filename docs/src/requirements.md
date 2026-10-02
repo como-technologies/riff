@@ -476,6 +476,11 @@
   merged. Then it prints the merge commit and exits with status 0. It
   exits with status 1 and the reason when the pull request is closed
   and not merged, or when a required check fails.
+- **01M3Z8GG5EGEYAVEXG0HS46ACT** After one good look, `riff pr wait`
+  goes on when a look of `gh` fails. It prints one line with the error
+  on stderr, one time until the next good look, and looks again at its
+  interval. When the first look fails, it exits with status 1 and the
+  error.
 - **01M3NB6FYXXKX80VHEVA5CV6RY** `riff verify pass|fail N --file
   RESULT` reports a verify with `gh`: one comment on pull request N
   that names its head commit and holds the result, one status
@@ -1690,6 +1695,15 @@
 - **01M3NB589WMPRSAR43BSG9SP41** `riff top` makes only read calls: the
   `riff` and `who` calls of `riff who`, and the stream of `riff tail`.
   It posts nothing and wakes no session.
+- **01M3Z8FXE2DY34ZP75WJE1S8HR** After one good look, `riff top` stays
+  open when a look fails and a new try can repair the fault: riff
+  cannot reach the server, a connection fails in the middle of a call,
+  the front end replies by itself, or no reply comes in 10 seconds. It
+  keeps the last table. Its first line is then one red line with the
+  time of the last good look and the fault. It looks again at its
+  interval, with new connections. The line goes at the next good look.
+  `riff top --once`, a first look that fails, and each other fault end
+  `riff top` with the error and a status that is not 0.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
   line of a Claude Code session: `riff`, the short session ID of
   `riff who`, `lead`, each claim, and `blocked`. It is the

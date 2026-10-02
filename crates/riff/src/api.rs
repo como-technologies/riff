@@ -564,20 +564,42 @@ struct Held {
     expires_at: u64,
 }
 
+/// The HTTP client of the streams. No idle connection is kept, so the
+/// client has no pool. `Client::new` stops the process on the same
+/// error.
+fn stream_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_max_idle_per_host(0)
+        .build()
+        .expect("the HTTP client of the streams")
+}
+
 impl Api {
     pub fn new(base: &str) -> Self {
         Self {
             http: reqwest::Client::new(),
-            // No idle connection is kept, so the client has no pool.
-            // `Client::new` stops the process on the same error.
-            streams: reqwest::Client::builder()
-                .pool_max_idle_per_host(0)
-                .build()
-                .expect("the HTTP client of the streams"),
+            streams: stream_client(),
             base: base.trim_end_matches('/').to_owned(),
             auth: None,
             waits: None,
             mark: None,
+        }
+    }
+
+    /// The same caller with no open connection: each next request opens
+    /// a new connection (01M3Z8FXE2DY34ZP75WJE1S8HR). A connection can
+    /// die with no sign, for example when the address of the machine
+    /// changes. `riff top` calls it after a look that failed.
+    ///
+    /// ```
+    /// let api = riff::api::Api::new("http://127.0.0.1:7878");
+    /// assert_eq!(api.reconnected().base(), api.base());
+    /// ```
+    pub fn reconnected(&self) -> Api {
+        Api {
+            http: reqwest::Client::new(),
+            streams: stream_client(),
+            ..self.clone()
         }
     }
 
@@ -957,11 +979,11 @@ impl Api {
             note_reply(&self.base);
             if is_outage(&response) {
                 let Some(wait) = waits.next() else {
-                    bail!(
-                        "riff-server at {} does not answer: its front end replied {}",
-                        self.base,
-                        response.status()
-                    );
+                    return Err(Outage {
+                        base: self.base.clone(),
+                        status: response.status(),
+                    }
+                    .into());
                 };
                 self.busy(wait, &mut waited).await;
                 continue;
@@ -1810,6 +1832,108 @@ impl std::fmt::Display for TokenRefused {
 }
 
 impl std::error::Error for TokenRefused {}
+
+/// The front end of `riff-server` replied by itself for
+/// [`BUSY_LIMIT`]: see [`outage`].
+///
+/// ```
+/// let outage = riff::api::Outage {
+///     base: "http://127.0.0.1:7878".into(),
+///     status: reqwest::StatusCode::BAD_GATEWAY,
+/// };
+/// assert_eq!(
+///     outage.to_string(),
+///     "riff-server at http://127.0.0.1:7878 does not answer: its front end replied 502 Bad Gateway"
+/// );
+/// ```
+#[derive(Debug)]
+pub struct Outage {
+    /// The URL of the server.
+    pub base: String,
+    /// The status of the last reply of the front end.
+    pub status: reqwest::StatusCode,
+}
+
+impl std::fmt::Display for Outage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "riff-server at {} does not answer: its front end replied {}",
+            self.base, self.status
+        )
+    }
+}
+
+impl std::error::Error for Outage {}
+
+/// The server at `base` gave no reply to a call in `wait`. The text is
+/// [`text::no_reply`].
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let base = "http://127.0.0.1:7878";
+/// let wait = Duration::from_secs(20);
+/// let error = riff::api::NoReply { base: base.into(), wait };
+/// assert_eq!(error.to_string(), riff::text::no_reply(base, wait));
+/// ```
+#[derive(Debug)]
+pub struct NoReply {
+    /// The URL of the server.
+    pub base: String,
+    /// How long the caller waited.
+    pub wait: Duration,
+}
+
+impl std::fmt::Display for NoReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&text::no_reply(&self.base, self.wait))
+    }
+}
+
+impl std::error::Error for NoReply {}
+
+/// True when a new try can repair `error`
+/// (01M3Z8FXE2DY34ZP75WJE1S8HR): riff did not reach the server, the
+/// connection failed in the middle of a call, no reply came in time
+/// ([`NoReply`]), or the front end replied by itself ([`Outage`]). A
+/// command that runs until stopped goes on after such an error.
+///
+/// False for each other error, for example no sign-in, a refused token
+/// ([`TokenRefused`]), a refused call ([`Refusal`]), a session that left
+/// ([`Left`]) or a version that riff cannot talk to ([`Mismatch`]). A
+/// new try gives the same error, so the command ends with its text.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::api::{Api, Left, NoReply, Outage, TokenRefused, passes};
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// // Nothing listens on port 9.
+/// let base = "http://127.0.0.1:9";
+/// let away = Api::new(base).probe(Duration::from_secs(5)).await.unwrap_err();
+/// assert!(passes(&away), "{away:#}");
+/// let slow = NoReply { base: base.into(), wait: Duration::from_secs(10) };
+/// assert!(passes(&slow.into()));
+/// let outage = Outage { base: base.into(), status: reqwest::StatusCode::BAD_GATEWAY };
+/// assert!(passes(&outage.into()));
+///
+/// let refused = TokenRefused { error: "invalid_grant".into(), description: None };
+/// assert!(!passes(&refused.into()));
+/// assert!(!passes(&Left.into()));
+/// assert!(!passes(&anyhow::anyhow!(riff::text::no_sign_in(base, false))));
+/// # }
+/// ```
+pub fn passes(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.is::<Outage>()
+            || cause.is::<NoReply>()
+            || cause
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(|e| !e.is_status() && !e.is_builder())
+    })
+}
 
 /// The build of the last `riff-server` that this process talked to.
 static SERVER_BUILD: std::sync::Mutex<Option<Build>> = std::sync::Mutex::new(None);

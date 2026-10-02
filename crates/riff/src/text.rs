@@ -36,6 +36,61 @@ pub const WATCH_RUNS: &str = "riff: a riff watch runs for this session already, 
 you. This watch stops. Do not start the watch again now. Start it again only when the task of \
 that watch ends.";
 
+/// The line of `riff top` while its looks fail
+/// (01M3Z8FXE2DY34ZP75WJE1S8HR): the time of the last good look `last`,
+/// then the fault. The time has the date when `now` is another day.
+///
+/// ```
+/// use chrono::{FixedOffset, TimeZone};
+///
+/// let zone = FixedOffset::east_opt(0).unwrap();
+/// let last = zone.with_ymd_and_hms(2026, 10, 1, 21, 35, 7).unwrap();
+/// let now = zone.with_ymd_and_hms(2026, 10, 1, 21, 42, 4).unwrap();
+/// let fault = "cannot reach riff-server at http://127.0.0.1:7878";
+/// assert_eq!(
+///     riff::text::top_fault(fault, &last, &now),
+///     "riff: the last good look was at 21:35:07. riff tries again: cannot reach riff-server \
+///      at http://127.0.0.1:7878"
+/// );
+/// let next_day = zone.with_ymd_and_hms(2026, 10, 2, 7, 0, 0).unwrap();
+/// assert!(
+///     riff::text::top_fault(fault, &last, &next_day)
+///         .starts_with("riff: the last good look was at 2026-10-01 21:35:07. ")
+/// );
+/// ```
+pub fn top_fault<Tz: TimeZone>(fault: &str, last: &DateTime<Tz>, now: &DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let form = if last.date_naive() == now.date_naive() {
+        "%H:%M:%S"
+    } else {
+        "%Y-%m-%d %H:%M:%S"
+    };
+    format!(
+        "riff: the last good look was at {}. riff tries again: {fault}",
+        last.format(form)
+    )
+}
+
+/// The line of `riff pr wait` when a look of `gh` fails after a good
+/// look (01M3Z8GG5EGEYAVEXG0HS46ACT).
+///
+/// ```
+/// let line = riff::text::pr_look_failed(40, "gh pr view 40: network is unreachable", 30);
+/// assert_eq!(
+///     line,
+///     "riff: cannot look at pull request #40: gh pr view 40: network is unreachable. \
+///      Trying again every 30 seconds."
+/// );
+/// ```
+pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
+    format!(
+        "riff: cannot look at pull request #{number}: {error}. Trying again every {every_secs} \
+         seconds."
+    )
+}
+
 /// The one line of a `riff watch --once` that ends with no wake, before
 /// the harness stops its task (01M3Z64J08GW6N1H42AR2FZQZ4). It never
 /// says "Do not start the watch again now".
