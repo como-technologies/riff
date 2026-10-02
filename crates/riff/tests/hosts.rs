@@ -419,7 +419,8 @@ async fn a_host_tells_the_lead_a_change_of_its_settings() {
             .output()
             .unwrap();
     assert!(out.status.success(), "{out:?}");
-    let note = "note: workers: mcp [riff] to [riff, github] on b: each new worker there loads them.";
+    let note =
+        "note: workers: mcp [riff] to [riff, github] on b: each new worker there loads them.";
     let read = reads(&r.api, &r.lead, note).await;
     assert!(read.contains("mike@b:riff"), "{read}");
 

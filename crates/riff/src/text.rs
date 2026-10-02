@@ -981,6 +981,15 @@ pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
 ///     setting_changed(&idle, &Effect::Nothing),
 ///     "workers: idle on the server: per host 1 to 2, after 60 to 300 seconds."
 /// );
+/// // Only the value that changed.
+/// let idle = Change::Idle {
+///     old: Idle::default(),
+///     new: Idle { per_host: 0, after_secs: 60 },
+/// };
+/// assert_eq!(
+///     setting_changed(&idle, &Effect::Nothing),
+///     "workers: idle on the server: per host 1 to 0."
+/// );
 /// ```
 pub fn setting_changed(change: &crate::rollout::Change, effect: &crate::rollout::Effect) -> String {
     use crate::rollout::{Change, Effect};
@@ -1026,10 +1035,19 @@ pub fn setting_changed(change: &crate::rollout::Change, effect: &crate::rollout:
             old.join(", "),
             new.join(", ")
         ),
-        Change::Idle { old, new } => format!(
-            "workers: idle on the server: per host {} to {}, after {} to {} seconds.",
-            old.per_host, new.per_host, old.after_secs, new.after_secs
-        ),
+        Change::Idle { old, new } => {
+            let mut parts = Vec::new();
+            if old.per_host != new.per_host {
+                parts.push(format!("per host {} to {}", old.per_host, new.per_host));
+            }
+            if old.after_secs != new.after_secs {
+                parts.push(format!(
+                    "after {} to {} seconds",
+                    old.after_secs, new.after_secs
+                ));
+            }
+            format!("workers: idle on the server: {}.", parts.join(", "))
+        }
     }
 }
 

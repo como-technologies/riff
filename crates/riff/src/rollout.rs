@@ -338,7 +338,11 @@ impl Seen {
     /// ```
     pub fn keep(&mut self, now: Seen) {
         let mut limits = std::mem::take(&mut self.limits);
-        limits.extend(now.limits.iter().map(|(host, limit)| (host.clone(), *limit)));
+        limits.extend(
+            now.limits
+                .iter()
+                .map(|(host, limit)| (host.clone(), *limit)),
+        );
         let idle = now.idle.or(self.idle);
         *self = Seen {
             limits,
@@ -469,10 +473,7 @@ pub async fn run(env: impl Env) {
                 return anyhow::Ok(());
             };
             let on = seen.interval > 0;
-            let changed = known
-                .as_ref()
-                .map(|k| k.changes(&seen))
-                .unwrap_or_default();
+            let changed = known.as_ref().map(|k| k.changes(&seen)).unwrap_or_default();
             let view = if on || !changed.is_empty() {
                 env.look().await?
             } else {
@@ -983,14 +984,8 @@ async fn post_lead(server: &str, me: &SessionUri, body: &str, kind: Kind) -> Res
     let person = identity::person(me.place(), server)?;
     let api = Api::new(server).signed_in(None)?;
     let to: Selector = format!("session={session}").parse()?;
-    api.post(
-        &person,
-        me.default_thread().as_ref(),
-        &[to],
-        body,
-        kind,
-    )
-    .await?;
+    api.post(&person, me.default_thread().as_ref(), &[to], body, kind)
+        .await?;
     Ok(())
 }
 
@@ -1370,7 +1365,10 @@ mod tests {
         fake.with(|w| w.places[0].limit = 3);
         tokio::time::sleep(OFF_WAIT * 2).await;
         task.abort();
-        assert!(fake.hosts().is_empty(), "a rollout that is off starts nothing");
+        assert!(
+            fake.hosts().is_empty(),
+            "a rollout that is off starts nothing"
+        );
         assert_eq!(
             fake.with(|w| w.told.clone()),
             [(
