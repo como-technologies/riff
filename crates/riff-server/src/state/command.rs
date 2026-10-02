@@ -22,7 +22,7 @@ use std::fmt;
 use std::time::Instant;
 
 use riff_core::name::{SessionUri, Who};
-use riff_core::record::{Change, Record};
+use riff_core::record::{By, Change, Record};
 
 use super::presence::Signal;
 use super::view::View;
@@ -166,6 +166,50 @@ impl Caller {
 
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// The caller as a record and a log line name it: its class, with
+    /// the user and the session ID (RID_CAUSE).
+    ///
+    /// ```
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::record::By;
+    /// use riff_server::state::Caller;
+    ///
+    /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// assert_eq!(Caller::of(&me).by().json().to_string(), r#"{"session":"mike/a6cf"}"#);
+    /// let person: SessionUri = "riff://mike@pangolin".parse()?;
+    /// assert_eq!(Caller::of(&person).by(), By::Person("mike".into()));
+    /// assert_eq!(Caller::server().by(), By::Server);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn by(&self) -> By {
+        let who = self.who();
+        match self.class {
+            Class::Person => By::Person(who.user().to_owned()),
+            Class::Session => By::Session(who.clone()),
+            Class::SignIn => By::SignIn(who.user().to_owned()),
+            Class::Server => By::Server,
+        }
+    }
+}
+
+/// The cause of a record: the caller and the kind of its command
+/// (RID_CAUSE). [`State::queue`](super::State::queue) writes it in the
+/// envelope of each record of the command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Cause {
+    pub by: By,
+    pub command: CommandKind,
+}
+
+impl Cause {
+    /// The cause of each record of a command of `kind` from `caller`.
+    pub fn of(caller: &Caller, kind: CommandKind) -> Cause {
+        Cause {
+            by: caller.by(),
+            command: kind,
+        }
     }
 }
 

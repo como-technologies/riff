@@ -71,6 +71,8 @@
 //! let record = |position| Record {
 //!     position,
 //!     written_at_ms: 0,
+//!     by: None,
+//!     command: None,
 //!     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
 //! };
 //! let serving = || true;
@@ -163,6 +165,8 @@ pub fn encode(records: &[Record]) -> Vec<u8> {
 /// let record = Record {
 ///     position: 7,
 ///     written_at_ms: 0,
+///     by: None,
+///     command: None,
 ///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Paused }),
 /// };
 /// let (header, lines) = decode(&encode(&[record.clone()])).unwrap();
@@ -217,6 +221,8 @@ pub async fn write(
 /// let record = Record {
 ///     position: 1,
 ///     written_at_ms: 0,
+///     by: None,
+///     command: None,
 ///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
 /// };
 /// let (store, failed) = (Memory::default(), AtomicU64::new(0));
@@ -326,6 +332,8 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 /// let record = |position| Record {
 ///     position,
 ///     written_at_ms: 0,
+///     by: None,
+///     command: None,
 ///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
 /// };
 /// write(&store, &[record(1), record(2)], &Timing::default(), || true).await?;

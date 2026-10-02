@@ -4,9 +4,14 @@
 //!
 //! Each change that must not be lost is a [`Record`] in one log
 //! (01M3T410XDD9W4EC0Y68FAA7XN). A record
-//! has a position (1, 2, 3, and so on), the time of its write, and one
-//! [`Change`]. The change names say what happened, in the past tense.
-//! These Rust types are the schema of the log.
+//! has a position (1, 2, 3, and so on), the time of its write, its
+//! cause, and one [`Change`]. The change names say what happened, in the
+//! past tense. These Rust types are the schema of the log.
+//!
+//! The cause is in the envelope: the caller ([`By`]) and the kind of
+//! the command (RID_CAUSE). So the log alone shows who made each
+//! change. A record from before this rule has no cause: it reads, and
+//! its cause is not known.
 //!
 //! A record names a session by its URI with no lead mark and no claims:
 //! the who and the place at the time of the change
@@ -25,11 +30,14 @@
 //! # Example
 //!
 //! ```
-//! use riff_core::record::{Change, Claimed, Line, Record};
+//! use riff_core::name::Who;
+//! use riff_core::record::{By, Change, Claimed, Line, Record};
 //!
 //! let record = Record {
 //!     position: 1234,
 //!     written_at_ms: 1_790_000_000_000,
+//!     by: Some(By::Session(Who::new("ann", Some("s1"))?)),
+//!     command: Some("claim".into()),
 //!     change: Change::Claimed(Claimed {
 //!         session: "riff://ann@heron/acme/app?session=s1".parse()?,
 //!         thread: "acme/app".parse()?,
@@ -39,15 +47,20 @@
 //! let line = serde_json::to_string(&record).unwrap();
 //! assert_eq!(
 //!     line,
-//!     r#"{"position":1234,"written_at_ms":1790000000000,"change":{"claimed":{"session":"riff://ann@heron/acme/app?session=s1","thread":"acme/app","item":"issue-7"}}}"#
+//!     r#"{"position":1234,"written_at_ms":1790000000000,"by":{"session":"ann/s1"},"command":"claim","change":{"claimed":{"session":"riff://ann@heron/acme/app?session=s1","thread":"acme/app","item":"issue-7"}}}"#
 //! );
 //! assert_eq!(Line::parse(&line)?, Line::Record(Box::new(record)));
+//!
+//! // A record from before the cause reads. Its cause is not known.
+//! let old = r#"{"position":7,"written_at_ms":1,"change":{"riff_state_set":{"state":"running"}}}"#;
+//! let Line::Record(old) = Line::parse(old)? else { panic!("a known kind") };
+//! assert_eq!((old.by, old.command), (None, None));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::name::{SessionUri, ThreadName, Who};
 use crate::wire::{Idle, Message, RiffState};
@@ -62,6 +75,15 @@ pub struct Record {
     /// The time when the server made the record, in milliseconds since
     /// the Unix epoch.
     pub written_at_ms: u64,
+    /// The caller of the command that made the record. `None` in a
+    /// record from before this field: the cause is not known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
+    /// The kind of the command that made the record, for example
+    /// `claim`. It is text: a reader takes a kind that it does not know
+    /// as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     pub change: Change,
 }
 
@@ -92,6 +114,127 @@ pub enum Change {
     SessionForgotten(Forgotten),
 }
 // ANCHOR_END: record
+
+/// Who caused a record: the caller of its command, with its class
+/// (RID_CAUSE). It holds only the user and the session ID. The session
+/// in a change is a full URI, with the place.
+///
+/// | Caller | JSON |
+/// |---|---|
+/// | a person | `{"person":"mike"}` |
+/// | a session | `{"session":"mike/a6cf"}` |
+/// | a sign-in | `{"sign_in":"mike@comotechnologies.io"}` |
+/// | the server | `"server"` |
+///
+/// The set of classes can grow. A build reads a class that it does not
+/// know as [`By::Other`].
+///
+/// ```
+/// use riff_core::name::Who;
+/// use riff_core::record::By;
+///
+/// let session = By::Session(Who::new("mike", Some("a6cf"))?);
+/// assert_eq!(serde_json::to_string(&session).unwrap(), r#"{"session":"mike/a6cf"}"#);
+/// assert_eq!(serde_json::to_string(&By::Server).unwrap(), r#""server""#);
+/// assert_eq!(session.to_string(), "the session mike/a6cf");
+///
+/// let read = |json: &str| serde_json::from_str::<By>(json).unwrap();
+/// assert_eq!(read(r#"{"person":"mike"}"#), By::Person("mike".into()));
+/// assert_eq!(read(r#"{"session":"mike/a6cf"}"#), session);
+/// assert_eq!(read(r#""server""#), By::Server);
+/// // A class of a later build.
+/// assert_eq!(read(r#"{"robot":"r2"}"#), By::Other);
+/// assert_eq!(read(r#""cron""#), By::Other);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum By {
+    /// A person, by the user.
+    Person(String),
+    /// An agent session, by the user and the session ID.
+    Session(Who),
+    /// A verified email of the provider, before a token is there.
+    SignIn(String),
+    /// A timer of `riff-server`.
+    Server,
+    /// A class that this build does not know.
+    Other,
+}
+
+impl By {
+    const PERSON: &str = "person";
+    const SESSION: &str = "session";
+    const SIGN_IN: &str = "sign_in";
+    const SERVER: &str = "server";
+    const OTHER: &str = "other";
+
+    /// The class and the name as a JSON value: the form in a record and
+    /// in a log line.
+    pub fn json(&self) -> serde_json::Value {
+        let named = |class: &str, name: String| serde_json::json!({ class: name });
+        match self {
+            By::Person(user) => named(By::PERSON, user.clone()),
+            By::Session(who) => named(By::SESSION, who.to_string()),
+            By::SignIn(email) => named(By::SIGN_IN, email.clone()),
+            By::Server => By::SERVER.into(),
+            By::Other => By::OTHER.into(),
+        }
+    }
+
+    fn read(value: &serde_json::Value) -> By {
+        if let Some(text) = value.as_str() {
+            return if text == By::SERVER {
+                By::Server
+            } else {
+                By::Other
+            };
+        }
+        let Some(map) = value.as_object() else {
+            return By::Other;
+        };
+        let mut fields = map.iter();
+        let (Some((class, name)), None) = (fields.next(), fields.next()) else {
+            return By::Other;
+        };
+        let Some(name) = name.as_str() else {
+            return By::Other;
+        };
+        match class.as_str() {
+            By::PERSON => By::Person(name.to_owned()),
+            By::SESSION => name
+                .split_once('/')
+                .and_then(|(user, session)| Who::new(user, Some(session)).ok())
+                .map_or(By::Other, By::Session),
+            By::SIGN_IN => By::SignIn(name.to_owned()),
+            _ => By::Other,
+        }
+    }
+}
+
+/// The caller for people, for example `the session mike/a6cf`.
+impl std::fmt::Display for By {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            By::Person(user) => write!(f, "the person {user}"),
+            By::Session(who) => write!(f, "the session {who}"),
+            By::SignIn(email) => write!(f, "the sign-in {email}"),
+            By::Server => f.write_str("the server"),
+            By::Other => f.write_str("a caller of a class that this build does not know"),
+        }
+    }
+}
+
+impl Serialize for By {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.json().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for By {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<By, D::Error> {
+        Ok(By::read(&serde_json::Value::deserialize(deserializer)?))
+    }
+}
 
 impl Change {
     /// The name of each kind of change, as the JSON of a record has it.
@@ -185,6 +328,10 @@ impl Line {
         struct Raw {
             position: u64,
             written_at_ms: u64,
+            #[serde(default)]
+            by: Option<By>,
+            #[serde(default)]
+            command: Option<String>,
             change: serde_json::Map<String, serde_json::Value>,
         }
         let raw: Raw = serde_json::from_str(line).map_err(|e| e.to_string())?;
@@ -205,6 +352,8 @@ impl Line {
         Ok(Line::Record(Box::new(Record {
             position: raw.position,
             written_at_ms: raw.written_at_ms,
+            by: raw.by,
+            command: raw.command,
             change,
         })))
     }
@@ -271,6 +420,8 @@ mod tests {
             let record = Record {
                 position: 3,
                 written_at_ms: 4,
+                by: Some(By::Server),
+                command: Some("forget".into()),
                 change,
             };
             let line = serde_json::to_string(&record).unwrap();
@@ -291,6 +442,60 @@ mod tests {
                 state: RiffState::Running
             })
         );
+    }
+
+    #[test]
+    fn each_class_of_a_caller_reads_back() {
+        let who = uri().who().clone();
+        for (by, json) in [
+            (By::Person("ann".into()), r#"{"person":"ann"}"#),
+            (By::Session(who), r#"{"session":"ann/s1"}"#),
+            (
+                By::SignIn("ann@acme.io".into()),
+                r#"{"sign_in":"ann@acme.io"}"#,
+            ),
+            (By::Server, r#""server""#),
+            (By::Other, r#""other""#),
+        ] {
+            assert_eq!(serde_json::to_string(&by).unwrap(), json);
+            assert_eq!(serde_json::from_str::<By>(json).unwrap(), by);
+        }
+    }
+
+    #[test]
+    fn a_class_that_the_build_does_not_know_reads_as_other() {
+        for json in [
+            r#"{"robot":"r2"}"#,
+            r#""cron""#,
+            r#"{"person":"ann","more":"x"}"#,
+            r#"{"person":7}"#,
+            r#"{"session":"no-session-id"}"#,
+            "7",
+            "{}",
+        ] {
+            assert_eq!(
+                serde_json::from_str::<By>(json).unwrap(),
+                By::Other,
+                "{json}"
+            );
+        }
+        let line = r#"{"position":2,"written_at_ms":1,"by":{"robot":"r2"},"command":"sweep","change":{"riff_state_set":{"state":"running"}}}"#;
+        let Line::Record(record) = Line::parse(line).unwrap() else {
+            panic!("a known kind");
+        };
+        assert_eq!(record.by, Some(By::Other));
+        // The kind of a command is text: a kind of a later build reads.
+        assert_eq!(record.command.as_deref(), Some("sweep"));
+    }
+
+    #[test]
+    fn a_record_with_no_cause_reads_and_writes_no_cause() {
+        let line = r#"{"position":2,"written_at_ms":1,"change":{"riff_state_set":{"state":"running"}}}"#;
+        let Line::Record(record) = Line::parse(line).unwrap() else {
+            panic!("a known kind");
+        };
+        assert_eq!((&record.by, &record.command), (&None, &None));
+        assert_eq!(serde_json::to_string(&record).unwrap(), line);
     }
 
     #[test]

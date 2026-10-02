@@ -19,6 +19,8 @@ fn running(position: u64) -> Record {
     Record {
         position,
         written_at_ms: 1_790_000_000_000,
+        by: None,
+        command: None,
         change: Change::RiffStateSet(RiffStateSet {
             state: RiffState::Running,
         }),
@@ -29,6 +31,8 @@ fn claimed(position: u64) -> Record {
     Record {
         position,
         written_at_ms: 1_790_000_000_000,
+        by: None,
+        command: None,
         change: Change::Claimed(Claimed {
             session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
             thread: "acme/app".parse().unwrap(),

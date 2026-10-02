@@ -49,6 +49,8 @@
 //! let record = |position| Record {
 //!     position,
 //!     written_at_ms: 1_790_000_000_000,
+//!     by: None,
+//!     command: None,
 //!     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
 //! };
 //! write(&store, &[record(1), record(2), record(3)], &Timing::default(), || true).await?;
@@ -122,16 +124,20 @@ pub fn utc(ms: u64) -> String {
 }
 
 /// One record as one line of text: the position, the time, the kind of
-/// the change, and its facts. A message shows its thread, its number,
-/// its sender, its kind and the start of its body.
+/// the change, its facts, and its cause: the kind of the command and
+/// the caller (RID_CAUSE). A message shows its thread, its number, its
+/// sender, its kind and the start of its body.
 ///
 /// ```
-/// use riff_core::record::{Change, Claimed, Record};
+/// use riff_core::name::Who;
+/// use riff_core::record::{By, Change, Claimed, Record};
 /// use riff_server::tools::show;
 ///
-/// let record = Record {
+/// let mut record = Record {
 ///     position: 1234,
 ///     written_at_ms: 1_790_000_000_000,
+///     by: Some(By::Session(Who::new("ann", Some("s1"))?)),
+///     command: Some("claim".into()),
 ///     change: Change::Claimed(Claimed {
 ///         session: "riff://ann@heron/acme/app?session=s1".parse()?,
 ///         thread: "acme/app".parse()?,
@@ -140,8 +146,11 @@ pub fn utc(ms: u64) -> String {
 /// };
 /// assert_eq!(
 ///     show(&record),
-///     "1234  2026-09-21T14:13:20Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1"
+///     "1234  2026-09-21T14:13:20Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)"
 /// );
+/// // A record from before the cause.
+/// (record.by, record.command) = (None, None);
+/// assert!(show(&record).ends_with("  (cause not known)"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn show(record: &Record) -> String {
@@ -178,10 +187,22 @@ pub fn show(record: &Record) -> String {
         Change::SessionForgotten(f) => format!("session_forgotten  {}", f.session),
     };
     format!(
-        "{}  {}  {facts}",
+        "{}  {}  {facts}  ({})",
         record.position,
-        utc(record.written_at_ms)
+        utc(record.written_at_ms),
+        cause(record)
     )
+}
+
+/// The cause of a record as text: the kind of its command and its
+/// caller (RID_CAUSE). A record from before the cause has none.
+fn cause(record: &Record) -> String {
+    match (&record.command, &record.by) {
+        (Some(command), Some(by)) => format!("{command}, {by}"),
+        (Some(command), None) => command.clone(),
+        (None, Some(by)) => by.to_string(),
+        (None, None) => "cause not known".to_owned(),
+    }
 }
 
 /// The thread that a record names, if any.
@@ -651,6 +672,8 @@ mod tests {
         Record {
             position,
             written_at_ms: 0,
+            by: None,
+            command: None,
             change: Change::RiffStateSet(RiffStateSet {
                 state: RiffState::Running,
             }),
@@ -661,6 +684,8 @@ mod tests {
         Record {
             position,
             written_at_ms: 0,
+            by: None,
+            command: None,
             change: Change::Claimed(Claimed {
                 session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
                 thread: "acme/app".parse().unwrap(),

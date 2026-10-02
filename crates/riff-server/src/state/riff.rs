@@ -228,6 +228,8 @@ mod tests {
             let record = Record {
                 position: u64::try_from(n).unwrap() + 1,
                 written_at_ms: 5,
+                by: None,
+                command: None,
                 change: change.clone(),
             };
             apply(&mut riff, &record);

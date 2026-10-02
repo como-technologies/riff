@@ -119,8 +119,8 @@ use tokio::sync::{Notify, broadcast, oneshot};
 
 use crate::auth::SignedIn;
 use crate::state::{
-    Announce, Caller, Check, Code, Command, Delivery, Forget, MakeRiff, Refused, Role, Signal,
-    State, Stopping,
+    Announce, Caller, Cause, Check, Code, Command, Delivery, Forget, MakeRiff, Refused, Role,
+    Signal, State, Stopping,
 };
 
 /// Events that a slow stream may miss before it drops them.
@@ -822,7 +822,10 @@ impl<'s, C: Command> Checked<'s, C> {
         } = check;
         let (tx, done) = oneshot::channel();
         let (made, outcome) = match result {
-            Ok((changes, note)) => (core.state.queue(&changes, now), Ok(note)),
+            Ok((changes, note)) => {
+                let cause = Cause::of(&caller, C::KIND);
+                (core.state.queue(&cause, &changes, now), Ok(note))
+            }
             Err(refused) => (Vec::new(), Err(refused)),
         };
         // A stopped engine drops the sender: the call fails as stopped.

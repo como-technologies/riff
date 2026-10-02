@@ -12,7 +12,7 @@
 //!
 //! The tests do no I/O.
 
-use riff_core::record::{Claimed, Forgotten, Member, RiffStateSet, SettingChanged};
+use riff_core::record::{By, Claimed, Forgotten, Member, RiffStateSet, SettingChanged};
 use riff_core::wire;
 
 use super::*;
@@ -282,6 +282,8 @@ fn given(changes: &[Change]) -> Given {
     let records = changes.iter().enumerate().map(|(n, change)| Record {
         position: u64::try_from(n).unwrap() + 1,
         written_at_ms: 0,
+        by: None,
+        command: None,
         change: change.clone(),
     });
     Given {
@@ -318,7 +320,8 @@ impl Given {
 
     /// Commits `changes` as records, writes them, and gives the state.
     fn apply(mut self, changes: &[Change]) -> State {
-        let records = self.state.queue(changes, self.now);
+        let cause = Cause::of(&Caller::server(), CommandKind::Forget);
+        let records = self.state.queue(&cause, changes, self.now);
         self.state.written(&records);
         self.state
     }
@@ -645,7 +648,32 @@ fn a_claim_of_an_item_whose_holder_stopped_long_ago_is_granted() {
     given(&records)
         .after(CLAIM_GRACE)
         .when(&ann(), claim("issue-7"))
-        .then(&[claimed(&ann(), "issue-7")]);
+        .then(&[released(&bob(), "issue-7"), claimed(&ann(), "issue-7")]);
+}
+
+/// The old holder gets its `released` record first, in the chunk of the
+/// claim, with the cause of the claim (RID_TAKEN).
+#[test]
+fn a_claim_that_takes_an_item_gives_the_old_holder_a_released_record_in_one_chunk() {
+    let mut records = team();
+    records.push(claimed(&bob(), "issue-7"));
+    let Given { mut state, now } = given(&records).after(CLAIM_GRACE);
+    let command = claim("issue-7").of(&ann());
+    let (made, ()) = state.run(&Caller::of(&ann()), &command, now).unwrap();
+    let kinds: Vec<&Change> = made.iter().map(|record| &record.change).collect();
+    assert_eq!(
+        kinds,
+        [&released(&bob(), "issue-7"), &claimed(&ann(), "issue-7")]
+    );
+    assert_eq!(made[1].position, made[0].position + 1);
+    for record in &made {
+        assert_eq!(record.by, Some(By::Session(ann().who().clone())));
+        assert_eq!(record.command.as_deref(), Some("claim"));
+    }
+    // The item has one holder, and the old holder has no claim.
+    state.written(&made);
+    assert_eq!(state.uri(ann().who(), now).claims(), ["issue-7"]);
+    assert!(state.uri(bob().who(), now).claims().is_empty());
 }
 
 #[test]
