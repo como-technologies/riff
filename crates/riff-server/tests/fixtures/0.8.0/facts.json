@@ -1,0 +1,1106 @@
+{
+  "idle": {
+    "after_secs": 600,
+    "per_host": 2
+  },
+  "messages": {
+    "como-technologies/riff": [
+      {
+        "body": "note 8",
+        "from": "mike/m1",
+        "seq": 8
+      },
+      {
+        "body": "note 9",
+        "from": "mike/m1",
+        "seq": 9
+      },
+      {
+        "body": "note 10",
+        "from": "mike/m1",
+        "seq": 10
+      },
+      {
+        "body": "note 11",
+        "from": "mike/m1",
+        "seq": 11
+      },
+      {
+        "body": "note 12",
+        "from": "mike/m1",
+        "seq": 12
+      },
+      {
+        "body": "note 13",
+        "from": "mike/m1",
+        "seq": 13
+      },
+      {
+        "body": "note 14",
+        "from": "mike/m1",
+        "seq": 14
+      },
+      {
+        "body": "note 15",
+        "from": "mike/m1",
+        "seq": 15
+      },
+      {
+        "body": "note 16",
+        "from": "mike/m1",
+        "seq": 16
+      },
+      {
+        "body": "note 17",
+        "from": "mike/m1",
+        "seq": 17
+      },
+      {
+        "body": "note 18",
+        "from": "mike/m1",
+        "seq": 18
+      },
+      {
+        "body": "note 19",
+        "from": "mike/m1",
+        "seq": 19
+      },
+      {
+        "body": "note 20",
+        "from": "mike/m1",
+        "seq": 20
+      },
+      {
+        "body": "note 21",
+        "from": "mike/m1",
+        "seq": 21
+      },
+      {
+        "body": "note 22",
+        "from": "mike/m1",
+        "seq": 22
+      },
+      {
+        "body": "note 23",
+        "from": "mike/m1",
+        "seq": 23
+      },
+      {
+        "body": "note 24",
+        "from": "mike/m1",
+        "seq": 24
+      },
+      {
+        "body": "note 25",
+        "from": "mike/m1",
+        "seq": 25
+      },
+      {
+        "body": "note 26",
+        "from": "mike/m1",
+        "seq": 26
+      },
+      {
+        "body": "note 27",
+        "from": "mike/m1",
+        "seq": 27
+      },
+      {
+        "body": "note 28",
+        "from": "mike/m1",
+        "seq": 28
+      },
+      {
+        "body": "note 29",
+        "from": "mike/m1",
+        "seq": 29
+      },
+      {
+        "body": "note 30",
+        "from": "mike/m1",
+        "seq": 30
+      },
+      {
+        "body": "note 31",
+        "from": "mike/m1",
+        "seq": 31
+      },
+      {
+        "body": "note 32",
+        "from": "mike/m1",
+        "seq": 32
+      },
+      {
+        "body": "note 33",
+        "from": "mike/m1",
+        "seq": 33
+      },
+      {
+        "body": "note 34",
+        "from": "mike/m1",
+        "seq": 34
+      },
+      {
+        "body": "note 35",
+        "from": "mike/m1",
+        "seq": 35
+      },
+      {
+        "body": "note 36",
+        "from": "mike/m1",
+        "seq": 36
+      },
+      {
+        "body": "note 37",
+        "from": "mike/m1",
+        "seq": 37
+      },
+      {
+        "body": "note 38",
+        "from": "mike/m1",
+        "seq": 38
+      },
+      {
+        "body": "note 39",
+        "from": "mike/m1",
+        "seq": 39
+      },
+      {
+        "body": "note 40",
+        "from": "mike/m1",
+        "seq": 40
+      },
+      {
+        "body": "note 41",
+        "from": "mike/m1",
+        "seq": 41
+      },
+      {
+        "body": "note 42",
+        "from": "mike/m1",
+        "seq": 42
+      },
+      {
+        "body": "note 43",
+        "from": "mike/m1",
+        "seq": 43
+      },
+      {
+        "body": "note 44",
+        "from": "mike/m1",
+        "seq": 44
+      },
+      {
+        "body": "note 45",
+        "from": "mike/m1",
+        "seq": 45
+      },
+      {
+        "body": "note 46",
+        "from": "mike/m1",
+        "seq": 46
+      },
+      {
+        "body": "note 47",
+        "from": "mike/m1",
+        "seq": 47
+      },
+      {
+        "body": "note 48",
+        "from": "mike/m1",
+        "seq": 48
+      },
+      {
+        "body": "note 49",
+        "from": "mike/m1",
+        "seq": 49
+      },
+      {
+        "body": "note 50",
+        "from": "mike/m1",
+        "seq": 50
+      },
+      {
+        "body": "note 51",
+        "from": "mike/m1",
+        "seq": 51
+      },
+      {
+        "body": "note 52",
+        "from": "mike/m1",
+        "seq": 52
+      },
+      {
+        "body": "note 53",
+        "from": "mike/m1",
+        "seq": 53
+      },
+      {
+        "body": "note 54",
+        "from": "mike/m1",
+        "seq": 54
+      },
+      {
+        "body": "note 55",
+        "from": "mike/m1",
+        "seq": 55
+      },
+      {
+        "body": "note 56",
+        "from": "mike/m1",
+        "seq": 56
+      },
+      {
+        "body": "note 57",
+        "from": "mike/m1",
+        "seq": 57
+      },
+      {
+        "body": "note 58",
+        "from": "mike/m1",
+        "seq": 58
+      },
+      {
+        "body": "note 59",
+        "from": "mike/m1",
+        "seq": 59
+      },
+      {
+        "body": "note 60",
+        "from": "mike/m1",
+        "seq": 60
+      },
+      {
+        "body": "note 61",
+        "from": "mike/m1",
+        "seq": 61
+      },
+      {
+        "body": "note 62",
+        "from": "mike/m1",
+        "seq": 62
+      },
+      {
+        "body": "note 63",
+        "from": "mike/m1",
+        "seq": 63
+      },
+      {
+        "body": "note 64",
+        "from": "mike/m1",
+        "seq": 64
+      },
+      {
+        "body": "note 65",
+        "from": "mike/m1",
+        "seq": 65
+      },
+      {
+        "body": "note 66",
+        "from": "mike/m1",
+        "seq": 66
+      },
+      {
+        "body": "note 67",
+        "from": "mike/m1",
+        "seq": 67
+      },
+      {
+        "body": "note 68",
+        "from": "mike/m1",
+        "seq": 68
+      },
+      {
+        "body": "note 69",
+        "from": "mike/m1",
+        "seq": 69
+      },
+      {
+        "body": "note 70",
+        "from": "mike/m1",
+        "seq": 70
+      },
+      {
+        "body": "note 71",
+        "from": "mike/m1",
+        "seq": 71
+      },
+      {
+        "body": "note 72",
+        "from": "mike/m1",
+        "seq": 72
+      },
+      {
+        "body": "note 73",
+        "from": "mike/m1",
+        "seq": 73
+      },
+      {
+        "body": "note 74",
+        "from": "mike/m1",
+        "seq": 74
+      },
+      {
+        "body": "note 75",
+        "from": "mike/m1",
+        "seq": 75
+      },
+      {
+        "body": "note 76",
+        "from": "mike/m1",
+        "seq": 76
+      },
+      {
+        "body": "note 77",
+        "from": "mike/m1",
+        "seq": 77
+      },
+      {
+        "body": "note 78",
+        "from": "mike/m1",
+        "seq": 78
+      },
+      {
+        "body": "note 79",
+        "from": "mike/m1",
+        "seq": 79
+      },
+      {
+        "body": "note 80",
+        "from": "mike/m1",
+        "seq": 80
+      },
+      {
+        "body": "note 81",
+        "from": "mike/m1",
+        "seq": 81
+      },
+      {
+        "body": "note 82",
+        "from": "mike/m1",
+        "seq": 82
+      },
+      {
+        "body": "note 83",
+        "from": "mike/m1",
+        "seq": 83
+      },
+      {
+        "body": "note 84",
+        "from": "mike/m1",
+        "seq": 84
+      },
+      {
+        "body": "note 85",
+        "from": "mike/m1",
+        "seq": 85
+      },
+      {
+        "body": "note 86",
+        "from": "mike/m1",
+        "seq": 86
+      },
+      {
+        "body": "note 87",
+        "from": "mike/m1",
+        "seq": 87
+      },
+      {
+        "body": "note 88",
+        "from": "mike/m1",
+        "seq": 88
+      },
+      {
+        "body": "note 89",
+        "from": "mike/m1",
+        "seq": 89
+      },
+      {
+        "body": "note 90",
+        "from": "mike/m1",
+        "seq": 90
+      },
+      {
+        "body": "note 91",
+        "from": "mike/m1",
+        "seq": 91
+      },
+      {
+        "body": "note 92",
+        "from": "mike/m1",
+        "seq": 92
+      },
+      {
+        "body": "note 93",
+        "from": "mike/m1",
+        "seq": 93
+      },
+      {
+        "body": "note 94",
+        "from": "mike/m1",
+        "seq": 94
+      },
+      {
+        "body": "note 95",
+        "from": "mike/m1",
+        "seq": 95
+      },
+      {
+        "body": "note 96",
+        "from": "mike/m1",
+        "seq": 96
+      },
+      {
+        "body": "note 97",
+        "from": "mike/m1",
+        "seq": 97
+      },
+      {
+        "body": "note 98",
+        "from": "mike/m1",
+        "seq": 98
+      },
+      {
+        "body": "note 99",
+        "from": "mike/m1",
+        "seq": 99
+      },
+      {
+        "body": "note 100",
+        "from": "mike/m1",
+        "seq": 100
+      },
+      {
+        "body": "note 101",
+        "from": "mike/m1",
+        "seq": 101
+      },
+      {
+        "body": "note 102",
+        "from": "mike/m1",
+        "seq": 102
+      },
+      {
+        "body": "note 103",
+        "from": "mike/m1",
+        "seq": 103
+      },
+      {
+        "body": "note 104",
+        "from": "mike/m1",
+        "seq": 104
+      },
+      {
+        "body": "note 105",
+        "from": "mike/m1",
+        "seq": 105
+      },
+      {
+        "body": "note 106",
+        "from": "mike/m1",
+        "seq": 106
+      },
+      {
+        "body": "note 107",
+        "from": "mike/m1",
+        "seq": 107
+      },
+      {
+        "body": "note 108",
+        "from": "mike/m1",
+        "seq": 108
+      },
+      {
+        "body": "note 109",
+        "from": "mike/m1",
+        "seq": 109
+      },
+      {
+        "body": "note 110",
+        "from": "mike/m1",
+        "seq": 110
+      },
+      {
+        "body": "note 111",
+        "from": "mike/m1",
+        "seq": 111
+      },
+      {
+        "body": "note 112",
+        "from": "mike/m1",
+        "seq": 112
+      },
+      {
+        "body": "note 113",
+        "from": "mike/m1",
+        "seq": 113
+      },
+      {
+        "body": "note 114",
+        "from": "mike/m1",
+        "seq": 114
+      },
+      {
+        "body": "note 115",
+        "from": "mike/m1",
+        "seq": 115
+      },
+      {
+        "body": "note 116",
+        "from": "mike/m1",
+        "seq": 116
+      },
+      {
+        "body": "note 117",
+        "from": "mike/m1",
+        "seq": 117
+      },
+      {
+        "body": "note 118",
+        "from": "mike/m1",
+        "seq": 118
+      },
+      {
+        "body": "note 119",
+        "from": "mike/m1",
+        "seq": 119
+      },
+      {
+        "body": "note 120",
+        "from": "mike/m1",
+        "seq": 120
+      },
+      {
+        "body": "note 121",
+        "from": "mike/m1",
+        "seq": 121
+      },
+      {
+        "body": "note 122",
+        "from": "mike/m1",
+        "seq": 122
+      },
+      {
+        "body": "note 123",
+        "from": "mike/m1",
+        "seq": 123
+      },
+      {
+        "body": "note 124",
+        "from": "mike/m1",
+        "seq": 124
+      },
+      {
+        "body": "note 125",
+        "from": "mike/m1",
+        "seq": 125
+      },
+      {
+        "body": "note 126",
+        "from": "mike/m1",
+        "seq": 126
+      },
+      {
+        "body": "note 127",
+        "from": "mike/m1",
+        "seq": 127
+      },
+      {
+        "body": "note 128",
+        "from": "mike/m1",
+        "seq": 128
+      },
+      {
+        "body": "note 129",
+        "from": "mike/m1",
+        "seq": 129
+      },
+      {
+        "body": "note 130",
+        "from": "mike/m1",
+        "seq": 130
+      },
+      {
+        "body": "note 131",
+        "from": "mike/m1",
+        "seq": 131
+      },
+      {
+        "body": "note 132",
+        "from": "mike/m1",
+        "seq": 132
+      },
+      {
+        "body": "note 133",
+        "from": "mike/m1",
+        "seq": 133
+      },
+      {
+        "body": "note 134",
+        "from": "mike/m1",
+        "seq": 134
+      },
+      {
+        "body": "note 135",
+        "from": "mike/m1",
+        "seq": 135
+      },
+      {
+        "body": "note 136",
+        "from": "mike/m1",
+        "seq": 136
+      },
+      {
+        "body": "note 137",
+        "from": "mike/m1",
+        "seq": 137
+      },
+      {
+        "body": "note 138",
+        "from": "mike/m1",
+        "seq": 138
+      },
+      {
+        "body": "note 139",
+        "from": "mike/m1",
+        "seq": 139
+      },
+      {
+        "body": "note 140",
+        "from": "mike/m1",
+        "seq": 140
+      },
+      {
+        "body": "note 141",
+        "from": "mike/m1",
+        "seq": 141
+      },
+      {
+        "body": "note 142",
+        "from": "mike/m1",
+        "seq": 142
+      },
+      {
+        "body": "note 143",
+        "from": "mike/m1",
+        "seq": 143
+      },
+      {
+        "body": "note 144",
+        "from": "mike/m1",
+        "seq": 144
+      },
+      {
+        "body": "note 145",
+        "from": "mike/m1",
+        "seq": 145
+      },
+      {
+        "body": "note 146",
+        "from": "mike/m1",
+        "seq": 146
+      },
+      {
+        "body": "note 147",
+        "from": "mike/m1",
+        "seq": 147
+      },
+      {
+        "body": "note 148",
+        "from": "mike/m1",
+        "seq": 148
+      },
+      {
+        "body": "note 149",
+        "from": "mike/m1",
+        "seq": 149
+      },
+      {
+        "body": "note 150",
+        "from": "mike/m1",
+        "seq": 150
+      },
+      {
+        "body": "note 151",
+        "from": "mike/m1",
+        "seq": 151
+      },
+      {
+        "body": "note 152",
+        "from": "mike/m1",
+        "seq": 152
+      },
+      {
+        "body": "note 153",
+        "from": "mike/m1",
+        "seq": 153
+      },
+      {
+        "body": "note 154",
+        "from": "mike/m1",
+        "seq": 154
+      },
+      {
+        "body": "note 155",
+        "from": "mike/m1",
+        "seq": 155
+      },
+      {
+        "body": "note 156",
+        "from": "mike/m1",
+        "seq": 156
+      },
+      {
+        "body": "note 157",
+        "from": "mike/m1",
+        "seq": 157
+      },
+      {
+        "body": "note 158",
+        "from": "mike/m1",
+        "seq": 158
+      },
+      {
+        "body": "note 159",
+        "from": "mike/m1",
+        "seq": 159
+      },
+      {
+        "body": "note 160",
+        "from": "mike/m1",
+        "seq": 160
+      },
+      {
+        "body": "note 161",
+        "from": "mike/m1",
+        "seq": 161
+      },
+      {
+        "body": "note 162",
+        "from": "mike/m1",
+        "seq": 162
+      },
+      {
+        "body": "note 163",
+        "from": "mike/m1",
+        "seq": 163
+      },
+      {
+        "body": "note 164",
+        "from": "mike/m1",
+        "seq": 164
+      },
+      {
+        "body": "note 165",
+        "from": "mike/m1",
+        "seq": 165
+      },
+      {
+        "body": "note 166",
+        "from": "mike/m1",
+        "seq": 166
+      },
+      {
+        "body": "note 167",
+        "from": "mike/m1",
+        "seq": 167
+      },
+      {
+        "body": "note 168",
+        "from": "mike/m1",
+        "seq": 168
+      },
+      {
+        "body": "note 169",
+        "from": "mike/m1",
+        "seq": 169
+      },
+      {
+        "body": "note 170",
+        "from": "mike/m1",
+        "seq": 170
+      },
+      {
+        "body": "note 171",
+        "from": "mike/m1",
+        "seq": 171
+      },
+      {
+        "body": "note 172",
+        "from": "mike/m1",
+        "seq": 172
+      },
+      {
+        "body": "note 173",
+        "from": "mike/m1",
+        "seq": 173
+      },
+      {
+        "body": "note 174",
+        "from": "mike/m1",
+        "seq": 174
+      },
+      {
+        "body": "note 175",
+        "from": "mike/m1",
+        "seq": 175
+      },
+      {
+        "body": "note 176",
+        "from": "mike/m1",
+        "seq": 176
+      },
+      {
+        "body": "note 177",
+        "from": "mike/m1",
+        "seq": 177
+      },
+      {
+        "body": "note 178",
+        "from": "mike/m1",
+        "seq": 178
+      },
+      {
+        "body": "note 179",
+        "from": "mike/m1",
+        "seq": 179
+      },
+      {
+        "body": "note 180",
+        "from": "mike/m1",
+        "seq": 180
+      },
+      {
+        "body": "note 181",
+        "from": "mike/m1",
+        "seq": 181
+      },
+      {
+        "body": "note 182",
+        "from": "mike/m1",
+        "seq": 182
+      },
+      {
+        "body": "note 183",
+        "from": "mike/m1",
+        "seq": 183
+      },
+      {
+        "body": "note 184",
+        "from": "mike/m1",
+        "seq": 184
+      },
+      {
+        "body": "note 185",
+        "from": "mike/m1",
+        "seq": 185
+      },
+      {
+        "body": "note 186",
+        "from": "mike/m1",
+        "seq": 186
+      },
+      {
+        "body": "note 187",
+        "from": "mike/m1",
+        "seq": 187
+      },
+      {
+        "body": "note 188",
+        "from": "mike/m1",
+        "seq": 188
+      },
+      {
+        "body": "note 189",
+        "from": "mike/m1",
+        "seq": 189
+      },
+      {
+        "body": "note 190",
+        "from": "mike/m1",
+        "seq": 190
+      },
+      {
+        "body": "note 191",
+        "from": "mike/m1",
+        "seq": 191
+      },
+      {
+        "body": "note 192",
+        "from": "mike/m1",
+        "seq": 192
+      },
+      {
+        "body": "note 193",
+        "from": "mike/m1",
+        "seq": 193
+      },
+      {
+        "body": "note 194",
+        "from": "mike/m1",
+        "seq": 194
+      },
+      {
+        "body": "note 195",
+        "from": "mike/m1",
+        "seq": 195
+      },
+      {
+        "body": "note 196",
+        "from": "mike/m1",
+        "seq": 196
+      },
+      {
+        "body": "note 197",
+        "from": "mike/m1",
+        "seq": 197
+      },
+      {
+        "body": "note 198",
+        "from": "mike/m1",
+        "seq": 198
+      },
+      {
+        "body": "note 199",
+        "from": "mike/m1",
+        "seq": 199
+      },
+      {
+        "body": "note 200",
+        "from": "mike/m1",
+        "seq": 200
+      },
+      {
+        "body": "note 201",
+        "from": "mike/m1",
+        "seq": 201
+      },
+      {
+        "body": "note 202",
+        "from": "mike/m1",
+        "seq": 202
+      },
+      {
+        "body": "note 203",
+        "from": "mike/m1",
+        "seq": 203
+      },
+      {
+        "body": "note 204",
+        "from": "mike/m1",
+        "seq": 204
+      },
+      {
+        "body": "note 205",
+        "from": "mike/m1",
+        "seq": 205
+      },
+      {
+        "body": "the board of Wave 18",
+        "from": "mike/m1",
+        "seq": 206
+      },
+      {
+        "body": "verify request: issue-341",
+        "from": "mike/m2",
+        "seq": 207
+      }
+    ],
+    "como-technologies/strata": [
+      {
+        "body": "strata: the plan",
+        "from": "brett/b1",
+        "seq": 1
+      }
+    ],
+    "design": [
+      {
+        "body": "an idea for the design",
+        "from": "brett/b1",
+        "seq": 1
+      }
+    ],
+    "dm:brett/b1|brett/b2": [
+      {
+        "body": "request: claim issue-7",
+        "from": "brett/b1",
+        "seq": 1
+      }
+    ],
+    "dm:mike/m3|mike/m4": [
+      {
+        "body": "bye",
+        "from": "mike/m3",
+        "seq": 1
+      }
+    ]
+  },
+  "owner": "mike@comotechnologies.io",
+  "refresh": {
+    "brett": {
+      "jkt": "jkt-brett",
+      "token": "omJb2pW9547UdqpMoqoMBpedhnApihXNP1nAh1getgs"
+    },
+    "gone": {
+      "jkt": "jkt-gone",
+      "token": "Aafb35LP36LUW0fX7i0a09KrhxmcXjsCTSls7wTtJ1c"
+    },
+    "mike": {
+      "jkt": "jkt-mike",
+      "token": "ebH10HCVeWk1XO59sS97G38dIar4y24akGqxhg8fuw4"
+    },
+    "mike_session": {
+      "jkt": "jkt-mike",
+      "token": "U8GW_XhpNCnwKopKti1I-Ao_uJ6adUxXRPIihf93yf0"
+    },
+    "mike_used": {
+      "jkt": "jkt-mike",
+      "token": "wtcN3dEcsok3_b_qxlfXCpnudvIOzedIt2YbNz3JrjI"
+    }
+  },
+  "riff": "running",
+  "riff_id": "rPj_u8SJv17e8VPwciGGxitcBSKepm_xlwgMssv5YB0",
+  "saved_ms": 1790000000000,
+  "unread": {
+    "brett/b1": {
+      "como-technologies/strata": 0,
+      "design": 0,
+      "dm:brett/b1|brett/b2": 0
+    },
+    "brett/b2": {
+      "como-technologies/strata": 1,
+      "dm:brett/b1|brett/b2": 1
+    },
+    "mike/m1": {
+      "como-technologies/riff": 1,
+      "design": 1
+    },
+    "mike/m2": {
+      "como-technologies/riff": 1
+    },
+    "mike/m3": {
+      "como-technologies/riff": 207,
+      "dm:mike/m3|mike/m4": 0
+    },
+    "mike/m4": {
+      "como-technologies/riff": 207,
+      "dm:mike/m3|mike/m4": 1
+    },
+    "mike/m5": {
+      "como-technologies/riff": 207
+    }
+  },
+  "who": [
+    "riff://brett@kadomony/como-technologies/strata?session=b1&lead=true",
+    "riff://brett@kadomony/como-technologies/strata?session=b2&claim=issue-7#issue-7",
+    "riff://mike@pangolin/como-technologies/riff?session=m1&lead=true",
+    "riff://mike@pangolin/como-technologies/riff?session=m2&claim=issue-341#issue-341",
+    "riff://mike@thelio/como-technologies/riff?session=m3",
+    "riff://mike@thelio/como-technologies/riff?session=m4",
+    "riff://mike@thelio/como-technologies/riff?session=m5#issue-9"
+  ],
+  "workers": [
+    "brett/b2",
+    "mike/m2"
+  ]
+}

@@ -130,7 +130,8 @@ impl Threads {
             .is_some_and(|t| t.members.contains(who))
     }
 
-    fn last_seq(&self, thread: &ThreadName) -> u64 {
+    /// The seq of the last message of `thread`, or 0.
+    pub(super) fn last_seq(&self, thread: &ThreadName) -> u64 {
         self.by_name
             .get(thread)
             .and_then(|t| t.messages.back())

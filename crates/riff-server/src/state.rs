@@ -40,7 +40,7 @@
 //! | sessions | [`sessions`] | [`Sessions`](sessions::Sessions) | [`Register`], [`Arrive`], [`Start`], [`End`] |
 //! | threads | [`threads`] | [`Threads`](threads::Threads) | [`Join`], [`Leave`], [`Post`], [`Announce`] |
 //! | work | [`work`] | [`Work`](work::Work) | [`Claim`], [`Release`], [`ReleaseFor`], [`Lead`] |
-//! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`MakeRiff`], [`Pause`], [`Resume`], [`SetIdle`], [`Forget`] |
+//! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`MakeRiff`], [`Pause`], [`Resume`], [`SetIdle`], [`Forget`], [`Import`] |
 //! | people | [`people`] | [`People`] | [`Admit`], `Invite`, `Remove`, `SetAdmin`, `PassOwner`, `TakeOwner`, `DenyOwner`, [`GrantOwner`], [`EndOwner`], [`NameOwner`], `Revoke` |
 //!
 //! The wire type of a command that a client can send is its command
@@ -272,11 +272,11 @@ pub use command::{
     Caller, Cause, Class, Code, Command, CommandKind, Done, Now, Refused, Role, permits,
 };
 pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
-pub use presence::{Presence, Signal};
+pub use presence::{Imported, ImportedSession, Presence, Signal};
 pub use riff::{Riff, apply};
 pub use sessions::Arrive;
 pub use snapshot::Snapshot;
-pub use the_riff::{Forget, MakeRiff, Pauses};
+pub use the_riff::{Forget, Import, MakeRiff, Pauses};
 pub use threads::{Announce, may_read};
 pub use view::{Settings, View};
 pub use work::{MUST_CLEAR, released_for};
@@ -605,6 +605,62 @@ impl State {
                 ..Session::new(known.uri.place().clone(), loaded)
             };
             self.presence.sessions.insert(who.clone(), session);
+        }
+    }
+
+    /// Takes the memory of the old server after the write of the
+    /// import of go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): the last call,
+    /// the end and the status of each session, and the read cursors.
+    /// The log holds none of them.
+    ///
+    /// - It makes each session that the written copy knows, as a replay
+    ///   does: gone until it calls. So its claims and its lead hold for
+    ///   [`CLAIM_GRACE`], and `who --all` shows it.
+    /// - A session that called after the import stays as it is.
+    /// - A cursor counts only for a session and a thread that the
+    ///   written copy has. A cursor after the last message of its
+    ///   thread moves back to that message.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::record::{Change, SessionStarted};
+    /// use riff_core::wire::StartReason;
+    /// use riff_server::state::{Caller, Import, Imported, ImportedSession, State};
+    ///
+    /// let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
+    /// let started = Change::SessionStarted(SessionStarted {
+    ///     session: ann.clone(),
+    ///     reason: StartReason::Join,
+    ///     worker: false,
+    /// });
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.run(&Caller::server(), &Import { changes: vec![started] }, now).unwrap();
+    /// // The log names the session, and the presence does not know it.
+    /// assert!(state.who(now, 9_000, true).is_empty());
+    ///
+    /// let session = ImportedSession { who: ann.who().clone(), seen_ms: 5_000, ended: false, status: None };
+    /// state.imported(Imported { sessions: vec![session], cursors: vec![] }, now);
+    /// let who = state.who(now, 9_000, true);
+    /// assert_eq!(who[0].uri.who(), ann.who());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn imported(&mut self, imported: Imported, now: Instant) {
+        let loaded = self.presence.loaded.unwrap_or(now);
+        self.presence.loaded = Some(loaded);
+        for session in imported.sessions {
+            if let Some(known) = self.written.sessions().known.get(&session.who) {
+                let place = known.uri.place().clone();
+                self.presence.imported(session, place, loaded);
+            }
+        }
+        for (who, thread, seq) in imported.cursors {
+            let threads = self.written.threads();
+            if self.presence.knows(&who) && threads.has(&thread) {
+                let seq = seq.min(threads.last_seq(&thread));
+                self.presence.cursors.entry((who, thread)).or_insert(seq);
+            }
         }
     }
 

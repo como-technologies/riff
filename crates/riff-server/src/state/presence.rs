@@ -197,7 +197,55 @@ impl Signal {
     }
 }
 
+/// What the import of go-live gives to the presence
+/// (01M3Z8MRDZEKTXSKZTDTDSCZ3W): the memory of each session of the old
+/// server, and the read cursors. The log holds none of them. See
+/// [`State::imported`](super::State::imported).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Imported {
+    pub sessions: Vec<ImportedSession>,
+    /// The last seq that a session read in a thread.
+    pub cursors: Vec<(Who, ThreadName, u64)>,
+}
+
+/// The memory of one session of the old server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportedSession {
+    pub who: Who,
+    /// The last call, in milliseconds since the Unix epoch.
+    pub seen_ms: u64,
+    /// True when the session ended.
+    pub ended: bool,
+    /// The last status, with the time of its set in milliseconds since
+    /// the Unix epoch.
+    pub status: Option<(Status, u64)>,
+}
+
 impl Presence {
+    /// Makes the session `imported` in `place`, as it is after a replay
+    /// at `loaded`: gone until it calls. Its status is from before
+    /// `loaded`, so it is stale. A session that the presence knows
+    /// stays as it is: it called after the import.
+    pub(super) fn imported(&mut self, imported: ImportedSession, place: Place, loaded: Instant) {
+        let ImportedSession {
+            who,
+            seen_ms,
+            ended,
+            status,
+        } = imported;
+        self.sessions.entry(who).or_insert_with(|| Session {
+            seen_before_load: Some(seen_ms),
+            alive: None,
+            ended,
+            status: status.map(|(status, set_ms)| SetStatus {
+                status,
+                set_ms,
+                set: loaded,
+            }),
+            ..Session::new(place, loaded)
+        });
+    }
+
     /// True when the presence knows the session `who`.
     pub fn knows(&self, who: &Who) -> bool {
         self.sessions.contains_key(who)

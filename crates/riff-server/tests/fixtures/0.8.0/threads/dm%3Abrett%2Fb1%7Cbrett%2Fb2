@@ -1,0 +1,1 @@
+{"name":"dm:brett/b1|brett/b2","members":[{"user":"brett","session":"b1"},{"user":"brett","session":"b2"}],"messages":[{"message":{"seq":1,"from":"riff://brett@kadomony/como-technologies/strata?session=b1&lead=true","to":[{"session":"b2"}],"body":"request: claim issue-7","at_ms":1789992860000},"woken":[{"user":"brett","session":"b2"}]}]}

@@ -35,8 +35,9 @@
 //!   nothing.
 //! - The server is a caller too. The engine has one function for each
 //!   command of the server: [`Engine::make_riff`], [`Engine::announce`],
-//!   [`Engine::forget`], [`Engine::name_owner`], [`Engine::grant_owner`]
-//!   and [`Engine::end_owner`]. No HTTP call can send them.
+//!   [`Engine::forget`], [`Engine::import`], [`Engine::name_owner`],
+//!   [`Engine::grant_owner`] and [`Engine::end_owner`]. No HTTP call
+//!   can send them.
 //! - The token path sends the command `admit` for the first step of a
 //!   sign-in ([`Engine::sign_in`], 01M3XA877YZQ649SWB5TN60V5P). Its
 //!   caller is the sign-in: the verified email of the provider.
@@ -162,8 +163,8 @@ use crate::log::Written;
 use crate::oidc::Identity;
 use crate::state::{
     Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
-    CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, MakeRiff, NameOwner, OwnerChange,
-    Refused, Role, Signal, State, Stopping,
+    CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, MakeRiff,
+    NameOwner, OwnerChange, Refused, Role, Signal, State, Stopping,
 };
 use crate::trace::{Denied, DeniedCode, Limit, Named, Outcome, Traced};
 
@@ -783,6 +784,17 @@ impl Engine {
     /// build of a service is not async.
     pub fn make_riff(&self, riff_id: String) {
         drop(self.send(Engine::as_server(MakeRiff { riff_id })));
+    }
+
+    /// The import of go-live: the command `import` of the server
+    /// (01M3Z8MRDZEKTXSKZTDTDSCZ3W). `changes` are the changes that the
+    /// old objects give. It waits for the write of the records, and
+    /// then gives `memory` to the state, in one step under the lock
+    /// ([`State::imported`]). Gives the number of the records.
+    pub async fn import(&self, changes: Vec<Change>, memory: Imported) -> Result<usize, Failed> {
+        let made = self.dispatch(Engine::as_server(Import { changes })).await?;
+        self.core().state.imported(memory, Instant::now());
+        Ok(made)
     }
 
     /// The setting `--owner`: sends the command `name_owner` of the

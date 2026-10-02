@@ -1,0 +1,1 @@
+{"name":"dm:mike/m3|mike/m4","members":[{"user":"mike","session":"m3"},{"user":"mike","session":"m4"}],"messages":[{"message":{"seq":1,"from":"riff://mike@thelio/como-technologies/riff?session=m3","to":[{"session":"m4"}],"body":"bye","at_ms":1789992860000},"woken":[{"user":"mike","session":"m4"}]}]}
