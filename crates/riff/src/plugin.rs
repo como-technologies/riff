@@ -767,7 +767,7 @@ mod tests {
             "A new riff starts paused",
             "`riff pause` and `riff resume`",
             "the `pause` and `resume` tools",
-            "While the riff or your\nrepository is paused, a claim fails",
+            "While the riff or your repository is paused, a claim fails",
             "`riff pause --riff` and `riff resume --riff`",
             "### A new session in a paused riff",
             "Claim nothing",

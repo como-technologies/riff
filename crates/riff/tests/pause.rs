@@ -3,14 +3,20 @@
 //! pause wakes the sessions and keeps their claims, and a session with
 //! work runs the WIP steps of the skill. They push its branch and
 //! nothing to the default branch.
+//!
+//! The two pauses (01M3XAHZBGSSJB3YX23K88W01K to
+//! 01M3XAHZSJ5914BRQBZ2G4ZBSA): a pause of one repository stops and
+//! wakes only the sessions of that repository.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use riff::api::Api;
+use riff::api::{Api, PauseScope};
+use riff::text;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::RiffState;
+use riff_core::record::By;
+use riff_core::wire::{Posted, RiffState};
 
 async fn start_server() -> Api {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -106,6 +112,224 @@ async fn a_pause_wakes_each_session_and_keeps_its_claims() {
     assert!(!again.changed);
     assert!(posted.is_empty(), "no change wakes nobody");
     api.release(&worker, &repo(), "issue-12").await.unwrap();
+}
+
+fn strata() -> ThreadName {
+    "como-technologies/strata".parse().unwrap()
+}
+
+/// The lead of brett in the strata repository, and a session of brett
+/// with work there.
+fn strata_sessions() -> (SessionUri, SessionUri) {
+    (
+        uri("riff://brett@kadomony/como-technologies/strata?session=b1"),
+        uri("riff://brett@kadomony/como-technologies/strata?session=b2#issue-7"),
+    )
+}
+
+/// The session ID of each session that `posted` woke, in order.
+fn woken(posted: &[Posted]) -> Vec<String> {
+    let mut woken: Vec<_> = posted
+        .iter()
+        .flat_map(|p| &p.woken)
+        .map(|uri| uri.who().session().unwrap().to_owned())
+        .collect();
+    woken.sort();
+    woken
+}
+
+/// Two repositories in one riff. The lead of strata pauses its
+/// repository. Only the sessions of strata stop and wake
+/// (01M3XAHZBGSSJB3YX23K88W01K, 01M3XAHZSJ5914BRQBZ2G4ZBSA): a claim in
+/// the other repository works.
+#[tokio::test]
+async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
+    let api = start_server().await;
+    let (lead, worker, mike) = sessions();
+    let (strata_lead, strata_worker) = strata_sessions();
+    for me in [&lead, &worker, &strata_lead, &strata_worker] {
+        api.register(me).await.unwrap();
+    }
+    api.set_riff(&mike, RiffState::Running).await.unwrap();
+    for me in [&worker, &strata_worker] {
+        api.read(me, &me.default_thread().unwrap(), false)
+            .await
+            .unwrap();
+    }
+
+    let (reply, posted) = api
+        .set_pause(&strata_lead, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap();
+    assert!(reply.changed);
+    assert_eq!(reply.state, RiffState::Paused, "paused for the caller");
+    assert!(reply.riff.is_none(), "the whole riff runs");
+    let by = reply.repository(&strata()).unwrap().by.clone();
+    assert_eq!(by, Some(By::Session(strata_lead.who().clone())));
+    assert_eq!(reply.repositories.len(), 1);
+    assert_eq!(woken(&posted), ["b2"], "only the sessions of strata wake");
+    assert_eq!(posted[0].thread, strata());
+
+    // The other repository goes on, and no news comes to it.
+    assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Running);
+    assert!(api.read(&worker, &repo(), false).await.unwrap().is_empty());
+    assert!(
+        api.claim(&worker, &repo(), "issue-12")
+            .await
+            .unwrap()
+            .granted
+    );
+    // It sees the pause of strata, and who set it.
+    let seen = api.pauses(&worker).await.unwrap();
+    assert_eq!(
+        text::riff_state(&seen, Some(&repo())),
+        "The riff is running.\n\
+         The repository como-technologies/strata is paused by the session brett/b1."
+    );
+
+    // The sessions of strata are paused, and the refusal says by which
+    // pause, and who ends it.
+    assert_eq!(api.riff(&strata_worker).await.unwrap(), RiffState::Paused);
+    let error = api
+        .claim(&strata_worker, &strata(), "issue-7")
+        .await
+        .unwrap_err();
+    let error = format!("{error:#}");
+    assert!(
+        error.contains(
+            "the repository como-technologies/strata is paused by the session brett/b1, so \
+             nobody claims issue-7. Wait until your user or the lead resumes it."
+        ),
+        "{error}"
+    );
+    let news = api.read(&strata_worker, &strata(), false).await.unwrap();
+    assert_eq!(
+        news[0].message.body,
+        text::riff_news(Some(&strata()), RiffState::Paused)
+    );
+
+    // The resume wakes the same sessions, and the claim works.
+    let (reply, posted) = api
+        .set_pause(&strata_lead, &PauseScope::Here, RiffState::Running)
+        .await
+        .unwrap();
+    assert!(reply.changed && reply.repositories.is_empty());
+    assert_eq!(reply.state, RiffState::Running);
+    assert_eq!(woken(&posted), ["b2"]);
+    assert!(
+        api.claim(&strata_worker, &strata(), "issue-7")
+            .await
+            .unwrap()
+            .granted
+    );
+}
+
+/// A session that is not the lead cannot pause its repository, and a
+/// person can (01M3XAHZDSQR263QZVB41CK0MX).
+#[tokio::test]
+async fn a_worker_cannot_pause_its_repository_and_a_person_can() {
+    let api = start_server().await;
+    let (lead, worker, mike) = sessions();
+    api.register(&lead).await.unwrap();
+    api.register(&worker).await.unwrap();
+    api.set_riff(&mike, RiffState::Running).await.unwrap();
+
+    let error = api
+        .set_pause(&worker, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("403"), "{error:#}");
+    assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Running);
+
+    let (reply, posted) = api
+        .set_pause(&mike, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap();
+    assert!(reply.changed);
+    assert_eq!(woken(&posted), ["l1", "w1"]);
+    let by = reply.repository(&repo()).unwrap().by.clone();
+    assert_eq!(by, Some(By::Person("mike".into())));
+}
+
+/// The whole riff is paused, and the repository too. A resume of the
+/// repository changes only its pause: the riff still stops its
+/// sessions, so nobody wakes, and the answer says that the riff is
+/// still paused (01M3XAHZSJ5914BRQBZ2G4ZBSA).
+#[tokio::test]
+async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
+    let api = start_server().await;
+    let (lead, worker, mike) = sessions();
+    let (strata_lead, strata_worker) = strata_sessions();
+    for me in [&lead, &worker, &strata_lead, &strata_worker] {
+        api.register(me).await.unwrap();
+    }
+    api.set_riff(&mike, RiffState::Running).await.unwrap();
+    let (_, posted) = api
+        .set_pause(&lead, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap();
+    assert_eq!(woken(&posted), ["w1"]);
+
+    // The pause of the riff wakes only the sessions that it stops: the
+    // repository of mike is paused already.
+    let (reply, posted) = api.set_riff(&mike, RiffState::Paused).await.unwrap();
+    assert!(reply.changed && reply.riff.is_some());
+    assert_eq!(woken(&posted), ["b1", "b2"]);
+
+    let (reply, posted) = api
+        .set_pause(&lead, &PauseScope::Here, RiffState::Running)
+        .await
+        .unwrap();
+    assert!(reply.changed, "the pause of the repository ended");
+    assert_eq!(reply.state, RiffState::Paused, "the riff still stops it");
+    assert!(reply.riff.is_some() && reply.repositories.is_empty());
+    assert!(posted.is_empty(), "nobody wakes: {posted:?}");
+    assert_eq!(
+        text::riff_set(Some(&repo()), RiffState::Running, &reply, &posted),
+        "The repository como-technologies/riff is running now. No other session woke. The \
+         whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
+    );
+    let error = api.claim(&worker, &repo(), "issue-12").await.unwrap_err();
+    let error = format!("{error:#}");
+    assert!(
+        error.contains("the riff is paused by the person mike"),
+        "{error}"
+    );
+
+    // The resume of the riff wakes each session: no repository has a
+    // pause of its own now.
+    let (_, posted) = api.set_riff(&mike, RiffState::Running).await.unwrap();
+    assert_eq!(woken(&posted), ["b1", "b2", "l1", "w1"]);
+}
+
+/// A resume of the whole riff does not wake the sessions of a
+/// repository that has a pause of its own, and the answer names it.
+#[tokio::test]
+async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
+    let api = start_server().await;
+    let (lead, worker, mike) = sessions();
+    let (strata_lead, strata_worker) = strata_sessions();
+    for me in [&lead, &worker, &strata_lead, &strata_worker] {
+        api.register(me).await.unwrap();
+    }
+    api.set_riff(&mike, RiffState::Running).await.unwrap();
+    api.set_pause(&strata_lead, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap();
+    api.set_riff(&mike, RiffState::Paused).await.unwrap();
+
+    let (reply, posted) = api.set_riff(&mike, RiffState::Running).await.unwrap();
+    assert_eq!(woken(&posted), ["l1", "w1"], "strata stays paused");
+    let answer = text::riff_set(None, RiffState::Running, &reply, &posted);
+    assert!(
+        answer.ends_with(
+            "Still paused: como-technologies/strata. Its user or its lead resumes it with \
+             `riff resume`."
+        ),
+        "{answer}"
+    );
+    assert_eq!(api.riff(&strata_worker).await.unwrap(), RiffState::Paused);
+    assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Running);
 }
 
 /// `cmd` with no git settings of the user or the machine, for example

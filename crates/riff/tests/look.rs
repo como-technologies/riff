@@ -145,7 +145,7 @@ async fn whoami_shows_facts() {
         format!("uri      riff://mike@pangolin/{THREAD}?session=a6cf2205-1"),
         "{out}"
     );
-    assert_eq!(lines[2], "riff     paused", "{out}");
+    assert_eq!(lines[2], "riff     paused by the server", "{out}");
     assert!(lines[3].starts_with("build    v"), "{out}");
     // The action comes last.
     assert!(out.ends_with("resumes it with: riff resume\n"), "{out}");
@@ -162,7 +162,7 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     stdout(riff(&env, &server, dir, Some("a6cf2205-1"), &status)).await;
     let out = stdout(riff(&env, &server, dir, Some("a6cf2205-1"), &["who"])).await;
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines[0], "riff   paused", "{out}");
+    assert_eq!(lines[0], "riff   paused by the server", "{out}");
     assert_eq!(lines[2], "", "{out}");
     assert_eq!(
         lines[3], "SESSION                        STATE    ROLE      DETAIL",

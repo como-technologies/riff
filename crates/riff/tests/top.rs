@@ -134,7 +134,7 @@ async fn live_at(server: &str, uri: SessionUri) {
 /// session `c3`, all of mike and each live. `b2` registers as a worker
 /// on the host thelio. Each command runs on the host pangolin.
 async fn three_sessions(server: &str, dir: &Path, path: &Path) {
-    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume"][..])] {
+    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume", "--riff"][..])] {
         output(riff(server, dir, Some(id), path, args)).await;
     }
     let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
@@ -506,6 +506,12 @@ async fn a_pause_shows_paused_and_the_step() {
     for id in ["a1", "b2", "c3"] {
         assert!(session(&top, id)[0].ends_with("  paused"), "{top}");
     }
+    // The pause is the one of the repository, and top says who set it
+    // (01M3XAHZJAF6YVDJ7WX74X8RBX).
+    assert!(
+        top.contains("como-technologies/riff by the session mike/a1"),
+        "{top}"
+    );
     assert_eq!(
         detail(&top, "b2"),
         ["working on #12 Show the wave", "stopped at: tests"],
@@ -716,7 +722,7 @@ async fn twelve_sessions_fit_in_80_columns() {
         ),
     );
     output(riff(&server, dir, Some("s00"), bin.path(), &["lead"])).await;
-    output(riff(&server, dir, Some("s00"), bin.path(), &["resume"])).await;
+    output(riff(&server, dir, Some("s00"), bin.path(), &["resume", "--riff"])).await;
     for n in 0..12 {
         let id = format!("s{n:02}");
         let uri: SessionUri = format!("riff://mike@thelio/como-technologies/riff?session={id}")

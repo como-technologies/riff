@@ -122,7 +122,7 @@ impl Machine {
     /// as `session`.
     async fn claim(&self, session: &str, item: &str) {
         self.ok(session, &["lead"]).await;
-        self.ok(session, &["resume"]).await;
+        self.ok(session, &["resume", "--riff"]).await;
         self.ok(session, &["claim", item]).await;
     }
 

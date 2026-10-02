@@ -7,12 +7,12 @@ mod common;
 
 use std::time::Instant;
 
-use riff::api::Api;
+use riff::api::{Api, PauseScope};
 use riff::login::{self, SignIn};
 use riff::text;
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Kind, PersonRole, TokenReply};
+use riff_core::wire::{Kind, PersonRole, RiffState, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::Provider;
@@ -470,7 +470,8 @@ async fn who_on_a_riff_with_no_sign_in_shows_no_owner() {
     let shown = who(&api, &a1).await;
     let second = shown.lines().nth(1).unwrap();
     assert!(second.starts_with("build  v"), "{shown}");
-    assert!(!shown.contains("owner"), "{shown}");
+    // The action of the pause names the role, not a person.
+    assert!(!shown.lines().any(|l| l.starts_with("owner")), "{shown}");
 }
 
 /// A riff with sign-in and no owner says so (01M3Q63NK0AHM25MB258B0K8XP).
@@ -556,6 +557,80 @@ fn the_book_shows_the_owner_in_who() {
     assert!(section.contains("The owner is `none`"), "{section}");
     assert!(section.contains("  you lead  working on #6\n"), "{section}");
     assert!(section.contains("  worker    working on #7  "), "{section}");
+}
+
+/// Only the owner and the admins pause and resume the whole riff, or a
+/// repository by its name (01M3XAHZDSQR263QZVB41CK0MX). A lead that is
+/// not an admin gets a refusal with the reason, and still pauses its
+/// own repository. The other repository goes on.
+#[tokio::test]
+async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
+    let (service, api) = start_with(true).await;
+    sign_in(&service, &api, "ada@gmail.com");
+    let a1 = session("ada", "a1");
+    let ada = api.clone().signed_in(Some("a1")).unwrap();
+    ada.register(&a1).await.unwrap();
+    // The owner resumes the new riff, as its lead.
+    let (reply, _) = ada.set_riff(&a1, RiffState::Running).await.unwrap();
+    assert!(reply.changed);
+    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
+
+    sign_in(&service, &api, "bob@gmail.com");
+    let b1: SessionUri = "riff://bob@kadomony/como-technologies/strata?session=b1"
+        .parse()
+        .unwrap();
+    let bob = api.clone().signed_in(Some("b1")).unwrap();
+    bob.register(&b1).await.unwrap();
+    for scope in [PauseScope::Riff, PauseScope::Repository(repo())] {
+        for state in [RiffState::Paused, RiffState::Running] {
+            let error = bob.set_pause(&b1, &scope, state).await.unwrap_err();
+            let error = format!("{error:#}");
+            let verb = match state {
+                RiffState::Paused => "pause",
+                RiffState::Running => "resume",
+            };
+            let reason = format!(
+                "bob is not an admin; only the owner or an admin can {verb} the whole riff or a \
+                 repository by its name"
+            );
+            assert!(error.contains("403"), "{error}");
+            assert!(error.contains(&reason), "{error}");
+        }
+    }
+    let pauses = bob.pauses(&b1).await.unwrap();
+    assert!(pauses.riff.is_none() && pauses.repositories.is_empty());
+
+    // The lead of strata pauses its own repository.
+    let (reply, _) = bob
+        .set_pause(&b1, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap();
+    assert!(reply.changed && reply.riff.is_none());
+    assert_eq!(reply.state, RiffState::Paused);
+
+    // The owner goes on in its repository. It pauses the whole riff,
+    // and it resumes the repository of bob by its name.
+    sign_in(&service, &api, "ada@gmail.com");
+    let ada = api.clone().signed_in(Some("a1")).unwrap();
+    assert_eq!(ada.riff(&a1).await.unwrap(), RiffState::Running);
+    assert!(ada.claim(&a1, &repo(), "issue-12").await.unwrap().granted);
+    let strata = b1.default_thread().unwrap();
+    let (reply, _) = ada
+        .set_pause(&a1, &PauseScope::Repository(strata), RiffState::Running)
+        .await
+        .unwrap();
+    assert!(reply.changed && reply.repositories.is_empty());
+    let (reply, _) = ada.set_riff(&a1, RiffState::Paused).await.unwrap();
+    assert!(reply.changed && reply.riff.is_some());
+    ada.set_admin(&person("ada"), "bob@gmail.com", true)
+        .await
+        .unwrap();
+
+    // An admin resumes the whole riff.
+    sign_in(&service, &api, "bob@gmail.com");
+    let bob = api.clone().signed_in(Some("b1")).unwrap();
+    let (reply, _) = bob.set_riff(&b1, RiffState::Running).await.unwrap();
+    assert!(reply.changed && reply.riff.is_none());
 }
 
 /// `riff members` with no color.

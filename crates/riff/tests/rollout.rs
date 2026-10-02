@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use riff::api::Api;
+use riff::api::{Api, PauseScope};
 use riff::identity;
 use riff_core::name::{Place, SessionUri, Who};
 use riff_core::wire::{RiffState, Status};
@@ -347,6 +347,46 @@ async fn an_idle_worker_in_another_repository_does_not_stop_the_rollout() {
     let _same = lead.api.watch(&same).await.unwrap();
     lead.issues(r#"[{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
     assert_eq!(lead.settled().await, 1, "brett's worker can take the item");
+}
+
+/// The whole riff runs, and the repository of the lead is paused: the
+/// rollout starts no worker for it. A pause of another repository does
+/// not stop the rollout (01M3Q5QEBTNM90SPYXNVTT7RJA,
+/// 01M3XAHZBGSSJB3YX23K88W01K).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pause_of_the_repository_of_the_lead_stops_the_rollout() {
+    let lead = lead(5).await;
+    lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
+    // The lead of brett pauses the repository o/strata, and the lead
+    // pauses its own repository.
+    let other: SessionUri = "riff://brett@k/o/strata?session=b1".parse().unwrap();
+    lead.api.register(&other).await.unwrap();
+    for me in [&other, &lead.me] {
+        let (reply, _) = lead
+            .api
+            .set_pause(me, &PauseScope::Here, RiffState::Paused)
+            .await
+            .unwrap();
+        assert!(reply.changed);
+    }
+
+    lead.riff(RiffState::Running).await;
+    let pauses = lead.api.pauses(&lead.me).await.unwrap();
+    assert!(pauses.riff.is_none() && pauses.repositories.len() == 2);
+    assert_eq!(
+        lead.settled().await,
+        0,
+        "no worker starts for a paused repository"
+    );
+
+    // The lead resumes its repository. The other one stays paused, and
+    // the rollout starts a worker for the free item.
+    lead.api
+        .set_pause(&lead.me, &PauseScope::Here, RiffState::Running)
+        .await
+        .unwrap();
+    lead.until_workers(1).await;
+    assert_eq!(lead.api.riff(&other).await.unwrap(), RiffState::Paused);
 }
 
 /// The rollout never starts more workers than the limit of the machine.
