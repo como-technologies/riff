@@ -59,7 +59,7 @@
 //! |---|---|
 //! | `tell` | `told 075ff6a7` |
 //! | `post` | `posted a note: Waves: new item #314`, `posted a message: …` or `asked for status` |
-//! | `pause`, `resume` | `paused the riff`, `resumed the riff` |
+//! | `pause`, `resume` | `paused the repository`, `resumed the repository`; with `riff` true, `paused the riff`, `resumed the riff` |
 //! | `lead` | `became the lead` |
 //!
 //! Each member of the riff reads the step, and a direct thread is
@@ -87,7 +87,7 @@ use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::api::Api;
+use crate::api::{Api, PauseScope};
 use crate::binary::{Follow, with_last, with_place};
 use crate::{dropped, identity, leave, local, relay, text};
 
@@ -138,6 +138,14 @@ pub struct PostArgs {
     /// selects see it at their next `read`. Use it for a board, a
     /// "started" or a "done".
     kind: Option<Kind>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PauseArgs {
+    /// True names the whole riff: each repository. Only a lead whose
+    /// user is the owner or an admin can. Leave it out to name only
+    /// your repository.
+    riff: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -270,7 +278,8 @@ impl Tools {
 
     #[tool(
         description = "Show the URI of this session: who you are, where you work, what you hold. \
-Show the state of the riff: paused or running."
+Show the state of the riff: running, or which pause stops you (the pause of the whole riff or of \
+your repository) and who set it."
     )]
     async fn whoami(&self) -> ToolResult {
         let me = self.here()?;
@@ -281,10 +290,10 @@ Show the state of the riff: paused or running."
             .ok()
             .and_then(|list| list.into_iter().find(|s| s.uri.who() == me.who()))
             .map_or(me.clone(), |s| s.uri);
-        let state = match self.api.riff(&me).await {
-            Ok(state) => format!(
+        let state = match self.api.pauses(&me).await {
+            Ok(pauses) => format!(
                 "{}\n{}",
-                text::riff_state(state),
+                text::riff_state(&pauses, now.default_thread().as_ref()),
                 text::build_line(crate::api::server_build().as_ref())
             ),
             Err(e) => format!("riff cannot read the state of the riff: {e:#}"),
@@ -298,15 +307,15 @@ Show the state of the riff: paused or running."
     async fn who(&self, Parameters(a): Parameters<WhoArgs>) -> ToolResult {
         let me = self.here()?;
         let all = a.all.unwrap_or(false);
-        let state = self.api.riff(&me).await.map_err(err)?;
+        let pauses = self.api.pauses(&me).await.map_err(err)?;
         let mut who = self.api.roster(&me, all).await.map_err(err)?;
-        crate::state::fill(&mut who.sessions, state);
+        crate::state::fill(&mut who.sessions, pauses.state);
         let owner = text::owner_line(&who.owner)
             .map(|line| format!("{line}\n"))
             .unwrap_or_default();
         Ok(format!(
             "{}\n{owner}{}\n{}",
-            text::riff_state(state),
+            text::riff_state(&pauses, me.default_thread().as_ref()),
             text::build_line(crate::api::server_build().as_ref()),
             text::who(&who.sessions, &who.owner, &me)
         ))
@@ -499,19 +508,23 @@ your user says so."
     }
 
     #[tool(
-        description = "Pause the riff. Each session stops at its next step and waits. Only the \
-lead can. Call it only when your user says so."
+        description = "Pause your repository. Each session of it stops at its next step and \
+waits. The other repositories go on. With `riff` true, pause the whole riff. Only the lead can. \
+Call it only when your user says so."
     )]
-    async fn pause(&self) -> ToolResult {
-        self.set_riff(RiffState::Paused).await
+    async fn pause(&self, Parameters(a): Parameters<PauseArgs>) -> ToolResult {
+        self.set_riff(a.riff.unwrap_or(false), RiffState::Paused)
+            .await
     }
 
     #[tool(
-        description = "Resume the riff. Each session goes on from where it stopped. Only the \
-lead can. Call it only when your user says so."
+        description = "Resume your repository. Each session of it goes on from where it \
+stopped. With `riff` true, resume the whole riff. Only the lead can. Call it only when your \
+user says so."
     )]
-    async fn resume(&self) -> ToolResult {
-        self.set_riff(RiffState::Running).await
+    async fn resume(&self, Parameters(a): Parameters<PauseArgs>) -> ToolResult {
+        self.set_riff(a.riff.unwrap_or(false), RiffState::Running)
+            .await
     }
 
     #[tool(
@@ -556,11 +569,20 @@ the same files."
 impl ServerHandler for Tools {}
 
 impl Tools {
-    async fn set_riff(&self, state: RiffState) -> ToolResult {
+    /// Pauses or resumes the repository of the session, or with
+    /// `whole` the whole riff (01M3XAHZBGSSJB3YX23K88W01K).
+    async fn set_riff(&self, whole: bool, state: RiffState) -> ToolResult {
         let me = self.here()?;
-        let (reply, posted) = self.api.set_riff(&me, state).await.map_err(err)?;
-        self.lead_step(&me, text::riff_step(state).into()).await;
-        Ok(text::riff_set(&reply, &posted))
+        let scope = PauseScope::of(whole, None);
+        let (reply, posted) = self
+            .api
+            .set_pause(&me, &scope, state)
+            .await
+            .map_err(err)?;
+        self.lead_step(&me, text::riff_step(whole, state).into())
+            .await;
+        let repository = scope.repository(&me);
+        Ok(text::riff_set(repository.as_ref(), state, &reply, &posted))
     }
 
     /// Sets the step of `me` to `step`, when `me` is the lead: the

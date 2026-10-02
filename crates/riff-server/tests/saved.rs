@@ -51,7 +51,7 @@ async fn fill(base: &str) {
     call(base, "register", json!({ "me": BRETT })).await;
     // A new riff is paused. Mike, a person, resumes it.
     let mike = "riff://mike@pangolin/como-technologies/riff";
-    call(base, "resume", json!({ "me": mike })).await;
+    call(base, "resume", json!({ "me": mike, "riff": true })).await;
     let to_brett = json!([{ "user": "brett" }]);
     let post = json!({ "me": MIKE, "thread": "design", "to": to_brett, "body": "look" });
     call(base, "post", post).await;

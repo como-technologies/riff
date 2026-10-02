@@ -29,8 +29,8 @@ use std::fmt::Write;
 use std::path::Path;
 
 use riff_core::build::Build;
-use riff_core::name::SessionUri;
-use riff_core::wire::{MembersReply, RiffOwner, RiffState, SessionInfo};
+use riff_core::name::{SessionUri, ThreadName};
+use riff_core::wire::{MembersReply, PauseInfo, RiffOwner, RiffReply, SessionInfo};
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, WARNING, styled};
 use crate::text::{self, safe};
@@ -348,30 +348,60 @@ pub(crate) fn build_facts(server: Option<&Build>) -> Vec<(&'static str, String)>
     rows
 }
 
-/// The fact of the state of the riff, and the action for a paused
-/// riff.
-pub(crate) fn state_fact(state: RiffState) -> ((&'static str, String), Option<String>) {
-    match state {
-        RiffState::Running => (("riff", styled(GOOD, "running")), None),
-        RiffState::Paused => (
-            ("riff", styled(WARNING, "paused")),
-            Some(styled(
-                WARNING,
-                "The riff is paused. Nobody claims work. Your user or the lead resumes it with: \
-                 riff resume",
-            )),
-        ),
-    }
+/// Who set a pause, for example ` by the person mike`. Empty when it is
+/// not known.
+fn pause_by(pause: &PauseInfo) -> String {
+    pause
+        .by
+        .as_ref()
+        .map_or_else(String::new, |by| format!(" by {}", safe(&by.to_string())))
 }
 
-/// `riff whoami`: the session, its URI, the state of the riff and the
-/// build. `state` is the error text when riff cannot read the state.
+/// The facts of the pauses (01M3XAHZJAF6YVDJ7WX74X8RBX): the state of
+/// the whole riff, and one fact for each repository that is paused,
+/// each with who set the pause. Then the action for the pause that
+/// stops a session in the repository `here`.
+pub(crate) fn state_facts(
+    pauses: &RiffReply,
+    here: Option<&ThreadName>,
+) -> (Vec<(&'static str, String)>, Option<String>) {
+    let mut rows = Vec::new();
+    let mut action = None;
+    match &pauses.riff {
+        None => rows.push(("riff", styled(GOOD, "running"))),
+        Some(pause) => {
+            let fact = format!("paused{}", pause_by(pause));
+            rows.push(("riff", styled(WARNING, &fact)));
+            action = Some(
+                "The riff is paused. Nobody claims work. The owner or an admin resumes it \
+                 with: riff resume --riff"
+                    .to_owned(),
+            );
+        }
+    }
+    for paused in &pauses.repositories {
+        let fact = format!("{}{}", paused.repository, pause_by(&paused.pause));
+        rows.push(("paused", styled(WARNING, &safe(&fact))));
+        if action.is_none() && Some(&paused.repository) == here {
+            action = Some(format!(
+                "The repository {} is paused. Nobody claims work there. Your user or the lead \
+                 resumes it with: riff resume",
+                paused.repository
+            ));
+        }
+    }
+    (rows, action.map(|action| styled(WARNING, &action)))
+}
+
+/// `riff whoami`: the session, its URI, the pauses of the riff and the
+/// build. `state` is the error text when riff cannot read the pauses.
 ///
 /// ```
-/// use riff_core::wire::RiffState;
+/// use riff_core::record::By;
+/// use riff_core::wire::{PauseInfo, RepositoryPause, RiffReply, RiffState};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-1".parse()?;
-/// let out = riff::view::whoami(&me, Ok(RiffState::Running));
+/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()));
 /// let plain = anstream::adapter::strip_str(&out).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert_eq!(lines[0], "session  mike@pangolin:riff (a6cf2205)");
@@ -379,14 +409,30 @@ pub(crate) fn state_fact(state: RiffState) -> ((&'static str, String), Option<St
 /// assert_eq!(lines[2], "riff     running");
 /// assert!(lines[3].starts_with("build    v"), "{plain}");
 ///
-/// let paused = riff::view::whoami(&me, Ok(RiffState::Paused));
+/// let paused = riff::view::whoami(&me, Ok(RiffState::Paused.into()));
 /// let plain = anstream::adapter::strip_str(&paused).to_string();
-/// assert!(plain.ends_with("resumes it with: riff resume\n"), "{plain}");
+/// assert!(plain.ends_with("resumes it with: riff resume --riff\n"), "{plain}");
+///
+/// // The pause of the repository of the session, and who set it.
+/// let pause = RepositoryPause {
+///     repository: "como-technologies/riff".parse()?,
+///     pause: PauseInfo { by: Some(By::Person("mike".into())), at_ms: 7 },
+/// };
+/// let pauses = RiffReply {
+///     state: RiffState::Paused,
+///     repositories: vec![pause],
+///     ..RiffState::Running.into()
+/// };
+/// let plain = anstream::adapter::strip_str(&riff::view::whoami(&me, Ok(pauses))).to_string();
+/// let lines: Vec<&str> = plain.lines().collect();
+/// assert_eq!(lines[2], "riff     running");
+/// assert_eq!(lines[3], "paused   como-technologies/riff by the person mike");
+/// assert!(plain.ends_with("lead resumes it with: riff resume\n"), "{plain}");
 /// let down = riff::view::whoami(&me, Err("refused".into()));
 /// assert!(anstream::adapter::strip_str(&down).to_string().contains("riff     unknown: refused\n"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
+pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
     let mut rows = vec![
         (
             "session",
@@ -396,9 +442,9 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
     ];
     let mut action = None;
     match state {
-        Ok(state) => {
-            let (fact, act) = state_fact(state);
-            rows.push(fact);
+        Ok(pauses) => {
+            let (facts, act) = state_facts(&pauses, me.default_thread().as_ref());
+            rows.extend(facts);
             action = act;
             rows.extend(build_facts(crate::api::server_build().as_ref()));
         }
@@ -462,7 +508,8 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
-/// let text = riff::view::who(RiffState::Running, &owner, &list, &list[0].uri, false);
+/// let running = RiffState::Running.into();
+/// let text = riff::view::who(&running, &owner, &list, &list[0].uri, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert_eq!(lines[0], "riff   running");
@@ -480,31 +527,30 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 /// assert!(text.contains(&format!("{red}waits for a review (step: merge, 1m ago){red:#}")));
 ///
 /// // --long shows the URI in place of the name.
-/// let long = riff::view::who(RiffState::Running, &owner, &list, &list[0].uri, true);
+/// let long = riff::view::who(&running, &owner, &list, &list[0].uri, true);
 /// let plain = anstream::adapter::strip_str(&long).to_string();
 /// assert!(plain.contains("\nURI "), "{plain}");
 /// assert!(plain.contains("\nriff://brett@heron/como-technologies/riff?session=77e0 "), "{plain}");
 ///
 /// // A riff with no sign-in shows no owner.
-/// let text = riff::view::who(RiffState::Running, &RiffOwner::NoSignIn, &list, &list[0].uri, false);
+/// let text = riff::view::who(&running, &RiffOwner::NoSignIn, &list, &list[0].uri, false);
 /// assert!(!anstream::adapter::strip_str(&text).to_string().contains("owner"));
 ///
 /// // A riff with no owner ends with the action.
-/// let text = riff::view::who(RiffState::Running, &RiffOwner::Nobody, &list, &list[0].uri, false);
+/// let text = riff::view::who(&running, &RiffOwner::Nobody, &list, &list[0].uri, false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// assert!(plain.contains("\nowner  none\n"), "{plain}");
 /// assert!(plain.ends_with("riff owner --take\n"), "{plain}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn who(
-    state: RiffState,
+    pauses: &RiffReply,
     owner: &RiffOwner,
     sessions: &[SessionInfo],
     me: &SessionUri,
     long: bool,
 ) -> String {
-    let (fact, paused) = state_fact(state);
-    let mut rows = vec![fact];
+    let (mut rows, paused) = state_facts(pauses, me.default_thread().as_ref());
     let mut actions: Vec<String> = paused.into_iter().collect();
     match owner {
         RiffOwner::NoSignIn => {}

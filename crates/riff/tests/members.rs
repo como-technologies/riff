@@ -72,9 +72,9 @@ fn session(user: &str, id: &str) -> SessionUri {
 
 /// What `riff who` prints to the session `me`, with no color.
 async fn who(api: &Api, me: &SessionUri) -> String {
-    let state = api.riff(me).await.unwrap();
+    let pauses = api.pauses(me).await.unwrap();
     let who = api.roster(me, false).await.unwrap();
-    let text = riff::view::who(state, &who.owner, &who.sessions, me, false);
+    let text = riff::view::who(&pauses, &who.owner, &who.sessions, me, false);
     anstream::adapter::strip_str(&text).to_string()
 }
 

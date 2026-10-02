@@ -1817,19 +1817,21 @@ async fn read(
     }))
 }
 
-/// Reads the state of the riff: a query (01M3WRD9BSBKS9TN66H29TGTBV).
-/// The commands `pause` and `resume` change it.
+/// Reads the pauses of the riff, as the caller sees them: a query
+/// (01M3WRD9BSBKS9TN66H29TGTBV, 01M3XAHZJAF6YVDJ7WX74X8RBX). The
+/// commands `pause` and `resume` change them.
 async fn riff(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
     Json(r): Json<RiffQuery>,
 ) -> Reply<RiffReply> {
     let caller = admit(&s, &proof, &r.me)?;
-    let state = s.engine.query(&caller, State::riff_state).await?;
-    Ok(Json(RiffReply {
-        state,
-        changed: false,
-    }))
+    let me = r.me.clone();
+    let reply = s
+        .engine
+        .query(&caller, move |state| state.pauses_at(&me))
+        .await?;
+    Ok(Json(reply))
 }
 
 /// Reads the settings of idle workers: a query
@@ -2667,7 +2669,7 @@ mod tests {
             let register = Register { me, worker: false };
             send(&service, register).await.unwrap();
         }
-        send(&service, Resume { me: mike() }).await.unwrap();
+        send(&service, Resume::whole(mike())).await.unwrap();
         service
     }
 
@@ -3450,7 +3452,8 @@ mod tests {
         let store = Arc::new(Gated::default());
         let service = Service::load(config(), store.clone()).await.unwrap();
         service.save().await.unwrap();
-        let paused = Change::RiffStateSet(riff_core::record::RiffStateSet {
+        let paused = Change::PauseSet(riff_core::record::PauseSet {
+            scope: riff_core::record::Scope::Riff,
             state: riff_core::wire::RiffState::Paused,
         });
         assert_eq!(store.chunks().await, [[paused]]);
@@ -3760,7 +3763,7 @@ mod tests {
             worker: false,
         };
         send(&service, register).await.unwrap();
-        assert!(send(&service, Resume { me: mike() }).await.is_ok());
+        assert!(send(&service, Resume::here(mike())).await.is_ok());
     }
 
     /// A marker that no log line may hold.
@@ -3820,7 +3823,7 @@ mod tests {
                 me: me(),
                 thread: design(),
             }),
-            of(Resume { me: me() }),
+            of(Resume::whole(me())),
             of(Claim {
                 me: me(),
                 thread: thread(),
@@ -3839,7 +3842,7 @@ mod tests {
                 session: "a2".into(),
             }),
             of(Lead { me: me() }),
-            of(Pause { me: me() }),
+            of(Pause::here(me())),
             of(SetIdle {
                 me: me(),
                 per_host: Some(1),

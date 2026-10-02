@@ -93,7 +93,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use riff_core::record::{Change, Line, Record};
+use riff_core::record::{Change, Line, Record, Scope};
 use riff_core::wire::Kind;
 
 use crate::checkpoint;
@@ -236,6 +236,7 @@ pub fn show(record: &Record) -> String {
             serde_json::to_string(&s.idle).unwrap_or_default()
         ),
         Change::SessionForgotten(f) => format!("session_forgotten  {}", f.session),
+        Change::PauseSet(s) => format!("pause_set  {}  {}", s.scope, s.state),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -265,6 +266,10 @@ fn thread_of(record: &Record) -> Option<String> {
         }
         Change::Claimed(c) => Some(c.thread.to_string()),
         Change::Released(r) => Some(r.thread.to_string()),
+        Change::PauseSet(s) => match &s.scope {
+            Scope::Repository(thread) => Some(thread.to_string()),
+            Scope::Riff | Scope::Other => None,
+        },
         Change::RiffStateSet(_)
         | Change::SettingChanged(_)
         | Change::SessionForgotten(_)

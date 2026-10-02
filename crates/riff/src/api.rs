@@ -446,6 +446,49 @@ pub struct Probe {
     pub sign_in: Option<bool>,
 }
 
+/// What a pause or a resume names (01M3XAHZBGSSJB3YX23K88W01K).
+///
+/// ```
+/// use riff::api::PauseScope;
+///
+/// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let riff = "como-technologies/riff".parse()?;
+/// assert_eq!(PauseScope::Here.repository(&me), Some(riff));
+/// assert_eq!(PauseScope::Riff.repository(&me), None);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PauseScope {
+    /// The repository of the caller.
+    Here,
+    /// A repository by its name. Only the owner or an admin can.
+    Repository(ThreadName),
+    /// The whole riff. Only the owner or an admin can.
+    Riff,
+}
+
+impl PauseScope {
+    /// The scope of `riff pause` and `riff resume` with the flags
+    /// `--riff` and `--repo`.
+    pub fn of(riff: bool, repo: Option<ThreadName>) -> PauseScope {
+        match (riff, repo) {
+            (true, _) => PauseScope::Riff,
+            (false, Some(repo)) => PauseScope::Repository(repo),
+            (false, None) => PauseScope::Here,
+        }
+    }
+
+    /// The repository of the scope, for the caller `me`. `None` for the
+    /// whole riff, and for a caller outside a repository.
+    pub fn repository(&self, me: &SessionUri) -> Option<ThreadName> {
+        match self {
+            PauseScope::Here => me.default_thread(),
+            PauseScope::Repository(thread) => Some(thread.clone()),
+            PauseScope::Riff => None,
+        }
+    }
+}
+
 /// A connection to one `riff-server`. Cheap to clone.
 ///
 /// With [`Api::signed_in`], each request carries an access token with
@@ -1225,37 +1268,102 @@ impl Api {
         self.call(&Lead { me: me.clone() }).await
     }
 
-    /// The state of the riff (01M3JCFTWCR72HQB8CBTQKXJNF).
+    /// The state of the riff for the place of `me`: paused when the
+    /// whole riff or the repository of `me` is paused
+    /// (01M3JCFTWCR72HQB8CBTQKXJNF, 01M3XAHZBGSSJB3YX23K88W01K).
     pub async fn riff(&self, me: &SessionUri) -> Result<RiffState> {
-        Ok(self.call(&RiffQuery { me: me.clone() }).await?.state)
+        Ok(self.pauses(me).await?.state)
     }
 
-    /// Pauses or resumes the riff. Only a person or a lead can
-    /// (01M3JCG3T8AJZN31SZQQTP3FAF). When the state changes, it wakes
-    /// each session that is not gone: it posts [`text::riff_news`] to
-    /// the thread of each repository of such a session, to that
-    /// repository
-    /// (01M3JCG3YD7C2Y3V0QJPF082YH).
+    /// The pauses of the riff as `me` sees them: the pause of the whole
+    /// riff, and each repository that is paused, with who set each
+    /// (01M3XAHZJAF6YVDJ7WX74X8RBX).
+    pub async fn pauses(&self, me: &SessionUri) -> Result<RiffReply> {
+        self.call(&RiffQuery { me: me.clone() }).await
+    }
+
+    /// Pauses or resumes the whole riff: [`Api::set_pause`] with
+    /// [`PauseScope::Riff`]. Only the owner or an admin can
+    /// (01M3XAHZDSQR263QZVB41CK0MX).
     pub async fn set_riff(
         &self,
         me: &SessionUri,
         state: RiffState,
     ) -> Result<(RiffReply, Vec<Posted>)> {
+        self.set_pause(me, &PauseScope::Riff, state).await
+    }
+
+    /// Pauses or resumes `scope` (01M3XAHZBGSSJB3YX23K88W01K). See
+    /// 01M3XAHZDSQR263QZVB41CK0MX for who can. When the state changes,
+    /// it wakes each session that the change stops or starts, and that
+    /// is not gone (01M3JCG3YD7C2Y3V0QJPF082YH,
+    /// 01M3XAHZSJ5914BRQBZ2G4ZBSA): it posts [`text::riff_news`] to the
+    /// thread of the repository, to that repository. For the whole
+    /// riff, it posts to each repository of a session that is not
+    /// paused. A session that another pause still stops does not wake.
+    pub async fn set_pause(
+        &self,
+        me: &SessionUri,
+        scope: &PauseScope,
+        state: RiffState,
+    ) -> Result<(RiffReply, Vec<Posted>)> {
         // A pause and a resume are two commands, each on a path of its
         // own (01M3WRD9BSBKS9TN66H29TGTBV).
+        let (riff, repository) = match scope {
+            PauseScope::Here => (false, None),
+            PauseScope::Repository(thread) => (false, Some(thread.clone())),
+            PauseScope::Riff => (true, None),
+        };
         let me_now = me.clone();
         let reply: RiffReply = match state {
-            RiffState::Paused => self.call(&Pause { me: me_now }).await?,
-            RiffState::Running => self.call(&Resume { me: me_now }).await?,
+            RiffState::Paused => {
+                let pause = Pause {
+                    me: me_now,
+                    riff,
+                    repository,
+                };
+                self.call(&pause).await?
+            }
+            RiffState::Running => {
+                let resume = Resume {
+                    me: me_now,
+                    riff,
+                    repository,
+                };
+                self.call(&resume).await?
+            }
         };
         if !reply.changed {
             return Ok((reply, Vec::new()));
         }
-        let body = text::riff_news(state);
-        let posted = self
-            .post_to_each_repo(me, false, &body, Kind::Message)
-            .await?;
+        let thread = scope.repository(me);
+        let body = text::riff_news(thread.as_ref(), state);
+        let repos = match thread {
+            // The whole riff is paused: its sessions stay paused.
+            Some(_) if reply.riff.is_some() => Vec::new(),
+            Some(thread) => vec![thread],
+            None => {
+                let mut repos = self.repos(me, false).await?;
+                repos.retain(|repo| reply.repository(repo).is_none());
+                repos
+            }
+        };
+        let posted = self.post_to_repos(me, repos, &body, Kind::Message).await?;
         Ok((reply, posted))
+    }
+
+    /// The repository of each session in `who` (`all` counts the gone
+    /// sessions too), in the order of the names.
+    async fn repos(&self, me: &SessionUri, all: bool) -> Result<Vec<ThreadName>> {
+        let mut repos: Vec<ThreadName> = self
+            .who(me, all)
+            .await?
+            .into_iter()
+            .filter_map(|s| s.uri.default_thread())
+            .collect();
+        repos.sort();
+        repos.dedup();
+        Ok(repos)
     }
 
     /// Posts `body` to the thread of each repository of a session in
@@ -1267,14 +1375,19 @@ impl Api {
         body: &str,
         kind: Kind,
     ) -> Result<Vec<Posted>> {
-        let mut repos: Vec<ThreadName> = self
-            .who(me, all)
-            .await?
-            .into_iter()
-            .filter_map(|s| s.uri.default_thread())
-            .collect();
-        repos.sort();
-        repos.dedup();
+        let repos = self.repos(me, all).await?;
+        self.post_to_repos(me, repos, body, kind).await
+    }
+
+    /// Posts `body` to the thread of each repository in `repos`, to
+    /// that repository.
+    async fn post_to_repos(
+        &self,
+        me: &SessionUri,
+        repos: Vec<ThreadName>,
+        body: &str,
+        kind: Kind,
+    ) -> Result<Vec<Posted>> {
         let mut posted = Vec::new();
         for repo in repos {
             let to = Selector {

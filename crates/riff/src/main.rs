@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
-use riff::api::{self, Api, DEFAULT_SERVER, Reconnect, follow};
+use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     auto_update, binary, dropped, help, hook, hygiene, identity, lifecycle, local, login, mcp,
@@ -16,7 +16,9 @@ use riff::{
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Freed, Kind, RiffState, SessionInfo, StartReason, Status};
+use riff_core::wire::{
+    Freed, Kind, RiffReply, RiffState, SessionInfo, StartReason, Status,
+};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
@@ -197,16 +199,36 @@ enum Command {
         #[command(subcommand)]
         command: Option<LeadCommand>,
     },
-    /// Pause the riff
+    /// Pause your repository, or the whole riff
     ///
-    /// Each session stops at its next step and waits. Nobody claims work.
-    /// Only you in a shell, or the lead, can pause.
-    Pause,
-    /// Resume the riff
+    /// Each session of the repository of this directory stops at its
+    /// next step and waits. Nobody claims work there. The other
+    /// repositories go on. You in a shell, or the lead, can pause a
+    /// repository.
+    Pause {
+        /// Pause the whole riff: each repository. Only the owner or an
+        /// admin can
+        #[arg(long, conflicts_with = "repo")]
+        riff: bool,
+        /// Pause this repository, not the repository of this directory.
+        /// Only the owner or an admin can
+        #[arg(long, value_name = "OWNER/REPO")]
+        repo: Option<String>,
+    },
+    /// Resume your repository, or the whole riff
     ///
-    /// Each session goes on from where it stopped. A new riff starts
-    /// paused, so resume it to start the work.
-    Resume,
+    /// Each session of the repository of this directory goes on from
+    /// where it stopped. A new riff starts paused: the owner or an
+    /// admin resumes it with --riff to start the work.
+    Resume {
+        /// Resume the whole riff. Only the owner or an admin can
+        #[arg(long, conflicts_with = "repo")]
+        riff: bool,
+        /// Resume this repository, not the repository of this
+        /// directory. Only the owner or an admin can
+        #[arg(long, value_name = "OWNER/REPO")]
+        repo: Option<String>,
+    },
     /// Print one line for each wake of this session
     ///
     /// The plugin runs it. One watch runs for each session: a second one
@@ -961,17 +983,24 @@ async fn main() -> Result<()> {
     let api = api.signed_in(me.who().session())?;
     match cli.command {
         Command::Whoami => {
-            let state = api.riff(&me).await.map_err(|e| format!("{e:#}"));
-            anstream::print!("{}", view::whoami(&me, state));
+            let pauses = api.pauses(&me).await.map_err(|e| format!("{e:#}"));
+            anstream::print!("{}", view::whoami(&me, pauses));
         }
         Command::Who { all, long } => {
-            let state = api.riff(&me).await?;
+            let pauses = api.pauses(&me).await?;
             let mut who = api.roster(&me, all).await?;
-            riff::state::fill(&mut who.sessions, state);
-            anstream::print!("{}", view::who(state, &who.owner, &who.sessions, &me, long));
+            riff::state::fill(&mut who.sessions, pauses.state);
+            anstream::print!(
+                "{}",
+                view::who(&pauses, &who.owner, &who.sessions, &me, long)
+            );
         }
-        Command::Pause => pause(&api, &me, RiffState::Paused).await?,
-        Command::Resume => pause(&api, &me, RiffState::Running).await?,
+        Command::Pause { riff, repo } => {
+            pause(&api, &me, pause_scope(riff, repo)?, RiffState::Paused).await?;
+        }
+        Command::Resume { riff, repo } => {
+            pause(&api, &me, pause_scope(riff, repo)?, RiffState::Running).await?;
+        }
         Command::Post {
             thread,
             to,
@@ -1602,11 +1631,23 @@ async fn tail_beside_lead(api: &Api, me: &SessionUri) {
 const REGISTER_TRIES: u32 = 10;
 const REGISTER_WAIT: Duration = Duration::from_millis(200);
 
-/// Pauses or resumes the riff, and wakes each session
-/// (01M3JCG3T8AJZN31SZQQTP3FAF, 01M3JCG3YD7C2Y3V0QJPF082YH).
-async fn pause(api: &Api, me: &SessionUri, state: RiffState) -> Result<()> {
-    let (reply, posted) = api.set_riff(me, state).await?;
-    println!("{}", text::riff_set(&reply, &posted));
+/// The scope of `riff pause` and `riff resume` from the flags `--riff`
+/// and `--repo` (01M3XAHZBGSSJB3YX23K88W01K).
+fn pause_scope(riff: bool, repo: Option<String>) -> Result<PauseScope> {
+    let repo = repo.map(|repo| repo.parse::<ThreadName>()).transpose()?;
+    Ok(PauseScope::of(riff, repo))
+}
+
+/// Pauses or resumes `scope`, and wakes each session that the change
+/// stops or starts (01M3XAHZDSQR263QZVB41CK0MX,
+/// 01M3JCG3YD7C2Y3V0QJPF082YH).
+async fn pause(api: &Api, me: &SessionUri, scope: PauseScope, state: RiffState) -> Result<()> {
+    let (reply, posted) = api.set_pause(me, &scope, state).await?;
+    let repository = scope.repository(me);
+    println!(
+        "{}",
+        text::riff_set(repository.as_ref(), state, &reply, &posted)
+    );
     Ok(())
 }
 
@@ -1644,9 +1685,9 @@ async fn session_start(server: &str) -> String {
             Some(uri) => {
                 let facts = start_facts(api, &uri, input.source.reason());
                 match tokio::time::timeout(hook::STATE_WAIT, facts).await {
-                    Ok(Ok((lead, riff, freed, who))) => (
+                    Ok(Ok((lead, pauses, freed, who))) => (
                         Some(uri.with_lead(lead)),
-                        Some(riff),
+                        Some(pauses),
                         freed,
                         Some(who),
                         None,
@@ -1688,7 +1729,7 @@ async fn session_start(server: &str) -> String {
     let mismatch_free = mismatch.is_none();
     let mut context = match mismatch {
         Some(mismatch) => hook::mismatch_context(uri.as_ref(), &mismatch),
-        None => hook::start_context(uri.as_ref(), input.source, watching, riff, &freed),
+        None => hook::start_context(uri.as_ref(), input.source, watching, riff.as_ref(), &freed),
     };
     if let Some(behind) = behind {
         context.push_str(&behind.line());
@@ -1726,7 +1767,7 @@ async fn session_start(server: &str) -> String {
     hook::start_output(&context)
 }
 
-/// Whether the server names `me` as the lead, the state of the riff
+/// Whether the server names `me` as the lead, the pauses of the riff
 /// (01M3JCG48QPCNNTKW34FTR0AMR), the claims that a new start freed
 /// (01M3JEE1QQCFS5TMZW5N2DAD2D), and the sessions of the riff. With a
 /// `reason`, it sends the start call first, with the reason and the
@@ -1736,13 +1777,13 @@ async fn start_facts(
     api: Api,
     me: &SessionUri,
     reason: Option<StartReason>,
-) -> Result<(bool, RiffState, Vec<Freed>, Vec<SessionInfo>)> {
+) -> Result<(bool, RiffReply, Vec<Freed>, Vec<SessionInfo>)> {
     let api = api.signed_in(me.who().session())?;
     let freed = match reason {
         Some(reason) => api.start(me, reason, worker::is_worker()).await?,
         None => Vec::new(),
     };
-    let riff = api.riff(me).await?;
+    let riff = api.pauses(me).await?;
     let who = api.who(me, false).await?;
     let lead = who.iter().any(|s| s.uri.who() == me.who() && s.uri.lead());
     Ok((lead, riff, freed, who))
@@ -2014,12 +2055,12 @@ async fn draw_top(
     let clear = !once && std::io::stdout().is_terminal();
     let repo = thread.as_ref().map(ToString::to_string);
     loop {
-        let state = api.riff(me).await?;
+        let pauses = api.pauses(me).await?;
         let mut who = api.roster(me, false).await?;
-        riff::state::fill(&mut who.sessions, state);
+        riff::state::fill(&mut who.sessions, pauses.state);
         let server = riff::api::server_build();
         let top = riff::top::Top {
-            state,
+            pauses: &pauses,
             owner: &who.owner,
             server: server.as_ref(),
             sessions: &who.sessions,
