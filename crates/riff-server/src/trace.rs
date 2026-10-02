@@ -129,27 +129,22 @@ impl Traced {
         let key = self.key.as_deref();
         let command = self.command.as_str();
         match outcome {
-            // The reason of a command of the people can name an email:
-            // its line has only the code (01M3XA87CJHCGZX283ZQAFKARZ).
-            Outcome::Refused(refused) if self.command.of_people() => tracing::info!(
-                target: TARGET,
-                caller,
-                key,
-                command,
-                result = "refused",
-                code = refused.code.as_str(),
-                "refused"
-            ),
-            Outcome::Refused(refused) => tracing::info!(
-                target: TARGET,
-                caller,
-                key,
-                command,
-                result = "refused",
-                code = refused.code.as_str(),
-                reason = refused.reason.as_str(),
-                "refused"
-            ),
+            Outcome::Refused(refused) => {
+                // The reason of a command of the people can name an
+                // email: its line has only the code
+                // (01M3XA87CJHCGZX283ZQAFKARZ).
+                let reason = (!self.command.of_people()).then_some(refused.reason.as_str());
+                tracing::info!(
+                    target: TARGET,
+                    caller,
+                    key,
+                    command,
+                    result = "refused",
+                    code = refused.code.as_str(),
+                    reason,
+                    "refused"
+                );
+            }
             Outcome::NoChange => tracing::info!(
                 target: TARGET,
                 caller,

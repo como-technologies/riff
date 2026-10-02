@@ -215,6 +215,11 @@ fn another_email_does_not_get_the_user_of_the_first() {
             Code::NotAllowed,
             "the user ada belongs to another account; ask an admin",
         );
+    // A person who may not join gets "not a member", and learns nothing
+    // of the USER names (01M3XGP011KGXDP9D1FNMT374F).
+    given(&riff_of_ada())
+        .when_signs_in("ada@other.io", false)
+        .then_refused_as(Code::NotMember, "riff invite ada@other.io");
     // `apply` keeps the first email too.
     let state = given(&riff_of_ada()).apply(&[person_joined("ada", "ada@other.io")]);
     assert_eq!(state.written.people().email_of("ada"), Some(ADA));

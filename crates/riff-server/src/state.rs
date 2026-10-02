@@ -872,6 +872,55 @@ impl State {
         self.written.people().ended().clone()
     }
 
+    /// True when the people of the written copy know `user`: an email
+    /// signed in with it (R209).
+    pub fn knows_person(&self, user: &str) -> bool {
+        self.written.people().email_of(user).is_some()
+    }
+
+    /// The refusal of a command of `user` from a sign-in that started
+    /// at the position `started`, when the pending copy has a later end
+    /// of the sign-ins of `user`: a removal or a revoke
+    /// (01M3XGP03RDF6S15JYS718WWFC). The record of that end can still
+    /// wait in the queue. A person who is no member then gets the code
+    /// `not_member`. `None` when the sign-in is good.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::record::{Change, Email, PersonJoined};
+    /// use riff_server::state::{Caller, Cause, Code, CommandKind, State};
+    ///
+    /// let bob = "bob@gmail.com".to_owned();
+    /// let now = Instant::now();
+    /// let mut state = State::with_writer(now, 0);
+    /// let cause = Cause::of(&Caller::server(), CommandKind::Forget);
+    /// let joined = PersonJoined { user: "bob".into(), email: bob.clone() };
+    /// state.queue(&cause, &[Change::PersonJoined(joined)], now);
+    /// assert!(state.ended_since("bob", 1).is_none());
+    /// // The removal waits in the queue, at the position 2.
+    /// state.queue(&cause, &[Change::MemberRemoved(Email { email: bob })], now);
+    /// assert_eq!(state.ended_since("bob", 1).unwrap().code, Code::NotMember);
+    /// // A sign-in from after the removal is good.
+    /// assert!(state.ended_since("bob", 2).is_none());
+    /// ```
+    pub fn ended_since(&self, user: &str, started: u64) -> Option<Refused> {
+        let ended = *self.pending.people().ended().get(user)?;
+        if started >= ended {
+            return None;
+        }
+        Some(if self.pending_view().may_join(user) {
+            Refused::new(
+                Code::NotAllowed,
+                format!("each sign-in of {user} ended. Sign in again: riff login"),
+            )
+        } else {
+            Refused::new(
+                Code::NotMember,
+                format!("{user} is not a member of this riff, and each sign-in of {user} ended"),
+            )
+        })
+    }
+
     /// Each USER that holds `email`, in the written copy: the people
     /// whose sign-ins a `member_removed` record ends.
     pub fn users_of(&self, email: &str) -> Vec<String> {

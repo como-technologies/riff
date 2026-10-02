@@ -398,6 +398,9 @@ pub struct Admitted {
     /// role of the caller then comes from the trust of the riff
     /// (01M3X4Z6G0TG0B4FT2N1FSPDHS).
     key: Option<String>,
+    /// The position of the log at the start of the sign-in of that
+    /// token.
+    started: Option<u64>,
 }
 
 impl Admitted {
@@ -592,6 +595,7 @@ impl Engine {
         Ok(Admitted {
             caller: Caller::of(me),
             key: proof.map(|proof| proof.jkt.clone()),
+            started: proof.map(|proof| proof.started),
         })
     }
 
@@ -631,6 +635,7 @@ impl Engine {
             admitted: Admitted {
                 caller: Caller::server(),
                 key: None,
+                started: None,
             },
             command,
         }
@@ -679,6 +684,13 @@ impl Engine {
     /// state adds its worker mark, before `permits`
     /// (01M3WRD959DYNZHDKP5ZT9Q1C7).
     ///
+    /// A caller whose sign-in started before the last end of the
+    /// sign-ins of its user is refused here too, before `permits`
+    /// ([`State::ended_since`], 01M3XGP03RDF6S15JYS718WWFC). So between
+    /// the entry of a removal in the queue and the end of the sign-ins
+    /// after its write, the removed person changes nothing: also not
+    /// through a session.
+    ///
     /// A riff with no sign-in refuses each command of the people here,
     /// before `permits`, with the code `no_sign_in`
     /// (01M3WRD9G5GAF65EX8P6D5DMQM). The refused command has its entry
@@ -688,7 +700,20 @@ impl Engine {
         let Authenticated { admitted, command } = call;
         let mut core = self.core();
         let caller = self.with_role(&admitted, &core.state);
-        let check = if C::KIND.of_people() && self.0.sign_ins.trusted() {
+        // A sign-in from before the last end of the sign-ins of its user
+        // sends no command (01M3XGP03RDF6S15JYS718WWFC): the record of
+        // the end can wait in the queue, and the writer ends the
+        // sign-in only after its write.
+        let ended = admitted
+            .started
+            .and_then(|started| core.state.ended_since(admitted.who().user(), started));
+        let check = if let Some(refused) = ended {
+            Check {
+                registered: None,
+                caller,
+                result: Err(refused),
+            }
+        } else if C::KIND.of_people() && self.0.sign_ins.trusted() {
             Check {
                 registered: None,
                 caller,
@@ -782,6 +807,7 @@ impl Engine {
             admitted: Admitted {
                 caller: Caller::sign_in(&user, &email),
                 key: None,
+                started: None,
             },
             command: admit,
         })

@@ -124,6 +124,28 @@ impl fmt::Display for SignInError {
 
 impl std::error::Error for SignInError {}
 
+impl SignInError {
+    /// The error for a log line (01M3XA87CJHCGZX283ZQAFKARZ). The
+    /// reason of an ID token that is not valid can name a part of an
+    /// email, so the line has only the kind of the error.
+    ///
+    /// ```
+    /// use riff_server::oidc::{SignInError, user_of};
+    ///
+    /// let error = user_of("@mark.example").unwrap_err();
+    /// assert!(error.to_string().contains("mark.example"));
+    /// assert_eq!(error.for_log(), "the ID token is not valid");
+    /// let provider = SignInError::Provider("https://x/jwks: timeout".into());
+    /// assert!(provider.for_log().ends_with("timeout"));
+    /// ```
+    pub fn for_log(&self) -> String {
+        match self {
+            SignInError::Invalid(_) => "the ID token is not valid".to_owned(),
+            other => other.to_string(),
+        }
+    }
+}
+
 /// The code that [`Provider::check_client`] sends. No provider issued it.
 pub const CHECK_CODE: &str = "riff-client-check";
 

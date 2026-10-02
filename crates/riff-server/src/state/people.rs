@@ -28,6 +28,10 @@
 //! - The riff is new, with no owner and no admin: the person becomes
 //!   the owner. A riff whose owner was gone is not new.
 //!
+//! [`Admit`] checks the member first, and then the USER of the email
+//! (01M3XGP011KGXDP9D1FNMT374F). So a person who may not join gets "not
+//! a member", and learns nothing of the USER names.
+//!
 //! ```mermaid
 //! flowchart TD
 //!     A[verified email] --> O{owner, member or admin?}
@@ -339,6 +343,15 @@ impl View<'_> {
             || self.settings.is_admin(email)
     }
 
+    /// True when `user` holds an email that is the owner, an admin or a
+    /// member.
+    pub(super) fn may_join(&self, user: &str) -> bool {
+        let people = self.people();
+        people
+            .email_of(user)
+            .is_some_and(|email| self.is_admin(email) || people.members.contains(email))
+    }
+
     /// The role of `user`: the owner, an admin, or a member. A USER
     /// with no email is a member.
     pub fn role_of(&self, user: &str) -> Role {
@@ -587,6 +600,23 @@ impl Command for Admit {
     ) -> Result<(Vec<Change>, Admitted), Refused> {
         let people = view.people();
         let email = email(&self.email);
+        // The member comes first (01M3XGP011KGXDP9D1FNMT374F): a person
+        // who may not join learns nothing of the USER names.
+        let admin = people.admins.contains(&email) || view.settings.is_admin(&email);
+        let new_riff = !people.owned() && view.settings.admins().is_empty();
+        let may_join = admin
+            || self.allowed_domain
+            || new_riff
+            || people.owner() == Some(email.as_str())
+            || people.members.contains(&email);
+        if !may_join {
+            return Err(Refused::new(
+                Code::NotMember,
+                format!(
+                    "{email} is not a member of this riff; ask its owner to run: riff invite {email}"
+                ),
+            ));
+        }
         let user = user_of(&email).map_err(|e| Refused::new(Code::BadRequest, e.to_string()))?;
         if user == SERVER_USER {
             return Err(Refused::new(
@@ -603,21 +633,6 @@ impl Command for Admit {
             }
             held => held.is_some(),
         };
-        let admin = people.admins.contains(&email) || view.settings.is_admin(&email);
-        let new_riff = !people.owned() && view.settings.admins().is_empty();
-        let may_join = admin
-            || self.allowed_domain
-            || new_riff
-            || people.owner() == Some(email.as_str())
-            || people.members.contains(&email);
-        if !may_join {
-            return Err(Refused::new(
-                Code::NotMember,
-                format!(
-                    "{email} is not a member of this riff; ask its owner to run: riff invite {email}"
-                ),
-            ));
-        }
         let mut changes = Vec::new();
         if !known {
             changes.push(Change::PersonJoined(PersonJoined {

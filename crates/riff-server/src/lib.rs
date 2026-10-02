@@ -498,14 +498,15 @@ impl Server {
             .and_then(auth::dpop_token)
             .ok_or(None)?;
         let proof = self.proof(headers, method, path, Some(token))?;
-        let who = self
+        let (who, started) = self
             .tokens()
-            .caller(token, &proof.jkt, Instant::now())
+            .signed_in(token, &proof.jkt, Instant::now())
             .map_err(Refusal::token)?;
         self.first_use(&proof)?;
         Ok(SignedIn {
             who,
             jkt: proof.jkt,
+            started,
         })
     }
 
@@ -1154,11 +1155,20 @@ impl Service {
         // is ended: the server stopped between the write of the record
         // and the end of the sign-ins (01M3XA87A9GGFA89RQXWSKY0V6).
         let mut tokens = tokens;
-        let dropped = tokens.drop_ended(&state.signins_ended());
+        let mut dropped = tokens.drop_ended(&state.signins_ended());
+        // A sign-in that the log does not hold goes too
+        // (01M3XGNZYD1E35DXYTHHJT1CR7): its position is after the end of
+        // the log, or the people do not know its user. A log that went
+        // back, for example after `log cut`, gives such sign-ins. A riff
+        // with no sign-in has no people, so there each user counts as
+        // known.
+        let trusted = config.trusted();
+        let end = state.written_position();
+        dropped += tokens.drop_outside(end, |user| trusted || state.knows_person(user));
         if dropped > 0 {
             tracing::info!(
                 sign_ins = dropped,
-                "dropped the sign-ins from before the end of the sign-ins of their person"
+                "dropped the sign-ins that the log ended, or that the log does not hold"
             );
         }
         let mut replay = Replay::default();
@@ -2190,7 +2200,9 @@ async fn exchange(
         .as_ref()
         .ok_or_else(|| no("invalid_request"))?;
     let identity = provider.sign_in(&s.http, id_token).await.map_err(|e| {
-        tracing::info!("sign-in refused: {e}");
+        // The line holds no part of an email
+        // (01M3XA87CJHCGZX283ZQAFKARZ).
+        tracing::info!("sign-in refused: {}", e.for_log());
         no("invalid_grant")
     })?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
@@ -3980,6 +3992,7 @@ mod tests {
             signed_in: Some(SignedIn {
                 who: brett().who().clone(),
                 jkt: "key-of-brett".into(),
+                started: 0,
             }),
             path: Alive::PATH.to_owned(),
         };
@@ -4008,6 +4021,7 @@ mod tests {
         let proof = SignedIn {
             who: mike().who().clone(),
             jkt: "thumbprint-of-mike".into(),
+            started: 0,
         };
         let engine = &service.0.engine;
         // A new riff is paused: the claim is refused.
@@ -4045,15 +4059,121 @@ mod tests {
         user: &str,
         command: C,
     ) -> impl Future<Output = Result<<C as Call>::Reply, Failed>> + use<C> {
-        let engine = service.0.engine.clone();
+        // A sign-in that is newer than each end of sign-ins.
         let proof = SignedIn {
             who: Who::new(user, None).unwrap(),
             jkt: format!("key-of-{user}"),
+            started: u64::MAX,
         };
+        with_proof(service, proof, command)
+    }
+
+    /// Sends a command with the proof of a token: through the one path.
+    fn with_proof<C: Routed>(
+        service: &Service,
+        proof: SignedIn,
+        command: C,
+    ) -> impl Future<Output = Result<<C as Call>::Reply, Failed>> + use<C> {
+        let engine = service.0.engine.clone();
         async move {
             let call = engine.authenticate(Some(&proof), command)?;
             engine.dispatch(call).await
         }
+    }
+
+    /// Between the entry of a removal in the queue and the end of the
+    /// sign-ins after its write, the removed person sends no command:
+    /// not as a person, and not through a session
+    /// (01M3XGP03RDF6S15JYS718WWFC). The log has no record of that
+    /// person after `member_removed`. A revoke has the same rule, with
+    /// another code: the person is still a member.
+    #[tokio::test(start_paused = true)]
+    async fn a_removed_person_sends_no_command_while_the_removal_waits() {
+        let store = Arc::new(Gated::default());
+        let service = riff_of_ada(store.clone()).await;
+        let now = Instant::now();
+        let session: SessionUri = "riff://bob@kite/como-technologies/riff?session=b1"
+            .parse()
+            .unwrap();
+        // The proof of a token of bob: of the person, and of a session.
+        let proofs = |service: &Service, pair: &TokenReply| {
+            let tokens = service.tokens();
+            let (who, started) = tokens
+                .signed_in(&pair.access_token, "key-of-bob", now)
+                .unwrap();
+            let proof = |who: Who| SignedIn {
+                who,
+                jkt: "key-of-bob".into(),
+                started,
+            };
+            (proof(who), proof(session.who().clone()))
+        };
+        let join = |thread: &str| Join {
+            me: session.clone(),
+            thread: thread.parse().unwrap(),
+        };
+        let last = |chunks: Vec<Vec<Change>>| chunks.into_iter().flatten().last().unwrap();
+
+        as_person(&service, "ada", invite(BOB)).await.unwrap();
+        let bob = service.admit(BOB, false, "key-of-bob").await.unwrap();
+        let (person, in_session) = proofs(&service, &bob);
+        // Before the removal, the session of bob sends a command.
+        with_proof(&service, in_session.clone(), join("design"))
+            .await
+            .unwrap();
+
+        // The removal is in the queue, and its write waits.
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let removal = tokio::spawn(as_person(&service, "ada", remove(BOB)));
+        store.tried(tries + 1).await;
+        let by_session = tokio::spawn(with_proof(&service, in_session, join("plans")));
+        let revoke = Revoke { user: None };
+        let by_person = tokio::spawn(with_proof(&service, person, revoke));
+        sleep(Duration::from_millis(50)).await;
+        store.release();
+        assert_eq!(removal.await.unwrap().unwrap().sign_ins, 1);
+        assert_eq!(code(by_session.await.unwrap()), state::Code::NotMember);
+        assert_eq!(code(by_person.await.unwrap()), state::Code::NotMember);
+        service.save().await.unwrap();
+        // The removal is the last record: bob changed nothing after it.
+        assert!(matches!(
+            last(store.chunks().await),
+            Change::MemberRemoved(removed) if removed.email == BOB
+        ));
+
+        // A revoke: bob is a member, and a sign-in from before the
+        // record sends no command.
+        as_person(&service, "ada", invite(BOB)).await.unwrap();
+        let bob = service.admit(BOB, false, "key-of-bob").await.unwrap();
+        let (_, in_session) = proofs(&service, &bob);
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let revoke = Revoke {
+            user: Some("bob".into()),
+        };
+        let revoked = tokio::spawn(as_person(&service, "ada", revoke));
+        store.tried(tries + 1).await;
+        let by_session = tokio::spawn(with_proof(&service, in_session, join("plans")));
+        sleep(Duration::from_millis(50)).await;
+        store.release();
+        assert_eq!(revoked.await.unwrap().unwrap().sign_ins, 1);
+        let Err(Failed::Refused(refused)) = by_session.await.unwrap() else {
+            panic!("a refusal");
+        };
+        assert_eq!(refused.code, state::Code::NotAllowed);
+        assert!(refused.reason.contains("Sign in again"), "{refused}");
+        service.save().await.unwrap();
+        assert!(matches!(
+            last(store.chunks().await),
+            Change::SigninsEnded(ended) if ended.user == "bob"
+        ));
+        // A new sign-in of bob sends a command again.
+        let bob = service.admit(BOB, false, "key-of-bob").await.unwrap();
+        let (_, in_session) = proofs(&service, &bob);
+        with_proof(&service, in_session, join("plans"))
+            .await
+            .unwrap();
     }
 
     /// The proof of the provider for `email`, with no allowed domain.
@@ -4339,6 +4459,9 @@ mod tests {
         service.admit(&email("ada"), false, "k").await.unwrap();
         service.admit(&email("ada"), false, "k").await.unwrap();
         service.admit(&email("eve"), false, "k").await.unwrap_err();
+        // An email that gives no valid USER.
+        let no_user = format!("@{EMAIL_MARK}");
+        service.admit(&no_user, true, "k").await.unwrap_err();
         service
             .admit(&format!("ada@other.{EMAIL_MARK}"), true, "k")
             .await

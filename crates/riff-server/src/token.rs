@@ -514,6 +514,42 @@ impl Tokens {
             .sum()
     }
 
+    /// Drops each sign-in that the log does not hold
+    /// (01M3XGNZYD1E35DXYTHHJT1CR7): a sign-in whose position is after
+    /// `end`, the position of the log, and a sign-in of a USER that
+    /// `known` does not know. The server calls it after a load. A log
+    /// that goes back to an earlier position, for example after
+    /// `log cut`, keeps no record of what such a sign-in came from, so
+    /// a later removal has no position to compare. The person signs in
+    /// again. Returns the number of sign-ins that it dropped.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// tokens.start("bob", "laptop", 5, now).unwrap();
+    /// tokens.start("bob", "desktop", 9, now).unwrap();
+    /// tokens.start("eve", "k", 3, now).unwrap();
+    /// // The log ends at the position 7, and it does not know eve.
+    /// assert_eq!(tokens.drop_outside(7, |user| user == "bob"), 2);
+    /// assert_eq!(tokens.keys("bob", now), ["laptop"]);
+    /// assert!(tokens.keys("eve", now).is_empty());
+    /// ```
+    pub fn drop_outside(&mut self, end: u64, known: impl Fn(&str) -> bool) -> usize {
+        let ids: Vec<u64> = self
+            .sign_ins
+            .iter()
+            .filter(|(_, s)| s.position > end || !known(&s.user))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &ids {
+            self.revoke(*id);
+        }
+        ids.len()
+    }
+
     /// True when `token` names a chain of a live sign-in on the device
     /// key `jkt`. It checks no generation and no secret, and it changes
     /// nothing.
@@ -650,6 +686,25 @@ impl Tokens {
     /// Returns who a live access token acts as, used with the device key
     /// `jkt`: the user, and the session of a session token.
     pub fn caller(&self, token: &str, jkt: &str, now: Instant) -> Result<Who, Refused> {
+        self.signed_in(token, jkt, now).map(|(who, _)| who)
+    }
+
+    /// As [`Tokens::caller`], with the position of the log at the start
+    /// of the sign-in of the token (01M3XA87A9GGFA89RQXWSKY0V6). The
+    /// engine refuses a command of a sign-in from before the last end
+    /// of the sign-ins of its user (01M3XGP03RDF6S15JYS718WWFC).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::Tokens;
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let pair = tokens.start("bob", "k", 7, now).unwrap();
+    /// let (who, started) = tokens.signed_in(&pair.access_token, "k", now).unwrap();
+    /// assert_eq!((who.user(), started), ("bob", 7));
+    /// ```
+    pub fn signed_in(&self, token: &str, jkt: &str, now: Instant) -> Result<(Who, u64), Refused> {
         let access = self.access.get(&hash(token)).ok_or(Refused::Unknown)?;
         let sign_in = self.sign_ins.get(&access.sign_in).ok_or(Refused::Unknown)?;
         if sign_in.jkt != jkt {
@@ -659,7 +714,8 @@ impl Tokens {
             return Err(Refused::Expired);
         }
         // The store checked both parts when it issued the token.
-        Who::new(&sign_in.user, access.session.as_deref()).map_err(|_| Refused::Unknown)
+        let who = Who::new(&sign_in.user, access.session.as_deref());
+        Ok((who.map_err(|_| Refused::Unknown)?, sign_in.position))
     }
 
     /// Ends each sign-in of `user` and each token of them, with no

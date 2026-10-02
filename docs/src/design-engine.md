@@ -297,6 +297,21 @@ fails, and the worker asks in its own terminal.
   of the last `member_removed` or `signins_ended` record of its user,
   it drops the sign-in. So a stop between the write and the effect
   lets no removed person in.
+- A load also drops each sign-in that the log does not hold
+  (01M3XGNZYD1E35DXYTHHJT1CR7): its position is after the position of
+  the log, or the people do not know its user. A log that went back to
+  an earlier position gives such sign-ins, for example after
+  `log cut`. The person signs in again.
+- The token layer gives the engine the position of the sign-in of each
+  token. `Engine::check` refuses each command of a caller whose
+  sign-in started before the last end of the sign-ins of its user in
+  the pending copy, before `permits`
+  (01M3XGP03RDF6S15JYS718WWFC). So between the entry of a removal in
+  the queue and the effect, the removed person changes nothing, also
+  not through a session.
+- `admit` checks first if the person may join, and then the USER of
+  the email (01M3XGP011KGXDP9D1FNMT374F). A person who may not join
+  gets `not_member`.
 
 ```mermaid
 sequenceDiagram

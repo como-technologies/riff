@@ -216,6 +216,9 @@ pub struct SignedIn {
     pub who: Who,
     /// The thumbprint of the device key of the token.
     pub jkt: String,
+    /// The position of the log at the start of the sign-in of the token
+    /// (01M3XA87A9GGFA89RQXWSKY0V6).
+    pub started: u64,
 }
 
 impl SignedIn {
@@ -226,7 +229,7 @@ impl SignedIn {
     /// use riff_core::name::{SessionUri, Who};
     /// use riff_server::auth::SignedIn;
     ///
-    /// let caller = SignedIn { who: Who::new("mike", Some("a6cf")).unwrap(), jkt: "k".into() };
+    /// let caller = SignedIn { who: Who::new("mike", Some("a6cf")).unwrap(), jkt: "k".into(), started: 0 };
     /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse().unwrap();
     /// assert!(caller.may_act_as(me.who()).is_ok());
     /// let other: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b7d0".parse().unwrap();
@@ -259,7 +262,7 @@ impl SignedIn {
     ///
     /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let key = Key::generate();
-    /// let caller = SignedIn { who: me.who().clone(), jkt: key.thumbprint() };
+    /// let caller = SignedIn { who: me.who().clone(), jkt: key.thumbprint(), started: 0 };
     /// let mut post = Post::new(&me, Some("design".parse()?), vec![], "look");
     /// assert!(caller.check_post(&post, 9_000).is_err());
     ///
@@ -439,6 +442,7 @@ mod tests {
         let caller = SignedIn {
             who: me.who().clone(),
             jkt: key.thumbprint(),
+            started: 0,
         };
         let mut post = Post::new(&me, None, vec![Selector::session("b7d0")], "go");
         post.sign(key, at_ms);

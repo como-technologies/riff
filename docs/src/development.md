@@ -956,6 +956,11 @@ riff-server log cut --after 1201 --yes --dir ~/.local/state/riff-server
 Removed 2 records and 0 checkpoints after position 1201. Threads: acme/app.
 ```
 
+A cut also ends each sign-in that started after the new end of the
+log. At its next start, the server drops these sign-ins, and each
+sign-in of a person that the log does not know after the cut. Each
+such person signs in again with `riff login`.
+
 The command keeps only the good part of the log: its first records
 that read and have the right positions, up to the position. It removes
 each line after the first problem, also a line with a lower position,

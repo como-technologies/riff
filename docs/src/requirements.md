@@ -881,6 +881,24 @@
   is in a record, and in a reply to a member. The line of a refused
   command of the people has its code and no reason. The line of a
   sign-in names its USER.
+- **01M3XGNZYD1E35DXYTHHJT1CR7** At a load, `riff-server` drops each
+  sign-in that the log does not hold: a sign-in whose position is after
+  the position of the log, and a sign-in of a USER that the people of
+  the log do not know. So after a log that went back to an earlier
+  position, for example after `riff-server log cut`, each sign-in that
+  started after the new end is gone, and the person signs in again.
+- **01M3XGP011KGXDP9D1FNMT374F** `admit` checks first if the person may
+  join, and then the USER of the email (R209). A person who may not
+  join gets the refusal `not_member`, also when another email holds the
+  USER.
+- **01M3XGP03RDF6S15JYS718WWFC** The token layer gives the engine the
+  position of the sign-in of each token. The engine refuses each
+  command of a caller whose sign-in started before the last end of the
+  sign-ins of its user in the pending copy, before `permits`: with the
+  code `not_member` when the user is no member, else with
+  `not_allowed`. So between the entry of a removal in the queue and
+  the end of the sign-ins after its write, the removed person changes
+  nothing, also not through a session.
 
 - **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
   Its name is `checkpoint/`, the position in 20 digits, `-`, and the
