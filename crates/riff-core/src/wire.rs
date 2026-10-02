@@ -823,17 +823,6 @@ impl Post {
 /// assert_eq!("note".parse::<Kind>(), Ok(Kind::Note));
 /// assert!("other".parse::<Kind>().is_err());
 /// assert!(Kind::Note.needs_body() && !Kind::Status.needs_body());
-///
-/// // A kind of a later build reads as `other`, in each form of JSON.
-/// let read = |json: &str| serde_json::from_str::<Kind>(json).unwrap();
-/// assert_eq!(read(r#""note""#), Kind::Note);
-/// for later in [r#""poll""#, r#"{"poll":"wave"}"#, "7", "null"] {
-///     assert_eq!(read(later), Kind::Other, "{later}");
-/// }
-/// assert!(Kind::Note.is_post() && !Kind::Other.is_post());
-/// // The schema of a call has only the kinds of a `post` call.
-/// let schema = serde_json::to_string(&schemars::schema_for!(Kind)).unwrap();
-/// assert!(schema.contains("note") && !schema.contains("other"), "{schema}");
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -877,7 +866,32 @@ impl Kind {
         *self != Kind::Status
     }
 
-    /// True for a kind that a `post` call can have.
+    /// True for a kind that a `post` call can have. A kind of a later
+    /// build reads as [`Kind::Other`], and no `post` call can have it
+    /// (01M3XSF90E9JYYTC13D9THY4WE).
+    ///
+    /// ```
+    /// use riff_core::wire::Kind;
+    ///
+    /// let read = |json: &str| serde_json::from_str::<Kind>(json).unwrap();
+    /// assert_eq!(read(r#""note""#), Kind::Note);
+    /// // A kind of a later build can have each form of JSON.
+    /// for later in [r#""poll""#, r#"{"poll":"wave"}"#, "7", "null"] {
+    ///     assert_eq!(read(later), Kind::Other, "{later}");
+    /// }
+    /// assert!(Kind::Note.is_post() && !Kind::Other.is_post());
+    /// assert_eq!(serde_json::to_string(&Kind::Other).unwrap(), r#""other""#);
+    ///
+    /// // The schema of a call has only the kinds of a `post` call.
+    /// let schema = serde_json::to_value(schemars::schema_for!(Kind)).unwrap();
+    /// let kinds: Vec<&str> = schema["oneOf"]
+    ///     .as_array()
+    ///     .unwrap()
+    ///     .iter()
+    ///     .map(|kind| kind["const"].as_str().unwrap())
+    ///     .collect();
+    /// assert_eq!(kinds, ["message", "status", "note"]);
+    /// ```
     pub fn is_post(&self) -> bool {
         *self != Kind::Other
     }
