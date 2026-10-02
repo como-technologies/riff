@@ -61,7 +61,7 @@
 //! leave is a mark on this machine: the file `left-ID` in
 //! [`local::marks`]. The client of a session reads the mark before each
 //! request, in the one function that sends each request
-//! ([`Api::send_with`], 01M3XQVJXWBC3DKAVWBPXPSGZS). A request of a
+//! (`Api::send_with`, 01M3XQVJXWBC3DKAVWBPXPSGZS). A request of a
 //! session with the mark fails with [`Left`], and nothing goes to the
 //! server. So the status line, each hook, the watch, each tool and each
 //! task of `riff mcp` have the same check, and a new call site has it
