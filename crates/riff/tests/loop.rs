@@ -46,11 +46,13 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
     let api = start_server().await;
     let (mike, brett, thread) = (mike(), brett(), repo());
     api.register(&mike).await.unwrap();
+    api.register(&brett).await.unwrap();
 
     let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
     let mut tail = Box::pin(api.tail(&brett, &thread).await.unwrap());
 
-    // Each is the first session of its user, so each is its lead.
+    // Each is the first session of its user that registers, so each is
+    // its lead.
     let (mike_lead, brett_lead) = (mike.clone().with_lead(true), brett.clone().with_lead(true));
     let who = api.who(&mike, false).await.unwrap();
     assert!(who.iter().any(|s| s.uri == brett_lead && s.live));

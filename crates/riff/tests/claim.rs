@@ -358,7 +358,7 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
     let dir = repo();
     let dir = dir.path();
 
-    agent(&server, dir, "mike", "a1", &["read"]).await;
+    agent(&server, dir, "mike", "a1", &["lead"]).await;
     agent(&server, dir, "mike", "b2", &["read"]).await;
     let (out, _) = riff(&server, dir, "mike", &["who", "--long"]).await;
     assert!(out.contains("?session=a1&lead=true  "), "{out}");
@@ -393,8 +393,8 @@ async fn the_lead_releases_the_claim_of_another_session() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    agent(&server, dir, "mike", "lead1", &["read"]).await;
-    agent(&server, dir, "brett", "b1", &["read"]).await;
+    agent(&server, dir, "mike", "lead1", &["lead"]).await;
+    agent(&server, dir, "brett", "b1", &["lead"]).await;
     resume(&server, dir).await;
     let (out, code) = agent(&server, dir, "mike", "work1", &["claim", "issue-12"]).await;
     assert_eq!(code, 0, "{out}");
@@ -446,7 +446,7 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     let dir = repo();
     let dir = dir.path();
 
-    agent(&server, dir, "mike", "a1", &["read"]).await;
+    agent(&server, dir, "mike", "a1", &["lead"]).await;
     agent(&server, dir, "mike", "b2", &["read"]).await;
     let ask = [
         "post",

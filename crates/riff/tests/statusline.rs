@@ -115,12 +115,14 @@ async fn the_status_line_shows_the_session_and_its_claims() {
     // A new riff is paused. The person resumes it.
     let (_, code) = riff(&server, dir.path(), None, "", &["resume"]).await;
     assert_eq!(code, 0);
+    let (_, code) = riff(&server, dir.path(), Some(ID), "", &["lead"]).await;
+    assert_eq!(code, 0);
     let (_, code) = riff(&server, dir.path(), Some(ID), "", &["claim", "issue-82"]).await;
     assert_eq!(code, 0);
 
     let stdin = format!(r#"{{"session_id":"{ID}","cwd":"/x"}}"#);
     let (out, code) = riff(&server, dir.path(), None, &stdin, &["statusline"]).await;
-    // The first session of mike in the repository is his lead (R176).
+    // The session is the lead of mike in the repository.
     assert_eq!(out, "riff a6cf2205 lead issue-82\n");
     assert_eq!(code, 0);
 }
@@ -159,9 +161,12 @@ async fn line(server: &str, dir: &Path) -> String {
     out
 }
 
-/// Resumes the riff at `server`, and the session [`ID`] joins it.
+/// Resumes the riff at `server`, and the session [`ID`] joins it as
+/// the lead.
 async fn join(server: &str, dir: &Path) {
     let (_, code) = riff(server, dir, None, "", &["resume"]).await;
+    assert_eq!(code, 0);
+    let (_, code) = riff(server, dir, Some(ID), "", &["lead"]).await;
     assert_eq!(code, 0);
     let (_, code) = riff(server, dir, Some(ID), "", &["status", "work"]).await;
     assert_eq!(code, 0);

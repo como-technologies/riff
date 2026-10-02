@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use riff::api::Api;
 use riff_core::name::SessionUri;
+use riff_core::wire::StartReason;
 
 /// The path of each call that the server gets.
 type Calls = Arc<Mutex<Vec<String>>>;
@@ -133,7 +134,7 @@ async fn live_at(server: &str, uri: SessionUri) {
 /// session `c3`, all of mike and each live. `b2` registers as a worker
 /// on the host thelio. Each command runs on the host pangolin.
 async fn three_sessions(server: &str, dir: &Path, path: &Path) {
-    for (id, args) in [("a1", &["read"][..]), ("a1", &["resume"][..])] {
+    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume"][..])] {
         output(riff(server, dir, Some(id), path, args)).await;
     }
     let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
@@ -175,6 +176,16 @@ async fn session_at(server: &str, place: &str, id: &str, item: Option<&str>) {
         api.claim(&uri, &thread, item).await.unwrap();
     }
     live_at(server, uri).await;
+}
+
+/// The worker `b2` of [`three_sessions`] clears its context: a start
+/// with a fresh context, as the start hook sends after `/clear`.
+async fn clear_b2(server: &str) {
+    let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
+        .parse()
+        .unwrap();
+    let api = Api::new(server);
+    api.start(&b2, StartReason::Clear, true).await.unwrap();
 }
 
 /// `line` with each time in seconds, for example `0s` or `12s`, as `Ns`:
@@ -510,20 +521,47 @@ async fn a_pause_shows_paused_and_the_step() {
 
 /// A worker that releases its claim is `idle`, ready for work, with no
 /// old step (01M3Q551WCMPQRCNJ8FXQEBFY4, 01M3QB6CJ1XCQG5B1BVR8AF3B4).
+/// After the release of its last claim it shows `must clear`, until it
+/// starts with a fresh context. Then it shows the time since that start
+/// (01M3X9XC99KY4RQY36A7CYWY11).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_worker_with_no_claim_shows_idle_not_its_old_step() {
+async fn a_worker_with_no_claim_shows_must_clear_then_idle_not_its_old_step() {
     let (server, _) = start_server().await;
     let dir = repo();
     let dir = dir.path();
     let bin = bin(true);
     three_sessions(&server, dir, bin.path()).await;
     let release = ["release", "issue-12"];
-    output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
+    let released = output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
+    // The reply to the release carries the ask to clear.
+    assert!(
+        released.contains("clear your context before your next claim"),
+        "{released}"
+    );
 
     let top = ["top", "--once"];
+    let before = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    let head = &session(&before, "b2")[0];
+    assert!(head.ends_with("  worker  must clear"), "{before}");
+    let must = ["must clear its context before its next claim"];
+    assert_eq!(detail(&before, "b2"), must, "{before}");
+    let who = ["who", "--color", "never"];
+    let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
+    let b2 = who.lines().find(|l| l.contains("(b2)")).unwrap();
+    assert!(b2.contains("  must clear  worker  "), "{who}");
+    // A claim before the clear is refused.
+    let mut claim = riff(&server, dir, Some("b2"), bin.path(), &["claim", "issue-12"]);
+    let refused = claim.output().unwrap();
+    assert!(!refused.status.success());
+    let why = String::from_utf8_lossy(&refused.stderr).into_owned();
+    let text = "clear your context first: type /clear, or run riff workers next";
+    assert!(why.contains(text), "{why}");
+
+    clear_b2(&server).await;
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(session(&top, "b2")[0].ends_with("  worker  idle"), "{top}");
-    assert_eq!(detail(&top, "b2"), ["ready for work for Ns"], "{top}");
+    let ready = ["ready for work for Ns", "fresh start Ns ago"];
+    assert_eq!(detail(&top, "b2"), ready, "{top}");
     assert!(
         top.contains("\nWave 3 (como-technologies/riff)\n  free: #12\n"),
         "{top}"
@@ -544,6 +582,7 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     three_sessions(&server, dir, bin.path()).await;
     let release = ["release", "issue-12"];
     output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
+    clear_b2(&server).await;
     // The first session of mike in strata is its lead.
     let strata = "como-technologies/strata";
     session_at(&server, strata, "d4", Some("issue-12")).await;
@@ -647,13 +686,16 @@ async fn a_session_with_no_status_is_idle() {
 
     let release = ["release", "issue-12"];
     output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
+    clear_b2(&server).await;
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    assert_eq!(detail(&top, "b2"), ["ready for work for Ns"], "{top}");
+    let ready = ["ready for work for Ns", "fresh start Ns ago"];
+    assert_eq!(detail(&top, "b2"), ready, "{top}");
     let who = ["who", "--color", "never"];
     let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
     let b2 = who.lines().find(|l| l.contains("(b2)")).unwrap();
-    assert!(secs(b2).ends_with("  ready for work for Ns"), "{who}");
+    let ready = "  ready for work for Ns  fresh start Ns ago";
+    assert!(secs(b2).ends_with(ready), "{who}");
 }
 
 /// With 12 sessions, long titles and long statuses, `riff top --once`
@@ -673,6 +715,7 @@ async fn twelve_sessions_fit_in_80_columns() {
             r#"echo '[{{"number": 12, "title": "{long}", "milestone": {{"title": "Wave 3: A long name"}}}}, {{"number": 13, "title": "{long}", "milestone": {{"title": "Wave 3: A long name"}}}}]'"#
         ),
     );
+    output(riff(&server, dir, Some("s00"), bin.path(), &["lead"])).await;
     output(riff(&server, dir, Some("s00"), bin.path(), &["resume"])).await;
     for n in 0..12 {
         let id = format!("s{n:02}");

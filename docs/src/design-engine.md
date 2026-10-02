@@ -105,7 +105,9 @@ flowchart TD
   command `register` for that session, also when the call is a query
   or a signal. It is a command of its own, with an entry of its own:
   its records name `register`, and they have a `session_started`
-  record with the reason `join`. `Engine::check` runs the two `handle`
+  record with the reason `join`. In the code it is the type `Arrive`,
+  with the kind `register`: it keeps the worker mark of the state, and
+  it makes no lead. `Engine::check` runs the two `handle`
   functions under one lock. A query of such a session waits for that
   write, then reads the view. A signal of such a session first sends
   `register` through `Engine::dispatch` and waits for it, then sets
@@ -426,9 +428,18 @@ stateDiagram-v2
   says if the session is a worker.
 - The `start` call carries the reason and the worker mark. An explicit
   `register` whose worker mark is not the mark of the state makes a
-  `session_started` record with the reason `join` and the new mark.
+  `session_started` record with the reason `join` and the new mark. A
+  `register` of a session that the log does not know makes one too.
   The `register` that the engine runs first keeps the mark of the
   state.
+- The worker mark is a fact of the riff, not of the presence. `handle`
+  and `permits` get it from the pending copy, and `who` from the
+  written copy.
+- The start hook sends the reason from the `source` of Claude Code:
+  `startup` is `process`, `resume` is `resume`, `clear` is `clear`. It
+  sends no start for `compact`: a compaction is no new session, so the
+  session keeps its claims and its lead, and a worker in MustClear
+  stays there.
 - A start frees each claim of the session: one `released` record for
   each, then the `session_started` record. An end frees each claim
   too. The log has no record for the end itself.
@@ -485,10 +496,20 @@ sequenceDiagram
   there.
 - The engine sends no wake to a session in MustClear. The message is in
   its thread, and its `posted` record names the session in `woken`.
-  The wake waits in the presence. When the watch starts after the
-  clear, the session gets the wake that it missed. A start of the
-  server loses the wake that waits: the message stays unread, and the
-  session reads it at its start.
+  The wake waits in the written copy, as an unread message that woke
+  the session: the presence holds no state for it. A watch that starts
+  in MustClear gets no missed wake. The watch of a worker runs through
+  the clear, so the writer sends the wake: when it applies the
+  `session_started` record that ends MustClear, it sends the wake of
+  the newest unread message that woke the session
+  (`State::written`). A watch that starts after the clear gets the
+  same wake. A start of the server loses nothing: the next watch start
+  gives the wake.
+- The reply to a release is `ReleaseReply` with `must_clear`. The reply
+  to a keep-alive is `AliveReply` with `clear`: the state adds it to
+  the reply of the signal, from the written copy. Until #353, riff
+  shows the ask in the text of the release, and does not act on
+  `clear`.
 - `who`, `top` and `riff workers` show MustClear, and the time since
   the last fresh start of each worker.
 
@@ -623,7 +644,7 @@ The envelope of each record: `position`, `written_at_ms`, `by`,
 | `joined_thread` | `session`, `thread` | `register`, `join`, `post` |
 | `left_thread` | `session`, `thread` | `leave` |
 | `claimed` | `session`, `thread`, `item` | `claim` |
-| `released` | `session`, `thread`, `item`, `must_clear` | `release`, `start`, `end`, `claim`, `forget` |
+| `released` | `session`, `thread`, `item`, `must_clear` | `release`, `release_for`, `start`, `end`, `claim`, `forget` |
 | `lead_set` | `session`, `thread` | `lead`, `register`, `start` |
 | `session_started` | `session`, `reason`, `worker` | `register`, `start` |
 | `session_forgotten` | `session` | `forget` |
@@ -811,6 +832,11 @@ state is a private field of the engine.
 E2 is built: the cause in each record (`riff_core::record::By`), the
 lines of the module `crates/riff-server/src/trace.rs`, and the proof
 of a write (`log::Written`).
+
+E4 is built: the life cycle is in the part `Sessions` of the riff
+(`crates/riff-server/src/state/sessions.rs`), with its checkpoint
+fields. The order of `Change::KINDS` is not a part of the format: a
+reader finds a kind by its name.
 
 Other items:
 

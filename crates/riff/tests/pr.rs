@@ -118,8 +118,10 @@ impl Machine {
         text(&out.stdout)
     }
 
-    /// Resumes the new riff, and claims `item` as `session`.
+    /// Makes `session` the lead, resumes the new riff, and claims `item`
+    /// as `session`.
     async fn claim(&self, session: &str, item: &str) {
+        self.ok(session, &["lead"]).await;
         self.ok(session, &["resume"]).await;
         self.ok(session, &["claim", item]).await;
     }

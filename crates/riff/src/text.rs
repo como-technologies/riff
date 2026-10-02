@@ -1676,6 +1676,8 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     worker,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
@@ -1721,6 +1723,8 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
+///         must_clear: false,
+///         fresh_secs: None,
 ///         state: Some(SessionState::Busy),
 ///     },
 ///     SessionInfo {
@@ -1731,6 +1735,8 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: true,
 ///         stopping: false,
 ///         claims_secs: 60,
+///         must_clear: false,
+///         fresh_secs: None,
 ///         state: Some(SessionState::Idle),
 ///     },
 /// ];
@@ -1785,6 +1791,8 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     worker: false,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");

@@ -657,8 +657,8 @@
   keep-alive, the start and the end of a watch stream, and a read cursor
   are signals. A signal changes only the presence: it makes no record
   and no entry in the queue, and it does not wait for the writer. A
-  command can give a signal: a `register` gives the place and the worker
-  mark, and an `end` gives the end of the session. A refused command
+  command can give a signal: a `register` gives the place, and an `end`
+  gives the end of the session. A refused command
   sets no signal. A signal or a query of a session that the state does
   not know first sends `register` through the dispatch, and waits for
   its write.
@@ -728,6 +728,56 @@
 - **01M3X4Z6G0TG0B4FT2N1FSPDHS** The role of a caller with no token
   comes from the trust of the riff: an admin in a riff with no sign-in,
   else a member.
+- **01M3X9X9M079WGFPJZHNXH9VEP** The `start` call carries `reason`
+  (`process`, `resume` or `clear`) and `worker`. A start makes one
+  `released` record for each claim of the session, then a
+  `session_started` record with the session, the reason and the worker
+  mark. A `register` makes a `session_started` record with the reason
+  `join` when the log does not know the session, or when the worker
+  mark of the call is not the mark of the state. The `register` that
+  the engine runs first keeps the mark of the state. So the worker mark
+  is in the log, and not in the presence. A build reads a reason that
+  it does not know as `other`, and such a record changes nothing. The
+  start hook sends `process` for the source `startup`, `resume` for
+  `resume`, `clear` for `clear`, and no start for `compact`. A person
+  has no `session_started` record.
+- **01M3X9XA3H6YF0QCYSNB2P0CT2** Only a `register` or a `start` that
+  the session sends makes the first lead of a user in a repository
+  (R176), and never for a worker. The `register` that the engine runs
+  first makes no lead. `lead` refuses a worker.
+- **01M3X9XAK1KPZZVM1AJR2H8DSS** A worker that frees its last claim
+  with its own `release` is in MustClear: the `released` record has
+  `must_clear`. `apply` only stores it. A `session_started` record with
+  the reason `process` or `clear` ends it. `claim` refuses a session in
+  MustClear before each other check, with the code `must_clear` and the
+  text "clear your context first: type /clear, or run riff workers
+  next". A claim that goes by a start, an end, a release by the lead or
+  a claim of another session gives no MustClear.
+- **01M3X9XB37TQCXWPNFZRMRGJB4** The reply to the release that puts a
+  worker in MustClear carries the ask to clear (`must_clear`). The
+  reply to each keep-alive of a worker in MustClear carries it too
+  (`clear`). `riff release` and the `release` tool show the ask.
+- **01M3X9XBMB3R718Z81BYXTHMZ0** `riff-server` sends no wake to a
+  session in MustClear. The message is in its thread, and its `posted`
+  record names the session. A watch that starts gets no missed wake
+  while its session is in MustClear. The `session_started` record that
+  ends MustClear gives the session the wake that it missed. A watch
+  that starts after that record gets it too.
+- **01M3X9XC99KY4RQY36A7CYWY11** `who` gives `must_clear` and
+  `fresh_secs` for each session: the seconds since its last
+  `session_started` record with the reason `process` or `clear`. The
+  state `must_clear` comes after `blocked` and before `busy`
+  (01M3QB6CJ1XCQG5B1BVR8AF3B4). `riff who`, `riff top`, `riff workers`
+  and the `who` tool show it as `must clear` in yellow, with the detail
+  `must clear its context before its next claim`. Each worker that is
+  not offline shows `fresh start 12m ago` as the last fact of its
+  detail, when the log has such a start.
+- **01M3X9XCSBR11ACD86FNXKF8JH** `forget` gives one `released` record
+  for each claim of a session, then its `session_forgotten` record.
+- **01M3X9XD8QWHS2CXTFSQK0PN1Y** The checkpoint holds the worker mark,
+  the MustClear mark and the time of the last fresh start of each
+  session. A start from a checkpoint gives the life cycle of a full
+  replay.
 
 - **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
   Its name is `checkpoint/`, the position in 20 digits, `-`, and the
@@ -1151,7 +1201,8 @@
 - **R176** The first session of a person in a repository becomes the
   lead, with no action. It is first when no other session of the
   person in that repository holds (R9). A later session does not
-  become the lead.
+  become the lead. A worker never becomes the lead
+  (01M3X9XA3H6YF0QCYSNB2P0CT2).
 - **R177** `riff lead` and the `lead` tool make the session the lead
   of its person in its repository. It replaces the old lead. Only an
   agent session in a repository can be the lead.
@@ -1413,7 +1464,8 @@
   the other facts of the reply.
   The first state that matches wins: `offline` (no open watch stream),
   `paused` (the riff is paused), `blocked` (a current blocked status),
-  `busy` (a claim), `idle` (each other session). `riff top`, `riff
+  `must_clear` (01M3X9XC99KY4RQY36A7CYWY11), `busy` (a claim), `idle`
+  (each other session). `riff top`, `riff
   who`, the MCP `who` tool and `riff workers` show the word of the
   state, then its detail: for `offline`, `seen 2h ago`; for `paused`,
   the claims and `stopped at:` the step; for `blocked`, the reason and
