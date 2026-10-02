@@ -10,8 +10,14 @@
 //! | `offline` | grey | `seen 2h ago` |
 //! | `paused` | yellow | the claims, and the step it stopped at |
 //! | `blocked` | red | the reason, then the claims |
+//! | `must clear` | yellow | `must clear its context before its next claim` (01M3X9XC99KY4RQY36A7CYWY11) |
 //! | `busy` | green | `working on #N`, or `reviewing #N` for a verify claim, then the step |
 //! | `idle` | dim | `ready for work` with the time, then a current step. The lead: `monitoring work` |
+//!
+//! A worker that is not offline also shows the time since its last
+//! fresh start, when the log has one: `fresh start 12m ago`
+//! (01M3X9XC99KY4RQY36A7CYWY11). A fresh start is a new agent process or a clear of the
+//! context.
 //!
 //! `riff top`, `riff who`, the MCP `who` tool and `riff workers` show
 //! the same words.
@@ -24,7 +30,9 @@
 //!     P -- yes --> Pa[paused]
 //!     P -- no --> B{current status blocked?}
 //!     B -- yes --> Bl[blocked]
-//!     B -- no --> C{holds a claim?}
+//!     B -- no --> M{worker that must clear?}
+//!     M -- yes --> Mc[must clear]
+//!     M -- no --> C{holds a claim?}
 //!     C -- yes --> Bu[busy]
 //!     C -- no --> I[idle]
 //! ```
@@ -35,12 +43,13 @@ use crate::style::{DIM, ERROR, GOOD, MUTED, WARNING};
 use crate::text::{ago, safe};
 
 /// The color of a state: `blocked` red, `busy` green, `idle` dim,
-/// `offline` grey, `paused` yellow.
+/// `offline` grey, `paused` and `must clear` yellow.
 pub fn style(state: SessionState) -> anstyle::Style {
     match state {
         SessionState::Offline => MUTED,
         SessionState::Paused => WARNING,
         SessionState::Blocked => ERROR,
+        SessionState::MustClear => WARNING,
         SessionState::Busy => GOOD,
         SessionState::Idle => DIM,
     }
@@ -94,6 +103,8 @@ fn current(s: &SessionInfo) -> Option<&StatusInfo> {
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 300,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: Some(SessionState::Busy),
 /// };
 /// assert_eq!(plain(&s), ["working on #12 Show the wave", "reviewing #9", "2m ago: tests"]);
@@ -115,6 +126,26 @@ fn current(s: &SessionInfo) -> Option<&StatusInfo> {
 /// assert_eq!(plain(&s), ["monitoring work for 5m", "2m ago: plan the wave"]);
 /// s.state = Some(SessionState::Offline);
 /// assert_eq!(plain(&s), ["seen 2h ago"]);
+///
+/// // A worker that released its last claim, 12 minutes after its last
+/// // fresh start.
+/// s.uri = "riff://mike@thelio/o/r?session=w1".parse()?;
+/// (s.must_clear, s.fresh_secs) = (true, Some(720));
+/// s.state = Some(SessionState::MustClear);
+/// assert_eq!(
+///     plain(&s),
+///     ["must clear its context before its next claim", "fresh start 12m ago"]
+/// );
+/// s.state = Some(SessionState::Idle);
+/// assert_eq!(
+///     plain(&s),
+///     ["ready for work for 5m", "2m ago: plan the wave", "fresh start 12m ago"]
+/// );
+/// s.state = Some(SessionState::Offline);
+/// assert_eq!(plain(&s), ["seen 2h ago"]);
+/// s.state = Some(SessionState::Idle);
+/// s.worker = false;
+/// assert_eq!(plain(&s), ["ready for work for 5m", "2m ago: plan the wave"]);
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn detail(
@@ -161,6 +192,10 @@ pub fn detail(
             }
             lines.extend(claims());
         }
+        SessionState::MustClear => {
+            let what = "must clear its context before its next claim";
+            lines.push((what.to_owned(), WARNING));
+        }
         SessionState::Busy => {
             lines.extend(claims());
             lines.extend(s.status.as_ref().map(step));
@@ -174,6 +209,9 @@ pub fn detail(
             lines.push((format!("{what} for {}", ago(s.claims_secs)), plain));
             lines.extend(current(s).map(step));
         }
+    }
+    if let (true, Some(secs)) = (s.worker && of(s) != SessionState::Offline, s.fresh_secs) {
+        lines.push((format!("fresh start {} ago", ago(secs)), DIM));
     }
     lines
 }

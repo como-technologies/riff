@@ -126,10 +126,10 @@ use riff_core::wire::{
     AdminSet, Alive, AliveReply, Call, Claim, DenyOwner, End, Freed, Idle, IdleQuery, Invite,
     Invited, Join, Keys, Kind, Lead, LeadReply, Leave, MeReply, Members, MembersReply, Message,
     OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER, Read,
-    Register, Release, ReleaseFor, Remove, Removed, Resume, Revoke, Revoked, RiffQuery, RiffReply,
-    RiffState, ServerFacts, SessionInfo, SetAdmin, SetIdle, SetStatus, SignInConfig, Start, Status,
-    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Wake, WhoReply,
-    WhoRequest,
+    Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked,
+    RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetIdle, SetStatus,
+    SignInConfig, Start, StartReason, Status, Tailed, TakeOwner, ThreadInfo, Threads, TokenError,
+    TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -894,8 +894,20 @@ impl Api {
 
     /// A new start of the session: a new agent process, a resume or a
     /// `/clear`. Its claims are free at once (01M3JEE1QQCFS5TMZW5N2DAD2D).
-    pub async fn start(&self, me: &SessionUri) -> Result<Vec<Freed>> {
-        Ok(self.call(&Start { me: me.clone() }).await?.freed)
+    /// The call says why the session starts, and if it is a worker
+    /// (01M3X9X9M079WGFPJZHNXH9VEP).
+    pub async fn start(
+        &self,
+        me: &SessionUri,
+        reason: StartReason,
+        worker: bool,
+    ) -> Result<Vec<Freed>> {
+        let start = Start {
+            me: me.clone(),
+            reason,
+            worker,
+        };
+        Ok(self.call(&start).await?.freed)
     }
 
     /// Lists the sessions. `all` lists gone sessions too.
@@ -1172,7 +1184,14 @@ impl Api {
         }
     }
 
-    pub async fn release(&self, me: &SessionUri, thread: &ThreadName, item: &str) -> Result<()> {
+    /// Frees a claim of `me`. The reply says if `me` is a worker that
+    /// must clear its context now (01M3X9XB37TQCXWPNFZRMRGJB4).
+    pub async fn release(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        item: &str,
+    ) -> Result<ReleaseReply> {
         let release = Release {
             me: me.clone(),
             thread: thread.clone(),

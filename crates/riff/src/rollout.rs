@@ -1486,6 +1486,8 @@ mod tests {
             worker,
             stopping: false,
             claims_secs: 0,
+            must_clear: false,
+            fresh_secs: None,
             state: Some(riff_core::wire::SessionState::Idle),
         }
     }

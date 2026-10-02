@@ -41,17 +41,23 @@
 //!
 //! The context depends on the `source` of the start (R68):
 //!
-//! | Source | The session |
-//! |---|---|
-//! | `startup` | A new start. Follows the start routine (R54, R166). |
-//! | `resume` | A new start. Continues, and claims again what it goes on with. |
-//! | `clear` | A new start. Keeps its riff session ID and its lead (R168). Follows the start routine. |
-//! | `compact` | Continues, with its claims. |
+//! | Source | The session | The `start` call |
+//! |---|---|---|
+//! | `startup` | A new start. Follows the start routine (R54, R166). | `process` |
+//! | `resume` | A new start. Continues, and claims again what it goes on with. | `resume` |
+//! | `clear` | A new start. Keeps its riff session ID and its lead (R168). Follows the start routine. | `clear` |
+//! | `compact` | Continues, with its claims. | none |
 //!
 //! At a new start, the hook sends the start call: the claims of the
 //! session are free at once (01M3JEE1QQCFS5TMZW5N2DAD2D). The context names each
 //! freed claim, and points to "Pick up dropped work" in the skill
-//! (01M3JEE1SWR05DWQA5WQ8AXFTF).
+//! (01M3JEE1SWR05DWQA5WQ8AXFTF). The call carries the reason of the
+//! start, and the worker mark from `RIFF_WORKER` (01M3X9X9M079WGFPJZHNXH9VEP): see
+//! [`Source::reason`]. A start with the reason `process` or `clear` is a
+//! fresh context, so it lets a worker claim again after its last
+//! release. A compaction is no new session: the hook sends no start, so
+//! the session keeps its claims and its lead, and a worker that must
+//! clear its context still must.
 //!
 //! The context also depends on the state of the riff
 //! (01M3JCG48QPCNNTKW34FTR0AMR). The hook reads it from the server, and
@@ -130,7 +136,7 @@ use std::time::Duration;
 
 use riff_core::build::Mismatch;
 use riff_core::name::SessionUri;
-use riff_core::wire::{Freed, RiffState, SessionInfo};
+use riff_core::wire::{Freed, RiffState, SessionInfo, StartReason};
 use serde::Deserialize;
 
 /// The longest wait of the start hook for the state of the riff.
@@ -392,7 +398,30 @@ impl Source {
     /// assert!(!Source::Compact.is_new_start());
     /// ```
     pub fn is_new_start(self) -> bool {
-        self != Source::Compact
+        self.reason().is_some()
+    }
+
+    /// The reason of the `start` call that the hook sends for this
+    /// source (01M3X9X9M079WGFPJZHNXH9VEP). `None`: the hook sends no start. A
+    /// compaction is no new session: it keeps its claims and its lead,
+    /// and it is no fresh context.
+    ///
+    /// ```
+    /// use riff::hook::Source;
+    /// use riff_core::wire::StartReason;
+    ///
+    /// assert_eq!(Source::Startup.reason(), Some(StartReason::Process));
+    /// assert_eq!(Source::Resume.reason(), Some(StartReason::Resume));
+    /// assert_eq!(Source::Clear.reason(), Some(StartReason::Clear));
+    /// assert_eq!(Source::Compact.reason(), None);
+    /// ```
+    pub fn reason(self) -> Option<StartReason> {
+        match self {
+            Source::Startup => Some(StartReason::Process),
+            Source::Resume => Some(StartReason::Resume),
+            Source::Clear => Some(StartReason::Clear),
+            Source::Compact => None,
+        }
     }
 }
 
@@ -779,6 +808,29 @@ mod tests {
     async fn a_directory_outside_git_is_not_behind() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(behind(dir.path(), FETCH_WAIT).await, None);
+    }
+
+    /// 01M3X9X9M079WGFPJZHNXH9VEP: the start call of each source of Claude Code. Only a
+    /// new process and a clear are a fresh context.
+    #[test]
+    fn each_source_sends_its_reason_and_a_compaction_sends_no_start() {
+        let source = |json: &str| serde_json::from_str::<StartInput>(json).unwrap().source;
+        let sent = [
+            ("startup", Some(StartReason::Process)),
+            ("resume", Some(StartReason::Resume)),
+            ("clear", Some(StartReason::Clear)),
+            ("compact", None),
+            // A source of a later Claude Code counts as a new session.
+            ("later", Some(StartReason::Process)),
+        ];
+        for (name, reason) in sent {
+            let source = source(&format!(r#"{{"source":"{name}"}}"#));
+            assert_eq!(source.reason(), reason, "{name}");
+            assert_eq!(source.is_new_start(), reason.is_some(), "{name}");
+            let fresh = reason.is_some_and(StartReason::is_fresh);
+            assert_eq!(fresh, matches!(name, "startup" | "clear" | "later"), "{name}");
+        }
+        assert_eq!(SOURCES.len(), 4, "each source has a row");
     }
 
     #[test]
