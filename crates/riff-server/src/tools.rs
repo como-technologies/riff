@@ -36,7 +36,8 @@
 //!   01M3X342G8KF2W06PABGXTERMZ). It names what a cut removes.
 //! - `cut --yes` refuses while a server holds the lease
 //!   (01M3X342K007K3Z9G0CYWFKVMA). See "A live lease" in
-//!   [`crate::lease`].
+//!   [`crate::lease`]. It reads the lease again after the cut, and
+//!   names a server that started during the cut.
 //! - `cut` refuses a position before the oldest kept checkpoint: the
 //!   chunks before that checkpoint are gone, so no start can replay
 //!   them. It refuses also when the first problem is before that
@@ -743,7 +744,16 @@ pub fn cut_text(removed: &Cut, after: u64, mode: Mode) -> String {
         removed.last
     );
     match mode {
-        Mode::Remove => format!("Removed {what}"),
+        Mode::Remove => {
+            let held = removed.held.as_ref().map_or_else(String::new, |held| {
+                format!(
+                    "\nA server started during the cut: {}. Stop it, then run: \
+                     riff-server log verify",
+                    held_text(held)
+                )
+            });
+            format!("Removed {what}{held}")
+        }
         Mode::DryRun => {
             let held = removed.held.as_ref().map_or_else(String::new, |held| {
                 format!("\nNow {}: `--yes` refuses.", held_text(held))
@@ -791,7 +801,8 @@ pub struct Cut {
     /// The position of the last record that stays: the position of the
     /// cut, or the last good record of the log before it.
     pub last: u64,
-    /// The instance that holds the lease, in a dry run.
+    /// The instance that holds the lease. In a dry run, `--yes` refuses
+    /// because of it. After a cut, it took the lease during the cut.
     pub held: Option<Held>,
 }
 
@@ -885,6 +896,11 @@ pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolE
             removed.checkpoints.push(name.clone());
         }
     }
+    if mode == Mode::Remove {
+        // A server that started during the cut can hold records that
+        // the cut removed.
+        removed.held = lease::holder(store, lease::now_ms(), &timing).await?;
+    }
     Ok(removed)
 }
 
@@ -894,6 +910,7 @@ mod tests {
     use crate::checkpoint::Checkpoint;
     use crate::state::State;
     use crate::store::Memory;
+    use futures::future::{BoxFuture, FutureExt};
     use riff_core::record::{Claimed, RiffStateSet};
     use riff_core::wire::RiffState;
     use std::time::Instant;
@@ -1125,6 +1142,53 @@ mod tests {
         lease_of(&store, "abc123", 0, true).await;
         assert_eq!(cut(&store, 4, Mode::Remove).await.unwrap().records.len(), 1);
         assert_eq!(log::replay(&store).await.unwrap().last, 4);
+    }
+
+    /// A memory store in which a server takes the lease at the first
+    /// delete.
+    struct Raced(Memory);
+
+    impl Store for Raced {
+        fn load<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+            self.0.load(name)
+        }
+
+        fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+            self.0.list(prefix)
+        }
+
+        fn save<'a>(
+            &'a self,
+            name: &'a str,
+            bytes: Vec<u8>,
+            known: Option<crate::store::Version>,
+        ) -> BoxFuture<'a, Result<crate::store::Version, StoreError>> {
+            self.0.save(name, bytes, known)
+        }
+
+        fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+            async move {
+                lease_of(&self.0, "late42", 0, false).await;
+                self.0.delete(name).await
+            }
+            .boxed()
+        }
+    }
+
+    /// 01M3X342K007K3Z9G0CYWFKVMA: a server that takes the lease during
+    /// the cut is named after the cut.
+    #[tokio::test]
+    async fn cut_names_a_server_that_took_the_lease_during_the_cut() {
+        let store = Raced(store().await);
+        let removed = cut(&store, 4, Mode::Remove).await.unwrap();
+        assert_eq!(printed(&removed), ["5", "6"]);
+        assert_eq!(removed.held.as_ref().unwrap().id, "late42");
+        let text = cut_text(&removed, 4, Mode::Remove);
+        assert!(
+            text.contains("A server started during the cut: the server instance late42"),
+            "{text}"
+        );
+        assert!(text.ends_with("riff-server log verify"), "{text}");
     }
 
     /// 01M3X342NQWZBJPS0GXV98BQME: a chunk that starts before the end of

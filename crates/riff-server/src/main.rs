@@ -267,6 +267,10 @@ async fn log_tool(cli: &Cli, args: &LogArgs) -> Result<(), Stop> {
                 println!("checkpoint  {}", store.locate(name));
             }
             println!("{}", tools::cut_text(&removed, *after, mode));
+            // A server took the lease during the cut: the text says so.
+            if *yes && removed.held.is_some() {
+                return Err(Stop::Logged);
+            }
             Ok(())
         }
     }
@@ -461,5 +465,27 @@ mod tests {
         }
         // A cut names its position.
         assert!(Cli::try_parse_from(["riff-server", "log", "cut", "--dir", "d"]).is_err());
+    }
+
+    /// 01M3X342G8KF2W06PABGXTERMZ: a cut removes only with `--yes`.
+    #[test]
+    fn a_cut_is_a_dry_run_with_no_yes() {
+        use super::{Command, LogAction};
+        use clap::Parser;
+        let yes = |args: &[&str]| {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let Some(Command::Log(log)) = cli.command else {
+                panic!("not the log command");
+            };
+            let Some(LogAction::Cut { after, yes }) = log.action else {
+                panic!("not a cut");
+            };
+            assert_eq!(after, 7);
+            yes
+        };
+        let cut = ["riff-server", "log", "cut", "--after", "7", "--dir", "d"];
+        assert!(!yes(&cut));
+        let cut = ["riff-server", "log", "cut", "--after", "7", "--yes"];
+        assert!(yes(&cut));
     }
 }

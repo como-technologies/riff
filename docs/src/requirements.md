@@ -788,7 +788,9 @@
 - **01M3X342K007K3Z9G0CYWFKVMA** `riff-server log cut --yes` refuses
   while the lease is live (01M3X342DH98YEZ3X5CND43DGD). The refusal
   names the instance that holds the lease. A cut with no `--yes` runs,
-  and names that instance.
+  and names that instance. After a cut, the command reads the lease
+  again. When an instance took the lease during the cut, it names the
+  instance and exits with 1.
 - **01M3X342NQWZBJPS0GXV98BQME** `log verify` and `log cut` read each
   line of a chunk by its bytes, so a line that is not UTF-8 is one bad
   line. The good part of the log is its first records that read and

@@ -958,6 +958,10 @@ stateDiagram-v2
 - The server logs the ID of its instance at start: `took the lease
   as`.
 
+Start no server during a cut. The command reads the lease again after
+the cut. When a server started during the cut, the command names it and
+exits with 1. Stop that server, then check the log again.
+
 ### Use the tools on the bucket
 
 On your machine, a tool takes the access token of your Google sign-in.
