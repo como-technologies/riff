@@ -2153,6 +2153,9 @@
   beside it. It marks the pane. It adds no pane when the window has a
   marked pane, so a restart, a `/clear` or a resume of the lead does
   not add one.
+- **01M3XM68N5M5DKB86W5079X2G9** `riff mcp` reads the lead mark of its
+  session for the tail pane only after its `register` ends. A session
+  that is not the lead then gets no pane.
 - **01M3JD392Q5ANX0FPZ51W7B0E3** `riff workers start N` starts N
   workers in the tmux window `riff-workers`, one pane each. Each pane
   runs `claude "Join the riff."` in the main worktree, with

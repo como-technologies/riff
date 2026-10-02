@@ -1147,13 +1147,15 @@ async fn main() -> Result<()> {
         Command::Mcp { client } => {
             let me = identity::session(&here, api.base())?;
             let _record = record_session(&me);
+            let (registered, wait) = tokio::sync::oneshot::channel();
             let tail = async {
-                if !me.who().session().is_some_and(local::left_here) {
+                // A session that left the riff sends nothing.
+                if wait.await.is_ok() {
                     tail_beside_lead(&api, &me).await;
                 }
             };
-            let (_, served) =
-                tokio::join!(tail, mcp::serve(api.clone(), me.clone(), client.as_deref()));
+            let serve = mcp::serve(api.clone(), me.clone(), client.as_deref(), registered);
+            let (_, served) = tokio::join!(tail, serve);
             served?
         }
         Command::Hook { .. }
@@ -1617,8 +1619,10 @@ async fn stop_workers(pane: Option<&str>, server: &str) -> Result<()> {
 }
 
 /// In tmux, adds the `riff tail` pane beside the lead
-/// (01M3JD390F49HZSKEJ3VACX0ZA). It first waits until the server lists
-/// the session. An error goes to stderr: the tools still work.
+/// (01M3JD390F49HZSKEJ3VACX0ZA). Call it after the register of
+/// `riff mcp` ends: only that register makes the lead
+/// (01M3XM68N5M5DKB86W5079X2G9). An error goes to stderr: the tools
+/// still work.
 async fn tail_beside_lead(api: &Api, me: &SessionUri) {
     let Some(tmux) = Tmux::from_env() else {
         return;
@@ -1629,27 +1633,12 @@ async fn tail_beside_lead(api: &Api, me: &SessionUri) {
             &identity::working_dir()?,
             api.base(),
         );
-        for _ in 0..REGISTER_TRIES {
-            if api
-                .who(me, false)
-                .await?
-                .iter()
-                .any(|s| s.uri.who() == me.who())
-            {
-                break;
-            }
-            tokio::time::sleep(REGISTER_WAIT).await;
-        }
         terminal::tail_beside_lead(api, me, &tmux, &program).await
     };
     if let Err(e) = added.await {
         eprintln!("riff: cannot add the riff tail pane: {e:#}");
     }
 }
-
-/// How often and how long `riff mcp` waits for its session to register.
-const REGISTER_TRIES: u32 = 10;
-const REGISTER_WAIT: Duration = Duration::from_millis(200);
 
 /// The scope of `riff pause` and `riff resume` from the flags `--riff`
 /// and `--repo` (01M3XAHZBGSSJB3YX23K88W01K).

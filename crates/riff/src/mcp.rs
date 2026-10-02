@@ -14,12 +14,20 @@
 //!     participant M as riff mcp
 //!     participant S as riff-server
 //!     M->>S: register
+//!     S-->>M: done
+//!     Note over M: in tmux, the lead gets its tail pane
 //!     loop each ALIVE_EVERY, also while no turn runs
 //!         M->>S: alive
 //!     end
 //!     A-->>M: stdin closes, or SIGTERM, SIGINT or SIGHUP
 //!     M->>S: end
 //! ```
+//!
+//! `riff mcp` looks for the lead mark of its session only after its
+//! register ends (01M3XM68N5M5DKB86W5079X2G9). A query makes the server
+//! know a session, and makes no lead. So a session in `who` with no
+//! lead mark can be a session whose register is not done. The tail
+//! pane, the rollout and the reap all start after the register.
 //!
 //! The `riff mcp` of the lead also starts workers by itself when the
 //! wave has free work (see [`crate::rollout`]). It ends the session of a
@@ -774,8 +782,15 @@ pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// closes or a signal stops it (R204, R205). On a new binary, it runs
 /// it in place, with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5). With
 /// `client`, the initialize request of the old process, it skips the
-/// handshake.
-pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()> {
+/// handshake. It sends `registered` when its register ends, also when
+/// the register fails (01M3XM68N5M5DKB86W5079X2G9). A session that left
+/// the riff does not register: it drops `registered` with no value.
+pub async fn serve(
+    api: Api,
+    me: SessionUri,
+    client: Option<&str>,
+    registered: tokio::sync::oneshot::Sender<()>,
+) -> Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
     let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
@@ -784,10 +799,14 @@ pub async fn serve(api: Api, me: SessionUri, client: Option<&str>) -> Result<()>
         .as_worker(worker)
         .in_wrapper(crate::worker::wrapper());
     // Start even if the server is down: each tool call reports the error.
-    if !tools.left()
-        && let Err(e) = api.register_as(&me, worker).await
-    {
-        eprintln!("riff: {e:#}");
+    if tools.left() {
+        drop(registered);
+    } else {
+        if let Err(e) = api.register_as(&me, worker).await {
+            eprintln!("riff: {e:#}");
+        }
+        // The receiver can be gone: nothing waits for the register.
+        let _ = registered.send(());
     }
     let alive = tools.keep_alive();
     // A worker is never the lead.
