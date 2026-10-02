@@ -759,11 +759,11 @@ enum HookEvent {
         #[arg(long)]
         pane: Option<String>,
     },
-    /// End each open claim in the marks of a session, and report its
-    /// tokens
+    /// Report the tokens of each claim that a start or an end freed
     ///
-    /// The start hook starts it at a new start, and the end hook starts
-    /// it, detached.
+    /// It ends each open claim in the marks of the session. The start
+    /// hook starts it at a new start, and the end hook starts it,
+    /// detached.
     #[command(hide = true)]
     Usage {
         /// The riff session ID.
