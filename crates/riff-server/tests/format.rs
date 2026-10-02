@@ -12,12 +12,18 @@
 //!   messages than it keeps. Five sessions are forgotten. Two records
 //!   have no cause.
 //! - `replayed.json`: the state of a full replay of the log, as a
-//!   checkpoint.
+//!   checkpoint. The end of the log keeps a lead, a pause of the whole
+//!   riff and a pause of a repository.
+//! - `checkpoint.json`: the checkpoint of a live state. It is the full
+//!   replay, and then a session reads two threads. So it has read
+//!   cursors, which no record gives.
 //! - `later.jsonl`: one chunk of a later build. Each record has a value
 //!   that this build does not know: a scope and a class of a caller, as
-//!   a text and as an object, and a reason of a start.
+//!   a text and as an object, and a reason of a start as a text, an
+//!   object, a number and `null`.
 //!
-//! Never write `log.jsonl` or `replayed.json` again with a later build.
+//! Never write `log.jsonl`, `replayed.json` or `checkpoint.json` again
+//! with a later build.
 //! A later release adds a directory of its own.
 
 use std::collections::BTreeSet;
@@ -154,8 +160,48 @@ fn a_replay_of_the_fixture_log_gives_the_state_of_the_release() {
     assert_eq!(written(&state, &expected), bytes("replayed.json"));
 }
 
-/// Each part of the state that the log gives is in the checkpoint: a
-/// start from a checkpoint at each position of the fixture gives the
+/// The time of the checkpoint of the live state.
+const LIVE_MS: u64 = 1_792_678_500_000;
+
+/// The live state of `checkpoint.json` at `now`: the full replay, and
+/// then the session `a1` of ann reads two threads.
+fn live(now: Instant) -> State {
+    let mut state = State::replay(records("log.jsonl"), now, LIVE_MS);
+    let ann = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+    for thread in ["acme/app", "noise"] {
+        let unread = state.read(&ann, &thread.parse().unwrap(), false, now);
+        assert!(!unread.unwrap().is_empty(), "{thread}");
+    }
+    state
+}
+
+/// The read cursors are in the checkpoint, and a load keeps them: no
+/// record gives them again.
+#[test]
+fn a_checkpoint_of_a_live_state_keeps_the_read_cursors() {
+    let expected = checkpoint::decode(&bytes("checkpoint.json")).unwrap();
+    assert_eq!(checkpoint::encode(&expected), bytes("checkpoint.json"));
+    let encode = |state: &State, now| {
+        let snapshot = state.snapshot(now, LIVE_MS);
+        checkpoint::encode(&Checkpoint::new(
+            &expected.build,
+            expected.written_at_ms,
+            snapshot,
+        ))
+    };
+    let now = Instant::now();
+    let state = live(now);
+    assert_eq!(state.position(), expected.state.position);
+    assert_eq!(encode(&state, now), bytes("checkpoint.json"));
+
+    let loaded = State::load(Some(expected.state.clone()), [], now, LIVE_MS);
+    assert!(loaded.same_log_state(&state));
+    assert_eq!(encode(&loaded, now), bytes("checkpoint.json"));
+}
+
+/// Each part of the state that the log gives is in the checkpoint. At
+/// each position of the fixture, a load of the checkpoint gives the
+/// state of a replay up to that position, and a start from it gives the
 /// state of a full replay. The checkpoint goes through its bytes.
 #[test]
 fn a_start_from_a_checkpoint_at_each_position_gives_the_state_of_a_full_replay() {
@@ -168,8 +214,13 @@ fn a_start_from_a_checkpoint_at_each_position_gives_the_state_of_a_full_replay()
         let state = State::replay(before.to_vec(), now, 0);
         let saved = checkpoint::decode(&written(&state, &like)).unwrap();
         assert_eq!(saved.state.position, at as u64);
+        // The checkpoint alone gives the state at its position. So a
+        // part that a checkpoint loses fails at the first position that
+        // has it, also when a later record removes the part.
+        let alone = State::load(Some(saved.state.clone()), [], now, 0);
+        assert!(alone.same_log_state(&state), "the checkpoint at {at}");
         let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
-        assert!(loaded.same_log_state(&full), "a checkpoint at {at}");
+        assert!(loaded.same_log_state(&full), "a start from {at}");
     }
 }
 
@@ -199,7 +250,10 @@ fn each_apply_arm_reads_only_its_record_and_the_riff() {
 async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record() {
     let later = records("later.jsonl");
     let fields: Vec<_> = later.iter().map(Record::other).collect();
-    let expected = ["scope", "scope", "reason", "by", "by"].map(Some);
+    let expected = [
+        "scope", "scope", "reason", "reason", "reason", "reason", "by", "by",
+    ]
+    .map(Some);
     assert_eq!(fields, expected);
 
     let store = Memory::default();
@@ -216,8 +270,8 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
 
     let replayed = log::replay(&store).await.unwrap();
     assert_eq!(replayed.records.len(), known.len() + moved.len());
-    assert_eq!((replayed.skipped, replayed.skips), (Some(first), 5));
+    assert_eq!((replayed.skipped, replayed.skips), (Some(first), 8));
     // A start after the first such record counts the rest.
     let rest = log::replay_after(&store, first).await.unwrap();
-    assert_eq!((rest.skipped, rest.skips), (Some(first + 1), 4));
+    assert_eq!((rest.skipped, rest.skips), (Some(first + 1), 7));
 }

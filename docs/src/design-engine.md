@@ -759,13 +759,16 @@ The three rules of the store design stay. These rules come with them:
   and writes no checkpoint past it.
 - A field with a set of named values that can grow (`reason`, `scope`,
   the class in `by`) has the value `other`. A build reads a value that
-  it does not know as `other`, and `apply` changes nothing for it: a
-  `session_started` with the reason `other` is not a fresh start, and
-  a `pause_set` with the scope `other` changes no pause. A record with
-  a value that the build read as `other`, in its change or in its
-  `by`, counts as a skipped record: the build writes no checkpoint
-  past it, and `riff server` counts it. `state` of `pause_set` has two
-  values and no `other`.
+  it does not know as `other`: a text, and each other form of JSON.
+  `apply` stores nothing for such a value: a `session_started` with
+  the reason `other` is not a fresh start and changes no worker mark,
+  and a `pause_set` with the scope `other` changes no pause. As for
+  each record that names a session, `apply` keeps the URI of the
+  session and the time of the record. A record with a value that the
+  build read as `other`, in its change or in its `by`, counts as a
+  skipped record: the build writes no checkpoint past it, and
+  `riff server` counts it. `state` of `pause_set` has two values and
+  no `other`.
 - A new command needs no change of the format: `command` is text. A
   reader takes a `command` that it does not know as text.
 - A kind of record and a kind of command are never renamed, and the
@@ -810,10 +813,14 @@ checkpoint:
   start of each session;
 - each pause, with who set it and when.
 
-A test takes the fixture log and compares the state of a full replay
-with the state of a start from a checkpoint at each position. A
-second test replays the fixture log with `apply` alone, and in a state
-with a presence at two times: the riff after each record is the same.
+A test takes the fixture log and makes a checkpoint at each position.
+A load of the checkpoint gives the state of a replay up to that
+position, and a start from it gives the state of a full replay. So a
+part that a checkpoint loses fails the test at the first position
+that has it. A second test replays the fixture log with `apply` alone,
+and in a state with a presence at two times: the riff after each
+record is the same. A third test keeps the read cursors of a live
+state through a checkpoint.
 
 ## The scope of a pause
 

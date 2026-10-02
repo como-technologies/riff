@@ -310,3 +310,5 @@
 {"position":309,"written_at_ms":1792678400000,"by":"server","command":"forget","change":{"session_forgotten":{"session":"riff://erin@wren/acme/lib?session=e1"}}}
 {"position":310,"written_at_ms":1792678401000,"by":{"session":"ann/a1"},"command":"post","change":{"posted":{"thread":"acme/app","message":{"seq":5,"from":"riff://ann@heron/acme/app?session=a1","to":[],"body":"after the forget","at_ms":1792678401000}}}}
 {"position":311,"written_at_ms":1792678401000,"by":{"session":"ann/a1"},"command":"claim","change":{"claimed":{"session":"riff://ann@heron/acme/app?session=a1","thread":"acme/app","item":"issue-3"}}}
+{"position":312,"written_at_ms":1792678402000,"by":{"session":"ann/a1"},"command":"lead","change":{"lead_set":{"session":"riff://ann@heron/acme/app?session=a1","thread":"acme/app"}}}
+{"position":313,"written_at_ms":1792678403000,"by":{"person":"ann"},"command":"pause","change":{"pause_set":{"scope":"riff","state":"paused"}}}

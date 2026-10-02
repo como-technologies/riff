@@ -37,10 +37,11 @@
 //! - A field with a set of named values that can grow has the value
 //!   `other`: the class in [`By`], the [`Scope`] of a pause, and the
 //!   reason of a start ([`StartReason`]). A build reads a value that it
-//!   does not know as `other`, and `apply` changes nothing for it. Such
-//!   a record counts as a skipped record ([`Record::other`]): the build
-//!   writes no checkpoint past it (01M3XM2C18TT8VSKGD77YPZG53). The `state` of a
-//!   `pause_set` has two values and no `other`.
+//!   does not know as `other`: a text, and each other form of JSON.
+//!   `apply` stores nothing for such a value. Such a record counts as a
+//!   skipped record ([`Record::other`]): the build writes no checkpoint
+//!   past it (01M3XM2C18TT8VSKGD77YPZG53). The `state` of a `pause_set`
+//!   has two values and no `other`.
 //! - `command` is text. A reader takes a kind of command that it does
 //!   not know as text.
 //!
@@ -936,6 +937,14 @@ mod tests {
             panic!("a known kind");
         };
         assert_eq!(record.other(), None);
+        // A reason of a later build can have each form of JSON.
+        for later in [r#"{"wake":"timer"}"#, "7", "null", r#"["join"]"#] {
+            let line = line.replace(r#""wake""#, later);
+            let Line::Record(record) = Line::parse(&line).unwrap() else {
+                panic!("a known kind");
+            };
+            assert_eq!(record.other(), Some("reason"), "{later}");
+        }
     }
 
     #[test]
