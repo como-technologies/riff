@@ -716,9 +716,9 @@ impl Top<'_> {
                 .flat_map(|s| s.uri.claims().iter())
                 .filter(|c| issue_of(c) == Some(*n))
                 .collect();
-            let group = if claims.iter().any(|c| c.starts_with("verify-")) {
-                2
-            } else if claims.is_empty() && waits(n) {
+            let group = if claims.iter().any(|c| c.starts_with("verify-"))
+                || (claims.is_empty() && waits(n))
+            {
                 2
             } else if claims.is_empty() {
                 0
