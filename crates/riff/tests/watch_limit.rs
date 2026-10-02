@@ -97,10 +97,7 @@ async fn runs_after(child: &mut Child, time: Duration) -> bool {
 }
 
 fn no_wake(secs: u64) -> String {
-    format!(
-        "{}\n",
-        riff::text::watch_no_wake(Duration::from_secs(secs))
-    )
+    format!("{}\n", riff::text::watch_no_wake(Duration::from_secs(secs)))
 }
 
 #[tokio::test(flavor = "multi_thread")]
