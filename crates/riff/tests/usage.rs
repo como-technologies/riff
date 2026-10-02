@@ -334,8 +334,8 @@ async fn usage_shows_the_sum_of_a_claim_for_each_model_and_the_total() {
     // The comment holds only numbers and names (01M3Y1YP2CSNHCWV7T4CE9HZ4Y).
     let comments = machine.comments(12);
     assert_eq!(comments.lines().count(), 1, "{comments}");
-    for secret in ["secret", ".jsonl", "/home", "claude-1", "@", "thelio"] {
-        assert!(!comments.contains(secret), "{secret} is in {comments}");
+    for mark in ["secret", ".jsonl", "/home", "claude-1", "@", "thelio"] {
+        assert!(!comments.contains(mark), "{mark} is in {comments}");
     }
     assert!(comments.contains("<details><summary>riff:usage</summary>"));
 }
