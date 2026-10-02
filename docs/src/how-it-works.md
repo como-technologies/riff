@@ -999,12 +999,18 @@ A laptop sleeps, or the Wi-Fi drops. `riff top` stays open. It keeps
 the last table, and its first line is red:
 
 ```text
-riff: no good look since 21:35:07: cannot reach riff-server
+riff: no good look since 21:35:07: riff-server gave no reply in 10 seconds
 ```
 
-The line has the time of the last good look, then the fault. The table
-under it is old. `riff top` looks again every 3 seconds. You do
-nothing: when the server is back, the line goes and the table is new.
+The line has the time of the last good look, then the fault. The fault
+can be another text, for example `cannot reach riff-server`. riff
+tries a look again for 10 seconds before the look fails. So the line
+comes about 13 seconds after the fault starts.
+
+The table under the line is old. It keeps its titles and its board,
+also when `gh` fails too. `riff top` looks again every 3 seconds. You
+do nothing: when the server is back, the line goes and the table is
+new.
 
 ```mermaid
 stateDiagram-v2
@@ -1014,8 +1020,6 @@ stateDiagram-v2
     Fault --> Fault: the last table, with the red line
     Fault --> Good: the server is back, a new table
 ```
-
-A look that gets no reply in 10 seconds fails in the same way.
 
 `riff top` still ends with the error in these cases:
 

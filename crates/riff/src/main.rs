@@ -2520,7 +2520,9 @@ async fn draw_top(
             () = message => {}
         }
         if fetched.elapsed() >= riff::top::ISSUES_TTL {
-            issues = fetch(thread.clone()).await?;
+            // A `gh` that fails keeps the last issues
+            // (01M3ZC09FA9DZPTHK31XECZ566).
+            issues = riff::top::Issues::newest(issues, fetch(thread.clone()).await?);
             fetched = Instant::now();
         }
     }

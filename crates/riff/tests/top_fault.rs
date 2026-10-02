@@ -185,9 +185,14 @@ struct Live {
 }
 
 impl Live {
-    /// Starts `riff top` at `server`.
+    /// Starts `riff top` at `server`, with no `gh`.
     fn start(server: &str) -> Live {
-        let dirs = (repo(), bin());
+        Live::start_with(server, bin())
+    }
+
+    /// Starts `riff top` at `server`, with `bin` as its `PATH`.
+    fn start_with(server: &str, bin: tempfile::TempDir) -> Live {
+        let dirs = (repo(), bin);
         let mut child = top(server, dirs.0.path(), dirs.1.path(), &[])
             .spawn()
             .unwrap();
@@ -350,6 +355,58 @@ async fn top_stays_open_while_the_server_is_away() {
 #[tokio::test(flavor = "multi_thread")]
 async fn top_stays_open_when_each_connection_fails_in_the_middle() {
     stays_open(Some(Mode::Break)).await;
+}
+
+/// A `gh` for `PATH` that gives one open issue of Wave 3 at its first
+/// call, and fails at each later call. It writes the number of its
+/// calls to the file `gh.calls` next to it.
+fn gh_that_fails_after_one_call(bin: &Path) {
+    let gh = bin.join("gh");
+    let script = r#"#!/bin/sh
+n=0
+[ -f "$0.calls" ] && read -r n < "$0.calls"
+echo $((n + 1)) > "$0.calls"
+[ "$n" -eq 0 ] || exit 1
+echo '[{"number": 7, "title": "Keep the board", "milestone": {"title": "Wave 3"}}]'
+"#;
+    std::fs::write(&gh, script).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A network fault stops `gh` too. The kept table keeps its board: a
+/// read of `gh` that fails does not take the last issues away
+/// (01M3ZC09FA9DZPTHK31XECZ566).
+#[tokio::test(flavor = "multi_thread")]
+async fn top_keeps_the_board_when_gh_fails_too() {
+    const WAVE: &str = "Wave 3 (como-technologies/riff)";
+    let mut gate = Gate::start().await;
+    session(&gate.direct(), "b2").await;
+    let bin = bin();
+    gh_that_fails_after_one_call(bin.path());
+    let calls = bin.path().join("gh.calls");
+    let mut live = Live::start_with(&gate.url(), bin);
+    let good = |v: &str| !v.starts_with(FAULT) && has(v, "b2") && v.contains(WAVE);
+    live.view(0, "the session b2 and the board", good).await;
+
+    // The network goes away: the server and `gh`.
+    gate.close().await;
+    // `riff top` reads `gh` again after its time, and that read fails.
+    let end = Instant::now() + Duration::from_secs(150);
+    let read = || std::fs::read_to_string(&calls).unwrap_or_default();
+    while read().trim().parse::<u32>().unwrap_or(0) < 2 {
+        assert!(
+            live.child.try_wait().unwrap().is_none() && Instant::now() < end,
+            "no second read of gh: {:?}",
+            read()
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    // Each table after that read still has the board.
+    let from = live.views().len();
+    let kept = |v: &str| v.starts_with(FAULT) && has(v, "b2");
+    let (_, view) = live.view(from, "the line and the last table", kept).await;
+    assert!(view.contains(WAVE), "{view}");
+    assert!(view.contains("free: #7"), "{view}");
 }
 
 /// A new try cannot repair a server of another kind: `riff top` ends

@@ -11,8 +11,10 @@
 //!
 //! The titles of the issues and the current wave come from one
 //! `gh issue list` of the open issues ([`Issues`]). riff keeps them for
-//! [`ISSUES_TTL`]. With no `gh`, or when `gh` fails, the table has no
-//! titles and no board.
+//! [`ISSUES_TTL`], then reads them again. With no `gh`, the table has
+//! no titles and no board. When a later read of `gh` fails, riff keeps
+//! the last issues ([`Issues::newest`], 01M3ZC09FA9DZPTHK31XECZ566): a
+//! network fault stops `gh` too.
 //!
 //! The rows are a tree for each person: the person, each host, and each
 //! session on the host (01M3NT4M5D36KTZ5XZMDP6QFQT). A session gets only
@@ -187,6 +189,26 @@ impl Issues {
             return None;
         }
         Self::parse(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    /// The issues after a new read of `gh`: `new`, or `last` when `gh`
+    /// failed (01M3ZC09FA9DZPTHK31XECZ566). So the titles and the board
+    /// stay while the network is away.
+    ///
+    /// ```
+    /// use riff::top::Issues;
+    ///
+    /// let json = r#"[{"number": 7, "title": "Fix", "milestone": {"title": "Wave 3"}}]"#;
+    /// let last = Issues::parse(json);
+    /// // `gh` failed: the last issues stay.
+    /// assert_eq!(Issues::newest(last.clone(), None), last);
+    /// // `gh` gave no open issue: the board is empty.
+    /// let new = Issues::parse("[]");
+    /// assert_eq!(Issues::newest(last, new.clone()), new);
+    /// assert_eq!(Issues::newest(None, None), None);
+    /// ```
+    pub fn newest(last: Option<Issues>, new: Option<Issues>) -> Option<Issues> {
+        new.or(last)
     }
 }
 
@@ -799,5 +821,24 @@ mod tests {
     fn no_wave_milestone_gives_no_wave() {
         let issues = Issues::parse(r#"[{"number": 1, "title": "a", "milestone": null}]"#);
         assert_eq!(issues.unwrap().wave, None);
+    }
+
+    /// A `gh` that fails keeps the last issues, and a `gh` that works
+    /// replaces them (01M3ZC09FA9DZPTHK31XECZ566).
+    #[test]
+    fn a_read_of_gh_that_fails_keeps_the_last_issues() {
+        let wave = |n: u64| {
+            let json = format!(
+                r#"[{{"number": {n}, "title": "a", "milestone": {{"title": "Wave {n}"}}}}]"#
+            );
+            Issues::parse(&json)
+        };
+        let mut issues = wave(9);
+        for read in [None, None, wave(10), None] {
+            issues = Issues::newest(issues, read);
+        }
+        assert_eq!(issues, wave(10));
+        // With no `gh` from the start, there are no issues.
+        assert_eq!(Issues::newest(None, None), None);
     }
 }

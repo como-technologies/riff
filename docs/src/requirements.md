@@ -1704,6 +1704,9 @@
   interval, with new connections. The line goes at the next good look.
   `riff top --once`, a first look that fails, and each other fault end
   `riff top` with the error and a status that is not 0.
+- **01M3ZC09FA9DZPTHK31XECZ566** When a later read of `gh` fails,
+  `riff top` keeps the titles and the board of its last good read of
+  `gh`.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
   line of a Claude Code session: `riff`, the short session ID of
   `riff who`, `lead`, each claim, and `blocked`. It is the
