@@ -444,6 +444,8 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
+///         must_clear: false,
+///         fresh_secs: None,
 ///         state: Some(SessionState::Busy),
 ///     },
 ///     SessionInfo {
@@ -454,6 +456,8 @@ pub fn whoami(me: &SessionUri, state: Result<RiffState, String>) -> String {
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
+///         must_clear: false,
+///         fresh_secs: None,
 ///         state: Some(SessionState::Blocked),
 ///     },
 /// ];
@@ -572,6 +576,8 @@ fn state_cell(s: &SessionInfo) -> String {
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 300,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: Some(SessionState::Busy),
 /// };
 /// let plain = anstream::adapter::strip_str(&riff::view::detail_cell(&s)).to_string();
@@ -657,6 +663,8 @@ pub fn host_heading(
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: Some(SessionState::Busy),
 /// };
 /// let out = riff::view::workers(&panes, &[info.clone()], false);

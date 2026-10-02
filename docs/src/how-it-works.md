@@ -1832,6 +1832,7 @@ show it. The first state that matches wins:
 | `offline` | grey | the session has no open watch | `seen 2h ago` |
 | `paused` | yellow | the riff is paused | the claims, and `stopped at:` the step |
 | `blocked` | red | the session set a blocked status | the reason and the step, then the claims |
+| `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
 | `busy` | green | the session holds a claim | `working on #7`, or `reviewing #7` for a verify claim, then the step |
 | `idle` | dim | each other session | `ready for work for 6m`, or `monitoring work for 6m` for the lead, then a current step |
 
@@ -1839,7 +1840,8 @@ The lead takes no claims: it conducts the other sessions. So an idle
 lead shows `monitoring work`. The time of `idle` counts from the last
 release of the session. An
 older `riff-server` sends no state. Then riff derives the state from
-the other facts that the server sends.
+the other facts that the server sends. For `must clear`, see
+[A worker that must clear its context](#a-worker-that-must-clear-its-context).
 
 ```mermaid
 flowchart TD
@@ -1849,7 +1851,9 @@ flowchart TD
     P -- yes --> Pa[paused]
     P -- no --> B{current status blocked?}
     B -- yes --> Bl[blocked]
-    B -- no --> C{holds a claim?}
+    B -- no --> M{worker that must clear?}
+    M -- yes --> Mc[must clear]
+    M -- no --> C{holds a claim?}
     C -- yes --> Bu[busy]
     C -- no --> I[idle]
 ```
@@ -1964,8 +1968,10 @@ flowchart TB
 
 - Each person has at most one lead in each repository, on all
   machines together.
-- The first session of the person in the repository becomes the lead.
-  The person does nothing. A later session does not become the lead.
+- The first session of the person in the repository becomes the lead,
+  when it starts. The person does nothing. A later session does not
+  become the lead. A worker never becomes the lead: see
+  [When your only session is a worker](#when-your-only-session-is-a-worker).
 - The URI of the lead has `lead=true`. `riff who` shows it.
 - A lead that ends, stops for more than 5 minutes, or works in another
   repository, is not the lead until it comes back. A lead that leaves
@@ -2013,6 +2019,38 @@ riff lead
 ```
 
 You can also ask the session: *"Be my lead in riff."*
+
+### When your only session is a worker
+
+A worker is never the lead. So when each of your sessions in a
+repository is a worker, you have no lead there. This is what you see:
+
+- `riff who` shows no session of you with the tag `lead`.
+- A `tell` to `lead` fails, and says to ask your own user. So a worker
+  asks you in its own terminal.
+- A verify request goes to each of your live sessions with no claim.
+- No session of you can pause or resume the riff. You can, from a
+  terminal.
+- `riff lead` in a worker fails: `a worker cannot be the lead. Make
+  another session the lead.`
+
+To get a lead, start a session that is not a worker in the repository.
+It becomes the lead when it starts:
+
+```sh
+cd ~/src/riff
+claude
+riff who
+```
+
+```mermaid
+flowchart TD
+    S[a session registers or starts] --> W{a worker?}
+    W -- yes --> N[not the lead]
+    W -- no --> F{another session of the person holds in the repository?}
+    F -- yes --> N
+    F -- no --> L[the lead]
+```
 
 ### Ask the lead
 
@@ -3015,6 +3053,64 @@ sequenceDiagram
 never clears the lead: you work in it. It compacts the lead at the end
 of a wave (see the next section). To see the context of a worker, type
 `/context` in its pane.
+
+### A worker that must clear its context
+
+A worker that released its last claim must clear its context before
+its next claim. Its context still has the old item. To see such a
+worker:
+
+```sh
+riff who
+```
+
+```text
+SESSION                  STATE       ROLE    DETAIL
+mike@thelio:riff (5b1e)  must clear  worker  must clear its context before its next claim  fresh start 41m ago
+mike@thelio:riff (9c0d)  idle        worker  ready for work for 6m  fresh start 2m ago
+```
+
+- `must clear` is the state of the worker. `riff top` and
+  `riff workers` show the same words.
+- `fresh start 41m ago` is the time since the worker last started with
+  a fresh context: a new agent process, or `/clear`. Each worker that
+  is not offline shows it.
+- The reply to the release tells the worker to clear. The reply to each
+  keep-alive tells it too.
+- A claim before the clear fails: `clear your context first: type
+  /clear, or run riff workers next`.
+- The worker clears itself with `riff workers next` (see
+  [A worker goes to its next item](#a-worker-goes-to-its-next-item)).
+  To clear it by hand, type `/clear` in its pane.
+- A resume and a compaction are no fresh context. The worker still
+  must clear.
+- `riff-server` sends the worker no wake until the clear. A message to
+  it waits in its thread. After the clear, the worker gets the wake.
+
+```mermaid
+sequenceDiagram
+    participant W as worker
+    participant S as riff-server
+    participant L as lead
+    W->>S: release (the last claim)
+    S-->>W: released: clear your context
+    Note over S: the worker is in must clear
+    L->>S: tell the worker: request: claim issue-12
+    Note over S: the message waits, no wake
+    W->>S: claim issue-12
+    S-->>W: refused: clear your context first
+    W->>W: riff workers next, then /clear
+    W->>S: start (clear)
+    S-->>W: the wake that it missed
+    W->>S: claim issue-12
+    S-->>W: granted
+```
+
+Only the own release of the worker counts. A claim that goes in
+another way leaves the worker ready: a new start, an end, a release by
+the lead, or a claim of another session after the worker was gone for
+5 minutes. So a worker that you resume in the middle of an item claims
+its item again, and goes on.
 
 ### riff compacts the lead at the end of a wave
 

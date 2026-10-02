@@ -735,6 +735,8 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: None,
 /// };
 /// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
@@ -1486,6 +1488,8 @@ mod tests {
             worker,
             stopping: false,
             claims_secs: 0,
+            must_clear: false,
+            fresh_secs: None,
             state: Some(riff_core::wire::SessionState::Idle),
         }
     }

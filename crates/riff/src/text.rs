@@ -19,8 +19,8 @@ use riff_core::selector::Selector;
 use crate::api::{Checked, Claimed, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
-    AdminSet, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, Posted, Removed,
-    Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
+    AdminSet, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, Posted, ReleaseReply,
+    Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -1393,9 +1393,34 @@ pub fn connect_no_sign_in(server: &str, error: &anyhow::Error) -> String {
     )
 }
 
-/// The answer to a release.
-pub fn released(thread: &ThreadName, item: &str) -> String {
-    format!("You released {item} in {thread}.")
+/// The answer to a release. For a worker that released its last claim,
+/// it carries the ask to clear its context (01M3X9XB37TQCXWPNFZRMRGJB4).
+///
+/// ```
+/// use riff_core::wire::ReleaseReply;
+///
+/// let thread = "como-technologies/riff".parse()?;
+/// assert_eq!(
+///     riff::text::released(&thread, "issue-12", ReleaseReply::default()),
+///     "You released issue-12 in como-technologies/riff."
+/// );
+/// assert_eq!(
+///     riff::text::released(&thread, "issue-12", ReleaseReply { must_clear: true }),
+///     "You released issue-12 in como-technologies/riff. It was your last claim: clear your \
+///      context before your next claim. Run riff workers next, then end your turn. \
+///      Until then, each claim is refused."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn released(thread: &ThreadName, item: &str, reply: ReleaseReply) -> String {
+    let mut text = format!("You released {item} in {thread}.");
+    if reply.must_clear {
+        text.push_str(
+            " It was your last claim: clear your context before your next claim. Run riff \
+             workers next, then end your turn. Until then, each claim is refused.",
+        );
+    }
+    text
 }
 
 /// The answer to a release by the lead for the session `holder`
@@ -1651,6 +1676,8 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     worker,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
@@ -1696,6 +1723,8 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
+///         must_clear: false,
+///         fresh_secs: None,
 ///         state: Some(SessionState::Busy),
 ///     },
 ///     SessionInfo {
@@ -1706,6 +1735,8 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: true,
 ///         stopping: false,
 ///         claims_secs: 60,
+///         must_clear: false,
+///         fresh_secs: None,
 ///         state: Some(SessionState::Idle),
 ///     },
 /// ];
@@ -1760,6 +1791,8 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     worker: false,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: Some(riff_core::wire::SessionState::Idle),
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");

@@ -174,6 +174,22 @@ pub fn utc(ms: u64) -> String {
 /// // A record from before the cause.
 /// (record.by, record.command) = (None, None);
 /// assert!(show(&record).ends_with("  (cause not known)"));
+///
+/// // The start of a worker, and the release of its last claim.
+/// let session: riff_core::name::SessionUri = "riff://ann@heron/acme/app?session=s1".parse()?;
+/// record.change = Change::SessionStarted(riff_core::record::SessionStarted {
+///     session: session.clone(),
+///     reason: riff_core::wire::StartReason::Clear,
+///     worker: true,
+/// });
+/// assert!(show(&record).contains(&format!("session_started  {session} (clear, a worker)")));
+/// record.change = Change::Released(riff_core::record::Released {
+///     session: session.clone(),
+///     thread: "acme/app".parse()?,
+///     item: "issue-7".into(),
+///     must_clear: true,
+/// });
+/// assert!(show(&record).contains(&format!("released  issue-7 in acme/app by {session}, must clear")));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn show(record: &Record) -> String {
@@ -200,7 +216,19 @@ pub fn show(record: &Record) -> String {
         Change::JoinedThread(m) => format!("joined_thread  {} by {}", m.thread, m.session),
         Change::LeftThread(m) => format!("left_thread  {} by {}", m.thread, m.session),
         Change::Claimed(c) => format!("claimed  {} in {} by {}", c.item, c.thread, c.session),
-        Change::Released(c) => format!("released  {} in {} by {}", c.item, c.thread, c.session),
+        Change::Released(r) => format!(
+            "released  {} in {} by {}{}",
+            r.item,
+            r.thread,
+            r.session,
+            if r.must_clear { ", must clear" } else { "" }
+        ),
+        Change::SessionStarted(s) => format!(
+            "session_started  {} ({}{})",
+            s.session,
+            s.reason.word(),
+            if s.worker { ", a worker" } else { "" }
+        ),
         Change::LeadSet(m) => format!("lead_set  {} by {}", m.thread, m.session),
         Change::RiffStateSet(s) => format!("riff_state_set  {}", s.state),
         Change::SettingChanged(s) => format!(
@@ -235,8 +263,12 @@ fn thread_of(record: &Record) -> Option<String> {
         Change::JoinedThread(m) | Change::LeftThread(m) | Change::LeadSet(m) => {
             Some(m.thread.to_string())
         }
-        Change::Claimed(c) | Change::Released(c) => Some(c.thread.to_string()),
-        Change::RiffStateSet(_) | Change::SettingChanged(_) | Change::SessionForgotten(_) => None,
+        Change::Claimed(c) => Some(c.thread.to_string()),
+        Change::Released(r) => Some(r.thread.to_string()),
+        Change::RiffStateSet(_)
+        | Change::SettingChanged(_)
+        | Change::SessionForgotten(_)
+        | Change::SessionStarted(_) => None,
     }
 }
 

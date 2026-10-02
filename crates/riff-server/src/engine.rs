@@ -87,7 +87,7 @@
 //! ```
 //! # #[tokio::main(flavor = "current_thread")] async fn main() {
 //! use std::time::Instant;
-//! use riff_core::wire::{Join, Resume};
+//! use riff_core::wire::{Join, Register, Resume};
 //! use riff_server::engine::{Engine, Open};
 //! use riff_server::log::{Timing, write};
 //! use riff_server::state::State;
@@ -120,7 +120,10 @@
 //! let call = engine.authenticate(None, join).unwrap();
 //! engine.dispatch(call).await.unwrap();
 //!
-//! // A session that is the first of its user is the lead: it resumes.
+//! // The first session of its user that registers is the lead: it
+//! // resumes.
+//! let register = Register { me: me.clone(), worker: false };
+//! engine.dispatch(engine.authenticate(None, register).unwrap()).await.unwrap();
 //! let call = engine.authenticate(None, Resume { me }).unwrap();
 //! assert!(engine.dispatch(call).await.unwrap().changed);
 //! # }
@@ -144,7 +147,7 @@ use tokio::sync::{Notify, broadcast, oneshot};
 use crate::auth::SignedIn;
 use crate::log::Written;
 use crate::state::{
-    Announce, Caller, Cause, Check, Code, Command, CommandKind, Delivery, Forget, MakeRiff,
+    Announce, Arrive, Caller, Cause, Check, Code, Command, CommandKind, Delivery, Forget, MakeRiff,
     Refused, Role, Signal, State, Stopping,
 };
 use crate::trace::{Denied, DeniedCode, Named, Outcome, Traced};
@@ -718,9 +721,10 @@ impl Engine {
 
     /// Makes the state know the caller, for a signal or a query. A
     /// caller that the state does not know first sends `register`
-    /// through [`Engine::dispatch`], and waits for its write
-    /// (01M3WRD97EZJK3AABXECXEY133). It refuses a session ID that the
-    /// state knows under another user (R159).
+    /// ([`Arrive`]) through [`Engine::dispatch`], and waits for its
+    /// write (01M3WRD97EZJK3AABXECXEY133). That register makes no lead
+    /// (01M3X9XA3H6YF0QCYSNB2P0CT2). It refuses a session ID that the state knows under
+    /// another user (R159).
     async fn known(&self, admitted: &Admitted) -> Result<(), Failed> {
         let me = admitted.caller.me();
         let known = {
@@ -733,13 +737,9 @@ impl Engine {
         if known {
             return Ok(());
         }
-        let register = Register {
-            me: me.clone(),
-            worker: false,
-        };
         self.dispatch(Authenticated {
             admitted: admitted.clone(),
-            command: register,
+            command: Arrive { me: me.clone() },
         })
         .await
     }
@@ -753,7 +753,8 @@ impl Engine {
     /// (01M3WRD97EZJK3AABXECXEY133). It makes no entry in the queue, and
     /// it does not wait for the writer. A signal of a session that the
     /// state does not know first registers the session. The reply says
-    /// if the server asks the session to stop.
+    /// if the server asks the session to stop, and if the session must
+    /// clear its context (01M3X9XB37TQCXWPNFZRMRGJB4).
     pub async fn signal(&self, caller: &Admitted, signal: Signal) -> Result<AliveReply, Failed> {
         self.known(caller).await?;
         Ok(self.set(caller.who(), signal))
@@ -833,7 +834,8 @@ impl Engine {
     /// positions, under the lock. Then, for each entry in order, it
     /// writes the log line of a command with no record (01M3X4Z62RJREQ5H8F18Y85T6V),
     /// sends the effects and tells the call that the entry is done. The
-    /// call can be gone: the change is done.
+    /// call can be gone: the change is done. A session that a record
+    /// takes out of MustClear gets the wake that it missed (01M3X9XBMB3R718Z81BYXTHMZ0).
     ///
     /// A proof of other records is an error of the writer: the chunk
     /// fails, and the engine stops.
@@ -843,11 +845,16 @@ impl Engine {
             self.stop("the writer gave the proof of other records");
             return;
         }
+        let mut missed = Vec::new();
         {
             let mut core = self.core();
             for entry in &chunk.entries {
-                core.state.written(&entry.made);
+                missed.extend(core.state.written(&entry.made));
             }
+        }
+        for wake in missed {
+            // A send fails only when nobody listens. That is not an error.
+            let _ = self.0.wakes.send(wake);
         }
         for entry in chunk.entries {
             if let (true, Some(sent)) = (entry.made.is_empty(), &entry.sent) {
@@ -885,7 +892,8 @@ impl Engine {
     /// Sends the effects of the written records of one command: the
     /// wakes and the `tail` event of each `posted` record. With
     /// sign-in, the event holds the keys of the sender, so that a
-    /// reader verifies the message (R199).
+    /// reader verifies the message (R199). A session that must clear its
+    /// context gets no wake (01M3X9XBMB3R718Z81BYXTHMZ0): the message waits in its thread.
     fn effects(&self, made: &[Record]) {
         for record in made {
             let Change::Posted(posted) = &record.change else {
@@ -898,6 +906,7 @@ impl Engine {
                 delivery.tailed.keys = Keys::from([(from.to_owned(), keys)]);
             }
             delivery.tailed.trusted = self.0.people.trusted();
+            self.core().state.keep_wakes(&mut delivery.wakes);
             // A send fails only when nobody listens. That is not an error.
             for wake in delivery.wakes {
                 let _ = self.0.wakes.send(wake);

@@ -158,6 +158,7 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     let dir = repo();
     let dir = dir.path();
     let status = ["status", "write the tests"];
+    stdout(riff(&env, &server, dir, Some("a6cf2205-1"), &["lead"])).await;
     stdout(riff(&env, &server, dir, Some("a6cf2205-1"), &status)).await;
     let out = stdout(riff(&env, &server, dir, Some("a6cf2205-1"), &["who"])).await;
     let lines: Vec<&str> = out.lines().collect();

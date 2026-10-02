@@ -133,7 +133,7 @@ async fn a_pipe_gets_no_color_unless_asked() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    output(riff(&server, dir, Some("a1"), &["read"])).await;
+    output(riff(&server, dir, Some("a1"), &["lead"])).await;
 
     let auto = output(riff(&server, dir, None, &["who"])).await;
     assert!(
@@ -162,6 +162,7 @@ async fn a_blocked_status_is_red() {
     let dir = repo();
     let dir = dir.path();
     let blocked = ["status", "--blocked", "waits for a review", "merge"];
+    output(riff(&server, dir, Some("a1"), &["lead"])).await;
     output(riff(&server, dir, Some("a1"), &["resume"])).await;
     output(riff(&server, dir, Some("a1"), &blocked)).await;
     // A watch makes a1 live, so its state is blocked.

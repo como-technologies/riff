@@ -376,6 +376,8 @@ impl Top<'_> {
     ///     worker,
     ///     stopping: false,
     ///     claims_secs: 600,
+    ///     must_clear: false,
+    ///     fresh_secs: None,
     ///     state: Some(state),
     /// };
     /// let sessions = [

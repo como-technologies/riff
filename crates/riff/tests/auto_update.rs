@@ -217,7 +217,7 @@ async fn update_auto_sets_and_shows_the_setting() {
 async fn one_update_runs_for_the_machine_with_the_release_of_the_server() {
     let machine = Machine::new(0).await;
     // The first session of mike in the repository is the lead.
-    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    assert!(machine.run("lead", &["lead"]).await.status.success());
     machine.run("w", &["update", "--auto", "on"]).await;
 
     let mut children: Vec<_> = (0..6)
@@ -283,7 +283,7 @@ async fn nothing_runs_with_update_auto_off() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_update_keeps_the_old_riff_and_tells_the_lead_once() {
     let machine = Machine::new(101).await;
-    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    assert!(machine.run("lead", &["lead"]).await.status.success());
     machine.run("w", &["update", "--auto", "on"]).await;
 
     let out = machine.run("w1", &["who"]).await;
@@ -424,7 +424,7 @@ async fn output(mut command: Command) -> Output {
 async fn the_update_of_a_process_in_a_removed_directory_runs_in_a_directory_that_exists() {
     let machine = Machine::new(0).await;
     fake_cargo_with_dir(machine.bin.path());
-    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    assert!(machine.run("lead", &["lead"]).await.status.success());
     machine.run("w", &["update", "--auto", "on"]).await;
 
     let gone = machine
@@ -481,7 +481,7 @@ async fn riff_update_by_hand_in_a_removed_directory_runs_in_the_home_directory()
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failure_for_a_missing_directory_leaves_the_release_untried() {
     let machine = Machine::new(0).await;
-    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    assert!(machine.run("lead", &["lead"]).await.status.success());
     let tag = newer_tag();
     let place = "pangolin/como-technologies/riff";
     let args = ["--place", place, "update", "--background", "--tag", &tag];
@@ -507,7 +507,7 @@ async fn a_release_with_no_cargo_is_tried_once() {
     let machine = Machine::new(0).await;
     std::fs::remove_file(machine.bin.path().join("cargo")).unwrap();
     let path = format!("{}:/usr/bin:/bin", machine.bin.path().display());
-    assert!(machine.run("lead", &["whoami"]).await.status.success());
+    assert!(machine.run("lead", &["lead"]).await.status.success());
     machine.run("w", &["update", "--auto", "on"]).await;
 
     for n in 1..4 {

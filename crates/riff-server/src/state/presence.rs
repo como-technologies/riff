@@ -1,9 +1,10 @@
 //! The presence: the part of the state that is in memory.
 //!
 //! The presence says if a session is there: its place, its open watch
-//! streams, its last call, its last sign of life, whether it ended, its
-//! status and its worker mark. It also holds the read cursors, which the
-//! checkpoint keeps. A start of the server loses the rest.
+//! streams, its last call, its last sign of life, whether it ended and
+//! its status. It also holds the read cursors, which the checkpoint
+//! keeps. A start of the server loses the rest. The worker mark is not
+//! here: it is in the log (01M3X9X9M079WGFPJZHNXH9VEP).
 //!
 //! No record is needed to change the presence: a keep-alive, a status
 //! and a read change it. Each such change is a [`Signal`]
@@ -72,7 +73,7 @@ pub struct Presence {
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
-/// let place = Signal::Place { place: mike.place().clone(), worker: None };
+/// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
 /// Signal::Alive.set(&mut presence, mike.who(), Instant::now());
 /// # let _ = &mut riff;
@@ -89,7 +90,7 @@ pub struct Presence {
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
-/// let place = Signal::Place { place: mike.place().clone(), worker: None };
+/// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
 /// Signal::Alive.set(&mut riff, mike.who(), Instant::now());
 /// # Ok::<(), riff_core::name::NameError>(())
@@ -103,9 +104,8 @@ pub enum Signal {
     /// A keep-alive: a sign of life that is not a call (R204).
     Alive,
     /// The place of the session, from a `register`. It makes a session
-    /// that the presence does not know. `worker` sets the worker mark;
-    /// `None` keeps it.
-    Place { place: Place, worker: Option<bool> },
+    /// that the presence does not know.
+    Place { place: Place },
     /// The status of the session, set at `at_ms`.
     Status { status: Status, at_ms: u64 },
     /// A watch stream opened.
@@ -132,7 +132,9 @@ impl Signal {
     /// Sets the signal of the session `who` in `presence`, at `now`.
     /// Only [`Signal::Place`] makes a session that the presence does not
     /// know: each other signal of such a session changes nothing. The
-    /// reply says if the server asks the session to stop.
+    /// reply says if the server asks the session to stop. The state adds
+    /// the ask to clear: it is in the riff
+    /// ([`State::signal`](super::State::signal)).
     pub fn set(self, presence: &mut Presence, who: &Who, now: Instant) -> AliveReply {
         if let Signal::Read { thread, seq, all } = self {
             let cursor = presence.cursors.entry((who.clone(), thread)).or_insert(0);
@@ -156,12 +158,9 @@ impl Signal {
                 session.called(now);
             }
             Signal::Alive => session.live(now),
-            Signal::Place { place, worker } => {
+            Signal::Place { place } => {
                 session.place = place;
                 session.called(now);
-                if let Some(worker) = worker {
-                    session.worker = worker;
-                }
             }
             Signal::Status { status, at_ms } => {
                 session.status = Some(SetStatus {
@@ -190,6 +189,7 @@ impl Signal {
         }
         AliveReply {
             stop: session.stopping,
+            clear: false,
         }
     }
 }
@@ -215,9 +215,8 @@ impl Presence {
     ///   cursors, and each cursor of a thread that is gone.
     pub(super) fn applied(&mut self, record: &Record, riff: &Riff, at: Option<Instant>) {
         match &record.change {
-            Change::Claimed(claimed) | Change::Released(claimed) => {
-                self.claims_changed(claimed.session.who(), at);
-            }
+            Change::Claimed(claimed) => self.claims_changed(claimed.session.who(), at),
+            Change::Released(released) => self.claims_changed(released.session.who(), at),
             Change::RiffStateSet(_) => self.riff_changed = at.or(self.riff_changed),
             Change::SessionForgotten(forgotten) => {
                 let who = forgotten.session.who();
@@ -229,6 +228,7 @@ impl Presence {
             | Change::JoinedThread(_)
             | Change::LeftThread(_)
             | Change::LeadSet(_)
+            | Change::SessionStarted(_)
             | Change::SettingChanged(_) => {}
         }
     }
@@ -304,9 +304,6 @@ pub(super) struct Session {
     /// True after an end call, until the session comes back.
     pub(super) ended: bool,
     pub(super) status: Option<SetStatus>,
-    /// True when the session registered as a worker
-    /// (01M3NT4M159EHN5W8JRTQ417N4).
-    pub(super) worker: bool,
     /// True when the server asked this idle worker to stop, and it made
     /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     pub(super) stopping: bool,
@@ -343,7 +340,6 @@ impl Session {
             alive: Some(now),
             ended: false,
             status: None,
-            worker: false,
             stopping: false,
             claims_changed: now,
         }
@@ -409,7 +405,7 @@ mod tests {
     use std::time::Duration;
 
     use riff_core::name::SessionUri;
-    use riff_core::record::{Claimed, Forgotten, Member, RiffStateSet};
+    use riff_core::record::{Claimed, Forgotten, Member, Released, RiffStateSet};
     use riff_core::wire::RiffState;
 
     use super::super::riff::apply;
@@ -486,7 +482,7 @@ mod tests {
         let since = Instant::now();
         let at = since + Duration::from_secs(9);
         let mut presence = presence(since);
-        let record = record(Change::Released(claim_of(&ann())));
+        let record = record(Change::Released(Released::of(claim_of(&ann()))));
         presence.applied(&record, &Riff::default(), Some(at));
         assert_eq!(claims_changed(&presence, &ann()), at);
         assert_eq!(claims_changed(&presence, &bob()), since);
@@ -511,7 +507,7 @@ mod tests {
         presence.riff_changed = Some(since);
         let changes = [
             Change::Claimed(claim_of(&bob())),
-            Change::Released(claim_of(&bob())),
+            Change::Released(Released::of(claim_of(&bob()))),
             Change::RiffStateSet(RiffStateSet {
                 state: RiffState::Running,
             }),

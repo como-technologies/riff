@@ -264,8 +264,11 @@ async fn a_server_without_sign_in_keeps_no_signature() {
 #[tokio::test]
 async fn a_copy_of_a_signed_message_is_refused() {
     let (service, base) = common::start(true, &[]).await;
-    // a is the first session of mike here, so it is the lead.
+    // a is the first session of mike that registers here, so it is the
+    // lead.
     let a = Caller::new(&service, &base, A).await;
+    let register = serde_json::json!({ "me": A });
+    assert_eq!(a.call(&base, "register", &register).await.status(), 200);
     let worker = Caller::new(&service, &base, LEAD).await;
 
     let mut request = a.unsigned(REPO, "request: claim issue-12");

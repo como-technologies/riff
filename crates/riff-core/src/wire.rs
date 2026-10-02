@@ -183,7 +183,7 @@ calls! {
     Leave => "/v1/leave", ();
     Post => "/v1/post", Posted;
     Claim => "/v1/claim", ClaimReply;
-    Release => "/v1/release", ();
+    Release => "/v1/release", ReleaseReply;
     ReleaseFor => "/v1/release/for", ();
     Lead => "/v1/lead", LeadReply;
     Pause => "/v1/pause", RiffReply;
@@ -245,6 +245,11 @@ pub struct AliveReply {
     /// or the end of its watch at a wake, takes it back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stop: bool,
+    /// True when the session is a worker that must clear its context
+    /// before its next claim (01M3X9XB37TQCXWPNFZRMRGJB4). The reply to its last release
+    /// said so too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear: bool,
 }
 
 /// A worker session sends a keep-alive this often, so that it stops soon
@@ -484,6 +489,15 @@ pub struct SessionInfo {
     /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
     #[serde(default)]
     pub claims_secs: u64,
+    /// True when the session is a worker that must clear its context
+    /// before its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub must_clear: bool,
+    /// The seconds since the last fresh start of the session: a new
+    /// agent process or a clear of its context. `None` when the log has
+    /// no such start (01M3X9XC99KY4RQY36A7CYWY11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fresh_secs: Option<u64>,
     /// The state of the session, that the server derives
     /// (01M3QB6CJ1XCQG5B1BVR8AF3B4). An older server sends none: see
     /// [`SessionInfo::fill_state`].
@@ -520,6 +534,7 @@ impl SessionInfo {
             self.live,
             riff == RiffState::Paused,
             blocked,
+            self.must_clear,
             !self.uri.claims().is_empty(),
         ));
     }
@@ -532,18 +547,23 @@ impl SessionInfo {
 /// 1. `offline`: the session has no open watch stream.
 /// 2. `paused`: the riff is paused.
 /// 3. `blocked`: its current status, not a stale one, is blocked.
-/// 4. `busy`: it holds a claim.
-/// 5. `idle`: each other session.
+/// 4. `must_clear`: it is a worker that must clear its context before
+///    its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS).
+/// 5. `busy`: it holds a claim.
+/// 6. `idle`: each other session.
 ///
 /// ```
 /// use riff_core::wire::SessionState;
 ///
-/// // live, paused, blocked, claims
-/// assert_eq!(SessionState::of(false, true, true, true), SessionState::Offline);
-/// assert_eq!(SessionState::of(true, true, true, true), SessionState::Paused);
-/// assert_eq!(SessionState::of(true, false, true, true), SessionState::Blocked);
-/// assert_eq!(SessionState::of(true, false, false, true), SessionState::Busy);
-/// assert_eq!(SessionState::of(true, false, false, false), SessionState::Idle);
+/// // live, paused, blocked, must clear, claims
+/// assert_eq!(SessionState::of(false, true, true, true, true), SessionState::Offline);
+/// assert_eq!(SessionState::of(true, true, true, true, true), SessionState::Paused);
+/// assert_eq!(SessionState::of(true, false, true, true, true), SessionState::Blocked);
+/// assert_eq!(SessionState::of(true, false, false, true, false), SessionState::MustClear);
+/// assert_eq!(SessionState::of(true, false, false, false, true), SessionState::Busy);
+/// assert_eq!(SessionState::of(true, false, false, false, false), SessionState::Idle);
+/// assert_eq!(serde_json::to_string(&SessionState::MustClear).unwrap(), r#""must_clear""#);
+/// assert_eq!(SessionState::MustClear.word(), "must clear");
 /// assert_eq!(serde_json::to_string(&SessionState::Busy).unwrap(), r#""busy""#);
 /// assert_eq!(SessionState::Blocked.word(), "blocked");
 /// ```
@@ -554,20 +574,24 @@ pub enum SessionState {
     Offline,
     Paused,
     Blocked,
+    MustClear,
     Busy,
     Idle,
 }
 
 impl SessionState {
     /// The state of a session from its facts: an open watch stream
-    /// (`live`), a paused riff, a current blocked status, and a claim.
-    pub fn of(live: bool, paused: bool, blocked: bool, claims: bool) -> Self {
+    /// (`live`), a paused riff, a current blocked status, a worker that
+    /// must clear its context, and a claim.
+    pub fn of(live: bool, paused: bool, blocked: bool, must_clear: bool, claims: bool) -> Self {
         if !live {
             SessionState::Offline
         } else if paused {
             SessionState::Paused
         } else if blocked {
             SessionState::Blocked
+        } else if must_clear {
+            SessionState::MustClear
         } else if claims {
             SessionState::Busy
         } else {
@@ -581,6 +605,7 @@ impl SessionState {
             SessionState::Offline => "offline",
             SessionState::Paused => "paused",
             SessionState::Blocked => "blocked",
+            SessionState::MustClear => "must clear",
             SessionState::Busy => "busy",
             SessionState::Idle => "idle",
         }
@@ -1008,6 +1033,23 @@ pub struct Release {
     pub item: String,
 }
 
+/// The reply to a release.
+///
+/// ```
+/// use riff_core::wire::ReleaseReply;
+///
+/// assert_eq!(serde_json::to_string(&ReleaseReply::default()).unwrap(), "{}");
+/// let last: ReleaseReply = serde_json::from_str(r#"{"must_clear":true}"#).unwrap();
+/// assert!(last.must_clear);
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReleaseReply {
+    /// True when the release was the last claim of a worker: the worker
+    /// must clear its context before its next claim (01M3X9XB37TQCXWPNFZRMRGJB4).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub must_clear: bool,
+}
+
 /// `POST /v1/release/for`: the lead of a user frees the claim of
 /// another session of that user (01M3WG243BW7P6E1ME0DFNQF8C). The
 /// server posts a note to the thread of the claim.
@@ -1039,10 +1081,86 @@ pub struct LeadReply {
 
 /// `POST /v1/start`: a new start of the session: a new agent process,
 /// a resume or a `/clear` (01M3JEE1QQCFS5TMZW5N2DAD2D). Its claims are free
-/// at once. It keeps its ID, its threads and its lead.
+/// at once. It keeps its ID, its threads and its lead. The call says
+/// why the session starts, and if it is a worker (01M3X9X9M079WGFPJZHNXH9VEP).
+///
+/// ```
+/// use riff_core::wire::{Start, StartReason};
+///
+/// let start: Start = serde_json::from_str(
+///     r#"{"me":"riff://mike@pangolin/o/r?session=a1","reason":"clear","worker":true}"#,
+/// ).unwrap();
+/// assert_eq!(start.reason, StartReason::Clear);
+/// assert!(start.worker);
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Start {
     pub me: SessionUri,
+    /// `process`, `resume` or `clear`.
+    pub reason: StartReason,
+    /// True when the session is a worker: `riff workers run` started it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worker: bool,
+}
+
+/// Why a `session_started` record is there (01M3X9X9M079WGFPJZHNXH9VEP). A `start` call
+/// sends `process`, `resume` or `clear`.
+///
+/// | Reason | Meaning | A fresh context |
+/// |---|---|---|
+/// | `process` | A new agent process. | Yes |
+/// | `resume` | The agent process resumed an old conversation. | No |
+/// | `clear` | The agent cleared its context. | Yes |
+/// | `join` | The session came with no new start: a `register`. | No |
+/// | `other` | A reason that this build does not know. | No |
+///
+/// ```
+/// use riff_core::wire::StartReason;
+///
+/// let read = |json: &str| serde_json::from_str::<StartReason>(json).unwrap();
+/// assert_eq!(read(r#""process""#), StartReason::Process);
+/// assert_eq!(read(r#""wake""#), StartReason::Other);
+/// assert!(StartReason::Clear.is_fresh() && StartReason::Process.is_fresh());
+/// assert!(!StartReason::Resume.is_fresh() && !StartReason::Join.is_fresh());
+/// assert!(StartReason::Resume.is_start() && !StartReason::Join.is_start());
+/// assert_eq!(StartReason::Clear.word(), "clear");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StartReason {
+    Process,
+    Resume,
+    Clear,
+    Join,
+    /// A reason that this build does not know.
+    #[serde(other)]
+    Other,
+}
+
+impl StartReason {
+    /// True for a start with a fresh context: it ends MustClear.
+    pub fn is_fresh(self) -> bool {
+        matches!(self, StartReason::Process | StartReason::Clear)
+    }
+
+    /// True for a reason that a `start` call can have.
+    pub fn is_start(self) -> bool {
+        matches!(
+            self,
+            StartReason::Process | StartReason::Resume | StartReason::Clear
+        )
+    }
+
+    /// The word of the reason, as the JSON has it.
+    pub fn word(self) -> &'static str {
+        match self {
+            StartReason::Process => "process",
+            StartReason::Resume => "resume",
+            StartReason::Clear => "clear",
+            StartReason::Join => "join",
+            StartReason::Other => "other",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

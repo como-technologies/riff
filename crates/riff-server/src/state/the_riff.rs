@@ -209,9 +209,17 @@ impl Command for SetIdle {
     }
 }
 
+/// The number of sessions that the records of a `forget` forgot.
+pub(super) fn forgotten(made: &[Record]) -> usize {
+    made.iter()
+        .filter(|record| matches!(record.change, Change::SessionForgotten(_)))
+        .count()
+}
+
 /// The timer of the server forgets each session with no sign of life
-/// for [`SESSION_EXPIRY`]. The reply is the number of sessions that it
-/// forgot.
+/// for [`SESSION_EXPIRY`]. It gives one `released` record for each
+/// claim of the session, then the `session_forgotten` record
+/// (01M3X9XCSBR11ACD86FNXKF8JH). The reply is the number of sessions that it forgot.
 #[derive(Clone, Copy, Debug)]
 pub struct Forget;
 
@@ -245,6 +253,7 @@ impl Command for Forget {
                 None => now.ms.saturating_sub(known.at_ms) >= expiry,
             };
             if expired {
+                changes.extend(view.released_all(who));
                 changes.push(Change::SessionForgotten(Forgotten {
                     session: known.uri.clone(),
                 }));
@@ -254,6 +263,6 @@ impl Command for Forget {
     }
 
     fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> usize {
-        made.len()
+        forgotten(made)
     }
 }

@@ -157,6 +157,9 @@ async fn a_line_of_one_person_shows_at_the_other() {
 async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
     let api = start_server().await;
     let (mike_lead, brett_lead) = (lead_of("mike"), lead_of("brett"));
+    // A register makes the first session of a user the lead.
+    api.register(&mike_lead).await.unwrap();
+    api.register(&brett_lead).await.unwrap();
     let mut mike_wakes = Box::pin(api.watch(&mike_lead).await.unwrap());
     let mut brett_wakes = Box::pin(api.watch(&brett_lead).await.unwrap());
     let mut mike = Client::start(&api, "mike", "thelio", &[]).await;

@@ -16,7 +16,7 @@ use riff::{
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Freed, Kind, RiffState, SessionInfo, Status};
+use riff_core::wire::{Freed, Kind, RiffState, SessionInfo, StartReason, Status};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
@@ -1030,8 +1030,8 @@ async fn main() -> Result<()> {
                     println!("{}", text::released_for(&thread, &item, &holder));
                 }
                 None => {
-                    api.release(&me, &thread, &item).await?;
-                    println!("{}", text::released(&thread, &item));
+                    let reply = api.release(&me, &thread, &item).await?;
+                    println!("{}", text::released(&thread, &item, reply));
                 }
             }
         }
@@ -1642,7 +1642,7 @@ async fn session_start(server: &str) -> String {
     let facts = async {
         match uri {
             Some(uri) => {
-                let facts = start_facts(api, &uri, input.source.is_new_start());
+                let facts = start_facts(api, &uri, input.source.reason());
                 match tokio::time::timeout(hook::STATE_WAIT, facts).await {
                     Ok(Ok((lead, riff, freed, who))) => (
                         Some(uri.with_lead(lead)),
@@ -1728,17 +1728,19 @@ async fn session_start(server: &str) -> String {
 
 /// Whether the server names `me` as the lead, the state of the riff
 /// (01M3JCG48QPCNNTKW34FTR0AMR), the claims that a new start freed
-/// (01M3JEE1QQCFS5TMZW5N2DAD2D), and the sessions of the riff.
+/// (01M3JEE1QQCFS5TMZW5N2DAD2D), and the sessions of the riff. With a
+/// `reason`, it sends the start call first, with the reason and the
+/// worker mark of the session (01M3X9X9M079WGFPJZHNXH9VEP). A compaction has no reason,
+/// and sends no start.
 async fn start_facts(
     api: Api,
     me: &SessionUri,
-    new_start: bool,
+    reason: Option<StartReason>,
 ) -> Result<(bool, RiffState, Vec<Freed>, Vec<SessionInfo>)> {
     let api = api.signed_in(me.who().session())?;
-    let freed = if new_start {
-        api.start(me).await?
-    } else {
-        Vec::new()
+    let freed = match reason {
+        Some(reason) => api.start(me, reason, worker::is_worker()).await?,
+        None => Vec::new(),
     };
     let riff = api.riff(me).await?;
     let who = api.who(me, false).await?;

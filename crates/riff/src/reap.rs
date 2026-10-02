@@ -242,6 +242,8 @@ pub fn lost(reaper: &mut Reaper, tmux: &Tmux) -> Vec<Watched> {
 ///     worker: true,
 ///     stopping: false,
 ///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
 ///     state: None,
 /// };
 /// let sessions = [
