@@ -775,6 +775,9 @@ The three rules of the store design stay. These rules come with them:
   not in the list.
 - The order of the kinds in the code is not a part of the format: a
   reader finds a kind by its name.
+- Two parts of a `posted` record have no value `other` yet: the kind
+  of the message, and the fields of a selector. #431 gives it to them,
+  before go-live.
 
 | Record | Where `apply` reads the riff | It stays |
 |---|---|---|

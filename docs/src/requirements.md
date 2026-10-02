@@ -662,22 +662,22 @@
   that was released wrote read with no change, from 1.0.0 on. A test
   reads the log and the checkpoint of each release, and compares the
   state and the bytes.
-- **01M3XM2C18TT8VSKGD77YPZG53** A record with a value that a build read as
-  `other`, in its change or in its `by`, counts as a skipped record:
-  the build writes no checkpoint past it, and `riff server` counts it.
-  The fields are `reason`, `scope` and the class in `by`. The `state`
-  of a `pause_set` record has no `other`.
-- **01M3XM2C3MND6YB24SGZ565353** A kind of record and a kind of command are
-  never renamed, and the name of a removed kind is never used again. A
-  file in the fixtures lists the kinds of each release. A test fails
-  when a name of the list is gone from the code. The enum of the kinds
-  and its list come from one place.
-- **01M3XM2C60TKF05NETHY8EYP3P** The format of 1.0.0 has only the kinds of
-  a build that was released: it has no `riff_state_set`. A fixture holds
-  one record of each kind, and CI replays it. A test compares the state
-  of a full replay with the state of a start from a checkpoint at each
-  position of the fixture. The import of go-live writes only kinds of
-  1.0.0.
+- **01M3XM2C18TT8VSKGD77YPZG53** A record with a value that a build
+  read as `other`, in its change or in its `by`, counts as a skipped
+  record: the build writes no checkpoint past it, and `riff server`
+  counts it. The fields are `reason`, `scope` and the class in `by`.
+  The `state` of a `pause_set` record has no `other`.
+- **01M3XM2C3MND6YB24SGZ565353** A kind of record and a kind of
+  command are never renamed, and the name of a removed kind is never
+  used again. A file in the fixtures lists the kinds of each release. A
+  test fails when a name of the list is gone from the code. The enum of
+  the kinds and its list come from one place.
+- **01M3XM2C60TKF05NETHY8EYP3P** The format of 1.0.0 has only the kinds
+  of a build that was released: it has no `riff_state_set`. A fixture
+  holds one record of each kind, and CI replays it. A test compares the
+  state of a full replay with the state of a start from a checkpoint at
+  each position of the fixture. The import of go-live writes only kinds
+  of 1.0.0.
 - **01M3WRD8WJ2JF9077PRDX04T9A** Each command of `riff-server` goes
   through `Engine::dispatch`, and each signal goes through
   `Engine::signal`. The engine module owns the state, its lock and the
