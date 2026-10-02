@@ -1432,6 +1432,9 @@
 - **01M3ZE3Z80274JFTN53DNJ2F2G** A release that moves the state of the
   shared riff is rehearsed on the stage before its tag, by the how-to
   in the book. The results go on its issue.
+- **01M3ZGRZ0F3G93Q3ET9GGWKT7E** `just cloud log` and `just cloud
+  errors` give each argument to `gcloud` whole, with its spaces and
+  quotes. `just cloud log` with no `--limit` shows the last 50 lines.
 
 ## One instance
 

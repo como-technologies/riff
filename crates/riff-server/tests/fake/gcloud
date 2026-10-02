@@ -3,8 +3,12 @@
 # $FAKE_GCLOUD_LOG. A describe call succeeds only when the call starts
 # with a line of the file $FAKE_GCLOUD_FOUND. A list call of the alert
 # prints a name only then. For tests/gcs.rs, it prints
-# the access token of the fake Cloud Storage.
+# the access token of the fake Cloud Storage. When $FAKE_GCLOUD_ARGS is
+# set, it also writes each argument of each call on a line of that file.
 echo "$*" >> "${FAKE_GCLOUD_LOG:-/dev/null}"
+if [ -n "${FAKE_GCLOUD_ARGS:-}" ]; then
+    printf '%s\n' "$@" >> "$FAKE_GCLOUD_ARGS"
+fi
 case "$*" in
     "auth print-access-token"*) echo fake-token; exit 0 ;;
     "billing projects describe"*) echo True; exit 0 ;;

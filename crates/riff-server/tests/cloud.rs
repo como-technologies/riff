@@ -314,6 +314,60 @@ fn the_errors_recipe_reads_only_the_lines_with_the_severity_error() {
     );
 }
 
+/// Runs `just cloud RECIPE ARGS` with a fake `gcloud`. Returns each
+/// argument of each `gcloud` call on a line.
+fn just_cloud(recipe: &str, args: &[&str]) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let calls = dir.path().join("args");
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake");
+    let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("just")
+        .arg("--justfile")
+        .arg(deploy().join("cloud.just"))
+        .arg("--working-directory")
+        .arg(deploy())
+        .arg(recipe)
+        .args(args)
+        .env("PATH", path)
+        .env("FAKE_GCLOUD_ARGS", &calls)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    fs::read_to_string(calls).unwrap()
+}
+
+/// Each argument of `just cloud log` and `just cloud errors` reaches
+/// `gcloud` whole, also an argument with spaces and quotes. The log
+/// shows 50 lines when no `--limit` is given (01M3ZGRZ0F3G93Q3ET9GGWKT7E).
+#[test]
+fn the_log_recipes_keep_each_argument_whole() {
+    let filter = r#"jsonPayload.message:"imported the objects""#;
+    let args = just_cloud("log", &["--log-filter", filter]);
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(
+        &args[..5],
+        ["run", "services", "logs", "read", "riff-server"]
+    );
+    assert!(args.contains(&filter), "{args:?}");
+    assert!(args.windows(2).any(|w| w == ["--limit", "50"]), "{args:?}");
+
+    let args = just_cloud("log", &["stage", "--limit", "20"]);
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args[4], "riff-stage", "{args:?}");
+    assert!(args.windows(2).any(|w| w == ["--limit", "20"]), "{args:?}");
+    assert!(!args.contains(&"50"), "{args:?}");
+
+    let args = just_cloud("errors", &["stage", "20"]);
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args[4], "riff-stage", "{args:?}");
+    assert!(args.windows(2).any(|w| w == ["--limit", "20"]), "{args:?}");
+    assert!(args.contains(&"severity>=ERROR"), "{args:?}");
+}
+
 #[test]
 fn setup_with_no_owner_makes_no_alert_and_says_how() {
     let out = command(&deploy(), "cloud-setup.sh", &[], &[], None);

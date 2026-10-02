@@ -59,22 +59,23 @@ status NAME='':
         echo "service: none"
     fi
 
-# Show the log of the service of a riff: [NAME] [gcloud options]
+# Show the log of the service of a riff: [NAME] [gcloud options]. With no --limit, the last 50 lines
+[positional-arguments]
 log *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
-    set -- {{ARGS}}
     . ./settings.sh
-    if [ $# -eq 0 ]; then
-        set -- --limit 50
-    fi
+    case " $* " in
+        *" --limit "*|*" --limit="*) ;;
+        *) set -- --limit 50 "$@" ;;
+    esac
     gcloud run services logs read "$CLOUD_SERVICE" --project "$CLOUD_PROJECT" --region "$CLOUD_REGION" "$@"
 
 # Show the log lines of the service with the severity ERROR or more: [NAME] [LIMIT]
+[positional-arguments]
 errors *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
-    set -- {{ARGS}}
     . ./settings.sh
     gcloud run services logs read "$CLOUD_SERVICE" --project "$CLOUD_PROJECT" --region "$CLOUD_REGION" \
         --limit "${1:-50}" --log-filter 'severity>=ERROR'

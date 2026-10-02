@@ -1670,6 +1670,13 @@ just cloud log
 just cloud log --limit 20
 ```
 
+With no `--limit`, the log shows the last 50 lines. Each other option
+goes to `gcloud run services logs read` as you write it, quotes too:
+
+```sh
+just cloud log --log-filter 'jsonPayload.message:"imported the objects"'
+```
+
 Each start shows `the provider knows the OAuth client`. When Google
 refuses the client, the log shows `riff-server stops` and why.
 
