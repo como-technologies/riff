@@ -203,12 +203,23 @@ pub fn init() {
 
 /// The log lines of a test: the events of the thread of the test, in
 /// the format of the server.
+///
+/// The test process has one subscriber for all its threads, as the
+/// server has ([`init`]). It gives each line to the [`testing::Capture`]
+/// of the thread that wrote it, and drops the line of a thread with no
+/// capture.
+///
+/// A subscriber for each thread loses lines. `tracing` keeps for each
+/// call site, for the whole process, whether a subscriber wants it.
+/// With one subscriber, it asks only the thread that uses the call site
+/// first. So a thread with no subscriber turned the call site off for
+/// each thread.
 #[cfg(test)]
 pub(crate) mod testing {
-    use std::sync::{Arc, Mutex};
+    use std::cell::RefCell;
+    use std::sync::{Arc, Mutex, Once};
 
     use serde_json::Value;
-    use tracing::subscriber::DefaultGuard;
 
     use super::JsonLines;
 
@@ -216,9 +227,20 @@ pub(crate) mod testing {
     #[derive(Clone, Default)]
     struct Kept(Arc<Mutex<Vec<u8>>>);
 
-    impl std::io::Write for Kept {
+    thread_local! {
+        /// The lines of the capture of this thread, when it has one.
+        static KEPT: RefCell<Option<Kept>> = const { RefCell::new(None) };
+    }
+
+    /// The writer of one line: to the capture of this thread, or to
+    /// nothing.
+    struct ToThread(Option<Kept>);
+
+    impl std::io::Write for ToThread {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
+            if let Some(kept) = &self.0 {
+                kept.0.lock().unwrap().extend_from_slice(bytes);
+            }
             Ok(bytes.len())
         }
 
@@ -227,25 +249,45 @@ pub(crate) mod testing {
         }
     }
 
+    /// Starts the one subscriber of the test process, one time.
+    fn subscribe() {
+        static STARTED: Once = Once::new();
+        STARTED.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .event_format(JsonLines)
+                // A thread that ends has no capture.
+                .with_writer(|| {
+                    ToThread(KEPT.try_with(|kept| kept.borrow().clone()).ok().flatten())
+                })
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("the test process has no other subscriber");
+        });
+    }
+
     /// Keeps each log line of this thread while it lives. An async test
     /// needs a runtime with one thread, so that each task writes here.
+    /// A thread has at most one.
     pub(crate) struct Capture {
         kept: Kept,
-        _guard: DefaultGuard,
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            KEPT.with_borrow_mut(|kept| *kept = None);
+        }
     }
 
     impl Capture {
         pub(crate) fn start() -> Capture {
+            subscribe();
+            // A call site that a thread used before the subscriber
+            // started is off. This asks the subscriber again.
+            tracing::callsite::rebuild_interest_cache();
             let kept = Kept::default();
-            let writer = kept.clone();
-            let subscriber = tracing_subscriber::fmt()
-                .event_format(JsonLines)
-                .with_writer(move || writer.clone())
-                .finish();
-            Capture {
-                kept,
-                _guard: tracing::subscriber::set_default(subscriber),
-            }
+            let old = KEPT.with_borrow_mut(|of_thread| of_thread.replace(kept.clone()));
+            assert!(old.is_none(), "this thread has a capture");
+            Capture { kept }
         }
 
         /// The text of the lines so far.
@@ -286,7 +328,7 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::testing::capture;
+    use super::testing::{Capture, capture};
 
     #[test]
     fn a_field_with_a_caller_is_json_in_the_line() {
@@ -298,6 +340,24 @@ mod tests {
         assert_eq!(lines[1]["named"], "no json");
         // Each other field stays text.
         assert_eq!(lines[1]["other"], r#"{"a":1}"#);
+    }
+
+    /// One call site of a log line, for two threads.
+    fn shared() {
+        tracing::error!("a line of a call site that two threads use");
+    }
+
+    /// A thread with no capture that writes a line first does not hide
+    /// that line from the capture of another thread
+    /// (01M3X4Z62RJREQ5H8F18Y85T6V).
+    #[test]
+    fn a_thread_with_no_capture_does_not_hide_a_line_from_a_capture() {
+        let capture = Capture::start();
+        std::thread::spawn(shared).join().unwrap();
+        shared();
+        let lines = capture.lines();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["severity"], "ERROR");
     }
 
     #[test]
