@@ -51,6 +51,9 @@ async fn serve(
         Some(store) => Service::load(config, store).await.unwrap(),
         None => Service::new(config),
     };
+    // The owner of the settings is a record of the start: wait for its
+    // write, as `main` does.
+    service.save().await.unwrap();
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (service, url)

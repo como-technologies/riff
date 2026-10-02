@@ -817,12 +817,45 @@ riff-server log --dir ~/.local/state/riff-server | grep issue-7
 riff-server log --dir ~/.local/state/riff-server | grep 'the session ann/s1)'
 ```
 
+### Find who changed the people
+
+The people of the riff are records of the log too: who joined, who is
+a member, an admin or the owner, and each request for the owner role.
+To find each change of one person, or each change that one person
+made:
+
+```sh
+riff-server log --dir ~/.local/state/riff-server | grep bob@gmail.com
+riff-server log --dir ~/.local/state/riff-server | grep 'the person ada)'
+```
+
+```text
+12  2026-10-01T12:00:00Z  person_joined  ada@gmail.com as ada  (admit, the sign-in ada@gmail.com)
+13  2026-10-01T12:00:00Z  owner_set  ada@gmail.com  (admit, the sign-in ada@gmail.com)
+14  2026-10-01T12:01:00Z  member_invited  bob@gmail.com  (invite, the person ada)
+21  2026-10-01T12:09:00Z  member_removed  bob@gmail.com  (remove, the person ada)
+```
+
+| Record | Meaning |
+|---|---|
+| `riff_made` | The riff has its ID. |
+| `person_joined` | An email signed in for the first time. It holds its USER. |
+| `member_invited`, `member_removed` | An email is a member, or it is not. A removal ends each sign-in of the person. |
+| `admin_set` | An email is an admin, or a member again. |
+| `owner_set` | An email is the owner. With no email, the owner is gone. |
+| `owner_asked`, `owner_denied` | An admin asks for the owner role, or the owner keeps it. |
+| `signins_ended` | Each sign-in of a person ended: `riff logout --all`. |
+
+An email is in a record, and in the answer to a member. It is in no
+line of the log of the server: the line of a refused change of the
+people has its `code` and no `reason`.
+
 A command that changed nothing has no record. `riff-server` writes one
 line to its own log for it, with the field `result`:
 
 | `result` | Meaning |
 |---|---|
-| `refused` | The server refused the command. The line has the `code` and the `reason`. |
+| `refused` | The server refused the command. The line has the `code` and the `reason`. A change of the people has no `reason`. |
 | `no_change` | The server took the command, and nothing changed. |
 | `failed` | The server did not write the change, and stopped. The severity is `ERROR` when the write failed. It is `WARNING`, with the `reason`, when the server stopped first. |
 | `denied` | The server refused the token of the call, or the call had none. The line has the `path` of the call. |
@@ -851,7 +884,7 @@ jq -c 'select(.result == "denied")' server.log
 - `caller` is the caller that the token proved. `key` is the
   thumbprint of the device key of that token. It is not a secret.
 - `named` is the caller that a refused call named. No token proved it.
-- No line holds the body of a message or a token.
+- No line holds the body of a message, a token or an email.
 
 For the shared server, filter the shared log:
 

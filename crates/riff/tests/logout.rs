@@ -37,6 +37,8 @@ async fn start(admins: &[&str]) -> (Service, Api) {
 async fn serve(config: impl FnOnce(&str) -> Config) -> (Service, Api) {
     let (listener, url) = common::listen().await;
     let service = Service::new(config(&url));
+    // The riff ID is a record of the start: wait for its write.
+    service.save().await.unwrap();
     let api = Api::new(&url);
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });

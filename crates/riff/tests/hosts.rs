@@ -1062,11 +1062,11 @@ async fn a_host_works_against_a_server_with_sign_in() {
     });
     let person = Api::new(&url);
     let jkt = riff::device::key(&url).unwrap().thumbprint();
-    // Only the owner or an admin resumes the whole riff.
-    service.tokens().name_owner("mike@comotechnologies.io");
+    // Only the owner or an admin resumes the whole riff: the first
+    // person that signs in is the owner.
     let pair = service
-        .tokens()
-        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
+        .admit("mike@comotechnologies.io", false, &jkt)
+        .await
         .unwrap();
     riff::login::store(&url, &signed(pair)).unwrap();
 

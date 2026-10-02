@@ -576,8 +576,7 @@
   `who --all` shows it in the place of the last record that names it.
 - **R127** `riff-server` saves the changed token store at most once
   each second.
-- **R128** `riff-server` replies to a sign-in, a revoke and a change of
-  the people only after it saved the token store.
+- **R128** Replaced by 01M3XA877YZQ649SWB5TN60V5P.
 - **01M3TFG527M04TA7ESM970X3B8** `riff-server` replies to a refresh and
   to a swap for a session token before it saves the token store. While
   the last save of the token store failed, a refresh or a swap first
@@ -819,6 +818,69 @@
   the MustClear mark and the time of the last fresh start of each
   session. A start from a checkpoint gives the life cycle of a full
   replay.
+- **01M3XA875QZ584JBGA37853PWX** The people are state of the log: the
+  riff ID, the email of each USER, the members, the admins that the
+  owner made, the owner, a riff whose owner is gone, and the request
+  for the owner role with its time. Only `apply` of the kinds
+  `riff_made`, `person_joined`, `member_invited`, `member_removed`,
+  `admin_set`, `owner_set`, `owner_asked`, `owner_denied` and
+  `signins_ended` changes them. The checkpoint holds each of them, so
+  they stay after a restart with a bucket. `who`, `members` and
+  `GET /v1/sign-in` read them from the written copy.
+- **01M3XA87NXAP6TEMB34QJ28HVP** Each change of the people is a command
+  through `Engine::dispatch`: `admit`, `invite`, `remove`, `set_admin`,
+  `pass_owner`, `take_owner`, `deny_owner`, `grant_owner`, `end_owner`,
+  `name_owner` and `revoke`. Only a person sends `invite`, `remove`,
+  `set_admin`, `pass_owner`, `take_owner`, `deny_owner`, `revoke` and
+  `set_idle`. Only the sign-in sends `admit`. Only the server sends
+  `grant_owner`, `end_owner` and `name_owner`. A riff with no sign-in
+  refuses each command of the people with the code `no_sign_in`. A
+  command that names a person who is not a member is refused with the
+  code `not_member`.
+- **01M3XA87F70CD3WH4STADSCW6S** The role of a caller with a token
+  comes from the people of the pending copy, with the admins of the
+  settings (R210). So a command that comes after a change of a role in
+  the queue gets the new role. A query reads the people of the written
+  copy. The admins of the settings, the public address and the times of
+  the owner role are settings of the state: each view holds them, and
+  they are not in the log.
+- **01M3XA877YZQ649SWB5TN60V5P** The first step of a sign-in is the
+  command `admit`. Its caller is the sign-in: the verified email of the
+  provider. Then the token store starts the chain. `admit` makes no
+  record for a person that the people know, so a second try after a
+  stop makes no second record. A sign-in gets its reply after the write
+  of the records of `admit` and the save of the token store. A revoke
+  and a change of the people get their reply after the write of their
+  records.
+- **01M3XA87A9GGFA89RQXWSKY0V6** `signins.json` holds only the sign-ins
+  and their chains. Each sign-in keeps the position of the pending copy
+  at the check of its `admit`. After the write of a `member_removed` or
+  a `signins_ended` record, the writer ends each sign-in of the person
+  from before the position of the record. In the same step, the token
+  store keeps that position for the person, and it starts no sign-in of
+  the person below it. A load drops each sign-in below the last such
+  position of its USER. So a stop between the write and the end of the
+  sign-ins lets no removed person in. The reply to `remove` and to
+  `revoke` has the number of sign-ins that ended.
+- **01M3XA87HE06Z6M32ZJPSYSYRZ** Each riff has a riff ID. It is a field
+  of the command `make_riff` and of its record `riff_made`: the first
+  record of a new log. A new riff gets a random ID. `make_riff` makes
+  `riff_made` only for a riff with no ID, and `apply` keeps the first
+  ID. `GET /v1/sign-in` gives the ID of the written copy. A restart on
+  the same bucket keeps it. A server with no bucket gets a new riff ID
+  at each start.
+- **01M3XA87KQ6ESMQ4W1W1PTW766** `apply` of `owner_set` stores only the
+  owner, and ends the request that waits. A record with no email says
+  that the owner is gone. `handle` keeps the old owner an admin and a
+  member: it gives `member_invited` and `admin_set` for the old owner
+  before `owner_set`, in the same chunk. `set_admin` for a person who
+  is not a member gives `member_invited`, then `admin_set`. The notes
+  of `take_owner`, `deny_owner`, `grant_owner` and `end_owner` are
+  `posted` records in the chunk of the command.
+- **01M3XA87CJHCGZX283ZQAFKARZ** No log line holds an email. An email
+  is in a record, and in a reply to a member. The line of a refused
+  command of the people has its code and no reason. The line of a
+  sign-in names its USER.
 
 - **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
   Its name is `checkpoint/`, the position in 20 digits, `-`, and the
@@ -1216,11 +1278,8 @@
   to run the command again. `riff` keeps the old sign-in until the
   person runs `riff logout`. At a riff with sign-in, the riff ID finds
   an old sign-in (01M3JNVBRS35B3CD67367JF7SJ).
-- **01M3JNVBPMZ1K9WX7Q7DP6Y0DH** Each riff with sign-in has a riff ID.
-  `riff-server` makes a random one with a new state, saves it with the
-  tokens, and gives it in `GET /v1/sign-in`. A restart on the same
-  bucket keeps it. A server with no bucket gets a new riff ID at each
-  start.
+- **01M3JNVBPMZ1K9WX7Q7DP6Y0DH** Replaced by
+  01M3XA87HE06Z6M32ZJPSYSYRZ.
 - **01M3JNVBRS35B3CD67367JF7SJ** `riff` keeps the riff ID with each
   sign-in. Before its first token in a process, `riff` compares it with
   the riff ID of the server. When they differ, or the sign-in has none,
@@ -1824,9 +1883,8 @@
   environment of `riff-server`, `--public-url`, `--owner`, a sign-in of
   the owner, and `riff invite EMAIL` for each person. No secret is on
   the page.
-- **01M3JN3ANE676DT5WQ2NTG47DK** `riff-server` keeps the owner and the
-  members with the tokens in its state. They stay after a restart with
-  a bucket.
+- **01M3JN3ANE676DT5WQ2NTG47DK** Replaced by
+  01M3XA875QZ584JBGA37853PWX.
 - **01M3JY7T109BR860EQBSKEFDHY** `riff admin add EMAIL` makes a person
   an admin and a member. `riff admin remove EMAIL` makes an admin a
   member again. Only the owner can do either. The owner stays an admin.
@@ -2257,7 +2315,8 @@
   least 1). The server saves them. `riff workers idle` shows them.
   `riff workers idle --per-host N --after SECS` sets them. In a riff
   with sign-in, only the owner or an admin sets them. In a riff with no
-  sign-in, each person can.
+  sign-in, each person can. The change goes as the person, also from
+  the shell of an agent session (01M3XA87NXAP6TEMB34QJ28HVP).
 - **01M3Q5A0WRQT4SGPSD0CQFF011** For each worker that the server asks
   to stop, the server posts a note to the repository thread of the
   worker, to the lead of its user: the short session ID, the host, the

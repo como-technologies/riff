@@ -11,6 +11,7 @@
 //! | Claims | thread and item | [`Riff`] | The log. The session that holds the item. |
 //! | Leads | user and repository thread | [`Riff`] | The log. The lead session of the user. |
 //! | Riff state | none: one for the server | [`Riff`] | The log. The pause of the riff and of each repository, and the settings of idle workers. |
+//! | People | email, or USER | [`Riff`] | The log. The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role (01M3XA875QZ584JBGA37853PWX). |
 //! | Known sessions | who | [`Riff`] | The log. The URI and the time of the last record that names the session, and its life cycle: the worker mark, the MustClear mark and the time of its last fresh start (see [`sessions`]). |
 //! | Sessions | who | [`Presence`] | Memory. The place, open watch streams, the last call, the last sign of life, whether it ended, and its last status. |
 //! | Read cursors | who and thread | [`Presence`] | Memory and the checkpoint. The last sequence number that the session read. |
@@ -40,6 +41,7 @@
 //! | threads | [`threads`] | [`Threads`](threads::Threads) | [`Join`], [`Leave`], [`Post`], [`Announce`] |
 //! | work | [`work`] | [`Work`](work::Work) | [`Claim`], [`Release`], [`ReleaseFor`], [`Lead`] |
 //! | the riff | [`the_riff`] | [`TheRiff`](the_riff::TheRiff) | [`MakeRiff`], [`Pause`], [`Resume`], [`SetIdle`], [`Forget`] |
+//! | people | [`people`] | [`People`] | [`Admit`], `Invite`, `Remove`, `SetAdmin`, `PassOwner`, `TakeOwner`, `DenyOwner`, [`GrantOwner`], [`EndOwner`], [`NameOwner`], `Revoke` |
 //!
 //! The wire type of a command that a client can send is its command
 //! type (01M3WRD8TBDPA4JNEZY6J4N2EX). A new command is a type with
@@ -243,7 +245,7 @@
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use riff_core::name::{SessionUri, ThreadName, Who};
@@ -256,6 +258,7 @@ use riff_core::wire::{
 };
 
 pub mod command;
+pub mod people;
 pub mod presence;
 pub mod riff;
 pub mod sessions;
@@ -265,14 +268,17 @@ pub mod threads;
 pub mod view;
 pub mod work;
 
-pub use command::{Caller, Cause, Class, Code, Command, CommandKind, Now, Refused, Role, permits};
+pub use command::{
+    Caller, Cause, Class, Code, Command, CommandKind, Done, Now, Refused, Role, permits,
+};
+pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
 pub use presence::{Presence, Signal};
 pub use riff::{Riff, apply};
 pub use sessions::Arrive;
 pub use snapshot::Snapshot;
 pub use the_riff::{Forget, MakeRiff, Pauses};
 pub use threads::{Announce, may_read};
-pub use view::View;
+pub use view::{Settings, View};
 pub use work::{MUST_CLEAR, released_for};
 
 use presence::Session;
@@ -324,6 +330,9 @@ pub struct State {
     /// The last position of the log, when the last records of the log
     /// are of a kind that this build skipped ([`State::continue_after`]).
     skipped_to: u64,
+    /// The settings of the server that `handle` and `reply` read
+    /// (01M3XA87F70CD3WH4STADSCW6S). They are not in the log.
+    settings: Settings,
 }
 
 impl Default for State {
@@ -339,6 +348,7 @@ impl Default for State {
             clock: None,
             presence: Presence::default(),
             skipped_to: 0,
+            settings: Settings::default(),
         }
     }
 }
@@ -438,6 +448,24 @@ impl State {
             clock: Some((now, now_ms)),
             ..State::default()
         }
+    }
+
+    /// The same state with these settings of the server
+    /// (01M3XA87F70CD3WH4STADSCW6S): the admins of the settings, the
+    /// public address, and the times of the owner role. Each view holds
+    /// them.
+    ///
+    /// ```
+    /// use riff_server::owner::Timing;
+    /// use riff_server::state::{Role, Settings, State};
+    ///
+    /// let settings = Settings::new(&["boss@x.io".into()], "https://riff.x.io", Timing::default());
+    /// let state = State::default().with_settings(settings);
+    /// // A USER with no email is a member, also with the name of an admin.
+    /// assert_eq!(state.role("boss"), Role::Member);
+    /// ```
+    pub fn with_settings(self, settings: Settings) -> State {
+        State { settings, ..self }
     }
 
     /// Makes a state from the records of the log, with a writer. See
@@ -703,6 +731,9 @@ impl State {
     ///
     /// 1. A session ID that the state knows under another user is
     ///    refused ([`State::check_user`]).
+    ///    A command of the people skips the steps 1 and 2: its caller
+    ///    is the person of the token, with no place, and it changes no
+    ///    presence.
     /// 2. A caller that the state does not know registers first: the
     ///    state runs [`Arrive`] for it, and queues its records
     ///    ([`Check::registered`]). A `register` and an `end` do not
@@ -740,7 +771,10 @@ impl State {
     ) -> Check<C::Note> {
         let mut caller = caller.clone();
         let mut registered = None;
-        if caller.class() != Class::Server {
+        // A command of the people names no `me`: its caller is the
+        // person of the token, with no place. So it changes no presence.
+        let has_place = !C::KIND.of_people();
+        if has_place && matches!(caller.class(), Class::Person | Class::Session) {
             let me = caller.me().clone();
             if let Err(reason) = self.check_user(&me) {
                 return Check {
@@ -764,7 +798,9 @@ impl State {
             }
             caller = caller.with_worker(self.pending.sessions().worker(who));
         }
-        let result = permits(C::KIND, &caller, command.needs())
+        let needs = command.needs(&caller);
+        let result = permits(C::KIND, &caller, needs)
+            .map_err(|refused| self.no_owner(needs, refused))
             .and_then(|()| command.handle(&caller, &self.pending_view(), self.now(now)));
         if result.is_ok()
             && let Some(signal) = command.signal(&caller)
@@ -776,6 +812,70 @@ impl State {
             caller,
             result,
         }
+    }
+
+    /// The refusal of `permits` for a command that needs the owner, in
+    /// a riff with no owner: its text names `riff owner --take`
+    /// (01M3Q63NNC6SC03BFCG80M7B4D). `permits` reads only the caller, so
+    /// it cannot know that the riff has no owner.
+    fn no_owner(&self, needs: Role, refused: Refused) -> Refused {
+        if needs == Role::Owner && self.pending.people().owner().is_none() {
+            Refused::new(refused.code, people::NO_OWNER)
+        } else {
+            refused
+        }
+    }
+
+    /// The role of `user` for the check of a command: from the pending
+    /// copy, with the admins of the settings
+    /// (01M3XA87F70CD3WH4STADSCW6S). The queue is in order, so a command
+    /// that comes after a change of a role gets the new role.
+    pub fn role(&self, user: &str) -> Role {
+        self.pending_view().role_of(user)
+    }
+
+    /// The people of the written copy, with the settings: for each
+    /// query. See [`View::roles`], [`View::persons`] and
+    /// [`View::riff_owner`].
+    pub fn people(&self) -> View<'_> {
+        self.written_view()
+    }
+
+    /// The ID of the riff in the written copy, when the riff has one
+    /// (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
+    pub fn riff_id(&self) -> Option<String> {
+        self.written.people().riff_id().map(str::to_owned)
+    }
+
+    /// True when the riff has an owner, or had one, in the written
+    /// copy (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+    pub fn owned(&self) -> bool {
+        self.written.people().owned()
+    }
+
+    /// The email of the admin whose request for the owner role waits,
+    /// in the written copy.
+    pub fn asks(&self) -> Option<String> {
+        self.written.people().asks().map(str::to_owned)
+    }
+
+    /// True when a request for the owner role waits, and its time ended
+    /// at `now`, on the clock of the state: the clock that gave the
+    /// request its time.
+    pub fn owner_due(&self, now: Instant) -> bool {
+        self.written.people().is_due(self.ms(now))
+    }
+
+    /// The position of the last end of the sign-ins of each USER, in
+    /// the written copy (01M3XA87A9GGFA89RQXWSKY0V6).
+    pub fn signins_ended(&self) -> BTreeMap<String, u64> {
+        self.written.people().ended().clone()
+    }
+
+    /// Each USER that holds `email`, in the written copy: the people
+    /// whose sign-ins a `member_removed` record ends.
+    pub fn users_of(&self, email: &str) -> Vec<String> {
+        self.written.people().users_of(email)
     }
 
     /// Gives each change its position, its time and its cause, and
@@ -832,11 +932,11 @@ impl State {
         &self,
         caller: &Caller,
         command: &C,
-        made: &[Record],
+        done: &Done,
         note: C::Note,
         now: Instant,
     ) -> C::Reply {
-        command.reply(caller, &self.written_view(), made, note, self.now(now))
+        command.reply(caller, &self.written_view(), done, note, self.now(now))
     }
 
     /// Runs a command in the sync form: [`State::check`], then
@@ -900,7 +1000,7 @@ impl State {
         now: Instant,
     ) -> Result<C::Reply, Refused> {
         let (caller, made, note) = self.run_as(&trusted(me), command, now)?;
-        Ok(self.reply(&caller, command, &made, note, now))
+        Ok(self.reply(&caller, command, &Done::of(made), note, now))
     }
 
     /// Sets a signal of the session `who` in the presence
@@ -996,7 +1096,9 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&lead, now);
-    /// state.set_idle(&lead, Some(0), None, now).unwrap();
+    /// // Only a person changes the settings.
+    /// let mike: SessionUri = "riff://mike@pangolin".parse()?;
+    /// state.set_idle(&mike, Some(0), None, now).unwrap();
     /// state.worker(&w1, true, now);
     /// state.watch_started(&w1, now);
     ///
@@ -1748,18 +1850,7 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn live_leads(&self, user: &str, now: Instant) -> Vec<Who> {
-        let view = self.written_view();
-        let leads: BTreeSet<Who> = view
-            .riff
-            .work()
-            .leads
-            .keys()
-            .filter(|key| key.0 == user)
-            .filter_map(|key| view.lead_of(key, now))
-            .filter(|who| !view.gone(who, now))
-            .cloned()
-            .collect();
-        leads.into_iter().collect()
+        self.written_view().live_leads(user, now)
     }
 
     /// True when `user` shows a sign of life at `now`: a session of the
@@ -1806,13 +1897,7 @@ impl State {
     /// The thread of each repository of the riff, sorted: the repository
     /// of each known session, also a gone one (01M3MN14ZCTRVD3T455P6TFK1B).
     pub fn repositories(&self) -> Vec<ThreadName> {
-        let threads: BTreeSet<ThreadName> = self
-            .presence
-            .sessions
-            .values()
-            .filter_map(|s| s.place.default_thread())
-            .collect();
-        threads.into_iter().collect()
+        self.written_view().repositories()
     }
 
     /// Returns unread messages (or all of them) and marks them as read,
@@ -2045,6 +2130,7 @@ impl State {
         View {
             riff: &self.written,
             presence: &self.presence,
+            settings: &self.settings,
         }
     }
 
@@ -2052,6 +2138,7 @@ impl State {
         View {
             riff: &self.pending,
             presence: &self.presence,
+            settings: &self.settings,
         }
     }
 
@@ -2118,6 +2205,7 @@ mod tests {
     use riff_core::name::Place;
     use riff_core::record::Forgotten;
     use riff_core::wire::Kind;
+    use std::collections::BTreeSet;
 
     fn uri(text: &str) -> SessionUri {
         text.parse().unwrap()
@@ -2125,6 +2213,12 @@ mod tests {
 
     fn thread(text: &str) -> ThreadName {
         text.parse().unwrap()
+    }
+
+    /// The person of `me` on the command line: no session. Only a
+    /// person changes the settings.
+    fn person_of(me: &SessionUri) -> SessionUri {
+        uri(&format!("riff://{}@pangolin", me.who().user()))
     }
 
     fn to(selectors: &[&str]) -> Vec<Selector> {
@@ -2918,7 +3012,9 @@ mod tests {
         state.claim(&api(), &repo(), "issue-7", now).unwrap();
         state.release(&api(), &repo(), "issue-7", now).unwrap();
         state.lead(&docs(), now).unwrap();
-        state.set_idle(&docs(), Some(3), None, now).unwrap();
+        state
+            .set_idle(&person_of(&docs()), Some(3), None, now)
+            .unwrap();
         let log: Vec<Record> = state.take_queue();
         assert!(log.len() > 10, "{log:?}");
 
@@ -2969,7 +3065,9 @@ mod tests {
             .unwrap();
         state.claim(&tests(), &repo(), "issue-6", now).unwrap();
         state.lead(&docs(), now).unwrap();
-        state.set_idle(&docs(), Some(3), None, now).unwrap();
+        state
+            .set_idle(&person_of(&docs()), Some(3), None, now)
+            .unwrap();
         let forgotten = state.queue(
             &Cause::of(&Caller::server(), CommandKind::Forget),
             &[Change::SessionForgotten(Forgotten { session: docs() })],
@@ -3583,7 +3681,9 @@ mod tests {
         let now = Instant::now();
         let mut state = State::default();
         state.register(&lead(api()), now);
-        state.set_idle(&lead(api()), Some(0), None, now).unwrap();
+        state
+            .set_idle(&person_of(&api()), Some(0), None, now)
+            .unwrap();
         let w1 = idle_worker(&mut state, "pangolin", "w1", now);
         let later = now + Duration::from_secs(80);
         assert_eq!(stopped(&mut state, later), ["w1"]);
@@ -3602,11 +3702,13 @@ mod tests {
         for id in ["w1", "w2", "w3"] {
             idle_worker(&mut state, "pangolin", id, now);
         }
-        let set = state.set_idle(&lead(api()), None, Some(120), now);
+        let set = state.set_idle(&person_of(&api()), None, Some(120), now);
         assert_eq!(set.unwrap().after_secs, 120);
         assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
 
-        let idle = state.set_idle(&lead(api()), Some(2), None, now).unwrap();
+        let idle = state
+            .set_idle(&person_of(&api()), Some(2), None, now)
+            .unwrap();
         assert_eq!(
             idle,
             Idle {
@@ -3628,7 +3730,9 @@ mod tests {
         let now = Instant::now();
         let mut state = State::default();
         state.register(&lead(api()), now);
-        state.set_idle(&lead(api()), Some(0), None, now).unwrap();
+        state
+            .set_idle(&person_of(&api()), Some(0), None, now)
+            .unwrap();
         let w1 = idle_worker(&mut state, "pangolin", "w1", now);
         state.watch_ended(w1.who(), now);
         let agent = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
@@ -3986,7 +4090,10 @@ mod tests {
     fn a_start_from_a_checkpoint_gives_the_pauses_of_a_full_replay() {
         let now = Instant::now();
         let mut state = State::with_writer(now, T0);
-        state.run(&Caller::server(), &MakeRiff, now).unwrap();
+        let make_riff = MakeRiff {
+            riff_id: "r1".into(),
+        };
+        state.run(&Caller::server(), &make_riff, now).unwrap();
         let brett = strata("b1");
         for me in [api(), brett.clone()] {
             state.register(&me, now);

@@ -32,13 +32,13 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::ThreadName;
-use riff_core::record::{Change, Forgotten, PauseSet, Record, Scope, SettingChanged};
+use riff_core::record::{Change, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged};
 use riff_core::wire::{
     Idle, Pause, PauseInfo, RepositoryPause, Resume, RiffReply, RiffState, SetIdle,
 };
 use serde::{Deserialize, Serialize};
 
-use super::command::{Caller, Class, Code, Command, CommandKind, Now, Refused, Role};
+use super::command::{Caller, Class, Code, Command, CommandKind, Done, Now, Refused, Role};
 use super::view::View;
 use super::{GONE, SESSION_EXPIRY};
 
@@ -254,11 +254,17 @@ impl Saved {
 }
 
 /// The first start of a riff (01M3WRD99M99PNGP8ME50KC6WS). The server
-/// sends it when the log has no record: it makes the `pause_set` record
-/// that pauses the whole riff. In a riff with a record it changes
-/// nothing. E3 (#393) adds the `riff_made` record.
-#[derive(Clone, Copy, Debug)]
-pub struct MakeRiff;
+/// sends it at each start. In a log with no record, it makes the
+/// `riff_made` record with its ID, and the `pause_set` record that
+/// pauses the whole riff. In a riff with records and no ID, it makes
+/// only the `riff_made` record: a log from before the ID. It never
+/// replaces an ID that the riff has (01M3XA87HE06Z6M32ZJPSYSYRZ).
+#[derive(Clone, Debug)]
+pub struct MakeRiff {
+    /// The ID of the riff, when the riff has none: a random one for a
+    /// new riff, or the ID of today at the import of go-live.
+    pub riff_id: String,
+}
 
 impl Command for MakeRiff {
     const KIND: CommandKind = CommandKind::MakeRiff;
@@ -272,6 +278,11 @@ impl Command for MakeRiff {
         _now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
         let mut changes = Vec::new();
+        if view.riff.people().riff_id().is_none() {
+            changes.push(Change::RiffMade(RiffMade {
+                riff_id: self.riff_id.clone(),
+            }));
+        }
         if view.riff.position() == 0 {
             changes.push(Change::PauseSet(PauseSet {
                 scope: Scope::Riff,
@@ -281,7 +292,7 @@ impl Command for MakeRiff {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 }
 
 /// The repository of a call: for a session, the repository of its
@@ -358,12 +369,12 @@ fn set_pause(
 
 /// The reply to a pause or a resume: the pauses of the written copy as
 /// the caller sees them, and whether the command changed one.
-fn riff_reply(caller: &Caller, view: &View<'_>, made: &[Record]) -> RiffReply {
+fn riff_reply(caller: &Caller, view: &View<'_>, done: &Done) -> RiffReply {
     let thread = repository_of(caller, view);
     view.riff
         .the_riff()
         .pauses
-        .reply(thread.as_ref(), !made.is_empty())
+        .reply(thread.as_ref(), !done.made.is_empty())
 }
 
 /// Pauses the repository of the call, a named repository, or the whole
@@ -373,7 +384,7 @@ impl Command for Pause {
     type Reply = RiffReply;
     type Note = ();
 
-    fn needs(&self) -> Role {
+    fn needs(&self, _: &Caller) -> Role {
         role_for(self.riff, self.repository.as_ref())
     }
 
@@ -387,15 +398,8 @@ impl Command for Pause {
         set_pause(RiffState::Paused, self.riff, named, caller, view, now)
     }
 
-    fn reply(
-        &self,
-        caller: &Caller,
-        view: &View<'_>,
-        made: &[Record],
-        (): (),
-        _: Now,
-    ) -> RiffReply {
-        riff_reply(caller, view, made)
+    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
+        riff_reply(caller, view, done)
     }
 }
 
@@ -407,7 +411,7 @@ impl Command for Resume {
     type Reply = RiffReply;
     type Note = ();
 
-    fn needs(&self) -> Role {
+    fn needs(&self, _: &Caller) -> Role {
         role_for(self.riff, self.repository.as_ref())
     }
 
@@ -421,15 +425,8 @@ impl Command for Resume {
         set_pause(RiffState::Running, self.riff, named, caller, view, now)
     }
 
-    fn reply(
-        &self,
-        caller: &Caller,
-        view: &View<'_>,
-        made: &[Record],
-        (): (),
-        _: Now,
-    ) -> RiffReply {
-        riff_reply(caller, view, made)
+    fn reply(&self, caller: &Caller, view: &View<'_>, done: &Done, (): (), _: Now) -> RiffReply {
+        riff_reply(caller, view, done)
     }
 }
 
@@ -441,7 +438,7 @@ impl Command for SetIdle {
     type Reply = Idle;
     type Note = ();
 
-    fn needs(&self) -> Role {
+    fn needs(&self, _: &Caller) -> Role {
         Role::Admin
     }
 
@@ -468,7 +465,7 @@ impl Command for SetIdle {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, view: &View<'_>, _: &[Record], (): (), _: Now) -> Idle {
+    fn reply(&self, _: &Caller, view: &View<'_>, _: &Done, (): (), _: Now) -> Idle {
         view.riff.the_riff().idle
     }
 }
@@ -526,7 +523,7 @@ impl Command for Forget {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> usize {
-        forgotten(made)
+    fn reply(&self, _: &Caller, _: &View<'_>, done: &Done, (): (), _: Now) -> usize {
+        forgotten(&done.made)
     }
 }

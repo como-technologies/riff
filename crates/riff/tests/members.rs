@@ -452,8 +452,15 @@ async fn who_shows_the_owner() {
     assert!(line.contains("  you lead"), "{shown}");
     assert_eq!(people(&ada, &a1).await, [("ada".into(), PersonRole::Owner)]);
 
-    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
-    ada.pass_owner(&person("ada"), "bob@gmail.com")
+    // Only a person changes the people: the token of the person, not
+    // of the session.
+    let as_person = api.clone().signed_in(None).unwrap();
+    as_person
+        .invite(&person("ada"), "bob@gmail.com")
+        .await
+        .unwrap();
+    as_person
+        .pass_owner(&person("ada"), "bob@gmail.com")
         .await
         .unwrap();
     let shown = who(&ada, &a1).await;
@@ -594,16 +601,21 @@ fn the_book_shows_the_owner_in_who() {
 #[tokio::test]
 async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     let (service, api) = start_with(true).await;
-    sign_in(&service, &api, "ada@gmail.com");
+    sign_in(&service, &api, "ada@gmail.com").await;
     let a1 = session("ada", "a1");
     let ada = api.clone().signed_in(Some("a1")).unwrap();
     ada.register(&a1).await.unwrap();
     // The owner resumes the new riff, as its lead.
     let (reply, _) = ada.set_riff(&a1, RiffState::Running).await.unwrap();
     assert!(reply.changed);
-    ada.invite(&person("ada"), "bob@gmail.com").await.unwrap();
+    // Only a person changes the people: the token of the person.
+    let as_person = api.clone().signed_in(None).unwrap();
+    as_person
+        .invite(&person("ada"), "bob@gmail.com")
+        .await
+        .unwrap();
 
-    sign_in(&service, &api, "bob@gmail.com");
+    sign_in(&service, &api, "bob@gmail.com").await;
     let b1: SessionUri = "riff://bob@kadomony/como-technologies/strata?session=b1"
         .parse()
         .unwrap();
@@ -638,7 +650,7 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
 
     // The owner goes on in its repository. It pauses the whole riff,
     // and it resumes the repository of bob by its name.
-    sign_in(&service, &api, "ada@gmail.com");
+    sign_in(&service, &api, "ada@gmail.com").await;
     let ada = api.clone().signed_in(Some("a1")).unwrap();
     assert_eq!(ada.riff(&a1).await.unwrap(), RiffState::Running);
     assert!(ada.claim(&a1, &repo(), "issue-12").await.unwrap().granted);
@@ -650,12 +662,14 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     assert!(reply.changed && reply.repositories.is_empty());
     let (reply, _) = ada.set_riff(&a1, RiffState::Paused).await.unwrap();
     assert!(reply.changed && reply.riff.is_some());
-    ada.set_admin(&person("ada"), "bob@gmail.com", true)
+    let as_person = api.clone().signed_in(None).unwrap();
+    as_person
+        .set_admin(&person("ada"), "bob@gmail.com", true)
         .await
         .unwrap();
 
     // An admin resumes the whole riff.
-    sign_in(&service, &api, "bob@gmail.com");
+    sign_in(&service, &api, "bob@gmail.com").await;
     let bob = api.clone().signed_in(Some("b1")).unwrap();
     let (reply, _) = bob.set_riff(&b1, RiffState::Running).await.unwrap();
     assert!(reply.changed && reply.riff.is_none());

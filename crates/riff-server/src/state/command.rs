@@ -11,6 +11,7 @@
 //! | threads | [`super::threads`] | [`Join`](riff_core::wire::Join), [`Leave`](riff_core::wire::Leave), [`Post`](riff_core::wire::Post), [`Announce`](super::Announce) |
 //! | work | [`super::work`] | [`Claim`](riff_core::wire::Claim), [`Release`](riff_core::wire::Release), [`ReleaseFor`](riff_core::wire::ReleaseFor), [`Lead`](riff_core::wire::Lead) |
 //! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget) |
+//! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
 //!
@@ -42,8 +43,8 @@ pub enum Class {
     Person,
     /// An agent session, from a session token.
     Session,
-    /// A verified email of the provider, before a token is there. No
-    /// command of today takes it: E3 (#393) adds `admit`.
+    /// A verified email of the provider, before a token is there. Only
+    /// the command `admit` takes it.
     SignIn,
     /// A timer of `riff-server`.
     Server,
@@ -102,6 +103,8 @@ pub struct Caller {
     me: SessionUri,
     worker: bool,
     role: Role,
+    /// The verified email of a sign-in.
+    email: Option<String>,
 }
 
 impl Caller {
@@ -117,6 +120,32 @@ impl Caller {
             me: me.clone(),
             worker: false,
             role: Role::Member,
+            email: None,
+        }
+    }
+
+    /// A sign-in: the verified email `email` of the provider, which
+    /// gives the USER `user`, before a token is there. The engine makes
+    /// it for the command `admit`.
+    ///
+    /// ```
+    /// use riff_core::name::Who;
+    /// use riff_core::record::By;
+    /// use riff_server::state::{Caller, Class};
+    ///
+    /// let caller = Caller::sign_in(&Who::new("mike", None)?, "mike@comotechnologies.io");
+    /// assert_eq!(caller.class(), Class::SignIn);
+    /// assert_eq!(caller.by(), By::SignIn("mike@comotechnologies.io".into()));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn sign_in(user: &Who, email: &str) -> Caller {
+        let place = crate::owner::server_uri().place().clone();
+        Caller {
+            class: Class::SignIn,
+            me: SessionUri::new(user.clone(), place),
+            worker: false,
+            role: Role::Member,
+            email: Some(email.to_owned()),
         }
     }
 
@@ -127,6 +156,7 @@ impl Caller {
             me: crate::owner::server_uri(),
             worker: false,
             role: Role::Member,
+            email: None,
         }
     }
 
@@ -188,9 +218,50 @@ impl Caller {
         match self.class {
             Class::Person => By::Person(who.user().to_owned()),
             Class::Session => By::Session(who.clone()),
-            Class::SignIn => By::SignIn(who.user().to_owned()),
+            Class::SignIn => {
+                By::SignIn(self.email.clone().unwrap_or_else(|| who.user().to_owned()))
+            }
             Class::Server => By::Server,
         }
+    }
+
+    /// The caller as a log line names it (01M3XA87CJHCGZX283ZQAFKARZ): as
+    /// [`Caller::by`], but a sign-in has its USER in the place of its
+    /// email. An email is in a record, and in no log line.
+    ///
+    /// ```
+    /// use riff_core::name::Who;
+    /// use riff_core::record::By;
+    /// use riff_server::state::Caller;
+    ///
+    /// let caller = Caller::sign_in(&Who::new("mike", None)?, "mike@comotechnologies.io");
+    /// assert_eq!(caller.traced(), By::SignIn("mike".into()));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn traced(&self) -> By {
+        match self.class {
+            Class::SignIn => By::SignIn(self.who().user().to_owned()),
+            _ => self.by(),
+        }
+    }
+}
+
+/// The word of the writer to a call: its entry in the queue is done.
+/// [`Command::reply`] gets it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Done {
+    /// The records of the command, which are in the log now.
+    pub made: Vec<Record>,
+    /// The number of sign-ins that the writer ended for the records of
+    /// the command: the effect of a `member_removed` or a
+    /// `signins_ended` record (01M3XA87A9GGFA89RQXWSKY0V6).
+    pub ended: usize,
+}
+
+impl Done {
+    /// The word for `made`, with no sign-in that ended.
+    pub fn of(made: Vec<Record>) -> Done {
+        Done { made, ended: 0 }
     }
 }
 
@@ -233,11 +304,22 @@ pub enum CommandKind {
     Resume,
     SetIdle,
     Forget,
+    Admit,
+    Invite,
+    Remove,
+    SetAdmin,
+    PassOwner,
+    TakeOwner,
+    DenyOwner,
+    GrantOwner,
+    EndOwner,
+    NameOwner,
+    Revoke,
 }
 
 impl CommandKind {
     /// Each kind of this build.
-    pub const ALL: [CommandKind; 16] = [
+    pub const ALL: [CommandKind; 27] = [
         CommandKind::Register,
         CommandKind::Start,
         CommandKind::End,
@@ -254,6 +336,17 @@ impl CommandKind {
         CommandKind::Resume,
         CommandKind::SetIdle,
         CommandKind::Forget,
+        CommandKind::Admit,
+        CommandKind::Invite,
+        CommandKind::Remove,
+        CommandKind::SetAdmin,
+        CommandKind::PassOwner,
+        CommandKind::TakeOwner,
+        CommandKind::DenyOwner,
+        CommandKind::GrantOwner,
+        CommandKind::EndOwner,
+        CommandKind::NameOwner,
+        CommandKind::Revoke,
     ];
 
     /// The name of the kind.
@@ -275,7 +368,47 @@ impl CommandKind {
             CommandKind::Resume => "resume",
             CommandKind::SetIdle => "set_idle",
             CommandKind::Forget => "forget",
+            CommandKind::Admit => "admit",
+            CommandKind::Invite => "invite",
+            CommandKind::Remove => "remove",
+            CommandKind::SetAdmin => "set_admin",
+            CommandKind::PassOwner => "pass_owner",
+            CommandKind::TakeOwner => "take_owner",
+            CommandKind::DenyOwner => "deny_owner",
+            CommandKind::GrantOwner => "grant_owner",
+            CommandKind::EndOwner => "end_owner",
+            CommandKind::NameOwner => "name_owner",
+            CommandKind::Revoke => "revoke",
         }
+    }
+
+    /// True for a command of the group "people". A riff with no sign-in
+    /// refuses each of them (01M3WRD9G5GAF65EX8P6D5DMQM), and the log
+    /// line of each has no reason: the reason can name an email
+    /// (01M3XA87CJHCGZX283ZQAFKARZ).
+    ///
+    /// ```
+    /// use riff_server::state::CommandKind;
+    ///
+    /// assert!(CommandKind::Invite.of_people() && CommandKind::Admit.of_people());
+    /// assert!(!CommandKind::Claim.of_people() && !CommandKind::MakeRiff.of_people());
+    /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 11);
+    /// ```
+    pub fn of_people(self) -> bool {
+        matches!(
+            self,
+            CommandKind::Admit
+                | CommandKind::Invite
+                | CommandKind::Remove
+                | CommandKind::SetAdmin
+                | CommandKind::PassOwner
+                | CommandKind::TakeOwner
+                | CommandKind::DenyOwner
+                | CommandKind::GrantOwner
+                | CommandKind::EndOwner
+                | CommandKind::NameOwner
+                | CommandKind::Revoke
+        )
     }
 }
 
@@ -294,8 +427,8 @@ impl fmt::Display for CommandKind {
 /// | Code | When | HTTP status |
 /// |---|---|---|
 /// | `not_allowed` | The class or the role of the caller cannot send the command. | 403 |
-/// | `no_sign_in` | A command of the people in a riff with no sign-in (E3, #393). | 403 |
-/// | `not_member` | The command names a person who is not a member (E3, #393). | 403 |
+/// | `no_sign_in` | A command of the people in a riff with no sign-in. | 403 |
+/// | `not_member` | The command names a person who is not a member. | 403 |
 /// | `held` | Another session holds the item. | 409 |
 /// | `paused` | The riff or the repository is paused. | 409 |
 /// | `must_clear` | A worker must clear its context first. | 409 |
@@ -420,14 +553,17 @@ impl From<&str> for Refused {
 /// // A worker is never the lead.
 /// let worker = session.clone().with_worker(true);
 /// assert!(permits(CommandKind::Lead, &worker, Role::Member).is_err());
-/// // A change of the idle workers needs an admin.
-/// assert!(permits(CommandKind::SetIdle, &session, Role::Admin).is_err());
-/// let admin = session.with_role(Role::Admin);
+/// // A change of the idle workers needs a person who is an admin.
+/// let person: SessionUri = "riff://mike@pangolin".parse()?;
+/// let person = Caller::of(&person);
+/// assert!(permits(CommandKind::SetIdle, &person, Role::Admin).is_err());
+/// let admin = person.with_role(Role::Admin);
 /// assert!(permits(CommandKind::SetIdle, &admin, Role::Admin).is_ok());
+/// assert!(permits(CommandKind::SetIdle, &session.with_role(Role::Admin), Role::Admin).is_err());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Refused> {
-    use Class::{Person, Server, Session};
+    use Class::{Person, Server, Session, SignIn};
     let class = caller.class();
     let classes: &[Class] = match kind {
         // The engine registers the first call of a person too. A person
@@ -443,9 +579,22 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // The command gives the role: an admin for the whole riff.
         // `handle` checks that a session is a lead.
         CommandKind::Pause | CommandKind::Resume => &[Person, Session],
-        // Until E3 (#393): then only a person changes the settings.
-        CommandKind::SetIdle => &[Person, Session],
-        CommandKind::MakeRiff | CommandKind::Announce | CommandKind::Forget => &[Server],
+        // Only a person changes the settings and the people.
+        CommandKind::SetIdle
+        | CommandKind::Invite
+        | CommandKind::Remove
+        | CommandKind::SetAdmin
+        | CommandKind::PassOwner
+        | CommandKind::TakeOwner
+        | CommandKind::DenyOwner
+        | CommandKind::Revoke => &[Person],
+        CommandKind::Admit => &[SignIn],
+        CommandKind::MakeRiff
+        | CommandKind::Announce
+        | CommandKind::Forget
+        | CommandKind::GrantOwner
+        | CommandKind::EndOwner
+        | CommandKind::NameOwner => &[Server],
     };
     if !classes.contains(&class) {
         let reason = match (kind, class) {
@@ -460,16 +609,23 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
             "a worker cannot be the lead. Make another session the lead.",
         ));
     }
-    if class != Server && caller.role() < needs {
+    if matches!(class, Person | Session) && caller.role() < needs {
         let user = caller.who().user();
+        let admin = |what: &str| format!("{user} is not an admin; only an admin {what}");
+        let owner = |what: &str| format!("{user} is not the owner; only the owner {what}");
         let reason = match (kind, needs) {
-            (CommandKind::SetIdle, _) => format!(
-                "{user} is not an admin; only an admin can change the settings of idle workers"
-            ),
+            (CommandKind::SetIdle, _) => admin("can change the settings of idle workers"),
             (CommandKind::Pause | CommandKind::Resume, _) => format!(
                 "{user} is not an admin; only the owner or an admin can {kind} the whole riff \
                  or a repository by its name"
             ),
+            (CommandKind::Invite, _) => admin("can invite a person"),
+            (CommandKind::Remove, _) => admin("can remove a person"),
+            (CommandKind::TakeOwner, _) => admin("can take the owner role"),
+            (CommandKind::Revoke, _) => admin("revokes another person"),
+            (CommandKind::SetAdmin, _) => owner("adds or removes an admin"),
+            (CommandKind::PassOwner, _) => owner("passes the owner role"),
+            (CommandKind::DenyOwner, _) => owner("denies the owner role"),
             (_, Role::Owner) => format!("{user} is not the owner; the command {kind} needs it"),
             _ => format!("{user} is not an admin; the command {kind} needs an admin"),
         };
@@ -511,9 +667,12 @@ pub trait Command: Send + 'static {
     /// a post that matched no session.
     type Note: Send;
 
-    /// The role that the command needs. [`permits`] compares it with
-    /// the role of the caller.
-    fn needs(&self) -> Role {
+    /// The role that the command of `caller` needs. [`permits`]
+    /// compares it with the role of the caller. It reads the caller
+    /// only to know if the command names the caller: a `revoke` of the
+    /// own sign-ins needs a member, and a `revoke` of another person
+    /// needs an admin.
+    fn needs(&self, _caller: &Caller) -> Role {
         Role::Member
     }
 
@@ -528,12 +687,13 @@ pub trait Command: Send + 'static {
     ) -> Result<(Vec<Change>, Self::Note), Refused>;
 
     /// Makes the reply from `view`: the written copy, after the write
-    /// of `made`, the records of the command.
+    /// of the records of the command. `done` is the word of the writer:
+    /// the records, and what their effects did.
     fn reply(
         &self,
         caller: &Caller,
         view: &View<'_>,
-        made: &[Record],
+        done: &Done,
         note: Self::Note,
         now: Now,
     ) -> Self::Reply;
@@ -565,7 +725,7 @@ mod tests {
     /// The table "Who can send a command" of the design: the classes
     /// that can send the kind, and whether a worker can.
     fn row(kind: CommandKind) -> (&'static [Class], bool) {
-        use Class::{Person, Server, Session};
+        use Class::{Person, Server, Session, SignIn};
         match kind {
             CommandKind::Register => (&[Person, Session], true),
             CommandKind::Start | CommandKind::End => (&[Session], true),
@@ -576,45 +736,77 @@ mod tests {
             CommandKind::ReleaseFor => (&[Session], true),
             CommandKind::Lead => (&[Session], false),
             CommandKind::Pause | CommandKind::Resume => (&[Person, Session], true),
-            CommandKind::SetIdle => (&[Person, Session], true),
-            CommandKind::MakeRiff | CommandKind::Announce | CommandKind::Forget => {
-                (&[Server], true)
+            CommandKind::SetIdle
+            | CommandKind::Invite
+            | CommandKind::Remove
+            | CommandKind::SetAdmin
+            | CommandKind::PassOwner
+            | CommandKind::TakeOwner
+            | CommandKind::DenyOwner
+            | CommandKind::Revoke => (&[Person], true),
+            CommandKind::Admit => (&[SignIn], true),
+            CommandKind::MakeRiff
+            | CommandKind::Announce
+            | CommandKind::Forget
+            | CommandKind::GrantOwner
+            | CommandKind::EndOwner
+            | CommandKind::NameOwner => (&[Server], true),
+        }
+    }
+
+    /// The role that each command of the people needs, in the table of
+    /// the design.
+    #[test]
+    fn each_command_of_the_people_needs_the_role_of_the_table() {
+        let ann = caller(Class::Person);
+        let expected = |kind| match kind {
+            CommandKind::Invite | CommandKind::Remove | CommandKind::TakeOwner => Role::Admin,
+            CommandKind::SetAdmin | CommandKind::PassOwner | CommandKind::DenyOwner => Role::Owner,
+            _ => Role::Member,
+        };
+        for kind in CommandKind::ALL.into_iter().filter(|kind| kind.of_people()) {
+            if kind == CommandKind::Revoke {
+                // The own sign-ins: a member. Another person: an admin.
+                assert_eq!(needs(kind, &ann), [Role::Member, Role::Member, Role::Admin]);
+            } else {
+                assert_eq!(needs(kind, &ann), [expected(kind)], "{kind}");
             }
         }
     }
 
-    /// The role that the command of `kind` needs: [`Command::needs`] of
-    /// one command of its type. So the test reads the role from the
-    /// command, as the engine does.
-    fn needs(kind: CommandKind) -> Role {
+    /// The role that each case of the command of `kind` needs for
+    /// `caller`: [`Command::needs`] of one command of its type. So the
+    /// test reads the role from the command, as the engine does. Only
+    /// `revoke` has more than one case: the own sign-ins, by no name and
+    /// by the own name, and the sign-ins of another person.
+    fn needs(kind: CommandKind, caller: &Caller) -> Vec<Role> {
         use riff_core::wire::{
-            Claim, End, Join, Kind, Lead, Leave, Pause, Post, Register, Release, ReleaseFor,
-            Resume, SetIdle, Start, StartReason,
+            Claim, DenyOwner, End, Invite, Join, Kind, Lead, Leave, PassOwner, Pause, Post,
+            Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, Start,
+            StartReason, TakeOwner,
         };
 
-        use crate::state::{Announce, Forget, MakeRiff};
+        use crate::state::{Admit, Announce, EndOwner, Forget, GrantOwner, MakeRiff, NameOwner};
 
-        fn of<C: Command>(command: C, kind: CommandKind) -> Role {
-            assert_eq!(C::KIND, kind);
-            command.needs()
-        }
+        let of = Needs(caller);
+        let email = "bob@acme.io".to_owned();
         let me: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
         let thread = me.default_thread().unwrap();
         let item = "issue-7".to_owned();
-        match kind {
-            CommandKind::Register => of(Register { me, worker: false }, kind),
+        let role = match kind {
+            CommandKind::Register => of.of(Register { me, worker: false }, kind),
             CommandKind::Start => {
                 let start = Start {
                     me,
                     reason: StartReason::Process,
                     worker: false,
                 };
-                of(start, kind)
+                of.of(start, kind)
             }
-            CommandKind::End => of(End { me }, kind),
-            CommandKind::Join => of(Join { me, thread }, kind),
-            CommandKind::Leave => of(Leave { me, thread }, kind),
-            CommandKind::Post => of(Post::new(&me, Some(thread), vec![], "hi"), kind),
+            CommandKind::End => of.of(End { me }, kind),
+            CommandKind::Join => of.of(Join { me, thread }, kind),
+            CommandKind::Leave => of.of(Leave { me, thread }, kind),
+            CommandKind::Post => of.of(Post::new(&me, Some(thread), vec![], "hi"), kind),
             CommandKind::Announce => {
                 let announce = Announce {
                     thread: Some(thread),
@@ -623,10 +815,10 @@ mod tests {
                     kind: Kind::Note,
                     at_ms: 0,
                 };
-                of(announce, kind)
+                of.of(announce, kind)
             }
-            CommandKind::Claim => of(Claim { me, thread, item }, kind),
-            CommandKind::Release => of(Release { me, thread, item }, kind),
+            CommandKind::Claim => of.of(Claim { me, thread, item }, kind),
+            CommandKind::Release => of.of(Release { me, thread, item }, kind),
             CommandKind::ReleaseFor => {
                 let session = "a2".to_owned();
                 let release = ReleaseFor {
@@ -635,21 +827,58 @@ mod tests {
                     item,
                     session,
                 };
-                of(release, kind)
+                of.of(release, kind)
             }
-            CommandKind::Lead => of(Lead { me }, kind),
-            CommandKind::MakeRiff => of(MakeRiff, kind),
-            CommandKind::Pause => of(Pause::here(me), kind),
-            CommandKind::Resume => of(Resume::here(me), kind),
+            CommandKind::Lead => of.of(Lead { me }, kind),
+            CommandKind::MakeRiff => {
+                let riff_id = "r1".to_owned();
+                of.of(MakeRiff { riff_id }, kind)
+            }
+            CommandKind::Pause => of.of(Pause::here(me), kind),
+            CommandKind::Resume => of.of(Resume::here(me), kind),
             CommandKind::SetIdle => {
                 let set = SetIdle {
                     me,
                     per_host: Some(1),
                     after_secs: None,
                 };
-                of(set, kind)
+                of.of(set, kind)
             }
-            CommandKind::Forget => of(Forget, kind),
+            CommandKind::Forget => of.of(Forget, kind),
+            CommandKind::Admit => {
+                let admit = Admit {
+                    email,
+                    allowed_domain: false,
+                };
+                of.of(admit, kind)
+            }
+            CommandKind::Invite => of.of(Invite { email }, kind),
+            CommandKind::Remove => of.of(Remove { email }, kind),
+            CommandKind::SetAdmin => of.of(SetAdmin { email, admin: true }, kind),
+            CommandKind::PassOwner => of.of(PassOwner { email }, kind),
+            CommandKind::TakeOwner => of.of(TakeOwner {}, kind),
+            CommandKind::DenyOwner => of.of(DenyOwner {}, kind),
+            CommandKind::GrantOwner => of.of(GrantOwner, kind),
+            CommandKind::EndOwner => of.of(EndOwner, kind),
+            CommandKind::NameOwner => of.of(NameOwner { email }, kind),
+            CommandKind::Revoke => {
+                let own = caller.who().user().to_uppercase();
+                return [None, Some(own), Some("bob".to_owned())]
+                    .into_iter()
+                    .map(|user| of.of(Revoke { user }, kind))
+                    .collect();
+            }
+        };
+        vec![role]
+    }
+
+    /// Gives the role that a command needs for one caller.
+    struct Needs<'a>(&'a Caller);
+
+    impl Needs<'_> {
+        fn of<C: Command>(&self, command: C, kind: CommandKind) -> Role {
+            assert_eq!(C::KIND, kind);
+            command.needs(self.0)
         }
     }
 
@@ -662,24 +891,28 @@ mod tests {
                 for worker in [false, true] {
                     for role in Role::ALL {
                         let caller = caller(class).with_worker(worker).with_role(role);
-                        let expected = classes.contains(&class)
-                            && (workers || !worker)
-                            && (class == Class::Server || role >= needs(kind));
-                        let result = permits(kind, &caller, needs(kind));
-                        assert_eq!(
-                            result.is_ok(),
-                            expected,
-                            "{kind} as {class:?}, worker {worker}, {role:?}: {result:?}"
-                        );
-                        if let Err(refused) = result {
-                            assert_eq!(refused.code, Code::NotAllowed);
+                        let has_role = matches!(class, Class::Person | Class::Session);
+                        for needs in needs(kind, &caller) {
+                            let expected = classes.contains(&class)
+                                && (workers || !worker)
+                                && (!has_role || role >= needs);
+                            let result = permits(kind, &caller, needs);
+                            assert_eq!(
+                                result.is_ok(),
+                                expected,
+                                "{kind} as {class:?}, worker {worker}, {role:?}: {result:?}"
+                            );
+                            if let Err(refused) = result {
+                                assert_eq!(refused.code, Code::NotAllowed);
+                            }
+                            tried += 1;
                         }
-                        tried += 1;
                     }
                 }
             }
         }
-        assert_eq!(tried, 16 * 4 * 2 * 3);
+        // Each kind has one case, and `revoke` has 3.
+        assert_eq!(tried, (27 + 2) * 4 * 2 * 3);
     }
 
     #[test]
@@ -704,13 +937,13 @@ mod tests {
             riff,
             repository: repository.map(|r| r.parse().unwrap()),
         };
-        assert_eq!(pause(false, None).needs(), Role::Member);
-        assert_eq!(pause(true, None).needs(), Role::Admin);
-        assert_eq!(pause(false, Some("acme/lib")).needs(), Role::Admin);
-        assert_eq!(Resume::whole(me.clone()).needs(), Role::Admin);
-        assert_eq!(Resume::here(me.clone()).needs(), Role::Member);
-
         let member = caller(Class::Session);
+        assert_eq!(pause(false, None).needs(&member), Role::Member);
+        assert_eq!(pause(true, None).needs(&member), Role::Admin);
+        assert_eq!(pause(false, Some("acme/lib")).needs(&member), Role::Admin);
+        assert_eq!(Resume::whole(me.clone()).needs(&member), Role::Admin);
+        assert_eq!(Resume::here(me.clone()).needs(&member), Role::Member);
+
         let refused = permits(CommandKind::Pause, &member, Role::Admin).unwrap_err();
         assert_eq!(refused.code, Code::NotAllowed);
         assert!(refused.reason.contains("ann is not an admin"), "{refused}");

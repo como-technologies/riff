@@ -12,8 +12,9 @@
 //!     NoOwner --> Owner: an admin runs riff owner --take
 //! ```
 //!
-//! [`crate::token::Tokens`] keeps the owner, the request that waits and
-//! whether the riff has no owner. This module holds the times
+//! The people of the riff ([`crate::state::people`]) keep the owner, the
+//! request that waits and whether the riff has no owner: they are state
+//! of the log. This module holds the times
 //! ([`Timing`], 01M3Q5460YESBSQHTV3M15PE53), the check of the owner
 //! ([`Checks`], 01M3Q546335NBTKG5BHQ27QC93), and the text of each note
 //! (01M3N7K4DVHSF7AQ402F14J26Z).
@@ -56,7 +57,8 @@ use std::time::{Duration, Instant};
 
 use riff_core::name::SessionUri;
 
-use crate::token::{OwnerChange, SERVER_USER};
+use crate::state::OwnerChange;
+use crate::token::SERVER_USER;
 
 /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
 ///
@@ -314,7 +316,7 @@ pub fn warn_news(owner: &str, timing: &Timing) -> String {
 /// ```
 /// use std::time::Duration;
 /// use riff_server::owner::{Timing, change_news};
-/// use riff_server::token::OwnerChange;
+/// use riff_server::state::OwnerChange;
 ///
 /// let timing = Timing::default();
 /// let granted = OwnerChange::Granted { owner: "bob@gmail.com".into(), old: "ada@gmail.com".into() };

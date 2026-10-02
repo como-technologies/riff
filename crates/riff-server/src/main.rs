@@ -360,6 +360,12 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
             Service::new(config)
         }
     };
+    // The owner of the settings is a record of the start: wait for its
+    // write, so that the check below reads it.
+    service
+        .save()
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     let owned = service.owned();
     listen::check(cli.listen, trusted, cli.insecure, owned)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;

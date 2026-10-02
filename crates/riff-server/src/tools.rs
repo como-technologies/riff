@@ -237,6 +237,19 @@ pub fn show(record: &Record) -> String {
         ),
         Change::SessionForgotten(f) => format!("session_forgotten  {}", f.session),
         Change::PauseSet(s) => format!("pause_set  {}  {}", s.scope, s.state),
+        Change::RiffMade(m) => format!("riff_made  {}", m.riff_id),
+        Change::PersonJoined(p) => format!("person_joined  {} as {}", p.email, p.user),
+        Change::MemberInvited(p) => format!("member_invited  {}", p.email),
+        Change::MemberRemoved(p) => format!("member_removed  {}", p.email),
+        Change::AdminSet(a) if a.admin => format!("admin_set  {} is an admin", a.email),
+        Change::AdminSet(a) => format!("admin_set  {} is a member again", a.email),
+        Change::OwnerSet(o) => match &o.email {
+            Some(email) => format!("owner_set  {email}"),
+            None => "owner_set  no owner: the owner is gone".to_owned(),
+        },
+        Change::OwnerAsked(a) => format!("owner_asked  {}, due {}", a.email, utc(a.due_ms)),
+        Change::OwnerDenied(p) => format!("owner_denied  {}", p.email),
+        Change::SigninsEnded(e) => format!("signins_ended  {}", e.user),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -273,7 +286,16 @@ fn thread_of(record: &Record) -> Option<String> {
         Change::RiffStateSet(_)
         | Change::SettingChanged(_)
         | Change::SessionForgotten(_)
-        | Change::SessionStarted(_) => None,
+        | Change::SessionStarted(_)
+        | Change::RiffMade(_)
+        | Change::PersonJoined(_)
+        | Change::MemberInvited(_)
+        | Change::MemberRemoved(_)
+        | Change::AdminSet(_)
+        | Change::OwnerSet(_)
+        | Change::OwnerAsked(_)
+        | Change::OwnerDenied(_)
+        | Change::SigninsEnded(_) => None,
     }
 }
 

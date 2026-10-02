@@ -349,15 +349,18 @@ does not call `who` for the whole riff.
   for a token of its own, and a swap ends no other token. A swap
   changes nothing in `signins.json`.
 - The server writes `signins.json` at most one time each second, when
-  something changed. A sign-in and a revoke wait for the write. A
-  refresh does not. After a crash, the snapshot can be one generation
-  behind. So the first refresh of each chain after a start takes the
-  current generation, or the next one, as good.
+  something changed. A sign-in waits for the write. A refresh does
+  not. A revoke waits for the write of its record in the log. After a
+  crash, the snapshot can be one generation behind. So the first
+  refresh of each chain after a start takes the current generation, or
+  the next one, as good.
 - While a write of `signins.json` fails, a refresh gets 503. So the
   snapshot does not fall more generations behind.
 - `signins.json` holds only the sign-ins. The people (the owner, the
   admins, the members) and the riff ID are in the log. Each sign-in
-  keeps the position of the log at its start.
+  keeps the position of the log at its start. A load drops each
+  sign-in from before the last removal or revoke of its person. See
+  "What stays outside" in [the engine design](design-engine.md).
 - Access tokens and DPoP replay IDs are in memory. After a start, each
   client refreshes one time. A new instance refuses each DPoP proof from
   before its start.

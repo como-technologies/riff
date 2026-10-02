@@ -60,7 +60,7 @@ use riff_core::record::{Change, Member, Record, Released, SessionStarted};
 use riff_core::wire::{End, Freed, Register, Start, StartReason, Started};
 use serde::{Deserialize, Serialize};
 
-use super::command::{Caller, Command, CommandKind, Now, Refused};
+use super::command::{Caller, Command, CommandKind, Done, Now, Refused};
 use super::presence::Signal;
 use super::view::View;
 
@@ -99,7 +99,16 @@ fn named(change: &Change) -> Option<&SessionUri> {
         Change::RiffStateSet(_)
         | Change::SettingChanged(_)
         | Change::SessionForgotten(_)
-        | Change::PauseSet(_) => None,
+        | Change::PauseSet(_)
+        | Change::RiffMade(_)
+        | Change::PersonJoined(_)
+        | Change::MemberInvited(_)
+        | Change::MemberRemoved(_)
+        | Change::AdminSet(_)
+        | Change::OwnerSet(_)
+        | Change::OwnerAsked(_)
+        | Change::OwnerDenied(_)
+        | Change::SigninsEnded(_) => None,
     }
 }
 
@@ -320,7 +329,7 @@ impl Command for Register {
         Ok((view.comes(&self.me, Some(self.worker), now), ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 
     fn signal(&self, _caller: &Caller) -> Option<Signal> {
         Some(Signal::Place {
@@ -375,7 +384,7 @@ impl Command for Arrive {
         Ok((view.comes(&self.me, None, now), ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 
     fn signal(&self, _caller: &Caller) -> Option<Signal> {
         Some(Signal::Place {
@@ -434,8 +443,10 @@ impl Command for Start {
         Ok((changes, ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, made: &[Record], (): (), _: Now) -> Started {
-        Started { freed: freed(made) }
+    fn reply(&self, _: &Caller, _: &View<'_>, done: &Done, (): (), _: Now) -> Started {
+        Started {
+            freed: freed(&done.made),
+        }
     }
 }
 
@@ -455,7 +466,7 @@ impl Command for End {
         Ok((view.released_all(caller.who()), ()))
     }
 
-    fn reply(&self, _: &Caller, _: &View<'_>, _: &[Record], (): (), _: Now) {}
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 
     fn signal(&self, _caller: &Caller) -> Option<Signal> {
         Some(Signal::Ended)
