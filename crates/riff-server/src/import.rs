@@ -663,7 +663,7 @@ mod tests {
         assert_eq!(error.name, SESSIONS);
         let error = Old::parse(None, [("threads/x", b"[]".as_slice())], None).unwrap_err();
         assert_eq!(error.name, "threads/x");
-        let error = Old::parse(None, [], Some(b"[]")).unwrap_err();
+        let error = Old::parse(None, [], Some(b"7")).unwrap_err();
         assert_eq!(error.name, TOKENS);
     }
 }
