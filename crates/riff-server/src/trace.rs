@@ -2,7 +2,7 @@
 //!
 //! # Design
 //!
-//! Each command leaves one trace (RID_TRACE). A command that made
+//! Each command leaves one trace (01M3X4Z62RJREQ5H8F18Y85T6V). A command that made
 //! records has them in the log, with its caller and its kind in each
 //! envelope ([`riff_core::record::Record`]). Each other command gets
 //! one log line of `riff-server`. So a person finds who did what in the
@@ -47,7 +47,7 @@
 //! # Rules
 //!
 //! - A line never holds the body of a post, a token or a key
-//!   (RID_NOSECRET). The reason of a refusal names items, threads and
+//!   (01M3X4Z675D0ZQX93E93F3M8FA). The reason of a refusal names items, threads and
 //!   sessions only.
 //! - A command with records gets no line. A signal and a query that the
 //!   token layer accepts get no line.
@@ -111,7 +111,7 @@ pub struct Traced {
 }
 
 impl Traced {
-    /// Writes the one line of a command with no record (RID_TRACE).
+    /// Writes the one line of a command with no record (01M3X4Z62RJREQ5H8F18Y85T6V).
     pub fn line(&self, outcome: Outcome<'_>) {
         let caller = self.caller.json().to_string();
         let caller = caller.as_str();
@@ -282,7 +282,7 @@ fn cut(text: &str) -> (String, bool) {
 }
 
 /// Writes the one line of a call that the token layer refused
-/// (RID_DENIED): the caller that the call named, marked as not proved,
+/// (01M3X4Z64ZNRD0G0F4JV1M64FN): the caller that the call named, marked as not proved,
 /// the path and the code. It has no token, no key and no reason.
 pub fn denied(path: &str, named: Option<&Named>, code: DeniedCode) {
     let name = named.map(|named| named.json().to_string());

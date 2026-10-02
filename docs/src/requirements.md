@@ -688,6 +688,43 @@
   another session of that user. Only a session can send it. The note of
   the server for it is a `posted` record in the chunk of the command,
   after the `released` record.
+- **01M3X4Z60G1FXQTDC5XDJ05BAX** The envelope of each record names its cause: `by`, the
+  caller of the command, and `command`, the kind of the command. `by`
+  is an object that names the class of the caller (`person`, `session`,
+  `sign_in`), or the text `server`. A record with no `by` reads: its
+  cause is not known. A build reads a class that it does not know as
+  `other`. The records of one command are in one chunk, one after
+  another. `riff-server log` prints the cause of each record.
+- **01M3X4Z62RJREQ5H8F18Y85T6V** Each command leaves one trace: its records, or one log
+  line. A command that is refused, or that makes no record, gives one
+  line with `caller`, `key`, `command` and `result` (`refused` or
+  `no_change`). A refusal also has `code` and `reason`. `key` is the
+  thumbprint of the device key of the token. A chunk that is not
+  written gives one line with the result `failed` and the severity
+  `ERROR` for each of its commands. The writer makes these lines. A
+  command with records, a signal and a query give no line.
+- **01M3X4Z64ZNRD0G0F4JV1M64FN** The token layer writes one line with the result
+  `denied` for each call that it refuses. The line has `path`, `code`
+  (`no_token`, `bad_token`, `bad_proof`, `not_you` or `old_build`) and
+  `named`: the caller that the call named, with `proved` false. The
+  server reads the body of the call for the name only after the
+  refusal, and at most 64 KiB of it. A name of more than 200
+  characters is cut, and the line says so (`named_cut`).
+- **01M3X4Z675D0ZQX93E93F3M8FA** No line of a trace holds the body of a post, a token
+  or a key.
+- **01M3X4Z69CFV23V4QZBE8RP1GJ** The codes of a refusal are a fixed set. The status of
+  the reply is 403 for `not_allowed`, `no_sign_in` and `not_member`;
+  409 for `held`, `paused`, `must_clear`, `not_holder` and
+  `other_user`; 400 for `bad_request`. Each test of a refusal compares
+  the code.
+- **01M3X4Z6BKM251H7CS2CEGR205** A claim that takes the item of a holder that is gone
+  gives a `released` record for the old holder, then the `claimed`
+  record, in one chunk.
+- **01M3X4Z6DSWKMJ2R549R4TSYP0** `Engine::finish` takes the proof of the write of a
+  chunk (`Written`). Only the write of the log makes the proof. So only
+  a written chunk reaches the written state.
+- **01M3X4Z6G0TG0B4FT2N1FSPDHS** The role of a caller with no token comes from the trust
+  of the riff: an admin in a riff with no sign-in, else a member.
 
 - **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
   Its name is `checkpoint/`, the position in 20 digits, `-`, and the

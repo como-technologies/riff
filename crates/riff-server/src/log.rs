@@ -192,7 +192,7 @@ pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<Line>), String> {
     Ok((header, lines))
 }
 
-/// The proof that the records of a chunk are in the log (RID_WRITTEN).
+/// The proof that the records of a chunk are in the log (01M3X4Z6DSWKMJ2R549R4TSYP0).
 /// Only [`write()`] and [`write_counted`] make it, so only a written
 /// chunk reaches the written copy of the state:
 /// [`Engine::finish`](crate::engine::Engine::finish) takes it. A chunk

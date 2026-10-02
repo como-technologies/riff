@@ -782,24 +782,84 @@ after the command.
 ### Print the log
 
 `riff-server log` prints each record as one line of text: the
-position, the time, the kind of the change and its facts.
+position, the time, the kind of the change, its facts and its cause.
+The cause is the kind of the command and its caller.
 
 ```sh
 riff-server log --dir ~/.local/state/riff-server
 ```
 
 ```text
-1  2026-09-30T12:00:00Z  joined_thread  acme/app by riff://ann@heron/acme/app?session=s1
-2  2026-09-30T12:00:01Z  riff_state_set  running
-3  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
-4  2026-09-30T12:00:09Z  posted  acme/app #1 note from riff://ann@heron/acme/app?session=s1, woke 0: "started: issue-7"
+1  2026-09-30T12:00:00Z  riff_state_set  paused  (make_riff, the server)
+2  2026-09-30T12:00:01Z  joined_thread  acme/app by riff://ann@heron/acme/app?session=s1  (register, the session ann/s1)
+3  2026-09-30T12:00:02Z  riff_state_set  running  (resume, the session ann/s1)
+4  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)
+5  2026-09-30T12:00:09Z  posted  acme/app #1 note from riff://ann@heron/acme/app?session=s1, woke 0: "started: issue-7"  (post, the session ann/s1)
 ```
+
+A record from before release 1.0.0 has no cause. Its line ends with
+`(cause not known)`.
 
 To print only the records from a position, add `--from`:
 
 ```sh
 riff-server log --from 1200 --dir ~/.local/state/riff-server
 ```
+
+### Find who did what
+
+Each change of the riff is a record of the log, and each record names
+its cause. So the log shows who made each change. To find each change
+of one item, or each change of one session:
+
+```sh
+riff-server log --dir ~/.local/state/riff-server | grep issue-7
+riff-server log --dir ~/.local/state/riff-server | grep 'the session ann/s1)'
+```
+
+A command that changed nothing has no record. `riff-server` writes one
+line to its own log for it, with the field `result`:
+
+| `result` | Meaning |
+|---|---|
+| `refused` | The server refused the command. The line has the `code` and the `reason`. |
+| `no_change` | The server took the command, and nothing changed. |
+| `failed` | The server did not write the change, and stopped. The severity is `ERROR`. |
+| `denied` | The server refused the token of the call, or the call had none. The line has the `path` of the call. |
+
+```mermaid
+flowchart LR
+    C[a command] --> Q{did it change the riff?}
+    Q -->|yes| R["records in the log:<br/>riff-server log"]
+    Q -->|no| L["one line in the log of the server:<br/>result"]
+```
+
+To find these lines, keep the log of the server in a file, and filter
+it with `jq`:
+
+```sh
+riff-server | tee -a server.log
+jq -c 'select(.result == "refused")' server.log
+jq -c 'select(.result == "denied")' server.log
+```
+
+```text
+{"severity":"INFO","time":"2026-10-01T12:00:00.000Z","message":"refused","target":"engine","caller":{"session":"bob/b1"},"command":"claim","result":"refused","code":"held","reason":"ann@heron:app (s1) holds issue-7 in acme/app."}
+{"severity":"INFO","time":"2026-10-01T12:00:03.000Z","message":"denied","target":"engine","named":{"session":"bob/b1"},"proved":false,"path":"/v1/claim","result":"denied","code":"bad_token"}
+```
+
+- `caller` is the caller that the token proved. `key` is the
+  thumbprint of the device key of that token. It is not a secret.
+- `named` is the caller that a refused call named. No token proved it.
+- No line holds the body of a message or a token.
+
+For the shared server, filter the shared log:
+
+```sh
+just cloud log --log-filter 'jsonPayload.result="refused"'
+```
+
+The log keeps its records for about 30 days.
 
 ### Check the log
 

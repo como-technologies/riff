@@ -60,7 +60,7 @@
 //! records as one chunk outside the lock, and gives the chunk back with
 //! the proof of the write ([`Engine::finish`],
 //! [`Written`](crate::log::Written)). So the types show that only a
-//! written chunk reaches the written copy (RID_WRITTEN). `finish`
+//! written chunk reaches the written copy (01M3X4Z6DSWKMJ2R549R4TSYP0). `finish`
 //! applies the records to the written copy in the order of their
 //! positions, sends the wakes and the `tail` events of each `posted`
 //! record, and then tells each call that its entry is done. The call
@@ -69,10 +69,10 @@
 //!
 //! # The trace of a command
 //!
-//! Each command leaves one trace (RID_TRACE): its records, or one log
+//! Each command leaves one trace (01M3X4Z62RJREQ5H8F18Y85T6V): its records, or one log
 //! line. The records of one command are in one chunk, one after
 //! another, and each one names the caller and the kind of the command
-//! (RID_CAUSE). The writer writes the line of a command with no record
+//! (01M3X4Z60G1FXQTDC5XDJ05BAX). The writer writes the line of a command with no record
 //! in `finish`: `refused` or `no_change`. A chunk that is not written
 //! goes to [`Engine::fail`]: one line `failed` for each of its
 //! commands. See [`crate::trace`] for the lines.
@@ -313,7 +313,7 @@ impl Failed {
 
 impl Failed {
     /// Writes the line `denied` when the token layer refused the call
-    /// (RID_DENIED). `path` is the path of the call, and `me` the
+    /// (01M3X4Z64ZNRD0G0F4JV1M64FN). `path` is the path of the call, and `me` the
     /// caller that it named.
     pub fn trace_denied(&self, path: &str, me: Option<&SessionUri>) {
         if let Failed::Denied(denied) = self {
@@ -358,7 +358,7 @@ pub struct Admitted {
     /// The thumbprint of the device key of the token that proved the
     /// caller. `None` when the riff took the call with no token: the
     /// role of the caller then comes from the trust of the riff
-    /// (RID_TRUST).
+    /// (01M3X4Z6G0TG0B4FT2N1FSPDHS).
     key: Option<String>,
 }
 
@@ -451,7 +451,7 @@ struct Entry {
 }
 
 /// The trace of a command that makes no record: who sent it, and why it
-/// is refused (RID_TRACE).
+/// is refused (01M3X4Z62RJREQ5H8F18Y85T6V).
 struct Sent {
     traced: Traced,
     refused: Option<Refused>,
@@ -663,7 +663,7 @@ impl Engine {
     /// The caller of `admitted` with its role. Until E3 (#393), the
     /// role of a caller with a token comes from the token store. The
     /// role of a caller with no token comes from the trust of the riff
-    /// (RID_TRUST): an admin in a riff with no sign-in
+    /// (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in
     /// ([`People::trusted`]), else a member.
     fn with_role(&self, admitted: &Admitted) -> Caller {
         let people = &self.0.people;
@@ -828,10 +828,10 @@ impl Engine {
     // ANCHOR: finish
     /// Finishes each command of a chunk that the writer wrote
     /// (01M3WRD90WBBCWTDGVQCBR6MNT). `written` is the proof of the
-    /// write: only [`crate::log::write`] makes it (RID_WRITTEN). It
+    /// write: only [`crate::log::write`] makes it (01M3X4Z6DSWKMJ2R549R4TSYP0). It
     /// applies the records to the written copy in the order of their
     /// positions, under the lock. Then, for each entry in order, it
-    /// writes the log line of a command with no record (RID_TRACE),
+    /// writes the log line of a command with no record (01M3X4Z62RJREQ5H8F18Y85T6V),
     /// sends the effects and tells the call that the entry is done. The
     /// call can be gone: the change is done.
     ///
@@ -865,7 +865,7 @@ impl Engine {
     // ANCHOR_END: finish
 
     /// Ends each command of a chunk that the writer did not write: one
-    /// log line `failed` for each (RID_TRACE). Each call of the chunk
+    /// log line `failed` for each (01M3X4Z62RJREQ5H8F18Y85T6V). Each call of the chunk
     /// fails with [`Failed::Stopped`]. The writer then stops the server
     /// for good.
     pub fn fail(&self, chunk: Chunk) {

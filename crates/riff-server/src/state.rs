@@ -751,7 +751,7 @@ impl State {
     /// applies the records to the pending copy. It is the second step
     /// of a command, after [`State::check`]. The records of one command
     /// have positions one after another, and each one names the caller
-    /// and the kind of the command (RID_CAUSE). A state with no writer
+    /// and the kind of the command (01M3X4Z60G1FXQTDC5XDJ05BAX). A state with no writer
     /// applies them to the written copy too.
     ///
     /// ```

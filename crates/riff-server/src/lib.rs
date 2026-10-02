@@ -1599,7 +1599,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Proof {
 
 /// Admits the caller of a signal or of a query that acts as `me`
 /// ([`Engine::admit`]). A refusal gives the line `denied`
-/// (RID_DENIED).
+/// (01M3X4Z64ZNRD0G0F4JV1M64FN).
 fn admit(s: &Server, proof: &Proof, me: &SessionUri) -> Result<Admitted, Failed> {
     s.engine
         .admit(proof.signed_in.as_ref(), me)
@@ -2100,7 +2100,7 @@ async fn require_token(
         Some(_) => DeniedCode::BadProof,
     };
     // The server reads the body only now, after the refusal, to name
-    // the caller in the line (RID_DENIED).
+    // the caller in the line (01M3X4Z64ZNRD0G0F4JV1M64FN).
     let named = Named::in_request(request).await;
     trace::denied(&path, named.as_ref(), code);
     (
@@ -2112,7 +2112,7 @@ async fn require_token(
 
 /// Refuses a call from a `riff` of a version that this server cannot
 /// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T), with
-/// the line `denied` and the code `old_build` (RID_DENIED). A `riff`
+/// the line `denied` and the code `old_build` (01M3X4Z64ZNRD0G0F4JV1M64FN). A `riff`
 /// of the line of this server, or of the line before, goes on
 /// (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). The OAuth
 /// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
@@ -3363,7 +3363,7 @@ mod tests {
     }
 
     /// Each record names its cause, and the records of one command are
-    /// in one chunk, one after another (RID_CAUSE). The note of the
+    /// in one chunk, one after another (01M3X4Z60G1FXQTDC5XDJ05BAX). The note of the
     /// server that a command causes is a `posted` record of that
     /// command (01M3WRD9MGSC3FTBAANT4ZSMKY).
     #[tokio::test(start_paused = true)]
@@ -3446,7 +3446,7 @@ mod tests {
 
     /// A command that makes records gives no line. A refused command
     /// and a command with no change give one line each. A signal and a
-    /// query give no line (RID_TRACE).
+    /// query give no line (01M3X4Z62RJREQ5H8F18Y85T6V).
     #[tokio::test(start_paused = true)]
     async fn only_a_command_with_no_record_gives_a_log_line() {
         let store = Arc::new(Gated::default());
@@ -3516,7 +3516,7 @@ mod tests {
     }
 
     /// A chunk that is not written gives one line `failed` with the
-    /// severity `ERROR` for each of its commands (RID_TRACE).
+    /// severity `ERROR` for each of its commands (01M3X4Z62RJREQ5H8F18Y85T6V).
     #[tokio::test(start_paused = true)]
     async fn a_chunk_that_is_not_written_gives_a_failed_line_for_each_command() {
         let store = Arc::new(Gated::default());
@@ -3535,7 +3535,7 @@ mod tests {
     }
 
     /// The role of a caller with no token comes from the trust of the
-    /// riff (RID_TRUST).
+    /// riff (01M3X4Z6G0TG0B4FT2N1FSPDHS).
     #[tokio::test(start_paused = true)]
     async fn the_role_of_a_caller_with_no_token_comes_from_the_trust_of_the_riff() {
         let set = || SetIdle {
@@ -3654,7 +3654,7 @@ mod tests {
         ]
     }
 
-    /// No line holds the body of a post or a token (RID_NOSECRET). The
+    /// No line holds the body of a post or a token (01M3X4Z675D0ZQX93E93F3M8FA). The
     /// test runs each command with a marked body and a marked token: in
     /// a riff with no sign-in, which takes them, and in a riff with
     /// sign-in, which refuses each one.
@@ -3738,7 +3738,7 @@ mod tests {
 
     /// The line `denied` of a call that names its caller in the query,
     /// of a call from an old build, and of a call whose `me` is long or
-    /// has a line break (RID_DENIED). The line stays one line, and a
+    /// has a line break (01M3X4Z64ZNRD0G0F4JV1M64FN). The line stays one line, and a
     /// long name is cut.
     #[tokio::test(start_paused = true)]
     async fn a_denied_line_names_the_caller_of_the_call_with_a_limit() {
@@ -3804,7 +3804,7 @@ mod tests {
 
     /// A call from a build that the server cannot talk to gives the
     /// line `denied` with the code `old_build`, and a token that acts
-    /// as another session the code `not_you` (RID_DENIED).
+    /// as another session the code `not_you` (01M3X4Z64ZNRD0G0F4JV1M64FN).
     #[tokio::test(start_paused = true)]
     async fn a_denied_line_has_the_code_of_the_refusal() {
         use tower::ServiceExt;

@@ -57,7 +57,7 @@
 //!
 //! let mut lines = Vec::new();
 //! print(&store, 2, &mut |line| lines.push(line)).await?;
-//! assert_eq!(lines[0], "2  2026-09-21T14:13:20Z  riff_state_set  running");
+//! assert_eq!(lines[0], "2  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)");
 //! assert_eq!(lines.len(), 2);
 //!
 //! assert!(verify(&store).await?.problems.is_empty());
@@ -125,7 +125,7 @@ pub fn utc(ms: u64) -> String {
 
 /// One record as one line of text: the position, the time, the kind of
 /// the change, its facts, and its cause: the kind of the command and
-/// the caller (RID_CAUSE). A message shows its thread, its number, its
+/// the caller (01M3X4Z60G1FXQTDC5XDJ05BAX). A message shows its thread, its number, its
 /// sender, its kind and the start of its body.
 ///
 /// ```
@@ -195,7 +195,7 @@ pub fn show(record: &Record) -> String {
 }
 
 /// The cause of a record as text: the kind of its command and its
-/// caller (RID_CAUSE). A record from before the cause has none.
+/// caller (01M3X4Z60G1FXQTDC5XDJ05BAX). A record from before the cause has none.
 fn cause(record: &Record) -> String {
     match (&record.command, &record.by) {
         (Some(command), Some(by)) => format!("{command}, {by}"),

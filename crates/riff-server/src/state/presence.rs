@@ -208,7 +208,7 @@ impl Presence {
     /// - `claimed` and `released`: the time of the last change of the
     ///   claims of the session (01M3Q551WCMPQRCNJ8FXQEBFY4). A session
     ///   whose item another session takes has a `released` record of
-    ///   its own, before the `claimed` record (RID_TAKEN).
+    ///   its own, before the `claimed` record (01M3X4Z6BKM251H7CS2CEGR205).
     /// - `riff_state_set`: the time for a stale status
     ///   (01M3Q551YHYZBFV2NDS1QCYXCD).
     /// - `session_forgotten`: the session leaves memory, with its read

@@ -169,7 +169,7 @@ impl Caller {
     }
 
     /// The caller as a record and a log line name it: its class, with
-    /// the user and the session ID (RID_CAUSE).
+    /// the user and the session ID (01M3X4Z60G1FXQTDC5XDJ05BAX).
     ///
     /// ```
     /// use riff_core::name::SessionUri;
@@ -195,7 +195,7 @@ impl Caller {
 }
 
 /// The cause of a record: the caller and the kind of its command
-/// (RID_CAUSE). [`State::queue`](super::State::queue) writes it in the
+/// (01M3X4Z60G1FXQTDC5XDJ05BAX). [`State::queue`](super::State::queue) writes it in the
 /// envelope of each record of the command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cause {
@@ -303,7 +303,8 @@ impl fmt::Display for CommandKind {
 /// | `other_user` | The session ID is known under another user. | 409 |
 /// | `bad_request` | The fields of the call do not agree. | 400 |
 ///
-/// [`Failed::status`](crate::engine::Failed::status) gives the status.
+/// [`Failed::status`](crate::engine::Failed::status) gives the status
+/// (01M3X4Z69CFV23V4QZBE8RP1GJ).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
     /// The class or the role of the caller cannot send the command.

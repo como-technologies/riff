@@ -647,7 +647,7 @@ fn a_claim_of_an_item_whose_holder_stopped_long_ago_is_granted() {
 }
 
 /// The old holder gets its `released` record first, in the chunk of the
-/// claim, with the cause of the claim (RID_TAKEN).
+/// claim, with the cause of the claim (01M3X4Z6BKM251H7CS2CEGR205).
 #[test]
 fn a_claim_that_takes_an_item_gives_the_old_holder_a_released_record_in_one_chunk() {
     let mut records = team();

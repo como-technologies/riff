@@ -9,7 +9,7 @@
 //! past tense. These Rust types are the schema of the log.
 //!
 //! The cause is in the envelope: the caller ([`By`]) and the kind of
-//! the command (RID_CAUSE). So the log alone shows who made each
+//! the command (01M3X4Z60G1FXQTDC5XDJ05BAX). So the log alone shows who made each
 //! change. A record from before this rule has no cause: it reads, and
 //! its cause is not known.
 //!
@@ -116,7 +116,7 @@ pub enum Change {
 // ANCHOR_END: record
 
 /// Who caused a record: the caller of its command, with its class
-/// (RID_CAUSE). It holds only the user and the session ID. The session
+/// (01M3X4Z60G1FXQTDC5XDJ05BAX). It holds only the user and the session ID. The session
 /// in a change is a full URI, with the place.
 ///
 /// | Caller | JSON |

@@ -2222,7 +2222,9 @@ With a bucket, each change is a record in one log: a message, a join,
 a claim, a lead, a pause. `riff-server` writes the records as chunks to
 Cloud Storage. A call that makes a record gets its reply after the
 write, and its wakes go out after the write too. So nobody sees a
-change that a restart can lose.
+change that a restart can lose. Each record names its cause: the
+caller and the command. See
+[Find who did what](development.md#find-who-did-what).
 
 From time to time, the server writes a checkpoint: the whole state at
 one position of the log, with the read cursors. At start, it loads the
