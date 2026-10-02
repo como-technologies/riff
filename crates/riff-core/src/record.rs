@@ -45,12 +45,20 @@
 //! - A `posted` record has two such parts too
 //!   (01M3XSF90E9JYYTC13D9THY4WE): the kind of the message
 //!   ([`Kind`](crate::wire::Kind)), and each selector of its `to`
-//!   ([`Selector`]). A selector with a field
-//!   that the build does not know is a selector `other`: it keeps the
-//!   field, and it matches no session. The message stays in its thread,
-//!   and a reader shows it as a message.
+//!   ([`Selector`]). A selector that the build does not know is a
+//!   selector `other`: an object with a field or a value that the build
+//!   does not know, and each other form of JSON. It keeps its JSON as
+//!   it came, and it matches no session. The message stays in its
+//!   thread, and a reader shows it as a message.
+//! - A session URI keeps each query part that the build does not know,
+//!   as it came ([`SessionUri::other`], 01M3XYYSY536AEJVERBPTQFQYX). The session is the same
+//!   session, and the part gives no mark: no lead and no claim. Such a
+//!   record counts as a skipped record too.
 //! - `command` is text. A reader takes a kind of command that it does
 //!   not know as text.
+//! - Only the read of JSON takes a value of a later build. A call with
+//!   such a kind, such a selector or such a URI of its caller is
+//!   refused.
 //!
 //! # Each type with named values in a record
 //!
@@ -66,8 +74,31 @@
 //! | [`Scope`] | `pause_set` | `other` |
 //! | [`StartReason`] | `session_started` | `other` |
 //! | [`Kind`](crate::wire::Kind) | the message of `posted` | `other` |
-//! | [`Selector`] | the `to` of the message of `posted` | `other`, for a new field |
+//! | [`Selector`] | the `to` of the message of `posted` | `other`: a new field, a new value of a field, and each other form of JSON |
 //! | [`RiffState`] | `pause_set` | The line does not read. The set never grows: a pause is set or ended. A new sort of pause is a new [`Scope`]. |
+//!
+//! # Each text with a grammar in a record
+//!
+//! The list has each text that the read of a record checks or takes
+//! apart, and each number. A text that is not in the list is free text:
+//! the read takes each value. A new text with a grammar in a record
+//! needs a line here.
+//!
+//! | Text | Where | A value that the build does not know |
+//! |---|---|---|
+//! | The query of a session URI ([`SessionUri`]) | `session` of a change, `from` of a message | The URI keeps the part, and the record counts as a skipped record: a part with a new name, `lead` with a value other than `true`, a second `session`, and a `claim` with a character that is not allowed. |
+//! | The other parts of a session URI | the same | The line does not read. They never grow: `riff://USER@HOST`, then `/OWNER/REPO` or `/-`, then `#WORKTREE`, and each part holds only ASCII letters, digits, `-`, `_`, `.` and `~`. A new fact of a session is a new query part. |
+//! | A thread name ([`ThreadName`]) | `thread` | The line does not read. The grammar never grows: a text that is not empty and has no white space. Each new sort of thread name fits it, as `dm:` did. The read does not take a name apart. |
+//! | The caller in `by` | `{"session":"USER/ID"}` | `other` ([`By`]) |
+//! | A session in `woken` ([`Who`]) | `posted` | The read checks no character. A field that the build does not know is skipped. |
+//! | The signature and the payload of a message | `sig`, `payload` | The read keeps the text, and checks nothing. A reader checks them: a text that does not check gives a message that is not verified. |
+//! | An item, an email, a user, the ID of a riff, a body, a command | `item`, `email`, `user`, `riff_id`, `body`, `command` | Free text. |
+//! | A time, a position, a seq, a count | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
+//! | A mark | `worker`, `must_clear`, `admin` | The line does not read. A mark is `true` or `false`, and its type never changes. |
+//!
+//! The header of a chunk has the number of the format. A header of a
+//! later format stops the load (01M3T411F3K6FD28R3Q3ZE4VCN): this is
+//! the one sign that a build must not read the log.
 //!
 //! # Example
 //!
@@ -342,10 +373,40 @@ impl<'de> Deserialize<'de> for By {
     }
 }
 
+impl Change {
+    /// The session URI that this change holds: the `session` of the
+    /// change, or the `from` of the message of a `posted` change. `None`
+    /// for a change with no session URI.
+    pub fn session(&self) -> Option<&SessionUri> {
+        match self {
+            Change::Posted(posted) => Some(&posted.message.from),
+            Change::JoinedThread(m) | Change::LeftThread(m) | Change::LeadSet(m) => {
+                Some(&m.session)
+            }
+            Change::Claimed(c) => Some(&c.session),
+            Change::Released(r) => Some(&r.session),
+            Change::SessionForgotten(f) => Some(&f.session),
+            Change::SessionStarted(s) => Some(&s.session),
+            Change::SettingChanged(_)
+            | Change::PauseSet(_)
+            | Change::RiffMade(_)
+            | Change::PersonJoined(_)
+            | Change::MemberInvited(_)
+            | Change::MemberRemoved(_)
+            | Change::AdminSet(_)
+            | Change::OwnerSet(_)
+            | Change::OwnerAsked(_)
+            | Change::OwnerDenied(_)
+            | Change::SigninsEnded(_) => None,
+        }
+    }
+}
+
 impl Record {
     /// The field of this record whose value this build read as `other`:
-    /// `by`, `scope`, `reason`, or the `kind` or the `to` of a message.
-    /// `None` when the build knows each value. A record with such a
+    /// `by`, `scope`, `reason`, the `kind` or the `to` of a message, or
+    /// a session URI (`session`, or the `from` of a message). `None`
+    /// when the build knows each value. A record with such a
     /// value counts as a skipped record: the build writes no checkpoint
     /// past it (01M3XM2C18TT8VSKGD77YPZG53).
     ///
@@ -372,10 +433,19 @@ impl Record {
     /// assert_eq!(read(post).other(), None);
     /// assert_eq!(read(&post.replace("note", "poll")).other(), Some("kind"));
     /// assert_eq!(read(&post.replace(r#"{"user":"bob"}"#, r#"{"user":"bob","wave":"17"}"#)).other(), Some("to"));
+    /// assert_eq!(read(&post.replace(r#"{"user":"bob"}"#, r#""all""#)).other(), Some("to"));
+    /// // A session URI with a query part of a later build.
+    /// assert_eq!(read(&post.replace("session=s1", "session=s1&wave=17")).other(), Some("from"));
     /// ```
     pub fn other(&self) -> Option<&'static str> {
         if self.by == Some(By::Other) {
             return Some("by");
+        }
+        if self.change.session().is_some_and(SessionUri::is_other) {
+            return Some(match self.change {
+                Change::Posted(_) => "from",
+                _ => "session",
+            });
         }
         match &self.change {
             Change::PauseSet(set) if set.scope == Scope::Other => Some("scope"),
@@ -1029,6 +1099,14 @@ mod tests {
             r#"[{"user":"bob","wave":"17"}]"#,
             r#"[{"user":"bob"},{"wave":17}]"#,
             r#"[{"wave":{"n":17},"lead":true}]"#,
+            // A value that the build does not know, and each other form
+            // of JSON.
+            r#"[{"user":null,"wave":"17"}]"#,
+            r#"[{"lead":"maybe","user":"bob"}]"#,
+            r#"["all"]"#,
+            r#"[["user","bob"]]"#,
+            "[17]",
+            "[null]",
         ] {
             let record = posted(&MESSAGE.replace(r#"[{"user":"bob"}]"#, later));
             assert_eq!(record.other(), Some("to"), "{later}");
@@ -1042,6 +1120,168 @@ mod tests {
             let read: serde_json::Value = serde_json::from_str(later).unwrap();
             assert_eq!(written, read);
         }
+    }
+
+    /// The line of a change with the session URI `uri`, for each kind
+    /// that holds one.
+    fn lines_with(uri: &str) -> Vec<String> {
+        let member = format!(r#"{{"session":"{uri}","thread":"acme/app"}}"#);
+        let claim = format!(r#"{{"session":"{uri}","thread":"acme/app","item":"issue-7"}}"#);
+        let message = MESSAGE.replace("riff://ann@heron/acme/app?session=s1", uri);
+        [
+            (
+                "posted",
+                format!(r#"{{"thread":"acme/app","message":{message}}}"#),
+            ),
+            ("joined_thread", member.clone()),
+            ("left_thread", member.clone()),
+            ("lead_set", member),
+            ("claimed", claim.clone()),
+            ("released", claim),
+            ("session_forgotten", format!(r#"{{"session":"{uri}"}}"#)),
+            (
+                "session_started",
+                format!(r#"{{"session":"{uri}","reason":"process"}}"#),
+            ),
+        ]
+        .into_iter()
+        .map(|(kind, body)| {
+            format!(r#"{{"position":2,"written_at_ms":1,"change":{{"{kind}":{body}}}}}"#)
+        })
+        .collect()
+    }
+
+    #[test]
+    fn a_session_uri_with_a_query_part_of_a_later_build_reads_in_each_kind() {
+        let known = "riff://ann@heron/acme/app?session=s1";
+        for line in lines_with(known) {
+            let Line::Record(record) = Line::parse(&line).unwrap() else {
+                panic!("a known kind");
+            };
+            assert_eq!(record.other(), None, "{line}");
+            assert_eq!(record.change.session(), Some(&uri()), "{line}");
+        }
+        // Each kind with no session URI has none.
+        let with_uri = lines_with(known).len();
+        let without = one_of_each()
+            .iter()
+            .filter(|change| change.session().is_none())
+            .count();
+        assert_eq!(with_uri + without, Change::KINDS.len());
+
+        for later in [
+            "riff://ann@heron/acme/app?session=s1&wave=17",
+            "riff://ann@heron/acme/app?session=s1&lead=maybe",
+            "riff://ann@heron/acme/app?session=s1&lead=true&mode",
+            "riff://ann@heron/acme/app?session=s1&session=s2",
+            "riff://ann@heron/acme/app?session=s1&claim=two%20words",
+            "riff://ann@heron/acme/app?session=s1&claim=issue-7&wave=17#api",
+        ] {
+            for line in lines_with(later) {
+                let Line::Record(record) = Line::parse(&line).unwrap() else {
+                    panic!("a known kind");
+                };
+                let field = match record.change {
+                    Change::Posted(_) => "from",
+                    _ => "session",
+                };
+                assert_eq!(record.other(), Some(field), "{line}");
+                // The same session, and the URI as it came.
+                let session = record.change.session().unwrap();
+                assert_eq!(session.who(), uri().who(), "{line}");
+                assert_eq!(session.place().host(), "heron", "{line}");
+                assert_eq!(session.to_string(), later, "{line}");
+                assert!(serde_json::to_string(&record).unwrap().contains(later));
+            }
+        }
+        // The part gives no mark.
+        let read = |text: &str| SessionUri::try_from(text.to_owned()).unwrap();
+        let maybe = read("riff://ann@heron/acme/app?session=s1&lead=maybe");
+        assert!(!maybe.lead() && maybe.claims().is_empty());
+        let claim = read("riff://ann@heron/acme/app?session=s1&claim=two%20words");
+        assert!(claim.claims().is_empty());
+    }
+
+    /// The list "Each text with a grammar in a record" of the module
+    /// docs: what reads, and what does not.
+    #[test]
+    fn each_text_with_a_grammar_reads_as_the_list_says() {
+        let reads = |line: &str| Line::parse(line).is_ok();
+        let claimed = |session: &str, thread: &str, item: &str| {
+            format!(
+                r#"{{"position":2,"written_at_ms":1,"change":{{"claimed":{{"session":"{session}","thread":"{thread}","item":"{item}"}}}}}}"#
+            )
+        };
+        let session = "riff://ann@heron/acme/app?session=s1";
+        assert!(reads(&claimed(session, "acme/app", "issue-7")));
+        // The parts of a URI before its query never grow.
+        for other in [
+            "riff://ann@heron/acme/app/more?session=s1",
+            "riff://ann@two words/acme/app?session=s1",
+            "rifs://ann@heron/acme/app?session=s1",
+            "riff://heron/acme/app?session=s1",
+        ] {
+            assert!(!reads(&claimed(other, "acme/app", "issue-7")), "{other}");
+        }
+        // A thread name is a text with no white space. The read does
+        // not take it apart.
+        for thread in [
+            "wave:17",
+            "dm:ann/s1|bob/b1",
+            "dm:a later form",
+            "dm:x",
+            "a/b/c",
+        ] {
+            let reads_it = !thread.contains(' ') || thread.starts_with("dm:");
+            assert_eq!(
+                reads(&claimed(session, thread, "issue-7")),
+                reads_it,
+                "{thread}"
+            );
+        }
+        assert!(!reads(&claimed(session, "", "issue-7")));
+        // An item is free text.
+        assert!(reads(&claimed(
+            session,
+            "acme/app",
+            "two words, and more: 17"
+        )));
+        assert!(reads(&claimed(session, "acme/app", "")));
+        // A session in `woken`: no check of a character, and a field of
+        // a later build is skipped.
+        let woken =
+            r#"[{"user":"two words","session":"b 1","wave":17},{"user":"bob","session":null}]"#;
+        let record = posted(MESSAGE);
+        let line = serde_json::to_string(&record)
+            .unwrap()
+            .replace(r#"[{"user":"bob","session":"b1"}]"#, woken);
+        assert!(line.contains("two words"));
+        let Line::Record(record) = Line::parse(&line).unwrap() else {
+            panic!("a known kind");
+        };
+        assert_eq!(record.other(), None);
+        // A signature and a payload that do not check still read.
+        let signed = MESSAGE.replace(
+            r#""kind""#,
+            r#""sig":"not a signature","payload":"%%","kind""#,
+        );
+        assert_eq!(posted(&signed).other(), None);
+        // A number is a whole number that is not negative.
+        let numbered = |position: &str, at: &str| {
+            format!(
+                r#"{{"position":{position},"written_at_ms":{at},"change":{{"riff_made":{{"riff_id":"r1"}}}}}}"#
+            )
+        };
+        assert!(reads(&numbered("2", "18446744073709551615")));
+        for (position, at) in [("-2", "1"), ("2", "1.5"), ("2", r#""1""#), ("2", "null")] {
+            assert!(!reads(&numbered(position, at)), "{position} {at}");
+        }
+        let idle = |per_host: &str| {
+            format!(
+                r#"{{"position":2,"written_at_ms":1,"change":{{"setting_changed":{{"idle":{{"per_host":{per_host},"after_secs":60}}}}}}}}"#
+            )
+        };
+        assert!(reads(&idle("65535")) && !reads(&idle("65536")));
     }
 
     #[test]

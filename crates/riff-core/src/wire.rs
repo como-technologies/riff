@@ -1031,6 +1031,11 @@ impl Message {
             let [to] = &self.to[..] else {
                 return false;
             };
+            // A selector of a later build matches no session, so it
+            // does not name the other session.
+            if to.is_other() {
+                return false;
+            }
             let names = |want: &Option<String>, have: Option<&str>| {
                 want.as_deref().is_none_or(|w| Some(w) == have)
             };

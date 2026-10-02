@@ -476,8 +476,8 @@ impl Command for Post {
         }
         if let Some(later) = post.to.iter().find(|selector| selector.is_other()) {
             return Err(format!(
-                "the selector {later} has a field that this server does not know. \
-                 Use user, session, host, repo, worktree, claim or lead."
+                "this server does not know the selector {later}. \
+                 Use the fields user, session, host, repo, worktree, claim or lead."
             )
             .into());
         }

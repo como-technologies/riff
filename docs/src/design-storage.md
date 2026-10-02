@@ -174,9 +174,11 @@ code](#the-book-shows-the-real-code):
   - A field with a set of named values that can grow has the value
     `other`. A build reads a value that it does not know as `other`.
     Such a record counts as a skipped record. The kind of a message
-    has this value. A selector with a field that the build does not
-    know is a selector `other`: it keeps the field, and it matches no
-    session (01M3XSF90E9JYYTC13D9THY4WE).
+    has this value. A selector that the build does not know is a
+    selector `other`: it keeps its JSON as it came, and it matches no
+    session (01M3XSF90E9JYYTC13D9THY4WE). A session URI keeps each
+    query part that the build does not know, and such a record counts
+    as a skipped record too (01M3XYYSY536AEJVERBPTQFQYX).
 - Each release adds a sample log to the test fixtures, from 1.0.0 on:
   `crates/riff-server/tests/fixtures/1.0.0/`. CI replays each fixture
   of each earlier release.
@@ -271,8 +273,8 @@ a scheme that it does not know shows the message as not verified.
   says so. A test runs a new build, an old build, then the new build
   again, and compares the state. A second test does the same with a
   pause whose scope the old build does not know. A third test does
-  the same with a message whose kind, or a field of whose selector,
-  the old build does not know.
+  the same with a message whose kind, selector or session URI the
+  old build does not know.
 - The server keeps the last 3 checkpoints, and one checkpoint each day
   for 30 days.
 - The server deletes a chunk only when each kept checkpoint is past it.

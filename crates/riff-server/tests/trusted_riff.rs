@@ -139,7 +139,21 @@ async fn a_post_with_a_kind_or_a_selector_field_of_a_later_build_is_a_bad_reques
     for (body, text) in [
         (post("poll", known.clone()), "no such kind"),
         (post("other", known.clone()), "no such kind"),
-        (post("note", later), "the selector user=mike,wave=17"),
+        (
+            post("note", later),
+            r#"this server does not know the selector {"user":"mike","wave":"17"}"#,
+        ),
+        (
+            post("note", serde_json::json!("all")),
+            r#"this server does not know the selector "all""#,
+        ),
+        (
+            post(
+                "note",
+                serde_json::json!({ "user": "mike", "lead": "maybe" }),
+            ),
+            "this server does not know the selector",
+        ),
     ] {
         let reply = call("post", body.clone()).await.unwrap();
         assert_eq!(reply.status(), 400, "{body}");
@@ -147,6 +161,39 @@ async fn a_post_with_a_kind_or_a_selector_field_of_a_later_build_is_a_bad_reques
         assert_eq!(code, "bad_request", "{body}");
         let why = reply.text().await.unwrap();
         assert!(why.contains(text), "{why}");
+    }
+    // A caller whose URI has a query part that the server does not
+    // know is refused in each call: a command, a signal and a query.
+    let later = format!("{me}&wave=17");
+    for (op, body) in [
+        ("register", serde_json::json!({ "me": later })),
+        ("alive", serde_json::json!({ "me": later })),
+        (
+            "post",
+            serde_json::json!({ "me": later, "thread": thread, "body": "hi" }),
+        ),
+        (
+            "read",
+            serde_json::json!({ "me": later, "thread": thread, "all": true }),
+        ),
+        ("who", serde_json::json!({ "me": later })),
+    ] {
+        let reply = call(op, body.clone()).await.unwrap();
+        assert_eq!(reply.status(), 400, "{op}");
+        // A command names the code of its refusal. A signal and a
+        // query give only the status and the text.
+        let code = reply
+            .headers()
+            .get(riff_core::wire::REFUSED_HEADER)
+            .cloned();
+        if matches!(op, "register" | "post") {
+            assert_eq!(code.unwrap(), "bad_request", "{op}");
+        }
+        let why = reply.text().await.unwrap();
+        assert!(
+            why.contains("a part that this server does not know: wave=17"),
+            "{op}: {why}"
+        );
     }
     call("post", post("note", known))
         .await

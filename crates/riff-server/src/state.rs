@@ -3049,12 +3049,22 @@ mod tests {
         let why = state
             .post(Post::new(&api(), Some(repo()), field.clone(), "hi"), now, 0)
             .unwrap_err();
-        assert!(why.starts_with("the selector user=brett,wave=17 has a field"));
+        let text = r#"this server does not know the selector {"user":"brett","wave":"17"}."#;
+        assert!(why.starts_with(text), "{why}");
+        // A selector in another form of JSON.
+        let form = vec![later(r#""all""#)];
+        let why = state
+            .post(Post::new(&api(), Some(repo()), form, "hi"), now, 0)
+            .unwrap_err();
+        assert!(
+            why.starts_with(r#"this server does not know the selector "all"."#),
+            "{why}"
+        );
         // A direct message too.
         let why = state
             .post(Post::new(&api(), None, field, "hi"), now, 0)
             .unwrap_err();
-        assert!(why.starts_with("the selector user=brett,wave=17 has a field"));
+        assert!(why.starts_with(text), "{why}");
         assert_eq!(state.position(), position, "a refused post makes no record");
         let refused = state
             .run(
@@ -3073,11 +3083,18 @@ mod tests {
     /// wider (01M3XSF90E9JYYTC13D9THY4WE). The server posts with such a
     /// selector here, because a `post` call with it is refused.
     #[test]
-    fn a_selector_with_a_field_of_a_later_build_wakes_nobody() {
+    fn a_selector_of_a_later_build_wakes_nobody() {
         let now = Instant::now();
         let server = crate::owner::server_uri();
         for (json, known) in [
             (r#"{"user":"brett","wave":"17"}"#, "user=brett"),
+            // A value that the build does not know, and each other form
+            // of JSON.
+            (r#"{"lead":"maybe","user":"brett"}"#, "user=brett"),
+            (r#""all""#, "repo=como-technologies/riff"),
+            (r#"["user","brett"]"#, "user=brett"),
+            ("17", "user=brett"),
+            ("null", "user=brett"),
             (
                 r#"{"repo":"como-technologies/riff","wave":17}"#,
                 "repo=como-technologies/riff",
@@ -3163,6 +3180,49 @@ mod tests {
         assert_eq!(shown, [(Kind::Other, "text 1"), (Kind::Note, "text 2")]);
         assert!(messages[1].to[0].is_other());
         assert!(!messages[1].to[0].matches(&tests()));
+    }
+
+    /// A session URI with a query part of a later build is the URI of
+    /// the same session, and the part gives no mark: no lead and no
+    /// claim (01M3XYYSY536AEJVERBPTQFQYX).
+    #[test]
+    fn a_replay_takes_a_session_uri_of_a_later_build_as_the_same_session() {
+        let now = Instant::now();
+        let later = "riff://mike@pangolin/como-technologies/riff?session=a1&lead=maybe&wave=17#api";
+        let lines = [
+            format!(
+                r#"{{"position":1,"written_at_ms":1,"change":{{"session_started":{{"session":"{later}","reason":"process"}}}}}}"#
+            ),
+            format!(
+                r#"{{"position":2,"written_at_ms":2,"change":{{"claimed":{{"session":"{later}","thread":"como-technologies/riff","item":"issue-7"}}}}}}"#
+            ),
+            format!(
+                r#"{{"position":3,"written_at_ms":3,"change":{{"posted":{{"thread":"como-technologies/riff","message":{{"seq":1,"from":"{later}","to":[],"body":"the text","at_ms":3}}}}}}}}"#
+            ),
+        ];
+        let records: Vec<Record> = lines
+            .iter()
+            .map(|line| match riff_core::record::Line::parse(line).unwrap() {
+                riff_core::record::Line::Record(record) => *record,
+                riff_core::record::Line::Unknown { .. } => panic!("a known kind"),
+            })
+            .collect();
+        let fields: Vec<_> = records.iter().map(Record::other).collect();
+        assert_eq!(fields, [Some("session"), Some("session"), Some("from")]);
+
+        let mut state = State::replay(records, now, 0);
+        // The same session, in its place, with its claim.
+        let uri = state.uri(api().who(), now);
+        assert_eq!((uri.who(), uri.place()), (api().who(), api().place()));
+        assert_eq!(uri.claims(), ["issue-7"]);
+        // The part `lead=maybe` gives no lead.
+        assert!(!uri.lead() && !uri.is_other());
+        // The message keeps the URI of its sender as it came.
+        state.register(&tests(), now);
+        let messages = state.read(&tests(), &repo(), true, now).unwrap();
+        assert_eq!(messages[0].body, "the text");
+        assert_eq!(messages[0].from.to_string(), later);
+        assert_eq!(messages[0].from.who(), api().who());
     }
 
     /// A time in milliseconds since the Unix epoch.

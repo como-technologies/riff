@@ -22,25 +22,29 @@
 //! On the command line, a selector is `FIELD=VALUE` pairs with commas
 //! between them.
 //!
-//! # A field of a later build (01M3XSF90E9JYYTC13D9THY4WE)
+//! # A selector of a later build (01M3XSF90E9JYYTC13D9THY4WE)
 //!
-//! The set of fields can grow. A selector keeps each field that this
-//! build does not know ([`Selector::other`]), with its value. Such a
-//! selector is a selector `other`: it matches no session, because a
-//! field that the build cannot check never makes a selector wider. It
-//! writes each field again, so a reader of a later build gets the
-//! selector as it was. A `post` call with such a selector is refused.
+//! The set of fields can grow, and so can the form of a selector. A
+//! selector that this build does not know is a selector `other`: an
+//! object with a field or a value that the build does not know, and
+//! each other form of JSON (a text, a list, a number, `null`). It keeps
+//! its JSON as it came ([`Selector::other`]), and writes it again. So a
+//! reader of a later build gets the selector as it was, and the check
+//! of a signed message covers it. A selector `other` matches no
+//! session, because a field that the build cannot check never makes a
+//! selector wider. A `post` call with such a selector is refused.
 //!
 //! ```
 //! use riff_core::name::SessionUri;
 //! use riff_core::selector::Selector;
 //!
 //! let uri: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
-//! let json = r#"{"user":"mike","wave":"17"}"#;
-//! let later: Selector = serde_json::from_str(json).unwrap();
-//! assert!(later.is_other() && !later.matches(&uri));
-//! assert_eq!(later.to_string(), "user=mike,wave=17");
-//! assert_eq!(serde_json::to_string(&later).unwrap(), json);
+//! for json in [r#"{"user":"mike","wave":"17"}"#, r#"{"user":null,"wave":"17"}"#, r#""all""#, "null"] {
+//!     let later: Selector = serde_json::from_str(json).unwrap();
+//!     assert!(later.is_other() && !later.matches(&uri), "{json}");
+//!     assert_eq!(later.to_string(), json);
+//!     assert_eq!(serde_json::to_string(&later).unwrap(), json);
+//! }
 //! // The same selector with only the field that the build knows.
 //! assert!("user=mike".parse::<Selector>()?.matches(&uri));
 //! # Ok::<(), riff_core::name::NameError>(())
@@ -70,18 +74,17 @@
 //! # Ok::<(), riff_core::name::NameError>(())
 //! ```
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::name::{NameError, SessionUri};
 
 /// Picks sessions by who they are, where they work, and what they hold.
 /// Each field that is set must match. Set one or more fields.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct Selector {
     /// The user, for example `mike`.
@@ -106,18 +109,89 @@ pub struct Selector {
     /// `user` and `repo`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<bool>,
-    /// Each field that this build does not know, with its value. A
-    /// selector with such a field matches no session.
-    #[serde(flatten)]
+    /// The JSON of a selector that this build does not know, as it
+    /// came. Each field above is then empty, and the selector matches
+    /// no session.
     #[schemars(skip)]
-    pub other: BTreeMap<String, serde_json::Value>,
+    pub other: Option<serde_json::Value>,
+}
+
+/// The selector of this build, as its JSON has it.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Known {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worktree: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lead: Option<bool>,
+}
+
+/// A selector `other` writes its JSON as it came.
+impl Serialize for Selector {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Some(other) = &self.other {
+            return other.serialize(serializer);
+        }
+        let selector = self.clone();
+        Known {
+            user: selector.user,
+            session: selector.session,
+            host: selector.host,
+            repo: selector.repo,
+            worktree: selector.worktree,
+            claim: selector.claim,
+            lead: selector.lead,
+        }
+        .serialize(serializer)
+    }
+}
+
+/// A build reads each selector that it does not know as a selector
+/// `other`: an object with a field or a value that it does not know, and
+/// each other form of JSON (01M3XSF90E9JYYTC13D9THY4WE).
+impl<'de> Deserialize<'de> for Selector {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        // Only an object is a selector of this build: a list of values
+        // in the order of the fields is not.
+        let known = value
+            .is_object()
+            .then(|| Known::deserialize(&value).ok())
+            .flatten();
+        Ok(match known {
+            Some(known) => Selector {
+                user: known.user,
+                session: known.session,
+                host: known.host,
+                repo: known.repo,
+                worktree: known.worktree,
+                claim: known.claim,
+                lead: known.lead,
+                other: None,
+            },
+            None => Selector {
+                other: Some(value),
+                ..Selector::default()
+            },
+        })
+    }
 }
 
 impl Selector {
-    /// True for a selector `other`: it has a field that this build does
-    /// not know.
+    /// True for a selector `other`: a selector that this build does not
+    /// know.
     pub fn is_other(&self) -> bool {
-        !self.other.is_empty()
+        self.other.is_some()
     }
 
     /// A selector for one session.
@@ -175,16 +249,16 @@ impl Selector {
 }
 
 impl fmt::Display for Selector {
+    /// The `FIELD=VALUE` pairs. A selector `other` shows its JSON.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(other) = &self.other {
+            return write!(f, "{other}");
+        }
         let pairs: Vec<String> = self
             .fields()
             .iter()
             .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}={v}")))
             .chain(self.lead.map(|l| format!("lead={l}")))
-            .chain(self.other.iter().map(|(k, v)| match v.as_str() {
-                Some(text) => format!("{k}={text}"),
-                None => format!("{k}={v}"),
-            }))
             .collect();
         f.write_str(&pairs.join(","))
     }
@@ -327,37 +401,59 @@ mod tests {
     }
 
     #[test]
-    fn a_selector_with_a_field_of_a_later_build_matches_no_session() {
+    fn a_selector_of_a_later_build_matches_no_session() {
         let u = uri("riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6#api")
             .with_lead(true);
-        for json in [
-            r#"{"colour":"blue"}"#,
-            r#"{"user":"mike","wave":"17"}"#,
-            r#"{"session":"a6cf","wave":17}"#,
-            r#"{"lead":true,"wave":{"n":17}}"#,
-            r#"{"claim":"issue-6","wave":null}"#,
+        // The selector of a later build, and the same selector with
+        // only the fields that this build knows.
+        for (json, known) in [
+            (r#"{"colour":"blue"}"#, "{}"),
+            (r#"{"user":"mike","wave":"17"}"#, r#"{"user":"mike"}"#),
+            (r#"{"session":"a6cf","wave":17}"#, r#"{"session":"a6cf"}"#),
+            (r#"{"lead":true,"wave":{"n":17}}"#, r#"{"lead":true}"#),
+            (
+                r#"{"claim":"issue-6","wave":null}"#,
+                r#"{"claim":"issue-6"}"#,
+            ),
+            (r#"{"user":null,"wave":"17"}"#, "{}"),
+            // A value of a field that the build does not know.
+            (r#"{"lead":"maybe","user":"mike"}"#, r#"{"user":"mike"}"#),
+            (r#"{"user":["mike","brett"]}"#, "{}"),
+            // Each other form of JSON.
+            (r#""all""#, "{}"),
+            (r#"["user","mike"]"#, "{}"),
+            ("17", "{}"),
+            ("true", "{}"),
+            ("null", "{}"),
         ] {
             let later: Selector = serde_json::from_str(json).unwrap();
             assert!(later.is_other() && !later.is_empty(), "{json}");
             assert!(!later.matches(&u), "{json}");
-            // The selector writes each field again.
-            let again: serde_json::Value = serde_json::to_value(&later).unwrap();
-            assert_eq!(
-                again,
-                serde_json::from_str::<serde_json::Value>(json).unwrap()
-            );
-            // The same selector with only the fields that the build
-            // knows is wider: it matches the session.
-            let known = Selector {
-                other: BTreeMap::new(),
-                ..later
-            };
+            // The selector is written again as it came.
+            assert_eq!(serde_json::to_string(&later).unwrap(), json);
+            assert_eq!(later.to_string(), json);
+            // Two selectors of a later build are the same only when
+            // their JSON is the same.
+            let same: Selector = serde_json::from_str(json).unwrap();
+            assert_eq!(later, same);
+            assert_ne!(later, serde_json::from_str(r#"{"wave":"18"}"#).unwrap());
+            // The selector with only the known fields is wider.
+            let known: Selector = serde_json::from_str(known).unwrap();
+            assert!(!known.is_other(), "{json}");
             assert!(known.is_empty() || known.matches(&u), "{json}");
         }
-        let later: Selector = serde_json::from_str(r#"{"user":"mike","wave":17}"#).unwrap();
-        assert_eq!(later.to_string(), "user=mike,wave=17");
         // The command line still takes only the fields of this build.
         assert!("user=mike,wave=17".parse::<Selector>().is_err());
+    }
+
+    /// A field that the build knows can be `null`: it is not set. An
+    /// agent tool sends such a selector.
+    #[test]
+    fn a_null_of_a_field_that_the_build_knows_is_a_field_that_is_not_set() {
+        let s: Selector = serde_json::from_str(r#"{"user":"mike","session":null}"#).unwrap();
+        assert_eq!(s, sel("user=mike"));
+        assert!(!s.is_other());
+        assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"user":"mike"}"#);
     }
 
     #[test]
