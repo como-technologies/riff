@@ -3929,7 +3929,9 @@ mod tests {
         // The paused repository: no claim, and its session is paused.
         let refused = state.claim(&brett, &other, "issue-3", now).unwrap_err();
         assert!(
-            refused.contains("the repository como-technologies/strata is paused by the session brett/b1"),
+            refused.contains(
+                "the repository como-technologies/strata is paused by the session brett/b1"
+            ),
             "{refused}"
         );
         assert_eq!(info(&state, &brett, now).state, Some(SessionState::Paused));
@@ -3988,10 +3990,16 @@ mod tests {
             state.register(&me, now);
         }
         let later = now + Duration::from_secs(5);
-        state.pause_repository(&brett, RiffState::Paused, later).unwrap();
+        state
+            .pause_repository(&brett, RiffState::Paused, later)
+            .unwrap();
         state.riff(&api(), Some(RiffState::Running), later).unwrap();
-        state.pause_repository(&api(), RiffState::Paused, later).unwrap();
-        state.pause_repository(&brett, RiffState::Running, later).unwrap();
+        state
+            .pause_repository(&api(), RiffState::Paused, later)
+            .unwrap();
+        state
+            .pause_repository(&brett, RiffState::Running, later)
+            .unwrap();
         state.riff(&api(), Some(RiffState::Paused), later).unwrap();
         let log: Vec<Record> = state.take_queue();
         let full = State::replay(log.clone(), now, T0);
@@ -3999,8 +4007,15 @@ mod tests {
         let by = |pause: &riff_core::wire::PauseInfo| pause.by.as_ref().unwrap().to_string();
         assert_eq!(by(pauses.riff().unwrap()), "the session mike/a1");
         assert_eq!(pauses.riff().unwrap().at_ms, T0 + 5000);
-        assert_eq!(by(pauses.repository(&repo()).unwrap()), "the session mike/a1");
-        assert!(pauses.repository(&thread("como-technologies/strata")).is_none());
+        assert_eq!(
+            by(pauses.repository(&repo()).unwrap()),
+            "the session mike/a1"
+        );
+        assert!(
+            pauses
+                .repository(&thread("como-technologies/strata"))
+                .is_none()
+        );
 
         for at in 0..=log.len() {
             let head = State::replay(log[..at].to_vec(), now, T0);
@@ -4026,7 +4041,10 @@ mod tests {
             assert!(state.pauses().riff().is_none_or(|p| p.by.is_none()));
             // This build writes the same fields for it.
             let written = serde_json::to_string(&state.snapshot(now, T0)).unwrap();
-            assert!(!written.contains("riff_pause") && !written.contains("pauses"), "{written}");
+            assert!(
+                !written.contains("riff_pause") && !written.contains("pauses"),
+                "{written}"
+            );
         }
     }
 
@@ -4039,7 +4057,9 @@ mod tests {
         let mut state = State::default();
         running(&mut state).unwrap();
         let in_repo = |repo: &str, id: &str| {
-            uri(&format!("riff://mike@pangolin/como-technologies/{repo}?session={id}"))
+            uri(&format!(
+                "riff://mike@pangolin/como-technologies/{repo}?session={id}"
+            ))
         };
         for (repo, id, at) in [("riff", "r1", 0), ("dotfiles", "d1", 1)] {
             let lead = in_repo(repo, &format!("lead-{repo}"));
@@ -4069,7 +4089,9 @@ mod tests {
         let t = |secs| now + Duration::from_secs(secs);
         set_step(&mut state, &docs(), "tests", t(1));
         set_step(&mut state, &brett, "docs", t(1));
-        state.pause_repository(&brett, RiffState::Paused, t(2)).unwrap();
+        state
+            .pause_repository(&brett, RiffState::Paused, t(2))
+            .unwrap();
         assert!(stale(&state, &brett, t(2)));
         assert!(!stale(&state, &docs(), t(2)));
     }

@@ -996,10 +996,24 @@ async fn main() -> Result<()> {
             );
         }
         Command::Pause { riff, repo } => {
-            pause(&api, &me, &here, pause_scope(riff, repo)?, RiffState::Paused).await?;
+            pause(
+                &api,
+                &me,
+                &here,
+                pause_scope(riff, repo)?,
+                RiffState::Paused,
+            )
+            .await?;
         }
         Command::Resume { riff, repo } => {
-            pause(&api, &me, &here, pause_scope(riff, repo)?, RiffState::Running).await?;
+            pause(
+                &api,
+                &me,
+                &here,
+                pause_scope(riff, repo)?,
+                RiffState::Running,
+            )
+            .await?;
         }
         Command::Post {
             thread,

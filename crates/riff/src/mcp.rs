@@ -574,11 +574,7 @@ impl Tools {
     async fn set_riff(&self, whole: bool, state: RiffState) -> ToolResult {
         let me = self.here()?;
         let scope = PauseScope::of(whole, None);
-        let (reply, posted) = self
-            .api
-            .set_pause(&me, &scope, state)
-            .await
-            .map_err(err)?;
+        let (reply, posted) = self.api.set_pause(&me, &scope, state).await.map_err(err)?;
         self.lead_step(&me, text::riff_step(whole, state).into())
             .await;
         let repository = scope.repository(&me);

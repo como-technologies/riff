@@ -428,9 +428,10 @@
   sessions of a repository that has a pause of its own. The answer to
   a resume names each pause that still stops work.
 - **01M3XAHZG26ECNARX35JD73YXJ** The record `pause_set` holds a pause
-  that is set or ended: `scope` (`"riff"`, or `{"repository":"OWNER/REPO"}`)
-  and `state` (`paused` or `running`). A build reads a scope that it
-  does not know as `other`, and such a record changes no pause.
+  that is set or ended: `scope` (`"riff"`, or
+  `{"repository":"OWNER/REPO"}`) and `state` (`paused` or `running`).
+  A build reads a scope that it does not know as `other`, and such a
+  record changes no pause.
   `make_riff` makes a `pause_set` record. A `riff_state_set` record of
   an older log reads as a pause of the whole riff. No command makes
   one.
@@ -1527,9 +1528,10 @@
   lead that `riff-server` accepts: `told SESSION` with the short
   session ID, `posted a message: TEXT`, `posted a note: TEXT`, `asked
   for status`, `paused the repository`, `resumed the repository`,
-  `paused the riff`, `resumed the riff` and `became the lead`. TEXT is the message in one line, cut to 80 characters with
-  `…`. The step replaces the step of the lead. A `status` call of
-  the lead replaces the step until the next of these calls. The step
+  `paused the riff`, `resumed the riff` and `became the lead`. TEXT is
+  the message in one line, cut to 80 characters with `…`. The step
+  replaces the step of the lead. A `status` call of the lead replaces
+  the step until the next of these calls. The step
   of a session that is not the lead does not change. The skill tells
   the lead to set its status for work that riff cannot see.
 - **01M3WKCYM623M66ATHCH3QGMKP** The automatic step of the lead shows

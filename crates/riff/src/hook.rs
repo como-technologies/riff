@@ -748,7 +748,8 @@ mod tests {
 
     #[test]
     fn new_sessions_in_a_running_riff_get_the_start_routine() {
-        let context = |source| start_context(None, source, false, Some(&pauses(RiffState::Running)), &[]);
+        let context =
+            |source| start_context(None, source, false, Some(&pauses(RiffState::Running)), &[]);
         assert!(context(Source::Startup).contains("start routine"));
         assert!(context(Source::Startup).contains("Pick a free item yourself"));
         assert!(context(Source::Clear).contains("start routine"));
@@ -759,7 +760,13 @@ mod tests {
     #[test]
     fn a_new_session_in_a_paused_riff_waits_and_says_hello() {
         for source in [Source::Startup, Source::Clear] {
-            let context = start_context(Some(&uri()), source, false, Some(&pauses(RiffState::Paused)), &[]);
+            let context = start_context(
+                Some(&uri()),
+                source,
+                false,
+                Some(&pauses(RiffState::Paused)),
+                &[],
+            );
             assert!(context.contains("Claim nothing."), "{context}");
             assert!(context.contains("the session `lead`"), "{context}");
             assert!(
@@ -773,7 +780,13 @@ mod tests {
     #[test]
     fn the_lead_in_a_paused_riff_tells_its_user() {
         let lead = uri().with_lead(true);
-        let context = start_context(Some(&lead), Source::Startup, false, Some(&pauses(RiffState::Paused)), &[]);
+        let context = start_context(
+            Some(&lead),
+            Source::Startup,
+            false,
+            Some(&pauses(RiffState::Paused)),
+            &[],
+        );
         assert!(
             context.contains("You are the lead: tell your user"),
             "{context}"
@@ -785,7 +798,13 @@ mod tests {
     #[test]
     fn a_session_that_continues_in_a_paused_riff_stops() {
         for source in [Source::Resume, Source::Compact] {
-            let context = start_context(Some(&uri()), source, true, Some(&pauses(RiffState::Paused)), &[]);
+            let context = start_context(
+                Some(&uri()),
+                source,
+                true,
+                Some(&pauses(RiffState::Paused)),
+                &[],
+            );
             assert!(context.contains("Stop at your next step"), "{context}");
             assert!(!context.contains("start routine"), "{context}");
         }

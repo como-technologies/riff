@@ -249,8 +249,9 @@ fails, and the worker asks in its own terminal.
   `session_forgotten` record removes the session and its cursors, a
   `claimed` or a `released` record sets the time of the last change of
   the claims, and a `pause_set` record sets the time for a stale
-  status, for the riff or for its repository. The writer calls `apply(&mut riff, record)` and then
-  `Presence::applied`, with the record, the riff after the `apply`,
+  status, for the riff or for its repository. The writer calls
+  `apply(&mut riff, record)` and then `Presence::applied`, with the
+  record, the riff after the `apply`,
   and the time of the call that made the record. A replay gives no
   time, and then `Presence::applied` sets no time.
 - A session whose item another session takes has a `released` record of

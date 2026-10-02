@@ -136,7 +136,10 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     assert_eq!(code, 0);
     assert!(out.starts_with("The riff is paused now."), "{out}");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
-    assert!(out.contains("\nriff     paused by the person mike\n"), "{out}");
+    assert!(
+        out.contains("\nriff     paused by the person mike\n"),
+        "{out}"
+    );
     assert!(out.contains("The riff is paused."), "{out}");
 }
 

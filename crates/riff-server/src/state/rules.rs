@@ -1055,13 +1055,13 @@ fn a_pause_of_one_repository_stops_no_claim_in_another() {
         thread: lib.clone(),
         item: "issue-7".into(),
     };
-    given(&records).when(&dave, Whole(claim_in_lib)).then(&[
-        Change::Claimed(Claimed {
+    given(&records)
+        .when(&dave, Whole(claim_in_lib))
+        .then(&[Change::Claimed(Claimed {
             session: dave.clone(),
             thread: lib,
             item: "issue-7".into(),
-        }),
-    ]);
+        })]);
     // A thread that is not a repository thread sees only the pause of
     // the riff.
     let claim_in_design = wire::Claim {
@@ -1069,13 +1069,13 @@ fn a_pause_of_one_repository_stops_no_claim_in_another() {
         thread: design(),
         item: "issue-7".into(),
     };
-    given(&records).when(&ann(), Whole(claim_in_design)).then(&[
-        Change::Claimed(Claimed {
+    given(&records)
+        .when(&ann(), Whole(claim_in_design))
+        .then(&[Change::Claimed(Claimed {
             session: ann(),
             thread: design(),
             item: "issue-7".into(),
-        }),
-    ]);
+        })]);
 }
 
 /// A `riff_state_set` record of an old log sets the pause of the whole
