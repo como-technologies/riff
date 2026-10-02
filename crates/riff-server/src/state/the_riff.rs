@@ -311,7 +311,7 @@ impl Command for MakeRiff {
 /// let import = Import { changes: vec![made] };
 /// let mut state = State::default();
 /// let now = Instant::now();
-/// assert_eq!(state.run(&Caller::server(), &import, now).unwrap(), 1);
+/// assert_eq!(state.run(&Caller::server(), &import, now).unwrap().0.len(), 1);
 /// assert_eq!(state.riff_id().as_deref(), Some("r1"));
 /// // A second import is refused: the log has records.
 /// let refused = state.run(&Caller::server(), &import, now).unwrap_err();

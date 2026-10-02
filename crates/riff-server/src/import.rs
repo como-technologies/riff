@@ -472,6 +472,15 @@ mod tests {
                     .as_slice(),
             ),
             (
+                "threads/como-technologies%2Fstrata",
+                include_bytes!("../tests/fixtures/0.8.0/threads/como-technologies%2Fstrata")
+                    .as_slice(),
+            ),
+            (
+                "threads/design",
+                include_bytes!("../tests/fixtures/0.8.0/threads/design").as_slice(),
+            ),
+            (
                 "threads/dm%3Abrett%2Fb1%7Cbrett%2Fb2",
                 include_bytes!("../tests/fixtures/0.8.0/threads/dm%3Abrett%2Fb1%7Cbrett%2Fb2")
                     .as_slice(),
@@ -629,12 +638,64 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(forgotten, ["mike/m1", "mike/m2"]);
+        assert_eq!(forgotten, ["brett/b1", "mike/m1", "mike/m2"]);
         assert!(!changes.iter().any(|c| matches!(c, Change::SessionStarted(_))));
         // No direct thread is left.
         assert!(!changes.iter().any(
             |c| matches!(c, Change::Posted(p) if p.thread.is_direct())
         ));
+    }
+
+    /// The log of the import alone gives the state: a replay is the
+    /// same. Each session is in the place of the old `sessions` object,
+    /// with its claims and its lead mark, and a sender that is no
+    /// session of the import is not known.
+    #[test]
+    fn a_replay_of_the_import_gives_the_same_state_with_each_session_in_its_place() {
+        use std::time::Instant;
+
+        use crate::state::{Caller, Import, State};
+
+        let now = Instant::now();
+        let mut state = State::default();
+        let import = Import {
+            changes: old().changes(SAVED_MS),
+        };
+        let made = state.run(&Caller::server(), &import, now).unwrap();
+        assert_eq!(made.0.len(), import.changes.len());
+        state.imported(old().memory(SAVED_MS), now);
+
+        let replayed = State::replay(state.take_queue(), now, SAVED_MS);
+        assert!(replayed.same_log_state(&state));
+        for state in [&state, &replayed] {
+            let uris: Vec<String> = state
+                .who(now, SAVED_MS, true)
+                .iter()
+                .map(|s| s.uri.to_string())
+                .collect();
+            assert_eq!(
+                uris,
+                [
+                    "riff://brett@kadomony/como-technologies/strata?session=b1&lead=true",
+                    "riff://brett@kadomony/como-technologies/strata?session=b2&claim=issue-7#issue-7",
+                    "riff://mike@pangolin/como-technologies/riff?session=m1&lead=true",
+                    "riff://mike@pangolin/como-technologies/riff?session=m2&claim=issue-341#issue-341",
+                    "riff://mike@thelio/como-technologies/riff?session=m3",
+                    "riff://mike@thelio/como-technologies/riff?session=m4",
+                    "riff://mike@thelio/como-technologies/riff?session=m5#issue-9",
+                ]
+            );
+        }
+        // The memory of the old server: the worker read up to 205.
+        let m2 = "riff://mike@pangolin/como-technologies/riff?session=m2"
+            .parse::<SessionUri>()
+            .unwrap();
+        let unread: Vec<usize> = state
+            .threads_of(m2.who(), now)
+            .iter()
+            .map(|t| t.unread)
+            .collect();
+        assert_eq!(unread, [1]);
     }
 
     #[test]
