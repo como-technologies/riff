@@ -4065,16 +4065,18 @@ mod tests {
             let lead = in_repo(repo, &format!("lead-{repo}"));
             state.register(&lead, now);
             let worker = in_repo(repo, id);
-            state.watch_started(&worker, now + Duration::from_secs(at));
-            state.worker(worker.who(), true);
+            let at = now + Duration::from_secs(at);
+            state.watch_started(&worker, at);
+            state.worker(&worker, true, at);
         }
         let later = now + Duration::from_secs(90);
         assert!(stopped(&mut state, later).is_empty());
 
         // A second idle worker in one of the two repositories stops.
         let second = in_repo("riff", "r2");
-        state.watch_started(&second, now + Duration::from_secs(2));
-        state.worker(second.who(), true);
+        let at = now + Duration::from_secs(2);
+        state.watch_started(&second, at);
+        state.worker(&second, true, at);
         assert_eq!(stopped(&mut state, later), ["r1"]);
     }
 

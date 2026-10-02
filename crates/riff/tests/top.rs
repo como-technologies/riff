@@ -722,7 +722,14 @@ async fn twelve_sessions_fit_in_80_columns() {
         ),
     );
     output(riff(&server, dir, Some("s00"), bin.path(), &["lead"])).await;
-    output(riff(&server, dir, Some("s00"), bin.path(), &["resume", "--riff"])).await;
+    output(riff(
+        &server,
+        dir,
+        Some("s00"),
+        bin.path(),
+        &["resume", "--riff"],
+    ))
+    .await;
     for n in 0..12 {
         let id = format!("s{n:02}");
         let uri: SessionUri = format!("riff://mike@thelio/como-technologies/riff?session={id}")

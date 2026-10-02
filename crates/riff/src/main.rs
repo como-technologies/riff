@@ -16,9 +16,7 @@ use riff::{
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{
-    Freed, Kind, RiffReply, RiffState, SessionInfo, StartReason, Status,
-};
+use riff_core::wire::{Freed, Kind, RiffReply, RiffState, SessionInfo, StartReason, Status};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);

@@ -153,8 +153,8 @@ async fn pause_and_resume_name_the_repository_of_the_directory() {
     let (here, strata) = (repo(), repo_named("strata"));
     let (here, strata) = (here.path(), strata.path());
     resume(&server, here).await;
-    agent(&server, here, "mike", "a1", &["who"]).await;
-    agent(&server, strata, "brett", "b1", &["who"]).await;
+    agent(&server, here, "mike", "a1", &["lead"]).await;
+    agent(&server, strata, "brett", "b1", &["lead"]).await;
 
     let (out, code) = agent(&server, strata, "brett", "b1", &["pause"]).await;
     assert_eq!(code, 0, "{out}");

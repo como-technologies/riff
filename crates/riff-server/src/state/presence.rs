@@ -416,9 +416,7 @@ mod tests {
     use std::time::Duration;
 
     use riff_core::name::SessionUri;
-    use riff_core::record::{
-        Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet,
-    };
+    use riff_core::record::{Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet};
     use riff_core::wire::RiffState;
 
     use super::super::riff::apply;

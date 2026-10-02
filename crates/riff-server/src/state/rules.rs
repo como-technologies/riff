@@ -14,8 +14,8 @@
 //! The tests do no I/O.
 
 use riff_core::record::{
-    By, Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet, Scope,
-    SessionStarted, SettingChanged,
+    By, Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet, Scope, SessionStarted,
+    SettingChanged,
 };
 use riff_core::wire;
 
