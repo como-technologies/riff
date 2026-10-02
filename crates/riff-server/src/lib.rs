@@ -989,15 +989,18 @@ impl Service {
     /// config.lease.wait = Duration::from_millis(10);
     /// let store = Memory::default();
     /// let old = Service::load(config.clone(), Arc::new(store.clone())).await?;
+    /// // The first start of a riff writes the record of `make_riff` as
+    /// // the first chunk. Wait for that write.
+    /// old.save().await?;
     ///
     /// // A build that cannot load takes no lease.
     /// let lease = store.load(LEASE).await?.unwrap().bytes;
-    /// store.save("log/00000000000000000001.jsonl", b"not a chunk".to_vec(), None).await?;
+    /// store.save("log/00000000000000000002.jsonl", b"not a chunk".to_vec(), None).await?;
     /// assert!(Service::load(config.clone(), Arc::new(store.clone())).await.is_err());
     /// assert_eq!(store.load(LEASE).await?.unwrap().bytes, lease);
     ///
     /// // A deploy: a new server on the same store.
-    /// store.delete("log/00000000000000000001.jsonl").await?;
+    /// store.delete("log/00000000000000000002.jsonl").await?;
     /// let new = Service::load(config, Arc::new(store)).await?;
     /// old.stopped().await;
     /// # Ok(()) }
