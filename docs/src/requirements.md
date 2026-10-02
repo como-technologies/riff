@@ -137,7 +137,7 @@
 - **01M3K0FZA21H0PPSDANFMMY47C** A session removes a stale worktree
   with the `ExitWorktree` tool only when it made the worktree with
   `EnterWorktree` in its current context. In each other case, for
-  example after `riff workers next` or `/clear`, it runs
+  example after a clear of its context, it runs
   `git -C MAIN worktree remove` and deletes the branch with
   `git -C MAIN update-ref -d` (R165).
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
@@ -827,9 +827,9 @@
   `must_clear`. `apply` only stores it. A `session_started` record with
   the reason `process` or `clear` ends it. `claim` refuses a session in
   MustClear before each other check, with the code `must_clear` and the
-  text "clear your context first: type /clear, or run riff workers
-  next". A claim that goes by a start, an end, a release by the lead or
-  a claim of another session gives no MustClear.
+  text "clear your context first: end your turn and riff clears it, or
+  type /clear". A claim that goes by a start, an end, a release by the
+  lead or a claim of another session gives no MustClear.
 - **01M3X9XB37TQCXWPNFZRMRGJB4** The reply to the release that puts a
   worker in MustClear carries the ask to clear (`must_clear`). The
   reply to each keep-alive of a worker in MustClear carries it too
@@ -840,6 +840,10 @@
   while its session is in MustClear. The `session_started` record that
   ends MustClear gives the session the wake that it missed. A watch
   that starts after that record gets it too.
+- **01M3XV0588C2XZKZ3NM67JXCKJ** One message gives a session one wake.
+  When a `posted` record and the `session_started` record that ends
+  the MustClear of its session are in one chunk, the session gets only
+  the missed wake, and no second wake for the `posted` record.
 - **01M3X9XC99KY4RQY36A7CYWY11** `who` gives `must_clear` and
   `fresh_secs` for each session: the seconds since its last
   `session_started` record with the reason `process` or `clear`. The
@@ -2269,23 +2273,40 @@
   the machine, and `riff workers stop PANE` ends one. It closes the
   pane, then sends the end call of the session. The session leaves
   `riff who`, and its claims are free at once.
-- **01M3JQCCX22R4R4MN7XZPTS391** `riff workers next` asks for a fresh
-  context. It works only in a worker (`RIFF_WORKER=1`) in tmux that is
-  not the lead and holds no claims. It writes the file `next-ID` with
-  the pane of the worker, and tells the agent to end its turn.
+- **01M3JQCCX22R4R4MN7XZPTS391** No command asks for a fresh context.
+  `riff workers next` and the file `next-ID` are gone.
 - **01M3JQCCZ5M9VY3RGXWJYJN9Q9** The plugin has a Stop hook,
-  `riff hook stop`. When the file `next-ID` of the session exists, the
-  hook takes it. A detached process then types `/clear` and the start
-  prompt into the pane. The hook returns at once, and always exits
-  with status 0.
+  `riff hook stop`. In a worker (`RIFF_WORKER=1`) in tmux that did not
+  leave the riff, it starts the check of the clear
+  (01M3XV0562D3H3P22CJDBPAZBH) as a detached process. The hook returns
+  at once, and always exits with status 0.
+- **01M3XV0562D3H3P22CJDBPAZBH** riff clears the context of a worker
+  by itself, when its turn ends after the release of its last claim.
+  The check of the Stop hook sends one keep-alive. When the reply asks
+  for the clear (01M3X9XB37TQCXWPNFZRMRGJB4), a detached process types
+  `/clear` and the start prompt into the pane of the worker. With no
+  ask, the check does nothing. It sends a failed keep-alive again, at
+  most 5 times. So the clear does not depend on a call of the worker,
+  and a session that is no worker is never cleared.
+- **01M3XZCWQED9M9ZB29F730EA58** The check of the Stop hook types
+  nothing when a new turn of the worker started after the check
+  started. It counts the prompts in the transcript of the agent when
+  it starts, and again before the keys. A prompt is a line of the user
+  that is not the result of a tool. The Stop hook of the new turn
+  starts a new check.
+- **01M3XV05AD98S415V3SWN8ZDXC** The lead clears a worker that stays in
+  MustClear with `riff workers stop PANE`: the rollout starts a new
+  worker with a fresh context. A person can also type `/clear` in its
+  pane.
 - **01M3JQCD16CNWN5FCQBRKHXYMP** After the fresh context, the worker
   keeps its riff session ID, its lead and its watch. It follows the
   start routine and claims its next item with no person.
 - **01M3JQCD373XZWNSSQYBE561TM** The keys that clear the context and
   start the next item are in one adapter for each agent tool.
-- **01M3JQCD5BS2ZSGZSD3CTWGPB8** The skill tells a worker: when its item
-  is merged, its claim released and its worktree removed, run
-  `riff workers next`, then end the turn. The lead never runs it.
+- **01M3JQCD5BS2ZSGZSD3CTWGPB8** The skill tells a worker: after the
+  release of its last claim, do the steps that are left for the item,
+  then end the turn. riff then clears its context. The worker runs no
+  command for the clear.
 - **01M3Q88G1K7N2EMPBA07X069A7** riff compacts the lead at the end of
   a wave, once for each wave. The Stop hook of each session that is not
   a worker starts a detached check and returns at once. The check does
@@ -2317,15 +2338,16 @@
   only when the input line of the agent tool is empty. When riff cannot
   find the input line, it types nothing. The check of the input line is
   in the adapter of the agent tool.
-- **01M3MNP34M5PAZW9VWAYVGNSV2** `riff workers start`, and
-  `riff workers next` before the fresh context, fast-forward the
-  default branch of the main clone to `origin` first (`git fetch` and
-  `git merge --ff-only`). They say what they did.
+- **01M3MNP34M5PAZW9VWAYVGNSV2** `riff workers start`, and the clear of
+  a worker before the fresh context, fast-forward the default branch
+  of the main clone to `origin` first (`git fetch` and
+  `git merge --ff-only`). `riff workers start` says what it did.
 - **01M3MNP36TZYN3PE00AZJTJSER** When the main clone is not on the
   default branch, has local changes to tracked files, or has commits
-  that `origin` does not have, `riff workers start` and
-  `riff workers next` change nothing and say why. `riff workers next`
-  also tells the lead why. A failed step never stops the command.
+  that `origin` does not have, `riff workers start` and the clear of a
+  worker change nothing. `riff workers start` says why, and the clear
+  of a worker tells the lead why. A failed step never stops the command
+  or the clear.
 - **01M3MNP39172Y463WGQAW125KW** The skill tells a session: fetch before
   it makes a worktree, and put the new worktree on the fresh
   `origin` default branch before any change. Rebase on a fresh

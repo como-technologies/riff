@@ -27,7 +27,6 @@
 //! | `mcp-PID` | `riff mcp`. PID is its parent: the agent tool. | The session ID. |
 //! | `build-PID` | The same `riff mcp`, next to `mcp-PID`. | The build of that `riff mcp`. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
-//! | `next-ID` | `riff workers next` of a worker. The Stop hook takes it (see [`crate::next`]). | The tmux pane of the worker. |
 //! | `left-ID` | The `leave` tool. The `join` tool removes it. It is in [`marks`], not in [`dir`]. | Nothing. The file counts. |
 //! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
 //! | `update-tried` | The same update. | The release tag that it tried last. |

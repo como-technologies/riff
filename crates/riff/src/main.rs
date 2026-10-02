@@ -10,8 +10,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    auto_update, binary, dropped, help, hook, hygiene, identity, lifecycle, local, login, mcp,
-    next, permissions, plugin, pr, settings, terminal, text, view, worker,
+    auto_update, binary, dropped, help, hook, identity, lifecycle, local, login, mcp, next,
+    permissions, plugin, pr, settings, terminal, text, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -612,12 +612,6 @@ enum Workers {
         #[command(subcommand)]
         command: Option<WorkersMcp>,
     },
-    /// Ask for a fresh context in a worker
-    ///
-    /// Run it in a worker whose item is merged and released. When the turn
-    /// ends, riff gives the pane `/clear` and the start prompt, and the
-    /// worker claims its next item.
-    Next,
     /// End the workers of this machine
     ///
     /// It ends each worker, or only the worker in PANE. Each worker leaves
@@ -715,10 +709,25 @@ enum HookEvent {
     SessionEnd,
     /// Run the Stop hook
     ///
-    /// It reads the Stop input on stdin. When the worker asked for its
-    /// next item with `riff workers next`, it gives its pane `/clear` and
-    /// the start prompt. It always exits with status 0.
+    /// It reads the Stop input on stdin. In a worker that released its
+    /// last claim, riff then gives its pane `/clear` and the start
+    /// prompt. It always exits with status 0.
     Stop,
+    /// Check whether riff clears the context of a worker now
+    ///
+    /// The Stop hook starts it, detached, in each worker in tmux.
+    #[command(hide = true)]
+    Clear {
+        /// The riff session ID of the worker.
+        #[arg(long)]
+        session: String,
+        /// The tmux pane of the worker.
+        #[arg(long)]
+        pane: String,
+        /// The transcript of the session.
+        #[arg(long)]
+        transcript: Option<std::path::PathBuf>,
+    },
     /// Check whether riff compacts the lead now
     ///
     /// The Stop hook starts it, detached, in each session that is not a
@@ -816,6 +825,20 @@ async fn main() -> Result<()> {
     } = cli.command
     {
         stop_hook();
+        return Ok(());
+    }
+    if let Command::Hook {
+        event:
+            HookEvent::Clear {
+                session,
+                pane,
+                transcript,
+            },
+    } = &cli.command
+    {
+        if let Err(e) = clear_check(session, pane, transcript.as_deref(), &server).await {
+            eprintln!("riff: cannot clear the context of the worker: {e:#}");
+        }
         return Ok(());
     }
     if let Command::Hook {
@@ -1354,7 +1377,6 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             Ok(())
         }
         Some(Workers::Stop { pane, .. }) => stop_workers(pane.as_deref(), server).await,
-        Some(Workers::Next) => next_item(server).await,
         Some(Workers::Run { claude, args }) => {
             std::process::exit(worker::run(claude, args, server).await?)
         }
@@ -1422,52 +1444,10 @@ async fn start_refusal(server: &str) -> Option<String> {
     }
 }
 
-/// Asks for a fresh context after the turn (01M3JQCCX22R4R4MN7XZPTS391):
-/// only in a worker that is not the lead and holds no claims.
-async fn next_item(server: &str) -> Result<()> {
-    if !std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
-        eprintln!("{}", text::ONLY_A_WORKER_NEXT);
-        std::process::exit(1);
-    }
-    let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
-    let Some(pane) = pane else {
-        anyhow::bail!("riff workers next needs the tmux pane of the worker (TMUX_PANE)");
-    };
-    let id = identity::session_id()
-        .ok_or_else(|| anyhow::anyhow!("riff workers next needs the session ID of the worker"))?;
-    let here = identity::place(&identity::working_dir()?)?;
-    let api = Api::new(server);
-    let me = identity::agent(&here, &id, api.base())?;
-    let signed = api.signed_in(Some(&id))?;
-    let sessions = signed.who(&me, false).await?;
-    let Some(info) = sessions.iter().find(|s| s.uri.who() == me.who()) else {
-        anyhow::bail!("this worker is not in riff who");
-    };
-    if info.uri.lead() {
-        eprintln!("{}", text::THE_LEAD_KEEPS_ITS_CONTEXT);
-        std::process::exit(1);
-    }
-    if !info.uri.claims().is_empty() {
-        eprintln!("{}", text::next_holds_claims(info.uri.claims()));
-        std::process::exit(1);
-    }
-    let fresh = hygiene::fast_forward(&identity::working_dir()?);
-    if let Some(line) = fresh.line() {
-        println!("{line}");
-        if fresh.tells_the_lead()
-            && let Err(e) = signed.tell(&me, riff::api::LEAD, &line).await
-        {
-            eprintln!("riff: cannot tell the lead: {e:#}");
-        }
-    }
-    let dir = local::dir().ok_or_else(|| anyhow::anyhow!("no local directory for riff"))?;
-    next::mark(&dir, &id, &pane)?;
-    println!("{}", text::NEXT_ASKED);
-    Ok(())
-}
-
-/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). In a session that is not
-/// a worker, it starts the check of the compact of the lead
+/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). In a worker, it starts
+/// the check of the clear of its context
+/// (01M3XV0562D3H3P22CJDBPAZBH). In a session that is not a worker, it
+/// starts the check of the compact of the lead
 /// (01M3Q88G1K7N2EMPBA07X069A7). It never fails.
 fn stop_hook() {
     let mut stdin = String::new();
@@ -1482,12 +1462,52 @@ fn stop_hook() {
         }
         return;
     }
-    let Some(pane) = local::dir().and_then(|dir| next::take(&dir, &id)) else {
-        return;
-    };
-    if let Err(e) = next::spawn(&next::ClaudeCode, &pane) {
-        eprintln!("riff: cannot give the worker a fresh context: {e:#}");
+    if let Err(e) = start_clear_check(&id, input.transcript_path.as_deref()) {
+        eprintln!("riff: cannot check the clear of the worker: {e:#}");
     }
+}
+
+/// Starts `riff hook clear` for the worker `id`, detached, so that the
+/// Stop hook returns at once (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It starts
+/// nothing outside tmux, or when the session left the riff.
+fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    let in_tmux = std::env::var_os("TMUX").is_some_and(|t| !t.is_empty());
+    let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
+    let Some(pane) = pane.filter(|_| in_tmux) else {
+        return Ok(());
+    };
+    if local::left_here(id) {
+        return Ok(());
+    }
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.args(["hook", "clear", "--session", id, "--pane", &pane]);
+    if let Some(transcript) = transcript {
+        cmd.arg("--transcript").arg(transcript);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    Ok(())
+}
+
+/// The check of the clear of the worker `id` in the pane `pane`
+/// ([`next::check`], 01M3XV0562D3H3P22CJDBPAZBH).
+async fn clear_check(
+    id: &str,
+    pane: &str,
+    transcript: Option<&std::path::Path>,
+    server: &str,
+) -> Result<()> {
+    let dir = identity::working_dir()?;
+    let here = identity::place(&dir)?;
+    let api = Api::new(server);
+    let me = identity::agent(&here, id, api.base())?;
+    let api = api.signed_in(Some(id))?;
+    next::check(&api, &me, pane, &dir, transcript).await?;
+    Ok(())
 }
 
 /// Starts `riff hook compact` for the session `id`, detached, so that

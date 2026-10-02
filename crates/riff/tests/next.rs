@@ -1,19 +1,31 @@
-//! A fresh context for a worker after each item
-//! (01M3JQCCX22R4R4MN7XZPTS391 to 01M3JQCD16CNWN5FCQBRKHXYMP). A fake
-//! `tmux` on `PATH` writes each call to a log.
+//! A fresh context for a worker after each item: riff clears the
+//! context of a worker by itself, when its turn ends after its last
+//! release (01M3XV0562D3H3P22CJDBPAZBH, 01M3JQCCZ5M9VY3RGXWJYJN9Q9,
+//! 01M3JQCD16CNWN5FCQBRKHXYMP). A fake `tmux` on `PATH` writes each
+//! call to a log. Each test runs the real `riff` binary.
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use riff::api::Api;
 use riff::identity;
 use riff_core::name::{SessionUri, Who};
-use riff_core::wire::RiffState;
+use riff_core::record::Change;
+use riff_core::wire::{RiffState, StartReason};
+use riff_server::Service;
+use riff_server::auth::Config;
+use riff_server::store::Memory;
 
 const FAKE_TMUX: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/log\"\n";
+
+/// Longer than the check of the Stop hook and the wait before its first
+/// key ([`riff::next::CLEAR_WAIT`]).
+const NO_KEYS: Duration = Duration::from_millis(2500);
 
 struct Worker {
     fake: tempfile::TempDir,
@@ -76,24 +88,73 @@ impl Worker {
         cmd
     }
 
-    fn next(&self, id: &str, worker: bool) -> Output {
-        self.riff(id, worker, &["workers", "next"])
-            .output()
-            .unwrap()
-    }
-
-    /// The Stop hook of the session `id`.
-    fn stop_hook(&self, id: &str) -> Output {
+    /// A hook of the session `id`, with `input` on its stdin.
+    fn hook(&self, id: &str, worker: bool, event: &str, input: &str) -> Output {
         let mut hook = self
-            .riff(id, true, &["hook", "stop"])
+            .riff(id, worker, &["hook", event])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let input = format!(r#"{{"session_id":"{id}","hook_event_name":"Stop"}}"#);
         std::io::Write::write_all(hook.stdin.as_mut().unwrap(), input.as_bytes()).unwrap();
         hook.wait_with_output().unwrap()
+    }
+
+    /// The Stop hook of the session `id`: its turn ends. The hook
+    /// returns at once.
+    fn stop_hook(&self, id: &str, worker: bool) {
+        self.stop_hook_with(id, worker, None);
+    }
+
+    /// The Stop hook of the session `id`, with the transcript of its
+    /// agent in the input.
+    fn stop_hook_with(&self, id: &str, worker: bool, transcript: Option<&Path>) {
+        let start = Instant::now();
+        let input = serde_json::json!({
+            "session_id": id,
+            "hook_event_name": "Stop",
+            "transcript_path": transcript,
+        })
+        .to_string();
+        let out = self.hook(id, worker, "stop", &input);
+        assert!(out.status.success(), "{out:?}");
+        let took = start.elapsed();
+        assert!(took < Duration::from_secs(1), "{took:?}");
+    }
+
+    /// What `/clear` does in the pane of the worker `id`: the start hook
+    /// with the source `clear`.
+    fn clear(&self, id: &str) {
+        let input = format!(r#"{{"session_id":"{id}","source":"clear"}}"#);
+        let out = self.hook(id, true, "session-start", &input);
+        assert!(out.status.success(), "{out:?}");
+    }
+
+    /// Waits until the fake `tmux` has the keys of one clear after its
+    /// first `before` lines, and checks them.
+    async fn keys(&self, before: usize) {
+        let end = Instant::now() + Duration::from_secs(20);
+        while self.log().lines().count() < before + 4 {
+            assert!(Instant::now() < end, "no keys: {}", self.log());
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            self.log().lines().skip(before).collect::<Vec<_>>(),
+            [
+                "send-keys -t %3 -l /clear",
+                "send-keys -t %3 Enter",
+                "send-keys -t %3 -l Join the riff.",
+                "send-keys -t %3 Enter",
+            ]
+        );
+    }
+
+    /// Waits longer than the check and its first key take, and checks
+    /// that the fake `tmux` has `lines` lines: riff typed nothing more.
+    async fn no_keys(&self, lines: usize) {
+        tokio::time::sleep(NO_KEYS).await;
+        assert_eq!(self.log().lines().count(), lines, "{}", self.log());
     }
 
     fn uri(&self, id: &str) -> SessionUri {
@@ -102,123 +163,322 @@ impl Worker {
     }
 }
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
+/// A riff on a memory store, so that a test reads its log.
+struct Riff {
+    api: Api,
+    store: Arc<Memory>,
+    w: Worker,
+    _service: Service,
 }
 
-fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).into_owned()
+impl Riff {
+    /// A running riff with the lead `l1` and the worker `w1`, which
+    /// holds `issue-12`.
+    async fn with_a_worker() -> Self {
+        let store = Arc::new(Memory::default());
+        let mut config = Config::default();
+        config.lease.wait = Duration::from_millis(10);
+        let service = Service::load(config, store.clone()).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let router = service.router();
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let api = Api::new(&format!("http://{addr}"));
+        let w = Worker::new(api.base());
+        let lead = w.uri("l1");
+        api.register(&lead).await.unwrap();
+        api.set_riff(&lead, RiffState::Running).await.unwrap();
+        let w1 = w.uri("w1");
+        api.start(&w1, StartReason::Process, true).await.unwrap();
+        let thread = w1.default_thread().unwrap();
+        api.claim(&w1, &thread, "issue-12").await.unwrap();
+        Riff {
+            api,
+            store,
+            w,
+            _service: service,
+        }
+    }
+
+    /// The worker releases its last claim with `riff release`. It runs
+    /// no other command.
+    fn release(&self) -> String {
+        let out = self
+            .w
+            .riff("w1", true, &["release", "issue-12"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        stdout(&out)
+    }
+
+    /// Each change of the log, in order.
+    async fn changes(&self) -> Vec<Change> {
+        let replayed = riff_server::log::replay(&*self.store).await.unwrap();
+        replayed.records.into_iter().map(|r| r.change).collect()
+    }
+
+    /// True when the server refuses a claim of the worker.
+    async fn claim_is_refused(&self, item: &str) -> bool {
+        let w1 = self.w.uri("w1");
+        let thread = w1.default_thread().unwrap();
+        self.api.claim(&w1, &thread, item).await.is_err()
+    }
+
+    /// The line of the worker in `riff who`, as the lead sees it.
+    fn who(&self) -> String {
+        let out = self
+            .w
+            .riff("l1", false, &["who", "--color", "never"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let who = stdout(&out);
+        let line = who.lines().find(|l| l.contains("(w1)"));
+        let line = line.unwrap_or_else(|| panic!("no worker in {who}"));
+        // The columns have a width: one space between the words.
+        line.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
 }
 
-/// A riff with the lead `l1` and the worker `w1`.
-async fn riff_with_a_worker() -> (Api, Worker) {
-    let api = start_server().await;
-    let w = Worker::new(api.base());
-    let lead = w.uri("l1");
-    api.register(&lead).await.unwrap();
-    api.set_riff(&lead, RiffState::Running).await.unwrap();
-    api.register(&w.uri("w1")).await.unwrap();
-    (api, w)
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// The path of a worker whose item is done: `riff workers next`, then
-/// the turn ends, then riff types `/clear` and the start prompt into its
-/// pane (01M3JQCCZ5M9VY3RGXWJYJN9Q9).
+/// A worker releases its last claim, and its turn ends. Its pane gets
+/// `/clear` and the start prompt, with no other command of the worker
+/// (01M3XV0562D3H3P22CJDBPAZBH).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_finished_worker_gets_clear_and_the_start_prompt() {
-    let (_api, w) = riff_with_a_worker().await;
-    let out = w.next("w1", true);
-    assert!(out.status.success(), "{out:?}");
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("End your turn now"),
-        "{out:?}"
-    );
-    assert!(w.run.path().join("state/next-w1").exists() || find_mark(w.run.path()));
-    assert_eq!(w.log(), "", "nothing types before the turn ends");
+async fn a_worker_that_released_its_last_claim_gets_the_clear_when_its_turn_ends() {
+    let r = Riff::with_a_worker().await;
+    // A turn that ends while the worker holds its claim: no clear.
+    r.w.stop_hook("w1", true);
+    r.w.no_keys(0).await;
 
-    // The hook returns at once; the keys come after it.
-    let start = Instant::now();
-    let out = w.stop_hook("w1");
-    assert!(out.status.success(), "{out:?}");
+    let released = r.release();
     assert!(
-        start.elapsed() < Duration::from_secs(1),
-        "{:?}",
-        start.elapsed()
+        released.contains("riff clears your context when your turn ends"),
+        "{released}"
     );
-    assert!(!find_mark(w.run.path()), "the hook took the mark");
+    // Nothing types before the turn ends.
+    r.w.no_keys(0).await;
 
-    let end = Instant::now() + Duration::from_secs(10);
-    while w.log().lines().count() < 4 {
-        assert!(Instant::now() < end, "{}", w.log());
+    r.w.stop_hook("w1", true);
+    r.w.keys(0).await;
+
+    // After the clear, a turn that ends gives no second clear.
+    r.w.clear("w1");
+    r.w.stop_hook("w1", true);
+    r.w.no_keys(4).await;
+}
+
+/// The log shows the clear: after the `released` record that asks for
+/// it, a `session_started` record of the worker with the reason `clear`
+/// (01M3X9X9M079WGFPJZHNXH9VEP).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_log_has_session_started_with_the_reason_clear_after_the_clear() {
+    let r = Riff::with_a_worker().await;
+    r.release();
+    r.w.stop_hook("w1", true);
+    r.w.keys(0).await;
+    let w1 = r.w.uri("w1");
+    let clear = |changes: &[Change]| {
+        changes.iter().position(|c| {
+            matches!(c, Change::SessionStarted(s)
+                if s.reason == StartReason::Clear && s.worker && s.session.who() == w1.who())
+        })
+    };
+    let before = r.changes().await;
+    let asked = before
+        .iter()
+        .position(|c| matches!(c, Change::Released(released) if released.must_clear))
+        .expect("the released record asks for the clear");
+    assert_eq!(clear(&before), None);
+
+    r.w.clear("w1");
+    let after = r.changes().await;
+    let cleared = clear(&after).expect("a session_started record with the reason clear");
+    assert!(cleared > asked, "{after:?}");
+}
+
+/// A request of the lead that comes while the worker waits for its
+/// clear gives no wake, and the claim that it asks for is refused. After
+/// the clear, the worker gets the wake and claims the item
+/// (01M3X9XBMB3R718Z81BYXTHMZ0).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_that_comes_in_the_wait_is_done_after_the_clear() {
+    let r = Riff::with_a_worker().await;
+    r.release();
+    let mut watch: Child =
+        r.w.riff("w1", true, &["watch", "--once"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+    r.api
+        .tell(&r.w.uri("l1"), "w1", "request: claim issue-13")
+        .await
+        .unwrap();
+    assert!(r.claim_is_refused("issue-13").await);
+
+    // The turn ends. The watch still waits: the request gave no wake.
+    r.w.stop_hook("w1", true);
+    r.w.keys(0).await;
+    assert!(
+        watch.try_wait().unwrap().is_none(),
+        "the watch ended before the clear"
+    );
+
+    // The clear: the watch ends with the wake of the request.
+    r.w.clear("w1");
+    let out = tokio::task::spawn_blocking(move || watch.wait_with_output().unwrap());
+    let out = tokio::time::timeout(Duration::from_secs(20), out)
+        .await
+        .expect("the watch ends after the clear")
+        .unwrap();
+    let wake = stdout(&out);
+    assert!(wake.contains("wrote to you in a direct message"), "{wake}");
+
+    // The worker does the request.
+    let claim = r.w.riff("w1", true, &["claim", "issue-13"]).output();
+    let claim = claim.unwrap();
+    assert!(claim.status.success(), "{claim:?}");
+}
+
+/// `riff who` shows the time since the last clear of a worker
+/// (01M3X9XC99KY4RQY36A7CYWY11).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_who_shows_the_time_since_the_last_clear_of_a_worker() {
+    let r = Riff::with_a_worker().await;
+    r.release();
+    // The watch of the worker: a session with no watch shows as offline.
+    let mut watch: Child =
+        r.w.riff("w1", true, &["watch"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+    let end = Instant::now() + Duration::from_secs(20);
+    while r.who().contains("offline") {
+        assert!(Instant::now() < end, "{}", r.who());
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(
-        w.log().lines().collect::<Vec<_>>(),
-        [
-            "send-keys -t %3 -l /clear",
-            "send-keys -t %3 Enter",
-            "send-keys -t %3 -l Join the riff.",
-            "send-keys -t %3 Enter",
-        ]
-    );
+    let waits = r.who();
+    assert!(waits.contains(" must clear worker "), "{waits}");
 
-    // A second turn end with no request types nothing.
-    let out = w.stop_hook("w1");
-    assert!(out.status.success());
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(w.log().lines().count(), 4);
+    r.w.stop_hook("w1", true);
+    r.w.keys(0).await;
+    // The keys take 4 seconds: the time since the first start is more.
+    let old = fresh_secs(&r.who());
+    assert!(old >= 4, "{old}");
+    r.w.clear("w1");
+    let cleared = r.who();
+    watch.kill().unwrap();
+    watch.wait().unwrap();
+    assert!(cleared.contains(" idle worker "), "{cleared}");
+    assert!(fresh_secs(&cleared) < old, "{cleared}");
 }
 
-/// True when a `next-*` file is anywhere under `dir`.
-fn find_mark(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().any(|e| {
-        let path = e.path();
-        if path.is_dir() {
-            find_mark(&path)
-        } else {
-            e.file_name().to_string_lossy().starts_with("next-")
-        }
-    })
+/// A proxy in front of `server`. While its gate is closed, it holds each
+/// new connection: the server does not answer. It counts the
+/// connections that it holds.
+struct Gate {
+    url: String,
+    open: tokio::sync::watch::Sender<bool>,
+    held: Arc<AtomicUsize>,
 }
 
+impl Gate {
+    async fn before(server: &str) -> Self {
+        let (open, gate) = tokio::sync::watch::channel(true);
+        let held = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let to = server.trim_start_matches("http://").to_owned();
+        let count = held.clone();
+        tokio::spawn(async move {
+            while let Ok((mut from, _)) = listener.accept().await {
+                let (mut gate, to, count) = (gate.clone(), to.clone(), count.clone());
+                tokio::spawn(async move {
+                    if !*gate.borrow() {
+                        count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    if gate.wait_for(|open| *open).await.is_err() {
+                        return;
+                    }
+                    let Ok(mut to) = tokio::net::TcpStream::connect(&to).await else {
+                        return;
+                    };
+                    let _ = tokio::io::copy_bidirectional(&mut from, &mut to).await;
+                });
+            }
+        });
+        Gate { url, open, held }
+    }
+}
+
+/// One prompt in the transcript of an agent: a new turn starts.
+const PROMPT: &str = r#"{"type":"user","message":{"content":"Join the riff."}}"#;
+
+/// The reply to the check of a turn comes late, and the worker releases
+/// its last claim in its next turn. The check types nothing into that
+/// turn. The clear comes when that turn ends
+/// (01M3XZCWQED9M9ZB29F730EA58).
 #[tokio::test(flavor = "multi_thread")]
-async fn only_a_worker_asks_for_a_fresh_context() {
-    let (_api, w) = riff_with_a_worker().await;
-    let out = w.next("w1", false);
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
-    assert!(stderr(&out).contains("only a worker"), "{out:?}");
-    assert!(!find_mark(w.run.path()));
+async fn a_check_with_a_late_reply_types_nothing_into_a_new_turn() {
+    let mut r = Riff::with_a_worker().await;
+    let gate = Gate::before(&r.w.server).await;
+    r.w.server = gate.url.clone();
+    let transcript = r.w.run.path().join("transcript.jsonl");
+    std::fs::write(&transcript, format!("{PROMPT}\n")).unwrap();
+
+    // A turn ends while the worker holds its claim. The server does not
+    // answer the check.
+    gate.open.send(false).unwrap();
+    r.w.stop_hook_with("w1", true, Some(&transcript));
+    let end = Instant::now() + Duration::from_secs(20);
+    while gate.held.load(Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < end, "the check sent no keep-alive");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // The next turn starts and releases the last claim. Then the server
+    // answers the check of the first turn: clear.
+    std::fs::write(&transcript, format!("{PROMPT}\n{PROMPT}\n")).unwrap();
+    let w1 = r.w.uri("w1");
+    let thread = w1.default_thread().unwrap();
+    r.api.release(&w1, &thread, "issue-12").await.unwrap();
+    assert!(r.claim_is_refused("issue-13").await);
+    gate.open.send(true).unwrap();
+    r.w.no_keys(0).await;
+
+    // The next turn ends: its check clears the worker.
+    r.w.stop_hook_with("w1", true, Some(&transcript));
+    r.w.keys(0).await;
 }
 
-/// riff never clears the lead: its user works in it.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_lead_is_never_cleared() {
-    let (_api, w) = riff_with_a_worker().await;
-    let out = w.next("l1", true);
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
-    assert!(stderr(&out).contains("this session is the lead"), "{out:?}");
-    assert!(!find_mark(w.run.path()));
-    assert!(w.stop_hook("l1").status.success());
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    assert_eq!(w.log(), "");
+/// The seconds of `fresh start Ns ago` in a line of `riff who`.
+fn fresh_secs(line: &str) -> u64 {
+    let (_, rest) = line.split_once("fresh start ").expect(line);
+    let (secs, _) = rest.split_once("s ago").expect(line);
+    secs.parse().expect(line)
 }
 
-/// A worker that still holds its claim is not finished.
+/// riff never clears a session that is no worker, for example the lead:
+/// its user works in it (01M3XV0562D3H3P22CJDBPAZBH).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_worker_with_a_claim_is_not_finished() {
-    let (api, w) = riff_with_a_worker().await;
-    let thread = "como-technologies/riff".parse().unwrap();
-    api.claim(&w.uri("w1"), &thread, "issue-12").await.unwrap();
-    let out = w.next("w1", true);
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
-    assert!(stderr(&out).contains("you still hold issue-12"), "{out:?}");
-    assert!(!find_mark(w.run.path()));
+async fn a_session_that_is_no_worker_is_never_cleared() {
+    let r = Riff::with_a_worker().await;
+    let l1 = r.w.uri("l1");
+    let thread = l1.default_thread().unwrap();
+    r.api.claim(&l1, &thread, "issue-7").await.unwrap();
+    r.api.release(&l1, &thread, "issue-7").await.unwrap();
+    // Also with the worker mark in its environment: the server knows
+    // that the session is no worker, and does not ask for a clear.
+    r.w.stop_hook("l1", true);
+    r.w.no_keys(0).await;
 }

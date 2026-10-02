@@ -434,8 +434,9 @@ impl Source {
 /// assert!(!riff::hook::WORKER_LINE.contains("set your status"));
 /// assert!(!riff::hook::WORKER_LINE.contains("workers done"));
 /// ```
-pub const WORKER_LINE: &str = "- You are a worker (RIFF_WORKER=1). When you finish an item, run \
-`riff workers next` (step 12 of the start routine). When the start routine finds no free item and \
+pub const WORKER_LINE: &str = "- You are a worker (RIFF_WORKER=1). After you release your last \
+claim, do the steps that are left for the item, then end your turn: riff clears your context by \
+itself (step 12 of the start routine). When the start routine finds no free item and \
 no free verify request, and you hold no claim, keep your watch running, and end your turn. riff \
 shows you as idle. Do not end this session: the lead gives you work with a request, and the \
 server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). While you wait for \

@@ -4,49 +4,80 @@
 //!
 //! A worker takes many items in a row. Its context keeps the history of
 //! each item, which costs tokens and mixes old facts with the new item.
-//! The agent does not clear its own context: riff does it, from the
-//! terminal of the worker (01M3JQCCZ5M9VY3RGXWJYJN9Q9).
+//! The agent does not clear its own context, and it does not ask for
+//! the clear: riff does it, from the terminal of the worker, when the
+//! worker released its last claim (01M3XV0562D3H3P22CJDBPAZBH).
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant W as worker (claude in its tmux pane)
-//!     participant N as riff workers next
-//!     participant F as next-ID file
+//!     participant S as riff-server
 //!     participant H as riff hook stop
+//!     participant C as riff hook clear
 //!     participant T as tmux
-//!     W->>N: item merged, released, worktree removed
-//!     N->>F: write the pane
-//!     N-->>W: end your turn now
+//!     W->>S: release (the last claim)
+//!     S-->>W: released: the worker is in MustClear
+//!     Note over W: the steps that are left, for example the worktree
 //!     W->>H: the turn ends: Stop hook
-//!     H->>F: take the pane
-//!     H->>T: later: /clear, then "Join the riff."
+//!     H->>C: start, detached
+//!     H-->>W: return at once
+//!     C->>S: keep-alive
+//!     S-->>C: clear
+//!     C->>C: fast-forward the main clone
+//!     C->>T: later: /clear, then "Join the riff."
 //!     T->>W: /clear: the start hook gives the start routine
+//!     W->>S: start (clear): MustClear ends
 //!     T->>W: "Join the riff.": the worker claims its next item
 //! ```
 //!
-//! - `riff workers next` runs only in a worker, never in the lead, and
-//!   only when the worker holds no claims (01M3JQCCX22R4R4MN7XZPTS391).
-//!   It writes the file `next-ID` in the local directory
-//!   ([`crate::local`]), with the tmux pane of the worker.
-//! - The Stop hook runs when the turn ends, so the worker is idle. It
-//!   takes the file and starts a detached process that types the keys
-//!   into the pane after [`CLEAR_WAIT`]. The hook itself returns at
-//!   once.
+//! - The server knows that a worker must clear its context: the
+//!   `released` record of its last claim says so
+//!   (01M3X9XAK1KPZZVM1AJR2H8DSS). The reply to each keep-alive carries
+//!   the ask (01M3X9XB37TQCXWPNFZRMRGJB4). So the check needs no file
+//!   and no call of the worker, and it does not matter how the worker
+//!   released: with the tool or with `riff release`.
+//! - The Stop hook runs when the turn ends, so the worker is idle. In a
+//!   worker in tmux it starts [`check`] as a detached process
+//!   (`riff hook clear`), and returns at once
+//!   (01M3JQCCZ5M9VY3RGXWJYJN9Q9).
+//! - [`check`] sends one keep-alive. A failed call is sent again, at
+//!   most [`ASKS`] times. With no ask to clear, it does nothing. With
+//!   the ask, it fast-forwards the main clone
+//!   ([`crate::hygiene::fast_forward`]), tells the lead when it cannot,
+//!   and types the keys into the pane after [`CLEAR_WAIT`].
+//! - The clear comes at the end of the turn, not at the release. So a
+//!   worker does the steps after its release in the same turn.
+//! - The keys never come in a turn that runs. [`check`] counts the
+//!   prompts in the transcript of the agent when it starts
+//!   ([`crate::compact::prompts`]), and again before the keys. A higher
+//!   number shows a new turn: the check stops, and the Stop hook of
+//!   that turn starts a new check (01M3XZCWQED9M9ZB29F730EA58).
 //! - A worker has its riff session ID in `RIFF_SESSION`
 //!   (01M3JPQT9BA7JVMZPV68FY4MQ6). So after `/clear` it keeps its ID,
 //!   its lead and its watch (01M3JQCD16CNWN5FCQBRKHXYMP).
 //! - The keys that clear the context and start the next item are
 //!   specific to an agent tool. They are in an [`Agent`] adapter, one
 //!   for each tool (01M3JQCD373XZWNSSQYBE561TM).
+//! - riff never clears the lead: a worker is never the lead
+//!   (01M3X9XA3H6YF0QCYSNB2P0CT2), and only a worker comes into
+//!   MustClear.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use riff_core::name::SessionUri;
 use serde::Deserialize;
 
+use crate::api::{Api, LEAD};
+use crate::hygiene;
 use crate::terminal::quote;
+
+/// How many times [`check`] sends its keep-alive, when the call fails.
+pub const ASKS: u32 = 5;
+/// How long [`check`] waits after a failed keep-alive.
+pub const ASK_WAIT: Duration = Duration::from_secs(2);
 
 /// How long the detached process waits before it types `/clear`, so
 /// that the agent tool is ready for input after its turn.
@@ -137,40 +168,60 @@ pub struct StopInput {
     pub transcript_path: Option<std::path::PathBuf>,
 }
 
-/// The file that asks for a fresh context for `session`.
+/// The check of the Stop hook of the worker `me`, whose agent runs in
+/// the tmux pane `pane` and works in `dir` (01M3XV0562D3H3P22CJDBPAZBH).
+/// It asks the server with a keep-alive. When the worker must clear its
+/// context, it fast-forwards the main clone of `dir`
+/// (01M3MNP34M5PAZW9VWAYVGNSV2), tells the lead when the main clone
+/// stays as it is (01M3MNP36TZYN3PE00AZJTJSER), and starts the keys of
+/// the clear. It gives true when it started the keys.
 ///
-/// ```
-/// let path = riff::next::mark_path("/run/riff".as_ref(), "w1");
-/// assert_eq!(path, std::path::Path::new("/run/riff/next-w1"));
-/// ```
-pub fn mark_path(dir: &Path, session: &str) -> PathBuf {
-    dir.join(format!("next-{session}"))
+/// A keep-alive that fails is sent again after [`ASK_WAIT`], at most
+/// [`ASKS`] times. A session that left the riff makes no call
+/// ([`crate::leave`]), so riff does not clear it.
+///
+/// The reply can come late, and the fast-forward takes time. When the
+/// `transcript` of the agent shows that a new turn started in that
+/// time, the check types nothing: the Stop hook of the new turn starts
+/// a new check (01M3XZCWQED9M9ZB29F730EA58).
+pub async fn check(
+    api: &Api,
+    me: &SessionUri,
+    pane: &str,
+    dir: &Path,
+    transcript: Option<&Path>,
+) -> Result<bool> {
+    let turns = turns(transcript);
+    let mut reply = api.alive(me).await;
+    for _ in 1..ASKS {
+        if reply.is_ok() {
+            break;
+        }
+        tokio::time::sleep(ASK_WAIT).await;
+        reply = api.alive(me).await;
+    }
+    if !reply?.clear {
+        return Ok(false);
+    }
+    let fresh = hygiene::fast_forward(dir);
+    if let Some(line) = fresh.line()
+        && fresh.tells_the_lead()
+        && let Err(e) = api.tell(me, LEAD, &line).await
+    {
+        eprintln!("riff: cannot tell the lead: {e:#}");
+    }
+    if self::turns(transcript) != turns {
+        return Ok(false);
+    }
+    spawn(&ClaudeCode, pane)?;
+    Ok(true)
 }
 
-/// Asks for a fresh context for `session`, in `pane`, after the turn.
-pub fn mark(dir: &Path, session: &str, pane: &str) -> Result<()> {
-    std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    let path = mark_path(dir, session);
-    std::fs::write(&path, pane).with_context(|| format!("cannot write {}", path.display()))
-}
-
-/// Takes the request of `session`: its pane, and the file is gone.
-/// `None` when there is no request.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// assert_eq!(riff::next::take(dir.path(), "w1"), None);
-/// riff::next::mark(dir.path(), "w1", "%3")?;
-/// assert_eq!(riff::next::take(dir.path(), "w1").as_deref(), Some("%3"));
-/// assert_eq!(riff::next::take(dir.path(), "w1"), None);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn take(dir: &Path, session: &str) -> Option<String> {
-    let path = mark_path(dir, session);
-    let pane = std::fs::read_to_string(&path).ok()?;
-    std::fs::remove_file(&path).ok()?;
-    let pane = pane.trim().to_owned();
-    (!pane.is_empty()).then_some(pane)
+/// The number of turns that started in the `transcript` of the agent
+/// ([`crate::compact::prompts`]). It is 0 with no transcript.
+fn turns(transcript: Option<&Path>) -> usize {
+    let text = transcript.and_then(|path| std::fs::read_to_string(path).ok());
+    text.map_or(0, |text| crate::compact::prompts(&text))
 }
 
 /// The shell script that types the keys of `agent` into `pane` with
@@ -203,7 +254,7 @@ pub fn script(agent: &dyn Agent, pane: &str) -> String {
 }
 
 /// Starts [`script`] as a detached process in its own process group, so
-/// that it outlives the hook.
+/// that it outlives the check.
 pub fn spawn(agent: &dyn Agent, pane: &str) -> Result<()> {
     use std::os::unix::process::CommandExt;
     Command::new("sh")
@@ -226,14 +277,6 @@ mod tests {
     fn a_pane_with_a_quote_stays_one_word() {
         let s = script(&ClaudeCode, "%3'x");
         assert!(s.contains(r"-t '%3'\''x'"), "{s}");
-    }
-
-    #[test]
-    fn an_empty_mark_is_no_request() {
-        let dir = tempfile::tempdir().unwrap();
-        mark(dir.path(), "w1", "  ").unwrap();
-        assert_eq!(take(dir.path(), "w1"), None);
-        assert!(!mark_path(dir.path(), "w1").exists());
     }
 
     #[test]

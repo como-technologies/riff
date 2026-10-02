@@ -1557,7 +1557,7 @@ fn a_claim_of_a_worker_that_goes_in_another_way_has_no_must_clear() {
 /// riff.
 #[test]
 fn a_claim_of_a_session_in_must_clear_is_refused_as_must_clear() {
-    let text = "clear your context first: type /clear, or run riff workers next";
+    let text = "clear your context first: end your turn and riff clears it, or type /clear";
     given(&must_clear_records())
         .when(&ann2(), claim("issue-9"))
         .then_refused_as(Code::MustClear, text);

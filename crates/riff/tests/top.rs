@@ -541,7 +541,7 @@ async fn a_worker_with_no_claim_shows_must_clear_then_idle_not_its_old_step() {
     let released = output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
     // The reply to the release carries the ask to clear.
     assert!(
-        released.contains("clear your context before your next claim"),
+        released.contains("riff clears your context when your turn ends"),
         "{released}"
     );
 
@@ -560,7 +560,7 @@ async fn a_worker_with_no_claim_shows_must_clear_then_idle_not_its_old_step() {
     let refused = claim.output().unwrap();
     assert!(!refused.status.success());
     let why = String::from_utf8_lossy(&refused.stderr).into_owned();
-    let text = "clear your context first: type /clear, or run riff workers next";
+    let text = "clear your context first: end your turn and riff clears it, or type /clear";
     assert!(why.contains(text), "{why}");
 
     clear_b2(&server).await;
