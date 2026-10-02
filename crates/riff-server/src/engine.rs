@@ -580,6 +580,17 @@ impl Engine {
     /// such a call. The caller of the reply writes the line `denied` of
     /// a refusal ([`crate::trace::denied`]): it knows the path.
     pub fn admit(&self, proof: Option<&SignedIn>, me: &SessionUri) -> Result<Admitted, Failed> {
+        // Only the read of the log takes a URI of a later build
+        // (01M3XYYSY536AEJVERBPTQFQYX).
+        if me.is_other() {
+            return Err(Failed::Refused(Refused::new(
+                Code::BadRequest,
+                format!(
+                    "the session URI has a part that this server does not know: {}",
+                    me.other().join("&")
+                ),
+            )));
+        }
         match proof {
             Some(proof) => proof
                 .may_act_as(me.who())

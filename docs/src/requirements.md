@@ -669,6 +669,25 @@
   Each of them reads a text and each other form of JSON that the build
   does not know as `other`. The `state` of a `pause_set` record has no
   `other`.
+- **01M3XSF90E9JYYTC13D9THY4WE** In a `posted` record, the kind of the
+  message and each selector follow the rule of `other` too. A build
+  reads a kind that it does not know as `other`, and a reader shows
+  the message as a message, with its text. A selector that the build
+  does not know is a selector `other`: an object with a field or a
+  value that the build does not know, and each other form of JSON. It
+  keeps its JSON as it came, and it matches no session. Such a record
+  counts as a skipped record. A `post` call with such a kind or such a
+  selector is refused, with the code `bad_request`: only the read of
+  the log takes a value of a later build. The rustdoc of the records
+  lists each type with named values in a record, with its rule.
+- **01M3XYYSY536AEJVERBPTQFQYX** A session URI in JSON keeps each
+  query part that the build does not know, as it came. The session is
+  the same session: its user, its session ID and its place. The part
+  gives no mark: no lead and no claim. A record with such a URI counts
+  as a skipped record. `riff-server` refuses a call of a caller with
+  such a URI, with the status 400. The rustdoc of the records lists
+  each text with a grammar in a record, with its rule or with the
+  reason why it never grows.
 - **01M3XM2C3MND6YB24SGZ565353** A kind of record and a kind of
   command are never renamed, and the name of a removed kind is never
   used again. A file in the fixtures lists the kinds of each release. A

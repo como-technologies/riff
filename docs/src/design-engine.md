@@ -778,9 +778,29 @@ The three rules of the store design stay. These rules come with them:
   not in the list.
 - The order of the kinds in the code is not a part of the format: a
   reader finds a kind by its name.
-- Two parts of a `posted` record have no value `other` yet: the kind
-  of the message, and the fields of a selector. #431 gives it to them,
-  before go-live.
+- Two parts of a `posted` record have the value `other` too
+  (01M3XSF90E9JYYTC13D9THY4WE): the kind of the message, and each
+  selector of its `to`. A selector that the build does not know is a
+  selector `other`: an object with a field or a value that the build
+  does not know, and each other form of JSON. It keeps its JSON as it
+  came, and it matches no session: a field that the build cannot check
+  never makes a selector wider. `apply` keeps the message in its
+  thread, with the sessions that the record says it woke. A reader
+  shows a message of the kind `other` as a message, with its text.
+  Such a record counts as a skipped record.
+- A session URI keeps each query part that the build does not know, as
+  it came (01M3XYYSY536AEJVERBPTQFQYX). The session is the same
+  session, and the part gives no mark: no lead and no claim. Such a
+  record counts as a skipped record.
+- Only the read of the log takes a value of a later build. A `post`
+  call with a kind or a selector that the server does not know is
+  refused, with the code `bad_request`. Each call of a caller whose
+  URI has a part that the server does not know is refused, with the
+  status 400.
+- The rustdoc of `crates/riff-core/src/record.rs` lists each type with
+  named values that a record holds, and each text with a grammar. Each
+  line has the rule for a value of a later build, or the reason why
+  the set never grows.
 
 | Record | Where `apply` reads the riff | It stays |
 |---|---|---|
@@ -926,6 +946,7 @@ gives the state of a full replay.
 | E4 | The life cycle: `reason` and `worker` in `start`, `session_started`, the first lead only from an explicit `register` or `start` and never for a worker, the `released` records of `forget`, `must_clear` in `released`, MustClear, the refusals, the ask to clear in the reply to a release and to a keep-alive, the wake that waits, the state in `who`, `top` and `riff workers`. | E2 |
 | E5 | The two pauses (#364): `pause_set`, the roles, the views, the rollout, the idle workers for each repository. | E2 |
 | E6 | The format of 1.0.0: the enum and the kinds from one place, the value `other` and its checkpoint rule, the list of the command kinds, a fixture with one record of each kind, the replay of each fixture in CI, the test of the checkpoint. The command `import` is in #341. | E3, E4, E5 |
+| E6b | The value `other` for the kind of a message and for a selector of a later build, and a session URI with a query part of a later build (#431). | E6 |
 
 E1a is built: the riff and the presence, and each command as a type.
 
@@ -960,6 +981,12 @@ count of such a record in `log::replay_after`, and the fixtures and
 the tests of `crates/riff-server/tests/format.rs`. A later release
 adds a directory of fixtures of its own, and the build reads each one
 with no change (01M3WNQR41K41TV832GRQZ2CQS).
+
+E6b is built: `Kind::Other` in `crates/riff-core/src/wire.rs`, the
+selector `other` in `crates/riff-core/src/selector.rs`, the query
+parts of a later build in `SessionUri` (`crates/riff-core/src/name.rs`),
+and the refusals in the `post` command and in `Engine::admit`
+(01M3XSF90E9JYYTC13D9THY4WE, 01M3XYYSY536AEJVERBPTQFQYX).
 
 Other items:
 

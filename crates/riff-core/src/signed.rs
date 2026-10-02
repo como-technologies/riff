@@ -362,6 +362,49 @@ mod tests {
         }
     }
 
+    /// A signed message of a later build: this build reads its kind as
+    /// `other`, and keeps each field of its selector
+    /// (01M3XSF90E9JYYTC13D9THY4WE). The check still covers the
+    /// selector as it came.
+    #[test]
+    fn a_payload_with_a_kind_and_a_selector_field_of_a_later_build_checks() {
+        let key = Key::generate();
+        let json = r#"{"from":{"user":"mike","session":"a6cf"},"lead":true,"thread":"design",
+            "to":[{"user":"brett","wave":"17"}],"body":"go","kind":"poll","at_ms":5}"#;
+        let payload = B64.encode(json);
+        let sig = sign_payload(&payload, &key);
+        let (jkt, signed) = check(&payload, &sig).unwrap();
+        assert_eq!(jkt, key.thumbprint());
+        assert_eq!(signed.kind, Kind::Other);
+        assert!(signed.to[0].is_other());
+
+        let (mike, thread) = (mike(), "design".parse().unwrap());
+        let read = |selector: &str| -> Vec<Selector> { serde_json::from_str(selector).unwrap() };
+        let to = read(r#"[{"user":"brett","wave":"17"}]"#);
+        let content = Content {
+            from: &mike,
+            lead: true,
+            thread: Some(&thread),
+            to: &to,
+            body: "go",
+            kind: Kind::Other,
+            at_ms: 5,
+        };
+        assert!(signed.covers(&content));
+        // A change of the field that the build does not know, or a
+        // selector with only the fields that it knows, is not covered.
+        for changed in [r#"[{"user":"brett","wave":"18"}]"#, r#"[{"user":"brett"}]"#] {
+            let to = read(changed);
+            assert!(!signed.covers(&Content { to: &to, ..content }), "{changed}");
+        }
+        // A kind that the build knows is not the kind of the payload.
+        let known = Content {
+            kind: Kind::Message,
+            ..content
+        };
+        assert!(!signed.covers(&known));
+    }
+
     #[test]
     fn the_signature_names_its_key() {
         let mike = mike();

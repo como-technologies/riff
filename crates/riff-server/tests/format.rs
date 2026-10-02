@@ -19,8 +19,11 @@
 //!   cursors, which no record gives.
 //! - `later.jsonl`: one chunk of a later build. Each record has a value
 //!   that this build does not know: a scope and a class of a caller, as
-//!   a text and as an object, and a reason of a start as a text, an
-//!   object, a number and `null`.
+//!   a text and as an object, a reason of a start as a text, an
+//!   object, a number and `null`, a kind of a message, a selector with
+//!   a field or a value of a later build and in each other form of
+//!   JSON, and a session URI with a query part of a later build
+//!   (01M3XSF90E9JYYTC13D9THY4WE).
 //!
 //! Never write `log.jsonl`, `replayed.json` or `checkpoint.json` again
 //! with a later build.
@@ -251,10 +254,20 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
     let later = records("later.jsonl");
     let fields: Vec<_> = later.iter().map(Record::other).collect();
     let expected = [
-        "scope", "scope", "reason", "reason", "reason", "reason", "by", "by",
+        "scope", "scope", "reason", "reason", "reason", "reason", "by", "by", "kind", "to",
+        "session", "from", "to", "to", "to",
     ]
     .map(Some);
     assert_eq!(fields, expected);
+    // This build writes a selector and a session URI of the later build
+    // again as they came: the line of the record is the line of the
+    // fixture.
+    let text = String::from_utf8(bytes("later.jsonl")).unwrap();
+    let lines: Vec<&str> = text.lines().skip(1).collect();
+    assert_eq!(lines.len(), later.len());
+    for at in 9..later.len() {
+        assert_eq!(serde_json::to_string(&later[at]).unwrap(), lines[at]);
+    }
 
     let store = Memory::default();
     let known = records("log.jsonl");
@@ -270,8 +283,35 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
 
     let replayed = log::replay(&store).await.unwrap();
     assert_eq!(replayed.records.len(), known.len() + moved.len());
-    assert_eq!((replayed.skipped, replayed.skips), (Some(first), 8));
+    assert_eq!((replayed.skipped, replayed.skips), (Some(first), 15));
     // A start after the first such record counts the rest.
     let rest = log::replay_after(&store, first).await.unwrap();
-    assert_eq!((rest.skipped, rest.skips), (Some(first + 1), 7));
+    assert_eq!((rest.skipped, rest.skips), (Some(first + 1), 14));
+
+    // The state takes each record. The messages are in their thread,
+    // and a reader gets each one with its text.
+    let now = Instant::now();
+    let mut state = State::replay(replayed.records, now, 0);
+    let bob = "riff://bob@kite/acme/app?session=b1".parse().unwrap();
+    state.register(&bob, now);
+    let thread = "acme/app".parse().unwrap();
+    let messages = state.read(&bob, &thread, true, now).unwrap();
+    let texts: Vec<&str> = messages.iter().map(|m| m.body.as_str()).collect();
+    let expected = [
+        "which wave is next?",
+        "the wave starts",
+        "from a lead of a later build",
+        "to all",
+        "to the wave",
+        "to each form",
+    ];
+    assert!(texts.ends_with(&expected), "{texts:?}");
+    // The session with a URI of a later build is the same session: it
+    // holds the claim of the record. The part `lead=maybe` gives no
+    // lead.
+    let ann: riff_core::name::SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+    let uri = state.uri(ann.who(), now);
+    assert!(uri.claims().contains(&"issue-17".to_owned()), "{uri}");
+    let from = &messages[messages.len() - 4].from;
+    assert!(from.is_other() && !from.lead() && from.who() == ann.who());
 }

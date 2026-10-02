@@ -189,8 +189,9 @@ pub fn wake_line(wake: &Wake) -> String {
     };
     let from = name(&wake.from);
     match wake.kind {
-        // A note wakes no session, so a wake of a note does not come.
-        Kind::Message | Kind::Note => format!(
+        // A note wakes no session, so a wake of a note does not come. A
+        // kind of a later build is a message.
+        Kind::Message | Kind::Note | Kind::Other => format!(
             "riff: {from} wrote to you in {place} (message {}). Use the riff read tool.",
             wake.seq
         ),
@@ -1639,6 +1640,10 @@ pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
 /// );
 /// m.message.to = vec!["repo=como-technologies/riff".parse()?];
 /// assert!(riff::text::message(&m, &thread).contains("(a6cf) to all (not verified)"));
+/// // A kind of a later build shows as a message, with its text
+/// // (01M3XSF90E9JYYTC13D9THY4WE).
+/// m.message.kind = Kind::Other;
+/// assert!(riff::text::message(&m, &thread).ends_with("(not verified): done: issue-6 merged"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn message(c: &Checked, thread: &ThreadName) -> String {
@@ -1670,7 +1675,7 @@ pub fn message(c: &Checked, thread: &ThreadName) -> String {
     let lead = if lead { " lead=true" } else { "" };
     let head = format!("[{}] {}{lead}{to} ({mark})", m.seq, name(&m.from));
     match (m.kind, m.body.is_empty()) {
-        (Kind::Message, _) => match action(&m.from, &m.body) {
+        (Kind::Message | Kind::Other, _) => match action(&m.from, &m.body) {
             Some(action) => format!("{head}: {action}"),
             None => format!("{head}: {}", m.body),
         },
@@ -2141,7 +2146,7 @@ pub fn told_step(session: &str) -> String {
 pub fn posted_step(kind: riff_core::wire::Kind, body: &str) -> String {
     use riff_core::wire::Kind;
     let action = match kind {
-        Kind::Message => "posted a message",
+        Kind::Message | Kind::Other => "posted a message",
         Kind::Status => "asked for status",
         Kind::Note => "posted a note",
     };
@@ -2301,7 +2306,9 @@ where
     };
     let _ = write!(out, "  {mark}  {}", styled(DIM, &format!("#{}", m.seq)));
     let body = match (m.kind, m.body.is_empty()) {
-        (Kind::Message, _) => safe(&action(&m.from, &m.body).unwrap_or_else(|| m.body.clone())),
+        (Kind::Message | Kind::Other, _) => {
+            safe(&action(&m.from, &m.body).unwrap_or_else(|| m.body.clone()))
+        }
         (Kind::Status, true) => "asks for your status.".into(),
         (Kind::Status, false) => format!("asks for your status: {}", safe(&m.body)),
         (Kind::Note, _) => format!("note: {}", safe(&m.body)),

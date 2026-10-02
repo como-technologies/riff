@@ -2890,6 +2890,153 @@ mod tests {
         }
     }
 
+    /// A rollback before the new build wrote a checkpoint: the new
+    /// build wrote a message with a kind, with a selector (a field, or
+    /// another form of JSON), or with a session URI that the old build
+    /// does not know. The old build reads each one as `other`, keeps
+    /// the message with its text, and writes no checkpoint past the
+    /// record. A session with such a URI is the same session: it keeps
+    /// its claim. So the new build has the message again as it wrote
+    /// it (01M3XSF90E9JYYTC13D9THY4WE).
+    #[tokio::test(start_paused = true)]
+    async fn new_build_old_build_new_build_keeps_a_message_with_a_value_that_the_old_build_does_not_know()
+     {
+        let thread = mike().default_thread().unwrap();
+        // The last message of the thread: its kind, its address and its
+        // text.
+        let last_message = |service: &Service| {
+            let request = Read {
+                after: None,
+                me: brett(),
+                thread: thread.clone(),
+                all: true,
+            };
+            let state = AxumState(service.0.clone());
+            async move {
+                let reply = read(state, Proof::none(), Json(request)).await.unwrap();
+                reply.messages.last().unwrap().clone()
+            }
+        };
+        let claims_of_mike = |service: &Service| {
+            let read = |state: &State| state.uri(mike().who(), Instant::now()).claims().to_vec();
+            service.0.engine.read(read)
+        };
+        let to_brett = vec![Selector {
+            user: Some("brett".into()),
+            ..Selector::default()
+        }];
+        let kind = (r#""kind":"note""#, r#""kind":"poll""#);
+        let field = (
+            r#""to":[{"user":"brett"}]"#,
+            r#""to":[{"user":"brett","wave":"17"}]"#,
+        );
+        let form = (r#""to":[{"user":"brett"}]"#, r#""to":["all"]"#);
+        // The URI of mike in each record gets a query part.
+        let uri = (
+            r#""riff://mike@pangolin/como-technologies/riff?session=a"#,
+            r#""riff://mike@pangolin/como-technologies/riff?session=a&wave=17"#,
+        );
+        let cases = [
+            (kind, Kind::Note),
+            (field, Kind::Message),
+            (form, Kind::Message),
+            (uri, Kind::Message),
+        ];
+        for (view, sent) in cases {
+            let store = Arc::new(Gated::default());
+            let new = running_with(with_checkpoints(1000, "0.9.0"), store.clone()).await;
+            let post = Post {
+                kind: sent,
+                ..Post::new(&mike(), Some(thread.clone()), to_brett.clone(), "for brett")
+            };
+            send(&new, claim_of(&mike(), "issue-5")).await.unwrap();
+            send(&new, post).await.unwrap();
+            let in_new = last_message(&new).await;
+            assert_eq!(
+                (in_new.kind, &in_new.to, in_new.body.as_str()),
+                (sent, &to_brett, "for brett")
+            );
+            assert!(!in_new.from.is_other());
+            let last = position(&new);
+            assert!(checkpoints(&store).await.is_empty());
+            // The records that the view of the old build changes.
+            let records = store
+                .chunks()
+                .await
+                .concat()
+                .iter()
+                .filter(|change| match change {
+                    _ if view == uri => {
+                        let session = change.session();
+                        session.is_some_and(|session| session.who() == mike().who())
+                    }
+                    Change::Posted(posted) if view == kind => posted.message.kind == Kind::Note,
+                    Change::Posted(posted) => posted.message.to == to_brett,
+                    _ => false,
+                })
+                .count() as u64;
+            assert!(records >= 1);
+            drop(new);
+
+            // The old build does not know the value: it keeps the
+            // message with its text, and writes no checkpoint past the
+            // record.
+            *store.later.lock().unwrap() = Some(view);
+            let old = Service::load(with_checkpoints(1, "0.8.0"), store.clone())
+                .await
+                .unwrap();
+            let in_old = last_message(&old).await;
+            assert_eq!(in_old.body, "for brett");
+            assert_eq!(in_old.from.who(), mike().who());
+            if view == kind {
+                assert_eq!((in_old.kind, &in_old.to), (Kind::Other, &to_brett));
+            } else if view == uri {
+                assert_eq!((in_old.kind, &in_old.to), (sent, &to_brett));
+                assert_eq!(in_old.from.other(), ["wave=17"]);
+                assert_eq!(in_old.from.lead(), in_new.from.lead());
+            } else {
+                assert_eq!(in_old.kind, Kind::Message);
+                assert!(in_old.to[0].is_other() && !in_old.to[0].matches(&brett()));
+            }
+            // The session of mike is the same session: it holds its
+            // claim.
+            assert_eq!(claims_of_mike(&old), ["issue-5"]);
+            post_n(&old, 3, "old").await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(checkpoints(&store).await.is_empty());
+            let facts = old.0.server_facts();
+            assert_eq!(facts.skipped_records, records);
+            let why = facts.no_checkpoint.expect("the build writes no checkpoint");
+            assert!(why.contains("this build skipped the record at"), "{why}");
+            assert_eq!(position(&old), last + 3);
+            drop(old);
+
+            // The new build again: it has the message as it wrote it,
+            // and each record of the old build. It writes checkpoints.
+            *store.later.lock().unwrap() = None;
+            let again = Service::load(with_checkpoints(1, "0.9.0"), store.clone())
+                .await
+                .unwrap();
+            let request = Read {
+                after: None,
+                me: brett(),
+                thread: thread.clone(),
+                all: true,
+            };
+            let reply = read(AxumState(again.0.clone()), Proof::none(), Json(request))
+                .await
+                .unwrap();
+            assert_eq!(reply.messages[reply.messages.len() - 4], in_new);
+            assert_eq!(claims_of_mike(&again), ["issue-5"]);
+            assert_eq!(position(&again), last + 3);
+            let facts = again.0.server_facts();
+            assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+            post_n(&again, 2, "again").await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(!checkpoints(&store).await.is_empty());
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_build_that_skipped_a_record_writes_no_checkpoint_past_it() {
         let store = Arc::new(Gated::default());

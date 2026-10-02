@@ -225,6 +225,30 @@ impl Place {
 /// assert!(lead.lead());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
+///
+/// # A query part of a later build (01M3XYYSY536AEJVERBPTQFQYX)
+///
+/// The set of query parts can grow, as `lead` and `claim` came. A URI
+/// in JSON keeps each query part that this build does not know
+/// ([`SessionUri::other`]), as it came. The session is the same
+/// session: its user, its session ID and its place. The part gives no
+/// mark: no lead and no claim. A URI that a person types
+/// ([`FromStr`]) takes only the parts of this build, and
+/// `riff-server` refuses a call of a caller with such a part.
+///
+/// ```
+/// use riff_core::name::SessionUri;
+///
+/// let known: SessionUri = "riff://ann@heron/acme/app?session=s1".parse()?;
+/// let json = r#""riff://ann@heron/acme/app?session=s1&wave=17&lead=maybe""#;
+/// let later: SessionUri = serde_json::from_str(json).unwrap();
+/// assert_eq!((later.who(), later.place()), (known.who(), known.place()));
+/// assert!(later.is_other() && !later.lead() && later.claims().is_empty());
+/// assert_eq!(later.other(), ["wave=17", "lead=maybe"]);
+/// assert_eq!(serde_json::to_string(&later).unwrap(), json);
+/// assert!(json.trim_matches('"').parse::<SessionUri>().is_err());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct SessionUri {
@@ -232,6 +256,8 @@ pub struct SessionUri {
     place: Place,
     lead: bool,
     claims: Vec<String>,
+    /// Each query part that this build does not know, as it came.
+    other: Vec<String>,
 }
 
 impl SessionUri {
@@ -242,7 +268,69 @@ impl SessionUri {
             place,
             lead: false,
             claims: Vec::new(),
+            other: Vec::new(),
         }
+    }
+
+    /// Each query part that this build does not know, as it came.
+    pub fn other(&self) -> &[String] {
+        &self.other
+    }
+
+    /// True for a URI with a query part that this build does not know.
+    pub fn is_other(&self) -> bool {
+        !self.other.is_empty()
+    }
+
+    /// Reads a URI. With `later`, it keeps each query part that this
+    /// build does not know. With no `later`, such a part is an error.
+    fn read(s: &str, later: bool) -> Result<Self, NameError> {
+        let bad = || NameError(format!("not a session URI: {s}"));
+        let rest = s.strip_prefix(SCHEME).ok_or_else(bad)?;
+        let (rest, worktree) = match rest.split_once('#') {
+            Some((rest, worktree)) => (rest, Some(worktree)),
+            None => (rest, None),
+        };
+        let (rest, query) = match rest.split_once('?') {
+            Some((rest, query)) => (rest, Some(query)),
+            None => (rest, None),
+        };
+        let (authority, path) = match rest.split_once('/') {
+            Some((authority, path)) => (authority, Some(path)),
+            None => (rest, None),
+        };
+        let (user, host) = authority.split_once('@').ok_or_else(bad)?;
+        let repo = match path {
+            None | Some("-") => Repo::None,
+            Some(path) => {
+                let (owner, name) = path.split_once('/').ok_or_else(bad)?;
+                Repo::Git {
+                    owner: owner.into(),
+                    name: name.into(),
+                }
+            }
+        };
+        let mut session = None;
+        let mut lead = false;
+        let mut claims = Vec::new();
+        let mut other = Vec::new();
+        for pair in query.into_iter().flat_map(|q| q.split('&')) {
+            match pair.split_once('=') {
+                Some(("session", value)) if session.is_none() => session = Some(value),
+                Some(("lead", "true")) => lead = true,
+                Some(("claim", value)) if !later || check("claim", value).is_ok() => {
+                    check("claim", value)?;
+                    claims.push(value.to_owned());
+                }
+                _ if later => other.push(pair.to_owned()),
+                _ => return Err(bad()),
+            }
+        }
+        let who = Who::new(user, session)?;
+        let place = Place::new(host, repo, worktree)?;
+        let mut uri = Self::new(who, place).with_lead(lead).with_claims(claims);
+        uri.other = other;
+        Ok(uri)
     }
 
     /// The same URI, as the lead or not.
@@ -327,6 +415,7 @@ impl fmt::Display for SessionUri {
             .map(|s| format!("session={s}"))
             .chain(self.lead.then(|| "lead=true".to_owned()))
             .chain(self.claims.iter().map(|c| format!("claim={c}")))
+            .chain(self.other.iter().cloned())
             .collect();
         if self.place.has_path() || !query.is_empty() {
             write!(f, "/{}", self.place.repo_text())?;
@@ -344,57 +433,21 @@ impl fmt::Display for SessionUri {
 impl FromStr for SessionUri {
     type Err = NameError;
 
+    /// Parses a URI that a person or an agent typed: only the query
+    /// parts of this build.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bad = || NameError(format!("not a session URI: {s}"));
-        let rest = s.strip_prefix(SCHEME).ok_or_else(bad)?;
-        let (rest, worktree) = match rest.split_once('#') {
-            Some((rest, worktree)) => (rest, Some(worktree)),
-            None => (rest, None),
-        };
-        let (rest, query) = match rest.split_once('?') {
-            Some((rest, query)) => (rest, Some(query)),
-            None => (rest, None),
-        };
-        let (authority, path) = match rest.split_once('/') {
-            Some((authority, path)) => (authority, Some(path)),
-            None => (rest, None),
-        };
-        let (user, host) = authority.split_once('@').ok_or_else(bad)?;
-        let repo = match path {
-            None | Some("-") => Repo::None,
-            Some(path) => {
-                let (owner, name) = path.split_once('/').ok_or_else(bad)?;
-                Repo::Git {
-                    owner: owner.into(),
-                    name: name.into(),
-                }
-            }
-        };
-        let mut session = None;
-        let mut lead = false;
-        let mut claims = Vec::new();
-        for pair in query.into_iter().flat_map(|q| q.split('&')) {
-            match pair.split_once('=') {
-                Some(("session", value)) if session.is_none() => session = Some(value),
-                Some(("lead", "true")) => lead = true,
-                Some(("claim", value)) => {
-                    check("claim", value)?;
-                    claims.push(value.to_owned());
-                }
-                _ => return Err(bad()),
-            }
-        }
-        let who = Who::new(user, session)?;
-        let place = Place::new(host, repo, worktree)?;
-        Ok(Self::new(who, place).with_lead(lead).with_claims(claims))
+        Self::read(s, false)
     }
 }
 
 impl TryFrom<String> for SessionUri {
     type Error = NameError;
 
+    /// Reads a URI of JSON: a record of the log, or a call. It keeps
+    /// each query part that this build does not know
+    /// (01M3XYYSY536AEJVERBPTQFQYX).
     fn try_from(s: String) -> Result<Self, Self::Error> {
-        s.parse()
+        Self::read(&s, true)
     }
 }
 

@@ -811,7 +811,8 @@ impl Post {
     }
 }
 
-/// The kind of a post.
+/// The kind of a post. A `post` call sends `message`, `status` or
+/// `note`.
 ///
 /// ```
 /// use riff_core::wire::Kind;
@@ -823,7 +824,7 @@ impl Post {
 /// assert!("other".parse::<Kind>().is_err());
 /// assert!(Kind::Note.needs_body() && !Kind::Status.needs_body());
 /// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     /// A message to read.
@@ -835,6 +836,23 @@ pub enum Kind {
     /// A note: it informs and wakes no session. A session sees it at its
     /// next `read` (01M3JPMQE6S7YM4HPEVGXWK7ET).
     Note,
+    /// A kind that this build does not know. A reader shows the post as
+    /// a message.
+    #[schemars(skip)]
+    Other,
+}
+
+/// The set of kinds can grow. A build reads each value that it does not
+/// know as [`Kind::Other`]: a text, and each other form of JSON
+/// (01M3XSF90E9JYYTC13D9THY4WE).
+impl<'de> Deserialize<'de> for Kind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(value
+            .as_str()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(Kind::Other))
+    }
 }
 
 impl Kind {
@@ -846,6 +864,36 @@ impl Kind {
     /// needs none.
     pub fn needs_body(&self) -> bool {
         *self != Kind::Status
+    }
+
+    /// True for a kind that a `post` call can have. A kind of a later
+    /// build reads as [`Kind::Other`], and no `post` call can have it
+    /// (01M3XSF90E9JYYTC13D9THY4WE).
+    ///
+    /// ```
+    /// use riff_core::wire::Kind;
+    ///
+    /// let read = |json: &str| serde_json::from_str::<Kind>(json).unwrap();
+    /// assert_eq!(read(r#""note""#), Kind::Note);
+    /// // A kind of a later build can have each form of JSON.
+    /// for later in [r#""poll""#, r#"{"poll":"wave"}"#, "7", "null"] {
+    ///     assert_eq!(read(later), Kind::Other, "{later}");
+    /// }
+    /// assert!(Kind::Note.is_post() && !Kind::Other.is_post());
+    /// assert_eq!(serde_json::to_string(&Kind::Other).unwrap(), r#""other""#);
+    ///
+    /// // The schema of a call has only the kinds of a `post` call.
+    /// let schema = serde_json::to_value(schemars::schema_for!(Kind)).unwrap();
+    /// let kinds: Vec<&str> = schema["oneOf"]
+    ///     .as_array()
+    ///     .unwrap()
+    ///     .iter()
+    ///     .map(|kind| kind["const"].as_str().unwrap())
+    ///     .collect();
+    /// assert_eq!(kinds, ["message", "status", "note"]);
+    /// ```
+    pub fn is_post(&self) -> bool {
+        *self != Kind::Other
     }
 }
 
@@ -983,6 +1031,11 @@ impl Message {
             let [to] = &self.to[..] else {
                 return false;
             };
+            // A selector of a later build matches no session, so it
+            // does not name the other session.
+            if to.is_other() {
+                return false;
+            }
             let names = |want: &Option<String>, have: Option<&str>| {
                 want.as_deref().is_none_or(|w| Some(w) == have)
             };

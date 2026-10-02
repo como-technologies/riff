@@ -116,6 +116,102 @@ async fn a_server_with_no_sign_in_trusts_its_callers() {
     }
 }
 
+/// Only the read of the log takes a value of a later build
+/// (01M3XSF90E9JYYTC13D9THY4WE): a `post` call with a kind or a field
+/// of a selector that the server does not know is refused.
+#[tokio::test]
+async fn a_post_with_a_kind_or_a_selector_field_of_a_later_build_is_a_bad_request() {
+    let (_server, port, _) = serve(&["--listen", "127.0.0.1:0"]);
+    let url = format!("http://127.0.0.1:{port}/v1");
+    let me = "riff://mike@pangolin/como-technologies/riff?session=a1";
+    let thread = "como-technologies/riff";
+    let http = common::client();
+    let call =
+        |op: &str, body: serde_json::Value| http.post(format!("{url}/{op}")).json(&body).send();
+    call("register", serde_json::json!({ "me": me }))
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let post = |kind: &str, to: serde_json::Value| serde_json::json!({ "me": me, "thread": thread, "to": [to], "body": "hi", "kind": kind });
+    let known = serde_json::json!({ "user": "mike" });
+    let later = serde_json::json!({ "user": "mike", "wave": "17" });
+    for (body, text) in [
+        (post("poll", known.clone()), "no such kind"),
+        (post("other", known.clone()), "no such kind"),
+        (
+            post("note", later),
+            r#"this server does not know the selector {"user":"mike","wave":"17"}"#,
+        ),
+        (
+            post("note", serde_json::json!("all")),
+            r#"this server does not know the selector "all""#,
+        ),
+        (
+            post(
+                "note",
+                serde_json::json!({ "user": "mike", "lead": "maybe" }),
+            ),
+            "this server does not know the selector",
+        ),
+    ] {
+        let reply = call("post", body.clone()).await.unwrap();
+        assert_eq!(reply.status(), 400, "{body}");
+        let code = reply.headers()[riff_core::wire::REFUSED_HEADER].clone();
+        assert_eq!(code, "bad_request", "{body}");
+        let why = reply.text().await.unwrap();
+        assert!(why.contains(text), "{why}");
+    }
+    // A caller whose URI has a query part that the server does not
+    // know is refused in each call: a command, a signal and a query.
+    let later = format!("{me}&wave=17");
+    for (op, body) in [
+        ("register", serde_json::json!({ "me": later })),
+        ("alive", serde_json::json!({ "me": later })),
+        (
+            "post",
+            serde_json::json!({ "me": later, "thread": thread, "body": "hi" }),
+        ),
+        (
+            "read",
+            serde_json::json!({ "me": later, "thread": thread, "all": true }),
+        ),
+        ("who", serde_json::json!({ "me": later })),
+    ] {
+        let reply = call(op, body.clone()).await.unwrap();
+        assert_eq!(reply.status(), 400, "{op}");
+        // A command names the code of its refusal. A signal and a
+        // query give only the status and the text.
+        let code = reply
+            .headers()
+            .get(riff_core::wire::REFUSED_HEADER)
+            .cloned();
+        if matches!(op, "register" | "post") {
+            assert_eq!(code.unwrap(), "bad_request", "{op}");
+        }
+        let why = reply.text().await.unwrap();
+        assert!(
+            why.contains("a part that this server does not know: wave=17"),
+            "{op}: {why}"
+        );
+    }
+    call("post", post("note", known))
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let read = serde_json::json!({ "me": me, "thread": thread, "all": true });
+    let reply: ReadReply = call("read", read)
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reply.messages.len(), 1, "a refused post leaves no message");
+}
+
 #[test]
 fn with_no_sign_in_a_network_address_needs_insecure() {
     let out = server(&["--listen", "0.0.0.0:0"]).output().unwrap();
