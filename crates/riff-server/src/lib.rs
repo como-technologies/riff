@@ -175,7 +175,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Form, FromRef, Query, Request, State as AxumState};
+use axum::extract::{Form, FromRef, FromRequestParts, Query, Request, State as AxumState};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -207,6 +208,7 @@ use crate::owner::{Check, Checks};
 use crate::state::{Announce, Role, Signal, State, may_read};
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
+use crate::trace::{DeniedCode, Named};
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -1479,6 +1481,9 @@ impl Service {
             .route(Lead::PATH, post(command::<Lead>))
             .route(Pause::PATH, post(command::<Pause>))
             .route(Resume::PATH, post(command::<Resume>));
+        // `set_idle` has a router of its own: in a riff with sign-in,
+        // its route always has the token check.
+        let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));
         // ANCHOR_END: routes
         // The signals and the queries.
         let mut routes = commands
@@ -1494,23 +1499,20 @@ impl Service {
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
         // The settings of idle workers: the query, and the command
         // `set_idle` on a path of its own (01M3WRD9BSBKS9TN66H29TGTBV).
-        let idle = |routes: Router<Shared>| {
-            routes
-                .route(IdleQuery::PATH, post(idle_workers))
-                .route(SetIdle::PATH, post(command::<SetIdle>))
-        };
+        let idle = Router::new()
+            .route(IdleQuery::PATH, post(idle_workers))
+            .merge(set_idle);
         // A riff with sign-in knows who changes the idle workers
-        // (01M3Q5A0TF9K49V8Z1ZY9NDF74).
-        let trusted = self.0.config.trusted();
-        if trusted {
-            routes = idle(routes);
+        // (01M3Q5A0TF9K49V8Z1ZY9NDF74): there, the routes of the idle
+        // workers have the token check.
+        let mut admin_routes = Router::new();
+        if self.0.config.trusted() {
+            routes = routes.merge(idle);
+        } else {
+            admin_routes = admin_routes.merge(idle);
         }
         if self.0.config.require_sign_in {
             routes = routes.route_layer(guard());
-        }
-        let mut admin_routes = Router::new();
-        if !trusted {
-            admin_routes = idle(admin_routes);
         }
         let admin_routes = admin_routes
             .route("/v1/revoke", post(revoke))
@@ -1566,13 +1568,42 @@ pub fn router() -> Router {
 
 /// The proof of the token layer in a request, when the route has the
 /// token check.
-type Proof = Option<Extension<SignedIn>>;
+struct Proof {
+    signed_in: Option<SignedIn>,
+    /// The path of the call, for the line of a refusal.
+    path: String,
+}
+
+#[cfg(test)]
+impl Proof {
+    /// The proof of a call with no token, for a test that calls a
+    /// handler.
+    fn none() -> Proof {
+        Proof {
+            signed_in: None,
+            path: String::new(),
+        }
+    }
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for Proof {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Proof, Infallible> {
+        Ok(Proof {
+            signed_in: parts.extensions.get::<SignedIn>().cloned(),
+            path: parts.uri.path().to_owned(),
+        })
+    }
+}
 
 /// Admits the caller of a signal or of a query that acts as `me`
-/// ([`Engine::admit`]).
+/// ([`Engine::admit`]). A refusal gives the line `denied`
+/// (RID_DENIED).
 fn admit(s: &Server, proof: &Proof, me: &SessionUri) -> Result<Admitted, Failed> {
-    let proof = proof.as_ref().map(|Extension(proof)| proof);
-    s.engine.admit(proof, me)
+    s.engine
+        .admit(proof.signed_in.as_ref(), me)
+        .inspect_err(|failed| failed.trace_denied(&proof.path, Some(me)))
 }
 
 /// A keep-alive: a sign of life that is not a call (R204). It is a
@@ -1692,7 +1723,7 @@ async fn read(
     proof: Proof,
     Json(r): Json<Read>,
 ) -> Reply<ReadReply> {
-    let signed = proof.is_some();
+    let signed = proof.signed_in.is_some();
     let caller = admit(&s, &proof, &r.me)?;
     let (page, read) = s
         .engine
@@ -2055,13 +2086,23 @@ async fn require_token(
     let method = request.method().as_str().to_owned();
     let path = request.uri().path().to_owned();
     let checked = s.authenticate(request.headers(), &method, &path);
-    let challenge = match checked {
+    let refusal = match checked {
         Ok(user) => {
             request.extensions_mut().insert(user);
             return next.run(request).await;
         }
-        Err(refusal) => s.config.challenge(refusal.as_ref()),
+        Err(refusal) => refusal,
     };
+    let challenge = s.config.challenge(refusal.as_ref());
+    let code = match &refusal {
+        None => DeniedCode::NoToken,
+        Some(refusal) if refusal.code == Refusal::TOKEN => DeniedCode::BadToken,
+        Some(_) => DeniedCode::BadProof,
+    };
+    // The server reads the body only now, after the refusal, to name
+    // the caller in the line (RID_DENIED).
+    let named = Named::in_request(request).await;
+    trace::denied(&path, named.as_ref(), code);
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, challenge)],
@@ -2070,7 +2111,8 @@ async fn require_token(
 }
 
 /// Refuses a call from a `riff` of a version that this server cannot
-/// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T). A `riff`
+/// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T), with
+/// the line `denied` and the code `old_build` (RID_DENIED). A `riff`
 /// of the line of this server, or of the line before, goes on
 /// (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). The OAuth
 /// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
@@ -2086,6 +2128,9 @@ async fn check_build(request: Request, next: Next) -> Response {
         server: Some(this),
         seen: None,
     };
+    let path = request.uri().path().to_owned();
+    let named = Named::in_request(request).await;
+    trace::denied(&path, named.as_ref(), DeniedCode::OldBuild);
     (StatusCode::CONFLICT, mismatch.to_string()).into_response()
 }
 
@@ -2565,7 +2610,7 @@ mod tests {
             me: me.clone(),
             all: false,
         };
-        let who = who(AxumState(service.0.clone()), None, Json(request))
+        let who = who(AxumState(service.0.clone()), Proof::none(), Json(request))
             .await
             .unwrap();
         who.sessions
@@ -2814,7 +2859,7 @@ mod tests {
         store.tried(tries + 1).await;
         let claims = || async {
             let query = Query(WatchQuery { uri: mike() });
-            let reply = me(AxumState(service.0.clone()), None, query).await.unwrap();
+            let reply = me(AxumState(service.0.clone()), Proof::none(), query).await.unwrap();
             let session = reply.session.clone().expect("the server knows mike");
             session.uri.claims().to_vec()
         };
@@ -2917,7 +2962,7 @@ mod tests {
     }
 
     async fn read_messages(service: &Service, request: Read) -> Vec<String> {
-        let reply = read(AxumState(service.0.clone()), None, Json(request))
+        let reply = read(AxumState(service.0.clone()), Proof::none(), Json(request))
             .await
             .unwrap();
         reply.messages.iter().map(|m| m.body.clone()).collect()
@@ -3146,7 +3191,7 @@ mod tests {
             status: step.clone(),
         };
         // The reply comes while the write of the post waits.
-        let _ = status(AxumState(service.0.clone()), None, Json(set))
+        let _ = status(AxumState(service.0.clone()), Proof::none(), Json(set))
             .await
             .unwrap();
         assert!(!posting.is_finished());
@@ -3175,7 +3220,7 @@ mod tests {
             .unwrap();
         let reply = alive(
             AxumState(service.0.clone()),
-            None,
+            Proof::none(),
             Json(Alive { me: new.clone() }),
         )
         .await

@@ -319,9 +319,12 @@ pub struct Refusal {
 }
 
 impl Refusal {
+    /// The code of a token that the server refuses.
+    pub const TOKEN: &str = "invalid_token";
+
     pub fn token(description: impl ToString) -> Self {
         Refusal {
-            code: "invalid_token",
+            code: Refusal::TOKEN,
             description: description.to_string(),
         }
     }

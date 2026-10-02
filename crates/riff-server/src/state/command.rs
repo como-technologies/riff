@@ -577,11 +577,66 @@ mod tests {
         }
     }
 
-    /// The role that each command of the kind needs.
+    /// The role that the command of `kind` needs: [`Command::needs`] of
+    /// one command of its type. So the test reads the role from the
+    /// command, as the engine does.
     fn needs(kind: CommandKind) -> Role {
+        use riff_core::wire::{
+            Claim, End, Join, Kind, Lead, Leave, Pause, Post, Register, Release, ReleaseFor,
+            Resume, SetIdle, Start,
+        };
+
+        use crate::state::{Announce, Forget, MakeRiff};
+
+        fn of<C: Command>(command: C, kind: CommandKind) -> Role {
+            assert_eq!(C::KIND, kind);
+            command.needs()
+        }
+        let me: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+        let thread = me.default_thread().unwrap();
+        let item = "issue-7".to_owned();
         match kind {
-            CommandKind::SetIdle => Role::Admin,
-            _ => Role::Member,
+            CommandKind::Register => of(Register { me, worker: false }, kind),
+            CommandKind::Start => of(Start { me }, kind),
+            CommandKind::End => of(End { me }, kind),
+            CommandKind::Join => of(Join { me, thread }, kind),
+            CommandKind::Leave => of(Leave { me, thread }, kind),
+            CommandKind::Post => of(Post::new(&me, Some(thread), vec![], "hi"), kind),
+            CommandKind::Announce => {
+                let announce = Announce {
+                    thread: Some(thread),
+                    to: Vec::new(),
+                    body: "hi".into(),
+                    kind: Kind::Note,
+                    at_ms: 0,
+                };
+                of(announce, kind)
+            }
+            CommandKind::Claim => of(Claim { me, thread, item }, kind),
+            CommandKind::Release => of(Release { me, thread, item }, kind),
+            CommandKind::ReleaseFor => {
+                let session = "a2".to_owned();
+                let release = ReleaseFor {
+                    me,
+                    thread,
+                    item,
+                    session,
+                };
+                of(release, kind)
+            }
+            CommandKind::Lead => of(Lead { me }, kind),
+            CommandKind::MakeRiff => of(MakeRiff, kind),
+            CommandKind::Pause => of(Pause { me }, kind),
+            CommandKind::Resume => of(Resume { me }, kind),
+            CommandKind::SetIdle => {
+                let set = SetIdle {
+                    me,
+                    per_host: Some(1),
+                    after_secs: None,
+                };
+                of(set, kind)
+            }
+            CommandKind::Forget => of(Forget, kind),
         }
     }
 

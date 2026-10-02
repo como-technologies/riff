@@ -143,7 +143,7 @@ use tokio::sync::{Notify, broadcast, oneshot};
 
 use crate::auth::SignedIn;
 use crate::log::Written;
-use crate::trace::{Denied, DeniedCode, Outcome, Traced};
+use crate::trace::{Denied, DeniedCode, Named, Outcome, Traced};
 use crate::state::{
     Announce, Caller, Cause, Check, Code, Command, CommandKind, Delivery, Forget, MakeRiff,
     Refused, Role, Signal, State, Stopping,
@@ -309,6 +309,18 @@ impl Failed {
             Failed::Denied(denied) => denied.reason.clone(),
             Failed::Refused(refused) => refused.reason.clone(),
             Failed::Stopped => "the server stopped before it wrote the change. Try again.".into(),
+        }
+    }
+}
+
+impl Failed {
+    /// Writes the line `denied` when the token layer refused the call
+    /// (RID_DENIED). `path` is the path of the call, and `me` the
+    /// caller that it named.
+    pub fn trace_denied(&self, path: &str, me: Option<&SessionUri>) {
+        if let Failed::Denied(denied) = self {
+            let named = me.map(Named::of);
+            crate::trace::denied(path, named.as_ref(), denied.code);
         }
     }
 }
@@ -1015,8 +1027,10 @@ where
         let Json(command) = Json::<C>::from_request(request, state)
             .await
             .map_err(IntoResponse::into_response)?;
+        let me = command.me().cloned();
         engine
             .authenticate(proof.as_ref(), command)
+            .inspect_err(|failed| failed.trace_denied(C::PATH, me.as_ref()))
             .map_err(IntoResponse::into_response)
     }
 }
