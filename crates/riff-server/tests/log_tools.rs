@@ -366,10 +366,10 @@ async fn log_cut_with_no_yes_is_a_dry_run() {
         lines,
         [
             "4  2026-09-21T14:13:20Z  claimed  issue-4 in acme/app by \
-             riff://ann@heron/acme/app?session=s1",
-            "5  2026-09-21T14:13:20Z  riff_state_set  running",
+             riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
+            "5  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)",
             "6  2026-09-21T14:13:20Z  claimed  issue-6 in acme/app by \
-             riff://ann@heron/acme/app?session=s1",
+             riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
             &format!("checkpoint  {}", checkpoint.display()),
             "A cut removes 3 records and 1 checkpoint after position 3. Threads: acme/app.",
             "This run removed nothing. To remove them, stop the server and run: \

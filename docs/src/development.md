@@ -904,7 +904,7 @@ riff-server log cut --after 1201 --dir ~/.local/state/riff-server
 
 ```text
 1202  (a line that does not read: EOF while parsing a value at line 1 column 30)
-1203  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
+1203  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)
 A cut removes 2 records and 0 checkpoints after position 1201. Threads: acme/app.
 This run removed nothing. To remove them, stop the server and run: riff-server log cut --after 1201 --yes
 ```
@@ -919,7 +919,7 @@ riff-server log cut --after 1201 --yes --dir ~/.local/state/riff-server
 
 ```text
 1202  (a line that does not read: EOF while parsing a value at line 1 column 30)
-1203  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
+1203  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)
 Removed 2 records and 0 checkpoints after position 1201. Threads: acme/app.
 ```
 
