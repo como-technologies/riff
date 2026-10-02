@@ -481,7 +481,8 @@ request wakes you, answer with this tool. Do not post a reply."
 
     #[tool(
         description = "Claim a work item so that no other session does the same work. The result \
-names the pushed branch and the worktree of an earlier session on the item, when there is one."
+names the pushed branch and the worktree of an earlier session on the item, when there is one, \
+and the pull request of the item with the state of its verify."
     )]
     async fn claim(&self, Parameters(a): Parameters<ClaimArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
@@ -496,6 +497,11 @@ names the pushed branch and the worktree of an earlier session on the item, when
         if reply.granted && self.earlier {
             let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
             if let Some(line) = dropped::at_claim(&dir, &a.item).await {
+                out.push('\n');
+                out.push_str(&line);
+            }
+            let repo = me.place().repo_text();
+            if let Some(line) = crate::rollout::at_claim(&dir, &repo, &a.item).await {
                 out.push('\n');
                 out.push_str(&line);
             }

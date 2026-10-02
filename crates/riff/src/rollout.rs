@@ -32,6 +32,18 @@
 //!   when its branch names an issue, it is not a draft, its head has no
 //!   status `riff/verify`, and no session claims `verify-issue-N` for
 //!   it.
+//! - **One count for an item** ([`Verify`], [`in_verify`],
+//!   01M3Z9N5HHHS1E17NFGMVBKZ0K). The author of a pull request releases
+//!   its item at the verify request. So an open issue with no claim can
+//!   have a pull request. riff reads the state of that pull request
+//!   from the status `riff/verify` of its head
+//!   (01M3Z9MY0CDBB1G749XBVMVV8X):
+//!
+//!   | Status `riff/verify` | State | Work |
+//!   |---|---|---|
+//!   | none | asked | a verify |
+//!   | `success` | passed | none: the merge waits |
+//!   | `failure` | failed | a build: the item is free, with its earlier work |
 //! - **Idle workers** ([`idle`]). A worker pane of the user with no
 //!   claim, also one that did not join yet, and a live worker of
 //!   another user with no claim. A worker that the server asked to stop
@@ -104,7 +116,7 @@
 //! ([`crate::host`], 01M3X30RJS8YE5TXJBQDC2FT0C).
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -638,15 +650,20 @@ pub fn needs(body: &str) -> Vec<u64> {
 }
 
 /// The free items of the wave `wave`, from all `open` issues of the
-/// repository and the `claims` of all sessions: an open issue of the
-/// wave that no session claims, with no comment `Merged in #`, and with
-/// each issue of its `Needs:` line closed. An open need blocks the item,
-/// also a need outside the wave, and also a need that is merged but not
-/// closed.
+/// repository, the `claims` of all sessions and the open `pulls`: an
+/// open issue of the wave that no session claims, with no comment
+/// `Merged in #`, and with each issue of its `Needs:` line closed. An
+/// open need blocks the item, also a need outside the wave, and also a
+/// need that is merged but not closed.
+///
+/// An item whose pull request waits for a verify or for the merge is
+/// not free: it is work for a verify, not for a build
+/// (01M3Z9N5HHHS1E17NFGMVBKZ0K). An item whose verify failed is free,
+/// with its earlier work.
 ///
 /// ```
 /// use std::collections::HashSet;
-/// use riff::rollout::{Comment, Issue, Milestone, free_items};
+/// use riff::rollout::{Check, Comment, Issue, Milestone, Pull, free_items};
 ///
 /// let issue = |number, wave: &str, body: &str, merged| Issue {
 ///     number,
@@ -667,26 +684,79 @@ pub fn needs(body: &str) -> Vec<u64> {
 /// ];
 /// let claims: HashSet<String> = ["issue-5".to_owned()].into();
 /// // 99 is closed. 2 is merged but open. 50 is open outside the wave.
-/// assert_eq!(free_items(&open, "Wave 2", &claims), [1, 4]);
+/// assert_eq!(free_items(&open, "Wave 2", &claims, &[]), [1, 4]);
+///
+/// // The author of 1 asked for a verify and released the item. The
+/// // verify of 4 failed.
+/// let pull = |number, issue: u64, state: Option<&str>| Pull {
+///     number,
+///     branch: format!("worktree-issue-{issue}"),
+///     checks: state.map(Check::verify).into_iter().collect(),
+///     ..Pull::default()
+/// };
+/// let pulls = [pull(40, 1, None), pull(41, 4, Some("FAILURE"))];
+/// assert_eq!(free_items(&open, "Wave 2", &claims, &pulls), [4]);
+/// let pulls = [pull(40, 1, Some("SUCCESS"))];
+/// assert_eq!(free_items(&open, "Wave 2", &claims, &pulls), [4]);
 /// ```
-pub fn free_items(open: &[Issue], wave: &str, claims: &HashSet<String>) -> Vec<u64> {
+pub fn free_items(
+    open: &[Issue],
+    wave: &str,
+    claims: &HashSet<String>,
+    pulls: &[Pull],
+) -> Vec<u64> {
     let numbers: HashSet<u64> = open.iter().map(|i| i.number).collect();
+    let in_verify = in_verify(pulls);
     open.iter()
         .filter(|i| i.milestone.as_ref().is_some_and(|m| m.title == wave))
         .filter(|i| !i.merged())
         .filter(|i| !claims.contains(&format!("issue-{}", i.number)))
+        .filter(|i| !in_verify.contains(&i.number))
         .filter(|i| needs(&i.body).iter().all(|n| !numbers.contains(n)))
         .map(|i| i.number)
         .collect()
 }
 
-/// An open pull request, as `gh pr list --json
-/// number,headRefName,isDraft,statusCheckRollup` gives it.
-#[derive(Debug, Clone, Deserialize)]
+/// The issues with a pull request in `pulls` that waits for a verify
+/// or for the merge ([`Verify::Asked`], [`Verify::Passed`]). Such an
+/// item is no free work for a build (01M3Z9N5HHHS1E17NFGMVBKZ0K).
+///
+/// ```
+/// use riff::rollout::{Check, Pull, in_verify};
+///
+/// let pull = |branch: &str, checks| Pull { number: 40, branch: branch.into(), checks, ..Pull::default() };
+/// let pulls = [
+///     pull("worktree-issue-12", vec![]),
+///     pull("worktree-issue-13", vec![Check::verify("SUCCESS")]),
+///     pull("worktree-issue-14", vec![Check::verify("FAILURE")]),
+///     Pull { draft: true, ..pull("worktree-issue-15", vec![]) },
+///     pull("release-v0.8.0", vec![]),
+/// ];
+/// let mut issues: Vec<u64> = in_verify(&pulls).into_iter().collect();
+/// issues.sort_unstable();
+/// assert_eq!(issues, [12, 13]);
+/// ```
+pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
+    pulls
+        .iter()
+        .filter(|p| matches!(p.verify(), Some(Verify::Asked | Verify::Passed)))
+        .filter_map(|p| branch_issue(&p.branch))
+        .collect()
+}
+
+/// The fields of `gh pr list --json` that [`Pull`] reads.
+pub const PULL_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheckRollup";
+
+/// An open pull request, as `gh pr list --json` with [`PULL_FIELDS`]
+/// gives it.
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Pull {
     pub number: u64,
     #[serde(rename = "headRefName")]
     pub branch: String,
+    /// The head commit.
+    #[serde(rename = "headRefOid", default)]
+    pub head: String,
     #[serde(rename = "isDraft", default)]
     pub draft: bool,
     #[serde(rename = "statusCheckRollup", default)]
@@ -694,11 +764,82 @@ pub struct Pull {
 }
 
 /// A status or a check of the head of a pull request. Only a status has
-/// a context.
-#[derive(Debug, Clone, Deserialize)]
+/// a context and a state.
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Check {
     #[serde(default)]
     pub context: Option<String>,
+    /// The state of a status: `SUCCESS`, `FAILURE`, `ERROR`, `PENDING`
+    /// or `EXPECTED`.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// The URL of a status. For `riff/verify` it is the comment with
+    /// the result.
+    #[serde(rename = "targetUrl", default)]
+    pub url: Option<String>,
+}
+
+impl Check {
+    /// The status `riff/verify` with `state`, as `riff verify` sets it.
+    pub fn verify(state: &str) -> Self {
+        Self {
+            context: Some(crate::pr::VERIFY_CONTEXT.into()),
+            state: Some(state.into()),
+            url: None,
+        }
+    }
+}
+
+/// Where the pull request of an item is on its way to the merge. riff
+/// makes it from the status `riff/verify` of the head commit
+/// (01M3Z9MY0CDBB1G749XBVMVV8X). So it needs no claim of the author.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verify {
+    /// No status: the pull request waits for a verify.
+    Asked,
+    /// The verify passed: the pull request waits for the merge.
+    Passed,
+    /// The verify failed: the item is free, with its earlier work.
+    Failed,
+}
+
+impl Pull {
+    /// The state of the verify of this pull request. `None` for a
+    /// draft, and for a branch that names no issue: a pull request
+    /// that a person opened by hand is no work.
+    ///
+    /// ```
+    /// use riff::rollout::{Check, Pull, Verify};
+    ///
+    /// let pull = |checks| Pull { number: 40, branch: "worktree-issue-12".into(), checks, ..Pull::default() };
+    /// assert_eq!(pull(vec![]).verify(), Some(Verify::Asked));
+    /// assert_eq!(pull(vec![Check::default()]).verify(), Some(Verify::Asked));
+    /// assert_eq!(pull(vec![Check::verify("SUCCESS")]).verify(), Some(Verify::Passed));
+    /// assert_eq!(pull(vec![Check::verify("FAILURE")]).verify(), Some(Verify::Failed));
+    /// assert_eq!(pull(vec![Check::verify("ERROR")]).verify(), Some(Verify::Failed));
+    /// assert_eq!(Pull { draft: true, ..pull(vec![]) }.verify(), None);
+    /// assert_eq!(Pull { branch: "main".into(), ..pull(vec![]) }.verify(), None);
+    /// ```
+    pub fn verify(&self) -> Option<Verify> {
+        if self.draft {
+            return None;
+        }
+        branch_issue(&self.branch)?;
+        Some(match self.verify_status() {
+            None => Verify::Asked,
+            Some(check) => match check.state.as_deref() {
+                Some("FAILURE" | "ERROR") => Verify::Failed,
+                _ => Verify::Passed,
+            },
+        })
+    }
+
+    /// The status `riff/verify` of the head, when it has one.
+    pub fn verify_status(&self) -> Option<&Check> {
+        self.checks
+            .iter()
+            .find(|c| c.context.as_deref() == Some(crate::pr::VERIFY_CONTEXT))
+    }
 }
 
 /// The issue of a branch like `worktree-issue-12` or
@@ -718,27 +859,29 @@ pub fn branch_issue(branch: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-/// The pull requests that wait for a verify: the branch names an issue,
-/// not a draft, no status `riff/verify` on the head, and no session
-/// claims `verify-issue-N` for the issue of the branch. A pull request
-/// that a person opened by hand names no issue, so it is no work.
+/// The pull requests that wait for a verify ([`Verify::Asked`]): the
+/// branch names an issue, not a draft, no status `riff/verify` on the
+/// head, and no session claims `verify-issue-N` for the issue of the
+/// branch. A pull request that a person opened by hand names no issue,
+/// so it is no work.
 ///
 /// ```
 /// use std::collections::HashSet;
 /// use riff::rollout::{Check, Pull, waiting_verifies};
 ///
-/// let pull = |number, branch: &str, verified| Pull {
+/// let pull = |number, branch: &str, state: Option<&str>| Pull {
 ///     number,
 ///     branch: branch.into(),
-///     draft: false,
-///     checks: if verified { vec![Check { context: Some("riff/verify".into()) }] } else { vec![] },
+///     checks: state.map(Check::verify).into_iter().collect(),
+///     ..Pull::default()
 /// };
 /// let pulls = [
-///     pull(40, "worktree-issue-12", false),
-///     pull(41, "worktree-issue-13", true),
-///     pull(42, "worktree-issue-14", false),
-///     Pull { draft: true, ..pull(43, "worktree-issue-15", false) },
-///     pull(44, "release-v0.8.0", false),
+///     pull(40, "worktree-issue-12", None),
+///     pull(41, "worktree-issue-13", Some("SUCCESS")),
+///     pull(42, "worktree-issue-14", None),
+///     Pull { draft: true, ..pull(43, "worktree-issue-15", None) },
+///     pull(44, "release-v0.8.0", None),
+///     pull(45, "worktree-issue-16", Some("FAILURE")),
 /// ];
 /// let claims: HashSet<String> = ["verify-issue-14".to_owned()].into();
 /// assert_eq!(waiting_verifies(&pulls, &claims), [40]);
@@ -746,17 +889,104 @@ pub fn branch_issue(branch: &str) -> Option<u64> {
 pub fn waiting_verifies(pulls: &[Pull], claims: &HashSet<String>) -> Vec<u64> {
     pulls
         .iter()
-        .filter(|p| !p.draft)
-        .filter(|p| {
-            !p.checks
-                .iter()
-                .any(|c| c.context.as_deref() == Some(crate::pr::VERIFY_CONTEXT))
-        })
+        .filter(|p| p.verify() == Some(Verify::Asked))
         .filter(|p| {
             branch_issue(&p.branch).is_some_and(|n| !claims.contains(&format!("verify-issue-{n}")))
         })
         .map(|p| p.number)
         .collect()
+}
+
+/// The longest wait of a claim for the pull requests of `gh`
+/// (01M3Z9N6SPWPSSCBEVDCKBESSV).
+pub const PULL_WAIT: Duration = Duration::from_secs(5);
+
+/// The line after the answer to a granted claim of `item`, when the
+/// item has an open pull request in `pulls`
+/// (01M3Z9N6SPWPSSCBEVDCKBESSV). The author of a pull request releases
+/// its item at the verify request, so the next session that claims the
+/// item must know where the pull request is. A verify claim, and an
+/// item with no pull request, get no line.
+///
+/// ```
+/// use riff::rollout::{Check, Pull, claim_line};
+///
+/// let pull = |checks| Pull {
+///     number: 40,
+///     branch: "worktree-issue-12".into(),
+///     head: "1a2b3c4d5e6f".into(),
+///     checks,
+///     ..Pull::default()
+/// };
+/// let failed = Check { url: Some("https://c".into()), ..Check::verify("FAILURE") };
+/// assert_eq!(
+///     claim_line("issue-12", &[pull(vec![failed])]).unwrap(),
+///     "The verify of pull request #40 of issue-12 failed for commit 1a2b3c4: https://c. Read the \
+///      result, go on from the branch, and send a new verify request: see \"Pick up dropped \
+///      work\" in the riff skill."
+/// );
+/// assert_eq!(
+///     claim_line("issue-12", &[pull(vec![])]).unwrap(),
+///     "Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4. The build is done: \
+///      do not build it again. Release issue-12. To verify the work, claim verify-issue-12."
+/// );
+/// assert_eq!(
+///     claim_line("issue-12", &[pull(vec![Check::verify("SUCCESS")])]).unwrap(),
+///     "The verify of pull request #40 of issue-12 passed for commit 1a2b3c4, and the merge \
+///      waits. The build is done: do not build it again. Release issue-12."
+/// );
+/// assert_eq!(claim_line("verify-issue-12", &[pull(vec![])]), None);
+/// assert_eq!(claim_line("issue-13", &[pull(vec![])]), None);
+/// assert_eq!(claim_line("issue-12", &[Pull { draft: true, ..pull(vec![]) }]), None);
+/// ```
+pub fn claim_line(item: &str, pulls: &[Pull]) -> Option<String> {
+    let issue: u64 = item.strip_prefix("issue-")?.parse().ok()?;
+    let (pull, state) = pulls
+        .iter()
+        .filter(|p| branch_issue(&p.branch) == Some(issue))
+        .find_map(|p| Some((p, p.verify()?)))?;
+    let number = pull.number;
+    let commit: String = pull.head.chars().take(7).collect();
+    Some(match state {
+        Verify::Failed => {
+            let result = match pull.verify_status().and_then(|c| c.url.as_deref()) {
+                Some(url) if !url.is_empty() => format!(": {}", text::safe(url)),
+                _ => String::new(),
+            };
+            format!(
+                "The verify of pull request #{number} of {item} failed for commit {commit}{result}. \
+                 Read the result, go on from the branch, and send a new verify request: see \
+                 \"Pick up dropped work\" in the riff skill."
+            )
+        }
+        Verify::Asked => format!(
+            "Pull request #{number} of {item} waits for a verify of commit {commit}. The build is \
+             done: do not build it again. Release {item}. To verify the work, claim verify-{item}."
+        ),
+        Verify::Passed => format!(
+            "The verify of pull request #{number} of {item} passed for commit {commit}, and the \
+             merge waits. The build is done: do not build it again. Release {item}."
+        ),
+    })
+}
+
+/// The line of [`claim_line`] for a granted claim of `item` in the
+/// repository `repo`, from the clone of `dir`. A pull request has a
+/// pushed branch. So riff asks `gh` only when the clone knows a pushed
+/// branch of the item, after the fetch of [`crate::dropped::at_claim`],
+/// and waits at most [`PULL_WAIT`]. With no `gh`, or a slow one, the
+/// claim gets no line.
+pub async fn at_claim(dir: &Path, repo: &str, item: &str) -> Option<String> {
+    if !item.starts_with("issue-") {
+        return None;
+    }
+    let (dir, repo, item) = (dir.to_owned(), repo.to_owned(), item.to_owned());
+    let look = tokio::task::spawn_blocking(move || {
+        crate::dropped::find(&dir, &item).filter(|earlier| !earlier.pushed.is_empty())?;
+        let pulls = pulls(&Gh::default(), &repo).ok()?;
+        claim_line(&item, &pulls)
+    });
+    tokio::time::timeout(PULL_WAIT, look).await.ok()?.ok()?
 }
 
 /// Each claim of each session in `sessions`.
@@ -821,14 +1051,33 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
     mine + others
 }
 
+/// The open pull requests of the repository `repo` (`OWNER/REPO`),
+/// with `gh`.
+pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
+    gh.json(&[
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        PULL_FIELDS,
+    ])
+}
+
 /// The free work of the repository `repo` (`OWNER/REPO`), with `gh`:
 /// the free items of the current wave and the pull requests that wait
-/// for a verify.
+/// for a verify. An item counts one time: as a build or as a verify
+/// (01M3Z9N5HHHS1E17NFGMVBKZ0K).
 pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<usize> {
     let open: Vec<Milestone> = gh.json(&[
         "api",
         &format!("repos/{repo}/milestones?state=open&per_page=100"),
     ])?;
+    let pulls = pulls(gh, repo)?;
     let items = match current_wave(&open) {
         Some(wave) => {
             let issues: Vec<Issue> = gh.json(&[
@@ -843,22 +1092,10 @@ pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<usize>
                 "--json",
                 "number,body,comments,milestone",
             ])?;
-            free_items(&issues, wave, claims).len()
+            free_items(&issues, wave, claims, &pulls).len()
         }
         None => 0,
     };
-    let pulls: Vec<Pull> = gh.json(&[
-        "pr",
-        "list",
-        "--repo",
-        repo,
-        "--state",
-        "open",
-        "--limit",
-        "100",
-        "--json",
-        "number,headRefName,isDraft,statusCheckRollup",
-    ])?;
     Ok(items + waiting_verifies(&pulls, claims).len())
 }
 
@@ -1730,7 +1967,7 @@ mod tests {
         )
         .unwrap();
         // 259 is merged but open, so 266 waits.
-        assert_eq!(free_items(&issues, "Wave 13", &HashSet::new()), [265]);
+        assert_eq!(free_items(&issues, "Wave 13", &HashSet::new(), &[]), [265]);
         let pulls: Vec<Pull> = serde_json::from_str(
             r#"[{"number":267,"headRefName":"worktree-issue-265","isDraft":false,
                  "statusCheckRollup":[{"__typename":"CheckRun","name":"Gate","conclusion":"SUCCESS"},
@@ -1739,5 +1976,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(waiting_verifies(&pulls, &HashSet::new()), [268]);
+        // The pull request of 265 waits for the merge: no build.
+        assert!(free_items(&issues, "Wave 13", &HashSet::new(), &pulls).is_empty());
+    }
+
+    /// The author released the item at its verify request. The item is
+    /// work for a verify, and it counts one time
+    /// (01M3Z9N5HHHS1E17NFGMVBKZ0K). After a fail it is a build again.
+    #[test]
+    fn an_item_with_an_open_pull_request_and_no_claim_counts_one_time() {
+        let issues: Vec<Issue> = serde_json::from_str(
+            r#"[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 3"}}]"#,
+        )
+        .unwrap();
+        let pulls = |status: &str| -> Vec<Pull> {
+            serde_json::from_str(&format!(
+                r#"[{{"number":40,"headRefName":"worktree-issue-12","headRefOid":"1a2b3c4d","isDraft":false,
+                     "statusCheckRollup":[{{"__typename":"CheckRun","name":"Gate","conclusion":"SUCCESS"}}{status}]}}]"#
+            ))
+            .unwrap()
+        };
+        let status = |state: &str| {
+            format!(
+                r#",{{"__typename":"StatusContext","context":"riff/verify","state":"{state}","targetUrl":"https://c"}}"#
+            )
+        };
+        let work = |pulls: &[Pull], claims: &[&str]| {
+            let claims: HashSet<String> = claims.iter().map(|c| (*c).to_owned()).collect();
+            (
+                free_items(&issues, "Wave 3", &claims, pulls),
+                waiting_verifies(pulls, &claims),
+            )
+        };
+        // Asked: one verify, no build.
+        let asked = pulls("");
+        assert_eq!(work(&asked, &[]), (vec![], vec![40]));
+        // A verifier holds it: no work.
+        assert_eq!(work(&asked, &["verify-issue-12"]), (vec![], vec![]));
+        // Passed: the merge waits, no work.
+        assert_eq!(work(&pulls(&status("SUCCESS")), &[]), (vec![], vec![]));
+        // Failed: the item is free for a build, and no verify waits.
+        let failed = pulls(&status("FAILURE"));
+        assert_eq!(work(&failed, &[]), (vec![12], vec![]));
+        assert_eq!(failed[0].verify_status().unwrap().url.as_deref(), Some("https://c"));
+        // The next session holds it: no work.
+        assert_eq!(work(&failed, &["issue-12"]), (vec![], vec![]));
     }
 }

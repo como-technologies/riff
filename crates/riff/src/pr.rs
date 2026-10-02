@@ -37,6 +37,11 @@
 //! that the verifier tested, `HEAD` of its worktree or `--commit`
 //! ([`same_commit`]).
 //!
+//! The author of a pull request releases its item at the verify
+//! request. So the issue can have no holder. Then the result wakes the
+//! lead of the user of the verifier in the repository ([`result_to`],
+//! 01M3Z9N70J4H79VJN4ZKKH3G6S): a result is never silent.
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant A as author
@@ -45,7 +50,7 @@
 //!     participant E as riff-server
 //!     A->>G: riff pr open: pr create, pr merge --auto --squash
 //!     V->>G: riff verify pass 40: pr comment, status riff/verify
-//!     V->>E: post to [claim=issue-12]
+//!     V->>E: post to [claim=issue-12], and to the lead when no session holds issue-12
 //!     A->>G: riff pr wait 40: pr view until MERGED
 //! ```
 
@@ -55,6 +60,9 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use riff_core::name::SessionUri;
+use riff_core::selector::Selector;
+use riff_core::wire::SessionInfo;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -503,6 +511,56 @@ pub struct Reported {
     pub commit: String,
     /// The URL of the comment.
     pub url: String,
+}
+
+/// The sessions that the result of a verify of `issue` wakes: the
+/// holder of the issue. When no live session of `sessions` holds the
+/// issue in the repository of the verifier `me`, also the lead of the
+/// user of `me` there (01M3Z9N70J4H79VJN4ZKKH3G6S).
+///
+/// ```
+/// use riff::pr::result_to;
+/// use riff_core::wire::SessionInfo;
+///
+/// let info = |uri: &str, live| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live,
+///     idle_secs: 0,
+///     status: None,
+///     worker: true,
+///     stopping: false,
+///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
+///     state: None,
+/// };
+/// let to = |sessions: &[SessionInfo]| -> Vec<String> {
+///     let me = "riff://mike@pangolin/o/r?session=v1&claim=verify-issue-12".parse().unwrap();
+///     result_to(12, &me, sessions).iter().map(ToString::to_string).collect()
+/// };
+/// let holder = info("riff://mike@thelio/o/r?session=a1&claim=issue-12", true);
+/// assert_eq!(to(&[holder]), ["claim=issue-12"]);
+/// // The author released the item, its session is gone, or the claim
+/// // is in another repository: the lead wakes.
+/// let lead = ["claim=issue-12", "user=mike,repo=o/r,lead=true"];
+/// assert_eq!(to(&[]), lead);
+/// assert_eq!(to(&[info("riff://mike@thelio/o/r?session=a1&claim=issue-12", false)]), lead);
+/// assert_eq!(to(&[info("riff://mike@thelio/o/s?session=a1&claim=issue-12", true)]), lead);
+/// ```
+pub fn result_to(issue: u64, me: &SessionUri, sessions: &[SessionInfo]) -> Vec<Selector> {
+    let item = format!("issue-{issue}");
+    let repo = me.place().repo_text();
+    let held = sessions
+        .iter()
+        .any(|s| s.live && s.uri.place().repo_text() == repo && s.uri.claims().contains(&item));
+    let mut to = vec![Selector {
+        claim: Some(item),
+        ..Selector::default()
+    }];
+    if !held {
+        to.push(Selector::lead(me.who().user(), &repo));
+    }
+    to
 }
 
 /// The commit `HEAD` of the git worktree `dir`: the commit that the
