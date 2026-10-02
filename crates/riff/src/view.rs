@@ -118,6 +118,33 @@ pub fn setting(key: &str, value: &str, path: &Path, hint: &str) -> String {
     )
 }
 
+/// `riff watch limit` (01M3Z64J08GW6N1H42AR2FZQZ4).
+///
+/// ```
+/// let on = riff::view::watch_limit(6000, "/h/config.toml".as_ref());
+/// let plain = anstream::adapter::strip_str(&on).to_string();
+/// assert_eq!(
+///     plain,
+///     "watch.limit  6000  (/h/config.toml)\n\
+///      riff watch --once ends after 6000 seconds with no wake. \
+///      Set it with: riff watch limit SECONDS"
+/// );
+/// let off = riff::view::watch_limit(0, "/h/config.toml".as_ref());
+/// assert!(off.contains("riff watch --once waits with no limit."), "{off}");
+/// ```
+pub fn watch_limit(secs: u64, path: &Path) -> String {
+    let hint = if secs == 0 {
+        "riff watch --once waits with no limit. Set a limit with: riff watch limit SECONDS"
+            .to_owned()
+    } else {
+        format!(
+            "riff watch --once ends after {secs} seconds with no wake. \
+             Set it with: riff watch limit SECONDS"
+        )
+    };
+    setting("watch.limit", &secs.to_string(), path, &hint)
+}
+
 /// `riff update --auto` (01M3N7JJC5WQBJ7SJZSZNBAVVR).
 ///
 /// ```

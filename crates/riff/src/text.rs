@@ -36,6 +36,32 @@ pub const WATCH_RUNS: &str = "riff: a riff watch runs for this session already, 
 you. This watch stops. Do not start the watch again now. Start it again only when the task of \
 that watch ends.";
 
+/// The one line of a `riff watch --once` that ends with no wake, before
+/// the harness stops its task (01M3Z64J08GW6N1H42AR2FZQZ4). It never
+/// says "Do not start the watch again now".
+///
+/// ```
+/// let line = riff::text::watch_no_wake(std::time::Duration::from_secs(6000));
+/// assert!(line.starts_with("riff: no wake came in 100 minutes."), "{line}");
+/// assert!(line.contains("start the watch again at once"), "{line}");
+/// assert!(!line.contains("Do not start"), "{line}");
+/// let short = riff::text::watch_no_wake(std::time::Duration::from_secs(1));
+/// assert!(short.starts_with("riff: no wake came in 1 seconds."), "{short}");
+/// ```
+pub fn watch_no_wake(limit: std::time::Duration) -> String {
+    let secs = limit.as_secs();
+    let time = if secs >= 60 && secs.is_multiple_of(60) {
+        format!("{} minutes", secs / 60)
+    } else {
+        format!("{secs} seconds")
+    };
+    format!(
+        "riff: no wake came in {time}. This watch ends before the time limit of a background \
+         task. It is a normal end. Call the riff read tool with no thread and start the watch \
+         again at once, in the same response."
+    )
+}
+
 /// The refusal of each riff tool except `join` in a session that left
 /// the riff (01M3MEEFETT9A0DRWBKQTG77Z2).
 pub const LEFT: &str = "This session left the riff. The riff tools do not work until it \
@@ -119,8 +145,8 @@ pub fn joined(me: &SessionUri) -> String {
     format!(
         "You joined the riff again as {me}.\n\
          - Now run `riff watch --once` with the Bash tool, with run_in_background true and the \
-         description \"riff wakes\". When the task ends, call the riff read tool with no thread \
-         and start the watch again at once, in the same response.\n\
+         description \"riff wakes\". When the task ends or Claude Code stops it, call the riff \
+         read tool with no thread and start the watch again at once, in the same response.\n\
          - Then follow the start routine of the riff skill."
     )
 }

@@ -16,7 +16,7 @@
 //!     H-->>C: stdout: additionalContext
 //!     C->>S: context
 //!     S->>W: Bash, run_in_background
-//!     W-->>S: one wake, then exit
+//!     W-->>S: one wake or no wake in 100 minutes, then exit
 //!     S->>S: read
 //!     S->>W: Bash, run_in_background (R171)
 //! ```
@@ -33,11 +33,20 @@
 //! A notice wakes an idle session. In a turn, it comes with the result
 //! of the next tool call. A Monitor task expires each 30 minutes, and a
 //! busy session often starts it again only at the end of its turn. So
-//! riff uses a background Bash task, which ends only on a wake. The
+//! riff uses a background Bash task, which ends on a wake. The
 //! session reads, then starts the watch again at once. No message is
 //! lost while no watch runs: a new watch wakes the session once if an
 //! addressed message is unread (R49). So the session reads before it
 //! starts the watch again.
+//!
+//! Claude Code stops a background task after 2 hours at most, and its
+//! notice says not to start the task again. A session that obeys the
+//! notice gets no more wakes. So `riff watch --once` ends by itself
+//! before that limit, with a line that tells the session to read and to
+//! start the watch again (01M3Z64J08GW6N1H42AR2FZQZ4, see
+//! [`crate::settings::watch_limit`]). The context says that this end is
+//! a normal end, and that the session also starts the watch again when
+//! Claude Code stops the task (01M3Z64J33EA25B0R5BCBZAHPE).
 //!
 //! The context depends on the `source` of the start (R68):
 //!
@@ -579,8 +588,11 @@ pub fn start_context(
     out.push_str(
         "- When the task ends, call the riff read tool with no thread and start the watch \
          again at once, in the same response: two tool calls in one message, also in the \
-         middle of a turn (01M3JPMQJCC3F19QAJ84EKMVKA). When the watch says \"Do not start \
-         the watch again now\", do not start it.\n",
+         middle of a turn (01M3JPMQJCC3F19QAJ84EKMVKA). The watch also ends by itself when \
+         no wake came for a long time: it is a normal end, so do the same. When Claude Code \
+         stops the task at its time limit, do the same, also when its notice says not to \
+         start the task again (01M3Z64J33EA25B0R5BCBZAHPE). Only when the watch itself says \
+         \"Do not start the watch again now\", do not start it.\n",
     );
     let new = matches!(source, Source::Startup | Source::Clear);
     let find_work = "follow the start routine of the riff skill. Pick a free item yourself. \
@@ -745,6 +757,27 @@ mod tests {
             assert!(context.contains("Keep it."), "{context}");
             assert!(!context.contains("Now run"), "{context}");
             assert!(context.contains("start the watch again at once, in the same response"));
+        }
+    }
+
+    /// 01M3Z64J33EA25B0R5BCBZAHPE: an end with no wake is a normal end,
+    /// and a stop by Claude Code is no reason to stay with no watch.
+    #[test]
+    fn each_source_starts_the_watch_again_after_an_end_with_no_wake() {
+        for source in SOURCES {
+            for watching in [false, true] {
+                let context = start_context(Some(&uri()), source, watching, None, &[]);
+                for text in [
+                    "The watch also ends by itself when no wake came for a long time: it is a \
+                     normal end, so do the same.",
+                    "When Claude Code stops the task at its time limit, do the same, also when \
+                     its notice says not to start the task again",
+                    "Only when the watch itself says \"Do not start the watch again now\", do \
+                     not start it.",
+                ] {
+                    assert!(context.contains(text), "no {text:?} in {context}");
+                }
+            }
         }
     }
 
