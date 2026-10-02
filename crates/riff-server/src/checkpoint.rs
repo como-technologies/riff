@@ -32,7 +32,9 @@
 //! - The server writes a checkpoint each [`Settings::every_records`]
 //!   records, or each [`Settings::every`] when records came.
 //! - A build writes no checkpoint past the first record that it skipped
-//!   ([`crate::log::Replayed::skipped`]). A build writes no checkpoint
+//!   ([`crate::log::Replayed::skipped`]): a record of a kind that it
+//!   does not know, or with a value that it read as `other`
+//!   (01M3XM2C18TT8VSKGD77YPZG53). A build writes no checkpoint
 //!   while the newest checkpoint comes from a later version, or does not
 //!   read ([`Found::blocked`]). So a rollback and a roll forward lose no
 //!   record: the newer build replays each record after its own

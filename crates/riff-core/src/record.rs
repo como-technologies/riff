@@ -800,7 +800,11 @@ mod tests {
         let changes = one_of_each();
         let kinds: BTreeSet<&str> = changes.iter().map(Change::kind).collect();
         assert_eq!(kinds, BTreeSet::from_iter(Change::KINDS.iter().copied()));
-        assert_eq!(kinds.len(), Change::KINDS.len(), "a name is in the list two times");
+        assert_eq!(
+            kinds.len(),
+            Change::KINDS.len(),
+            "a name is in the list two times"
+        );
         for change in changes {
             let kind = change.kind();
             let record = Record {

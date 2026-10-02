@@ -702,8 +702,9 @@ The tests keep the given/when/then form of the store design.
 ## The records
 
 Release 1.0.0 fixes this list. The enum `Change` and the list of its
-kinds come from one place, so a kind cannot be in one and not in the
-other. The fixtures of CI hold one record of each kind.
+kinds come from one macro, so a kind cannot be in one and not in the
+other. The fixtures of CI hold one record of each kind:
+`crates/riff-server/tests/fixtures/1.0.0/`.
 
 The envelope of each record: `position`, `written_at_ms`, `by`,
 `command`, `change`.
@@ -730,10 +731,10 @@ The envelope of each record: `position`, `written_at_ms`, `by`,
 | `owner_denied` | `email` | `deny_owner` |
 | `signins_ended` | `user` | `revoke` |
 
-- `pause_set` holds the pause of the riff too. A log from before E5
-  has `riff_state_set` records: the build reads each one as a pause of
-  the whole riff, and no command makes one. E6 removes the kind with
-  the old fixture.
+- `pause_set` holds the pause of the riff too.
+- The list has only the kinds of a build that was released. A kind
+  that only a build of `main` before 1.0.0 wrote is not in the format:
+  a build reads such a record as a kind that it does not know.
 - A record of the people names a person by the email. The state finds
   the user from the email.
 - `setting_changed` holds each setting. Each setting is a field that
@@ -767,6 +768,13 @@ The three rules of the store design stay. These rules come with them:
   values and no `other`.
 - A new command needs no change of the format: `command` is text. A
   reader takes a `command` that it does not know as text.
+- A kind of record and a kind of command are never renamed, and the
+  name of a removed kind is never used again. The file `kinds.json` of
+  the fixtures lists the kinds of the release. A test fails when a name
+  of the list is gone from the code, and when a kind of the code is
+  not in the list.
+- The order of the kinds in the code is not a part of the format: a
+  reader finds a kind by its name.
 
 | Record | Where `apply` reads the riff | It stays |
 |---|---|---|
@@ -799,8 +807,10 @@ checkpoint:
   start of each session;
 - each pause, with who set it and when.
 
-A test takes each fixture log and compares the state of a full replay
-with the state of a start from a checkpoint at each position.
+A test takes the fixture log and compares the state of a full replay
+with the state of a start from a checkpoint at each position. A
+second test replays the fixture log with `apply` alone, and in a state
+with a presence at two times: the riff after each record is the same.
 
 ## The scope of a pause
 
@@ -876,13 +886,17 @@ records, with `by` `server` and `command` `import`:
    checkpoint keeps them. A direct thread whose two sessions ended is
    not in the import.
 
+- The import writes only kinds of 1.0.0, and it can make each of
+  them.
+- An imported `posted` record keeps its old seq. So a thread can start
+  at a seq that is not 1.
 - After the import, the server writes a checkpoint with the read
   cursors of the old objects. So no session reads a message of the
   import a second time.
 - A worker that holds no claim at the import is Ready.
 - A second start finds the log, and does not import again.
-- Until the import is built (E6), `riff-server` refuses to start on a
-  store that has the old objects and no log.
+- Until the import is built (#341), `riff-server` refuses to start on
+  a store that has the old objects and no log.
 - After go-live, only the owner and the admins resume the whole riff.
 
 ## Build items
@@ -901,12 +915,9 @@ gives the state of a full replay.
 | E3 | The people in the log: the kinds, the commands, `admit`, `name_owner`, the timer commands of the owner, `riff_made`, the role of the caller from the written copy, `signins.json` with only the sign-ins and the position of each, the drop of an old sign-in at a load. | E2 |
 | E4 | The life cycle: `reason` and `worker` in `start`, `session_started`, the first lead only from an explicit `register` or `start` and never for a worker, the `released` records of `forget`, `must_clear` in `released`, MustClear, the refusals, the ask to clear in the reply to a release and to a keep-alive, the wake that waits, the state in `who`, `top` and `riff workers`. | E2 |
 | E5 | The two pauses (#364): `pause_set`, the roles, the views, the rollout, the idle workers for each repository. | E2 |
-| E6 | The format of 1.0.0: the enum and the kinds from one place, the value `other` and its checkpoint rule, the list of the command kinds, a fixture with one record of each kind, the replay of each fixture in CI, the test of the checkpoint, the command `import`. | E3, E4, E5 |
+| E6 | The format of 1.0.0: the enum and the kinds from one place, the value `other` and its checkpoint rule, the list of the command kinds, a fixture with one record of each kind, the replay of each fixture in CI, the test of the checkpoint. The command `import` is in #341. | E3, E4, E5 |
 
-E1a is built. Its fixture
-`crates/riff-server/tests/fixtures/main-a2e9c98/` holds a log and a
-checkpoint that `main` wrote before the engine build. Each later item
-reads them with no change (01M3WNQR41K41TV832GRQZ2CQS).
+E1a is built: the riff and the presence, and each command as a type.
 
 E1b is built: the module `crates/riff-server/src/engine.rs`. The sync
 methods of `State` (`State::run`, `State::claim` and the others) stay
@@ -931,8 +942,14 @@ was never deployed.
 
 E4 is built: the life cycle is in the part `Sessions` of the riff
 (`crates/riff-server/src/state/sessions.rs`), with its checkpoint
-fields. The order of `Change::KINDS` is not a part of the format: a
-reader finds a kind by its name.
+fields.
+
+E6 is built: the macros that make `Change` and `CommandKind` with
+their lists, `Record::other` in `crates/riff-core/src/record.rs`, the
+count of such a record in `log::replay_after`, and the fixtures and
+the tests of `crates/riff-server/tests/format.rs`. A later release
+adds a directory of fixtures of its own, and the build reads each one
+with no change (01M3WNQR41K41TV832GRQZ2CQS).
 
 Other items:
 

@@ -171,9 +171,12 @@ code](#the-book-shows-the-real-code):
     name of a removed field again.
   - A new kind of change gets a new name. A build that does not know a
     kind skips the record and logs a warning with its position.
-- Each release adds a sample log and some real signed messages to the
-  test fixtures. CI replays each fixture of each earlier release and
-  checks each message.
+  - A field with a set of named values that can grow has the value
+    `other`. A build reads a value that it does not know as `other`.
+    Such a record counts as a skipped record.
+- Each release adds a sample log to the test fixtures, from 1.0.0 on:
+  `crates/riff-server/tests/fixtures/1.0.0/`. CI replays each fixture
+  of each earlier release.
 
 ### Signed messages
 
@@ -259,10 +262,12 @@ a scheme that it does not know shows the message as not verified.
   log gives up to that position, the read cursors, the last N messages
   of each thread, and the version of the build that wrote it.
 - The server encodes a copy of the state outside the lock.
-- A build writes no checkpoint past the first record that it skipped.
-  A build writes no checkpoint while the newest checkpoint comes from a
-  later version. `riff server` says so. A test runs a new build, an old
-  build, then the new build again, and compares the state.
+- A build writes no checkpoint past the first record that it skipped,
+  or that it read with a value `other`. A build writes no checkpoint
+  while the newest checkpoint comes from a later version. `riff server`
+  says so. A test runs a new build, an old build, then the new build
+  again, and compares the state. A second test does the same with a
+  pause whose scope the old build does not know.
 - The server keeps the last 3 checkpoints, and one checkpoint each day
   for 30 days.
 - The server deletes a chunk only when each kept checkpoint is past it.

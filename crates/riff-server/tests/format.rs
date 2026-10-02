@@ -81,15 +81,35 @@ fn the_code_has_each_kind_of_the_list_and_the_list_has_each_kind_of_the_code() {
     let kinds = kinds();
     let listed = set(kinds.records.iter().map(String::as_str));
     let code = set(Change::KINDS.iter().copied());
-    assert_eq!(listed.difference(&code).collect::<Vec<_>>(), [] as [&&str; 0]);
-    assert_eq!(code.difference(&listed).collect::<Vec<_>>(), [] as [&&str; 0]);
-    assert_eq!(kinds.records.len(), listed.len(), "a name is there two times");
+    assert_eq!(
+        listed.difference(&code).collect::<Vec<_>>(),
+        [] as [&&str; 0]
+    );
+    assert_eq!(
+        code.difference(&listed).collect::<Vec<_>>(),
+        [] as [&&str; 0]
+    );
+    assert_eq!(
+        kinds.records.len(),
+        listed.len(),
+        "a name is there two times"
+    );
 
     let listed = set(kinds.commands.iter().map(String::as_str));
     let code = set(CommandKind::ALL.iter().map(|kind| kind.as_str()));
-    assert_eq!(listed.difference(&code).collect::<Vec<_>>(), [] as [&&str; 0]);
-    assert_eq!(code.difference(&listed).collect::<Vec<_>>(), [] as [&&str; 0]);
-    assert_eq!(kinds.commands.len(), listed.len(), "a name is there two times");
+    assert_eq!(
+        listed.difference(&code).collect::<Vec<_>>(),
+        [] as [&&str; 0]
+    );
+    assert_eq!(
+        code.difference(&listed).collect::<Vec<_>>(),
+        [] as [&&str; 0]
+    );
+    assert_eq!(
+        kinds.commands.len(),
+        listed.len(),
+        "a name is there two times"
+    );
 }
 
 /// The list of 1.0.0 has no kind that only a build of `main` before
@@ -112,7 +132,11 @@ fn the_fixture_log_has_a_record_of_each_kind() {
     assert!(records.iter().any(|record| record.by.is_none()));
     let import = records[0].command.as_deref();
     assert_eq!(import, Some("import"));
-    assert!(CommandKind::ALL.iter().all(|kind| Some(kind.as_str()) != import));
+    assert!(
+        CommandKind::ALL
+            .iter()
+            .all(|kind| Some(kind.as_str()) != import)
+    );
 }
 
 #[test]

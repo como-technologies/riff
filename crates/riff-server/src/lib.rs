@@ -2428,6 +2428,10 @@ mod tests {
         /// What happens one time after the next chunk is in the store,
         /// before the writer gets the proof of the write.
         after_chunk: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+        /// The view of an older build: each load of a chunk gives the
+        /// second text in the place of the first one. So a value that
+        /// this build knows reads as a value of a later build.
+        later: Mutex<Option<(&'static str, &'static str)>>,
     }
 
     impl Gated {
@@ -2467,7 +2471,20 @@ mod tests {
             &'a self,
             name: &'a str,
         ) -> BoxFuture<'a, Result<Option<store::Loaded>, StoreError>> {
-            self.store.load(name)
+            let later = *self.later.lock().unwrap();
+            let Some((known, later)) = later.filter(|_| name.starts_with(log::LOG)) else {
+                return self.store.load(name);
+            };
+            Box::pin(async move {
+                let loaded = self.store.load(name).await?;
+                Ok(loaded.map(|loaded| store::Loaded {
+                    bytes: String::from_utf8(loaded.bytes)
+                        .expect("a chunk is text")
+                        .replace(known, later)
+                        .into_bytes(),
+                    ..loaded
+                }))
+            })
         }
 
         fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
@@ -2792,6 +2809,85 @@ mod tests {
         post_n(&again, 3, "again").await;
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_ne!(checkpoints(&store).await, written);
+    }
+
+    /// A rollback before the new build wrote a checkpoint: the new
+    /// build wrote a pause with a scope that the old build does not
+    /// know. The old build reads the scope as `other`, and writes no
+    /// checkpoint past the record. So the new build has the pause again
+    /// (01M3XM2C18TT8VSKGD77YPZG53). The scope of the later build is an
+    /// object in the first case: the pause of a repository. It is a text
+    /// in the second one: the old build does not know the resume of the
+    /// riff, so it has the pause of a new riff.
+    #[tokio::test(start_paused = true)]
+    async fn new_build_old_build_new_build_keeps_a_pause_of_a_scope_that_the_old_build_does_not_know()
+     {
+        let repository = mike().default_thread().unwrap();
+        let paused = |service: &Service| {
+            service.0.engine.read(|state| {
+                let pauses = state.pauses();
+                (
+                    pauses.riff().is_some(),
+                    pauses.repository(&repository).is_some(),
+                )
+            })
+        };
+        let object = (r#""scope":{"repository":"#, r#""scope":{"wave":"#);
+        let text = (r#""scope":"riff""#, r#""scope":"host""#);
+        // The pauses of the riff and of the repository, in the new
+        // build and in the old build.
+        let cases = [
+            (
+                object,
+                Some(Pause::here(mike())),
+                (false, true),
+                (false, false),
+                1,
+            ),
+            (text, None, (false, false), (true, false), 2),
+        ];
+        for (view, pause, in_new, in_old, records) in cases {
+            let store = Arc::new(Gated::default());
+            let new = running_with(with_checkpoints(1000, "0.9.0"), store.clone()).await;
+            if let Some(pause) = pause {
+                send(&new, pause).await.unwrap();
+            }
+            assert_eq!(paused(&new), in_new);
+            let last = position(&new);
+            assert!(checkpoints(&store).await.is_empty());
+            drop(new);
+
+            // The old build does not know the scope: it has no pause,
+            // and writes no checkpoint past the record.
+            *store.later.lock().unwrap() = Some(view);
+            let old = Service::load(with_checkpoints(1, "0.8.0"), store.clone())
+                .await
+                .unwrap();
+            assert_eq!(paused(&old), in_old);
+            post_n(&old, 3, "old").await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(checkpoints(&store).await.is_empty());
+            let facts = old.0.server_facts();
+            assert_eq!(facts.skipped_records, records);
+            let why = facts.no_checkpoint.expect("the build writes no checkpoint");
+            assert!(why.contains("this build skipped the record at"), "{why}");
+            assert_eq!(position(&old), last + 3);
+            drop(old);
+
+            // The new build again: it has the pause, and each record of
+            // the old build. It writes checkpoints.
+            *store.later.lock().unwrap() = None;
+            let again = Service::load(with_checkpoints(1, "0.9.0"), store.clone())
+                .await
+                .unwrap();
+            assert_eq!(paused(&again), in_new);
+            assert_eq!(position(&again), last + 3);
+            let facts = again.0.server_facts();
+            assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+            post_n(&again, 2, "again").await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert!(!checkpoints(&store).await.is_empty());
+        }
     }
 
     #[tokio::test(start_paused = true)]
