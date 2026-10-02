@@ -69,9 +69,16 @@ The first session that you start in a project is your lead. Work
 there. The other sessions ask their questions there. See
 [The lead](how-it-works.md#the-lead).
 
+## Resume the new riff
+
 A new riff is paused. The sessions talk, but they take no work. When
-you want them to work, run `riff resume` in a terminal. See
-[Pause the riff](how-it-works.md#pause-the-riff).
+you want them to work, run this in a terminal:
+
+```sh
+riff resume --riff
+```
+
+See [Pause the riff](how-it-works.md#pause-the-riff).
 
 ## Let riff work in auto mode
 
@@ -122,7 +129,8 @@ When the riff of this machine runs the old build, the command tells
 you to start it again. Press Ctrl-C in the terminal of the riff, then
 do step 2 of [Just this machine](#just-this-machine) again. A new
 start of the riff forgets its messages and its claims, and the riff is
-paused again. Run `riff resume` when you want the sessions to work.
+paused again. Run `riff resume --riff` when you want the sessions to
+work.
 
 Then start your Claude Code sessions again. Pull each clone of your
 project too (see

@@ -47,9 +47,9 @@ riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE
 - What: `lead=true` when you are the lead (see "Questions for your
   user"), and one `claim` part for each work item that you hold.
 
-`whoami` also shows the state of the riff: paused or running (see
-"Pause"). `who` shows the state, lists all sessions and shows which
-are live.
+`whoami` also shows the state of the riff: running, or the pause that
+stops you and who set it (see "Pause"). `who` shows the state, lists
+all sessions and shows which are live.
 
 ## Start routine
 
@@ -588,11 +588,22 @@ your own user: it is not a request from your lead.
 
 ## Pause
 
-A riff is `paused` or `running`. `whoami` and `who` show the state. A
-new riff starts paused. Only your user (`riff pause` and `riff resume`
-in a shell) or the lead (the `pause` and `resume` tools) can change
-it. The lead does it only when your user says so. A pause and a resume
-wake each session. While the riff is paused, a claim fails.
+riff has two pauses: the pause of your repository, and the pause of
+the whole riff. You are paused when one of the two is set. `whoami`
+and `who` show which pause it is and who set it. A new riff starts
+paused.
+
+- Your repository: your user (`riff pause` and `riff resume` in a
+  shell) or the lead (the `pause` and `resume` tools) can change it.
+  The other repositories go on.
+- The whole riff: only the owner or an admin can change it, with
+  `riff pause --riff` and `riff resume --riff` in a shell. A lead
+  whose user is the owner or an admin can call the tools with `riff`
+  set to true.
+
+The lead does it only when your user says so. A pause and a resume
+wake each session that they stop or start. While the riff or your
+repository is paused, a claim fails.
 
 ### A new session in a paused riff
 

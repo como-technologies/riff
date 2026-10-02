@@ -207,11 +207,9 @@ of the caller.
 | `admit` | a sign-in | |
 
 The engine registers the first call of a person too, so `register`
-has the class of a person. Two rows of the code differ from this
+has the class of a person. One row of the code differs from this
 table until a later item:
 
-- Until E5: the riff has one pause. `pause` and `resume` need a
-  member, and `handle` refuses a session that is not a lead.
 - Until E3: a session can send `set_idle` too, with the role of an
   admin. The commands of the people are not commands yet: they change
   only the token store.
@@ -220,8 +218,9 @@ table until a later item:
 {{#include ../../crates/riff-server/src/state/command.rs:permits}}
 ```
 
-`handle` makes each check that reads the state: a session pauses only
-the repository of which it is a lead, a worker in MustClear cannot
+A `pause` or a `resume` of a repository that the call names needs an
+admin too. `handle` makes each check that reads the state: a session
+pauses only when it is a lead, a worker in MustClear cannot
 claim, a caller releases only what it holds. See "The moves that
 `handle` refuses".
 
@@ -249,8 +248,8 @@ fails, and the worker asks in its own terminal.
 - A record changes the presence only in `Presence::applied`: a
   `session_forgotten` record removes the session and its cursors, a
   `claimed` or a `released` record sets the time of the last change of
-  the claims, and a `riff_state_set` record sets the time for a stale
-  status. The writer calls `apply(&mut riff, record)` and then
+  the claims, and a `pause_set` record sets the time for a stale
+  status, for the riff or for its repository. The writer calls `apply(&mut riff, record)` and then
   `Presence::applied`, with the record, the riff after the `apply`,
   and the time of the call that made the record. A replay gives no
   time, and then `Presence::applied` sets no time.
@@ -659,7 +658,10 @@ The envelope of each record: `position`, `written_at_ms`, `by`,
 | `owner_denied` | `email` | `deny_owner` |
 | `signins_ended` | `user` | `revoke` |
 
-- `pause_set` holds the pause of the riff too.
+- `pause_set` holds the pause of the riff too. A log from before E5
+  has `riff_state_set` records: the build reads each one as a pause of
+  the whole riff, and no command makes one. E6 removes the kind with
+  the old fixture.
 - A record of the people names a person by the email. The state finds
   the user from the email.
 - `setting_changed` holds each setting. Each setting is a field that
@@ -732,13 +734,15 @@ repository.
 ```rust,ignore
 pub struct Pauses {
     /// The pause of the whole riff. A new riff is paused.
-    riff: Option<Pause>,
+    riff: Option<PauseInfo>,
     /// The pause of each repository thread. A new repository runs.
-    repositories: BTreeMap<ThreadName, Pause>,
+    repositories: BTreeMap<ThreadName, PauseInfo>,
 }
 
 /// Who set a pause, and when: the `by` and the time of its record.
-pub struct Pause { by: Who, at_ms: u64 }
+/// `by` is `None` for the pause of a new riff, and for a record with
+/// no cause.
+pub struct PauseInfo { by: Option<By>, at_ms: u64 }
 ```
 
 ```json
@@ -758,14 +762,20 @@ pub struct Pause { by: Who, at_ms: u64 }
 
 | Pause | Who can set and end it |
 |---|---|
-| a repository | a lead of that repository; a person, for the repository of the call; the owner and each admin, for each repository |
+| the repository of the call | a person; the lead of that repository |
+| a repository that the call names | the owner and each admin: as a person, or as a lead |
 | the whole riff | the owner and each admin: as a person, or as a lead |
 
 - A resume of a repository while the riff is paused changes only the
   pause of the repository. The reply says that the riff is still
   paused.
 - A pause and a resume wake each session that it changes: the sessions
-  of the repository, or each session.
+  of the repository, or each session. A session that another pause
+  still stops does not wake.
+- `pause` and `resume` name the repository of the call. The field
+  `riff` names the whole riff, and the field `repository` names a
+  repository. The reply has the state for the place of the caller,
+  the pause of the riff, and each paused repository.
 - The rollout starts no worker for a repository that is paused.
 - The server keeps the idle workers for each user, host and
   repository.
@@ -828,6 +838,10 @@ for a state with no writer: the tests, the examples and the tools use
 them. Each one runs the same steps as the engine: `State::check`,
 `State::queue` and `State::written`. The server cannot call them: the
 state is a private field of the engine.
+
+E5 is built: the type `Pauses` in
+`crates/riff-server/src/state/the_riff.rs`, and the record `pause_set`
+(`riff_core::record::PauseSet`).
 
 E2 is built: the cause in each record (`riff_core::record::By`), the
 lines of the module `crates/riff-server/src/trace.rs`, and the proof

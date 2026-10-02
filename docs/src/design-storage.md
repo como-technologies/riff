@@ -592,7 +592,7 @@ An example of the log:
 | 1043 | posted | `chat` | 51 |
 | 1044 | posted | a direct thread | 7 |
 | 1045 | posted | `como-technologies/riff` | 287 |
-| 1046 | riff state set: paused | | |
+| 1046 | `pause_set`: the riff, paused | | |
 
 - People see the seq: "message 287" in the repo thread, "message 51" in
   chat. The positions of one thread have gaps (1041, 1045).
