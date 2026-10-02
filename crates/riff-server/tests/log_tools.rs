@@ -3,8 +3,12 @@
 //! (01M3TJWHRP49M66NYNHWSYD3XP) and `riff-server log cut`
 //! (01M3TJWHVN730ZWCWHT9ER186R). Each test runs the real binary.
 
+mod common;
+
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use isolated::Isolated;
@@ -14,7 +18,7 @@ use riff_core::wire::RiffState;
 use riff_server::checkpoint::{self, Checkpoint};
 use riff_server::log::{self, chunk_name};
 use riff_server::state::State;
-use riff_server::store::Dir;
+use riff_server::store::{Dir, LEASE};
 
 /// A record from before the cause.
 fn running(position: u64) -> Record {
@@ -167,7 +171,7 @@ async fn log_verify_names_a_bad_line() {
     assert!(stdout.contains("riff-server log cut --after 3"), "{stdout}");
 
     // The cut that it names removes the bad line, and the log reads.
-    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3"]);
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3", "--yes"]);
     assert!(ok, "{stderr}");
     assert!(stdout.contains("4  (a line that does not read"), "{stdout}");
     let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
@@ -177,9 +181,10 @@ async fn log_verify_names_a_bad_line() {
 #[tokio::test]
 async fn log_cut_removes_the_chunks_after_a_position_and_names_the_records() {
     let dir = store(&[2, 4]).await;
-    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3"]);
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3", "--yes"]);
     assert!(ok, "{stderr}");
     let lines: Vec<&str> = stdout.lines().collect();
+    let checkpoint = dir.path().join(checkpoint::name(4, 4));
     assert_eq!(
         lines,
         [
@@ -188,6 +193,7 @@ async fn log_cut_removes_the_chunks_after_a_position_and_names_the_records() {
             "5  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)",
             "6  2026-09-21T14:13:20Z  claimed  issue-6 in acme/app by \
              riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
+            &format!("checkpoint  {}", checkpoint.display()),
             "Removed 3 records and 1 checkpoint after position 3. Threads: acme/app.",
         ]
     );
@@ -205,7 +211,7 @@ async fn log_cut_removes_the_chunks_after_a_position_and_names_the_records() {
     let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
     assert!(ok, "{stdout}");
     // A second cut removes nothing.
-    let (ok, stdout, _) = tool(dir.path(), &["log", "cut", "--after", "3"]);
+    let (ok, stdout, _) = tool(dir.path(), &["log", "cut", "--after", "3", "--yes"]);
     assert!(ok);
     assert_eq!(stdout, "Nothing is after position 3: removed nothing.\n");
 }
@@ -213,7 +219,7 @@ async fn log_cut_removes_the_chunks_after_a_position_and_names_the_records() {
 #[tokio::test]
 async fn log_cut_refuses_a_cut_before_the_oldest_kept_checkpoint() {
     let dir = store(&[4]).await;
-    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3"]);
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3", "--yes"]);
     assert!(!ok);
     assert_eq!(stdout, "");
     assert!(
@@ -228,7 +234,7 @@ async fn log_cut_refuses_a_cut_before_the_oldest_kept_checkpoint() {
 #[tokio::test]
 async fn a_server_loads_the_log_after_a_cut() {
     let dir = store(&[2]).await;
-    let (ok, _, stderr) = tool(dir.path(), &["log", "cut", "--after", "4"]);
+    let (ok, _, stderr) = tool(dir.path(), &["log", "cut", "--after", "4", "--yes"]);
     assert!(ok, "{stderr}");
     let store = Dir::new(dir.path());
     let found = checkpoint::load(&store, "0.8.0").await.unwrap();
@@ -261,8 +267,9 @@ async fn log_cut_repairs_a_chunk_with_a_record_of_a_lower_position() {
         "{stdout}"
     );
     assert!(stdout.contains("riff-server log cut --after 6"), "{stdout}");
+    assert!(!stdout.contains("--yes"), "verify names the dry run: {stdout}");
 
-    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "4"]);
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "4", "--yes"]);
     assert!(ok, "{stderr}");
     assert!(
         stdout.contains("Removed 3 records and 0 checkpoints after position 4."),
@@ -275,4 +282,257 @@ async fn log_cut_repairs_a_chunk_with_a_record_of_a_lower_position() {
         stdout,
         "The log reads: 2 chunks, 4 records from position 1 to 4, 0 checkpoints.\n"
     );
+}
+
+/// The bytes of each file under `dir`, by its path.
+fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+    let mut all = BTreeMap::new();
+    for part in ["log", "checkpoint"] {
+        for name in files(dir, part) {
+            let bytes = fs::read(dir.join(&name)).unwrap();
+            all.insert(name, bytes);
+        }
+    }
+    all
+}
+
+/// 01M3X342G8KF2W06PABGXTERMZ: `log cut` with no `--yes` removes
+/// nothing. It prints each record and each checkpoint that a cut
+/// removes, and the command with `--yes`.
+#[tokio::test]
+async fn log_cut_with_no_yes_is_a_dry_run() {
+    let dir = store(&[2, 4]).await;
+    let before = snapshot(dir.path());
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3"]);
+    assert!(ok, "{stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    let checkpoint = dir.path().join(checkpoint::name(4, 4));
+    assert_eq!(
+        lines,
+        [
+            "4  2026-09-21T14:13:20Z  claimed  issue-4 in acme/app by \
+             riff://ann@heron/acme/app?session=s1",
+            "5  2026-09-21T14:13:20Z  riff_state_set  running",
+            "6  2026-09-21T14:13:20Z  claimed  issue-6 in acme/app by \
+             riff://ann@heron/acme/app?session=s1",
+            &format!("checkpoint  {}", checkpoint.display()),
+            "A cut removes 3 records and 1 checkpoint after position 3. Threads: acme/app.",
+            "This run removed nothing. To remove them, stop the server and run: \
+             riff-server log cut --after 3 --yes",
+        ]
+    );
+    assert_eq!(snapshot(dir.path()), before, "a dry run changes no file");
+
+    // The whole log: `--after 0` on a store with no checkpoint.
+    let dir = store(&[]).await;
+    let before = snapshot(dir.path());
+    let (ok, stdout, _) = tool(dir.path(), &["log", "cut", "--after", "0"]);
+    assert!(ok);
+    assert!(stdout.contains("A cut removes 6 records"), "{stdout}");
+    assert_eq!(snapshot(dir.path()), before);
+
+    // The same command with `--yes` removes what the dry run printed.
+    let (ok, removed, stderr) = tool(dir.path(), &["log", "cut", "--after", "3", "--yes"]);
+    assert!(ok, "{stderr}");
+    assert!(removed.contains("Removed 3 records"), "{removed}");
+    assert_ne!(snapshot(dir.path()), before);
+}
+
+/// 01M3X342K007K3Z9G0CYWFKVMA: `log cut --yes` refuses while a server
+/// holds the lease, and names the instance. After the shutdown of the
+/// server, it cuts.
+#[tokio::test]
+async fn log_cut_refuses_while_a_server_holds_the_lease() {
+    let dir = store(&[]).await;
+    let service = common::load_on(Arc::new(Dir::new(dir.path())))
+        .await
+        .unwrap();
+    service.save().await.unwrap();
+    let lease = fs::read(dir.path().join(LEASE)).unwrap();
+    let lease: serde_json::Value = serde_json::from_slice(&lease).unwrap();
+    let id = lease["id"].as_str().unwrap();
+    let before = snapshot(dir.path());
+
+    let cut = ["log", "cut", "--after", "4", "--yes"];
+    let (ok, stdout, stderr) = tool(dir.path(), &cut);
+    assert!(!ok, "{stdout}");
+    assert_eq!(stdout, "");
+    assert!(
+        stderr.contains(&format!(
+            "cannot cut: the server instance {id} holds the lease"
+        )),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Stop the server first."), "{stderr}");
+    assert_eq!(snapshot(dir.path()), before, "a refusal changes no file");
+
+    // A dry run runs, and names the instance too.
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "4"]);
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains(&format!("the server instance {id} holds the lease")),
+        "{stdout}"
+    );
+    assert_eq!(snapshot(dir.path()), before);
+
+    // The shutdown ends the lease (01M3X342ARX5Y7R9ZJDT12R9A1).
+    service.shutdown().await.unwrap();
+    let (ok, stdout, stderr) = tool(dir.path(), &cut);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("after position 4."), "{stdout}");
+    let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
+    assert!(ok, "{stdout}");
+    assert!(stdout.contains("from position 1 to 4"), "{stdout}");
+}
+
+/// A lease file of the instance `abc123`, with a time `age_ms` before
+/// now.
+fn lease_file(dir: &Path, age_ms: u64) {
+    let at = riff_server::lease::now_ms() - age_ms;
+    let json = format!(r#"{{"id":"abc123","renewed_at_ms":{at},"ended":false}}"#);
+    fs::write(dir.join(LEASE), json).unwrap();
+}
+
+/// 01M3X342DH98YEZ3X5CND43DGD: a lease is live for 90 seconds after its
+/// time. A server that stopped with no shutdown leaves such a lease.
+#[tokio::test]
+async fn log_cut_cuts_when_the_lease_is_90_seconds_old() {
+    let dir = store(&[]).await;
+    let cut = ["log", "cut", "--after", "4", "--yes"];
+    lease_file(dir.path(), 60_000);
+    let (ok, _, stderr) = tool(dir.path(), &cut);
+    assert!(!ok);
+    assert!(
+        stderr.contains("cannot cut: the server instance abc123 holds the lease"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("or 90 seconds after its last write"),
+        "{stderr}"
+    );
+    assert_eq!(files(dir.path(), "log").len(), 3);
+
+    lease_file(dir.path(), 90_000);
+    let (ok, stdout, stderr) = tool(dir.path(), &cut);
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains("Removed 2 records and 0 checkpoints after position 4."),
+        "{stdout}"
+    );
+}
+
+/// The command that `log verify` names.
+fn named_cut(stdout: &str) -> Vec<String> {
+    let command = stdout.rsplit_once("run: riff-server ").unwrap().1.trim();
+    command.split(' ').map(str::to_owned).collect()
+}
+
+/// Runs the cut that `log verify` named, with `--yes`.
+fn run_named_cut(dir: &Path, verify_stdout: &str) -> String {
+    let mut args = named_cut(verify_stdout);
+    args.push("--yes".into());
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (ok, stdout, stderr) = tool(dir, &args);
+    assert!(ok, "{stderr}");
+    stdout
+}
+
+/// 01M3X342NQWZBJPS0GXV98BQME: a chunk that starts before the end of
+/// the chunk before it. The cut that `verify` names repairs the log,
+/// and keeps each record before the problem.
+#[tokio::test]
+async fn the_named_cut_repairs_a_chunk_that_starts_too_early() {
+    let dir = tempfile::tempdir().unwrap();
+    let line = |position| serde_json::to_string(&running(position)).unwrap() + "\n";
+    fs::create_dir_all(dir.path().join("log")).unwrap();
+    let first: String = (1..=4).map(line).collect();
+    let second: String = (3..=5).map(line).collect();
+    let chunk = |n: u64, lines: &str| {
+        let text = format!("{{\"format\":1,\"first\":{n}}}\n{lines}");
+        fs::write(dir.path().join(chunk_name(n)), text).unwrap();
+    };
+    chunk(1, &first);
+    chunk(3, &second);
+    let good = fs::read(dir.path().join(chunk_name(1))).unwrap();
+
+    let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
+    assert!(!ok);
+    assert!(
+        stdout.contains("line 1: the chunk starts at position 3, and the log needs 5"),
+        "{stdout}"
+    );
+    assert_eq!(named_cut(&stdout), ["log", "cut", "--after", "4"]);
+
+    let removed = run_named_cut(dir.path(), &stdout);
+    let lines: Vec<&str> = removed.lines().collect();
+    assert_eq!(lines.len(), 4, "{removed}");
+    assert!(
+        lines[0].starts_with("3  ")
+            && lines[0].ends_with("(a repeat: the record at position 3 stays)"),
+        "{removed}"
+    );
+    assert!(lines[2].starts_with("5  ") && !lines[2].contains("a repeat"));
+    assert_eq!(
+        lines[3],
+        "Removed 3 records and 0 checkpoints after position 4. Threads: none."
+    );
+    // The chunk before the problem has each of its bytes.
+    assert_eq!(files(dir.path(), "log"), [chunk_name(1)]);
+    assert_eq!(fs::read(dir.path().join(chunk_name(1))).unwrap(), good);
+    let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
+    assert!(ok, "{stdout}");
+    assert_eq!(
+        stdout,
+        "The log reads: 1 chunk, 4 records from position 1 to 4, 0 checkpoints.\n"
+    );
+    let replayed = log::replay(&Dir::new(dir.path())).await.unwrap();
+    assert_eq!(replayed.last, 4);
+}
+
+/// 01M3X342NQWZBJPS0GXV98BQME: a line that is not UTF-8. `verify`
+/// names that line only, and the cut that it names keeps each record
+/// before the line, with its bytes.
+#[tokio::test]
+async fn the_named_cut_repairs_a_line_that_is_not_utf8() {
+    // One chunk, with the positions 1 to 4. The record 3 is not UTF-8.
+    let dir = tempfile::tempdir().unwrap();
+    let line = |position| serde_json::to_string(&claimed(position)).unwrap() + "\n";
+    let mut bytes = b"{\"format\":1,\"first\":1}\n".to_vec();
+    bytes.extend(line(1).bytes());
+    bytes.extend(line(2).bytes());
+    let good = bytes.clone();
+    bytes.extend(b"{\"position\":3,\"bad\":\"\xff\xfe\"}\n");
+    bytes.extend(line(4).bytes());
+    fs::create_dir_all(dir.path().join("log")).unwrap();
+    let chunk = dir.path().join(chunk_name(1));
+    fs::write(&chunk, bytes).unwrap();
+
+    let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
+    assert!(!ok);
+    assert!(
+        stdout.contains("line 4: the line is not UTF-8"),
+        "{stdout}"
+    );
+    assert!(stdout.starts_with(&chunk.display().to_string()), "{stdout}");
+    assert!(stdout.contains("1 problem in 1 chunk"), "{stdout}");
+    // Not `--after 0`: that is the whole log.
+    assert_eq!(named_cut(&stdout), ["log", "cut", "--after", "2"]);
+
+    let removed = run_named_cut(dir.path(), &stdout);
+    let lines: Vec<&str> = removed.lines().collect();
+    assert_eq!(lines.len(), 3, "{removed}");
+    assert!(
+        lines[0].starts_with("3  (a line that does not read: the line is not UTF-8"),
+        "{removed}"
+    );
+    assert!(lines[1].starts_with("4  "), "{removed}");
+    assert_eq!(
+        lines[2],
+        "Removed 2 records and 0 checkpoints after position 2. Threads: acme/app."
+    );
+    assert_eq!(fs::read(&chunk).unwrap(), good, "the kept bytes are the same");
+    let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
+    assert!(ok, "{stdout}");
+    let replayed = log::replay(&Dir::new(dir.path())).await.unwrap();
+    assert_eq!(replayed.last, 2);
 }

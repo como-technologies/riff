@@ -165,13 +165,19 @@ enum LogAction {
     /// kept checkpoint. Name each line that does not read, and each gap in
     /// the positions. Exit with 1 when it finds a problem.
     Verify,
-    /// Delete each record and each checkpoint after a position, and print
-    /// what it removes. Stop the server first. It refuses a position
+    /// Print each record and each checkpoint after a position. With
+    /// --yes, delete them. Stop the server first: with --yes, the command
+    /// refuses while a server holds the lease. It refuses a position
     /// before the oldest kept checkpoint.
     Cut {
         /// The last position that stays.
         #[arg(long, value_name = "POSITION")]
         after: u64,
+
+        /// Delete the records and the checkpoints. Without it, the
+        /// command only prints them.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -246,12 +252,21 @@ async fn log_tool(cli: &Cli, args: &LogArgs) -> Result<(), Stop> {
                 Err(Stop::Logged)
             }
         }
-        Some(LogAction::Cut { after }) => {
-            let removed = tools::cut(&*store, *after).await.map_err(told)?;
+        Some(LogAction::Cut { after, yes }) => {
+            // Without --yes, a dry run (01M3X342G8KF2W06PABGXTERMZ).
+            let mode = if *yes {
+                tools::Mode::Remove
+            } else {
+                tools::Mode::DryRun
+            };
+            let removed = tools::cut(&*store, *after, mode).await.map_err(told)?;
             for line in &removed.records {
                 println!("{line}");
             }
-            println!("{}", tools::cut_text(&removed, *after));
+            for name in &removed.checkpoints {
+                println!("checkpoint  {}", store.locate(name));
+            }
+            println!("{}", tools::cut_text(&removed, *after, mode));
             Ok(())
         }
     }

@@ -40,6 +40,7 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
             read_every: Duration::from_millis(50),
             valid_for: Duration::from_millis(500),
             exit_after: Duration::from_secs(1),
+            ..Default::default()
         },
         ..Config::new(&url)
     };

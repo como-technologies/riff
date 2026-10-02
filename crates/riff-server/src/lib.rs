@@ -418,6 +418,8 @@ struct Gate {
 /// Where a server saves its token store.
 struct Saved {
     store: Arc<dyn Store>,
+    /// The lease of this instance.
+    lease: Arc<Lease>,
     /// The last write of the token store. The lock lets only one write
     /// run at a time.
     written: tokio::sync::Mutex<Written>,
@@ -1085,8 +1087,10 @@ impl Service {
         if !lease.held().await? {
             return Err(StoreError::Conflict(store::LEASE.into()));
         }
+        let lease = Arc::new(lease);
         let saved = Saved {
             store: store.clone(),
+            lease: lease.clone(),
             written: tokio::sync::Mutex::new(written),
         };
         let until = asked + config.lease.valid_for;
@@ -1399,10 +1403,19 @@ impl Service {
     }
 
     /// Stops taking calls, then saves each unsaved change (R129). The
-    /// gate replies 503 from now on. `main` calls it on SIGTERM.
+    /// gate replies 503 from now on. `main` calls it on SIGTERM. A
+    /// server that holds the lease then ends it, so that a tool of the
+    /// log can run at once (01M3X342ARX5Y7R9ZJDT12R9A1).
     pub async fn shutdown(&self) -> Result<(), StoreError> {
         self.0.gate.closing.store(true, Ordering::SeqCst);
-        self.save().await
+        let saved = self.save().await;
+        if let Some(store) = &self.0.saved
+            && self.0.leased()
+            && let Err(error) = store.lease.end().await
+        {
+            tracing::warn!("the lease was not ended: {error}");
+        }
+        saved
     }
 
     /// Ends when the server stops for good (R140, R141).
@@ -1411,14 +1424,17 @@ impl Service {
     }
 
     /// Starts the task that reads the lease each
-    /// [`lease::Timing::read_every`] (R139). The task ends when the
+    /// [`lease::Timing::read_every`] (R139), and writes the time to it
+    /// each [`lease::Timing::renew_every`]. The task ends when the
     /// server stops or ends.
-    fn keep_lease(&self, lease: Lease) {
+    fn keep_lease(&self, lease: Arc<Lease>) {
         let server = Arc::downgrade(&self.0);
         let timing = self.0.config.lease;
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(timing.read_every);
             tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            // The take wrote the time.
+            let mut renewed = Instant::now();
             loop {
                 tick.tick().await;
                 let Some(server) = server.upgrade() else {
@@ -1428,7 +1444,19 @@ impl Service {
                     break;
                 }
                 let asked = Instant::now();
-                match lease.held().await {
+                // A renewal that is due takes the place of the read. So
+                // while it fails, the serve time ends
+                // (01M3X34282SG0DJ6X34F90HS26).
+                let renew = asked.duration_since(renewed) >= timing.renew_every;
+                let held = if renew {
+                    lease.renew().await
+                } else {
+                    lease.held().await
+                };
+                if renew && held.is_ok() {
+                    renewed = asked;
+                }
+                match held {
                     Ok(true) => *server.until() = Some(asked + timing.valid_for),
                     Ok(false) => {
                         server.stop("another instance holds the lease");
