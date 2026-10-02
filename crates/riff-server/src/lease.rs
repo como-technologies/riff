@@ -87,6 +87,40 @@
 //! A lease of an older build has no time. The tool cannot know that
 //! its instance stopped, so the lease is live until a person deletes
 //! the object. An instance that still runs then stops for good (R140).
+//!
+//! # A tool takes the lease
+//!
+//! An instance can stop for longer than the live time and then run
+//! again: a process that a signal stopped, a machine that slept. It
+//! holds records in memory that a cut removed. Two rules keep it from
+//! the log:
+//!
+//! - The tool takes the lease with an ID of its own
+//!   ([`ToolLease::take`], 01M3X5TP9CD4NXGPJEGP2Q4RS0). The write names
+//!   the version of the lease that the tool read, so it fails when an
+//!   instance wrote the lease in between. The old instance then reads
+//!   another ID and stops for good (R140). After a lease that ended by
+//!   its age, the tool waits [`Timing::settle`] and reads the lease
+//!   again, before it changes the log.
+//! - An instance whose last write of the time is
+//!   [`Timing::ends_after`] old stops for good, before it reads or
+//!   writes the lease again (01M3X5TPBMF81TDVZ7Q4NVXBQX). It counts
+//!   the time on the monotonic clock and on the wall clock.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant I as instance
+//!     participant S as store
+//!     participant T as log cut --yes
+//!     Note over I: does not run for 95 s
+//!     T->>S: read the lease: ID of I, 95 s old
+//!     T->>S: write the lease: ID of T, only when not changed
+//!     Note over T: waits 10 s, reads the lease again
+//!     T->>S: remove the records
+//!     T->>S: end the lease of T
+//!     Note over I: runs again
+//!     Note over I: its time is 95 s old: stops for good, exits with an error
+//! ```
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -94,7 +128,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::store::{LEASE, Store, StoreError};
+use crate::store::{LEASE, Store, StoreError, Version};
 
 /// The times of the lease rules. Tests use short times.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +161,22 @@ impl Default for Timing {
             renew_every: Duration::from_secs(30),
             ends_after: Duration::from_secs(90),
         }
+    }
+}
+
+impl Timing {
+    /// How long an instance can write after another holder took the
+    /// lease: one read, the serve time of the read before it, and one
+    /// try of a chunk.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use riff_server::lease::Timing;
+    ///
+    /// assert_eq!(Timing::default().settle(), Duration::from_secs(10));
+    /// ```
+    pub fn settle(&self) -> Duration {
+        self.read_every + self.valid_for + crate::log::Timing::default().attempt
     }
 }
 
@@ -197,19 +247,184 @@ pub async fn holder(
     now_ms: u64,
     timing: &Timing,
 ) -> Result<Option<Held>, StoreError> {
-    let Some(lease) = store.load(LEASE).await? else {
-        return Ok(None);
+    Ok(Found::read(store, now_ms, timing).await?.held)
+}
+
+/// The lease as a tool reads it.
+struct Found {
+    /// The version of the lease object, or `None` with no object.
+    version: Option<Version>,
+    /// The instance of a live lease.
+    held: Option<Held>,
+    /// True when the lease ended only by its age: its holder did not
+    /// end it.
+    by_age: bool,
+}
+
+impl Found {
+    async fn read(store: &dyn Store, now_ms: u64, timing: &Timing) -> Result<Found, StoreError> {
+        let Some(lease) = store.load(LEASE).await? else {
+            return Ok(Found {
+                version: None,
+                held: None,
+                by_age: false,
+            });
+        };
+        let holder = parse(&lease.bytes)?;
+        let age = u128::from(now_ms.saturating_sub(holder.renewed_at_ms));
+        // A lease with no time never ends by its age: an instance of an
+        // older build can still write the store.
+        let fresh = holder.renewed_at_ms == 0 || age < timing.ends_after.as_millis();
+        let live = !holder.ended && fresh;
+        Ok(Found {
+            version: Some(lease.version),
+            held: live.then_some(Held {
+                id: holder.id,
+                renewed_at_ms: holder.renewed_at_ms,
+            }),
+            by_age: !holder.ended && !fresh,
+        })
+    }
+}
+
+/// A new random ID.
+fn new_id() -> Result<String, StoreError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|e| StoreError::Failed(e.to_string()))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The bytes of the lease of the holder `id`, with the time now.
+fn json(id: &str, ended: bool) -> Result<Vec<u8>, StoreError> {
+    let holder = Holder {
+        id: id.to_owned(),
+        renewed_at_ms: now_ms(),
+        ended,
     };
-    let holder = parse(&lease.bytes)?;
-    let age = u128::from(now_ms.saturating_sub(holder.renewed_at_ms));
-    // A lease with no time never ends by its age: an instance of an
-    // older build can still write the store.
-    let fresh = holder.renewed_at_ms == 0 || age < timing.ends_after.as_millis();
-    let live = !holder.ended && fresh;
-    Ok(live.then_some(Held {
-        id: holder.id,
-        renewed_at_ms: holder.renewed_at_ms,
-    }))
+    serde_json::to_vec(&holder).map_err(|e| StoreError::Failed(e.to_string()))
+}
+
+/// True when the lease of `store` holds `id`.
+async fn holds(store: &dyn Store, id: &str) -> Result<bool, StoreError> {
+    let Some(lease) = store.load(LEASE).await? else {
+        return Ok(false);
+    };
+    Ok(parse(&lease.bytes)?.id == id)
+}
+
+/// Writes the lease of the holder `id` again, when the lease holds
+/// `id`. Each write names the version that it read, so it never writes
+/// over the lease of another holder. False when the lease holds another
+/// ID.
+async fn write(store: &dyn Store, id: &str, ended: bool) -> Result<bool, StoreError> {
+    loop {
+        let Some(lease) = store.load(LEASE).await? else {
+            return Ok(false);
+        };
+        if parse(&lease.bytes)?.id != id {
+            return Ok(false);
+        }
+        let known = Some(lease.version);
+        match store.save(LEASE, json(id, ended)?, known).await {
+            Ok(_) => return Ok(true),
+            // Another holder wrote the lease since the load. Read it
+            // again.
+            Err(StoreError::Conflict(_)) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Why a tool does not get the lease.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Busy {
+    /// The lease is live: this instance holds it.
+    Held(Held),
+    /// An instance wrote the lease while the tool took it.
+    Taken,
+}
+
+/// The lease of a tool that changes the log, for example
+/// `riff-server log cut --yes` (01M3X5TP9CD4NXGPJEGP2Q4RS0). See "A tool
+/// takes the lease" in the module docs.
+///
+/// ```
+/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// use std::sync::Arc;
+/// use riff_server::lease::{Busy, Lease, Timing, ToolLease, holder, now_ms};
+/// use riff_server::store::Memory;
+///
+/// let store = Arc::new(Memory::default());
+/// let timing = Timing::default();
+/// // A live lease: the tool does not get it.
+/// let server = Lease::take(store.clone()).await?;
+/// let busy = ToolLease::take(&*store, "cut", &timing).await?.err();
+/// assert!(matches!(busy, Some(Busy::Held(held)) if held.id == server.id()));
+///
+/// // The server shuts down. The tool takes the lease: it is live, with
+/// // the ID of the tool.
+/// server.end().await?;
+/// let tool = ToolLease::take(&*store, "cut", &timing).await?.unwrap();
+/// let held = holder(&*store, now_ms(), &timing).await?.unwrap();
+/// assert!(held.id.starts_with("cut-"));
+/// // The server finds another ID.
+/// assert!(!server.held().await?);
+///
+/// assert!(tool.end().await?);
+/// assert_eq!(holder(&*store, now_ms(), &timing).await?, None);
+/// # Ok(()) }
+/// ```
+pub struct ToolLease<'a> {
+    store: &'a dyn Store,
+    id: String,
+}
+
+impl<'a> ToolLease<'a> {
+    /// Takes the lease for the tool `name`, when no instance holds it.
+    /// The ID of the tool starts with `name`.
+    ///
+    /// - A live lease gives [`Busy::Held`].
+    /// - The write names the version of the lease that the tool read.
+    ///   When an instance wrote the lease in between, the tool gets
+    ///   [`Busy::Taken`] and changes nothing.
+    /// - After a lease that ended by its age, its instance can still
+    ///   run. The tool waits [`Timing::settle`], then reads the lease
+    ///   again: an instance that read the ID of the tool stopped, and
+    ///   an instance that took the lease gives [`Busy::Taken`].
+    pub async fn take(
+        store: &'a dyn Store,
+        name: &str,
+        timing: &Timing,
+    ) -> Result<Result<ToolLease<'a>, Busy>, StoreError> {
+        let found = Found::read(store, now_ms(), timing).await?;
+        if let Some(held) = found.held {
+            return Ok(Err(Busy::Held(held)));
+        }
+        let id = format!("{name}-{}", new_id()?);
+        match store.save(LEASE, json(&id, false)?, found.version).await {
+            Ok(_) => {}
+            Err(StoreError::Conflict(_)) => return Ok(Err(Busy::Taken)),
+            Err(error) => return Err(error),
+        }
+        if found.by_age {
+            tokio::time::sleep(timing.settle()).await;
+            if !holds(store, &id).await? {
+                return Ok(Err(Busy::Taken));
+            }
+        }
+        Ok(Ok(ToolLease { store, id }))
+    }
+
+    /// Ends the lease of the tool. False when the lease holds another
+    /// ID: an instance took it while the tool ran.
+    pub async fn end(self) -> Result<bool, StoreError> {
+        write(self.store, &self.id, true).await
+    }
+
+    /// The ID of the tool.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 /// The lease of one instance.
@@ -245,17 +460,15 @@ impl Lease {
     /// Writes a new random ID to the lease, over the ID of any other
     /// instance (R138).
     pub async fn take(store: Arc<dyn Store>) -> Result<Lease, StoreError> {
-        let mut bytes = [0u8; 16];
-        getrandom::fill(&mut bytes).map_err(|e| StoreError::Failed(e.to_string()))?;
-        let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         let lease = Lease {
             store,
-            id,
+            id: new_id()?,
             ended: AtomicBool::new(false),
         };
         loop {
             let known = lease.store.load(LEASE).await?.map(|lease| lease.version);
-            match lease.store.save(LEASE, lease.json(false)?, known).await {
+            let bytes = json(&lease.id, false)?;
+            match lease.store.save(LEASE, bytes, known).await {
                 Ok(_) => return Ok(lease),
                 // Another instance wrote the lease since the load. Write
                 // over it: the newest instance serves.
@@ -265,43 +478,9 @@ impl Lease {
         }
     }
 
-    /// The bytes of the lease of this instance, with the time now.
-    fn json(&self, ended: bool) -> Result<Vec<u8>, StoreError> {
-        let holder = Holder {
-            id: self.id.clone(),
-            renewed_at_ms: now_ms(),
-            ended,
-        };
-        serde_json::to_vec(&holder).map_err(|e| StoreError::Failed(e.to_string()))
-    }
-
     /// True when the lease holds the ID of this instance.
     pub async fn held(&self) -> Result<bool, StoreError> {
-        let Some(lease) = self.store.load(LEASE).await? else {
-            return Ok(false);
-        };
-        Ok(parse(&lease.bytes)?.id == self.id)
-    }
-
-    /// Writes the lease of this instance again, when the lease holds its
-    /// ID. False when the lease holds another ID.
-    async fn write(&self, ended: bool) -> Result<bool, StoreError> {
-        loop {
-            let Some(lease) = self.store.load(LEASE).await? else {
-                return Ok(false);
-            };
-            if parse(&lease.bytes)?.id != self.id {
-                return Ok(false);
-            }
-            let known = Some(lease.version);
-            match self.store.save(LEASE, self.json(ended)?, known).await {
-                Ok(_) => return Ok(true),
-                // Another instance wrote the lease since the load. Read
-                // it again.
-                Err(StoreError::Conflict(_)) => continue,
-                Err(error) => return Err(error),
-            }
-        }
+        holds(&*self.store, &self.id).await
     }
 
     /// Writes the time now to the lease, when the lease holds the ID of
@@ -311,7 +490,7 @@ impl Lease {
         if self.ended.load(Ordering::SeqCst) {
             return self.held().await;
         }
-        self.write(false).await
+        write(&*self.store, &self.id, false).await
     }
 
     /// Ends the lease, when it holds the ID of this instance
@@ -319,7 +498,7 @@ impl Lease {
     /// writes nothing more.
     pub async fn end(&self) -> Result<(), StoreError> {
         self.ended.store(true, Ordering::SeqCst);
-        self.write(true).await.map(|_| ())
+        write(&*self.store, &self.id, true).await.map(|_| ())
     }
 
     /// The ID of this instance.

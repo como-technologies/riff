@@ -380,8 +380,19 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
         }
         () = async {
             service.stopped().await;
-            tokio::time::sleep(service.config().lease.exit_after).await;
+            if !service.lease_ended() {
+                tokio::time::sleep(service.config().lease.exit_after).await;
+            }
         } => {
+            if service.lease_ended() {
+                // A tool can have changed the log. Exit with an error,
+                // so that a new instance loads the state from the store
+                // (01M3X5TPBMF81TDVZ7Q4NVXBQX).
+                return Err(std::io::Error::other(
+                    "the lease of this instance ended by its age: its state in memory can \
+                     be old",
+                ));
+            }
             // Another instance serves now (R140).
             tracing::info!("exiting: another instance serves");
             Ok(())

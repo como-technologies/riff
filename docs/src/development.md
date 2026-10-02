@@ -954,7 +954,8 @@ stateDiagram-v2
 - After Ctrl-C or `just cloud down`, the lease ends at once. Run the
   command again.
 - After a server that stopped with no shutdown, for example a crash,
-  wait 90 seconds. Then run the command again.
+  wait 90 seconds. Then run the command again. It waits 10 seconds
+  more, before it reads the log.
 - The server logs the ID of its instance at start: `took the lease
   as`.
 - The command reads the time in the lease with the clock of your
@@ -974,9 +975,38 @@ On Cloud Run, the server needs CPU that is always on
 (`--no-cpu-throttling`) and exactly one instance. Then it writes the
 time also when it gets no call. `deploy/deploy.sh` sets both.
 
-Start no server during a cut. The command reads the lease again after
-the cut. When a server started during the cut, the command names it and
-exits with 1. Stop that server, then check the log again.
+#### The cut takes the lease
+
+With `--yes`, the command takes the lease for the time of the cut, with
+an ID of its own that starts with `cut-`. It ends the lease after the
+cut. A dry run does not write the lease.
+
+```mermaid
+sequenceDiagram
+    participant I as old server
+    participant S as store
+    participant T as log cut --yes
+    Note over I: does not run for 95 s
+    T->>S: read the lease: the ID of the server, 95 s old
+    T->>S: write the lease: the ID of the cut, only when not changed
+    Note over T: waits 10 s, reads the lease again
+    T->>S: remove the records
+    T->>S: end the lease of the cut
+    Note over I: runs again
+    Note over I: its lease is 95 s old: it exits with an error
+```
+
+- A server that did not run for some time, for example a stopped
+  process or a machine that slept, holds the removed records in its
+  memory. It finds the ID of the cut in the lease, or it finds that its
+  own lease is 90 seconds old. It then stops for good and serves no
+  more. In the second case, `riff-server` exits with an error, so that
+  Cloud Run starts a new instance, which loads the log from the store.
+- When a server writes the lease at the same time as the cut, the cut
+  refuses and removes nothing.
+- Start no server during a cut. When a server took the lease during
+  the cut, the command names it and exits with 1. Stop that server,
+  then check the log again.
 
 ### Use the tools on the bucket
 

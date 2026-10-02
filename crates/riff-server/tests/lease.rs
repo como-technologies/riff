@@ -12,7 +12,7 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::lease::{Timing, holder, now_ms};
 use riff_server::store::{LEASE, Loaded, Memory, Store, StoreError, Version};
-use riff_server::tools::{Mode, cut};
+use riff_server::tools::{Mode, cut, cut_with, verify};
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout};
 
@@ -223,14 +223,20 @@ const RENEW_EVERY: Duration = Duration::from_millis(100);
 /// Starts a server on `store` that writes the time to the lease each
 /// [`RENEW_EVERY`].
 async fn start_renewing(store: Arc<dyn Store>) -> (Service, String) {
+    let timing = Timing {
+        renew_every: RENEW_EVERY,
+        ..common::LEASE
+    };
+    start_with(store, timing).await
+}
+
+/// Starts a server on `store` with the lease times `lease`.
+async fn start_with(store: Arc<dyn Store>, lease: Timing) -> (Service, String) {
     common::client();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
-        lease: Timing {
-            renew_every: RENEW_EVERY,
-            ..common::LEASE
-        },
+        lease,
         save_every: common::SAVE_EVERY,
         ..Config::new(&url)
     };
@@ -270,6 +276,102 @@ async fn a_server_writes_the_time_to_the_lease_and_ends_it_at_its_shutdown() {
     // The lease stays ended: the instance writes it no more.
     sleep(RENEW_EVERY * 4).await;
     assert_eq!(holder(&store, now_ms(), &timing).await.unwrap(), None);
+}
+
+/// The position of the last record of the log of `store`.
+async fn last_position(store: &Memory) -> u64 {
+    verify(store).await.unwrap().last.unwrap()
+}
+
+/// The run that found the fault of #363, as a test. An instance holds
+/// the lease, does not run for more than the live time, and a cut runs.
+/// Then the instance runs again, with the removed records in its
+/// memory. It does not serve, it writes no chunk, and it does not write
+/// the lease (01M3X5TP9CD4NXGPJEGP2Q4RS0, 01M3X5TPBMF81TDVZ7Q4NVXBQX).
+#[tokio::test]
+async fn an_instance_that_runs_again_after_a_cut_does_not_serve_and_writes_no_chunk() {
+    let store = Arc::new(Flaky::default());
+    let timing = Timing {
+        renew_every: RENEW_EVERY,
+        ends_after: Duration::from_secs(1),
+        ..common::LEASE
+    };
+    let (service, base) = start_with(store.clone(), timing).await;
+    assert_eq!(status(&base, "register", json!({ "me": MIKE })).await, 200);
+    service.save().await.unwrap();
+    assert_eq!(status(&base, "register", json!({ "me": BRETT })).await, 200);
+    service.save().await.unwrap();
+    let last = last_position(&store.store).await;
+
+    // The instance does not run: it does not reach the store.
+    store.down.store(true, Ordering::SeqCst);
+    sleep(timing.ends_after + Duration::from_millis(200)).await;
+
+    // The lease ended by its age: the cut takes it, and cuts.
+    let removed = cut_with(&store.store, last - 1, Mode::Remove, &timing)
+        .await
+        .unwrap();
+    assert_eq!(removed.records.len(), 1, "{removed:?}");
+    assert_eq!(removed.held, None);
+    let after_cut = chunks(&store.store).await;
+    let lease = lease_json(&store.store).await;
+    assert!(lease["id"].as_str().unwrap().starts_with("cut-"), "{lease}");
+
+    // The instance runs again.
+    store.down.store(false, Ordering::SeqCst);
+    timeout(Duration::from_secs(5), service.stopped())
+        .await
+        .unwrap();
+    assert!(service.lease_ended(), "the instance stops with an error");
+    sleep(timing.valid_for).await;
+    let third = "riff://ann@heron/como-technologies/riff?session=c";
+    assert_eq!(status(&base, "register", json!({ "me": third })).await, 503);
+    service.save().await.unwrap();
+    assert_eq!(chunks(&store.store).await, after_cut, "no new chunk");
+    assert_eq!(
+        lease_json(&store.store).await,
+        lease,
+        "no write of the lease"
+    );
+    assert_eq!(last_position(&store.store).await, last - 1);
+    assert!(verify(&store.store).await.unwrap().problems.is_empty());
+}
+
+/// The clock of the tool says that the lease ended, but its instance
+/// runs: the take of the lease by the cut stops the instance, before
+/// the cut reads the log (01M3X5TP9CD4NXGPJEGP2Q4RS0).
+#[tokio::test]
+async fn the_take_of_the_lease_by_a_cut_stops_an_instance_that_runs() {
+    let store = Memory::default();
+    let (service, base) = common::start_on(Arc::new(store.clone())).await;
+    assert_eq!(status(&base, "register", json!({ "me": MIKE })).await, 200);
+    service.save().await.unwrap();
+    assert_eq!(status(&base, "register", json!({ "me": BRETT })).await, 200);
+    service.save().await.unwrap();
+    let last = last_position(&store).await;
+
+    // The lease of the instance, with a time that is 95 seconds old.
+    let lease = store.load(LEASE).await.unwrap().unwrap();
+    let mut old: Value = serde_json::from_slice(&lease.bytes).unwrap();
+    old["renewed_at_ms"] = json!(now_ms() - 95_000);
+    let old = serde_json::to_vec(&old).unwrap();
+    store.save(LEASE, old, Some(lease.version)).await.unwrap();
+
+    let removed = cut_with(&store, last - 1, Mode::Remove, &common::LEASE)
+        .await
+        .unwrap();
+    assert_eq!(removed.records.len(), 1, "{removed:?}");
+    // The instance read the ID of the cut during the wait of the cut.
+    timeout(Duration::from_millis(100), service.stopped())
+        .await
+        .unwrap();
+    assert!(!service.lease_ended());
+    let after_cut = chunks(&store).await;
+    let third = "riff://ann@heron/como-technologies/riff?session=c";
+    assert_eq!(status(&base, "register", json!({ "me": third })).await, 503);
+    service.save().await.unwrap();
+    assert_eq!(chunks(&store).await, after_cut, "no new chunk");
+    assert!(verify(&store).await.unwrap().problems.is_empty());
 }
 
 /// A deploy: the old and the new instance run at the same time for a

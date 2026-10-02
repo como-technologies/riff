@@ -410,6 +410,9 @@ struct Gate {
     until: Mutex<Option<Instant>>,
     /// True once the server stopped for good (R140).
     stopped: tokio::sync::watch::Sender<bool>,
+    /// True once the server stopped because its lease ended by its age
+    /// (01M3X5TPBMF81TDVZ7Q4NVXBQX).
+    lease_ended: AtomicBool,
     /// True once the server shuts down: it takes no call, but it still
     /// saves (R129).
     closing: AtomicBool,
@@ -1169,6 +1172,7 @@ impl Service {
             gate: Gate {
                 until: Mutex::new(until),
                 stopped: tokio::sync::watch::Sender::new(false),
+                lease_ended: AtomicBool::new(false),
                 closing: AtomicBool::new(false),
             },
             log,
@@ -1424,10 +1428,23 @@ impl Service {
         self.0.stopping().await;
     }
 
+    /// True when the server stopped because its last write of the time
+    /// to the lease is [`lease::Timing::ends_after`] old
+    /// (01M3X5TPBMF81TDVZ7Q4NVXBQX). `main` then exits with an error, so
+    /// that a new instance loads the state from the store.
+    pub fn lease_ended(&self) -> bool {
+        self.0.gate.lease_ended.load(Ordering::SeqCst)
+    }
+
     /// Starts the task that reads the lease each
     /// [`lease::Timing::read_every`] (R139), and writes the time to it
     /// each [`lease::Timing::renew_every`]. `taken` is a time before the
     /// take of the lease. The task ends when the server stops or ends.
+    ///
+    /// When the last write of the time is [`lease::Timing::ends_after`]
+    /// old, the server stops for good, and [`Service::lease_ended`] is
+    /// true (01M3X5TPBMF81TDVZ7Q4NVXBQX). A fault of the store that is
+    /// shorter gives 503, and the server goes on.
     fn keep_lease(&self, lease: Arc<Lease>, taken: Instant) {
         let server = Arc::downgrade(&self.0);
         let timing = self.0.config.lease;
@@ -1437,6 +1454,10 @@ impl Service {
             // The start of the last write of the time. The take wrote
             // the first time.
             let mut renewed = taken;
+            // The same time on the wall clock: the monotonic clock can
+            // stop while the machine sleeps.
+            let since = taken.elapsed().as_millis() as u64;
+            let mut renewed_ms = lease::now_ms().saturating_sub(since);
             loop {
                 tick.tick().await;
                 let Some(server) = server.upgrade() else {
@@ -1446,6 +1467,23 @@ impl Service {
                     break;
                 }
                 let asked = Instant::now();
+                let asked_ms = lease::now_ms();
+                // The lease ended by its age: a tool can have changed
+                // the log. The state in memory never serves again, and
+                // the instance does not write the lease again
+                // (01M3X5TPBMF81TDVZ7Q4NVXBQX).
+                let age = asked
+                    .duration_since(renewed)
+                    .max(Duration::from_millis(asked_ms.saturating_sub(renewed_ms)));
+                if age >= timing.ends_after {
+                    server.gate.lease_ended.store(true, Ordering::SeqCst);
+                    server.stop(&format!(
+                        "its last write of the time to the lease is {} seconds old, so the \
+                         lease ended",
+                        age.as_secs()
+                    ));
+                    break;
+                }
                 // A renewal that is due takes the place of the read. So
                 // while it fails, the serve time ends
                 // (01M3X34282SG0DJ6X34F90HS26).
@@ -1457,6 +1495,7 @@ impl Service {
                 };
                 if renew && held.is_ok() {
                     renewed = asked;
+                    renewed_ms = asked_ms;
                 }
                 match held {
                     Ok(true) => *server.until() = Some(asked + timing.valid_for),

@@ -36,8 +36,11 @@
 //!   01M3X342G8KF2W06PABGXTERMZ). It names what a cut removes.
 //! - `cut --yes` refuses while a server holds the lease
 //!   (01M3X342K007K3Z9G0CYWFKVMA). See "A live lease" in
-//!   [`crate::lease`]. It reads the lease again after the cut, and
-//!   names a server that started during the cut.
+//!   [`crate::lease`]. Else it takes the lease with an ID of its own
+//!   for the time of the cut (01M3X5TP9CD4NXGPJEGP2Q4RS0). So an
+//!   instance that held the lease and runs again finds another ID, and
+//!   stops. It ends its lease after the cut, and names a server that
+//!   took the lease during the cut.
 //! - `cut` refuses a position before the oldest kept checkpoint: the
 //!   chunks before that checkpoint are gone, so no start can replay
 //!   them. It refuses also when the first problem is before that
@@ -94,7 +97,7 @@ use riff_core::record::{Change, Line, Record};
 use riff_core::wire::Kind;
 
 use crate::checkpoint;
-use crate::lease::{self, Held};
+use crate::lease::{self, Busy, Held, ToolLease};
 use crate::log::{self, Header};
 use crate::store::{Loaded, Store, StoreError};
 
@@ -817,14 +820,74 @@ pub struct Cut {
 ///
 /// - It refuses a position before the oldest kept checkpoint.
 /// - With [`Mode::Remove`], it refuses while an instance holds the
-///   lease, and names the instance (01M3X342K007K3Z9G0CYWFKVMA). See
-///   [`crate::lease::holder`].
+///   lease, and names the instance (01M3X342K007K3Z9G0CYWFKVMA). Else it
+///   takes the lease for the time of the cut
+///   (01M3X5TP9CD4NXGPJEGP2Q4RS0). See [`crate::lease::ToolLease`].
 /// - It keeps only the first records of the log that read and have the
 ///   right positions, up to `after`. It removes each line after them,
 ///   also a line with a lower position, and each later chunk. So the
 ///   log reads after the cut, and a line that it names as removed never
 ///   stays (01M3X342NQWZBJPS0GXV98BQME).
 pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolError> {
+    cut_with(store, after, mode, &lease::Timing::default()).await
+}
+
+/// As [`cut`], with the times of the lease rules. Tests use short
+/// times.
+pub async fn cut_with(
+    store: &dyn Store,
+    after: u64,
+    mode: Mode,
+    timing: &lease::Timing,
+) -> Result<Cut, ToolError> {
+    if mode == Mode::DryRun {
+        let mut named = remove(store, after, mode).await?;
+        named.held = lease::holder(store, lease::now_ms(), timing).await?;
+        return Ok(named);
+    }
+    // The cut reads the log only after it has the lease: no instance
+    // writes the store then.
+    let mine = match ToolLease::take(store, "cut", timing).await? {
+        Ok(mine) => mine,
+        Err(Busy::Held(held)) if held.renewed_at_ms == 0 => {
+            return Err(ToolError::Refused(format!(
+                "cannot cut: {}. A riff-server of an older release wrote it, and that server \
+                 can still run. Stop that server, delete the object {}, and run the command \
+                 again. A server that still runs stops when the object is gone.",
+                held_text(&held),
+                store.locate(crate::store::LEASE)
+            )));
+        }
+        Err(Busy::Held(held)) => {
+            return Err(ToolError::Refused(format!(
+                "cannot cut: {}. Stop the server first. A lease ends when its server shuts \
+                 down, or {} seconds after its last write.",
+                held_text(&held),
+                timing.ends_after.as_secs()
+            )));
+        }
+        Err(Busy::Taken) => {
+            return Err(ToolError::Refused(
+                "cannot cut: a server wrote the lease while the cut took it. The cut removed \
+                 nothing. Stop the server first."
+                    .into(),
+            ));
+        }
+    };
+    let removed = remove(store, after, mode).await;
+    // End the lease also after a refusal or a failed call.
+    let ended = mine.end().await;
+    let mut removed = removed?;
+    if !ended? {
+        // A server that took the lease during the cut can hold records
+        // that the cut removed.
+        removed.held = lease::holder(store, lease::now_ms(), timing).await?;
+    }
+    Ok(removed)
+}
+
+/// The work of [`cut`], with no look at the lease.
+async fn remove(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolError> {
     let checkpoints = checkpoint::names(store).await?;
     let oldest = checkpoints.first().map(|(position, _, _)| *position);
     if let Some(oldest) = oldest
@@ -833,26 +896,6 @@ pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolE
         return Err(ToolError::Refused(format!(
             "cannot cut after position {after}: the oldest kept checkpoint is at position \
              {oldest}, and the chunks before it are gone. Cut at position {oldest} or later."
-        )));
-    }
-    let timing = lease::Timing::default();
-    let held = lease::holder(store, lease::now_ms(), &timing).await?;
-    if let (Mode::Remove, Some(held)) = (mode, &held) {
-        if held.renewed_at_ms == 0 {
-            // A riff-server from before the time in the lease wrote it.
-            return Err(ToolError::Refused(format!(
-                "cannot cut: {}. An older riff-server wrote it, so the lease does not end. \
-                 Stop that server, delete the object {}, and run the command again. A \
-                 server that still runs stops when the object is gone.",
-                held_text(held),
-                store.locate(crate::store::LEASE)
-            )));
-        }
-        return Err(ToolError::Refused(format!(
-            "cannot cut: {}. Stop the server first. A lease ends when its server shuts \
-             down, or {} seconds after its last write.",
-            held_text(held),
-            timing.ends_after.as_secs()
         )));
     }
     let walk = Walk::read(store, oldest).await?;
@@ -869,7 +912,6 @@ pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolE
     }
     let mut removed = Cut {
         last: kept.last,
-        held,
         ..Cut::default()
     };
     // From the end of the log to the cut, so that no gap stays when the
@@ -912,11 +954,6 @@ pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolE
             removed.checkpoints.push(name.clone());
         }
     }
-    if mode == Mode::Remove {
-        // A server that started during the cut can hold records that
-        // the cut removed.
-        removed.held = lease::holder(store, lease::now_ms(), &timing).await?;
-    }
     Ok(removed)
 }
 
@@ -929,7 +966,7 @@ mod tests {
     use futures::future::{BoxFuture, FutureExt};
     use riff_core::record::{Claimed, RiffStateSet};
     use riff_core::wire::RiffState;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     fn running(position: u64) -> Record {
         Record {
@@ -1079,10 +1116,14 @@ mod tests {
         assert_eq!(cut(&store, 3, Mode::Remove).await.unwrap(), nothing);
     }
 
-    /// Each object of the store, with its bytes.
+    /// Each object of the store but the lease, with its bytes.
     async fn objects(store: &Memory) -> Vec<(String, Vec<u8>)> {
         let mut objects = Vec::new();
         for name in store.list("").await.unwrap() {
+            // A cut takes the lease and ends it: the lease changes.
+            if name == crate::store::LEASE {
+                continue;
+            }
             let bytes = store.load(&name).await.unwrap().unwrap().bytes;
             objects.push((name, bytes));
         }
@@ -1128,7 +1169,7 @@ mod tests {
 
     /// 01M3X342K007K3Z9G0CYWFKVMA: a cut refuses while an instance holds
     /// the lease, and names the instance.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn cut_refuses_a_live_lease_and_cuts_after_a_lease_that_ended() {
         let store = store().await;
         lease_of(&store, "abc123", 1_000, false).await;
@@ -1168,13 +1209,81 @@ mod tests {
         assert!(error.contains("delete the object lease"), "{error}");
         assert_eq!(objects(&store).await.len(), before.len());
 
-        // The lease ended: 90 seconds with no new time.
+        // The lease ended: 90 seconds with no new time. The cut waits
+        // 10 seconds after it takes the lease.
         lease_of(&store, "abc123", 90_000, false).await;
+        let start = tokio::time::Instant::now();
         assert_eq!(cut(&store, 5, Mode::Remove).await.unwrap().records.len(), 1);
-        // The lease ended: the instance shut down.
+        assert_eq!(start.elapsed(), Duration::from_secs(10));
+        // The cut took the lease and ended it (01M3X5TP9CD4NXGPJEGP2Q4RS0):
+        // the instance abc123 finds another ID.
+        let lease = store.load(crate::store::LEASE).await.unwrap().unwrap();
+        let lease: serde_json::Value = serde_json::from_slice(&lease.bytes).unwrap();
+        assert!(lease["id"].as_str().unwrap().starts_with("cut-"), "{lease}");
+        assert_eq!(lease["ended"], true);
+
+        // The lease ended: the instance shut down. The cut does not wait.
         lease_of(&store, "abc123", 0, true).await;
+        let start = tokio::time::Instant::now();
         assert_eq!(cut(&store, 4, Mode::Remove).await.unwrap().records.len(), 1);
+        assert_eq!(start.elapsed(), Duration::ZERO);
         assert_eq!(log::replay(&store).await.unwrap().last, 4);
+    }
+
+    /// A memory store in which a server writes the lease before each
+    /// save of the lease.
+    struct Beaten(Memory);
+
+    impl Store for Beaten {
+        fn load<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+            self.0.load(name)
+        }
+
+        fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+            self.0.list(prefix)
+        }
+
+        fn save<'a>(
+            &'a self,
+            name: &'a str,
+            bytes: Vec<u8>,
+            known: Option<crate::store::Version>,
+        ) -> BoxFuture<'a, Result<crate::store::Version, StoreError>> {
+            async move {
+                if name == crate::store::LEASE {
+                    lease_of(&self.0, "first7", 0, false).await;
+                }
+                self.0.save(name, bytes, known).await
+            }
+            .boxed()
+        }
+
+        fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+            self.0.delete(name)
+        }
+    }
+
+    /// 01M3X5TP9CD4NXGPJEGP2Q4RS0: the take of the lease names the
+    /// version that the cut read. A server that writes the lease first
+    /// wins: the cut refuses, and changes nothing.
+    #[tokio::test]
+    async fn a_cut_whose_take_of_the_lease_loses_to_a_server_changes_nothing() {
+        let memory = store().await;
+        lease_of(&memory, "abc123", 0, true).await;
+        let before = objects(&memory).await;
+        let store = Beaten(memory.clone());
+        let error = cut(&store, 2, Mode::Remove).await.unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "cannot cut: a server wrote the lease while the cut took it. The cut removed \
+             nothing. Stop the server first."
+        );
+        assert_eq!(objects(&memory).await, before);
+        // The lease is the lease of the server.
+        let timing = lease::Timing::default();
+        let held = lease::holder(&memory, lease::now_ms(), &timing).await;
+        assert_eq!(held.unwrap().unwrap().id, "first7");
+        assert_eq!(log::replay(&memory).await.unwrap().last, 6);
     }
 
     /// A memory store in which a server takes the lease at the first
