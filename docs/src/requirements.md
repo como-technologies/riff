@@ -932,12 +932,24 @@
   severity `WARNING` and the reason of the stop. The writer makes these
   lines. A command with records, a signal and a query give no line.
 - **01M3X4Z64ZNRD0G0F4JV1M64FN** The token layer writes one line with
-  the result `denied` for each call that it refuses. The line has
+  the result `denied` for each call that it refuses, up to the limit
+  of rate (01M3Z67DZX9BC3TYF3PWGFGZJ7). The line has
   `path`, `code` (`no_token`, `bad_token`, `bad_proof`, `not_you` or
   `old_build`) and `named`: the caller that the call named, with
   `proved` false. The server reads the body of the call for the name
   only after the refusal, and at most 64 KiB of it. A name of more than
   200 characters is cut, and the line says so (`named_cut`).
+- **01M3Z67B9RMVKY7TCXCG8HEZT4** The read of the body of a refused call
+  takes at most 2 seconds (`trace::BODY_TIME`). After it, the server
+  writes the `denied` line with no `named`, and the reply closes the
+  call.
+- **01M3Z67DZX9BC3TYF3PWGFGZJ7** The server writes at most 100 `denied`
+  lines (`trace::DENIED_MAX`) in each window of 10 seconds
+  (`trace::DENIED_INTERVAL`). Over the limit, it writes no line and
+  does not read the body of the call. At the end of a window with such
+  calls, it writes one line with the result `dropped`, the severity
+  `WARNING` and their `count`. A stop of the server ends the window.
+  The reply to a refused call is the same with a line and with no line.
 - **01M3X4Z675D0ZQX93E93F3M8FA** No line of a trace holds the body of a
   post, a token or a key.
 - **01M3X4Z69CFV23V4QZBE8RP1GJ** The codes of a refusal are a fixed set.

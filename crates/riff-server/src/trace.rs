@@ -785,7 +785,11 @@ mod tests {
         let capture = Capture::start();
         let limit = Limit::default();
         for _ in 0..DENIED_MAX {
-            assert!(limit.refuse(request("{}".into()), DeniedCode::NoToken).await);
+            assert!(
+                limit
+                    .refuse(request("{}".into()), DeniedCode::NoToken)
+                    .await
+            );
         }
         let start = Instant::now();
         let slow = request(slow_body("{"));

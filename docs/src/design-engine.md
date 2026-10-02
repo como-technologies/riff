@@ -384,6 +384,7 @@ line has the format of each other log line (`severity`, `time`,
 | `failed` | The write of the chunk of the command failed, and the instance stopped. | `ERROR` |
 | `failed` | The command waited in the queue when the server stopped. The line has the `reason` of the stop. | `WARNING` |
 | `denied` | The token layer refused the call: a command, a query or a signal. | `INFO` |
+| `dropped` | A window of the limit of rate ended, and the token layer did not write some `denied` lines in it. | `WARNING` |
 
 - The writer makes the lines `refused`, `no_change` and `failed`
   (`Engine::finish` and `Engine::fail`, 01M3X4Z62RJREQ5H8F18Y85T6V). The
@@ -440,6 +441,55 @@ line has the format of each other log line (`severity`, `time`,
   `{"text":"..."}`. A name of more than 200 characters is cut, and the
   line then has `named_cut` with the value `true`. A line break in a
   name is escaped, so the line stays one line.
+- The cost of a refused call has a bound. Two constants of `trace.rs`
+  hold the limits:
+
+  | Limit | Constant | Value |
+  |---|---|---|
+  | The time of the read of the body | `BODY_TIME` | 2 seconds |
+  | The `denied` lines in one window | `DENIED_MAX` in `DENIED_INTERVAL` | 100 lines in 10 seconds |
+
+  ```mermaid
+  flowchart TD
+      R[the token layer refuses a call] --> W{"fewer than 100 lines<br/>in this window?"}
+      W -->|yes| B["read the body for the name:<br/>at most 64 KiB, at most 2 seconds"]
+      B --> D[line: denied]
+      W -->|no| N["no read, no line:<br/>the count goes up"]
+      N -->|"the window ends,<br/>or the server stops"| C["line: dropped, with the count"]
+      D --> S[the same reply]
+      N --> S
+  ```
+
+- The time limit (01M3Z67B9RMVKY7TCXCG8HEZT4): the server reads the
+  body for `named` for at most 2 seconds. After it, the line has no
+  `named`. When the read stops before the end of the body, at the time
+  limit or at 64 KiB, the reply has the header `connection: close`,
+  and the server reads no more of the call.
+- The limit of rate (01M3Z67DZX9BC3TYF3PWGFGZJ7): the server writes at
+  most 100 `denied` lines in each window of 10 seconds. A window
+  starts at the first refused call after the end of the last window.
+  Over the limit, the server writes no line and does not read the
+  body. At the end of a window with such calls, a timer writes one
+  line with the result `dropped`, the severity `WARNING` and `count`:
+  the number of `denied` lines that the server did not write. So a
+  window has at most one `dropped` line. A stop of the server ends the
+  window, so no count is lost.
+
+  ```json
+  {"severity":"WARNING","time":"2026-10-01T12:00:10Z","target":"engine","message":"dropped","result":"dropped","count":900}
+  ```
+
+- The count is one count for the whole server. Behind Cloud Run, the
+  server knows no address of a caller that it can trust. So many
+  refused calls of one caller also take the lines of each other
+  caller in that window. The request log of Cloud Run still holds
+  each call.
+- The limit also holds for the `old_build` lines. At go-live, each
+  client of v0.8.0 gets a refusal for each call until its update. The
+  server then writes at most 100 of these lines in 10 seconds, and
+  the `dropped` lines hold the count of the rest.
+- The limits change only the lines. The reply to a refused call has
+  the same status and the same text with a line and with no line.
 - `key` is the thumbprint of the device key of the token. It is not a
   secret. A call with no token has no `key`.
 - A line never holds the body of a post, a token or a key

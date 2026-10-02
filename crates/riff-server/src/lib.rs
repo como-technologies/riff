@@ -1262,7 +1262,7 @@ impl Service {
                 let records = chunk.records();
                 let log = s.log.clone();
                 let timing = s.config.log;
-                let began = Instant::now();
+                let began = tokio::time::Instant::now();
                 let failed = AtomicU64::new(0);
                 // A chunk of commands with no record needs no object:
                 // the write gives its proof at once.
@@ -4315,7 +4315,7 @@ mod tests {
         let first = tokio_stream::once(Ok::<_, Infallible>(start));
         let slow = tokio_stream::StreamExt::chain(first, tokio_stream::pending());
         let slow = axum::body::Body::from_stream(slow);
-        let began = Instant::now();
+        let began = tokio::time::Instant::now();
         let response = send(slow).await.unwrap();
         assert_eq!(began.elapsed(), trace::BODY_TIME);
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
