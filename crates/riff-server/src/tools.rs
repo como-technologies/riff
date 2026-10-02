@@ -10,24 +10,41 @@
 //! |---|---|---|
 //! | `riff-server log` | [`print()`] | Prints each record from a position as one line of text (01M3TJWHNYRCA7RTPFNYM5ZNQS). |
 //! | `riff-server log verify` | [`verify`] | Reads each checkpoint and each chunk from the oldest kept checkpoint, and names each line that does not read (01M3TJWHRP49M66NYNHWSYD3XP). |
-//! | `riff-server log cut --after POSITION` | [`cut`] | Deletes each record and each checkpoint after the position, and names what it removes (01M3TJWHVN730ZWCWHT9ER186R). |
+//! | `riff-server log cut --after POSITION` | [`cut`] | Names each record and each checkpoint after the position. With `--yes`, it deletes them (01M3TJWHVN730ZWCWHT9ER186R). |
 //!
 //! To go back to a position, a person stops the server, runs `verify` to
 //! find the first bad record, and cuts before it:
 //!
 //! ```mermaid
 //! flowchart LR
-//!     S[stop the server] --> V[log verify:<br/>the first bad record is at P + 1]
-//!     V --> C[log cut --after P:<br/>names each removed record]
+//!     S[stop the server] --> V[log verify:<br/>the last good record is at P]
+//!     V --> D[log cut --after P:<br/>a dry run, names each record]
+//!     D --> C[log cut --after P --yes:<br/>removes them]
 //!     C --> R[start the server:<br/>it replays up to P]
 //! ```
 //!
 //! - `verify` does not stop at the first problem. It reads each line by
-//!   itself, so one run names each bad line, each gap and each repeat of
-//!   a position.
+//!   its bytes, so one run names each bad line, each gap and each repeat
+//!   of a position. A line that is not UTF-8 is one bad line.
+//! - `verify` and `cut` read the log with the same walk. The good part
+//!   of the log is its first records that read and have the right
+//!   positions. `cut` keeps only that part, up to the position: it
+//!   removes each line after the first problem, also in a later chunk
+//!   (01M3X342NQWZBJPS0GXV98BQME). So the cut that `verify` names
+//!   repairs the log, and removes no record before the problem.
+//! - `cut` removes nothing without `--yes` ([`Mode::DryRun`],
+//!   01M3X342G8KF2W06PABGXTERMZ). It names what a cut removes.
+//! - `cut --yes` refuses while a server holds the lease
+//!   (01M3X342K007K3Z9G0CYWFKVMA). See "A live lease" in
+//!   [`crate::lease`]. Else it takes the lease with an ID of its own
+//!   for the time of the cut (01M3X5TP9CD4NXGPJEGP2Q4RS0). So an
+//!   instance that held the lease and runs again finds another ID, and
+//!   stops. It ends its lease after the cut, and names a server that
+//!   took the lease during the cut.
 //! - `cut` refuses a position before the oldest kept checkpoint: the
 //!   chunks before that checkpoint are gone, so no start can replay
-//!   them.
+//!   them. It refuses also when the first problem is before that
+//!   checkpoint: no cut repairs such a log.
 //! - `cut` deletes the chunks from the end of the log to its start, then
 //!   writes the chunk that holds the position again with only its first
 //!   records, then deletes the checkpoints. So a cut that stops in the
@@ -43,7 +60,7 @@
 //! use riff_core::wire::RiffState;
 //! use riff_server::log::{Timing, write};
 //! use riff_server::store::Memory;
-//! use riff_server::tools::{cut, print, verify};
+//! use riff_server::tools::{Mode, cut, print, verify};
 //!
 //! let store = Memory::default();
 //! let record = |position| Record {
@@ -62,8 +79,13 @@
 //!
 //! assert!(verify(&store).await?.problems.is_empty());
 //!
-//! let removed = cut(&store, 1).await?;
-//! assert_eq!(removed.records.len(), 2);
+//! // A dry run names the records, and removes nothing.
+//! let named = cut(&store, 1, Mode::DryRun).await?;
+//! assert_eq!(named.records.len(), 2);
+//! assert_eq!(verify(&store).await?.last, Some(3));
+//!
+//! let removed = cut(&store, 1, Mode::Remove).await?;
+//! assert_eq!(removed, named);
 //! assert_eq!(verify(&store).await?.last, Some(1));
 //! # Ok(()) }
 //! ```
@@ -75,8 +97,9 @@ use riff_core::record::{Change, Line, Record};
 use riff_core::wire::Kind;
 
 use crate::checkpoint;
+use crate::lease::{self, Busy, Held, ToolLease};
 use crate::log::{self, Header};
-use crate::store::{Store, StoreError};
+use crate::store::{Loaded, Store, StoreError};
 
 /// The most characters of a message body that [`show`] prints.
 const BODY: usize = 60;
@@ -279,6 +302,201 @@ pub async fn print(
     Ok(printed)
 }
 
+/// One line of a chunk after its header.
+struct Row {
+    /// The position that the log needs at this line.
+    expected: u64,
+    /// The number of bytes of the chunk up to the end of this line.
+    end: usize,
+    /// The line, or why it does not read.
+    line: Result<Line, String>,
+}
+
+impl Row {
+    /// True when the line is the record that the log needs here.
+    fn right(&self) -> bool {
+        matches!(&self.line, Ok(line) if position_of(line) == self.expected)
+    }
+
+    /// Why the line is not the record that the log needs here.
+    fn problem(&self) -> Option<String> {
+        match &self.line {
+            Ok(line) if position_of(line) == self.expected => None,
+            Ok(line) => Some(format!(
+                "a record has position {}, and the log needs {}",
+                position_of(line),
+                self.expected
+            )),
+            Err(why) => Some(why.clone()),
+        }
+    }
+
+    /// The line as text, for a cut that removes it. `last` is the
+    /// position of the last record that stays.
+    fn gone(&self, last: u64) -> String {
+        match &self.line {
+            Ok(line) if position_of(line) <= last => format!(
+                "{}  (a repeat: the record at position {} stays)",
+                show_line(line),
+                position_of(line)
+            ),
+            Ok(line) => show_line(line),
+            Err(why) => format!("{}  (a line that does not read: {why})", self.expected),
+        }
+    }
+}
+
+/// One chunk as [`verify`] and [`cut`] read it.
+struct Chunk {
+    /// The first position, from the name.
+    first: u64,
+    name: String,
+    /// `None` when the chunk is gone.
+    loaded: Option<Loaded>,
+    /// Each problem of the header and of the start of the chunk: its
+    /// line, and why.
+    head: Vec<(Option<usize>, String)>,
+    rows: Vec<Row>,
+}
+
+/// Each line of `bytes`, with the number of bytes up to its end. It
+/// splits bytes, so a line that is not UTF-8 is one line.
+fn lines(bytes: &[u8]) -> Vec<(usize, &[u8])> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (at, byte) in bytes.iter().enumerate() {
+        if *byte == b'\n' {
+            lines.push((at + 1, &bytes[start..at]));
+            start = at + 1;
+        }
+    }
+    if start < bytes.len() {
+        lines.push((bytes.len(), &bytes[start..]));
+    }
+    lines
+}
+
+/// The chunks of the log from the oldest kept checkpoint, as [`verify`]
+/// and [`cut`] read them. Both tools use this one walk, so the cut that
+/// `verify` names keeps what `verify` read as good
+/// (01M3X342NQWZBJPS0GXV98BQME).
+struct Walk {
+    /// The position after the oldest kept checkpoint, or 1.
+    start: u64,
+    chunks: Vec<Chunk>,
+}
+
+impl Walk {
+    /// Reads each chunk from the chunk that holds the position after
+    /// `oldest`, the oldest kept checkpoint. It reads each line by its
+    /// bytes.
+    async fn read(store: &dyn Store, oldest: Option<u64>) -> Result<Walk, ToolError> {
+        let names = log::chunks(store).await?;
+        let start = oldest.map_or(1, |oldest| oldest + 1);
+        let from = chunk_with(&names, start);
+        // The position that the next record must have.
+        let mut next: Option<u64> = None;
+        let mut chunks = Vec::new();
+        for (first, name) in &names[from..] {
+            let loaded = store.load(name).await?;
+            let mut head = Vec::new();
+            let mut rows = Vec::new();
+            if let Some(loaded) = &loaded {
+                let mut lines = lines(&loaded.bytes).into_iter();
+                let header = lines.next();
+                match header.map(|(_, line)| serde_json::from_slice::<Header>(line)) {
+                    Some(Ok(header)) => {
+                        if header.format > log::FORMAT {
+                            let why = format!("the chunk has the later format {}", header.format);
+                            head.push((Some(1), why));
+                        }
+                        if header.first != *first {
+                            let why = format!(
+                                "the header says position {}, and the name says {first}",
+                                header.first
+                            );
+                            head.push((Some(1), why));
+                        }
+                    }
+                    Some(Err(error)) => {
+                        head.push((Some(1), format!("the header does not read: {error}")));
+                    }
+                    None => head.push((None, "the chunk is empty".into())),
+                }
+                let begins = match (next, oldest) {
+                    (Some(next), _) if next != *first => Some(format!(
+                        "the chunk starts at position {first}, and the log needs {next}"
+                    )),
+                    (None, Some(oldest)) if *first > oldest + 1 => Some(format!(
+                        "the log starts at position {first}, after the oldest checkpoint at {oldest}"
+                    )),
+                    (None, None) if *first != 1 => Some(format!(
+                        "the log starts at position {first}, and the store has no checkpoint"
+                    )),
+                    _ => None,
+                };
+                head.extend(begins.map(|why| (Some(1), why)));
+                for (expected, (end, raw)) in (*first..).zip(lines) {
+                    let line = std::str::from_utf8(raw)
+                        .map_err(|error| format!("the line is not UTF-8: {error}"))
+                        .and_then(Line::parse);
+                    rows.push(Row {
+                        expected,
+                        end,
+                        line,
+                    });
+                }
+            } else {
+                head.push((None, "the chunk is gone".into()));
+            }
+            next = Some(first + rows.len() as u64);
+            chunks.push(Chunk {
+                first: *first,
+                name: name.clone(),
+                loaded,
+                head,
+                rows,
+            });
+        }
+        Ok(Walk { start, chunks })
+    }
+
+    /// What stays in a cut after the position `after`: the first records
+    /// of the log that read and have the right positions, up to `after`.
+    /// Each line after the first problem goes, also in a later chunk.
+    fn keep(&self, after: u64) -> Kept {
+        // The last position before the first chunk of the walk.
+        let mut last = match self.chunks.first() {
+            Some(chunk) if chunk.first <= self.start => chunk.first.saturating_sub(1),
+            _ => self.start - 1,
+        };
+        let mut keeping = true;
+        let mut rows = Vec::new();
+        for chunk in &self.chunks {
+            keeping &= chunk.head.is_empty();
+            let mut stay = 0;
+            for row in &chunk.rows {
+                keeping &= row.right() && row.expected <= after;
+                if !keeping {
+                    break;
+                }
+                stay += 1;
+                last = row.expected;
+            }
+            rows.push(stay);
+        }
+        Kept { last, rows }
+    }
+}
+
+/// What stays of the chunks of a [`Walk`].
+struct Kept {
+    /// The position of the last record that stays.
+    last: u64,
+    /// For each chunk, the number of its first lines that stay.
+    rows: Vec<usize>,
+}
+
 /// A line or an object that does not read, or a break in the positions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Problem {
@@ -312,12 +530,16 @@ pub struct Verified {
     /// The position of the last record that it read.
     pub last: Option<u64>,
     /// The position of the last record before the first problem of the
-    /// log. A cut after it removes each bad record. With no good record,
-    /// it is the position before the first chunk.
+    /// log. A cut after it removes each bad record, and no record before
+    /// the problem. With no good record, it is the position before the
+    /// first record that the log needs.
     pub good: Option<u64>,
     /// True when a chunk has a problem. A cut after [`Verified::good`]
     /// then repairs the log.
     pub bad_log: bool,
+    /// The position of the oldest kept checkpoint. A cut before it is
+    /// refused.
+    pub oldest: Option<u64>,
     /// Each problem, in the order of the log. The checkpoints come
     /// first.
     pub problems: Vec<Problem>,
@@ -349,112 +571,54 @@ pub async fn verify(store: &dyn Store) -> Result<Verified, ToolError> {
             why,
         });
     }
-    let oldest = checkpoints.first().map(|(position, _, _)| *position);
+    verified.oldest = checkpoints.first().map(|(position, _, _)| *position);
     let newest = checkpoints.last().map(|(position, _, _)| *position);
-    let chunks = log::chunks(store).await?;
-    let from = chunk_with(&chunks, oldest.map_or(1, |oldest| oldest + 1));
-    // The position that the next record must have.
-    let mut next: Option<u64> = None;
-    let mut chunk_problems = false;
-    for (first, name) in &chunks[from..] {
+    let walk = Walk::read(store, verified.oldest).await?;
+    for chunk in &walk.chunks {
         verified.chunks += 1;
-        if verified.good.is_none() && !chunk_problems {
-            verified.good = Some(first.saturating_sub(1));
-        }
         // Each problem of this chunk: its line, and why.
-        let mut bad: Vec<(Option<usize>, String)> = Vec::new();
-        let loaded = store.load(name).await?;
-        let text = loaded
-            .as_ref()
-            .and_then(|loaded| std::str::from_utf8(&loaded.bytes).ok());
-        let mut position = *first;
-        if let Some(text) = text {
-            let mut lines = text.lines();
-            match lines.next().map(serde_json::from_str::<Header>) {
-                Some(Ok(header)) => {
-                    if header.format > log::FORMAT {
-                        let why = format!("the chunk has the later format {}", header.format);
-                        bad.push((Some(1), why));
-                    }
-                    if header.first != *first {
-                        let why = format!(
-                            "the header says position {}, and the name says {first}",
-                            header.first
-                        );
-                        bad.push((Some(1), why));
-                    }
+        let mut bad = chunk.head.clone();
+        for (n, row) in chunk.rows.iter().enumerate() {
+            match row.problem() {
+                Some(why) => bad.push((Some(n + 2), why)),
+                None => {
+                    verified.records += 1;
+                    verified.first.get_or_insert(row.expected);
+                    verified.last = Some(row.expected);
                 }
-                Some(Err(error)) => {
-                    bad.push((Some(1), format!("the header does not read: {error}")));
-                }
-                None => bad.push((None, "the chunk is empty".into())),
             }
-            let start = match (next, oldest) {
-                (Some(next), _) if next != position => Some(format!(
-                    "the chunk starts at position {position}, and the log needs {next}"
-                )),
-                (None, Some(oldest)) if position > oldest + 1 => Some(format!(
-                    "the log starts at position {position}, after the oldest checkpoint at {oldest}"
-                )),
-                (None, None) if position != 1 => Some(format!(
-                    "the log starts at position {position}, and the store has no checkpoint"
-                )),
-                _ => None,
-            };
-            bad.extend(start.map(|why| (Some(1), why)));
-            for (n, line) in lines.enumerate() {
-                let why = match Line::parse(line) {
-                    Ok(line) if position_of(&line) == position => None,
-                    Ok(line) => Some(format!(
-                        "a record has position {}, and the log needs {position}",
-                        position_of(&line)
-                    )),
-                    Err(why) => Some(why),
-                };
-                match why {
-                    Some(why) => bad.push((Some(n + 2), why)),
-                    None => {
-                        verified.records += 1;
-                        verified.first.get_or_insert(position);
-                        verified.last = Some(position);
-                        if !chunk_problems && bad.is_empty() {
-                            verified.good = Some(position);
-                        }
-                    }
-                }
-                position += 1;
-            }
-        } else {
-            bad.push((None, "the chunk is gone, or is not text".into()));
         }
-        chunk_problems |= !bad.is_empty();
+        verified.bad_log |= !bad.is_empty();
         verified
             .problems
             .extend(bad.into_iter().map(|(line, why)| Problem {
-                object: store.locate(name),
+                object: store.locate(&chunk.name),
                 line,
                 why,
             }));
-        next = Some(position);
     }
-    verified.bad_log = chunk_problems;
-    let end = next.map_or(0, |next| next - 1);
-    if let (Some(newest), Some((_, name))) = (newest, chunks.last())
-        && end < newest
-    {
-        verified.problems.push(Problem {
-            object: store.locate(name),
-            line: None,
-            why: format!(
-                "the log ends at position {end}, before the newest checkpoint at {newest}"
-            ),
-        });
+    if let Some(chunk) = walk.chunks.last() {
+        verified.good = Some(walk.keep(u64::MAX).last);
+        let end = (chunk.first + chunk.rows.len() as u64).saturating_sub(1);
+        if let Some(newest) = newest
+            && end < newest
+        {
+            verified.problems.push(Problem {
+                object: store.locate(&chunk.name),
+                line: None,
+                why: format!(
+                    "the log ends at position {end}, before the newest checkpoint at {newest}"
+                ),
+            });
+        }
     }
     Ok(verified)
 }
 
 /// The last lines of `riff-server log verify`: what it read, and for a
-/// bad log the first bad position and the cut that removes it.
+/// bad log the last good position and the cut that removes each record
+/// after it. That command is a dry run: it prints the records, and the
+/// command that removes them.
 ///
 /// ```
 /// use riff_server::tools::{Problem, Verified, verified_text};
@@ -467,6 +631,7 @@ pub async fn verify(store: &dyn Store) -> Result<Verified, ToolError> {
 ///     last: Some(6),
 ///     good: Some(6),
 ///     bad_log: false,
+///     oldest: Some(1),
 ///     problems: Vec::new(),
 /// };
 /// assert_eq!(
@@ -479,8 +644,16 @@ pub async fn verify(store: &dyn Store) -> Result<Verified, ToolError> {
 /// assert_eq!(
 ///     verified_text(&verified),
 ///     "1 problem in 3 chunks and 1 checkpoint. The last good record of the log is at \
-///      position 2.\nTo remove each record after it, stop the server and run: \
+///      position 2.\nTo see each record after it, and the command that removes them, run: \
 ///      riff-server log cut --after 2"
+/// );
+/// // A problem before the oldest kept checkpoint: no cut repairs the log.
+/// verified.good = Some(0);
+/// assert_eq!(
+///     verified_text(&verified),
+///     "1 problem in 3 chunks and 1 checkpoint. The first problem of the log is before the \
+///      oldest kept checkpoint at position 1, so no cut repairs the log. Get back an older \
+///      version of the chunk."
 /// );
 /// ```
 pub fn verified_text(verified: &Verified) -> String {
@@ -502,32 +675,64 @@ pub fn verified_text(verified: &Verified) -> String {
     );
     if verified.bad_log {
         let good = verified.good.unwrap_or(0);
-        text.push_str(&format!(
-            " The last good record of the log is at position {good}.\n\
-             To remove each record after it, stop the server and run: \
-             riff-server log cut --after {good}"
-        ));
+        match verified.oldest {
+            Some(oldest) if good < oldest => text.push_str(&format!(
+                " The first problem of the log is before the oldest kept checkpoint at \
+                 position {oldest}, so no cut repairs the log. Get back an older version of \
+                 the chunk."
+            )),
+            _ => text.push_str(&format!(
+                " The last good record of the log is at position {good}.\n\
+                 To see each record after it, and the command that removes them, run: \
+                 riff-server log cut --after {good}"
+            )),
+        }
     }
     text
 }
 
-/// The last line of `riff-server log cut`: how much it removed, and the
-/// threads of the removed records.
+/// A live lease as text, for a cut.
+fn held_text(held: &Held) -> String {
+    if held.renewed_at_ms == 0 {
+        return format!(
+            "the server instance {} holds the lease, and the lease has no time",
+            held.id
+        );
+    }
+    format!(
+        "the server instance {} holds the lease, and wrote it at {}",
+        held.id,
+        utc(held.renewed_at_ms)
+    )
+}
+
+/// The last lines of `riff-server log cut`: how much it removed, and the
+/// threads of the removed records. `after` is the position that the
+/// person named. A dry run also gives the command that removes.
 ///
 /// ```
-/// use riff_server::tools::{Cut, cut_text};
+/// use riff_server::tools::{Cut, Mode, cut_text};
 ///
-/// let mut removed = Cut::default();
-/// assert_eq!(cut_text(&removed, 9), "Nothing is after position 9: removed nothing.");
+/// let mut removed = Cut { last: 9, ..Cut::default() };
+/// assert_eq!(
+///     cut_text(&removed, 9, Mode::Remove),
+///     "Nothing is after position 9: removed nothing."
+/// );
 /// removed.records = vec!["10  …".into(), "11  …".into()];
 /// removed.threads.insert("acme/app".into());
 /// removed.checkpoints.push("checkpoint/x".into());
 /// assert_eq!(
-///     cut_text(&removed, 9),
+///     cut_text(&removed, 9, Mode::Remove),
 ///     "Removed 2 records and 1 checkpoint after position 9. Threads: acme/app."
 /// );
+/// assert_eq!(
+///     cut_text(&removed, 9, Mode::DryRun),
+///     "A cut removes 2 records and 1 checkpoint after position 9. Threads: acme/app.\n\
+///      This run removed nothing. To remove them, stop the server and run: \
+///      riff-server log cut --after 9 --yes"
+/// );
 /// ```
-pub fn cut_text(removed: &Cut, after: u64) -> String {
+pub fn cut_text(removed: &Cut, after: u64, mode: Mode) -> String {
     if removed.records.is_empty() && removed.checkpoints.is_empty() {
         return format!("Nothing is after position {after}: removed nothing.");
     }
@@ -541,11 +746,33 @@ pub fn cut_text(removed: &Cut, after: u64) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    format!(
-        "Removed {} and {} after position {after}. Threads: {threads}.",
+    let what = format!(
+        "{} and {} after position {}. Threads: {threads}.",
         count(removed.records.len() as u64, "record"),
-        count(removed.checkpoints.len() as u64, "checkpoint")
-    )
+        count(removed.checkpoints.len() as u64, "checkpoint"),
+        removed.last
+    );
+    match mode {
+        Mode::Remove => {
+            let held = removed.held.as_ref().map_or_else(String::new, |held| {
+                format!(
+                    "\nA server started during the cut: {}. Stop it, then run: \
+                     riff-server log verify",
+                    held_text(held)
+                )
+            });
+            format!("Removed {what}{held}")
+        }
+        Mode::DryRun => {
+            let held = removed.held.as_ref().map_or_else(String::new, |held| {
+                format!("\nNow {}: `--yes` refuses.", held_text(held))
+            });
+            format!(
+                "A cut removes {what}\nThis run removed nothing. To remove them, stop the \
+                 server and run: riff-server log cut --after {after} --yes{held}"
+            )
+        }
+    }
 }
 
 /// A number with its noun: `1 chunk`, `3 chunks`.
@@ -557,11 +784,21 @@ fn count(n: u64, noun: &str) -> String {
     }
 }
 
-/// What [`cut`] removed.
+/// What [`cut`] does with the records that it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// It removes nothing (01M3X342G8KF2W06PABGXTERMZ).
+    DryRun,
+    /// It removes them: `--yes`.
+    Remove,
+}
+
+/// What [`cut`] removed, or what it removes with [`Mode::Remove`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Cut {
-    /// Each removed record as one line of text, in log order. A line
-    /// that does not read shows its position and why.
+    /// Each removed line as one line of text, in log order. A line that
+    /// does not read shows its position and why. A line whose position
+    /// stays in the log says so.
     pub records: Vec<String>,
     /// Each thread that a removed record names.
     pub threads: BTreeSet<String>,
@@ -570,88 +807,150 @@ pub struct Cut {
     pub chunks: Vec<String>,
     /// The name of each checkpoint that it deleted.
     pub checkpoints: Vec<String>,
+    /// The position of the last record that stays: the position of the
+    /// cut, or the last good record of the log before it.
+    pub last: u64,
+    /// The instance that holds the lease. In a dry run, `--yes` refuses
+    /// because of it. After a cut, it took the lease during the cut.
+    pub held: Option<Held>,
 }
 
-/// Deletes each record and each checkpoint after the position `after`.
-/// It refuses a position before the oldest kept checkpoint. See the
-/// module docs. Stop each server of the store before a cut.
+/// Names each record and each checkpoint after the position `after`,
+/// and deletes them with [`Mode::Remove`]. See the module docs.
 ///
-/// In a chunk, it keeps only the first lines whose positions are right:
-/// each is the position of the header plus its place, up to `after`. It
-/// removes each line after them, also a line with a lower position. So
-/// a record that it names as removed never stays. It removes a chunk
-/// whose header does not read.
-pub async fn cut(store: &dyn Store, after: u64) -> Result<Cut, ToolError> {
+/// - It refuses a position before the oldest kept checkpoint.
+/// - With [`Mode::Remove`], it refuses while an instance holds the
+///   lease, and names the instance (01M3X342K007K3Z9G0CYWFKVMA). Else it
+///   takes the lease for the time of the cut
+///   (01M3X5TP9CD4NXGPJEGP2Q4RS0). See [`crate::lease::ToolLease`].
+/// - It keeps only the first records of the log that read and have the
+///   right positions, up to `after`. It removes each line after them,
+///   also a line with a lower position, and each later chunk. So the
+///   log reads after the cut, and a line that it names as removed never
+///   stays (01M3X342NQWZBJPS0GXV98BQME).
+pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolError> {
+    cut_with(store, after, mode, &lease::Timing::default()).await
+}
+
+/// As [`cut`], with the times of the lease rules. Tests use short
+/// times.
+pub async fn cut_with(
+    store: &dyn Store,
+    after: u64,
+    mode: Mode,
+    timing: &lease::Timing,
+) -> Result<Cut, ToolError> {
+    if mode == Mode::DryRun {
+        let mut named = remove(store, after, mode).await?;
+        named.held = lease::holder(store, lease::now_ms(), timing).await?;
+        return Ok(named);
+    }
+    // The cut reads the log only after it has the lease: no instance
+    // writes the store then.
+    let mine = match ToolLease::take(store, "cut", timing).await? {
+        Ok(mine) => mine,
+        Err(Busy::Held(held)) if held.renewed_at_ms == 0 => {
+            return Err(ToolError::Refused(format!(
+                "cannot cut: {}. A riff-server of an older release wrote it, and that server \
+                 can still run. Stop that server, delete the object {}, and run the command \
+                 again. A server that still runs stops when the object is gone.",
+                held_text(&held),
+                store.locate(crate::store::LEASE)
+            )));
+        }
+        Err(Busy::Held(held)) => {
+            return Err(ToolError::Refused(format!(
+                "cannot cut: {}. Stop the server first. A lease ends when its server shuts \
+                 down, or {} seconds after its last write.",
+                held_text(&held),
+                timing.ends_after.as_secs()
+            )));
+        }
+        Err(Busy::Taken) => {
+            return Err(ToolError::Refused(
+                "cannot cut: a server wrote the lease while the cut took it. The cut removed \
+                 nothing. Stop the server first."
+                    .into(),
+            ));
+        }
+    };
+    let removed = remove(store, after, mode).await;
+    // End the lease also after a refusal or a failed call.
+    let ended = mine.end().await;
+    let mut removed = removed?;
+    if !ended? {
+        // A server that took the lease during the cut can hold records
+        // that the cut removed.
+        removed.held = lease::holder(store, lease::now_ms(), timing).await?;
+    }
+    Ok(removed)
+}
+
+/// The work of [`cut`], with no look at the lease.
+async fn remove(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolError> {
     let checkpoints = checkpoint::names(store).await?;
-    if let Some((oldest, _, _)) = checkpoints.first()
-        && after < *oldest
+    let oldest = checkpoints.first().map(|(position, _, _)| *position);
+    if let Some(oldest) = oldest
+        && after < oldest
     {
         return Err(ToolError::Refused(format!(
             "cannot cut after position {after}: the oldest kept checkpoint is at position \
              {oldest}, and the chunks before it are gone. Cut at position {oldest} or later."
         )));
     }
-    let chunks = log::chunks(store).await?;
-    let from = chunk_with(&chunks, after.saturating_add(1));
-    let mut removed = Cut::default();
+    let walk = Walk::read(store, oldest).await?;
+    let kept = walk.keep(after);
+    if let Some(oldest) = oldest
+        && kept.last < oldest
+    {
+        return Err(ToolError::Refused(format!(
+            "cannot cut: the log does not read at position {}, before the oldest kept \
+             checkpoint at position {oldest}. No cut repairs the log. To see each problem, \
+             run: riff-server log verify",
+            kept.last + 1
+        )));
+    }
+    let mut removed = Cut {
+        last: kept.last,
+        ..Cut::default()
+    };
     // From the end of the log to the cut, so that no gap stays when the
     // cut stops in the middle.
-    for (first, name) in chunks[from..].iter().rev() {
-        let Some(loaded) = store.load(name).await? else {
+    for (chunk, stay) in walk.chunks.iter().zip(&kept.rows).rev() {
+        let Some(loaded) = &chunk.loaded else {
             continue;
         };
-        let mut lines: Vec<&[u8]> = loaded.bytes.split(|byte| *byte == b'\n').collect();
-        if lines.last().is_some_and(|line| line.is_empty()) {
-            lines.pop();
-        }
-        let header = lines
-            .first()
-            .and_then(|line| serde_json::from_slice::<Header>(line).ok());
-        // False from the first line that does not stay.
-        let mut keeping = header.is_some_and(|h| h.first == *first && h.format <= log::FORMAT);
-        // The number of bytes that stay: the header and each kept line.
-        let mut stay = lines.first().map_or(0, |line| line.len() + 1);
-        let mut kept = 0;
-        let mut gone = Vec::new();
-        for (expected, raw) in (*first..).zip(lines.iter().skip(1)) {
-            let parsed = std::str::from_utf8(raw)
-                .map_err(|e| e.to_string())
-                .and_then(Line::parse);
-            let right = matches!(&parsed, Ok(line) if position_of(line) == expected);
-            if keeping && right && expected <= after {
-                kept += 1;
-                stay += raw.len() + 1;
-                continue;
-            }
-            keeping = false;
-            match &parsed {
-                Ok(line) => {
-                    if let Line::Record(record) = line {
-                        removed.threads.extend(thread_of(record));
-                    }
-                    gone.push(show_line(line));
-                }
-                Err(why) => gone.push(format!("{expected}  (a line that does not read: {why})")),
-            }
-        }
-        if gone.is_empty() && kept > 0 {
+        let rows = &chunk.rows[*stay..];
+        if rows.is_empty() && *stay > 0 {
             continue;
         }
-        if kept == 0 {
-            store.delete(name).await?;
-        } else {
-            // The header and the kept lines, with their bytes unchanged.
-            let bytes = loaded.bytes[..stay.min(loaded.bytes.len())].to_vec();
-            store.save(name, bytes, Some(loaded.version)).await?;
+        if mode == Mode::Remove {
+            match stay.checked_sub(1) {
+                None => store.delete(&chunk.name).await?,
+                Some(end) => {
+                    // The header and the kept lines, with their bytes
+                    // unchanged.
+                    let bytes = loaded.bytes[..chunk.rows[end].end].to_vec();
+                    store.save(&chunk.name, bytes, Some(loaded.version)).await?;
+                }
+            }
         }
-        removed.chunks.push(name.clone());
+        removed.chunks.push(chunk.name.clone());
+        for row in rows {
+            if let Ok(Line::Record(record)) = &row.line {
+                removed.threads.extend(thread_of(record));
+            }
+        }
+        let mut gone: Vec<String> = rows.iter().map(|row| row.gone(kept.last)).collect();
         gone.append(&mut removed.records);
         removed.records = gone;
     }
     removed.chunks.reverse();
     for (position, _, name) in &checkpoints {
-        if *position > after {
-            store.delete(name).await?;
+        if *position > kept.last {
+            if mode == Mode::Remove {
+                store.delete(name).await?;
+            }
             removed.checkpoints.push(name.clone());
         }
     }
@@ -664,9 +963,10 @@ mod tests {
     use crate::checkpoint::Checkpoint;
     use crate::state::State;
     use crate::store::Memory;
+    use futures::future::{BoxFuture, FutureExt};
     use riff_core::record::{Claimed, RiffStateSet};
     use riff_core::wire::RiffState;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     fn running(position: u64) -> Record {
         Record {
@@ -791,7 +1091,7 @@ mod tests {
         checkpoint_at(&store, 4).await;
         let before = store.load(&log::chunk_name(3)).await.unwrap().unwrap();
 
-        let removed = cut(&store, 3).await.unwrap();
+        let removed = cut(&store, 3, Mode::Remove).await.unwrap();
         let positions: Vec<&str> = removed
             .records
             .iter()
@@ -809,14 +1109,396 @@ mod tests {
         assert_eq!(replayed.last, 3);
         assert!(verify(&store).await.unwrap().problems.is_empty());
         // A second cut removes nothing.
-        assert_eq!(cut(&store, 3).await.unwrap(), Cut::default());
+        let nothing = Cut {
+            last: 3,
+            ..Cut::default()
+        };
+        assert_eq!(cut(&store, 3, Mode::Remove).await.unwrap(), nothing);
+    }
+
+    /// Each object of the store but the lease, with its bytes.
+    async fn objects(store: &Memory) -> Vec<(String, Vec<u8>)> {
+        let mut objects = Vec::new();
+        for name in store.list("").await.unwrap() {
+            // A cut takes the lease and ends it: the lease changes.
+            if name == crate::store::LEASE {
+                continue;
+            }
+            let bytes = store.load(&name).await.unwrap().unwrap().bytes;
+            objects.push((name, bytes));
+        }
+        objects
+    }
+
+    /// 01M3X342G8KF2W06PABGXTERMZ: a dry run names what the cut removes,
+    /// and changes no object.
+    #[tokio::test]
+    async fn a_dry_run_names_each_record_and_each_checkpoint_and_removes_nothing() {
+        let store = store().await;
+        checkpoint_at(&store, 2).await;
+        checkpoint_at(&store, 4).await;
+        let before = objects(&store).await;
+
+        let named = cut(&store, 3, Mode::DryRun).await.unwrap();
+        assert_eq!(printed(&named), ["4", "5", "6"]);
+        assert_eq!(named.checkpoints, [checkpoint::name(4, 4)]);
+        assert_eq!(objects(&store).await, before, "a dry run changes nothing");
+        let text = cut_text(&named, 3, Mode::DryRun);
+        assert!(
+            text.starts_with("A cut removes 3 records and 1 checkpoint after position 3."),
+            "{text}"
+        );
+        assert!(
+            text.ends_with("riff-server log cut --after 3 --yes"),
+            "{text}"
+        );
+
+        // The cut removes what the dry run named.
+        assert_eq!(cut(&store, 3, Mode::Remove).await.unwrap(), named);
+        assert_ne!(objects(&store).await, before);
+    }
+
+    /// The lease of the instance `id`, with a time `age_ms` before now.
+    async fn lease_of(store: &Memory, id: &str, age_ms: u64, ended: bool) {
+        let at = lease::now_ms() - age_ms;
+        let json = format!(r#"{{"id":"{id}","renewed_at_ms":{at},"ended":{ended}}}"#);
+        store.delete(crate::store::LEASE).await.unwrap();
+        let saved = store.save(crate::store::LEASE, json.into_bytes(), None);
+        saved.await.unwrap();
+    }
+
+    /// 01M3X342K007K3Z9G0CYWFKVMA: a cut refuses while an instance holds
+    /// the lease, and names the instance.
+    #[tokio::test(start_paused = true)]
+    async fn cut_refuses_a_live_lease_and_cuts_after_a_lease_that_ended() {
+        let store = store().await;
+        lease_of(&store, "abc123", 1_000, false).await;
+        let before = objects(&store).await;
+        let error = cut(&store, 4, Mode::Remove).await.unwrap_err().to_string();
+        assert!(
+            error.starts_with("cannot cut: the server instance abc123 holds the lease"),
+            "{error}"
+        );
+        assert!(error.contains("Stop the server first."), "{error}");
+        assert_eq!(objects(&store).await, before, "a refusal changes nothing");
+
+        // A dry run names the records and the instance.
+        let named = cut(&store, 4, Mode::DryRun).await.unwrap();
+        assert_eq!(printed(&named), ["5", "6"]);
+        assert_eq!(named.held.as_ref().unwrap().id, "abc123");
+        let text = cut_text(&named, 4, Mode::DryRun);
+        assert!(
+            text.contains("the server instance abc123 holds the lease"),
+            "{text}"
+        );
+
+        // The lease of an older riff-server has no time: it does not
+        // end, and the refusal names the object to delete.
+        store.delete(crate::store::LEASE).await.unwrap();
+        let old = br#"{"id":"old080"}"#.to_vec();
+        let saved = store.save(crate::store::LEASE, old, None);
+        saved.await.unwrap();
+        let error = cut(&store, 4, Mode::Remove).await.unwrap_err().to_string();
+        assert!(
+            error.starts_with(
+                "cannot cut: the server instance old080 holds the lease, and the lease has \
+                 no time."
+            ),
+            "{error}"
+        );
+        assert!(error.contains("delete the object lease"), "{error}");
+        assert_eq!(objects(&store).await.len(), before.len());
+
+        // The lease ended: 90 seconds with no new time. The cut waits
+        // 10 seconds after it takes the lease.
+        lease_of(&store, "abc123", 90_000, false).await;
+        let start = tokio::time::Instant::now();
+        assert_eq!(cut(&store, 5, Mode::Remove).await.unwrap().records.len(), 1);
+        assert_eq!(start.elapsed(), Duration::from_secs(10));
+        // The cut took the lease and ended it (01M3X5TP9CD4NXGPJEGP2Q4RS0):
+        // the instance abc123 finds another ID.
+        let lease = store.load(crate::store::LEASE).await.unwrap().unwrap();
+        let lease: serde_json::Value = serde_json::from_slice(&lease.bytes).unwrap();
+        assert!(lease["id"].as_str().unwrap().starts_with("cut-"), "{lease}");
+        assert_eq!(lease["ended"], true);
+
+        // The lease ended: the instance shut down. The cut does not wait.
+        lease_of(&store, "abc123", 0, true).await;
+        let start = tokio::time::Instant::now();
+        assert_eq!(cut(&store, 4, Mode::Remove).await.unwrap().records.len(), 1);
+        assert_eq!(start.elapsed(), Duration::ZERO);
+        assert_eq!(log::replay(&store).await.unwrap().last, 4);
+    }
+
+    /// A memory store in which a server writes the lease before each
+    /// save of the lease.
+    struct Beaten(Memory);
+
+    impl Store for Beaten {
+        fn load<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+            self.0.load(name)
+        }
+
+        fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+            self.0.list(prefix)
+        }
+
+        fn save<'a>(
+            &'a self,
+            name: &'a str,
+            bytes: Vec<u8>,
+            known: Option<crate::store::Version>,
+        ) -> BoxFuture<'a, Result<crate::store::Version, StoreError>> {
+            async move {
+                if name == crate::store::LEASE {
+                    lease_of(&self.0, "first7", 0, false).await;
+                }
+                self.0.save(name, bytes, known).await
+            }
+            .boxed()
+        }
+
+        fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+            self.0.delete(name)
+        }
+    }
+
+    /// 01M3X5TP9CD4NXGPJEGP2Q4RS0: the take of the lease names the
+    /// version that the cut read. A server that writes the lease first
+    /// wins: the cut refuses, and changes nothing.
+    #[tokio::test]
+    async fn a_cut_whose_take_of_the_lease_loses_to_a_server_changes_nothing() {
+        let memory = store().await;
+        lease_of(&memory, "abc123", 0, true).await;
+        let before = objects(&memory).await;
+        let store = Beaten(memory.clone());
+        let error = cut(&store, 2, Mode::Remove).await.unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "cannot cut: a server wrote the lease while the cut took it. The cut removed \
+             nothing. Stop the server first."
+        );
+        assert_eq!(objects(&memory).await, before);
+        // The lease is the lease of the server.
+        let timing = lease::Timing::default();
+        let held = lease::holder(&memory, lease::now_ms(), &timing).await;
+        assert_eq!(held.unwrap().unwrap().id, "first7");
+        assert_eq!(log::replay(&memory).await.unwrap().last, 6);
+    }
+
+    /// A memory store in which a server takes the lease at the first
+    /// delete.
+    struct Raced(Memory);
+
+    impl Store for Raced {
+        fn load<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+            self.0.load(name)
+        }
+
+        fn list<'a>(&'a self, prefix: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+            self.0.list(prefix)
+        }
+
+        fn save<'a>(
+            &'a self,
+            name: &'a str,
+            bytes: Vec<u8>,
+            known: Option<crate::store::Version>,
+        ) -> BoxFuture<'a, Result<crate::store::Version, StoreError>> {
+            self.0.save(name, bytes, known)
+        }
+
+        fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
+            async move {
+                lease_of(&self.0, "late42", 0, false).await;
+                self.0.delete(name).await
+            }
+            .boxed()
+        }
+    }
+
+    /// 01M3X342K007K3Z9G0CYWFKVMA: a server that takes the lease during
+    /// the cut is named after the cut.
+    #[tokio::test]
+    async fn cut_names_a_server_that_took_the_lease_during_the_cut() {
+        let store = Raced(store().await);
+        let removed = cut(&store, 4, Mode::Remove).await.unwrap();
+        assert_eq!(printed(&removed), ["5", "6"]);
+        assert_eq!(removed.held.as_ref().unwrap().id, "late42");
+        let text = cut_text(&removed, 4, Mode::Remove);
+        assert!(
+            text.contains("A server started during the cut: the server instance late42"),
+            "{text}"
+        );
+        assert!(text.ends_with("riff-server log verify"), "{text}");
+    }
+
+    /// 01M3X342NQWZBJPS0GXV98BQME: a chunk that starts before the end of
+    /// the chunk before it. The cut that `verify` names removes that
+    /// chunk, and keeps each record of the chunk before it.
+    #[tokio::test]
+    async fn the_cut_that_verify_names_repairs_a_chunk_that_starts_too_early() {
+        let store = Memory::default();
+        chunk(&store, 1, &[1, 2, 3, 4]).await;
+        chunk(&store, 3, &[3, 4, 5]).await;
+        assert!(log::replay(&store).await.is_err());
+        let verified = verify(&store).await.unwrap();
+        assert_eq!(
+            verified.problems[0].why,
+            "the chunk starts at position 3, and the log needs 5"
+        );
+        assert_eq!((verified.good, verified.bad_log), (Some(4), true));
+
+        let removed = cut(&store, 4, Mode::Remove).await.unwrap();
+        assert_eq!(printed(&removed), ["3", "4", "5"]);
+        // A removed line whose position stays in the log says so.
+        assert!(
+            removed.records[0].ends_with("(a repeat: the record at position 3 stays)"),
+            "{:?}",
+            removed.records
+        );
+        assert!(!removed.records[2].contains("a repeat"));
+        assert_eq!(removed.chunks, [log::chunk_name(3)]);
+        assert_eq!(removed.last, 4);
+        let verified = verify(&store).await.unwrap();
+        assert!(verified.problems.is_empty(), "{:?}", verified.problems);
+        assert_eq!((verified.first, verified.last), (Some(1), Some(4)));
+        assert_eq!(log::replay(&store).await.unwrap().last, 4);
+    }
+
+    /// A cut before the chunk that starts too early removes the records
+    /// of both chunks, and names each line that it removes.
+    #[tokio::test]
+    async fn a_cut_before_a_chunk_that_starts_too_early_names_each_removed_line() {
+        let store = Memory::default();
+        chunk(&store, 1, &[1, 2, 3, 4]).await;
+        chunk(&store, 3, &[3, 4, 5]).await;
+        let removed = cut(&store, 2, Mode::Remove).await.unwrap();
+        assert_eq!(printed(&removed), ["3", "4", "3", "4", "5"]);
+        assert!(
+            removed
+                .records
+                .iter()
+                .all(|line| !line.contains("a repeat"))
+        );
+        assert_eq!(
+            removed.chunks,
+            [log::chunk_name(1), log::chunk_name(3)],
+            "the cut wrote the first chunk again, and deleted the second"
+        );
+        let verified = verify(&store).await.unwrap();
+        assert!(verified.problems.is_empty(), "{:?}", verified.problems);
+        assert_eq!(verified.last, Some(2));
+    }
+
+    /// The chunk `first` of `store`, with the bytes `bad` and a newline
+    /// in the place of its line `line`. The header is line 1.
+    async fn replace_line(store: &Memory, first: u64, line: usize, bad: &[u8]) {
+        let name = log::chunk_name(first);
+        let loaded = store.load(&name).await.unwrap().unwrap();
+        let mut lines: Vec<&[u8]> = loaded.bytes.split(|byte| *byte == b'\n').collect();
+        lines.pop();
+        lines[line - 1] = bad;
+        let mut bytes = lines.join(&b'\n');
+        bytes.push(b'\n');
+        let saved = store.save(&name, bytes, Some(loaded.version));
+        saved.await.unwrap();
+    }
+
+    /// 01M3X342NQWZBJPS0GXV98BQME: a line that is not UTF-8 is one bad
+    /// line. The cut that `verify` names keeps each record before it.
+    #[tokio::test]
+    async fn the_cut_that_verify_names_repairs_a_line_that_is_not_utf8() {
+        let store = store().await;
+        replace_line(&store, 3, 3, b"\xff\xfe not text").await;
+        let before = store.load(&log::chunk_name(3)).await.unwrap().unwrap();
+        assert!(log::replay(&store).await.is_err());
+
+        let verified = verify(&store).await.unwrap();
+        assert_eq!(verified.problems.len(), 1, "{:?}", verified.problems);
+        let problem = &verified.problems[0];
+        assert_eq!(problem.line, Some(3));
+        assert!(
+            problem.why.starts_with("the line is not UTF-8"),
+            "{problem}"
+        );
+        // The record at position 3, before the bad line, is good.
+        assert_eq!((verified.good, verified.bad_log), (Some(3), true));
+        assert_eq!(verified.records, 5);
+
+        let removed = cut(&store, 3, Mode::Remove).await.unwrap();
+        assert_eq!(printed(&removed), ["4", "5", "6"]);
+        assert!(
+            removed.records[0].starts_with("4  (a line that does not read: the line is not UTF-8"),
+            "{:?}",
+            removed.records
+        );
+        // The kept lines have their bytes unchanged.
+        let after = store.load(&log::chunk_name(3)).await.unwrap().unwrap();
+        assert!(before.bytes.starts_with(&after.bytes));
+        assert!(verify(&store).await.unwrap().problems.is_empty());
+        assert_eq!(log::replay(&store).await.unwrap().last, 3);
+    }
+
+    /// A log of one chunk with a line that is not UTF-8: the cut that
+    /// `verify` names is not the whole log.
+    #[tokio::test]
+    async fn a_bad_line_in_the_only_chunk_does_not_cut_the_whole_log() {
+        let store = Memory::default();
+        chunk(&store, 1, &[1, 2, 3, 4]).await;
+        replace_line(&store, 1, 4, b"\xc3\x28").await;
+        let verified = verify(&store).await.unwrap();
+        assert_eq!(verified.good, Some(2));
+        let removed = cut(&store, 2, Mode::Remove).await.unwrap();
+        assert_eq!(printed(&removed), ["3", "4"]);
+        assert_eq!(log::replay(&store).await.unwrap().last, 2);
+    }
+
+    /// A cut after a position that comes after a problem keeps only the
+    /// good part of the log, and says where it ends.
+    #[tokio::test]
+    async fn a_cut_after_a_problem_removes_each_line_from_the_problem() {
+        let store = store().await;
+        replace_line(&store, 3, 3, b"{not json").await;
+        let removed = cut(&store, 5, Mode::Remove).await.unwrap();
+        assert_eq!(printed(&removed), ["4", "5", "6"]);
+        assert_eq!(removed.last, 3);
+        assert_eq!(
+            cut_text(&removed, 5, Mode::Remove),
+            "Removed 3 records and 0 checkpoints after position 3. Threads: acme/app."
+        );
+        assert!(verify(&store).await.unwrap().problems.is_empty());
+    }
+
+    /// A problem before the oldest kept checkpoint: `verify` names no
+    /// cut, and a cut refuses and changes nothing.
+    #[tokio::test]
+    async fn no_cut_repairs_a_problem_before_the_oldest_kept_checkpoint() {
+        let store = store().await;
+        // The chunk 3 holds the positions 3 and 4: the checkpoint needs
+        // the chunk for the position 4.
+        checkpoint_at(&store, 3).await;
+        replace_line(&store, 3, 2, b"{not json").await;
+        let before = objects(&store).await;
+        let verified = verify(&store).await.unwrap();
+        assert_eq!((verified.good, verified.oldest), (Some(2), Some(3)));
+        let text = verified_text(&verified);
+        assert!(text.contains("no cut repairs the log"), "{text}");
+        assert!(!text.contains("log cut"), "{text}");
+
+        let error = cut(&store, 4, Mode::Remove).await.unwrap_err().to_string();
+        assert!(
+            error.starts_with("cannot cut: the log does not read at position 3"),
+            "{error}"
+        );
+        assert_eq!(objects(&store).await, before);
     }
 
     #[tokio::test]
     async fn cut_refuses_a_position_before_the_oldest_kept_checkpoint() {
         let store = store().await;
         checkpoint_at(&store, 4).await;
-        let error = cut(&store, 3).await.unwrap_err();
+        let error = cut(&store, 3, Mode::Remove).await.unwrap_err();
         assert!(
             error
                 .to_string()
@@ -825,7 +1507,7 @@ mod tests {
         );
         assert_eq!(log::replay(&store).await.unwrap().last, 6);
         // A cut at the checkpoint is good.
-        assert_eq!(cut(&store, 4).await.unwrap().records.len(), 2);
+        assert_eq!(cut(&store, 4, Mode::Remove).await.unwrap().records.len(), 2);
     }
 
     /// A chunk with the records `positions` after its header, at
@@ -861,7 +1543,7 @@ mod tests {
         );
         assert_eq!((verified.good, verified.bad_log), (Some(6), true));
 
-        let removed = cut(&store, 4).await.unwrap();
+        let removed = cut(&store, 4, Mode::Remove).await.unwrap();
         assert_eq!(printed(&removed), ["5", "6", "3"]);
         // No record after the position stays.
         assert!(store.load(&log::chunk_name(5)).await.unwrap().is_none());
@@ -885,7 +1567,7 @@ mod tests {
         assert_eq!((verified.good, verified.bad_log), (Some(5), true));
         assert!(verified_text(&verified).ends_with("riff-server log cut --after 5"));
 
-        let removed = cut(&store, 5).await.unwrap();
+        let removed = cut(&store, 5, Mode::Remove).await.unwrap();
         assert_eq!(printed(&removed), ["2"]);
         assert!(verify(&store).await.unwrap().problems.is_empty());
         assert_eq!(log::replay(&store).await.unwrap().last, 5);
@@ -895,7 +1577,7 @@ mod tests {
     async fn cut_removes_each_line_after_a_jump_and_a_chunk_with_a_bad_header() {
         let store = store().await;
         chunk(&store, 3, &[3, 9, 5]).await;
-        let removed = cut(&store, 3).await.unwrap();
+        let removed = cut(&store, 3, Mode::Remove).await.unwrap();
         assert_eq!(printed(&removed), ["9", "5", "5", "6"]);
         assert_eq!(log::replay(&store).await.unwrap().last, 3);
 
@@ -910,7 +1592,7 @@ mod tests {
         store.save(&name, bad.into_bytes(), None).await.unwrap();
         let verified = verify(&store).await.unwrap();
         assert_eq!((verified.good, verified.bad_log), (Some(2), true));
-        let removed = cut(&store, 2).await.unwrap();
+        let removed = cut(&store, 2, Mode::Remove).await.unwrap();
         assert_eq!(printed(&removed), ["3"]);
         assert!(verify(&store).await.unwrap().problems.is_empty());
     }
@@ -918,7 +1600,12 @@ mod tests {
     #[tokio::test]
     async fn cut_takes_the_largest_position() {
         let store = store().await;
-        assert_eq!(cut(&store, u64::MAX).await.unwrap(), Cut::default());
+        let nothing = Cut {
+            last: 6,
+            ..Cut::default()
+        };
+        let removed = cut(&store, u64::MAX, Mode::Remove).await.unwrap();
+        assert_eq!(removed, nothing);
     }
 
     #[tokio::test]
@@ -935,7 +1622,7 @@ mod tests {
         let verified = verify(&store).await.unwrap();
         assert_eq!(verified.good, Some(6));
 
-        let removed = cut(&store, 6).await.unwrap();
+        let removed = cut(&store, 6, Mode::Remove).await.unwrap();
         assert_eq!(removed.records.len(), 1);
         assert!(removed.records[0].starts_with("7  (a line that does not read"));
         assert!(verify(&store).await.unwrap().problems.is_empty());

@@ -774,16 +774,40 @@
   of a position. It does not stop at the first problem. For a problem
   in a chunk, it names the last good position and the cut that removes
   each record after it. It exits with 1 when it finds a problem.
-- **01M3TJWHVN730ZWCWHT9ER186R** `riff-server log cut --after POSITION`
-  deletes each record and each checkpoint after the position. It
-  prints each record that it removes, and the threads of these
-  records. It keeps the bytes of each line that stays. In a chunk, it
-  keeps only the first lines whose positions are right, up to the
-  position, and removes each line after them, also a line with a
-  lower position. It removes a chunk whose header does not read. It
-  deletes the chunks from the end of the log to its start, so a cut
-  that stops leaves no gap. It refuses a position before the oldest
-  kept checkpoint.
+- **01M3TJWHVN730ZWCWHT9ER186R** `riff-server log cut --after POSITION
+  --yes` deletes each record and each checkpoint after the position.
+  It prints each record and each checkpoint that it removes, and the
+  threads of these records. It keeps the bytes of each line that
+  stays. It removes a chunk whose header does not read. It deletes the
+  chunks from the end of the log to its start, so a cut that stops
+  leaves no gap. It refuses a position before the oldest kept
+  checkpoint.
+- **01M3X342G8KF2W06PABGXTERMZ** `riff-server log cut` with no `--yes`
+  removes nothing. It prints each record and each checkpoint that the
+  cut removes, and the command with `--yes`.
+- **01M3X342K007K3Z9G0CYWFKVMA** `riff-server log cut --yes` refuses
+  while the lease is live (01M3X342DH98YEZ3X5CND43DGD). The refusal
+  names the instance that holds the lease. A cut with no `--yes` runs,
+  and names that instance.
+- **01M3X5TP9CD4NXGPJEGP2Q4RS0** `riff-server log cut --yes` takes the
+  lease before it reads the log: it writes an ID of its own to the
+  lease, only when the lease is the version that it read. When an
+  instance wrote the lease in between, the cut refuses and changes
+  nothing. After a lease that ended by its age, the cut then waits 10
+  seconds and reads the lease again. The cut ends its lease after its
+  work, also after a refusal. When an instance took the lease during
+  the cut, the command names the instance and exits with 1. A cut with
+  no `--yes` does not write the lease.
+- **01M3X342NQWZBJPS0GXV98BQME** `log verify` and `log cut` read each
+  line of a chunk by its bytes, so a line that is not UTF-8 is one bad
+  line. The good part of the log is its first records that read and
+  have the right positions. `log cut` keeps only the good part, up to
+  the position. It removes each line after the first problem, also a
+  line with a lower position, and each later chunk. It prints only the
+  lines that it removes. So the cut that `log verify` names repairs
+  the log, and removes no record before the first problem. When the
+  first problem is before the oldest kept checkpoint, `log verify`
+  names no cut, and `log cut` refuses.
 - **01M3TJWHYB9FTZ3G8G227V0N05** With a bucket, a tool of the log takes
   its access token from the metadata server of Cloud Run. When that
   server does not answer in 2 seconds, the tool takes the token of the
@@ -1008,6 +1032,29 @@
   gives it to serve. The writer checks it before each try of a chunk.
 - **R156** A new instance starts to serve at a whole second. When the
   lease shows another ID after its wait, it exits and does not serve.
+- **01M3X34282SG0DJ6X34F90HS26** The lease also holds a time. An
+  instance writes the time when it takes the lease, and again every 30
+  seconds. While a write of the time that is due fails, the instance
+  does not serve (R139).
+- **01M3X5TPBMF81TDVZ7Q4NVXBQX** An instance whose last good write of
+  the time to the lease is 90 seconds old stops for good, as in R140.
+  It does not read or write the lease again, and it does not serve
+  again from its state in memory. It counts the 90 seconds on the
+  monotonic clock and on the wall clock. `riff-server` then exits at
+  once with an error that says why, so that a new instance loads the
+  state from the store. A shorter fault gives 503, and the instance
+  goes on.
+- **01M3X342ARX5Y7R9ZJDT12R9A1** On a shutdown (R129), an instance that
+  holds the lease marks the lease as ended, after it saved.
+- **01M3X342DH98YEZ3X5CND43DGD** A lease is live until its instance
+  ends it, and for 90 seconds after its time. A tool reads the time
+  with its own clock, which can be at most 50 seconds ahead of the
+  clock of the instance. A lease with no time is from an older build.
+  It is live until a person deletes the object. The refusal of a tool
+  names the object.
+- **01M3X342RCXX2GGK879VYK06TS** The shared server runs with CPU always
+  on and with exactly one instance. So an instance writes the time to
+  the lease also when it gets no call.
 
 ## Sessions
 

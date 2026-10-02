@@ -80,6 +80,8 @@ pub const LEASE: Timing = Timing {
     read_every: Duration::from_millis(50),
     valid_for: Duration::from_millis(500),
     exit_after: Duration::from_secs(1),
+    renew_every: Duration::from_secs(30),
+    ends_after: Duration::from_secs(90),
 };
 
 /// A short time between two writes of the token store, so that a test
