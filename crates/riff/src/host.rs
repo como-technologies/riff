@@ -91,7 +91,7 @@
 //! # A change of the settings
 //!
 //! Each [`reap::EVERY`] the host reads the worker settings of its
-//! machine ([`Mine`]). When the limit or the floor changes, it sets its
+//! machine (`Mine`). When the limit or the floor changes, it sets its
 //! status at once, so the lead sees the new value at its next look and
 //! gets the message of the change from its own rollout
 //! ([`crate::rollout`]). When the MCP servers of the workers change, the
