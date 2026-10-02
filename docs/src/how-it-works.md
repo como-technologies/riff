@@ -2960,6 +2960,11 @@ settings file does not change. Each worker joins the riff and finds its
 own work. A second `riff workers start` adds panes to the same window.
 Outside tmux, the command says that it needs tmux and starts nothing.
 
+A worker starts in the main clone. Where riff is off in the main
+clone, riff starts no worker: not with this command, not by itself,
+and not on a workers host. The command then names `riff enable`. See
+[Turn riff on or off for a repository](#turn-riff-on-or-off-for-a-repository).
+
 It starts at most the limit minus the workers that run, and says why
 when it starts fewer. A worker never starts workers. In Claude Code,
 only your lead can start them.

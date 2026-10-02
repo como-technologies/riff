@@ -1541,10 +1541,10 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
 /// tmux, it starts nothing and fails (01M3JD3973J7A9BG8G9EP9TVDP).
 async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
     // A worker in a repository with riff off has no riff
-    // (01M3XY2T542DCHBN95H9PX4AGQ).
-    let here = enable::State::here();
-    if !here.on {
-        eprintln!("{}", text::workers_off(&here));
+    // (01M3XY2T542DCHBN95H9PX4AGQ). `worker::start` checks it for each
+    // start; here the refusal comes before each other one.
+    if let Some(why) = worker::off(&identity::working_dir()?) {
+        eprintln!("{why}");
         std::process::exit(1);
     }
     if let Some(why) = start_refusal(server).await {

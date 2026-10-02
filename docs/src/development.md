@@ -720,8 +720,9 @@ It builds the workspace, and runs the debug `riff-server` of the tree
 on the first free port from 7900. Its log goes to
 `target/dev-server.log`. Then it starts Claude Code with the plugin of
 the tree and the debug `riff` of the tree. The installed plugin is off
-in that session only. When you end Claude Code, `just dev` stops the
-server. It changes nothing that is installed.
+in that session only. `just dev` sets `RIFF_ON=1`, so riff is on in the
+session with no `riff enable`. When you end Claude Code, `just dev`
+stops the server. It changes nothing that is installed.
 
 - Options after `dev` go to `riff-server`. Do not give `--listen`.
 - In the dev session, `riff server` names the server of the tree and

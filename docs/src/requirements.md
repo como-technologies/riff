@@ -254,7 +254,8 @@
   session that runs, so it goes on.
 - **01M3XY2SWEK0N8MC3MY4TMYTD3** `RIFF_ON=1` turns riff on for the
   processes that have it, also outside a repository. `just dev` and
-  the helper crate `isolated` set it.
+  the helper crate `isolated` set it. A worker that such a process
+  starts gets `RIFF_ON=1`.
 - **01M3XY2SYKG91SAB2FS1QNCZ2H** The state is obvious. The last line
   of `riff connect claude` says where riff is on, or
   `riff is installed but off`, with the command to change it.
@@ -268,8 +269,10 @@
   says that the session has no riff tools, how to turn the server on,
   and to tell the lead with `riff tell lead`. The status line says it
   too.
-- **01M3XY2T542DCHBN95H9PX4AGQ** `riff workers start` starts nothing
-  where riff is off, and names `riff enable`.
+- **01M3XY2T542DCHBN95H9PX4AGQ** riff starts no worker where riff is
+  off in the main clone of the repository: `riff workers start`
+  starts nothing and names `riff enable`, and the rollout of the lead
+  and a workers host start none.
 - **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
   people use under the headings Get started, Work in the riff, Pull
   requests, Lead and Members, in that order. Each command has one

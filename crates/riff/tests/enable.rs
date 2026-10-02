@@ -14,6 +14,8 @@ use std::time::Duration;
 use rmcp::ServiceExt;
 use serde_json::{Value, json};
 
+mod book;
+
 const ID: &str = "a6cf2205-d54a-4c1e-9b1f-2e3d4c5b6a7f";
 
 /// A riff that does not answer.
@@ -604,6 +606,88 @@ async fn riff_on_turns_riff_on_for_a_process() {
         .output()
         .unwrap();
     assert!(stdout(&out).contains("riff on (RIFF_ON=1)"), "{out:?}");
+}
+
+/// The how-tos of the book name real commands and real flags: each
+/// `riff` command of the part runs with `--help`, and the help of the
+/// command has each flag of the how-tos.
+#[test]
+fn the_how_tos_of_the_book_name_real_commands() {
+    let connect = book::commands_of_part("how-it-works.md", "Connect");
+    for command in [
+        "riff enable",
+        "riff disable",
+        "riff enable --shared",
+        "riff enable --global",
+        "riff connect claude --scope repo",
+        "riff connect claude --scope global",
+        "riff connect claude --scope none",
+        "riff server",
+    ] {
+        assert!(connect.iter().any(|c| c == command), "{command}: {connect:?}");
+    }
+    let riff: Vec<String> = connect
+        .into_iter()
+        .filter(|c| c.starts_with("riff "))
+        .collect();
+    book::each_is_real(&riff);
+
+    for (page, heading, commands) in [
+        ("start-a-riff.md", "Turn riff on in a project", ["riff enable"]),
+        ("join-a-riff.md", "Turn riff on in your project", ["riff enable"]),
+        (
+            "start-a-team-riff.md",
+            "Turn riff on in the project",
+            ["riff enable --shared"],
+        ),
+    ] {
+        let found = book::commands_of_part(page, heading);
+        assert_eq!(found, commands, "{page}: {heading}");
+        book::each_is_real(&found);
+    }
+
+    let help = |args: &[&str]| {
+        let out = Isolated::shared().riff().args(args).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let part = book::part("how-it-works.md", "Connect");
+    for command in ["enable", "disable"] {
+        let text = help(&[command, "--help"]);
+        for flag in ["--local", "--shared", "--global"] {
+            assert!(text.contains(flag), "riff {command} --help: {flag}");
+            assert!(part.contains(flag), "the book: {flag}");
+        }
+    }
+    let text = help(&["connect", "claude", "--help"]);
+    assert!(text.contains("--scope"), "{text}");
+    for scope in ["repo", "global", "none"] {
+        assert!(text.contains(scope), "riff connect claude --help: {scope}");
+    }
+}
+
+/// 01M3XY2T542DCHBN95H9PX4AGQ: `riff workers start` starts nothing
+/// where riff is off, and names `riff enable`. After `riff enable`, the
+/// refusal is gone: the next one is that the person is not in tmux.
+#[test]
+fn riff_workers_start_starts_nothing_where_riff_is_off() {
+    let machine = Machine::new();
+    let repo = machine.repo("app");
+    let start = || {
+        let mut cmd = machine.riff(&repo, &["workers", "start", "1"]);
+        let out = cmd.env_remove("TMUX").output().unwrap();
+        assert!(!out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    assert_eq!(
+        start(),
+        "riff starts no worker here: riff off. To turn it on: riff enable\n"
+    );
+    assert_eq!(machine.git_calls(), "", "riff ran git where it is off");
+    machine.run(&repo, &["enable"]);
+    let on = start();
+    assert!(!on.contains("riff enable"), "{on}");
+    assert!(on.contains("tmux"), "{on}");
 }
 
 /// 01M3XY2ST8R67SKTXJECAYJZRX: `riff mcp` has no tool where riff is

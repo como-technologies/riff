@@ -474,6 +474,8 @@ fn connect_leaves_another_statusline() {
     let out = connect(&bin, tmp.path(), tmp.path()).success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
     assert!(stdout.contains("has another status line"), "{stdout}");
+    // It prints the command to add riff to that status line.
+    assert!(stdout.contains("calls `riff statusline`"), "{stdout}");
     assert!(
         stdout.contains("\"Find the pane of a session\""),
         "{stdout}"

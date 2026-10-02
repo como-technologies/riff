@@ -284,6 +284,31 @@ impl State {
         }
     }
 
+    /// The state where a worker of `dir` starts: the main clone of the
+    /// repository of `dir`. The shared settings of a linked worktree
+    /// can turn riff on there while the main clone has it off
+    /// (01M3XY2T542DCHBN95H9PX4AGQ).
+    ///
+    /// ```
+    /// use riff::enable::{State, set};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let main = dir.path().join("app");
+    /// let tree = main.join(".claude/worktrees/issue-12");
+    /// let gitdir = main.join(".git/worktrees/issue-12");
+    /// std::fs::create_dir_all(&gitdir)?;
+    /// std::fs::create_dir_all(&tree)?;
+    /// std::fs::write(tree.join(".git"), format!("gitdir: {}\n", gitdir.display()))?;
+    /// set(&tree.join(".claude/settings.json"), Some(true))?;
+    /// assert!(State::of(&tree, None, false).on);
+    /// assert!(!State::of_workers(&tree, None, false).on);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn of_workers(dir: &Path, user: Option<&Path>, forced: bool) -> State {
+        let home = Repo::of(dir).map(|repo| repo.home().to_owned());
+        State::of(home.as_deref().unwrap_or(dir), user, forced)
+    }
+
     /// The state in the working directory of this process, with the
     /// user settings of Claude Code and `RIFF_ON` of the environment.
     /// With no working directory, riff is off.
