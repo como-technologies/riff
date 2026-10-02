@@ -430,13 +430,11 @@ impl When {
 
 #[test]
 fn a_new_session_joins_its_repository_and_is_the_first_lead() {
-    given(&[])
-        .when(&ann(), Register)
-        .then(&[
-            joined(&ann(), &repo()),
-            started(&ann(), StartReason::Join, false),
-            lead_set(&ann()),
-        ]);
+    given(&[]).when(&ann(), Register).then(&[
+        joined(&ann(), &repo()),
+        started(&ann(), StartReason::Join, false),
+        lead_set(&ann()),
+    ]);
 }
 
 #[test]
@@ -1180,9 +1178,7 @@ fn a_register_with_another_worker_mark_makes_session_started_with_the_reason_joi
     given(&team())
         .when(&ann(), RegisterWorker)
         .then(&[started(&ann(), StartReason::Join, true)]);
-    worker_team()
-        .when(&ann2(), RegisterWorker)
-        .then(&[]);
+    worker_team().when(&ann2(), RegisterWorker).then(&[]);
     worker_team()
         .live(&[ann()])
         .when(&ann2(), Register)
@@ -1238,7 +1234,10 @@ fn a_start_makes_the_first_lead_but_not_for_a_worker() {
     let alone = [joined(&ann(), &repo())];
     given(&alone)
         .when(&ann(), Start(StartReason::Process, false))
-        .then(&[started(&ann(), StartReason::Process, false), lead_set(&ann())]);
+        .then(&[
+            started(&ann(), StartReason::Process, false),
+            lead_set(&ann()),
+        ]);
     given(&alone)
         .when(&ann(), Start(StartReason::Process, true))
         .then(&[started(&ann(), StartReason::Process, true)]);

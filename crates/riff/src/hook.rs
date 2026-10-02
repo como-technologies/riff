@@ -828,7 +828,11 @@ mod tests {
             assert_eq!(source.reason(), reason, "{name}");
             assert_eq!(source.is_new_start(), reason.is_some(), "{name}");
             let fresh = reason.is_some_and(StartReason::is_fresh);
-            assert_eq!(fresh, matches!(name, "startup" | "clear" | "later"), "{name}");
+            assert_eq!(
+                fresh,
+                matches!(name, "startup" | "clear" | "later"),
+                "{name}"
+            );
         }
         assert_eq!(SOURCES.len(), 4, "each source has a row");
     }

@@ -18,8 +18,7 @@ use std::time::Instant;
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::record::{Change, Claimed, Member, Record, Released};
 use riff_core::wire::{
-    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply,
-    RiffState,
+    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply, RiffState,
 };
 use serde::{Deserialize, Serialize};
 
