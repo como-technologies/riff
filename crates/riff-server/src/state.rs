@@ -1454,6 +1454,8 @@ impl State {
     /// let brett: SessionUri = "riff://brett@kadomony/como-technologies/strata?session=b1".parse()?;
     /// let now = Instant::now();
     /// let mut state = State::default();
+    /// // The first session of its user that registers is the lead.
+    /// state.register(&lead, now);
     /// state.register(&brett, now);
     /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
     /// state.pause_repository(&brett, RiffState::Paused, now).unwrap();

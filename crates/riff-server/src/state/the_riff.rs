@@ -60,6 +60,8 @@ use super::{GONE, SESSION_EXPIRY};
 /// let mut state = State::default();
 /// // A new riff is paused.
 /// assert_eq!(state.pauses().check(&riff).unwrap().0, Scope::Riff);
+/// // The first session of its user that registers is the lead.
+/// state.register(&mike, now);
 /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
 /// assert!(state.pauses().check(&riff).is_none());
 ///
