@@ -11,8 +11,10 @@
 //!
 //! The titles of the issues and the current wave come from one
 //! `gh issue list` of the open issues ([`Issues`]). riff keeps them for
-//! [`ISSUES_TTL`]. With no `gh`, or when `gh` fails, the table has no
-//! titles and no board.
+//! [`ISSUES_TTL`], then reads them again. With no `gh`, the table has
+//! no titles and no board. When a later read of `gh` fails, riff keeps
+//! the last issues ([`Issues::newest`], 01M3ZC09FA9DZPTHK31XECZ566): a
+//! network fault stops `gh` too.
 //!
 //! The rows are a tree for each person: the person, each host, and each
 //! session on the host (01M3NT4M5D36KTZ5XZMDP6QFQT). A session gets only
@@ -37,6 +39,34 @@
 //!         T->>T: draw the table in place
 //!     end
 //! ```
+//!
+//! # A look that fails
+//!
+//! A look is the two calls `riff` and `who`. A laptop sleeps, and the
+//! Wi-Fi drops or gets a new address. So after one good look, a look
+//! that fails does not end `riff top`
+//! (01M3Z8FXE2DY34ZP75WJE1S8HR), when a new try can repair the fault
+//! ([`crate::api::passes`]). A look also fails when it gets no reply
+//! in [`LOOK_WAIT`]: a dead connection can give no error. `riff top`
+//! keeps the last table, shows [`Top::fault`] as its first line, and
+//! looks again at its interval, with new connections
+//! ([`crate::api::Api::reconnected`]). The line goes at the next good
+//! look.
+//!
+//! `riff top --once`, the first look, and a fault that a new try cannot
+//! repair end `riff top` with the error.
+//!
+//! ```mermaid
+//! stateDiagram-v2
+//!     [*] --> Good: the first look is good
+//!     [*] --> [*]: the first look fails, the error
+//!     Good --> Good: a good look, a new table
+//!     Good --> Fault: a look fails, a new try can repair it
+//!     Fault --> Fault: the same, the last table and the line
+//!     Fault --> Good: a good look, a new table and no line
+//!     Good --> [*]: another fault, the error
+//!     Fault --> [*]: another fault, the error
+//! ```
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -48,12 +78,16 @@ use riff_core::wire::{Person, PersonRole, RiffOwner, RiffReply, SessionInfo, Ses
 use serde::Deserialize;
 
 use crate::state;
-use crate::style::{BOLD, MUTED, session as session_style, styled};
+use crate::style::{BOLD, ERROR, MUTED, session as session_style, styled};
 use crate::text::safe;
 use crate::view;
 
 /// The time between two draws of `riff top` with no message.
 pub const REFRESH: Duration = Duration::from_secs(3);
+
+/// The longest time that `riff top` waits for one look, when it runs
+/// until stopped (01M3Z8FXE2DY34ZP75WJE1S8HR).
+pub const LOOK_WAIT: Duration = Duration::from_secs(10);
 
 /// How long `riff top` keeps the issues of `gh`.
 pub const ISSUES_TTL: Duration = Duration::from_secs(60);
@@ -156,6 +190,26 @@ impl Issues {
         }
         Self::parse(&String::from_utf8_lossy(&out.stdout))
     }
+
+    /// The issues after a new read of `gh`: `new`, or `last` when `gh`
+    /// failed (01M3ZC09FA9DZPTHK31XECZ566). So the titles and the board
+    /// stay while the network is away.
+    ///
+    /// ```
+    /// use riff::top::Issues;
+    ///
+    /// let json = r#"[{"number": 7, "title": "Fix", "milestone": {"title": "Wave 3"}}]"#;
+    /// let last = Issues::parse(json);
+    /// // `gh` failed: the last issues stay.
+    /// assert_eq!(Issues::newest(last.clone(), None), last);
+    /// // `gh` gave no open issue: the board is empty.
+    /// let new = Issues::parse("[]");
+    /// assert_eq!(Issues::newest(last, new.clone()), new);
+    /// assert_eq!(Issues::newest(None, None), None);
+    /// ```
+    pub fn newest(last: Option<Issues>, new: Option<Issues>) -> Option<Issues> {
+        new.or(last)
+    }
 }
 
 /// The N of a milestone `Wave N`, or `Wave N: NAME`.
@@ -211,6 +265,10 @@ pub struct Top<'a> {
     pub repo: Option<&'a str>,
     /// The width of the terminal in columns: no line is wider.
     pub width: usize,
+    /// The line of a look that failed ([`crate::text::top_fault`]),
+    /// while the table is the one of the last good look
+    /// (01M3Z8FXE2DY34ZP75WJE1S8HR).
+    pub fault: Option<&'a str>,
 }
 
 /// One line of the tree: a plain lead-in, then its parts, each with its
@@ -421,6 +479,7 @@ impl Top<'_> {
     ///     issues: issues.as_ref(),
     ///     repo: Some("o/r"),
     ///     width: 80,
+    ///     fault: None,
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// assert!(text.starts_with("riff   running\nowner  mike (m@x.io)\nbuild  "), "{text}");
@@ -452,6 +511,14 @@ impl Top<'_> {
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// assert!(text.contains("\n   │    working on #12 Show the wave in…\n"), "{text}");
     /// assert!(text.lines().all(|l| l.chars().count() <= 40), "{text}");
+    ///
+    /// // While the looks fail, the line of the fault is first, and the
+    /// // table of the last good look stays.
+    /// top.width = 80;
+    /// let table = anstream::adapter::strip_str(&top.view()).to_string();
+    /// top.fault = Some("riff: no good look since 21:35:07: cannot reach riff-server");
+    /// let text = anstream::adapter::strip_str(&top.view()).to_string();
+    /// assert_eq!(text, format!("{}\n{table}", top.fault.unwrap()));
     /// ```
     pub fn view(&self) -> String {
         let here = self.repo.and_then(|repo| repo.parse().ok());
@@ -465,6 +532,9 @@ impl Top<'_> {
         }
         facts.extend(view::build_facts(self.server));
         let mut out = String::new();
+        if let Some(fault) = self.fault {
+            let _ = writeln!(out, "{}", fit(&styled(ERROR, &safe(fault)), self.width));
+        }
         for line in view::facts(&facts).lines().chain(paused.as_deref()) {
             let _ = writeln!(out, "{}", fit(line, self.width));
         }
@@ -692,7 +762,7 @@ fn short(s: &SessionInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style::{DIM, ERROR, GOOD};
+    use crate::style::{DIM, GOOD};
 
     fn plain(line: &Line, width: usize) -> String {
         anstream::adapter::strip_str(&line.render(width)).to_string()
@@ -751,5 +821,24 @@ mod tests {
     fn no_wave_milestone_gives_no_wave() {
         let issues = Issues::parse(r#"[{"number": 1, "title": "a", "milestone": null}]"#);
         assert_eq!(issues.unwrap().wave, None);
+    }
+
+    /// A `gh` that fails keeps the last issues, and a `gh` that works
+    /// replaces them (01M3ZC09FA9DZPTHK31XECZ566).
+    #[test]
+    fn a_read_of_gh_that_fails_keeps_the_last_issues() {
+        let wave = |n: u64| {
+            let json = format!(
+                r#"[{{"number": {n}, "title": "a", "milestone": {{"title": "Wave {n}"}}}}]"#
+            );
+            Issues::parse(&json)
+        };
+        let mut issues = wave(9);
+        for read in [None, None, wave(10), None] {
+            issues = Issues::newest(issues, read);
+        }
+        assert_eq!(issues, wave(10));
+        // With no `gh` from the start, there are no issues.
+        assert_eq!(Issues::newest(None, None), None);
     }
 }

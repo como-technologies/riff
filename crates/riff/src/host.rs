@@ -172,7 +172,11 @@ pub async fn in_time<T>(
 ) -> Result<T> {
     match tokio::time::timeout(wait, call).await {
         Ok(result) => result,
-        Err(_) => bail!(text::no_reply(base, wait)),
+        Err(_) => Err(crate::api::NoReply {
+            base: base.to_owned(),
+            wait,
+        }
+        .into()),
     }
 }
 

@@ -993,6 +993,41 @@ host, a blocked session comes first. The titles and the wave come from
 
 The lead can keep it in a tmux pane beside `riff tail`.
 
+### When riff cannot reach the server
+
+A laptop sleeps, or the Wi-Fi drops. `riff top` stays open. It keeps
+the last table, and its first line is red:
+
+```text
+riff: no good look since 21:35:07: riff-server gave no reply in 10 seconds
+```
+
+The line has the time of the last good look, then the fault. The fault
+can be another text, for example `cannot reach riff-server`. riff
+tries a look again for 10 seconds before the look fails. So the line
+comes about 13 seconds after the fault starts.
+
+The table under the line is old. It keeps its titles and its board,
+also when `gh` fails too. `riff top` looks again every 3 seconds. You
+do nothing: when the server is back, the line goes and the table is
+new.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Good: the first look is good
+    Good --> Good: a good look, a new table
+    Good --> Fault: riff cannot reach the server
+    Fault --> Fault: the last table, with the red line
+    Fault --> Good: the server is back, a new table
+```
+
+`riff top` still ends with the error in these cases:
+
+- The first look fails. Check the server, then start `riff top` again.
+- A new try cannot repair the fault, for example when your sign-in
+  ended. Do what the error says.
+- You ran `riff top --once`.
+
 ### Print the table once
 
 To print one table and exit, for example in a pipe:
@@ -1426,8 +1461,10 @@ It looks at pull request 40 every 30 seconds (`--every SECONDS`) until
 GitHub merges it, and then prints the merge commit. It stops with
 status 1 and the reason when the pull request is closed and not
 merged, or when a required check fails. A session runs it as a
-background task. After the merge, it adds the total of the tokens to
-the issue: see
+background task. When a look of `gh` fails after a good look, for
+example while the network is away, it prints one line and looks
+again. After the merge, it adds the total of the tokens to the issue:
+see
 [See the tokens of an issue](development.md#see-the-tokens-of-an-issue).
 
 ### Report a verify

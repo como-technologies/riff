@@ -160,6 +160,50 @@ async fn pr_wait_waits_while_the_pull_request_is_open() {
     assert_eq!(log.matches("gh pr view 40 --json state").count(), 3);
 }
 
+/// After one good look, a look of `gh` that fails does not end the
+/// wait. It prints one line, and looks again
+/// (01M3Z8GG5EGEYAVEXG0HS46ACT).
+#[tokio::test]
+async fn pr_wait_goes_on_after_a_look_that_fails() {
+    let open_away_merged = r#"*'pr view 40 --json state,mergeCommit'*)
+    n=$(cat "$dir/views" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$dir/views"
+    if [ $n -eq 1 ]; then echo '{"state":"OPEN","mergeCommit":null}'
+    elif [ $n -lt 4 ]; then echo 'error connecting to api.github.com' >&2; exit 1
+    else echo '{"state":"MERGED","mergeCommit":{"oid":"9f8e7d6c"}}'; fi ;;
+*'pr checks 40 --required --json name,bucket'*) echo '[{"name":"Gate","bucket":"pass"}]' ;;"#;
+    let machine = Machine::new(open_away_merged).await;
+    let out = machine
+        .run("s1", &["pr", "wait", "40", "--every", "1"])
+        .await;
+    let stderr = text(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(text(&out.stdout), "9f8e7d6c\n");
+    let line = "riff: cannot look at pull request #40: gh pr view 40 --json state,mergeCommit: \
+                error connecting to api.github.com. Trying again every 1 seconds.";
+    assert_eq!(stderr.matches(line).count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("cannot look at").count(), 1, "{stderr}");
+    let log = log(machine.bin.path());
+    assert_eq!(log.matches("gh pr view 40 --json state").count(), 4);
+}
+
+/// When the first look of `gh` fails, the wait ends with the error
+/// (01M3Z8GG5EGEYAVEXG0HS46ACT).
+#[tokio::test]
+async fn pr_wait_ends_when_the_first_look_fails() {
+    let away =
+        r#"*'pr view 40 --json state,mergeCommit'*) echo 'no pull requests found' >&2; exit 1 ;;"#;
+    let machine = Machine::new(away).await;
+    let out = machine
+        .run("s1", &["pr", "wait", "40", "--every", "1"])
+        .await;
+    let stderr = text(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("no pull requests found"), "{stderr}");
+    assert!(!stderr.contains("cannot look at"), "{stderr}");
+    let log = log(machine.bin.path());
+    assert_eq!(log.matches("gh pr view 40 --json state").count(), 1);
+}
+
 #[tokio::test]
 async fn pr_wait_fails_for_a_closed_pull_request() {
     let closed = r#"*'pr view 40 --json state,mergeCommit'*) echo '{"state":"CLOSED","mergeCommit":null}' ;;"#;

@@ -2415,7 +2415,9 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
 /// [`riff::top::REFRESH`] and after each message of `thread` until
 /// stopped (01M3NB54P1RBHTA5TKXP8BMY3K). It makes only read calls
 /// (01M3NB589WMPRSAR43BSG9SP41). Until stopped, it runs a new binary
-/// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+/// (01M3NT6WXGCNKW3EQ7MBJDQTR4), and it goes on after a look that
+/// fails: see "A look that fails" in [`riff::top`]
+/// (01M3Z8FXE2DY34ZP75WJE1S8HR).
 async fn top(api: &Api, me: &SessionUri, thread: Option<ThreadName>, once: bool) -> Result<()> {
     if once {
         return draw_top(api, me, thread, once).await;
@@ -2447,13 +2449,46 @@ async fn draw_top(
         .map(|t| Box::pin(follow(|| api.tail(me, t), RETRY)));
     let clear = !once && std::io::stdout().is_terminal();
     let repo = thread.as_ref().map(ToString::to_string);
+    // The client of the looks. The stream keeps `api`: each stream has
+    // a connection of its own.
+    let mut calls = api.clone();
+    // The last good look, and its time.
+    let mut last = None;
     loop {
-        let pauses = api.pauses(me).await?;
-        let mut who = api.roster(me, false).await?;
-        riff::state::fill(&mut who.sessions, pauses.state);
+        let look = async {
+            let pauses = calls.pauses(me).await?;
+            let mut who = calls.roster(me, false).await?;
+            riff::state::fill(&mut who.sessions, pauses.state);
+            anyhow::Ok((pauses, who))
+        };
+        let looked = if once {
+            look.await
+        } else {
+            riff::host::in_time(api.base(), riff::top::LOOK_WAIT, look).await
+        };
+        // After one good look, a fault that a new try can repair keeps
+        // the last table (01M3Z8FXE2DY34ZP75WJE1S8HR).
+        let failed = match looked {
+            Ok(look) => {
+                last = Some((look, chrono::Local::now()));
+                None
+            }
+            Err(e) if last.is_some() && api::passes(&e) => {
+                // A dead connection can stay in the pool.
+                calls = api.reconnected();
+                Some(e)
+            }
+            Err(e) => return Err(e),
+        };
+        // A fault with no good look ended the loop above.
+        let Some(((pauses, who), at)) = &last else {
+            continue;
+        };
+        let now = chrono::Local::now();
+        let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
         let server = riff::api::server_build();
         let top = riff::top::Top {
-            pauses: &pauses,
+            pauses,
             owner: &who.owner,
             server: server.as_ref(),
             sessions: &who.sessions,
@@ -2461,6 +2496,7 @@ async fn draw_top(
             issues: issues.as_ref(),
             repo: repo.as_deref(),
             width: textwrap::termwidth(),
+            fault: fault.as_deref(),
         };
         if clear {
             // Home and erase: the table draws again in place.
@@ -2484,7 +2520,9 @@ async fn draw_top(
             () = message => {}
         }
         if fetched.elapsed() >= riff::top::ISSUES_TTL {
-            issues = fetch(thread.clone()).await?;
+            // A `gh` that fails keeps the last issues
+            // (01M3ZC09FA9DZPTHK31XECZ566).
+            issues = riff::top::Issues::newest(issues, fetch(thread.clone()).await?);
             fetched = Instant::now();
         }
     }

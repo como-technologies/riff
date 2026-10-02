@@ -36,6 +36,71 @@ pub const WATCH_RUNS: &str = "riff: a riff watch runs for this session already, 
 you. This watch stops. Do not start the watch again now. Start it again only when the task of \
 that watch ends.";
 
+/// The line of `riff top` while its looks fail
+/// (01M3Z8FXE2DY34ZP75WJE1S8HR): the time of the last good look `last`,
+/// then the fault. The time has the date when `now` is another day.
+/// The line is short, so that it fits in 80 columns: it does not name
+/// `base`, the URL of the server.
+///
+/// ```
+/// use chrono::{FixedOffset, TimeZone};
+/// use riff::text::top_fault;
+///
+/// let zone = FixedOffset::east_opt(0).unwrap();
+/// let last = zone.with_ymd_and_hms(2026, 10, 1, 21, 35, 7).unwrap();
+/// let now = zone.with_ymd_and_hms(2026, 10, 1, 21, 42, 4).unwrap();
+/// let base = "http://127.0.0.1:7878";
+/// let fault = format!("cannot reach riff-server at {base}");
+/// assert_eq!(
+///     top_fault(&fault, base, &last, &now),
+///     "riff: no good look since 21:35:07: cannot reach riff-server"
+/// );
+/// let slow = riff::text::no_reply(base, std::time::Duration::from_secs(10));
+/// let line = top_fault(&slow, base, &last, &now);
+/// assert_eq!(line, "riff: no good look since 21:35:07: riff-server gave no reply in 10 seconds");
+/// assert!(line.len() <= 80);
+/// let next_day = zone.with_ymd_and_hms(2026, 10, 2, 7, 0, 0).unwrap();
+/// assert_eq!(
+///     top_fault(&fault, base, &last, &next_day),
+///     "riff: no good look since 2026-10-01 21:35:07: cannot reach riff-server"
+/// );
+/// ```
+pub fn top_fault<Tz: TimeZone>(
+    fault: &str,
+    base: &str,
+    last: &DateTime<Tz>,
+    now: &DateTime<Tz>,
+) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let form = if last.date_naive() == now.date_naive() {
+        "%H:%M:%S"
+    } else {
+        "%Y-%m-%d %H:%M:%S"
+    };
+    let fault = fault.replace(&format!(" at {base}"), "");
+    format!("riff: no good look since {}: {fault}", last.format(form))
+}
+
+/// The line of `riff pr wait` when a look of `gh` fails after a good
+/// look (01M3Z8GG5EGEYAVEXG0HS46ACT).
+///
+/// ```
+/// let line = riff::text::pr_look_failed(40, "gh pr view 40: network is unreachable", 30);
+/// assert_eq!(
+///     line,
+///     "riff: cannot look at pull request #40: gh pr view 40: network is unreachable. \
+///      Trying again every 30 seconds."
+/// );
+/// ```
+pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
+    format!(
+        "riff: cannot look at pull request #{number}: {error}. Trying again every {every_secs} \
+         seconds."
+    )
+}
+
 /// The one line of a `riff watch --once` that ends with no wake, before
 /// the harness stops its task (01M3Z64J08GW6N1H42AR2FZQZ4). It never
 /// says "Do not start the watch again now".

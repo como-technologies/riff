@@ -58,6 +58,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use crate::text;
+
 /// The context of the verify status of a commit.
 pub const VERIFY_CONTEXT: &str = "riff/verify";
 
@@ -367,9 +369,16 @@ pub fn wait_state(pr: &PrState, checks: &[Check]) -> Wait {
 /// Looks at pull request `number` each `every` until it is merged
 /// (01M3NB6FWMGBQ9VTY6RCBPKBHK). Returns the merge commit. Fails when
 /// it closes unmerged or a required check fails.
+///
+/// A look of `gh` can fail for a short time, for example while the
+/// network is away. After one good look, a failed look does not end the
+/// wait (01M3Z8GG5EGEYAVEXG0HS46ACT): it prints
+/// [`text::pr_look_failed`] on stderr, one time until the next good
+/// look, and looks again after `every`. When the first look fails, the
+/// wait ends with its error: `gh` cannot see the pull request.
 pub fn wait(gh: &Gh, number: u64, every: Duration) -> Result<String> {
     let n = number.to_string();
-    loop {
+    let look = || {
         let pr: PrState = gh.json(&["pr", "view", &n, "--json", "state,mergeCommit"])?;
         // With no required check, `gh pr checks` prints no JSON.
         let (_, out, _) = gh.output(
@@ -377,15 +386,32 @@ pub fn wait(gh: &Gh, number: u64, every: Duration) -> Result<String> {
             None,
         )?;
         let checks: Vec<Check> = serde_json::from_str(&out).unwrap_or_default();
-        match wait_state(&pr, &checks) {
-            Wait::Merged(commit) => return Ok(commit),
-            Wait::Closed => bail!("pull request #{number} is closed, and not merged"),
-            Wait::Failed(names) => bail!(
+        anyhow::Ok(wait_state(&pr, &checks))
+    };
+    let mut looked = false;
+    let mut told = false;
+    loop {
+        match look() {
+            Ok(Wait::Merged(commit)) => return Ok(commit),
+            Ok(Wait::Closed) => bail!("pull request #{number} is closed, and not merged"),
+            Ok(Wait::Failed(names)) => bail!(
                 "pull request #{number} waits no more: a required check failed: {}",
                 names.join(", ")
             ),
-            Wait::Open => std::thread::sleep(every),
+            Ok(Wait::Open) => {
+                looked = true;
+                told = false;
+            }
+            Err(e) if looked => {
+                if !told {
+                    let error = format!("{e:#}");
+                    eprintln!("{}", text::pr_look_failed(number, &error, every.as_secs()));
+                    told = true;
+                }
+            }
+            Err(e) => return Err(e),
         }
+        std::thread::sleep(every);
     }
 }
 
