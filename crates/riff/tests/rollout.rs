@@ -572,3 +572,72 @@ async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
     )
     .await;
 }
+
+/// The book and the skill say that the lead gets a message for each
+/// change of a worker setting, with the texts that riff makes
+/// (01M3X30KHKB6W11C3NBAW7KCGW).
+#[test]
+fn the_book_and_the_skill_say_what_the_lead_gets_for_a_change() {
+    use riff::rollout::{Change, Effect};
+    use riff::text::setting_changed;
+    use riff_core::wire::Idle;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let book = std::fs::read_to_string(root.join("../../docs/src/how-it-works.md")).unwrap();
+    let how = &book[book
+        .find("### Change a worker setting while the riff runs")
+        .unwrap()..];
+    let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+    let limit = |old, new| Change::Limit {
+        host: "pangolin".into(),
+        old,
+        new,
+    };
+    let waits = Effect::Waits {
+        count: 2,
+        remote: true,
+    };
+    let texts = [
+        "```sh\nriff workers limit 4\n```".to_owned(),
+        "```mermaid".to_owned(),
+        setting_changed(&limit(3, 4), &Effect::Starts),
+        setting_changed(&limit(3, 4), &Effect::Nothing),
+        setting_changed(&limit(1, 3), &waits),
+        setting_changed(&limit(4, 3), &Effect::Over(4)),
+        setting_changed(
+            &Change::Interval {
+                host: "thelio".into(),
+                old: 10,
+                new: 0,
+            },
+            &Effect::Nothing,
+        ),
+        setting_changed(
+            &Change::Mcp {
+                host: "pangolin".into(),
+                old: vec!["riff".into()],
+                new: vec!["riff".into(), "github".into()],
+            },
+            &Effect::Nothing,
+        ),
+        setting_changed(
+            &Change::Idle {
+                old: Idle::default(),
+                new: Idle {
+                    per_host: 2,
+                    after_secs: 300,
+                },
+            },
+            &Effect::Nothing,
+        ),
+    ];
+    for text in &texts {
+        assert!(how.contains(text.as_str()), "the how-to has no {text:?}");
+    }
+    let skill =
+        std::fs::read_to_string(root.join("claude-plugin/riff/skills/riff/SKILL.md")).unwrap();
+    assert!(
+        skill.contains(&setting_changed(&limit(3, 4), &Effect::Starts)),
+        "skill"
+    );
+}

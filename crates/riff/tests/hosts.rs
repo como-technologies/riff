@@ -434,7 +434,11 @@ async fn a_host_tells_the_lead_a_change_of_its_settings() {
     })
     .await;
     // The host does not wait for its refresh.
-    assert!(start.elapsed() < riff::host::REFRESH, "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() < riff::host::REFRESH / 2,
+        "{:?}",
+        start.elapsed()
+    );
 }
 
 /// A host refuses a start request that is not from the lead of its

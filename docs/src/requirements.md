@@ -2174,6 +2174,25 @@
   not claim yet, counts. So when no worker takes the counted work, one
   worker waits idle, the server keeps it, and riff starts no more
   workers.
+- **01M3X30KHKB6W11C3NBAW7KCGW** The lead gets one message for each
+  change of a worker setting: the setting, the old value, the new
+  value and the host. The settings are the limit of the machine of the
+  lead and of each live workers host, the interval and the MCP servers
+  of the machine of the lead, and the idle settings of the server.
+  `riff mcp` of the lead reads them at each look of the rollout, also
+  while the rollout is off. The first look gives no message.
+- **01M3X30R4PSBP3RQWM02BJ6GK3** The message for a new limit says what
+  the change does. When the rollout starts a worker because of a
+  higher limit, it says so. When more workers run than a lower limit,
+  it says so, and riff stops none.
+- **01M3X30RA3X08JBJ2JBVCCNEH3** The message for a change of a worker
+  setting is a note. It wakes the lead only when free work waits that
+  a higher limit lets start and the rollout is off. Then it names the
+  `riff workers start` command.
+- **01M3X30RJS8YE5TXJBQDC2FT0C** A workers host reads the worker
+  settings of its machine each 5 seconds. It sets its status at once
+  when its limit or its floor changes. It posts a note to the lead
+  when its MCP servers change.
 - **01M3WFYZP9Y4N41QGH5SWKFZZC** The skill tells each session: run one
   build or test command at a time. To run a test many times, run that
   test by its name in a loop, not the full `just ci`.
