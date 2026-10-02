@@ -85,6 +85,20 @@ opens:
 riff login
 ```
 
+## Turn riff on in the project
+
+riff is off in a project until a person turns it on there. In your
+clone of the project, turn riff on for the team, and commit the file
+`.claude/settings.json`:
+
+```sh
+riff enable --shared
+```
+
+Each person who joins then has riff in each clone of the project. To
+turn riff on only for you, run `riff enable` with no flag. See
+[Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
+
 ## Invite a person
 
 Invite each person with the email of their account:

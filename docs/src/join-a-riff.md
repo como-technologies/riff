@@ -47,13 +47,28 @@ To start a riff with sign-in for your team, see
    echo 'export RIFF_SERVER=ADDRESS' >> ~/.bashrc
    ```
 
-3. Open a new terminal, so that it has `RIFF_SERVER`. Add riff to
-   Claude Code. It signs you in: your browser opens. On a second
-   machine of your own, use the same account as on the first machine:
+3. Open a new terminal, so that it has `RIFF_SERVER`. Go to your clone
+   of the project. Add riff to Claude Code. It asks where you want
+   riff on: press Enter for this project only. It signs you in: your
+   browser opens. On a second machine of your own, use the same
+   account as on the first machine:
 
    ```sh
    riff connect claude
    ```
+
+## Turn riff on in your project
+
+riff is off in a project until you turn it on there. When step 3 did
+not run in your clone of the project, or for another project of the
+riff, run this in the clone:
+
+```sh
+riff enable
+```
+
+See
+[Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
 
 ## Check it
 

@@ -147,7 +147,7 @@ async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
     let stdout = String::from_utf8_lossy(&connect.stdout);
     let stderr = String::from_utf8_lossy(&connect.stderr);
     assert!(connect.status.success(), "{stdout}{stderr}");
-    assert!(stdout.starts_with("Installed the riff plugin"), "{stdout}");
+    assert!(stdout.starts_with("Added the riff plugin"), "{stdout}");
     assert!(!stdout.contains("sign"), "{stdout}");
     assert_eq!(stderr, "");
 
@@ -218,6 +218,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
         riff,
         [
             "riff login",
+            "riff enable --shared",
             "riff invite EMAIL",
             "riff tail",
             "riff owner --take",

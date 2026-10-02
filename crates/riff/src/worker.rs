@@ -84,7 +84,7 @@ use crate::api::Api;
 use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
-use crate::{hygiene, identity, local, settings, text, worker_mcp};
+use crate::{enable, hygiene, identity, local, settings, text, worker_mcp};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -255,13 +255,40 @@ pub struct Started {
     pub no_scope: Option<String>,
 }
 
+/// The refusal of a start of workers for `dir`, when riff is off where
+/// a worker starts: the main clone of the repository of `dir`
+/// ([`enable::State::of_workers`], 01M3XY2T542DCHBN95H9PX4AGQ). A
+/// worker there is a plain session: it never joins the riff, so the
+/// rollout would start the next one.
+pub fn off(dir: &Path) -> Option<String> {
+    let user = crate::plugin::user_settings();
+    let state = enable::State::of_workers(dir, user.as_deref(), enable::forced());
+    (!state.on).then(|| text::workers_off(&state))
+}
+
+/// The variables that a new worker gets from a process with `forced`:
+/// `RIFF_ON=1` turned riff on for the process, so it turns riff on for
+/// its workers (01M3XY2SWEK0N8MC3MY4TMYTD3). A tmux pane does not get
+/// the variables of the process that makes it.
+///
+/// ```
+/// assert_eq!(riff::worker::on_env(true), Some(("RIFF_ON".into(), "1".into())));
+/// assert_eq!(riff::worker::on_env(false), None);
+/// ```
+pub fn on_env(forced: bool) -> Option<(String, String)> {
+    forced.then(|| (enable::VAR.into(), "1".into()))
+}
+
 /// Starts at most `count` workers in `tmux`, in the main worktree of
 /// `dir` (01M3JD392Q5ANX0FPZ51W7B0E3): at most the limit of the machine
 /// minus the workers that run (01M3JPQT57PJCRBQYJNDVESS04). Each loads
 /// only the MCP servers of `workers.mcp` (01M3NB5R92ZC61VW6Y45SJEAY9). It
 /// starts none while the available memory is less than the floor
 /// (01M3WFZ01PTAYYKG3T5CFA2W4D). It makes the slice of the workers ready
-/// first (01M3WFYZX6GVFYW6NTTTKF144R). The inner
+/// first (01M3WFYZX6GVFYW6NTTTKF144R). It starts none where riff is off
+/// in the main clone ([`off`], 01M3XY2T542DCHBN95H9PX4AGQ): the command,
+/// the rollout of the lead and a workers host all start workers here.
+/// A worker of a process with `RIFF_ON=1` gets `RIFF_ON=1`. The inner
 /// error is the refusal to show when it started nothing. The caller
 /// checks who may start workers.
 pub fn start(
@@ -271,6 +298,9 @@ pub fn start(
     server: &str,
     dir: &Path,
 ) -> Result<std::result::Result<Started, String>> {
+    if let Some(why) = off(dir) {
+        return Ok(Err(why));
+    }
     let settings = settings::path()?;
     let limit = settings::workers_limit(&settings)?;
     if limit == 0 {
@@ -295,7 +325,7 @@ pub fn start(
     let scope = limits::scope(&settings, &machine, local::dir().as_deref())?;
     let programs: Vec<Program> = (0..start)
         .map(|_| {
-            Program::worker(
+            let mut worker = Program::worker(
                 &riff,
                 claude,
                 &main,
@@ -303,7 +333,9 @@ pub fn start(
                 &terminal::new_session_id(),
                 &mcp,
                 scope.slice,
-            )
+            );
+            worker.env.extend(on_env(enable::forced()));
+            worker
         })
         .collect();
     let (window, panes) = tmux.workers(&programs)?;

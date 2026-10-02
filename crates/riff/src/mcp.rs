@@ -607,6 +607,29 @@ the same files."
 )]
 impl ServerHandler for Tools {}
 
+/// The server of `riff mcp` in a directory where riff is off: it has
+/// no tool, and its instructions name `riff enable`
+/// (01M3XY2ST8R67SKTXJECAYJZRX).
+struct Off;
+
+impl ServerHandler for Off {
+    fn get_info(&self) -> rmcp::model::ServerConfig {
+        let mut info = rmcp::model::ServerConfig::default();
+        info.instructions = Some(text::MCP_OFF.into());
+        info
+    }
+}
+
+/// `riff mcp` in a directory where riff is off. It serves a server with
+/// no tool, whose instructions are [`text::MCP_OFF`], over stdio until
+/// the agent tool closes the stream. It makes no call to
+/// `riff-server`, and keeps no file of the session.
+pub async fn serve_off() -> Result<()> {
+    let service = Off.serve(rmcp::transport::stdio()).await?;
+    service.waiting().await?;
+    Ok(())
+}
+
 impl Tools {
     /// Pauses or resumes the repository of the session, or with
     /// `whole` the whole riff (01M3XAHZBGSSJB3YX23K88W01K).
@@ -744,6 +767,7 @@ impl Tools {
             tmux: crate::terminal::Tmux::from_env(),
             claude: "claude".into(),
             gh: Arc::new(crate::pr::Gh::default()),
+            off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
     }

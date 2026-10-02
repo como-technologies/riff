@@ -46,17 +46,30 @@ flowchart TD
    riff-server
    ```
 
-3. In a second terminal, add riff to Claude Code. You do not sign in:
-   riff uses the name that you log in with on this machine. The
-   command also shows each session and its claims in the status line
-   of Claude Code:
+3. In a second terminal, go to your project. Add riff to Claude Code.
+   You do not sign in: riff uses the name that you log in with on
+   this machine. The command also shows each session and its claims
+   in the status line of Claude Code:
 
    ```sh
    riff connect claude
    ```
 
-   On a new machine, it asks once whether riff updates itself. Press
-   Enter for yes.
+   It asks where you want riff on. Press Enter: riff is on only in
+   this project. On a new machine, it also asks once whether riff
+   updates itself. Press Enter for yes.
+
+## Turn riff on in a project
+
+riff is off in a project until you turn it on there. To use riff in
+another project, run this in that project:
+
+```sh
+riff enable
+```
+
+To turn it off again, run `riff disable` there. See
+[Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
 
 ## Use it
 

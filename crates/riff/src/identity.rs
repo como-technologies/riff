@@ -322,6 +322,14 @@ pub fn main_worktree(dir: &Path) -> Option<std::path::PathBuf> {
     Some(first.into())
 }
 
+/// The common git directory of the repository of `dir`, as git gives
+/// it: the `.git` of the main clone, also in a linked worktree. `None`
+/// when git knows no repository there.
+pub fn common_dir(dir: &Path) -> Option<std::path::PathBuf> {
+    let args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+    git(dir, &args).map(Into::into)
+}
+
 /// The place for `dir` on a known host.
 pub fn place_in(dir: &Path, host: &str) -> Result<Place> {
     let (repo, worktree) = match git(dir, &["rev-parse", "--show-toplevel"]) {

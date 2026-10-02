@@ -123,8 +123,14 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
         );
         assert!(lines[after + 1].starts_with("  release   "), "{stdout}");
     } else {
-        assert_eq!(lines.len(), after, "{stdout}");
+        assert_eq!(lines.len(), after + 1, "{stdout}");
     }
+    // The last line: whether riff is on here (01M3XY2SYKG91SAB2FS1QNCZ2H).
+    assert_eq!(
+        lines.last(),
+        Some(&"repository  riff on (RIFF_ON=1)"),
+        "{stdout}"
+    );
 }
 
 /// The label of each line of facts in `riff server`, in order.

@@ -61,19 +61,177 @@ of the server.
 
 ## Connect
 
-`riff connect claude` installs the riff plugin in Claude Code. The
-plugin gives each new session the riff tools, the riff skill, a
-start hook and an end hook.
+`riff connect claude` adds the riff plugin to Claude Code. The plugin
+gives a session the riff tools, the riff skill, a start hook and an
+end hook. riff stays off in a session until you turn it on for the
+repository of the session.
 
 ```mermaid
 flowchart LR
     B[riff binary] -- writes --> D["~/.local/share/riff/claude-plugin"]
     D -- "claude plugin marketplace add" --> M[marketplace riff]
-    M -- "claude plugin install" --> P[plugin riff@riff]
+    M -- "riff enable" --> P["plugin riff@riff<br/>on in a repository"]
 ```
 
 Claude Code loads the plugin from that directory. After you update
 `riff`, run `riff connect claude` again.
+
+In a terminal, `riff connect claude` asks one time where you want riff
+on:
+
+```text
+Where do you want riff on?
+  1) Only in this repository (default)
+  2) In each repository on this machine
+  3) Not now: I run `riff enable` later
+Your choice [1]:
+```
+
+riff keeps your answer, and asks no more. With no terminal, it asks
+nothing and changes nothing. `riff update` asks nothing too, also in a
+terminal: an update never turns riff on in more repositories, and
+never turns it off. On a machine where a release up to v0.8.0 turned
+riff on in each repository, the command asks nothing and keeps that.
+The last line of the command says where riff is on, and the command
+to change it.
+
+### Turn riff on or off for a repository
+
+riff is off in a Claude Code session until you turn it on for the
+repository. Where riff is off, it does nothing: no call to the riff,
+no `git`, no text in the session, no tools, and an empty status line.
+A directory that is not in a git repository is always off.
+
+Run this in the repository:
+
+```sh
+riff enable
+```
+
+Then start a new Claude Code session there. To turn riff off again:
+
+```sh
+riff disable
+```
+
+`riff disable` changes only this repository. A session that runs
+keeps riff until it ends. To take it out now, run `/riff:leave` in it.
+
+`riff enable` writes one entry to a settings file of Claude Code:
+
+```json
+{
+  "enabledPlugins": {
+    "riff@riff": true
+  }
+}
+```
+
+Each other byte of the file stays. When the file is a symbolic link,
+riff writes the file that the link names, and shows its path.
+
+| Flag | File | Who gets riff |
+|---|---|---|
+| none, or `--local` | `.claude/settings.local.json` at the top of the repository | Only you, in this repository. |
+| `--shared` | `.claude/settings.json` at the top of the repository | Each person of the team who has riff, after you commit the file. |
+| `--global` | The user settings, `~/.claude/settings.json` | You, in each repository on this machine. |
+
+The first file that has the entry decides, in the order local,
+shared, global:
+
+```mermaid
+flowchart TD
+    G{in a git repository?} -- no --> OFF[riff is off]
+    G -- yes --> L{"local settings<br/>have the entry?"}
+    L -- yes --> V[its value decides]
+    L -- no --> S{"shared settings<br/>have the entry?"}
+    S -- yes --> V
+    S -- no --> U{"user settings<br/>have the entry?"}
+    U -- yes --> V
+    U -- no --> OFF
+```
+
+git does not track the local settings, so a linked worktree does not
+have them. In a linked worktree, riff reads the settings of the main
+clone too, and `riff enable` writes the local settings of the main
+clone. It asks git for the main clone first, and writes nothing when
+git does not know the worktree.
+
+### Turn riff on for the team
+
+`--shared` writes the entry to the project settings. Commit the file.
+Then each person who ran `riff connect claude` has riff in each clone:
+
+```sh
+riff enable --shared
+```
+
+A person who does not want riff in a clone runs `riff disable` there.
+It writes `false` to the local settings of that clone.
+
+### Turn riff on in each repository
+
+`--global` turns riff on in each repository on this machine:
+
+```sh
+riff enable --global
+```
+
+`riff disable --global` takes that away. To keep riff out of one
+repository, run `riff disable` there.
+
+### Choose where riff is on with no question
+
+`--scope` answers the question of `riff connect claude`, for a script:
+
+```sh
+riff connect claude --scope repo
+riff connect claude --scope global
+riff connect claude --scope none
+```
+
+### See whether riff is on here
+
+`riff server` shows it in the line `repository`, with the file that
+decides and the command to change it:
+
+```sh
+riff server
+```
+
+```text
+repository  riff off. To turn it on: riff enable
+```
+
+### After an update from a release before the opt-in
+
+A release up to v0.8.0 turned riff on in each repository: it wrote the
+entry to the user settings. An update keeps that choice, and asks
+nothing, in a terminal and with no terminal. riff stays on in each
+repository of the machine, and you run no command.
+
+To have riff only in some repositories, take the entry out, and turn
+riff on in each one:
+
+```sh
+riff disable --global
+riff enable
+```
+
+### When the riff server is turned off in /mcp
+
+The `/mcp` dialog of Claude Code can turn the riff server off. Claude
+Code keeps that for the project, so each new session there has no
+riff tools. The start hook tells the session, and the status line
+shows it:
+
+```text
+riff 2a880834 (no tools: the riff server is off, turn it on in /mcp)
+```
+
+To turn it on, run `/mcp` in a session of the project, and turn the
+server `riff` on. A worker with no riff tools tells the lead with the
+`riff tell` command.
 
 ### Use another claude command
 
@@ -2815,6 +2973,12 @@ riff gives these settings on the command line of each worker. Your
 settings file does not change. Each worker joins the riff and finds its
 own work. A second `riff workers start` adds panes to the same window.
 Outside tmux, the command says that it needs tmux and starts nothing.
+
+A worker starts in the main clone. Where riff is off in the main
+clone, riff starts no worker: not with this command, not by itself,
+and not on a workers host. The command then names `riff enable`, and
+the lead gets one note when riff starts no worker by itself. See
+[Turn riff on or off for a repository](#turn-riff-on-or-off-for-a-repository).
 
 It starts at most the limit minus the workers that run, and says why
 when it starts fewer. A worker never starts workers. In Claude Code,

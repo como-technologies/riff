@@ -77,19 +77,20 @@ fn connect_writes_the_plugin_and_runs_claude() {
     connect(&bin, tmp.path(), tmp.path())
         .success()
         .stdout(format!(
-            "Installed the riff plugin from {}. Start a new Claude Code session to use it.\n\
-             Added the riff status line to {}.\n",
+            "Added the riff plugin from {} to Claude Code.\n\
+             Added the riff status line to {}.\n\
+             riff is installed but off. To turn it on in a repository: cd REPO && riff enable\n",
             market.display(),
             tmp.path().join("home/.claude/settings.json").display()
         ));
     assert!(market.join("riff/.mcp.json").is_file());
+    // It installs the plugin in no scope: `riff enable` turns it on.
     let log = std::fs::read_to_string(tmp.path().join("log")).unwrap();
     assert_eq!(
         log,
         format!(
             "mcp remove --scope user riff\n\
-             plugin marketplace add {}\n\
-             plugin install --scope user riff@riff\n",
+             plugin marketplace add {}\n",
             market.display()
         )
     );
@@ -473,6 +474,8 @@ fn connect_leaves_another_statusline() {
     let out = connect(&bin, tmp.path(), tmp.path()).success();
     let stdout = String::from_utf8_lossy(&out.get_output().stdout);
     assert!(stdout.contains("has another status line"), "{stdout}");
+    // It prints the command to add riff to that status line.
+    assert!(stdout.contains("calls `riff statusline`"), "{stdout}");
     assert!(
         stdout.contains("\"Find the pane of a session\""),
         "{stdout}"
@@ -534,7 +537,10 @@ fn claude_installs_the_plugin_and_drops_the_old_entry() {
             .assert()
             .success();
     }
-    assert!(claude(&["plugin", "list"]).contains("riff@riff"));
+    assert!(claude(&["plugin", "marketplace", "list"]).contains("riff"));
+    // riff is on nowhere: the user settings have no entry of the plugin.
+    let user = std::fs::read_to_string(config.join("settings.json")).unwrap();
+    assert_eq!(riff::enable::entry(&user), None, "{user}");
     let settings = std::fs::read_to_string(config.join(".claude.json")).unwrap();
     let settings: serde_json::Value = serde_json::from_str(&settings).unwrap();
     assert_eq!(settings["mcpServers"], serde_json::json!({}));

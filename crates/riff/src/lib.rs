@@ -27,7 +27,9 @@
 //! its pushed branch and its worktree (see [`dropped`]).
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
-//! `riff hook session-start` (see [`hook`]).
+//! `riff hook session-start` (see [`hook`]). riff is off in a session
+//! until a person turns it on for the repository, with `riff enable`
+//! (see [`enable`]).
 //!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
 //! agree on the session because both read its session ID from the
@@ -69,6 +71,7 @@ pub mod chat;
 pub mod compact;
 pub mod device;
 pub mod dropped;
+pub mod enable;
 pub mod help;
 pub mod home;
 pub mod hook;

@@ -67,6 +67,7 @@ fn each_riff_command_of_the_page_is_real() {
         riff,
         [
             "riff connect claude",
+            "riff enable",
             "riff server",
             "riff who",
             "riff update",

@@ -123,6 +123,9 @@ pub struct View {
     /// The facts of the riff that `riff` uses, when it gives them
     /// (01M3TJWJ12WEDCXW3W0529KRP2).
     pub facts: Option<ServerFacts>,
+    /// Whether riff is on in the working directory
+    /// (01M3XY2SYKG91SAB2FS1QNCZ2H).
+    pub here: Option<crate::enable::State>,
 }
 
 /// Asks the riff of `api` about itself, within [`PROBE_WAIT`].
@@ -175,6 +178,7 @@ pub async fn view(server: &str, local: &str, source: Source) -> View {
         used,
         local,
         facts,
+        here: Some(crate::enable::State::here()),
     }
 }
 
@@ -404,7 +408,8 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// ([`server_release`]). When that riff names no build that riff can
 /// read, it prints [`text::newest_instead`](crate::text::newest_instead)
 /// and installs the newest release. Then it updates the plugin with the new
-/// `riff connect claude --claude CLAUDE`, and looks for an old riff with
+/// `riff connect claude --claude CLAUDE`, which gets no terminal and so
+/// asks nothing, and looks for an old riff with
 /// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
 /// words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
@@ -434,10 +439,14 @@ pub async fn update(
             .current_dir(&dir),
         "cargo install",
     )?;
+    // An update asks nothing: a machine updates itself with no person.
+    // So the connect of the update has no terminal, and it keeps the
+    // choice of the person (01M3XY2SR3VJZAKEPC6CBCS292).
     run(
         Command::new("riff")
             .args(["connect", "claude", "--claude"])
             .arg(claude)
+            .stdin(std::process::Stdio::null())
             .current_dir(&dir),
         "riff connect claude",
     )?;

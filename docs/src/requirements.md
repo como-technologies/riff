@@ -205,11 +205,96 @@
   `~/.local/share/riff/claude-plugin`.
 - **R75** `riff connect claude` removes the user-scope MCP server entry
   `riff`, if it exists. The plugin gives the riff tools instead.
-- **R76** `riff connect claude` installs the plugin in user scope. It
-  runs the `claude` command on the PATH. `--claude PATH` names another
-  one.
+- **R76** Replaced by 01M3XY2SNXQJRSH5QX82AFVM2S.
 - **R77** `riff connect claude` does not need a riff session or a git
   repository. It works in any directory.
+- **01M3XY2SHGXQR9NVXF7QJBN09T** riff is off in a Claude Code session
+  until a person turns it on for the repository of the session. The
+  state is the entry `riff@riff` in the key `enabledPlugins` of the
+  Claude Code settings. The first file that has the entry decides, in
+  this order: the local settings of the repository
+  (`.claude/settings.local.json` at its top), its project settings
+  (`.claude/settings.json`), the user settings. A directory that is
+  not in a git repository is off.
+- **01M3XY2T2YEV7GT7DKJHSMMHYR** In a linked worktree, riff also reads
+  the local settings and the project settings of the main clone. The
+  local settings come before the project settings.
+- **01M3XY2SKQ27K3TE4NV28FHTVV** `riff enable` writes the entry `true`
+  to the local settings of the repository of the working directory:
+  in a linked worktree, to those of the main clone. `--shared` writes
+  it to the project settings. `--global` writes it to the user
+  settings. `riff disable` removes the entry from the same file. With
+  no flag, when another file then still turns riff on, `riff disable`
+  writes `false` to the local settings. Each command changes only the
+  entry of riff, as text: each other byte of the file stays. It
+  changes no other file, and says whether riff is on in the working
+  directory. With `--global`, the answer of
+  01M3XY2SNXQJRSH5QX82AFVM2S becomes `global` or `none`.
+- **01M3YCGKGP3VC93S8FA1G4K3QK** `riff enable` and `riff disable`
+  write through a symbolic link, and name the real path of the file
+  that they wrote. Before they write the local settings of the main
+  clone of a linked worktree, git must confirm the worktree: its
+  common directory (`git rev-parse --git-common-dir`) is the `.git` of
+  that main clone, and the file `gitdir` of the entry of the worktree
+  in the main clone names the `.git` file of the tree. If not, the
+  command writes nothing, and says why.
+- **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
+  marketplace to Claude Code with the `claude` command on the PATH.
+  `--claude PATH` names another one. It installs the plugin in no
+  scope, and turns riff on nowhere by itself. In a terminal, it asks
+  one time where the person wants riff on: only in this repository
+  (the default), in each repository on this machine, or not now.
+  `--scope repo|global|none` gives the answer with no question. riff
+  keeps the answer in its settings, `connect.scope`. With an answer
+  there, or with no terminal, it asks nothing and turns riff on
+  nowhere.
+- **01M3XY2SR3VJZAKEPC6CBCS292** An update never turns riff on for
+  each repository: only the answer `global` writes the entry `true` to
+  the user settings. `riff update` asks nothing, also in a terminal:
+  it runs `riff connect claude` with no terminal. With no terminal,
+  `riff connect claude` asks nothing, and a new install stays off. An
+  install of a release up to v0.8.0 is an old install: the user
+  settings have the entry `true`, because that release installed the
+  plugin in the user scope, and riff has no answer. Its choice is each
+  repository. On an old install `riff connect claude` asks nothing,
+  with a terminal and with no terminal: it keeps the entry, records
+  the answer `global`, and says in one line that riff stays on in each
+  repository and that `riff disable --global` changes it. So no person
+  does a thing at the update from v0.8.0. With `--scope repo` or
+  `--scope none`, `riff connect claude` removes that entry, and names
+  each repository of the Claude Code state file whose settings have a
+  riff permission rule, with the command `riff enable`.
+- **01M3XY2ST8R67SKTXJECAYJZRX** Where riff is off, each entry of the
+  plugin does nothing: `riff hook` and `riff statusline` make no call
+  to the server, run no `git`, and print nothing. `riff mcp` serves no
+  tool, makes no call to the server, and names `riff enable` in its
+  instructions. A `riff mcp` that an update starts again serves a
+  session that runs, so it goes on.
+- **01M3XY2SWEK0N8MC3MY4TMYTD3** `RIFF_ON=1` turns riff on for the
+  processes that have it, also outside a repository. `just dev` and
+  the helper crate `isolated` set it. A worker that such a process
+  starts gets `RIFF_ON=1`.
+- **01M3XY2SYKG91SAB2FS1QNCZ2H** The state is obvious. The last line
+  of `riff connect claude` says where riff is on, or
+  `riff is installed but off`, with the command to change it.
+  `riff server` shows `riff on` or `riff off` for the working
+  directory, the file that decides, and the command to change it. The
+  start context names the file that turned riff on, and
+  `riff disable`.
+- **01M3XY2T0R2Q39XYX8AYV7T0RK** When the Claude Code state file has
+  `plugin:riff:riff` in `disabledMcpServers` of the project, a person
+  turned the riff server off there in `/mcp`. The start context then
+  says that the session has no riff tools, how to turn the server on,
+  and to tell the lead with `riff tell lead`. The status line says it
+  too.
+- **01M3XY2T542DCHBN95H9PX4AGQ** riff starts no worker where riff is
+  off in the main clone of the repository: `riff workers start`
+  starts nothing and names `riff enable`, and the rollout of the lead
+  and a workers host start none.
+- **01M3YCGKKRDNFC338K1JSK30JK** When riff is off in the main clone of
+  the lead, the rollout posts one note to the lead: the host, the
+  reason and `riff enable`. The next note comes only after riff was on
+  there again.
 - **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
   people use under the headings Get started, Work in the riff, Pull
   requests, Lead and Members, in that order. Each command has one

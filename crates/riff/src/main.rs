@@ -10,7 +10,7 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    auto_update, binary, dropped, help, hook, identity, lifecycle, local, login, mcp, next,
+    auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local, login, mcp, next,
     permissions, plugin, pr, settings, terminal, text, usage, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
@@ -362,6 +362,28 @@ enum Command {
         /// when a rule is missing.
         #[arg(long)]
         check: bool,
+    },
+    /// Turn riff on in this repository
+    ///
+    /// riff is off in a Claude Code session until you turn it on for
+    /// the repository of the session. This command writes the entry
+    /// `riff@riff` to the key `enabledPlugins` of a Claude Code settings
+    /// file. It keeps each other key. A new session in the repository
+    /// then has riff.
+    Enable {
+        #[command(flatten)]
+        place: PlaceArgs,
+    },
+    /// Turn riff off in this repository
+    ///
+    /// It removes the entry that `riff enable` wrote. When another file
+    /// still turns riff on, for example after `riff enable --global`,
+    /// it writes a no for this repository to the local settings. No
+    /// other repository changes. A session that runs keeps riff until
+    /// it ends.
+    Disable {
+        #[command(flatten)]
+        place: PlaceArgs,
     },
     /// Show the riff that riff uses
     ///
@@ -775,13 +797,70 @@ enum HookEvent {
     },
 }
 
+/// The settings file of `riff enable` and `riff disable`.
+#[derive(clap::Args)]
+#[group(multiple = false)]
+struct PlaceArgs {
+    /// Only for you: .claude/settings.local.json at the top of the
+    /// repository (the default).
+    #[arg(long)]
+    local: bool,
+    /// For the team: .claude/settings.json at the top of the
+    /// repository. Commit the file.
+    #[arg(long)]
+    shared: bool,
+    /// For each repository on this machine: the user settings of
+    /// Claude Code.
+    #[arg(long)]
+    global: bool,
+}
+
+impl PlaceArgs {
+    fn place(&self) -> enable::Place {
+        match (self.shared, self.global) {
+            (true, _) => enable::Place::Shared,
+            (_, true) => enable::Place::Global,
+            _ => enable::Place::Local,
+        }
+    }
+}
+
+/// Where `riff connect claude` turns riff on.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ScopeArg {
+    /// Only in the repository of this directory.
+    Repo,
+    /// In each repository on this machine.
+    Global,
+    /// Nowhere now. Run `riff enable` later.
+    None,
+}
+
+impl From<ScopeArg> for enable::Scope {
+    fn from(scope: ScopeArg) -> Self {
+        match scope {
+            ScopeArg::Repo => enable::Scope::Repo,
+            ScopeArg::Global => enable::Scope::Global,
+            ScopeArg::None => enable::Scope::None,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Tool {
-    /// Install the riff plugin in Claude Code, in user scope.
+    /// Add the riff plugin to Claude Code.
+    ///
+    /// riff stays off in a session until you turn it on for a
+    /// repository. In a terminal, the command asks one time where you
+    /// want riff on. With no terminal, it turns riff on nowhere, and
+    /// keeps an earlier choice.
     Claude {
         /// The claude command.
         #[arg(long, default_value = "claude")]
         claude: std::path::PathBuf,
+        /// Where to turn riff on, with no question.
+        #[arg(long, value_enum)]
+        scope: Option<ScopeArg>,
     },
 }
 
@@ -790,6 +869,16 @@ async fn main() -> Result<()> {
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
     use_color(cli.color);
+    // Each entry of the plugin does nothing where riff is off
+    // (01M3XY2ST8R67SKTXJECAYJZRX). A `riff mcp` that an update started
+    // again serves a session that runs: it goes on.
+    match &cli.command {
+        Command::Hook { .. } | Command::Statusline if !enable::State::here().on => return Ok(()),
+        Command::Mcp { client: None } if !enable::State::here().on => {
+            return mcp::serve_off().await;
+        }
+        _ => {}
+    }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = cli.command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
@@ -922,15 +1011,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Connect {
-        tool: Tool::Claude { claude },
+        tool: Tool::Claude { claude, scope },
     } = &cli.command
     {
-        let settings = plugin::settings_from(
-            std::env::var_os("CLAUDE_CONFIG_DIR"),
-            std::env::var_os("HOME"),
-        );
+        let settings = plugin::user_settings();
         let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
-        println!("{}", text::connected(&connected));
+        let scoped = connect_scope(settings.as_deref(), scope.map(Into::into))?;
+        println!("{}", text::connected(&connected, &scoped));
         match login::ensure(&Api::new(&server), open_browser).await {
             Ok(Some(_)) => println!("{}", text::connect_signed_in(&server)),
             Ok(None) => {}
@@ -941,6 +1028,11 @@ async fn main() -> Result<()> {
     }
     if let Command::Setup { check } = cli.command {
         return setup(check);
+    }
+    if let Command::Enable { place } | Command::Disable { place } = &cli.command {
+        let on = matches!(cli.command, Command::Enable { .. });
+        println!("{}", text::enabled(&set_enabled(place.place(), on)?, on));
+        return Ok(());
     }
     if let Command::Workers { command, long } = &cli.command {
         return workers(command.as_ref(), *long, &server).await;
@@ -1242,6 +1334,8 @@ async fn main() -> Result<()> {
         | Command::Statusline
         | Command::Connect { .. }
         | Command::Setup { .. }
+        | Command::Enable { .. }
+        | Command::Disable { .. }
         | Command::Server
         | Command::Update { .. }
         | Command::Workers { .. }
@@ -1446,6 +1540,13 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
 /// session that is not the lead (01M3JPQT79FE47518Z8DFFQYYG). Outside
 /// tmux, it starts nothing and fails (01M3JD3973J7A9BG8G9EP9TVDP).
 async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
+    // A worker in a repository with riff off has no riff
+    // (01M3XY2T542DCHBN95H9PX4AGQ). `worker::start` checks it for each
+    // start; here the refusal comes before each other one.
+    if let Some(why) = worker::off(&identity::working_dir()?) {
+        eprintln!("{why}");
+        std::process::exit(1);
+    }
     if let Some(why) = start_refusal(server).await {
         eprintln!("{why}");
         std::process::exit(1);
@@ -1937,6 +2038,12 @@ async fn session_start(server: &str) -> String {
     if worker::is_worker() {
         context.push_str(hook::WORKER_LINE);
     }
+    if let Some(line) = hook::on_line(&enable::State::here()) {
+        context.push_str(&line);
+    }
+    if mcp_off_here() {
+        context.push_str(hook::MCP_OFF_LINE);
+    }
     if let Some(cwd) = cwd
         .as_deref()
         .filter(|_| uri.as_ref().is_some_and(SessionUri::lead))
@@ -1997,6 +2104,63 @@ fn setup(check: bool) -> Result<()> {
     Ok(())
 }
 
+/// `riff enable` (`on` true) or `riff disable` for the working
+/// directory (01M3XY2SKQ27K3TE4NV28FHTVV). A change of the user
+/// settings is a choice of the person, so riff keeps it as the answer
+/// to the scope question: an update then keeps it.
+fn set_enabled(place: enable::Place, on: bool) -> Result<enable::Changed> {
+    let dir = identity::working_dir()?;
+    let user = plugin::user_settings();
+    let done = if on {
+        enable::enable(&dir, place, user.as_deref())?
+    } else {
+        enable::disable(&dir, place, user.as_deref())?
+    };
+    if place == enable::Place::Global {
+        let scope = if on {
+            enable::Scope::Global
+        } else {
+            enable::Scope::None
+        };
+        settings::set_connect_scope(&settings::path()?, scope)?;
+    }
+    Ok(done)
+}
+
+/// The scope step of `riff connect claude` ([`enable::scope`]). It asks
+/// the scope question only in a terminal.
+fn connect_scope(
+    user: Option<&std::path::Path>,
+    flag: Option<enable::Scope>,
+) -> Result<enable::Scoped> {
+    use std::io::IsTerminal;
+    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let riff = settings::path()?;
+    let claude = enable::claude_state();
+    let files = enable::Files {
+        user,
+        riff: &riff,
+        claude: claude.as_deref(),
+    };
+    enable::scope(&identity::working_dir()?, files, flag, || {
+        enable::ask_scope(
+            terminal,
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout(),
+        )
+    })
+}
+
+/// True when a person turned the riff server off for the project of
+/// the working directory in `/mcp` (01M3XY2T0R2Q39XYX8AYV7T0RK).
+fn mcp_off_here() -> bool {
+    let Ok(dir) = std::env::current_dir() else {
+        return false;
+    };
+    let repo = enable::Repo::of(&dir);
+    enable::mcp_off_in(enable::claude_state().as_deref(), &dir, repo.as_ref())
+}
+
 /// The status line of the Claude Code session on stdin
 /// ([`text::statusline`]). It finds the session like a hook does, and
 /// asks riff-server for only that session with `GET /v1/me`, not `who`
@@ -2011,6 +2175,9 @@ async fn statusline(server: &str) -> String {
     };
     if local::left_here(&id) {
         return text::statusline_left(&id);
+    }
+    if mcp_off_here() {
+        return text::statusline_mcp_off(&id);
     }
     let find = async {
         let here = identity::place(&identity::working_dir()?)?;
