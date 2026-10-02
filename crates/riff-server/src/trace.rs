@@ -401,8 +401,16 @@ mod tests {
         let long = "x".repeat(64 * 1024);
         let broken = "riff://mike@pangolin\n{\"severity\":\"ERROR\"}";
         let lines = capture(|| {
-            denied("/v1/claim", Some(&Named::of_text(&long)), DeniedCode::NoToken);
-            denied("/v1/claim", Some(&Named::of_text(broken)), DeniedCode::NoToken);
+            denied(
+                "/v1/claim",
+                Some(&Named::of_text(&long)),
+                DeniedCode::NoToken,
+            );
+            denied(
+                "/v1/claim",
+                Some(&Named::of_text(broken)),
+                DeniedCode::NoToken,
+            );
         });
         // `capture` reads each line of the output as one JSON object.
         assert_eq!(lines.len(), 2);

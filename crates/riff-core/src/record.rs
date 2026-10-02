@@ -490,7 +490,8 @@ mod tests {
 
     #[test]
     fn a_record_with_no_cause_reads_and_writes_no_cause() {
-        let line = r#"{"position":2,"written_at_ms":1,"change":{"riff_state_set":{"state":"running"}}}"#;
+        let line =
+            r#"{"position":2,"written_at_ms":1,"change":{"riff_state_set":{"state":"running"}}}"#;
         let Line::Record(record) = Line::parse(line).unwrap() else {
             panic!("a known kind");
         };

@@ -143,11 +143,11 @@ use tokio::sync::{Notify, broadcast, oneshot};
 
 use crate::auth::SignedIn;
 use crate::log::Written;
-use crate::trace::{Denied, DeniedCode, Named, Outcome, Traced};
 use crate::state::{
     Announce, Caller, Cause, Check, Code, Command, CommandKind, Delivery, Forget, MakeRiff,
     Refused, Role, Signal, State, Stopping,
 };
+use crate::trace::{Denied, DeniedCode, Named, Outcome, Traced};
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
@@ -292,11 +292,9 @@ impl Failed {
             Failed::Denied(_) => StatusCode::FORBIDDEN,
             Failed::Refused(refused) => match refused.code {
                 Code::NotAllowed | Code::NoSignIn | Code::NotMember => StatusCode::FORBIDDEN,
-                Code::Held
-                | Code::Paused
-                | Code::MustClear
-                | Code::NotHolder
-                | Code::OtherUser => StatusCode::CONFLICT,
+                Code::Held | Code::Paused | Code::MustClear | Code::NotHolder | Code::OtherUser => {
+                    StatusCode::CONFLICT
+                }
                 Code::BadRequest => StatusCode::BAD_REQUEST,
             },
             Failed::Stopped => StatusCode::SERVICE_UNAVAILABLE,

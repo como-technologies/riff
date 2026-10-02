@@ -552,7 +552,11 @@ mod tests {
         let at = since + Duration::from_secs(9);
         let mut presence = presence(since);
         presence.cursors.insert((ann().who().clone(), repo()), 3);
-        presence.applied(&record(joined(&ann(), &design())), &Riff::default(), Some(at));
+        presence.applied(
+            &record(joined(&ann(), &design())),
+            &Riff::default(),
+            Some(at),
+        );
         assert_eq!(presence.sessions.len(), 2);
         assert_eq!(claims_changed(&presence, &ann()), since);
         assert_eq!(presence.riff_changed, None);

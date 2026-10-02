@@ -256,9 +256,7 @@ pub mod threads;
 pub mod view;
 pub mod work;
 
-pub use command::{
-    Caller, Cause, Class, Code, Command, CommandKind, Now, Refused, Role, permits,
-};
+pub use command::{Caller, Cause, Class, Code, Command, CommandKind, Now, Refused, Role, permits};
 pub use presence::{Presence, Signal};
 pub use riff::{Riff, apply};
 pub use snapshot::Snapshot;
