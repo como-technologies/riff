@@ -63,7 +63,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::name::{SessionUri, ThreadName, Who};
-use crate::wire::{Idle, Message, RiffState};
+use crate::wire::{Idle, Message, RiffState, StartReason};
 
 // ANCHOR: record
 /// One line of the log.
@@ -100,8 +100,9 @@ pub enum Change {
     LeftThread(Member),
     /// A session took a claim. It replaces the old holder.
     Claimed(Claimed),
-    /// The holder freed a claim.
-    Released(Claimed),
+    /// A claim is free. The record of the last claim of a worker, made
+    /// by its own release, says that the worker must clear its context.
+    Released(Released),
     /// A session became the lead of its user in a repository thread.
     LeadSet(Member),
     /// The riff is paused or running.
@@ -112,6 +113,9 @@ pub enum Change {
     /// drops it: its read cursors, its memberships, its claims, its lead,
     /// and each direct thread whose two sessions are gone.
     SessionForgotten(Forgotten),
+    /// A session started, or came with no new start. The record has the
+    /// worker mark of the session (01M3X9X9M079WGFPJZHNXH9VEP).
+    SessionStarted(SessionStarted),
 }
 // ANCHOR_END: record
 
@@ -238,6 +242,8 @@ impl<'de> Deserialize<'de> for By {
 
 impl Change {
     /// The name of each kind of change, as the JSON of a record has it.
+    /// The order of the list is not a part of the format: a reader
+    /// finds a kind by its name. So a new kind can go in at any place.
     pub const KINDS: &[&str] = &[
         "posted",
         "joined_thread",
@@ -248,6 +254,7 @@ impl Change {
         "riff_state_set",
         "setting_changed",
         "session_forgotten",
+        "session_started",
     ];
 }
 
@@ -276,6 +283,80 @@ pub struct Claimed {
     pub session: SessionUri,
     pub thread: ThreadName,
     pub item: String,
+}
+
+/// A claim that is free now.
+///
+/// ```
+/// use riff_core::record::{Claimed, Released};
+///
+/// let claim = Claimed {
+///     session: "riff://ann@heron/acme/app?session=s1".parse()?,
+///     thread: "acme/app".parse()?,
+///     item: "issue-7".into(),
+/// };
+/// let released = Released::of(claim.clone());
+/// let json = serde_json::to_string(&released).unwrap();
+/// // A record from before the mark has the same fields.
+/// assert_eq!(json, serde_json::to_string(&claim).unwrap());
+/// assert!(!serde_json::from_str::<Released>(&json).unwrap().must_clear);
+///
+/// let last = Released { must_clear: true, ..released };
+/// assert!(serde_json::to_string(&last).unwrap().ends_with(r#""must_clear":true}"#));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Released {
+    pub session: SessionUri,
+    pub thread: ThreadName,
+    pub item: String,
+    /// True when the session is a worker that released its last claim
+    /// itself: it must clear its context before its next claim
+    /// (01M3X9XAK1KPZZVM1AJR2H8DSS).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub must_clear: bool,
+}
+
+impl Released {
+    /// The release of `claim`, with no ask to clear.
+    pub fn of(claim: Claimed) -> Released {
+        Released {
+            session: claim.session,
+            thread: claim.thread,
+            item: claim.item,
+            must_clear: false,
+        }
+    }
+}
+
+/// A start of a session.
+///
+/// ```
+/// use riff_core::record::{Change, Line};
+/// use riff_core::wire::StartReason;
+///
+/// let line = r#"{"position":4,"written_at_ms":9,"change":{"session_started":{"session":"riff://ann@heron/acme/app?session=s1","reason":"clear","worker":true}}}"#;
+/// let Line::Record(record) = Line::parse(line)? else { panic!("a known kind") };
+/// let Change::SessionStarted(started) = &record.change else { panic!("a start") };
+/// assert!(started.worker && started.reason.is_fresh());
+/// assert_eq!(serde_json::to_string(&record).unwrap(), line);
+///
+/// // A reason of a later build reads as `other`. It is no fresh start.
+/// let later = line.replace("clear", "wake");
+/// let Line::Record(record) = Line::parse(&later)? else { panic!("a known kind") };
+/// let Change::SessionStarted(started) = &record.change else { panic!("a start") };
+/// assert_eq!(started.reason, StartReason::Other);
+/// assert!(!started.reason.is_fresh());
+/// # Ok::<(), String>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionStarted {
+    pub session: SessionUri,
+    /// Why the record is there. `process` and `clear` are fresh starts.
+    pub reason: StartReason,
+    /// True when the session is a worker.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub worker: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,7 +481,10 @@ mod tests {
             Change::JoinedThread(member.clone()),
             Change::LeftThread(member.clone()),
             Change::Claimed(claim.clone()),
-            Change::Released(claim),
+            Change::Released(Released {
+                must_clear: true,
+                ..Released::of(claim)
+            }),
             Change::LeadSet(member),
             Change::RiffStateSet(RiffStateSet {
                 state: RiffState::Running,
@@ -409,6 +493,11 @@ mod tests {
                 idle: Idle::default(),
             }),
             Change::SessionForgotten(Forgotten { session: uri() }),
+            Change::SessionStarted(SessionStarted {
+                session: uri(),
+                reason: StartReason::Process,
+                worker: true,
+            }),
         ]
     }
 
