@@ -301,7 +301,7 @@ fn pause_by(pause: &PauseInfo) -> String {
 /// use riff_core::wire::{PauseInfo, RepositoryPause, RiffReply, RiffState};
 ///
 /// let strata = "como-technologies/strata".parse()?;
-/// let by = Some(By::Session("brett/62b2".parse()?));
+/// let by = Some(By::Session(riff_core::name::Who::new("brett", Some("62b2"))?));
 /// let pause = RepositoryPause { repository: strata, pause: PauseInfo { by, at_ms: 7 } };
 /// let pauses = RiffReply { repositories: vec![pause.clone()], ..RiffState::Paused.into() };
 /// let riff = RiffReply { riff: None, ..pauses.clone() };
@@ -345,7 +345,7 @@ pub fn paused(pauses: &RiffReply, here: Option<&ThreadName>) -> Option<String> {
 ///
 /// let riff = "como-technologies/riff".parse()?;
 /// let strata = "como-technologies/strata".parse()?;
-/// let by = Some(By::Session("brett/62b2".parse()?));
+/// let by = Some(By::Session(riff_core::name::Who::new("brett", Some("62b2"))?));
 /// let pause = RepositoryPause { repository: strata, pause: PauseInfo { by, at_ms: 7 } };
 /// let pauses = RiffReply { repositories: vec![pause.clone()], ..RiffState::Running.into() };
 /// assert_eq!(

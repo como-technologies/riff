@@ -148,7 +148,10 @@ async fn whoami_shows_facts() {
     assert_eq!(lines[2], "riff     paused by the server", "{out}");
     assert!(lines[3].starts_with("build    v"), "{out}");
     // The action comes last.
-    assert!(out.ends_with("resumes it with: riff resume\n"), "{out}");
+    assert!(
+        out.ends_with("resumes it with: riff resume --riff\n"),
+        "{out}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

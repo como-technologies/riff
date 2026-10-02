@@ -127,12 +127,13 @@ fn strata_sessions() -> (SessionUri, SessionUri) {
     )
 }
 
-/// The session ID of each session that `posted` woke, in order.
+/// The session ID of each agent session that `posted` woke, in order.
+/// The person of a user has no session ID: it is not in the list.
 fn woken(posted: &[Posted]) -> Vec<String> {
     let mut woken: Vec<_> = posted
         .iter()
         .flat_map(|p| &p.woken)
-        .map(|uri| uri.who().session().unwrap().to_owned())
+        .filter_map(|uri| uri.who().session().map(str::to_owned))
         .collect();
     woken.sort();
     woken

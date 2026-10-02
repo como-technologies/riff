@@ -199,6 +199,19 @@ async fn pause_and_resume_name_the_repository_of_the_directory() {
     );
     let (out, code) = agent(&server, strata, "brett", "b1", &["claim", "issue-7"]).await;
     assert_eq!(code, 0, "{out}");
+
+    // A person in a shell pauses the repository of the directory.
+    let (out, code) = run(&server, strata, "brett", None, &["pause"]).await;
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        out,
+        "The repository como-technologies/strata is paused now. Woke \
+         brett@pangolin:strata (b1).\n"
+    );
+    let (out, _) = agent(&server, here, "mike", "a1", &["whoami"]).await;
+    let fact = "\npaused   como-technologies/strata by the person brett\n";
+    assert!(out.contains(fact), "{out}");
+    assert!(out.contains("\nriff     running\n"), "{out}");
 }
 
 #[tokio::test]
