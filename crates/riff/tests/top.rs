@@ -369,7 +369,8 @@ async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
     let dir = repo();
     let dir = dir.path();
     let bin = bin(true);
-    let issue = |n: u64| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#);
+    let issue =
+        |n: u64| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#);
     let pull = |n: u64, issue: u64, checks: &str| {
         format!(
             r#"{{"number": {n}, "headRefName": "worktree-issue-{issue}", "headRefOid": "1a2b3c4d", "isDraft": false, "statusCheckRollup": [{checks}]}}"#

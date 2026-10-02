@@ -2018,7 +2018,10 @@ mod tests {
         // Failed: the item is free for a build, and no verify waits.
         let failed = pulls(&status("FAILURE"));
         assert_eq!(work(&failed, &[]), (vec![12], vec![]));
-        assert_eq!(failed[0].verify_status().unwrap().url.as_deref(), Some("https://c"));
+        assert_eq!(
+            failed[0].verify_status().unwrap().url.as_deref(),
+            Some("https://c")
+        );
         // The next session holds it: no work.
         assert_eq!(work(&failed, &["issue-12"]), (vec![], vec![]));
     }

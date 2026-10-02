@@ -686,13 +686,12 @@ fn the_book_shows_how_a_session_works_on_an_item() {
         url: Some(url.into()),
         ..riff::rollout::Check::verify(state)
     };
-    for checks in [
-        vec![],
-        vec![verify("SUCCESS")],
-        vec![verify("FAILURE")],
-    ] {
+    for checks in [vec![], vec![verify("SUCCESS")], vec![verify("FAILURE")]] {
         let line = riff::rollout::claim_line("issue-12", &[pull(checks)]).unwrap();
-        assert!(how_to.contains(&format!("\n{line}\n```")), "no {line:?} in {how_to}");
+        assert!(
+            how_to.contains(&format!("\n{line}\n```")),
+            "no {line:?} in {how_to}"
+        );
     }
     assert!(how_to.contains(&format!(
         "waits at most {} seconds",

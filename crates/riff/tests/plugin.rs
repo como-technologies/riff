@@ -205,7 +205,8 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     }
     assert!(!author.contains("Set your status to blocked"), "{author}");
     let pass = at("When no session holds it, the author was a worker and released the item.");
-    let wait = at("`riff pr wait 40`, with `run_in_background` true. Keep your claim while you wait.");
+    let wait =
+        at("`riff pr wait 40`, with `run_in_background` true. Keep your claim while you wait.");
     let done = at("Post a note that the item is done");
     let item = at("remove the worktree and the branch of the item, when your machine has them");
     assert!(checkout < pass && pass < wait && wait < done && done < release && remove < item);
