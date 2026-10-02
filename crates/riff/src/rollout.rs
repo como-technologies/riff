@@ -60,8 +60,38 @@
 //!
 //! riff never stops a worker here. The server stops idle workers
 //! (#259).
+//!
+//! # A change of the worker settings
+//!
+//! The lead conducts the workers, so it must know what each machine can
+//! run. At each look, also while the rollout is off, `riff mcp` of the
+//! lead reads the worker settings ([`Seen`]): the limit of its machine
+//! and of each live workers host, the interval and the MCP servers of
+//! its machine, and the idle settings of the server. When a value is
+//! not the value of the look before ([`Seen::changes`]), the lead gets
+//! one message for the change: the setting, the old value, the new
+//! value and the host (01M3X30KHKB6W11C3NBAW7KCGW). The first look gives no message.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     T["each look"] --> S["read the settings"]
+//!     S --> C{"a value changed?"}
+//!     C -- no --> T
+//!     C -- yes --> E{"what does the change do?"}
+//!     E -- "a higher limit gives room, and the rollout is on" --> N1["note: the rollout starts 1 worker"]
+//!     E -- "a higher limit gives room, and the rollout is off" --> W["message that wakes the lead:<br/>riff workers start N"]
+//!     E -- "more workers run than the new limit" --> N2["note: riff stops no worker"]
+//!     E -- "nothing" --> N3["note: the change"]
+//! ```
+//!
+//! [`effect`] finds what the change does (01M3X30R4PSBP3RQWM02BJ6GK3). The message is a note
+//! when the lead has nothing to do. It wakes the lead only when work
+//! waits that the change lets start and the rollout is off (01M3X30RA3X08JBJ2JBVCCNEH3). A
+//! workers host sets its status at once when its limit changes, and
+//! posts the note for a change of its own MCP servers
+//! ([`crate::host`], 01M3X30RJS8YE5TXJBQDC2FT0C).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,7 +99,7 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, RiffState, SessionInfo};
+use riff_core::wire::{Idle, Kind, RiffState, SessionInfo};
 use serde::Deserialize;
 
 use crate::api::Api;
@@ -191,37 +221,283 @@ pub fn decide(view: &View) -> Option<usize> {
     pick(&view.places)
 }
 
+/// The worker settings that the lead sees at one look.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Seen {
+    /// The host name of the machine of the lead.
+    pub host: String,
+    /// `workers.interval` of the machine of the lead.
+    pub interval: u16,
+    /// `workers.mcp` of the machine of the lead.
+    pub mcp: Vec<String>,
+    /// The idle settings of the server. `None` when the server did not
+    /// tell them.
+    pub idle: Option<Idle>,
+    /// The limit of each machine by its host name: the machine of the
+    /// lead and each live workers host.
+    pub limits: BTreeMap<String, u16>,
+}
+
+/// One change of a worker setting (01M3X30KHKB6W11C3NBAW7KCGW).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    /// `workers.limit` of the machine `host`.
+    Limit { host: String, old: u16, new: u16 },
+    /// `workers.interval` of the machine of the lead.
+    Interval { host: String, old: u16, new: u16 },
+    /// `workers.mcp` of the machine `host`.
+    Mcp {
+        host: String,
+        old: Vec<String>,
+        new: Vec<String>,
+    },
+    /// The idle settings of the server.
+    Idle { old: Idle, new: Idle },
+}
+
+impl Seen {
+    /// Each change from `self`, the settings of the look before, to
+    /// `now`. A host that only one of the two has gives no change.
+    ///
+    /// ```
+    /// use riff::rollout::{Change, Seen};
+    ///
+    /// let before = Seen {
+    ///     host: "thelio".into(),
+    ///     interval: 10,
+    ///     mcp: vec!["riff".into()],
+    ///     idle: None,
+    ///     limits: [("thelio".to_owned(), 2), ("pangolin".to_owned(), 3)].into(),
+    /// };
+    /// assert_eq!(before.changes(&before), []);
+    /// let mut now = before.clone();
+    /// now.limits.insert("pangolin".into(), 4);
+    /// now.limits.insert("kadomony".into(), 1);
+    /// now.interval = 0;
+    /// assert_eq!(
+    ///     before.changes(&now),
+    ///     [
+    ///         Change::Limit { host: "pangolin".into(), old: 3, new: 4 },
+    ///         Change::Interval { host: "thelio".into(), old: 10, new: 0 },
+    ///     ]
+    /// );
+    /// ```
+    pub fn changes(&self, now: &Seen) -> Vec<Change> {
+        let mut changes: Vec<Change> = now
+            .limits
+            .iter()
+            .filter_map(|(host, &new)| {
+                let old = *self.limits.get(host)?;
+                (old != new).then(|| Change::Limit {
+                    host: host.clone(),
+                    old,
+                    new,
+                })
+            })
+            .collect();
+        if self.interval != now.interval {
+            changes.push(Change::Interval {
+                host: now.host.clone(),
+                old: self.interval,
+                new: now.interval,
+            });
+        }
+        if self.mcp != now.mcp {
+            changes.push(Change::Mcp {
+                host: now.host.clone(),
+                old: self.mcp.clone(),
+                new: now.mcp.clone(),
+            });
+        }
+        if let (Some(old), Some(new)) = (self.idle, now.idle)
+            && old != new
+        {
+            changes.push(Change::Idle { old, new });
+        }
+        changes
+    }
+
+    /// Takes the values of `now`. It keeps the limit of a host that
+    /// `now` does not have, and the idle settings when `now` has none.
+    /// So a host that stops, gets a new limit and starts again gives a
+    /// change.
+    ///
+    /// ```
+    /// use riff::rollout::{Change, Seen};
+    ///
+    /// let with = |limit| Seen {
+    ///     limits: [("pangolin".to_owned(), limit)].into(),
+    ///     ..Seen::default()
+    /// };
+    /// let mut known = with(3);
+    /// known.keep(Seen::default());
+    /// assert_eq!(
+    ///     known.changes(&with(4)),
+    ///     [Change::Limit { host: "pangolin".into(), old: 3, new: 4 }]
+    /// );
+    /// ```
+    pub fn keep(&mut self, now: Seen) {
+        let mut limits = std::mem::take(&mut self.limits);
+        limits.extend(now.limits.iter().map(|(host, limit)| (host.clone(), *limit)));
+        let idle = now.idle.or(self.idle);
+        *self = Seen {
+            limits,
+            idle,
+            ..now
+        };
+    }
+}
+
+/// What a change of a setting does (01M3X30R4PSBP3RQWM02BJ6GK3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effect {
+    /// Nothing more than the change.
+    Nothing,
+    /// The rollout starts one worker at this look because of the change.
+    Starts,
+    /// Free work waits that the change lets start, and the rollout is
+    /// off: the lead starts `count` workers. `remote` is true for a
+    /// workers host.
+    Waits { count: usize, remote: bool },
+    /// This many workers run on the machine: more than its new limit.
+    /// riff stops none.
+    Over(usize),
+}
+
+impl Effect {
+    /// True when the message wakes the lead: the lead has a step to do
+    /// (01M3X30RA3X08JBJ2JBVCCNEH3).
+    pub fn wakes(&self) -> bool {
+        matches!(self, Effect::Waits { .. })
+    }
+}
+
+/// What `change` does, with the `view` of the look that found it. `on`
+/// is true when the rollout is on (01M3X30R4PSBP3RQWM02BJ6GK3).
+///
+/// A higher limit starts a worker when the rollout starts none with the
+/// old limit and one with the new limit. A lower limit stops no worker.
+///
+/// ```
+/// use riff::rollout::{Change, Effect, Place, View, effect};
+///
+/// let pangolin = Place {
+///     host: "pangolin".into(),
+///     session: Some("h1".into()),
+///     limit: 4,
+///     workers: 3,
+///     floor: 4,
+///     machine: None,
+/// };
+/// let view = View { running: true, work: 2, idle: 0, places: vec![pangolin] };
+/// let raise = Change::Limit { host: "pangolin".into(), old: 3, new: 4 };
+/// assert_eq!(effect(&raise, &view, true), Effect::Starts);
+/// assert_eq!(effect(&raise, &view, false), Effect::Waits { count: 1, remote: true });
+/// // No free work: the change starts nothing.
+/// assert_eq!(effect(&raise, &View { work: 0, ..view.clone() }, true), Effect::Nothing);
+/// // The machine had room before the change.
+/// let more = Change::Limit { host: "pangolin".into(), old: 4, new: 5 };
+/// let mut wide = view.clone();
+/// wide.places[0].limit = 5;
+/// assert_eq!(effect(&more, &wide, true), Effect::Nothing);
+/// let lower = Change::Limit { host: "pangolin".into(), old: 4, new: 2 };
+/// assert_eq!(effect(&lower, &view, true), Effect::Over(3));
+/// ```
+pub fn effect(change: &Change, view: &View, on: bool) -> Effect {
+    let Change::Limit { host, old, new } = change else {
+        return Effect::Nothing;
+    };
+    let Some(i) = view.places.iter().position(|p| &p.host == host) else {
+        return Effect::Nothing;
+    };
+    let place = &view.places[i];
+    if new < old {
+        return if place.workers > usize::from(*new) {
+            Effect::Over(place.workers)
+        } else {
+            Effect::Nothing
+        };
+    }
+    let mut before = view.clone();
+    before.places[i].limit = *old;
+    if decide(&before).is_some() || decide(view).is_none() {
+        return Effect::Nothing;
+    }
+    if on {
+        return Effect::Starts;
+    }
+    let room = usize::from(place.limit).saturating_sub(place.workers);
+    Effect::Waits {
+        count: view.work.min(room),
+        remote: place.session.is_some(),
+    }
+}
+
 /// What the rollout needs from the world. [`Live`] is the real one.
 pub trait Env {
     /// The time between two looks. Zero turns the rollout off.
     fn interval(&self) -> Duration;
+    /// The worker settings now, or `None` when this session is not the
+    /// lead.
+    fn seen(&self) -> impl Future<Output = Result<Option<Seen>>> + Send;
     /// One look, or `None` when this session is not the lead.
     fn look(&self) -> impl Future<Output = Result<Option<View>>> + Send;
     /// Starts one worker on `place`.
     fn start(&self, place: &Place) -> impl Future<Output = Result<()>> + Send;
+    /// Gives `body` to the lead: a message that wakes it when `wake` is
+    /// true, else a note.
+    fn tell(&self, body: &str, wake: bool) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Runs the rollout until the task ends. It waits one interval, looks,
 /// and starts at most one worker, again and again. So riff starts at
 /// most one worker each interval. It prints an error once, not again
 /// until the error changes.
+///
+/// At each look it tells the lead each change of a worker setting
+/// (01M3X30KHKB6W11C3NBAW7KCGW). A rollout that is off looks at the settings each
+/// [`OFF_WAIT`], and starts no worker.
 pub async fn run(env: impl Env) {
     let mut last_error = None;
+    let mut known: Option<Seen> = None;
     loop {
         let every = env.interval();
-        if every.is_zero() {
-            tokio::time::sleep(OFF_WAIT).await;
-            continue;
-        }
-        tokio::time::sleep(every).await;
+        tokio::time::sleep(if every.is_zero() { OFF_WAIT } else { every }).await;
         let step = async {
-            let Some(view) = env.look().await? else {
-                return Ok(());
+            let Some(seen) = env.seen().await? else {
+                known = None;
+                return anyhow::Ok(());
             };
-            if let Some(i) = decide(&view) {
+            let on = seen.interval > 0;
+            let changed = known
+                .as_ref()
+                .map(|k| k.changes(&seen))
+                .unwrap_or_default();
+            let view = if on || !changed.is_empty() {
+                env.look().await?
+            } else {
+                None
+            };
+            for change in &changed {
+                let effect = match &view {
+                    Some(view) => effect(change, view, on),
+                    None => Effect::Nothing,
+                };
+                env.tell(&text::setting_changed(change, &effect), effect.wakes())
+                    .await?;
+            }
+            // The lead has each change now: a failed start tells none again.
+            match &mut known {
+                Some(known) => known.keep(seen),
+                None => known = Some(seen),
+            }
+            if on
+                && let Some(view) = &view
+                && let Some(i) = decide(view)
+            {
                 env.start(&view.places[i]).await?;
             }
-            anyhow::Ok(())
+            Ok(())
         };
         match step.await {
             Ok(()) => last_error = None,
@@ -551,6 +827,34 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         Duration::from_secs(u64::from(seconds))
     }
 
+    async fn seen(&self) -> Result<Option<Seen>> {
+        let me = (self.me)();
+        let sessions = self.api.who(&me, false).await?;
+        let lead = sessions
+            .iter()
+            .any(|s| s.uri.who() == me.who() && s.uri.lead());
+        if !lead {
+            return Ok(None);
+        }
+        let settings = settings::path()?;
+        let host = me.place().host().to_owned();
+        let mut limits = BTreeMap::new();
+        limits.insert(host.clone(), settings::workers_limit(&settings)?);
+        for (info, status) in host::hosts(&sessions, me.who().user()) {
+            limits
+                .entry(info.uri.place().host().to_owned())
+                .or_insert(status.limit);
+        }
+        Ok(Some(Seen {
+            host,
+            interval: settings::workers_interval(&settings)?,
+            mcp: settings::workers_mcp(&settings)?,
+            // A server that does not answer gives no change.
+            idle: self.api.idle(&me, None, None).await.ok(),
+            limits,
+        }))
+    }
+
     async fn look(&self) -> Result<Option<View>> {
         let me = (self.me)();
         let sessions = self.api.who(&me, false).await?;
@@ -656,12 +960,23 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         }
         Ok(())
     }
+
+    async fn tell(&self, body: &str, wake: bool) -> Result<()> {
+        let kind = if wake { Kind::Message } else { Kind::Note };
+        post_lead(self.api.base(), &(self.me)(), body, kind).await
+    }
 }
 
 /// Posts `body` as a note to the lead `me`, in its repository thread,
 /// as the person (01M3Q5QEE4MQNCRKVJK3D54G9Z). A note wakes nobody. The
 /// lead does not see its own posts, so the person posts it.
 pub async fn note_lead(server: &str, me: &SessionUri, body: &str) -> Result<()> {
+    post_lead(server, me, body, Kind::Note).await
+}
+
+/// Posts `body` to the lead `me`, in its repository thread, as the
+/// person. A post of the kind `message` wakes the lead.
+async fn post_lead(server: &str, me: &SessionUri, body: &str, kind: Kind) -> Result<()> {
     let Some(session) = me.who().session() else {
         bail!("the lead has no session");
     };
@@ -673,7 +988,7 @@ pub async fn note_lead(server: &str, me: &SessionUri, body: &str) -> Result<()> 
         me.default_thread().as_ref(),
         &[to],
         body,
-        Kind::Note,
+        kind,
     )
     .await?;
     Ok(())
@@ -714,6 +1029,8 @@ mod tests {
         starts: Vec<(String, tokio::time::Instant)>,
         /// The workers that the server stopped.
         stops: usize,
+        /// Each message to the lead, with true when it wakes the lead.
+        told: Vec<(String, bool)>,
     }
 
     impl World {
@@ -770,6 +1087,23 @@ mod tests {
     impl Env for Arc<Fake> {
         fn interval(&self) -> Duration {
             self.with(|w| w.interval)
+        }
+
+        async fn seen(&self) -> Result<Option<Seen>> {
+            Ok(self.with(|w| {
+                w.lead.then(|| Seen {
+                    host: w.places[0].host.clone(),
+                    interval: w.interval.as_secs() as u16,
+                    mcp: vec!["riff".into()],
+                    idle: Some(Idle::default()),
+                    limits: w.places.iter().map(|p| (p.host.clone(), p.limit)).collect(),
+                })
+            }))
+        }
+
+        async fn tell(&self, body: &str, wake: bool) -> Result<()> {
+            self.with(|w| w.told.push((body.to_owned(), wake)));
+            Ok(())
         }
 
         async fn look(&self) -> Result<Option<View>> {
@@ -841,6 +1175,7 @@ mod tests {
             new: Vec::new(),
             starts: Vec::new(),
             stops: 0,
+            told: Vec::new(),
         }
     }
 
@@ -987,6 +1322,112 @@ mod tests {
         run_for(&fake, 30).await;
         // thelio has 64 - 60 = 4 free, pangolin 24.
         assert_eq!(fake.hosts(), ["pangolin", "pangolin", "pangolin"]);
+    }
+
+    /// A higher limit on a machine that was full, with free work: the
+    /// lead gets a note that the rollout starts a worker, and the
+    /// rollout starts it (01M3X30KHKB6W11C3NBAW7KCGW, 01M3X30R4PSBP3RQWM02BJ6GK3).
+    #[tokio::test(start_paused = true)]
+    async fn a_higher_limit_tells_the_lead_that_the_rollout_starts_a_worker() {
+        let mut w = world(3);
+        w.places = vec![Place {
+            limit: 1,
+            ..pangolin()
+        }];
+        let fake = Fake::new(w);
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(Duration::from_secs(35)).await;
+        assert_eq!(fake.hosts(), ["pangolin"]);
+        assert!(fake.with(|w| w.told.is_empty()), "no change, no message");
+
+        fake.with(|w| w.places[0].limit = 2);
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        task.abort();
+        assert_eq!(fake.hosts(), ["pangolin", "pangolin"]);
+        assert_eq!(
+            fake.with(|w| w.told.clone()),
+            [(
+                "workers: limit 1 to 2 on pangolin: the rollout starts 1 worker.".to_owned(),
+                false
+            )]
+        );
+    }
+
+    /// With the rollout off, the same change wakes the lead: work waits,
+    /// and only the lead can start the worker (01M3X30RA3X08JBJ2JBVCCNEH3).
+    #[tokio::test(start_paused = true)]
+    async fn a_higher_limit_wakes_the_lead_when_the_rollout_is_off() {
+        let mut w = world(3);
+        w.interval = Duration::ZERO;
+        w.places = vec![Place {
+            limit: 1,
+            workers: 1,
+            ..pangolin()
+        }];
+        let fake = Fake::new(w);
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(OFF_WAIT * 2).await;
+        fake.with(|w| w.places[0].limit = 3);
+        tokio::time::sleep(OFF_WAIT * 2).await;
+        task.abort();
+        assert!(fake.hosts().is_empty(), "a rollout that is off starts nothing");
+        assert_eq!(
+            fake.with(|w| w.told.clone()),
+            [(
+                "workers: limit 1 to 3 on pangolin: free work waits, and the rollout is off. \
+                 Start workers with: riff workers start 2 --host pangolin"
+                    .to_owned(),
+                true
+            )]
+        );
+    }
+
+    /// A lower limit stops no worker, and the lead gets a note that says
+    /// so. A change with no free work gives a note with only the change.
+    #[tokio::test(start_paused = true)]
+    async fn a_lower_limit_gives_a_note_and_stops_no_worker() {
+        let mut w = world(0);
+        w.places[1].workers = 3;
+        let fake = Fake::new(w);
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        fake.with(|w| {
+            w.places[1].limit = 2;
+            w.places[0].limit = 6;
+        });
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        task.abort();
+        assert_eq!(fake.with(|w| w.places[1].workers), 3);
+        assert_eq!(
+            fake.with(|w| w.told.clone()),
+            [
+                (
+                    "workers: limit 4 to 2 on pangolin: 3 workers run there, and riff stops \
+                     none."
+                        .to_owned(),
+                    false
+                ),
+                ("workers: limit 4 to 6 on thelio.".to_owned(), false),
+            ]
+        );
+    }
+
+    /// A session that is not the lead tells nothing, and a new lead
+    /// starts from the settings of its first look.
+    #[tokio::test(start_paused = true)]
+    async fn only_the_lead_gets_the_changes() {
+        let fake = Fake::new(World {
+            lead: false,
+            ..world(0)
+        });
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        fake.with(|w| w.places[0].limit = 9);
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        fake.with(|w| w.lead = true);
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        task.abort();
+        assert!(fake.with(|w| w.told.is_empty()));
     }
 
     #[test]
