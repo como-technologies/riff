@@ -267,7 +267,10 @@ async fn log_cut_repairs_a_chunk_with_a_record_of_a_lower_position() {
         "{stdout}"
     );
     assert!(stdout.contains("riff-server log cut --after 6"), "{stdout}");
-    assert!(!stdout.contains("--yes"), "verify names the dry run: {stdout}");
+    assert!(
+        !stdout.contains("--yes"),
+        "verify names the dry run: {stdout}"
+    );
 
     let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "4", "--yes"]);
     assert!(ok, "{stderr}");
@@ -282,6 +285,58 @@ async fn log_cut_repairs_a_chunk_with_a_record_of_a_lower_position() {
         stdout,
         "The log reads: 2 chunks, 4 records from position 1 to 4, 0 checkpoints.\n"
     );
+}
+
+/// Each `log cut` command in the `sh` blocks of the part of the
+/// Development page from `heading` to `end`.
+fn book_cuts(heading: &str, end: &str) -> Vec<String> {
+    let page = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/src/development.md");
+    let page = fs::read_to_string(page).unwrap();
+    let part = &page[page.find(heading).unwrap()..];
+    let part = &part[..part.find(end).unwrap()];
+    let mut in_sh = false;
+    let mut cuts = Vec::new();
+    for line in part.lines() {
+        if line.starts_with("```") {
+            in_sh = line == "```sh";
+        } else if in_sh && line.contains("log cut") {
+            cuts.push(line.to_owned());
+        }
+    }
+    cuts
+}
+
+/// The book shows the dry run and the cut with `--yes`, in "Cut the
+/// log" and in "Go back to a position". `--help` names the flag.
+#[test]
+fn the_book_shows_the_dry_run_and_the_cut_with_yes() {
+    let parts = [
+        ("### Cut the log\n", "### Use the tools on the bucket\n"),
+        (
+            "### Go back to a position\n",
+            "## Set up the cloud project\n",
+        ),
+    ];
+    for (heading, end) in parts {
+        let cuts = book_cuts(heading, end);
+        assert!(cuts.len() >= 2, "{heading}: {cuts:?}");
+        // The dry run comes first.
+        assert!(!cuts[0].contains("--yes"), "{heading}: {cuts:?}");
+        assert!(
+            cuts.iter().any(|cut| cut.contains(" --yes ")),
+            "{heading}: {cuts:?}"
+        );
+        for cut in &cuts {
+            assert!(
+                cut.starts_with("riff-server log cut --after "),
+                "{heading}: {cut}"
+            );
+        }
+    }
+    let (ok, help, _) = tool(Path::new("d"), &["log", "cut", "--help"]);
+    assert!(ok);
+    assert!(help.contains("--yes"), "{help}");
+    assert!(help.contains("--after <POSITION>"), "{help}");
 }
 
 /// The bytes of each file under `dir`, by its path.
@@ -509,10 +564,7 @@ async fn the_named_cut_repairs_a_line_that_is_not_utf8() {
 
     let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
     assert!(!ok);
-    assert!(
-        stdout.contains("line 4: the line is not UTF-8"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("line 4: the line is not UTF-8"), "{stdout}");
     assert!(stdout.starts_with(&chunk.display().to_string()), "{stdout}");
     assert!(stdout.contains("1 problem in 1 chunk"), "{stdout}");
     // Not `--after 0`: that is the whole log.
@@ -530,7 +582,11 @@ async fn the_named_cut_repairs_a_line_that_is_not_utf8() {
         lines[2],
         "Removed 2 records and 0 checkpoints after position 2. Threads: acme/app."
     );
-    assert_eq!(fs::read(&chunk).unwrap(), good, "the kept bytes are the same");
+    assert_eq!(
+        fs::read(&chunk).unwrap(),
+        good,
+        "the kept bytes are the same"
+    );
     let (ok, stdout, _) = tool(dir.path(), &["log", "verify"]);
     assert!(ok, "{stdout}");
     let replayed = log::replay(&Dir::new(dir.path())).await.unwrap();

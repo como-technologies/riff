@@ -1044,6 +1044,7 @@ impl Service {
             "loaded the checkpoint and replayed the log after it in {:?}",
             facts.replay
         );
+        let taken = Instant::now();
         let lease = Lease::take(store.clone()).await?;
         tracing::info!(
             "took the lease as {}; waiting {:?} for the old instance",
@@ -1114,7 +1115,7 @@ impl Service {
                 .0
                 .error(format!("the token store was not saved: {error}"));
         }
-        service.keep_lease(lease);
+        service.keep_lease(lease, taken);
         service.save_each_second();
         Ok(service)
     }
@@ -1425,16 +1426,17 @@ impl Service {
 
     /// Starts the task that reads the lease each
     /// [`lease::Timing::read_every`] (R139), and writes the time to it
-    /// each [`lease::Timing::renew_every`]. The task ends when the
-    /// server stops or ends.
-    fn keep_lease(&self, lease: Arc<Lease>) {
+    /// each [`lease::Timing::renew_every`]. `taken` is a time before the
+    /// take of the lease. The task ends when the server stops or ends.
+    fn keep_lease(&self, lease: Arc<Lease>, taken: Instant) {
         let server = Arc::downgrade(&self.0);
         let timing = self.0.config.lease;
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(timing.read_every);
             tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            // The take wrote the time.
-            let mut renewed = Instant::now();
+            // The start of the last write of the time. The take wrote
+            // the first time.
+            let mut renewed = taken;
             loop {
                 tick.tick().await;
                 let Some(server) = server.upgrade() else {

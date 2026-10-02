@@ -879,20 +879,24 @@ The log reads: 3 chunks, 1234 records from position 1 to 1234, 1 checkpoint.
 ```
 
 A bad log gives one line for each problem, then the last good position
-and the command that removes each record after it:
+and the command that shows each record after it:
 
 ```text
 /home/ann/.local/state/riff-server/log/00000000000000001201.jsonl line 3: EOF while parsing a value at line 1 column 30
 1 problem in 3 chunks and 1 checkpoint. The last good record of the log is at position 1201.
-To remove each record after it, stop the server and run: riff-server log cut --after 1201
+To see each record after it, and the command that removes them, run: riff-server log cut --after 1201
 ```
 
 ### Cut the log
 
-`riff-server log cut --after POSITION` deletes each record and each
-checkpoint after the position. Stop the server first. A cut loses each
-change after the position: the command prints each record that it
-removes, and the threads of these records.
+A cut loses each change after a position. It has two steps: a dry
+run, then the cut.
+
+#### See what a cut removes
+
+`riff-server log cut --after POSITION` removes nothing. It prints each
+record and each checkpoint that the cut removes, the threads of these
+records, and the command that removes them.
 
 ```sh
 riff-server log cut --after 1201 --dir ~/.local/state/riff-server
@@ -901,15 +905,58 @@ riff-server log cut --after 1201 --dir ~/.local/state/riff-server
 ```text
 1202  (a line that does not read: EOF while parsing a value at line 1 column 30)
 1203  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
+A cut removes 2 records and 0 checkpoints after position 1201. Threads: acme/app.
+This run removed nothing. To remove them, stop the server and run: riff-server log cut --after 1201 --yes
+```
+
+#### Remove the records
+
+Stop the server first. Then add `--yes`:
+
+```sh
+riff-server log cut --after 1201 --yes --dir ~/.local/state/riff-server
+```
+
+```text
+1202  (a line that does not read: EOF while parsing a value at line 1 column 30)
+1203  2026-09-30T12:00:05Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1
 Removed 2 records and 0 checkpoints after position 1201. Threads: acme/app.
 ```
 
-In a chunk, the command keeps only the first lines whose positions are
-right. It removes each line after them, also a line with a lower
-position. So a record that it prints never stays.
+The command keeps only the good part of the log: its first records
+that read and have the right positions, up to the position. It removes
+each line after the first problem, also a line with a lower position,
+and each later chunk. So a line that it prints never stays, and the
+log reads after the cut. When the position of a removed line stays in
+the log from an earlier chunk, the line says so.
 
 The command refuses a position before the oldest kept checkpoint. The
 chunks before that checkpoint are gone, so no start can replay them.
+
+#### When the cut refuses: a server holds the lease
+
+With `--yes`, the command refuses while a server holds the lease of
+the store. The refusal names the instance of the server:
+
+```text
+riff-server: cannot cut: the server instance 5f0c…e1 holds the lease, and wrote it at 2026-09-30T12:00:05Z. Stop the server first. A lease ends when its server shuts down, or 90 seconds after its last write.
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> live: a server takes the lease
+    live --> live: the server writes the time, each 30 s
+    live --> ended: the server shuts down (Ctrl-C, SIGTERM)
+    live --> ended: 90 s with no new time
+    ended --> live: a server takes the lease
+```
+
+- After Ctrl-C or `just cloud down`, the lease ends at once. Run the
+  command again.
+- After a server that stopped with no shutdown, for example a crash,
+  wait 90 seconds. Then run the command again.
+- The server logs the ID of its instance at start: `took the lease
+  as`.
 
 ### Use the tools on the bucket
 
@@ -940,7 +987,8 @@ the log before the bad record.
 ```mermaid
 flowchart LR
     S[stop the server] --> V[log verify:<br/>the last good position is P]
-    V --> C[log cut --after P:<br/>names each removed record]
+    V --> D[log cut --after P:<br/>a dry run, names each record]
+    D --> C[log cut --after P --yes:<br/>removes them]
     C --> R[start the server:<br/>it replays up to P]
 ```
 
@@ -949,6 +997,7 @@ For a server on your machine, stop it with Ctrl-C. Then run:
 ```sh
 riff-server log verify --dir ~/.local/state/riff-server
 riff-server log cut --after POSITION --dir ~/.local/state/riff-server
+riff-server log cut --after POSITION --yes --dir ~/.local/state/riff-server
 riff-server --dir ~/.local/state/riff-server
 ```
 
@@ -960,6 +1009,7 @@ writes the log. Check out the release that ran, so that
 just cloud down
 riff-server log verify --bucket como-riff-state
 riff-server log cut --after POSITION --bucket como-riff-state
+riff-server log cut --after POSITION --yes --bucket como-riff-state
 git checkout vX.Y.Z
 just cloud up
 ```

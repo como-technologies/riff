@@ -412,11 +412,12 @@ does not call `who` for the whole riff.
   position (`--from POSITION`).
 - `riff-server log verify` reads each chunk and each checkpoint from the
   oldest kept checkpoint, and names each line that does not read.
-- `riff-server log cut --after POSITION` deletes each chunk and each
-  checkpoint after the position. It writes the chunk that holds the
-  position again, with only its first records. It prints the records
-  that it removes, and the threads. It refuses to cut before the oldest
-  kept checkpoint.
+- `riff-server log cut --after POSITION --yes` deletes each chunk and
+  each checkpoint after the position. It writes the chunk that holds
+  the position again, with only its first records. It prints the
+  records that it removes, and the threads. It refuses to cut before
+  the oldest kept checkpoint, and while a server holds the lease. With
+  no `--yes`, it removes nothing.
 - The tools take a token from the metadata server of Cloud Run, or from
   the Google sign-in of the person (`gcloud auth print-access-token`).
   So they run on a laptop too.
@@ -491,7 +492,8 @@ goes to the owner.
   1. Stop the server: `just cloud down`.
   2. `riff-server log verify`, to find the first bad record.
   3. `riff-server log cut --after POSITION`. A cut loses each change
-     after the position: the tool names them.
+     after the position: the tool names them. Then the same command
+     with `--yes`.
   4. Start the server: `just cloud up`.
 
 ### Deploy and rollback

@@ -862,9 +862,7 @@ pub async fn cut(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolE
                     // The header and the kept lines, with their bytes
                     // unchanged.
                     let bytes = loaded.bytes[..chunk.rows[end].end].to_vec();
-                    store
-                        .save(&chunk.name, bytes, Some(loaded.version))
-                        .await?;
+                    store.save(&chunk.name, bytes, Some(loaded.version)).await?;
                 }
             }
         }
@@ -1171,7 +1169,12 @@ mod tests {
         chunk(&store, 3, &[3, 4, 5]).await;
         let removed = cut(&store, 2, Mode::Remove).await.unwrap();
         assert_eq!(printed(&removed), ["3", "4", "3", "4", "5"]);
-        assert!(removed.records.iter().all(|line| !line.contains("a repeat")));
+        assert!(
+            removed
+                .records
+                .iter()
+                .all(|line| !line.contains("a repeat"))
+        );
         assert_eq!(
             removed.chunks,
             [log::chunk_name(1), log::chunk_name(3)],
