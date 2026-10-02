@@ -28,7 +28,7 @@
 //! | `build-PID` | The same `riff mcp`, next to `mcp-PID`. | The build of that `riff mcp`. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
 //! | `next-ID` | `riff workers next` of a worker. The Stop hook takes it (see [`crate::next`]). | The tmux pane of the worker. |
-//! | `left-ID` | The `leave` tool. The `join` tool removes it. | Nothing. The file counts. |
+//! | `left-ID` | The `leave` tool. The `join` tool removes it. It is in [`marks`], not in [`dir`]. | Nothing. The file counts. |
 //! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
 //! | `update-tried` | The same update. | The release tag that it tried last. |
 //! | `update.log` | The same update. | Its output. |
@@ -290,9 +290,38 @@ pub fn update_log(dir: &Path) -> PathBuf {
     dir.join("update.log")
 }
 
-/// Records that the session `session` left the riff
-/// (01M3MEEFC9ZQVW2KC9FNJ75MTY). The record has no lock: it outlives
-/// `riff mcp`, so it holds over a resume and `/clear`.
+/// The directory of the mark of a leave: `$RIFF_HOME/state` (see
+/// [`home`](crate::home)), else `$XDG_STATE_HOME/riff`, else
+/// `$HOME/.local/state/riff`. `None` without `HOME`. It is never
+/// `$XDG_RUNTIME_DIR`: the system clears that directory at a logout,
+/// and the mark must hold until a join (01M3XQVJVJDX81QY38219SN96B).
+pub fn marks() -> Option<PathBuf> {
+    if let Some(home) = crate::home::dir() {
+        return Some(home.join("state"));
+    }
+    marks_from(std::env::var_os("XDG_STATE_HOME"), std::env::var_os("HOME"))
+}
+
+/// [`marks`] from the values of `XDG_STATE_HOME` and `HOME`. An empty
+/// value counts as unset.
+///
+/// ```
+/// use riff::local::marks_from;
+/// use std::path::PathBuf;
+///
+/// let some = |s: &str| Some(s.into());
+/// assert_eq!(marks_from(some("/s"), some("/h")), Some(PathBuf::from("/s/riff")));
+/// assert_eq!(marks_from(some(""), some("/h")), Some(PathBuf::from("/h/.local/state/riff")));
+/// assert_eq!(marks_from(None, None), None);
+/// ```
+pub fn marks_from(state: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
+    dir_from(None, state, home)
+}
+
+/// Writes the mark that the session `session` left the riff
+/// (01M3MEEFC9ZQVW2KC9FNJ75MTY) in `dir`, a directory as [`marks`]. The
+/// mark has no lock: it outlives `riff mcp`, so it holds over a resume,
+/// `/clear` and a restart of the machine.
 ///
 /// ```
 /// let run = tempfile::tempdir()?;
@@ -309,7 +338,7 @@ pub fn leave(dir: &Path, session: &str) -> io::Result<()> {
     std::fs::write(left_file(dir, session), "")
 }
 
-/// Removes the record of [`leave`]. A session with no record is in the
+/// Removes the mark of [`leave`]. A session with no mark is in the
 /// riff already.
 pub fn join(dir: &Path, session: &str) -> io::Result<()> {
     match std::fs::remove_file(left_file(dir, session)) {
@@ -323,10 +352,10 @@ pub fn left(dir: &Path, session: &str) -> bool {
     left_file(dir, session).exists()
 }
 
-/// True when the session `session` left the riff, with the files in
-/// [`dir`]. False with no directory.
+/// True when the session `session` left the riff, with the mark in
+/// [`marks`]. False with no directory.
 pub fn left_here(session: &str) -> bool {
-    dir().is_some_and(|dir| left(&dir, session))
+    marks().is_some_and(|dir| left(&dir, session))
 }
 
 fn left_file(dir: &Path, session: &str) -> PathBuf {

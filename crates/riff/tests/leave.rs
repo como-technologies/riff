@@ -22,12 +22,18 @@ async fn start_server() -> Api {
     Api::new(&format!("http://{addr}"))
 }
 
-/// Connects an MCP client to `tools`.
+/// Registers `me` in a running riff, and connects an MCP client to
+/// `tools`.
 async fn connect(api: &Api, tools: Tools, me: &SessionUri) -> RunningService<RoleClient, ()> {
     api.register(me).await.unwrap();
     api.set_riff(me, riff_core::wire::RiffState::Running)
         .await
         .unwrap();
+    connect_only(tools).await
+}
+
+/// Connects an MCP client to `tools`, with no call to the server.
+async fn connect_only(tools: Tools) -> RunningService<RoleClient, ()> {
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     tokio::spawn(async move {
         tools
@@ -120,7 +126,7 @@ async fn a_leave_pushes_the_work_frees_the_claims_and_a_join_comes_back() {
     let mike: SessionUri = MIKE.parse().unwrap();
     let brett: SessionUri = BRETT.parse().unwrap();
     let tools = Tools::new(api.clone(), mike.clone())
-        .in_local(Some(run.path().to_owned()))
+        .in_local(run.path())
         .in_dir(work.clone());
     let m = connect(&api, tools, &mike).await;
     let b = connect(&api, Tools::new(api.clone(), brett.clone()), &brett).await;
@@ -214,11 +220,14 @@ async fn a_leave_on_the_default_branch_keeps_the_claims() {
 #[tokio::test]
 async fn a_leave_with_no_claim_pushes_nothing() {
     let not_git = tempfile::tempdir().unwrap();
+    let run = tempfile::tempdir().unwrap();
     let api = start_server().await;
     let mike: SessionUri = MIKE.parse().unwrap();
     let m = connect(
         &api,
-        Tools::new(api.clone(), mike.clone()).in_dir(not_git.path().to_owned()),
+        Tools::new(api.clone(), mike.clone())
+            .in_local(run.path())
+            .in_dir(not_git.path().to_owned()),
         &mike,
     )
     .await;
@@ -227,17 +236,49 @@ async fn a_leave_with_no_claim_pushes_nothing() {
     assert!(!left.contains("pushed"), "{left}");
 }
 
-/// A resume starts a new `riff mcp`. It finds the record, and its tools
-/// refuse (01M3MEEFH79XXNZW6DWSPTEW2A).
+/// A resume starts a new `riff mcp`. It finds the mark, and its tools
+/// refuse (01M3MEEFH79XXNZW6DWSPTEW2A). `riff who` does not list the
+/// session.
 #[tokio::test]
 async fn a_leave_holds_for_new_tools() {
     let run = tempfile::tempdir().unwrap();
-    riff::local::leave(run.path(), "a1").unwrap();
     let api = start_server().await;
     let mike: SessionUri = MIKE.parse().unwrap();
-    let tools = Tools::new(api.clone(), mike.clone()).in_local(Some(run.path().to_owned()));
+    let brett: SessionUri = BRETT.parse().unwrap();
+    let old = Tools::new(api.clone(), mike.clone()).in_local(run.path());
+    let m = connect(&api, old, &mike).await;
+    let b = connect(&api, Tools::new(api.clone(), brett.clone()), &brett).await;
+    let (left, error) = call(&m, "leave", json!({})).await;
+    assert!(!error, "{left}");
+    // The agent tool stops the old `riff mcp`, and starts a new one.
+    drop(m);
+
+    let tools = Tools::new(api.clone(), mike.clone()).in_local(run.path());
     assert!(tools.left());
-    let other: SessionUri = BRETT.parse().unwrap();
-    let fresh = Tools::new(api, other).in_local(Some(run.path().to_owned()));
+    let m = connect_only(tools).await;
+    let (text, error) = call(&m, "whoami", json!({})).await;
+    assert!(error, "{text}");
+    assert!(text.contains("/riff:join"), "{text}");
+    let (who, _) = call(&b, "who", json!({})).await;
+    assert!(!lists(&who, "a1"), "{who}");
+
+    let fresh = Tools::new(api, brett).in_local(run.path());
     assert!(!fresh.left(), "a new session joins as usual");
+}
+
+/// With no directory for the mark, riff cannot keep a leave: the tool
+/// refuses, and the session stays (01M3XQVK05FAT3PR43W8RNEYHY).
+#[tokio::test]
+async fn a_leave_that_riff_cannot_keep_is_refused() {
+    let not_git = tempfile::tempdir().unwrap();
+    let api = start_server().await;
+    let mike: SessionUri = MIKE.parse().unwrap();
+    let tools = Tools::new(api.clone(), mike.clone()).in_dir(not_git.path().to_owned());
+    let m = connect(&api, tools, &mike).await;
+    let (text, error) = call(&m, "leave", json!({})).await;
+    assert!(error, "{text}");
+    assert!(text.contains("still in the riff"), "{text}");
+    let (who, error) = call(&m, "who", json!({})).await;
+    assert!(!error, "{who}");
+    assert!(lists(&who, "a1"), "{who}");
 }
