@@ -44,8 +44,8 @@
 //! Remote Control also when the user settings turn on
 //! `remoteControlAtStartup` (01M3JV0ZNGKDFMRR9ACT0480V9). They also turn
 //! off the recap of Claude Code, because no person reads a worker pane
-//! (01M3MN0D429T4Q80DYBE9S9XR7). The user settings file does not change. `riff workers next`
-//! keeps the same process, so each next item has the same settings.
+//! (01M3MN0D429T4Q80DYBE9S9XR7). The user settings file does not change. The clear of a
+//! worker ([`crate::next`]) keeps the same process, so each next item has the same settings.
 //!
 //! Each pane gets the riff-server URL of the session that makes it, so
 //! all of them talk to the same riff (01M3JD39BASN1GNJTZXXKBCNZ9).

@@ -974,6 +974,9 @@ impl Engine {
     /// sends the effects and tells the call that the entry is done. The
     /// call can be gone: the change is done. A session that a record
     /// takes out of MustClear gets the wake that it missed (01M3X9XBMB3R718Z81BYXTHMZ0).
+    /// One message gives a session one wake: when the message and the
+    /// record that ends MustClear are in one chunk, the session gets
+    /// only the missed wake (01M3XV0588C2XZKZ3NM67JXCKJ).
     ///
     /// A proof of other records is an error of the writer: the chunk
     /// fails, and the engine stops.
@@ -990,9 +993,9 @@ impl Engine {
                 missed.extend(core.state.written(&entry.made));
             }
         }
-        for wake in missed {
+        for wake in &missed {
             // A send fails only when nobody listens. That is not an error.
-            let _ = self.0.wakes.send(wake);
+            let _ = self.0.wakes.send(wake.clone());
         }
         for entry in chunk.entries {
             if let (true, Some(sent)) = (entry.made.is_empty(), &entry.sent) {
@@ -1001,7 +1004,7 @@ impl Engine {
                     None => Outcome::NoChange,
                 });
             }
-            let ended = self.effects(&entry.made);
+            let ended = self.effects(&entry.made, &missed);
             if let Some(done) = entry.done {
                 let made = entry.made;
                 let _ = done.send(Done { made, ended });
@@ -1035,13 +1038,15 @@ impl Engine {
     ///   sign-in, the event holds the keys of the sender, so that a
     ///   reader verifies the message (R199). A session that must clear
     ///   its context gets no wake (01M3X9XBMB3R718Z81BYXTHMZ0): the
-    ///   message waits in its thread.
+    ///   message waits in its thread. A wake of `sent` went out
+    ///   already, as the missed wake of its session: it is not sent a
+    ///   second time (01M3XV0588C2XZKZ3NM67JXCKJ).
     /// - The end of the sign-ins of the person of a `member_removed`
     ///   record, and of the USER of a `signins_ended` record: each
     ///   sign-in that started before the position of the record (R20,
     ///   01M3XA87A9GGFA89RQXWSKY0V6). A stop before this effect ends no
     ///   sign-in now: the next load drops them by the same rule.
-    fn effects(&self, made: &[Record]) -> usize {
+    fn effects(&self, made: &[Record], sent: &[(Who, Wake)]) -> usize {
         let mut ended = 0;
         for record in made {
             let posted = match &record.change {
@@ -1067,6 +1072,7 @@ impl Engine {
             }
             delivery.tailed.trusted = self.0.sign_ins.trusted();
             self.core().state.keep_wakes(&mut delivery.wakes);
+            delivery.wakes.retain(|wake| !sent.contains(wake));
             // A send fails only when nobody listens. That is not an error.
             for wake in delivery.wakes {
                 let _ = self.0.wakes.send(wake);

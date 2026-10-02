@@ -312,7 +312,7 @@ impl Command for Claim {
 
 /// The reason of a claim that is refused with the code `must_clear`
 /// (01M3X9XAK1KPZZVM1AJR2H8DSS).
-pub const MUST_CLEAR: &str = "clear your context first: type /clear, or run riff workers next";
+pub const MUST_CLEAR: &str = "clear your context first: end your turn and riff clears it, or type /clear";
 
 /// Frees a claim. Only its holder can. The `released` record of the last
 /// claim of a worker has `must_clear`: the worker must clear its context

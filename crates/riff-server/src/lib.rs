@@ -3606,6 +3606,75 @@ mod tests {
         send(&service, claim_of(&worker, "issue-12")).await.unwrap();
     }
 
+    /// One message gives a session one wake (01M3XV0588C2XZKZ3NM67JXCKJ).
+    /// The request of the lead and the clear of the worker are in one
+    /// chunk: the worker gets the missed wake, and not the wake of the
+    /// `posted` record too. A message after the clear, in the same
+    /// chunk, gives its own wake.
+    #[tokio::test(start_paused = true)]
+    async fn a_message_and_the_clear_in_one_chunk_give_one_wake() {
+        use riff_core::wire::StartReason;
+
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1"
+            .parse()
+            .unwrap();
+        let start = |reason| Start {
+            me: worker.clone(),
+            reason,
+            worker: true,
+        };
+        send(&service, start(StartReason::Process)).await.unwrap();
+        send(&service, claim_of(&worker, "issue-7")).await.unwrap();
+        let release = Release {
+            me: worker.clone(),
+            thread: worker.default_thread().unwrap(),
+            item: "issue-7".into(),
+        };
+        assert!(send(&service, release).await.unwrap().must_clear);
+
+        let mut wakes = service.0.engine.wakes();
+        let request = |body: &str| Post::new(&mike(), None, vec![Selector::session("w1")], body);
+        let before = store.chunks().await.len();
+        let tries = store.tries.load(Ordering::SeqCst);
+        store.hold.store(true, Ordering::SeqCst);
+        let first = tokio::spawn(send(&service, post_body(&mike(), "one")));
+        store.tried(tries + 1).await;
+        let waits = tokio::spawn(send(&service, request("request: claim issue-12")));
+        sleep(Duration::from_millis(10)).await;
+        let clear = tokio::spawn(send(&service, start(StartReason::Clear)));
+        sleep(Duration::from_millis(10)).await;
+        let later = tokio::spawn(send(&service, request("request: claim issue-13")));
+        sleep(Duration::from_millis(50)).await;
+        store.release();
+        first.await.unwrap().unwrap();
+        let waits = waits.await.unwrap().unwrap();
+        clear.await.unwrap().unwrap();
+        let later = later.await.unwrap().unwrap();
+
+        // The two requests and the clear are in one chunk, in that order.
+        let chunks = store.chunks().await;
+        assert_eq!(chunks.len(), before + 2);
+        let kinds: Vec<&str> = chunks[before + 1]
+            .iter()
+            .filter_map(|change| match change {
+                Change::Posted(_) => Some("posted"),
+                Change::SessionStarted(_) => Some("session_started"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds, ["posted", "session_started", "posted"]);
+
+        // One wake for each request, and no more.
+        let mut seqs = Vec::new();
+        while let Ok((to, wake)) = wakes.try_recv() {
+            assert_eq!(&to, worker.who());
+            seqs.push(wake.seq);
+        }
+        assert_eq!(seqs, [waits.seq, later.seq]);
+    }
+
     /// A worker is never the lead: `permits` refuses the command with
     /// the code `not_allowed`. The engine adds the worker mark of the
     /// caller under the lock (01M3WRD959DYNZHDKP5ZT9Q1C7).

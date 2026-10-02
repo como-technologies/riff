@@ -529,7 +529,7 @@ stateDiagram-v2
 
 | Command | Refused when | Code |
 |---|---|---|
-| `claim` | The session is in MustClear: "clear your context first: type /clear, or run riff workers next". | `must_clear` |
+| `claim` | The session is in MustClear: "clear your context first: end your turn and riff clears it, or type /clear". | `must_clear` |
 | `claim` | The repository or the riff is paused. | `paused` |
 | `claim` | Another session holds the item. | `held` |
 | `release` | The caller does not hold the item. | `not_holder` |

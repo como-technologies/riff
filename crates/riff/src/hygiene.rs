@@ -4,13 +4,14 @@
 //!
 //! Workers start in the main clone, and a new worktree branches from
 //! it. A main clone that is behind `origin` gives each worker old
-//! project files and an old base. So `riff workers start`, and
-//! `riff workers next` before the fresh context, fast-forward the main
-//! clone to `origin` first (01M3MNP34M5PAZW9VWAYVGNSV2).
+//! project files and an old base. So `riff workers start`, and the
+//! clear of a worker before the fresh context ([`crate::next`]),
+//! fast-forward the main clone to `origin` first
+//! (01M3MNP34M5PAZW9VWAYVGNSV2).
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A[riff workers start / riff workers next] --> B{origin/HEAD?}
+//!     A[riff workers start / the clear of a worker] --> B{origin/HEAD?}
 //!     B -- no --> Z[no remote: change nothing, say nothing]
 //!     B -- yes --> C{on the default branch, no local changes?}
 //!     C -- no --> K[change nothing, say why]
@@ -23,9 +24,9 @@
 //! When the main clone is not on the default branch, has local changes
 //! to tracked files, or has commits that `origin` does not have, riff
 //! changes nothing and says why (01M3MNP36TZYN3PE00AZJTJSER). The
-//! person who runs `riff workers start` reads it. In a worker,
-//! `riff workers next` also tells the lead. A step that fails never
-//! stops the command.
+//! person who runs `riff workers start` reads it. The clear of a
+//! worker tells the lead. A step that fails never stops the command or
+//! the clear.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

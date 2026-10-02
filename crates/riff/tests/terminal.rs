@@ -865,7 +865,7 @@ fn the_book_has_a_how_to_for_each_step() {
         ("### List the workers", "riff workers\n"),
         ("### Stop the workers", "riff workers stop\n"),
         ("### Stop the workers", "riff workers stop %3"),
-        ("### A worker goes to its next item", "riff workers next"),
+        ("### A worker goes to its next item", "riff who\n"),
         ("### A worker with no work waits idle", "riff workers\n"),
     ] {
         let how = &part[part.find(heading).unwrap()..];
@@ -891,9 +891,12 @@ fn the_book_has_a_how_to_for_each_step() {
         .output()
         .unwrap();
     let help = String::from_utf8_lossy(&help.stdout);
-    for command in ["start", "limit", "next", "stop", "idle"] {
+    for command in ["start", "limit", "stop", "idle"] {
         assert!(help.contains(&format!("  {command} ")), "{help}");
     }
+    // riff clears a worker by itself: no command asks for it
+    // (01M3XV0562D3H3P22CJDBPAZBH).
+    assert!(!help.contains("  next "), "{help}");
     // A worker does not end itself; the server stops idle workers
     // (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     assert!(!help.contains("  done "), "{help}");

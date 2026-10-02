@@ -104,12 +104,12 @@ Do these steps when your session starts:
     are done, then call `release`.
 11. After the merge, remove your worktree and its branch. See "Remove
     a stale worktree".
-12. In a worker (`RIFF_WORKER=1`), when you hold no claims, run
-    `riff workers next`, then end your turn with no more tool calls.
-    riff clears your context and tells you to join the riff, so you
-    start your next item fresh. The lead never runs it. When the start
-    routine then finds no work, wait idle. See "When you are a
-    worker".
+12. In a worker (`RIFF_WORKER=1`), after you release your last claim
+    and do step 11, end your turn with no more tool calls. riff clears
+    your context by itself and tells you to join the riff, so you
+    start your next item fresh. You run no command for the clear. When
+    the start routine then finds no work, wait idle. See "When you are
+    a worker".
 
 ## Waves
 
@@ -396,7 +396,7 @@ To remove your stale worktree:
    `git -C MAIN update-ref -d refs/heads/BRANCH HEADREF`. MAIN is the
    path of the main worktree: the first line of `git worktree list`.
    The other cases are: you entered the worktree with `path`, or you
-   made it before `riff workers next` or `/clear`. After a new
+   made it before the clear of your context. After a new
    context, `ExitWorktree` says that this session is not the owner.
    HEADREF is the head commit of the merged pull request. A squash
    merge leaves the branch out of the default branch, so
@@ -415,10 +415,11 @@ decides.
 
 Each worker starts in the main clone, and each new worktree branches
 from a base. An old base gives old files and merge conflicts. riff
-fast-forwards the main clone to `origin` in `riff workers start` and
-`riff workers next`. When the main clone has local changes or is not
-on the default branch, riff changes nothing, and `riff workers next`
-tells the lead why. The steps below keep each worktree fresh. The
+fast-forwards the main clone to `origin` in `riff workers start`, and
+before it clears the context of a worker. When the main clone has
+local changes or is not on the default branch, riff changes nothing,
+and the clear tells the lead why. The steps below keep each worktree
+fresh. The
 examples use `main` for the default branch and `issue-12` for the
 item.
 
@@ -798,6 +799,12 @@ a scope, or a new item joins the current wave.
   A note needs no step. A message that wakes you names the
   `riff workers start` command: run it.
 - `riff workers` lists the workers: pane, session ID, claims, status.
+- riff clears the context of a worker by itself, when its turn ends
+  after its last release. Until then the worker shows `must clear`. To
+  clear a worker that stays in `must clear`, stop it with
+  `riff workers stop PANE`: riff starts a new worker with a fresh
+  context for the free work. A person can also type `/clear` in its
+  pane.
 - At the end of a wave, stop the workers with `riff workers stop`
   before the deploy of the shared server and the update of each
   machine. Stop the workers of each host with
@@ -836,15 +843,15 @@ give the item to a free worker.
 
 The start hook tells a worker that it is one (`RIFF_WORKER=1`).
 
-- When you finish an item, run `riff workers next` (step 12 of the
-  start routine). You start the next item with a fresh context.
-- After you release your last claim, you must clear your context
-  before your next claim. The reply to the release says so. Until
-  then, the server refuses each claim with `clear your context first`,
-  and sends you no wake. So run `riff workers next` after each release
-  that leaves you with no claim: also after a verify, and after you
-  wrote acceptance criteria. A claim that a new start or the lead
-  frees does not count: claim again and go on.
+- After you release your last claim, riff clears your context when
+  your turn ends (step 12 of the start routine). The reply to the
+  release says so. You run no command for the clear. You start the
+  next item with a fresh context.
+- Until the clear, the server refuses each claim with
+  `clear your context first`, and sends you no wake. So end your turn
+  after each release that leaves you with no claim: also after a
+  verify, and after you wrote acceptance criteria. A claim that a new
+  start or the lead frees does not count: claim again and go on.
 - When the start routine finds no free item and no free verify
   request, and you hold no claim, you are idle. Keep the watch
   running, and end your turn. Do not end this session. The lead gives

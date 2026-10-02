@@ -1,17 +1,18 @@
-//! `riff workers start` and `riff workers next` fast-forward the main
-//! clone to `origin` first (01M3MNP34M5PAZW9VWAYVGNSV2). With local
-//! changes, they change nothing and say why; `riff workers next` also
-//! tells the lead (01M3MNP36TZYN3PE00AZJTJSER).
+//! `riff workers start`, and the clear of a worker, fast-forward the
+//! main clone to `origin` first (01M3MNP34M5PAZW9VWAYVGNSV2). With local
+//! changes, they change nothing and say why: `riff workers start` to
+//! the person, and the clear to the lead (01M3MNP36TZYN3PE00AZJTJSER).
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use riff::api::Api;
 use riff::identity;
 use riff_core::name::{SessionUri, Who};
-use riff_core::wire::RiffState;
+use riff_core::wire::{RiffState, StartReason};
 
 /// A `tmux` that answers the calls of `riff workers start`.
 const FAKE_TMUX: &str = r#"#!/bin/sh
@@ -112,6 +113,13 @@ impl Machine {
 
     /// `riff workers ARGS` in `dir`, in the tmux pane `%3`.
     fn riff(&self, dir: &Path, args: &[&str]) -> Command {
+        let mut cmd = self.command(dir);
+        cmd.arg("workers").args(args);
+        cmd
+    }
+
+    /// A riff command in `dir`, in the tmux pane `%3`.
+    fn command(&self, dir: &Path) -> Command {
         let path = format!(
             "{}:{}",
             self.fake.path().display(),
@@ -119,8 +127,6 @@ impl Machine {
         );
         let mut cmd = Isolated::shared().riff();
         alone(&mut cmd)
-            .arg("workers")
-            .args(args)
             .current_dir(dir)
             .env("PATH", path)
             .env("RIFF_HOME", self.run.path())
@@ -143,13 +149,20 @@ impl Machine {
         self.riff(dir, &["start", "1"]).output().unwrap()
     }
 
-    /// `riff workers next` in the worker `id`.
-    fn next(&self, dir: &Path, id: &str) -> Output {
-        self.riff(dir, &["next"])
+    /// The turn of the worker `id` ends: its Stop hook. The check of
+    /// the clear runs after it, detached.
+    fn turn_ends(&self, dir: &Path, id: &str) {
+        let mut hook = self
+            .command(dir)
+            .args(["hook", "stop"])
             .env("RIFF_SESSION", id)
             .env("RIFF_WORKER", "1")
-            .output()
-            .unwrap()
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = format!(r#"{{"session_id":"{id}","hook_event_name":"Stop"}}"#);
+        std::io::Write::write_all(hook.stdin.as_mut().unwrap(), input.as_bytes()).unwrap();
+        assert!(hook.wait().unwrap().success());
     }
 }
 
@@ -171,14 +184,28 @@ fn session(dir: &Path, id: &str) -> SessionUri {
     SessionUri::new(Who::new("mike", Some(id)).unwrap(), place)
 }
 
-/// A riff with the lead `l1` and the worker `w1`, both in `dir`.
+/// A riff with the lead `l1` and the worker `w1`, both in `dir`. The
+/// worker released its last claim: it must clear its context.
 async fn riff_in(dir: &Path) -> (Api, SessionUri) {
     let api = start_server().await;
     let lead = session(dir, "l1");
     api.register(&lead).await.unwrap();
     api.set_riff(&lead, RiffState::Running).await.unwrap();
-    api.register(&session(dir, "w1")).await.unwrap();
+    let w1 = session(dir, "w1");
+    api.start(&w1, StartReason::Process, true).await.unwrap();
+    let thread = w1.default_thread().unwrap();
+    api.claim(&w1, &thread, "issue-12").await.unwrap();
+    assert!(api.release(&w1, &thread, "issue-12").await.unwrap().must_clear);
     (api, lead)
+}
+
+/// Waits until `done` is true, for at most 20 seconds.
+async fn wait_for(what: &str, done: impl AsyncFn() -> bool) {
+    let end = Instant::now() + Duration::from_secs(20);
+    while !done().await {
+        assert!(Instant::now() < end, "timed out: {what}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// The bodies of the unread messages of `me`.
@@ -246,40 +273,36 @@ fn workers_start_keeps_a_main_clone_on_another_branch() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn workers_next_fast_forwards_a_clean_main_clone() {
+async fn the_clear_of_a_worker_fast_forwards_a_clean_main_clone() {
     let clone = Clone::behind();
+    let before = clone.head();
     let (api, lead) = riff_in(&clone.main()).await;
     let m = Machine::new(api.base());
-    let out = m.next(&clone.main(), "w1");
-    assert!(out.status.success(), "{out:?}");
+    m.turn_ends(&clone.main(), "w1");
+    wait_for("the fast-forward", async || clone.head() != before).await;
     assert_eq!(clone.head(), clone.remote_head());
     assert_eq!(clone.origin(), clone.remote_head());
-    let text = stdout(&out);
-    assert!(
-        text.contains("moved 2 commits forward to origin/main."),
-        "{text}"
-    );
-    assert!(text.contains("End your turn now"), "{text}");
+    // A main clone that moved is no news for the lead.
     assert_eq!(unread(&api, &lead).await, Vec::<String>::new());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn workers_next_keeps_a_main_clone_with_local_changes_and_tells_the_lead() {
+async fn the_clear_of_a_worker_keeps_a_main_clone_with_local_changes_and_tells_the_lead() {
     let clone = Clone::behind();
     clone.change();
     let before = clone.head();
     let (api, lead) = riff_in(&clone.main()).await;
     let m = Machine::new(api.base());
-    let out = m.next(&clone.main(), "w1");
-    assert!(out.status.success(), "{out:?}");
+    m.turn_ends(&clone.main(), "w1");
+    wait_for("the message to the lead", async || {
+        !unread(&api, &lead).await.is_empty()
+    })
+    .await;
     assert_eq!(clone.head(), before);
-    assert!(
-        stdout(&out).contains("stays as it is: it has local changes."),
-        "{out:?}"
-    );
     let told = unread(&api, &lead).await;
     assert!(
-        told.iter().any(|b| b.contains("it has local changes")),
+        told.iter()
+            .any(|b| b.contains("stays as it is: it has local changes.")),
         "{told:?}"
     );
 }

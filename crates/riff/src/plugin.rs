@@ -665,7 +665,7 @@ mod tests {
             "If you made the worktree with `EnterWorktree` in this context",
             "git -C MAIN worktree remove PATH",
             "git -C MAIN update-ref -d refs/heads/BRANCH HEADREF",
-            "you made it before `riff workers next` or `/clear`.",
+            "you made it before the clear of your context.",
             "Do not force",
             "Never remove a worktree of another live session",
         ] {
@@ -744,7 +744,7 @@ mod tests {
             "A WIP commit says `WIP` in its subject",
             "The pull request merges with a squash, so the WIP commits do not show on the default branch",
             "Push it as WIP before the long run of the checks",
-            "`riff workers next` (step 12 of the start routine)",
+            "riff clears your context when your turn ends (step 12 of the start routine)",
         ] {
             assert!(flat.contains(word), "the skill does not say {word:?}");
         }
@@ -861,17 +861,29 @@ mod tests {
         }
     }
 
-    /// 01M3JQCD5BS2ZSGZSD3CTWGPB8: a worker asks for a fresh context.
+    /// 01M3JQCD5BS2ZSGZSD3CTWGPB8: riff clears the context of a worker,
+    /// and the worker runs no command for it. The lead has a way to
+    /// clear a worker that stays in `must clear`.
     #[test]
-    fn the_skill_tells_a_worker_to_ask_for_a_fresh_context() {
+    fn the_skill_tells_a_worker_that_riff_clears_its_context() {
         let skill = text("riff/skills/riff/SKILL.md");
+        assert!(!skill.contains("workers next"));
+        let all = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "After you release your last claim, riff clears your context when your turn ends",
+            "So end your turn after each release that leaves you with no claim",
+            "To clear a worker that stays in `must clear`, stop it with `riff workers stop PANE`",
+            "A person can also type `/clear` in its pane.",
+        ] {
+            assert!(all.contains(word), "the skill does not say {word:?}");
+        }
         let routine = &skill[skill.find("## Start routine").unwrap()..];
         let routine = &routine[..routine.find("\n## ").unwrap()];
         let flat = routine.split_whitespace().collect::<Vec<_>>().join(" ");
         for word in [
-            "In a worker (`RIFF_WORKER=1`), when you hold no claims, run `riff workers next`",
-            "then end your turn with no more tool calls.",
-            "The lead never runs it.",
+            "In a worker (`RIFF_WORKER=1`), after you release your last claim and do step 11, end your turn with no more tool calls.",
+            "riff clears your context by itself",
+            "You run no command for the clear.",
         ] {
             assert!(flat.contains(word), "the skill does not say {word:?}");
         }
