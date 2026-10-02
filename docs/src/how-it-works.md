@@ -2454,6 +2454,56 @@ workers.limit  3  (/home/mike/.config/riff/config.toml)
 Set it with: riff workers limit N
 ```
 
+### Change a worker setting while the riff runs
+
+You can change a worker setting at each moment, on the machine of the
+lead or on a workers host:
+
+```sh
+riff workers limit 4
+```
+
+The lead gets one message for each change, with the setting, the old
+value, the new value and the host. It also says what the change does:
+
+```text
+workers: limit 3 to 4 on pangolin: the rollout starts 1 worker.
+```
+
+```mermaid
+sequenceDiagram
+    participant P as you on pangolin
+    participant H as riff workers host on pangolin
+    participant L as riff mcp of the lead
+    participant A as lead
+    P->>H: riff workers limit 4
+    H->>L: status: limit 4
+    L->>L: the next look: limit 3 to 4
+    L->>A: note: limit 3 to 4 on pangolin: the rollout starts 1 worker
+    L->>H: workers start 1
+```
+
+| You change | The lead gets |
+|---|---|
+| `riff workers limit` on its machine or on a host | `workers: limit 3 to 4 on pangolin.` |
+| `riff workers interval` on its machine | `workers: interval 10 to 0 on thelio: the rollout is off, and riff starts no worker by itself.` |
+| `riff workers mcp` on its machine or on a host | `workers: mcp [riff] to [riff, github] on pangolin: each new worker there loads them.` |
+| `riff workers idle` | `workers: idle on the server: per host 1 to 2, after 60 to 300 seconds.` |
+
+The message is a note: it does not wake the lead. One message wakes
+the lead: a higher limit while free work waits and the rollout is off.
+It names the command that starts the workers:
+
+```text
+workers: limit 1 to 3 on pangolin: free work waits, and the rollout is off. Start workers with: riff workers start 2 --host pangolin
+```
+
+A lower limit stops no worker. The message says how many workers run:
+
+```text
+workers: limit 4 to 3 on pangolin: 4 workers run there, and riff stops none.
+```
+
 ### Limit the workers of a machine
 
 Each worker builds and tests. Too many compile jobs at one time fill

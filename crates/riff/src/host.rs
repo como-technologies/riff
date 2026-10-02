@@ -88,6 +88,16 @@
 //! The watch of the host has a connection of its own, so no call waits
 //! behind it (see "Streams" in [`crate::api`]).
 //!
+//! # A change of the settings
+//!
+//! Each [`reap::EVERY`] the host reads the worker settings of its
+//! machine (`Mine`). When the limit or the floor changes, it sets its
+//! status at once, so the lead sees the new value at its next look and
+//! gets the message of the change from its own rollout
+//! ([`crate::rollout`]). When the MCP servers of the workers change, the
+//! host posts the note of the change to the lead: its status does not
+//! hold them (01M3X30RJS8YE5TXJBQDC2FT0C).
+//!
 //! # A new binary
 //!
 //! When a new `riff` is on disk, the host runs it in its place, as
@@ -117,6 +127,7 @@ use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
 use crate::machine::Machine;
 use crate::reap::{self, Reaper, Watched};
+use crate::rollout::{Change, Effect};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
 use crate::{identity, local, settings, text, worker};
 
@@ -410,6 +421,27 @@ pub fn panes(status: &HostStatus, sessions: &[SessionInfo]) -> Vec<WorkerPane> {
         .collect()
 }
 
+/// The worker settings of this machine that the lead must know
+/// (01M3X30RJS8YE5TXJBQDC2FT0C).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Mine {
+    limit: u16,
+    floor: u32,
+    mcp: Vec<String>,
+}
+
+impl Mine {
+    /// The settings in the settings file now.
+    fn read() -> Result<Self> {
+        let path = settings::path()?;
+        Ok(Mine {
+            limit: settings::workers_limit(&path)?,
+            floor: settings::workers_floor(&path)?,
+            mcp: settings::workers_mcp(&path)?,
+        })
+    }
+}
+
 /// A running host.
 struct Host {
     api: Api,
@@ -476,6 +508,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     look.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // True while the host did not read the requests of a wake.
     let mut unread = false;
+    let mut mine = Mine::read()?;
     loop {
         let mut changed = true;
         tokio::select! {
@@ -505,6 +538,17 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
         if !lost.is_empty() {
             host.reap(&lost).await;
             changed = true;
+        }
+        match Mine::read() {
+            Ok(now) if now != mine => {
+                if now.mcp != mine.mcp {
+                    host.note_mcp(&mine.mcp, &now.mcp).await;
+                }
+                mine = now;
+                changed = true;
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("riff: cannot read the settings: {e:#}"),
         }
         if changed && let Err(e) = host.set_status().await {
             eprintln!("riff: cannot set the status of the host: {e:#}");
@@ -628,6 +672,21 @@ impl Host {
             if let Err(e) = self.note_lead(&note).await {
                 eprintln!("riff: cannot tell the lead: {e:#}");
             }
+        }
+    }
+
+    /// Posts the note of a change of the MCP servers of the workers of
+    /// this machine to the lead (01M3X30RJS8YE5TXJBQDC2FT0C).
+    async fn note_mcp(&self, old: &[String], new: &[String]) {
+        let change = Change::Mcp {
+            host: self.me.place().host().to_owned(),
+            old: old.to_vec(),
+            new: new.to_vec(),
+        };
+        let note = text::setting_changed(&change, &Effect::Nothing);
+        println!("{note}");
+        if let Err(e) = self.note_lead(&note).await {
+            eprintln!("riff: cannot tell the lead: {e:#}");
         }
     }
 

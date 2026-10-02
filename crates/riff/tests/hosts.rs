@@ -407,6 +407,41 @@ async fn the_lead_starts_workers_on_another_host() {
     assert!(listed.contains("  offline  seen "), "{listed}");
 }
 
+/// A person changes the worker settings of a host. The host posts a
+/// note to the lead for its new MCP servers, and it sets its status at
+/// once for its new limit, so `riff who` of the lead shows it
+/// (01M3X30RJS8YE5TXJBQDC2FT0C).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_tells_the_lead_a_change_of_its_settings() {
+    let r = riff().await;
+    let out =
+        r.b.riff(Path::new("/"), &["mcp", "add", "github"], None)
+            .output()
+            .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let note =
+        "note: workers: mcp [riff] to [riff, github] on b: each new worker there loads them.";
+    let read = reads(&r.api, &r.lead, note).await;
+    assert!(read.contains("mike@b:riff"), "{read}");
+
+    r.b.limit(2);
+    let start = Instant::now();
+    until("the new limit in the status of the host", || async {
+        let who = r.api.who(&r.lead, false).await.ok()?;
+        who.iter()
+            .filter_map(|s| s.status.as_ref())
+            .any(|st| st.status.step.starts_with("workers host: limit 2,"))
+            .then_some(())
+    })
+    .await;
+    // The host does not wait for its refresh.
+    assert!(
+        start.elapsed() < riff::host::REFRESH / 2,
+        "{:?}",
+        start.elapsed()
+    );
+}
+
 /// A host refuses a start request that is not from the lead of its
 /// user: from another session of the user, and from the lead of another
 /// user (01M3N7AKDE7DEA6NXS9ZMECRMH). The doc test of `host::judge`

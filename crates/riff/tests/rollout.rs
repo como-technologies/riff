@@ -3,6 +3,9 @@
 //! runs `riff mcp` with a fake `tmux` and a fake `gh` on `PATH`, and its
 //! own riff home. The unit tests of `riff::rollout` test the rate, the
 //! limit and the placement with a fake clock.
+//!
+//! The lead gets a message for each change of a worker setting
+//! (01M3X30KHKB6W11C3NBAW7KCGW to 01M3X30RA3X08JBJ2JBVCCNEH3).
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
@@ -13,7 +16,7 @@ use std::time::{Duration, Instant};
 use riff::api::Api;
 use riff::identity;
 use riff_core::name::{Place, SessionUri, Who};
-use riff_core::wire::RiffState;
+use riff_core::wire::{RiffState, Status};
 
 /// `list-panes -a` lists the worker panes from the file `workers`.
 const FAKE_TMUX: &str = r#"#!/bin/sh
@@ -61,7 +64,7 @@ const QUIET: Duration = Duration::from_secs(4);
 struct Lead {
     api: Api,
     fake: tempfile::TempDir,
-    _home: tempfile::TempDir,
+    home: tempfile::TempDir,
     _root: tempfile::TempDir,
     me: SessionUri,
     mcp: Child,
@@ -108,6 +111,31 @@ impl Lead {
         self.api.register_as(&worker, true).await.unwrap();
         let thread = self.me.default_thread().unwrap();
         self.api.claim(&worker, &thread, item).await.unwrap();
+    }
+
+    /// `riff workers ARGS` of a person on the machine of the lead.
+    fn set(&self, args: &[&str]) {
+        let out = Isolated::shared()
+            .riff()
+            .arg("workers")
+            .args(args)
+            .env("RIFF_HOME", self.home.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    }
+
+    /// The unread text of the lead, when it contains `needle`.
+    async fn reads(&self, needle: &str) -> String {
+        let start = Instant::now();
+        let mut read = String::new();
+        while !read.contains(needle) {
+            let inbox = self.api.inbox(&self.me, None, false).await.unwrap();
+            read.push_str(&riff::text::inbox(&inbox, &self.me));
+            assert!(start.elapsed() < WAIT, "timed out: {needle}\n{read}");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        read
     }
 
     /// Waits until `n` workers run.
@@ -223,7 +251,7 @@ async fn lead(limit: u16) -> Lead {
     Lead {
         api,
         fake,
-        _home: home,
+        home,
         _root: root,
         me,
         mcp,
@@ -450,4 +478,166 @@ fn riff_workers_interval_shows_and_sets_the_interval() {
     assert!(run(&["30"]).starts_with("workers.interval  30  ("));
     assert!(run(&[]).contains("each 30 seconds"));
     assert!(run(&["0"]).contains("\nThe lead starts no worker by itself."));
+}
+
+/// A person sets a higher limit on a machine that is at its limit, while
+/// an item is free. The lead gets one note with the setting, the old
+/// value, the new value and the host, and it says that the rollout
+/// starts a worker. The rollout starts it
+/// (01M3X30KHKB6W11C3NBAW7KCGW, 01M3X30R4PSBP3RQWM02BJ6GK3).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_higher_limit_tells_the_lead_and_the_rollout_starts_a_worker() {
+    let lead = lead(1).await;
+    lead.issues(TWO_FREE);
+    lead.riff(RiffState::Running).await;
+    lead.claim(1, "issue-1").await;
+    assert_eq!(lead.settled().await, 1, "the machine is at its limit");
+
+    lead.set(&["limit", "2"]);
+    let read = lead
+        .reads("workers: limit 1 to 2 on a: the rollout starts 1 worker.")
+        .await;
+    assert!(read.contains("note: workers: limit 1 to 2 on a"), "{read}");
+    lead.until_workers(2).await;
+    lead.claim(2, "issue-2").await;
+    assert_eq!(lead.settled().await, 2);
+    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+    let more = riff::text::inbox(&inbox, &lead.me);
+    assert!(!more.contains("workers: limit"), "one message: {more}");
+}
+
+/// With the rollout off, the lead gets a note that it is off. Then a
+/// higher limit, while an item is free, wakes the lead: the message is
+/// no note, and it names the command that starts the worker. riff starts
+/// none (01M3X30RA3X08JBJ2JBVCCNEH3).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_higher_limit_wakes_the_lead_when_the_rollout_is_off() {
+    let lead = lead(1).await;
+    lead.issues(TWO_FREE);
+    lead.riff(RiffState::Running).await;
+    lead.claim(1, "issue-1").await;
+    assert_eq!(lead.settled().await, 1);
+
+    lead.set(&["interval", "0"]);
+    let read = lead
+        .reads("note: workers: interval 1 to 0 on a: the rollout is off")
+        .await;
+    assert!(read.contains("riff starts no worker by itself."), "{read}");
+
+    lead.set(&["limit", "3"]);
+    let needle = "workers: limit 1 to 3 on a: free work waits, and the rollout is off. \
+                  Start workers with: riff workers start 1";
+    let read = lead.reads(needle).await;
+    assert!(!read.contains("note: workers: limit"), "it wakes: {read}");
+    assert!(!read.contains("--host"), "the machine of the lead: {read}");
+    assert_eq!(lead.settled().await, 1, "riff starts no worker");
+}
+
+/// The lead gets a note for a new limit of a workers host, for new idle
+/// settings of the server, and for new MCP servers of its machine
+/// (01M3X30KHKB6W11C3NBAW7KCGW).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
+    let lead = lead(1).await;
+    lead.issues("[]");
+    lead.riff(RiffState::Running).await;
+    // A live workers host of mike on `b`, with a limit of 2.
+    let place = Place::new("b", lead.me.place().repo().clone(), None).unwrap();
+    let host = SessionUri::new(Who::new("mike", Some("h1")).unwrap(), place);
+    let _watch = lead.api.watch(&host).await.unwrap();
+    let status = |limit| Status {
+        step: riff::host::HostStatus {
+            limit,
+            floor: 4,
+            machine: None,
+            workers: vec![],
+        }
+        .line(),
+        blocked: None,
+    };
+    lead.api.status(&host, &status(2)).await.unwrap();
+    // The lead looked at the host one time or more.
+    tokio::time::sleep(QUIET).await;
+
+    lead.api.status(&host, &status(3)).await.unwrap();
+    lead.reads("note: workers: limit 2 to 3 on b.").await;
+
+    lead.api.idle(&lead.me, Some(2), Some(300)).await.unwrap();
+    lead.reads("note: workers: idle on the server: per host 1 to 2, after 60 to 300 seconds.")
+        .await;
+
+    lead.set(&["mcp", "add", "github"]);
+    lead.reads(
+        "note: workers: mcp [riff] to [riff, github] on a: each new worker there loads them.",
+    )
+    .await;
+}
+
+/// The book and the skill say that the lead gets a message for each
+/// change of a worker setting, with the texts that riff makes
+/// (01M3X30KHKB6W11C3NBAW7KCGW).
+#[test]
+fn the_book_and_the_skill_say_what_the_lead_gets_for_a_change() {
+    use riff::rollout::{Change, Effect};
+    use riff::text::setting_changed;
+    use riff_core::wire::Idle;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let book = std::fs::read_to_string(root.join("../../docs/src/how-it-works.md")).unwrap();
+    let how = &book[book
+        .find("### Change a worker setting while the riff runs")
+        .unwrap()..];
+    let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+    let limit = |old, new| Change::Limit {
+        host: "pangolin".into(),
+        old,
+        new,
+    };
+    let waits = Effect::Waits {
+        count: 2,
+        remote: true,
+    };
+    let texts = [
+        "```sh\nriff workers limit 4\n```".to_owned(),
+        "```mermaid".to_owned(),
+        setting_changed(&limit(3, 4), &Effect::Starts),
+        setting_changed(&limit(3, 4), &Effect::Nothing),
+        setting_changed(&limit(1, 3), &waits),
+        setting_changed(&limit(4, 3), &Effect::Over(4)),
+        setting_changed(
+            &Change::Interval {
+                host: "thelio".into(),
+                old: 10,
+                new: 0,
+            },
+            &Effect::Nothing,
+        ),
+        setting_changed(
+            &Change::Mcp {
+                host: "pangolin".into(),
+                old: vec!["riff".into()],
+                new: vec!["riff".into(), "github".into()],
+            },
+            &Effect::Nothing,
+        ),
+        setting_changed(
+            &Change::Idle {
+                old: Idle::default(),
+                new: Idle {
+                    per_host: 2,
+                    after_secs: 300,
+                },
+            },
+            &Effect::Nothing,
+        ),
+    ];
+    for text in &texts {
+        assert!(how.contains(text.as_str()), "the how-to has no {text:?}");
+    }
+    let skill =
+        std::fs::read_to_string(root.join("claude-plugin/riff/skills/riff/SKILL.md")).unwrap();
+    assert!(
+        skill.contains(&setting_changed(&limit(3, 4), &Effect::Starts)),
+        "skill"
+    );
 }

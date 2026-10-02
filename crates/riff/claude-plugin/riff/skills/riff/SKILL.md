@@ -781,6 +781,11 @@ a scope, or a new item joins the current wave.
 - Never change the MCP servers of the workers (`riff workers mcp`).
   Only your user sets them. A worker has only the riff MCP server by
   default.
+- When a person changes a worker setting, you get a message with the
+  setting, the old value, the new value and the host, for example
+  `workers: limit 3 to 4 on pangolin: the rollout starts 1 worker.`
+  A note needs no step. A message that wakes you names the
+  `riff workers start` command: run it.
 - `riff workers` lists the workers: pane, session ID, claims, status.
 - At the end of a wave, stop the workers with `riff workers stop`
   before the deploy of the shared server and the update of each

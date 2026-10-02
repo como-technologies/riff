@@ -927,6 +927,130 @@ pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
     }
 }
 
+/// The message to the lead for a change of a worker setting: the
+/// setting, the old value, the new value and the host
+/// (01M3X30KHKB6W11C3NBAW7KCGW), and what the change does
+/// (01M3X30R4PSBP3RQWM02BJ6GK3).
+///
+/// ```
+/// use riff::rollout::{Change, Effect};
+/// use riff::text::setting_changed;
+/// use riff_core::wire::Idle;
+///
+/// let limit = |old, new| Change::Limit { host: "pangolin".into(), old, new };
+/// assert_eq!(
+///     setting_changed(&limit(3, 4), &Effect::Starts),
+///     "workers: limit 3 to 4 on pangolin: the rollout starts 1 worker."
+/// );
+/// assert_eq!(
+///     setting_changed(&limit(3, 4), &Effect::Waits { count: 1, remote: false }),
+///     "workers: limit 3 to 4 on pangolin: free work waits, and the rollout is off. \
+///      Start workers with: riff workers start 1"
+/// );
+/// assert_eq!(
+///     setting_changed(&limit(4, 3), &Effect::Over(4)),
+///     "workers: limit 4 to 3 on pangolin: 4 workers run there, and riff stops none."
+/// );
+/// assert_eq!(setting_changed(&limit(4, 3), &Effect::Nothing), "workers: limit 4 to 3 on pangolin.");
+///
+/// let interval = |old, new| Change::Interval { host: "thelio".into(), old, new };
+/// assert_eq!(
+///     setting_changed(&interval(10, 0), &Effect::Nothing),
+///     "workers: interval 10 to 0 on thelio: the rollout is off, and riff starts no worker by \
+///      itself."
+/// );
+/// assert_eq!(
+///     setting_changed(&interval(0, 30), &Effect::Nothing),
+///     "workers: interval 0 to 30 on thelio: the rollout is on, and riff starts at most one \
+///      worker each 30 seconds."
+/// );
+/// let mcp = Change::Mcp {
+///     host: "pangolin".into(),
+///     old: vec!["riff".into()],
+///     new: vec!["riff".into(), "github".into()],
+/// };
+/// assert_eq!(
+///     setting_changed(&mcp, &Effect::Nothing),
+///     "workers: mcp [riff] to [riff, github] on pangolin: each new worker there loads them."
+/// );
+/// let idle = Change::Idle {
+///     old: Idle::default(),
+///     new: Idle { per_host: 2, after_secs: 300 },
+/// };
+/// assert_eq!(
+///     setting_changed(&idle, &Effect::Nothing),
+///     "workers: idle on the server: per host 1 to 2, after 60 to 300 seconds."
+/// );
+/// // Only the value that changed.
+/// let idle = Change::Idle {
+///     old: Idle::default(),
+///     new: Idle { per_host: 0, after_secs: 60 },
+/// };
+/// assert_eq!(
+///     setting_changed(&idle, &Effect::Nothing),
+///     "workers: idle on the server: per host 1 to 0."
+/// );
+/// ```
+pub fn setting_changed(change: &crate::rollout::Change, effect: &crate::rollout::Effect) -> String {
+    use crate::rollout::{Change, Effect};
+    match change {
+        Change::Limit { host, old, new } => {
+            let what = format!("workers: limit {old} to {new} on {host}");
+            match effect {
+                Effect::Nothing => format!("{what}."),
+                Effect::Starts => format!("{what}: the rollout starts 1 worker."),
+                Effect::Waits { count, remote } => {
+                    let on = if *remote {
+                        format!(" --host {host}")
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "{what}: free work waits, and the rollout is off. Start workers with: \
+                         riff workers start {count}{on}"
+                    )
+                }
+                Effect::Over(runs) => format!(
+                    "{what}: {} there, and riff stops none.",
+                    if *runs == 1 {
+                        "1 worker runs".to_owned()
+                    } else {
+                        format!("{runs} workers run")
+                    }
+                ),
+            }
+        }
+        Change::Interval { host, old, new } => {
+            let what = format!("workers: interval {old} to {new} on {host}");
+            match new {
+                0 => format!("{what}: the rollout is off, and riff starts no worker by itself."),
+                _ => format!(
+                    "{what}: the rollout is on, and riff starts at most one worker each {new} \
+                     seconds."
+                ),
+            }
+        }
+        Change::Mcp { host, old, new } => format!(
+            "workers: mcp [{}] to [{}] on {host}: each new worker there loads them.",
+            old.join(", "),
+            new.join(", ")
+        ),
+        Change::Idle { old, new } => {
+            let mut parts = Vec::new();
+            if old.per_host != new.per_host {
+                parts.push(format!("per host {} to {}", old.per_host, new.per_host));
+            }
+            if old.after_secs != new.after_secs {
+                parts.push(format!(
+                    "after {} to {} seconds",
+                    old.after_secs, new.after_secs
+                ));
+            }
+            format!("workers: idle on the server: {}.", parts.join(", "))
+        }
+    }
+}
+
 /// The refusal of `riff workers mcp remove riff`.
 pub const WORKERS_MCP_KEEPS_RIFF: &str =
     "a worker needs the riff MCP server, so riff stays in workers.mcp";
