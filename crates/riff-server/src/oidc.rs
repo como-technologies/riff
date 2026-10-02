@@ -132,7 +132,7 @@ impl SignInError {
     /// ```
     /// use riff_server::oidc::{SignInError, user_of};
     ///
-    /// let error = user_of("@mark.example").unwrap_err();
+    /// let error = user_of("mark.example").unwrap_err();
     /// assert!(error.to_string().contains("mark.example"));
     /// assert_eq!(error.for_log(), "the ID token is not valid");
     /// let provider = SignInError::Provider("https://x/jwks: timeout".into());
