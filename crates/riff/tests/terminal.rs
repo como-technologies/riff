@@ -198,10 +198,12 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert!(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2]);
     let dir = main.display();
     // Each pane runs claude through the wrapper (01M3JQC8ANFYYEXSHBS2DCZYBX).
+    // `RIFF_ON=1` of the test environment turned riff on for the
+    // command, so each worker gets it (01M3XY2SWEK0N8MC3MY4TMYTD3).
     let env = |id: &str| {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
-             '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
+             -e RIFF_ON=1 '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
              '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false}}' 'Join the riff.'",
             Isolated::shared().riff_path().display(),
             m.mcp_file().display(),

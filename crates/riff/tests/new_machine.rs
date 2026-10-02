@@ -114,8 +114,10 @@ async fn a_new_machine_is_asked_once_in_a_terminal() {
     assert!(!has_key(&machine.settings()), "{text}");
 
     // The first time in a terminal: the question. The person says no.
+    // The scope question comes first (01M3XY2SNXQJRSH5QX82AFVM2S): the
+    // first Enter answers it. The second time riff has that answer too.
     let cmd = machine.connect();
-    let shown = tokio::task::spawn_blocking(move || in_a_terminal(cmd, "n\r"))
+    let shown = tokio::task::spawn_blocking(move || in_a_terminal(cmd, "\rn\r"))
         .await
         .unwrap();
     assert_eq!(shown.matches(question).count(), 1, "{shown}");
