@@ -703,26 +703,74 @@ async fn the_lead_gets_one_tail_pane() {
     );
 }
 
-/// The lead runs `riff mcp` in tmux: `riff mcp` adds the tail pane.
+/// A query makes the server know a session, and makes no lead. So a
+/// session in the list is not always a session that did its register:
+/// the pane comes only after the register
+/// (01M3XM68N5M5DKB86W5079X2G9).
 #[tokio::test(flavor = "multi_thread")]
-async fn riff_mcp_of_the_lead_adds_the_tail_pane_in_tmux() {
+async fn a_session_that_only_asked_gets_its_pane_after_its_register() {
     let api = start_server().await;
+    let lead = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
     let fake = fake_tmux();
-    let run = tempfile::tempdir().unwrap();
-    let (main, _) = repository(run.path());
-    let path = format!(
-        "{}:{}",
-        fake.path().display(),
-        std::env::var("PATH").unwrap()
+    let tmux = Tmux::new(fake.path().join("tmux"), "%0");
+    let tail = Program::tail("/bin/riff".as_ref(), "/src/riff".as_ref(), api.base());
+
+    let who = api.who(&lead, false).await.unwrap();
+    assert!(
+        who.iter()
+            .any(|s| s.uri.who() == lead.who() && !s.uri.lead()),
+        "{who:?}"
     );
-    let mut mcp = Isolated::shared()
+    assert!(
+        !terminal::tail_beside_lead(&api, &lead, &tmux, &tail)
+            .await
+            .unwrap()
+    );
+    assert_eq!(log(fake.path()), "");
+
+    api.register(&lead).await.unwrap();
+    assert!(
+        terminal::tail_beside_lead(&api, &lead, &tmux, &tail)
+            .await
+            .unwrap()
+    );
+}
+
+/// A server whose `register` takes `wait` longer: each other call
+/// comes before the end of the register.
+async fn start_server_with_a_slow_register(wait: Duration) -> Api {
+    use axum::extract::Request;
+    use axum::middleware::{Next, from_fn};
+    use riff_core::wire::{Call, Register};
+
+    let slow = move |request: Request, next: Next| async move {
+        if request.uri().path() == Register::PATH {
+            tokio::time::sleep(wait).await;
+        }
+        next.run(request).await
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, riff_server::router().layer(from_fn(slow)))
+            .await
+            .unwrap();
+    });
+    Api::new(&format!("http://{addr}"))
+}
+
+/// `riff mcp` of the session `a1` in the repository `main`, in the pane
+/// `%0` of the fake tmux.
+fn mcp_in_tmux(api: &Api, fake: &Path, run: &Path, main: &Path) -> tokio::process::Child {
+    let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
+    Isolated::shared()
         .tokio_riff()
         .arg("mcp")
-        .current_dir(&main)
+        .current_dir(main)
         .env("PATH", path)
         .env("TMUX", "/tmp/tmux-1000/default,1,0")
         .env("TMUX_PANE", "%0")
-        .env("RIFF_HOME", run.path())
+        .env("RIFF_HOME", run)
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SESSION", "a1")
@@ -734,7 +782,50 @@ async fn riff_mcp_of_the_lead_adds_the_tail_pane_in_tmux() {
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .unwrap();
+        .unwrap()
+}
+
+/// The order that failed: the server knows the session from a query,
+/// with no lead mark, before the register of `riff mcp` ends. The pane
+/// still comes (01M3XM68N5M5DKB86W5079X2G9).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_mcp_adds_the_tail_pane_when_a_query_comes_before_its_register() {
+    let api = start_server_with_a_slow_register(Duration::from_secs(1)).await;
+    let fake = fake_tmux();
+    let run = tempfile::tempdir().unwrap();
+    let (main, _) = repository(run.path());
+
+    // The query that came first.
+    let me = session_in(&main, "a1");
+    let who = api.who(&me, false).await.unwrap();
+    assert!(
+        who.iter().any(|s| s.uri.who() == me.who() && !s.uri.lead()),
+        "{who:?}"
+    );
+
+    let mut mcp = mcp_in_tmux(&api, fake.path(), run.path(), &main);
+    let start = Instant::now();
+    while !log(fake.path()).contains("@riff tail") {
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{}",
+            log(fake.path())
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let log = log(fake.path());
+    assert_eq!(log.matches("split-window -h").count(), 1, "{log}");
+    mcp.kill().await.unwrap();
+}
+
+/// The lead runs `riff mcp` in tmux: `riff mcp` adds the tail pane.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_mcp_of_the_lead_adds_the_tail_pane_in_tmux() {
+    let api = start_server().await;
+    let fake = fake_tmux();
+    let run = tempfile::tempdir().unwrap();
+    let (main, _) = repository(run.path());
+    let mut mcp = mcp_in_tmux(&api, fake.path(), run.path(), &main);
     let start = Instant::now();
     while !log(fake.path()).contains("@riff tail") {
         assert!(
