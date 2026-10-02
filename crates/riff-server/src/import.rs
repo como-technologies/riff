@@ -17,10 +17,10 @@
 //!     O -- yes --> P[read the old objects: Old::read]
 //!     P -->|an object does not read| X[error: no lease.<br/>The old instance serves on]
 //!     P --> T[take the lease]
-//!     T --> I[the command import: the records of Old::changes, one chunk]
+//!     T --> K[the sign-ins: Tokens::import, saved]
+//!     K --> I[the command import: the records of Old::changes, one chunk]
 //!     I --> M[the memory of each session: State::imported]
-//!     M --> K[the sign-ins: Tokens::import]
-//!     K --> C[a checkpoint with the read cursors]
+//!     M --> C[a checkpoint with the read cursors]
 //!     C --> V[open the port]
 //! ```
 //!
@@ -58,6 +58,9 @@
 //!   each session, its end, its status, and the read cursors. The
 //!   server writes a checkpoint at once after the import, so the read
 //!   cursors stay.
+//! - The server saves the sign-ins before it writes the log. A server
+//!   that stops between the two steps finds no log at its next start,
+//!   and imports again.
 //! - The old objects stay in the store. The import changes none of
 //!   them. A second start finds the log, and does not import again.
 //!

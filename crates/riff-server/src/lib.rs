@@ -795,11 +795,14 @@ impl Server {
     /// The import of go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W), after the
     /// lease and before the port opens. See [`import`] for the steps.
     ///
-    /// - The command `import` writes the records of the old objects as
-    ///   one chunk, and the state takes the memory of each session.
     /// - The token store takes the sign-ins of the old `tokens` object,
     ///   at the position of the end of the import
-    ///   (01M3Z8MRGWWA0CNZ003D67H6R4), and the server saves it.
+    ///   (01M3Z8MRGWWA0CNZ003D67H6R4), and the server saves it. This
+    ///   save comes before the log. So a server that stops between the
+    ///   two steps finds no log at its next start, and imports again:
+    ///   no stop loses the sign-ins.
+    /// - The command `import` writes the records of the old objects as
+    ///   one chunk, and the state takes the memory of each session.
     /// - A riff whose old objects have no ID gets one.
     /// - The server writes a checkpoint at once: it keeps the read
     ///   cursors.
@@ -810,14 +813,10 @@ impl Server {
             ))
         };
         let at_ms = now_ms();
-        let records = self
-            .engine
-            .import(old.changes(at_ms), old.memory(at_ms))
-            .await
-            .map_err(|e| failed("the command import", e.text()))?;
-        let (position, has_id) = self
-            .engine
-            .read(|state| (state.written_position(), state.riff_id().is_some()));
+        let changes = old.changes(at_ms);
+        // The log has no record, so the last record of the import has
+        // this position.
+        let position = changes.len() as u64;
         let mut sign_ins = 0;
         if let Some(bytes) = old.tokens() {
             let tokens = Tokens::import(bytes, position, Instant::now(), SystemTime::now())
@@ -829,6 +828,12 @@ impl Server {
                 .await
                 .map_err(|e| failed("the save of the sign-ins", e.to_string()))?;
         }
+        let records = self
+            .engine
+            .import(changes, old.memory(at_ms))
+            .await
+            .map_err(|e| failed("the command import", e.text()))?;
+        let has_id = self.engine.read(|state| state.riff_id().is_some());
         if !has_id {
             self.engine.make_riff(token::random_token());
         }

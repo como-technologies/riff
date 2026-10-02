@@ -987,11 +987,11 @@ sequenceDiagram
     M->>B: read sessions, tokens, threads/
     Note over M: an object that does not read stops the start
     M->>B: take the lease
+    M->>T: the sign-ins of the old tokens object
+    T->>B: signins.json
     M->>E: import (the changes of the old objects)
     E->>B: one chunk of the log
     E->>E: the memory of each session, the read cursors
-    M->>T: the sign-ins of the old tokens object
-    T->>B: signins.json
     M->>B: a checkpoint
     Note over M: open the port
 ```
@@ -1021,6 +1021,9 @@ sequenceDiagram
   today works one time: it gives the first pair of a new chain. So no
   person signs in again. A session token has no chain: the session
   swaps the new person token.
+- The server saves the sign-ins before it writes the log. A server
+  that stops between the two steps finds no log at its next start, and
+  imports again. So no stop loses the sign-ins.
 - The import changes no old object. They stay for a rollback.
 - After go-live, only the owner and the admins resume the whole riff.
 
