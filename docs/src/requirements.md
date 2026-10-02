@@ -388,6 +388,61 @@
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
 
+## Tokens on GitHub
+
+- **01M3Y1YP0QY11VR28RF9MKPN0G** riff sums the tokens of each claim
+  from the transcripts of its session, on the machine of the session:
+  the input, output, cache write and cache read tokens of each model.
+  A reply counts when its time is from the claim to before its end. A
+  reply counts one time, also when the transcript has it on more than
+  one line. The transcripts of the helper agents of the session count.
+- **01M3Y1YP15C7AT2N70BWQP8PE2** riff keeps the marks of each session
+  on its machine, in a directory that holds over a restart: each
+  transcript of the session, and each claim with its start time and
+  its end time. The start hook, the Stop hook and the end hook record
+  the transcript. A granted claim records the start time.
+- **01M3Y1YP1JAQMJ66K2QXC7766C** Tokens in a time with two claims of
+  one session count for the claim that started last.
+- **01M3Y1YP1ZA5TBRA01MKWM3VC6** At the end of a claim, riff puts its
+  sum on the issue of the claim as one comment, with `gh`. `issue-N`
+  and `verify-issue-N` are claims of the issue N. A claim ends at its
+  release, at a leave, at a new start of its session and at the end of
+  its session. The log of `riff-server` holds no tokens.
+- **01M3Y1YP2CSNHCWV7T4CE9HZ4Y** The comment has one line for a
+  person, then the same numbers as JSON in a `details` block with the
+  summary `riff:usage`. It holds only the item, the kind of the claim
+  (work or verify), the first 8 characters of the session ID, the two
+  times, and the four kinds of tokens for each model. It holds no text
+  of a transcript, no path and no email.
+- **01M3Y1YP2TVYQC7GCCAMN6111K** A second report of the same claim
+  replaces the comment of that claim that the same person wrote. It
+  adds no comment.
+- **01M3Y1YP39VFX6GH33H7B8A8KR** A report never fails a release, a
+  leave or a hook. With no `gh`, a `gh` that fails, an item that names
+  no issue, or a thread that is no repository, the sum stays in the
+  marks of the machine, and the result of the release says why. A
+  claim with no tokens gets no comment.
+- **01M3Y1YP3QMKS6B35PJ42KNYXX** `riff usage ISSUE` sums the comments
+  of the issue with the mark. It counts a claim one time: of two
+  comments for one claim, the later one counts. It shows the total
+  with the four kinds, then the work claims and the verify claims,
+  each with its session, its models and who wrote its comment.
+- **01M3Y1YP45VQS5HMJCXKRN3CCR** `riff usage --wave TITLE` lists each
+  issue of the wave, open and closed, with its total, and shows the
+  sum.
+- **01M3Y1YP4KVHK1DTZ85YNGDG0T** `riff usage` with no issue and no
+  wave shows each session with marks on this machine: its total, the
+  tokens of each item, and the line `no issue` with the tokens outside
+  each claim.
+- **01M3Y1YP514MPX8DTKMTWDHE8Q** After the merge, `riff pr wait` puts
+  the open claim of the issue on the issue as it is then, and adds one
+  comment with the total of the issue and its models. Each later
+  report of a claim of the issue writes that comment again. A failure
+  of this step does not fail the wait.
+- **01M3Y1YP5GC5W9KVJQP6PXPM3G** The book has the how-to "See the
+  tokens of an issue" with `riff usage`. It says that the numbers are
+  public on the issue.
+
 ## Pause
 
 - **01M3JCFTWCR72HQB8CBTQKXJNF** The whole riff is paused or running.

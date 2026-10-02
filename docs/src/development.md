@@ -255,6 +255,66 @@ on. It waits for `riff/verify`: see
 [Report a verify](how-it-works.md#report-a-verify). A new commit on
 the pull request has no status. It needs a new verify.
 
+## See the tokens of an issue
+
+riff counts the tokens that each claim takes, and the models that did
+the work. Run the commands in your clone. They need `gh`.
+
+The tokens of one issue: the total, then each work claim and each
+verify claim, with its models:
+
+```sh
+riff usage 12
+```
+
+Each issue of a wave with its total, and the sum:
+
+```sh
+riff usage --wave "Wave 3"
+```
+
+Each session of this machine, with the tokens of each item. The line
+`no issue` has the tokens outside each claim, for example of the lead:
+
+```sh
+riff usage
+```
+
+Each line shows the four kinds of tokens: input, output, cache write
+and cache read. A cache read costs much less than an output token.
+
+```mermaid
+sequenceDiagram
+    participant S as session
+    participant R as riff
+    participant T as transcript on this machine
+    participant I as issue on GitHub
+    S->>R: claim issue-12
+    S->>R: release issue-12
+    R->>T: sum the replies from the claim to the release
+    R->>I: one comment with the sum
+    Note over I: riff usage 12 sums the comments
+```
+
+- riff reads the transcripts of the agent tool on the machine of the
+  session. A claim counts from its `claim` to its `release`. A new
+  start or the end of the session also ends it.
+- `issue-12` and `verify-issue-12` are claims of the issue 12. riff
+  puts one comment on the issue for each claim.
+- The numbers are public on the issue. The comment holds the item, the
+  kind of the claim, the first characters of the session ID, the
+  times, the models and the tokens. It holds no text of a transcript,
+  no path and no email.
+- Each person who can write a comment can write one with numbers. So
+  `riff usage 12` names who wrote each comment that it sums.
+- Tokens in a time with two claims of one session count for the claim
+  that started last.
+- With no `gh`, or for an item that names no issue, the release still
+  works. The tokens stay on the machine, and `riff usage` shows them.
+- After the merge, `riff pr wait` adds one comment with the total of
+  the issue. A later release of a claim of the issue writes that
+  comment again.
+
 ## Sign in on this machine
 
 Sign-in uses the OAuth client of the Google Cloud project `como-riff`.
