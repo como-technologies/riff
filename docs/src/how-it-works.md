@@ -3136,6 +3136,10 @@ and ends its turn. Then riff types `/clear` into the pane of the
 worker, and then "Join the riff.". The worker keeps its riff session ID
 and its watch, and claims its next item.
 
+riff never types into a turn that runs. When the reply of the server
+comes late and the worker started a new turn, riff types nothing. It
+checks again when that turn ends.
+
 ```mermaid
 sequenceDiagram
     participant W as worker

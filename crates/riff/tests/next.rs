@@ -6,8 +6,10 @@
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use riff::api::Api;
@@ -102,8 +104,19 @@ impl Worker {
     /// The Stop hook of the session `id`: its turn ends. The hook
     /// returns at once.
     fn stop_hook(&self, id: &str, worker: bool) {
+        self.stop_hook_with(id, worker, None);
+    }
+
+    /// The Stop hook of the session `id`, with the transcript of its
+    /// agent in the input.
+    fn stop_hook_with(&self, id: &str, worker: bool, transcript: Option<&Path>) {
         let start = Instant::now();
-        let input = format!(r#"{{"session_id":"{id}","hook_event_name":"Stop"}}"#);
+        let input = serde_json::json!({
+            "session_id": id,
+            "hook_event_name": "Stop",
+            "transcript_path": transcript,
+        })
+        .to_string();
         let out = self.hook(id, worker, "stop", &input);
         assert!(out.status.success(), "{out:?}");
         let took = start.elapsed();
@@ -368,6 +381,84 @@ async fn riff_who_shows_the_time_since_the_last_clear_of_a_worker() {
     watch.wait().unwrap();
     assert!(cleared.contains(" idle worker "), "{cleared}");
     assert!(fresh_secs(&cleared) < old, "{cleared}");
+}
+
+/// A proxy in front of `server`. While its gate is closed, it holds each
+/// new connection: the server does not answer. It counts the
+/// connections that it holds.
+struct Gate {
+    url: String,
+    open: tokio::sync::watch::Sender<bool>,
+    held: Arc<AtomicUsize>,
+}
+
+impl Gate {
+    async fn before(server: &str) -> Self {
+        let (open, gate) = tokio::sync::watch::channel(true);
+        let held = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let to = server.trim_start_matches("http://").to_owned();
+        let count = held.clone();
+        tokio::spawn(async move {
+            while let Ok((mut from, _)) = listener.accept().await {
+                let (mut gate, to, count) = (gate.clone(), to.clone(), count.clone());
+                tokio::spawn(async move {
+                    if !*gate.borrow() {
+                        count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    if gate.wait_for(|open| *open).await.is_err() {
+                        return;
+                    }
+                    let Ok(mut to) = tokio::net::TcpStream::connect(&to).await else {
+                        return;
+                    };
+                    let _ = tokio::io::copy_bidirectional(&mut from, &mut to).await;
+                });
+            }
+        });
+        Gate { url, open, held }
+    }
+}
+
+/// One prompt in the transcript of an agent: a new turn starts.
+const PROMPT: &str = r#"{"type":"user","message":{"content":"Join the riff."}}"#;
+
+/// The reply to the check of a turn comes late, and the worker releases
+/// its last claim in its next turn. The check types nothing into that
+/// turn. The clear comes when that turn ends
+/// (01M3XZCWQED9M9ZB29F730EA58).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_check_with_a_late_reply_types_nothing_into_a_new_turn() {
+    let mut r = Riff::with_a_worker().await;
+    let gate = Gate::before(&r.w.server).await;
+    r.w.server = gate.url.clone();
+    let transcript = r.w.run.path().join("transcript.jsonl");
+    std::fs::write(&transcript, format!("{PROMPT}\n")).unwrap();
+
+    // A turn ends while the worker holds its claim. The server does not
+    // answer the check.
+    gate.open.send(false).unwrap();
+    r.w.stop_hook_with("w1", true, Some(&transcript));
+    let end = Instant::now() + Duration::from_secs(20);
+    while gate.held.load(Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < end, "the check sent no keep-alive");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // The next turn starts and releases the last claim. Then the server
+    // answers the check of the first turn: clear.
+    std::fs::write(&transcript, format!("{PROMPT}\n{PROMPT}\n")).unwrap();
+    let w1 = r.w.uri("w1");
+    let thread = w1.default_thread().unwrap();
+    r.api.release(&w1, &thread, "issue-12").await.unwrap();
+    assert!(r.claim_is_refused("issue-13").await);
+    gate.open.send(true).unwrap();
+    r.w.no_keys(0).await;
+
+    // The next turn ends: its check clears the worker.
+    r.w.stop_hook_with("w1", true, Some(&transcript));
+    r.w.keys(0).await;
 }
 
 /// The seconds of `fresh start Ns ago` in a line of `riff who`.

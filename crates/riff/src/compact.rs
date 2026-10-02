@@ -551,6 +551,33 @@ pub fn turn_ended(transcript: &str) -> bool {
     false
 }
 
+/// The number of prompts in the transcript: the lines of the user that
+/// are not the result of a tool. Each turn starts with one, so a higher
+/// number shows that a new turn started.
+///
+/// ```
+/// use riff::compact::prompts;
+/// let turn = r#"{"type":"user","message":{"content":"hi"}}
+/// {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}
+/// {"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}
+/// {"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}
+/// {"type":"system","subtype":"stop_hook_summary"}"#;
+/// assert_eq!(prompts(turn), 1);
+/// let wake = r#"{"type":"user","message":{"content":[{"type":"text","text":"a wake"}]}}"#;
+/// assert_eq!(prompts(&format!("{turn}\n{wake}")), 2);
+/// assert_eq!(prompts(""), 0);
+/// ```
+pub fn prompts(transcript: &str) -> usize {
+    entries(transcript)
+        .filter(|e| e.kind == "user")
+        .filter(|e| {
+            let content = e.message.as_ref().map(|m| &m.content);
+            let items = content.and_then(|c| c.as_array());
+            !items.is_some_and(|items| items.iter().any(|c| c["type"] == "tool_result"))
+        })
+        .count()
+}
+
 /// The text of the last message of the agent in the transcript.
 ///
 /// ```

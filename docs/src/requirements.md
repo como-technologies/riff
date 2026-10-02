@@ -2288,6 +2288,12 @@
   ask, the check does nothing. It sends a failed keep-alive again, at
   most 5 times. So the clear does not depend on a call of the worker,
   and a session that is no worker is never cleared.
+- **01M3XZCWQED9M9ZB29F730EA58** The check of the Stop hook types
+  nothing when a new turn of the worker started after the check
+  started. It counts the prompts in the transcript of the agent when
+  it starts, and again before the keys. A prompt is a line of the user
+  that is not the result of a tool. The Stop hook of the new turn
+  starts a new check.
 - **01M3XV05AD98S415V3SWN8ZDXC** The lead clears a worker that stays in
   MustClear with `riff workers stop PANE`: the rollout starts a new
   worker with a fresh context. A person can also type `/clear` in its

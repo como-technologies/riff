@@ -724,6 +724,9 @@ enum HookEvent {
         /// The tmux pane of the worker.
         #[arg(long)]
         pane: String,
+        /// The transcript of the session.
+        #[arg(long)]
+        transcript: Option<std::path::PathBuf>,
     },
     /// Check whether riff compacts the lead now
     ///
@@ -825,10 +828,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Hook {
-        event: HookEvent::Clear { session, pane },
+        event:
+            HookEvent::Clear {
+                session,
+                pane,
+                transcript,
+            },
     } = &cli.command
     {
-        if let Err(e) = clear_check(session, pane, &server).await {
+        if let Err(e) = clear_check(session, pane, transcript.as_deref(), &server).await {
             eprintln!("riff: cannot clear the context of the worker: {e:#}");
         }
         return Ok(());
@@ -1454,7 +1462,7 @@ fn stop_hook() {
         }
         return;
     }
-    if let Err(e) = start_clear_check(&id) {
+    if let Err(e) = start_clear_check(&id, input.transcript_path.as_deref()) {
         eprintln!("riff: cannot check the clear of the worker: {e:#}");
     }
 }
@@ -1462,7 +1470,7 @@ fn stop_hook() {
 /// Starts `riff hook clear` for the worker `id`, detached, so that the
 /// Stop hook returns at once (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It starts
 /// nothing outside tmux, or when the session left the riff.
-fn start_clear_check(id: &str) -> Result<()> {
+fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let in_tmux = std::env::var_os("TMUX").is_some_and(|t| !t.is_empty());
     let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
@@ -1472,9 +1480,12 @@ fn start_clear_check(id: &str) -> Result<()> {
     if local::left_here(id) {
         return Ok(());
     }
-    std::process::Command::new(std::env::current_exe()?)
-        .args(["hook", "clear", "--session", id, "--pane", &pane])
-        .stdin(std::process::Stdio::null())
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.args(["hook", "clear", "--session", id, "--pane", &pane]);
+    if let Some(transcript) = transcript {
+        cmd.arg("--transcript").arg(transcript);
+    }
+    cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .process_group(0)
@@ -1484,13 +1495,18 @@ fn start_clear_check(id: &str) -> Result<()> {
 
 /// The check of the clear of the worker `id` in the pane `pane`
 /// ([`next::check`], 01M3XV0562D3H3P22CJDBPAZBH).
-async fn clear_check(id: &str, pane: &str, server: &str) -> Result<()> {
+async fn clear_check(
+    id: &str,
+    pane: &str,
+    transcript: Option<&std::path::Path>,
+    server: &str,
+) -> Result<()> {
     let dir = identity::working_dir()?;
     let here = identity::place(&dir)?;
     let api = Api::new(server);
     let me = identity::agent(&here, id, api.base())?;
     let api = api.signed_in(Some(id))?;
-    next::check(&api, &me, pane, &dir).await?;
+    next::check(&api, &me, pane, &dir, transcript).await?;
     Ok(())
 }
 

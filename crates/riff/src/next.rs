@@ -47,6 +47,11 @@
 //!   and types the keys into the pane after [`CLEAR_WAIT`].
 //! - The clear comes at the end of the turn, not at the release. So a
 //!   worker does the steps after its release in the same turn.
+//! - The keys never come in a turn that runs. [`check`] counts the
+//!   prompts in the transcript of the agent when it starts
+//!   ([`crate::compact::prompts`]), and again before the keys. A higher
+//!   number shows a new turn: the check stops, and the Stop hook of
+//!   that turn starts a new check (01M3XZCWQED9M9ZB29F730EA58).
 //! - A worker has its riff session ID in `RIFF_SESSION`
 //!   (01M3JPQT9BA7JVMZPV68FY4MQ6). So after `/clear` it keeps its ID,
 //!   its lead and its watch (01M3JQCD16CNWN5FCQBRKHXYMP).
@@ -174,7 +179,19 @@ pub struct StopInput {
 /// A keep-alive that fails is sent again after [`ASK_WAIT`], at most
 /// [`ASKS`] times. A session that left the riff makes no call
 /// ([`crate::leave`]), so riff does not clear it.
-pub async fn check(api: &Api, me: &SessionUri, pane: &str, dir: &Path) -> Result<bool> {
+///
+/// The reply can come late, and the fast-forward takes time. When the
+/// `transcript` of the agent shows that a new turn started in that
+/// time, the check types nothing: the Stop hook of the new turn starts
+/// a new check (01M3XZCWQED9M9ZB29F730EA58).
+pub async fn check(
+    api: &Api,
+    me: &SessionUri,
+    pane: &str,
+    dir: &Path,
+    transcript: Option<&Path>,
+) -> Result<bool> {
+    let turns = turns(transcript);
     let mut reply = api.alive(me).await;
     for _ in 1..ASKS {
         if reply.is_ok() {
@@ -193,8 +210,18 @@ pub async fn check(api: &Api, me: &SessionUri, pane: &str, dir: &Path) -> Result
     {
         eprintln!("riff: cannot tell the lead: {e:#}");
     }
+    if self::turns(transcript) != turns {
+        return Ok(false);
+    }
     spawn(&ClaudeCode, pane)?;
     Ok(true)
+}
+
+/// The number of turns that started in the `transcript` of the agent
+/// ([`crate::compact::prompts`]). It is 0 with no transcript.
+fn turns(transcript: Option<&Path>) -> usize {
+    let text = transcript.and_then(|path| std::fs::read_to_string(path).ok());
+    text.map_or(0, |text| crate::compact::prompts(&text))
 }
 
 /// The shell script that types the keys of `agent` into `pane` with
