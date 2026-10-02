@@ -45,7 +45,7 @@
 //! - A `posted` record has two such parts too
 //!   (01M3XSF90E9JYYTC13D9THY4WE): the kind of the message
 //!   ([`Kind`](crate::wire::Kind)), and each selector of its `to`
-//!   ([`Selector`](crate::selector::Selector)). A selector with a field
+//!   ([`Selector`]). A selector with a field
 //!   that the build does not know is a selector `other`: it keeps the
 //!   field, and it matches no session. The message stays in its thread,
 //!   and a reader shows it as a message.
@@ -66,7 +66,7 @@
 //! | [`Scope`] | `pause_set` | `other` |
 //! | [`StartReason`] | `session_started` | `other` |
 //! | [`Kind`](crate::wire::Kind) | the message of `posted` | `other` |
-//! | [`Selector`](crate::selector::Selector) | the `to` of the message of `posted` | `other`, for a new field |
+//! | [`Selector`] | the `to` of the message of `posted` | `other`, for a new field |
 //! | [`RiffState`] | `pause_set` | The line does not read. The set never grows: a pause is set or ended. A new sort of pause is a new [`Scope`]. |
 //!
 //! # Example
