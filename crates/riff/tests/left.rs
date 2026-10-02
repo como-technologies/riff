@@ -289,6 +289,7 @@ async fn the_tasks_of_riff_mcp_send_no_request_after_a_leave() {
         tmux: None,
         claude: "claude".into(),
         gh: Arc::new(riff::pr::Gh::default()),
+        off_told: false.into(),
     };
     // The session is the lead: the rollout sees the settings.
     assert!(rollout.seen().await.unwrap().is_some());

@@ -87,10 +87,11 @@ Where do you want riff on?
 Your choice [1]:
 ```
 
-riff keeps your answer, and asks no more. With no terminal, for
-example in `riff update`, it asks nothing and turns riff on nowhere.
-An update never turns riff on in more repositories. The last line of
-the command says where riff is on, and the command to change it.
+riff keeps your answer, and asks no more. With no terminal, it asks
+nothing and changes nothing. `riff update` asks nothing too, also in a
+terminal: an update never turns riff on in more repositories, and
+never turns it off. The last line of the command says where riff is
+on, and the command to change it.
 
 ### Turn riff on or off for a repository
 
@@ -114,8 +115,7 @@ riff disable
 `riff disable` changes only this repository. A session that runs
 keeps riff until it ends. To take it out now, run `/riff:leave` in it.
 
-`riff enable` writes one entry to a settings file of Claude Code, and
-keeps each other key:
+`riff enable` writes one entry to a settings file of Claude Code:
 
 ```json
 {
@@ -124,6 +124,9 @@ keeps each other key:
   }
 }
 ```
+
+Each other byte of the file stays. When the file is a symbolic link,
+riff writes the file that the link names, and shows its path.
 
 | Flag | File | Who gets riff |
 |---|---|---|
@@ -149,7 +152,8 @@ flowchart TD
 git does not track the local settings, so a linked worktree does not
 have them. In a linked worktree, riff reads the settings of the main
 clone too, and `riff enable` writes the local settings of the main
-clone.
+clone. It asks git for the main clone first, and writes nothing when
+git does not know the worktree.
 
 ### Turn riff on for the team
 
@@ -199,10 +203,17 @@ repository  riff off. To turn it on: riff enable
 
 ### After an update from a release before the opt-in
 
-Before, riff was on in each repository. The first update takes that
-away: riff is installed and off. `riff update` names each repository
-where you used riff. Run `riff enable` in each one where you want
-riff.
+A release up to v0.8.0 turned riff on in each repository: it wrote the
+entry to the user settings. An update keeps that choice. riff stays on
+in each repository of the machine, and you run no command.
+
+To have riff only in some repositories, take the entry out, and turn
+riff on in each one:
+
+```sh
+riff disable --global
+riff enable
+```
 
 ### When the riff server is turned off in /mcp
 
@@ -2962,7 +2973,8 @@ Outside tmux, the command says that it needs tmux and starts nothing.
 
 A worker starts in the main clone. Where riff is off in the main
 clone, riff starts no worker: not with this command, not by itself,
-and not on a workers host. The command then names `riff enable`. See
+and not on a workers host. The command then names `riff enable`, and
+the lead gets one note when riff starts no worker by itself. See
 [Turn riff on or off for a repository](#turn-riff-on-or-off-for-a-repository).
 
 It starts at most the limit minus the workers that run, and says why

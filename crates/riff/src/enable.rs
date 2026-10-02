@@ -326,24 +326,218 @@ impl State {
     }
 }
 
+/// One member of a JSON object in a text.
+struct Member {
+    key: String,
+    /// The place of the key.
+    start: usize,
+    /// The place of the value.
+    value: usize,
+    /// The place after the value.
+    end: usize,
+}
+
+/// The place of the first byte at or after `i` that is not white space.
+fn skip_space(text: &[u8], mut i: usize) -> usize {
+    while text.get(i).is_some_and(u8::is_ascii_whitespace) {
+        i += 1;
+    }
+    i
+}
+
+/// The place after the JSON value that starts at `i`.
+fn value_end(text: &[u8], i: usize) -> Option<usize> {
+    match *text.get(i)? {
+        b'"' => {
+            let mut j = i + 1;
+            loop {
+                match *text.get(j)? {
+                    b'\\' => j += 2,
+                    b'"' => return Some(j + 1),
+                    _ => j += 1,
+                }
+            }
+        }
+        b'{' | b'[' => {
+            let (mut depth, mut j) = (0usize, i);
+            loop {
+                match *text.get(j)? {
+                    b'"' => {
+                        j = value_end(text, j)?;
+                        continue;
+                    }
+                    b'{' | b'[' => depth += 1,
+                    b'}' | b']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(j + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+        }
+        _ => {
+            let stops = |c: &u8| matches!(c, b',' | b'}' | b']') || c.is_ascii_whitespace();
+            Some(
+                (i..text.len())
+                    .find(|&j| stops(&text[j]))
+                    .unwrap_or(text.len()),
+            )
+        }
+    }
+}
+
+/// The members of the JSON object that starts at `open`, and the place
+/// of its `}`. `None` when the text there is no object.
+fn members(text: &str, open: usize) -> Option<(Vec<Member>, usize)> {
+    let bytes = text.as_bytes();
+    if bytes.get(open) != Some(&b'{') {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut i = skip_space(bytes, open + 1);
+    loop {
+        match *bytes.get(i)? {
+            b'}' => return Some((out, i)),
+            b',' => i = skip_space(bytes, i + 1),
+            b'"' => {
+                let after_key = value_end(bytes, i)?;
+                let key = serde_json::from_str(&text[i..after_key]).ok()?;
+                let colon = skip_space(bytes, after_key);
+                if bytes.get(colon) != Some(&b':') {
+                    return None;
+                }
+                let value = skip_space(bytes, colon + 1);
+                let end = value_end(bytes, value)?;
+                out.push(Member {
+                    key,
+                    start: i,
+                    value,
+                    end,
+                });
+                i = skip_space(bytes, end);
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// The white space that comes before the place `at`.
+fn space_before(text: &str, at: usize) -> &str {
+    let head = &text[..at];
+    &head[head.trim_end().len()..]
+}
+
+/// The text with the member `key` of the object at `open` set to
+/// `value`. A new member comes after the last one, with the white space
+/// that the last one has before it.
+fn put(text: &str, open: usize, key: &str, value: &str) -> Option<String> {
+    let (members, close) = members(text, open)?;
+    if let Some(member) = members.iter().find(|m| m.key == key) {
+        let (head, tail) = (&text[..member.value], &text[member.end..]);
+        return Some(format!("{head}{value}{tail}"));
+    }
+    let member = format!("{}: {value}", serde_json::to_string(key).ok()?);
+    Some(match members.last() {
+        Some(last) => {
+            let space = match space_before(text, last.start) {
+                "" => " ",
+                space => space,
+            };
+            let (head, tail) = (&text[..last.end], &text[last.end..]);
+            format!("{head},{space}{member}{tail}")
+        }
+        None => format!("{}{member}{}", &text[..=open], &text[close..]),
+    })
+}
+
+/// The text with no member `key` in the object at `open`. The comma
+/// after the member goes with it, else the comma before it.
+fn take(text: &str, open: usize, key: &str) -> Option<String> {
+    let (members, _) = members(text, open)?;
+    let i = members.iter().position(|m| m.key == key)?;
+    let member = &members[i];
+    let bytes = text.as_bytes();
+    let after = skip_space(bytes, member.end);
+    if bytes.get(after) == Some(&b',') {
+        let next = skip_space(bytes, after + 1);
+        return Some(format!("{}{}", &text[..member.start], &text[next..]));
+    }
+    let from = match i {
+        0 => open + 1,
+        _ => members[i - 1].end,
+    };
+    Some(format!("{}{}", &text[..from], &text[member.end..]))
+}
+
+/// The settings text with the entry of riff changed as text, so that
+/// each other byte of the file stays. `None` when it cannot: the caller
+/// then writes the file in the plain form.
+fn edit(text: &str, on: Option<bool>) -> Option<String> {
+    let open = skip_space(text.as_bytes(), 0);
+    let (top, close) = members(text, open)?;
+    let plugins = top.iter().find(|m| m.key == "enabledPlugins");
+    match (on, plugins) {
+        (Some(on), Some(plugins)) => put(text, plugins.value, KEY, &on.to_string()),
+        (Some(on), None) => {
+            // A file with no key gets the plain form.
+            let space = space_before(text, top.last()?.start);
+            let key = serde_json::to_string(KEY).ok()?;
+            let value = match space.rsplit_once('\n') {
+                Some((_, indent)) => format!("{{\n{indent}{indent}{key}: {on}\n{indent}}}"),
+                None => format!("{{{key}: {on}}}"),
+            };
+            put(text, open, "enabledPlugins", &value)
+        }
+        (None, Some(plugins)) => {
+            let (inner, _) = members(text, plugins.value)?;
+            if inner.iter().any(|m| m.key != KEY) {
+                return take(text, plugins.value, KEY);
+            }
+            // An `enabledPlugins` that is empty after the change goes.
+            match top.len() {
+                1 => Some(format!("{}{{}}{}", &text[..open], &text[close + 1..])),
+                _ => take(text, open, "enabledPlugins"),
+            }
+        }
+        (None, None) => None,
+    }
+}
+
 /// The settings text with the entry of riff set to `on`, or with no
-/// entry for `None`. `None` when the text has that state already. It
-/// keeps each other key in its order. An `enabledPlugins` that is empty
-/// after the change goes.
+/// entry for `None`. `None` when the text has that state already. An
+/// `enabledPlugins` that is empty after the change goes.
+///
+/// It changes only the entry of riff, as text
+/// (01M3XY2SKQ27K3TE4NV28FHTVV): each other byte of the file stays, so
+/// the file keeps its indent, the order of its keys and its lines. A
+/// new entry takes the white space of the member before it.
 ///
 /// ```
 /// use riff::enable::with_entry;
 ///
-/// let text = r#"{"model": "opus", "enabledPlugins": {"a@b": true}}"#;
+/// let text = r#"{
+///     "model": "opus",
+///     "permissions": {"allow": ["Bash(ls)", "Bash(cat:*)"]},
+///     "enabledPlugins": {"a@b": true}
+/// }
+/// "#;
 /// let on = with_entry(text, Some(true))?.unwrap();
-/// let value: serde_json::Value = serde_json::from_str(&on)?;
-/// assert_eq!(value["enabledPlugins"]["riff@riff"], true);
-/// assert_eq!(value["enabledPlugins"]["a@b"], true);
-/// assert_eq!(value["model"], "opus");
+/// assert_eq!(on, text.replace(r#"{"a@b": true}"#, r#"{"a@b": true, "riff@riff": true}"#));
 /// assert_eq!(with_entry(&on, Some(true))?, None);
-/// let off = with_entry(&on, None)?.unwrap();
-/// assert_eq!(serde_json::from_str::<serde_json::Value>(&off)?, serde_json::from_str::<serde_json::Value>(text)?);
-/// assert_eq!(with_entry(r#"{"enabledPlugins": {"riff@riff": true}}"#, None)?.unwrap(), "{}\n");
+/// let no = with_entry(&on, Some(false))?.unwrap();
+/// assert_eq!(no, on.replace(r#""riff@riff": true"#, r#""riff@riff": false"#));
+/// assert_eq!(with_entry(&no, None)?.unwrap(), text);
+///
+/// // A file with no `enabledPlugins` gets the key in the form of its other keys.
+/// let text = "{\n  \"model\": \"opus\"\n}\n";
+/// let on = with_entry(text, Some(true))?.unwrap();
+/// assert_eq!(on, "{\n  \"model\": \"opus\",\n  \"enabledPlugins\": {\n    \"riff@riff\": true\n  }\n}\n");
+/// assert_eq!(with_entry(&on, None)?.unwrap(), text);
+///
+/// assert_eq!(with_entry(r#"{"enabledPlugins": {"riff@riff": true}}"#, None)?.unwrap(), "{}");
 /// assert_eq!(with_entry("{}", None)?, None);
 /// assert!(with_entry("[1]", Some(true)).is_err());
 /// # Ok::<(), anyhow::Error>(())
@@ -383,6 +577,13 @@ pub fn with_entry(text: &str, on: Option<bool>) -> Result<Option<String>> {
             }
         }
     }
+    // The text edit must give the same settings. If it does not, for
+    // example for a file with a key two times, riff writes the plain
+    // form.
+    let same = |new: &String| serde_json::from_str::<Value>(new).is_ok_and(|v| v == value);
+    if let Some(new) = edit(text, on).filter(same) {
+        return Ok(Some(new));
+    }
     let mut out = serde_json::to_string_pretty(&value)?;
     out.push('\n');
     Ok(Some(out))
@@ -391,7 +592,9 @@ pub fn with_entry(text: &str, on: Option<bool>) -> Result<Option<String>> {
 /// Sets the entry of riff in the settings file at `path` to `on`, or
 /// removes it for `None`. It makes the file when it is not there and
 /// `on` is a value. It writes the file only when it changes. True when
-/// it changed the file.
+/// it changed the file. It writes through a symbolic link: a person
+/// who keeps the settings in another place made the link
+/// (01M3YCGKGP3VC93S8FA1G4K3QK).
 pub fn set(path: &Path, on: Option<bool>) -> Result<bool> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -413,10 +616,60 @@ pub fn set(path: &Path, on: Option<bool>) -> Result<bool> {
     Ok(true)
 }
 
+/// The file that a write to `file` changes: the path with each symbolic
+/// link followed (01M3YCGKGP3VC93S8FA1G4K3QK). A file that is not there gives `file`.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let dir = dir.path().canonicalize()?;
+/// std::fs::write(dir.join("real.json"), "{}")?;
+/// std::os::unix::fs::symlink(dir.join("real.json"), dir.join("link.json"))?;
+/// assert_eq!(riff::enable::real(&dir.join("link.json")), dir.join("real.json"));
+/// assert_eq!(riff::enable::real(&dir.join("none.json")), dir.join("none.json"));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn real(file: &Path) -> PathBuf {
+    std::fs::canonicalize(file).unwrap_or_else(|_| file.to_owned())
+}
+
+/// The repository of `dir` for a write to the file of `place`.
+///
+/// The local settings of a linked worktree are in the main clone, and
+/// [`Repo::of`] takes the main clone from the text of the `.git` file.
+/// A tree from an archive can have a `.git` file that names each
+/// directory. So before riff writes the settings of a main clone, git
+/// must confirm the worktree: the common directory of the worktree
+/// ([`crate::identity::common_dir`]) is the `.git` of that main clone
+/// (01M3YCGKGP3VC93S8FA1G4K3QK). If not, the command refuses and says why.
+fn for_write(dir: &Path, place: Place) -> Result<Option<Repo>> {
+    let repo = Repo::of(dir);
+    if let (
+        Place::Local,
+        Some(Repo {
+            top,
+            main: Some(main),
+        }),
+    ) = (place, &repo)
+    {
+        let same = |a: &Path, b: &Path| matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b);
+        let common = crate::identity::common_dir(top);
+        if !common.is_some_and(|common| same(&common, &main.join(".git"))) {
+            anyhow::bail!(
+                "git does not confirm that {} is a worktree of {}, so riff writes no settings \
+                 there. Run the command in the main clone, or use --shared",
+                top.display(),
+                main.display()
+            );
+        }
+    }
+    Ok(repo)
+}
+
 /// What `riff enable` or `riff disable` did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Changed {
-    /// The file of the command.
+    /// The file of the command: the real path of the file that it
+    /// wrote, with each symbolic link followed.
     pub file: PathBuf,
     /// True when the command changed a file.
     pub changed: bool,
@@ -461,10 +714,10 @@ pub fn file(place: Place, repo: Option<&Repo>, user: Option<&Path>) -> Result<Pa
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn enable(dir: &Path, place: Place, user: Option<&Path>) -> Result<Changed> {
-    let file = file(place, Repo::of(dir).as_ref(), user)?;
+    let file = file(place, for_write(dir, place)?.as_ref(), user)?;
     let changed = set(&file, Some(true))?;
     Ok(Changed {
-        file,
+        file: real(&file),
         changed,
         denied: None,
         state: State::of(dir, user, false),
@@ -477,15 +730,15 @@ pub fn enable(dir: &Path, place: Place, user: Option<&Path>) -> Result<Changed> 
 /// repository is off, and no other repository changes
 /// (01M3XY2SKQ27K3TE4NV28FHTVV).
 pub fn disable(dir: &Path, place: Place, user: Option<&Path>) -> Result<Changed> {
-    let file = file(place, Repo::of(dir).as_ref(), user)?;
+    let file = file(place, for_write(dir, place)?.as_ref(), user)?;
     let mut changed = set(&file, None)?;
     let mut denied = None;
     if place == Place::Local && State::of(dir, user, false).on {
         changed |= set(&file, Some(false))?;
-        denied = Some(file.clone());
+        denied = Some(real(&file));
     }
     Ok(Changed {
-        file,
+        file: real(&file),
         changed,
         denied,
         state: State::of(dir, user, false),
@@ -585,7 +838,8 @@ pub struct Scoped {
     /// kept the earlier choice.
     pub answer: Option<Scope>,
     /// The repositories that used riff, when it took an entry `true`
-    /// out of the user settings. `None` when it took none out.
+    /// out of the user settings: the person answered `repo` or `none`.
+    /// `None` when it took none out.
     pub moved: Option<Vec<PathBuf>>,
     /// The state of the working directory after the change.
     pub state: State,
@@ -615,9 +869,9 @@ pub struct Files<'a> {
 ///     R -- yes --> K[change nothing]
 ///     R -- no --> T{a terminal?}
 ///     T -- yes --> Q[ask] --> A
-///     T -- no --> O{"user settings<br/>turn riff on?"}
-///     O -- "yes: an old install" --> M[take the entry out, name the repositories]
-///     O -- no --> K
+///     T -- "no: an update" --> K
+///     A --> G{"the answer is repo or none,<br/>and the user settings turn riff on?"}
+///     G -- yes --> M[take the entry out, name the repositories]
 /// ```
 ///
 /// - It asks one time: an answer in the settings of riff stops the
@@ -625,9 +879,13 @@ pub struct Files<'a> {
 /// - Only the answer `global` writes `true` to the user settings. So an
 ///   update, which has no terminal, never turns the global scope on,
 ///   and keeps an earlier choice (01M3XY2SR3VJZAKEPC6CBCS292).
-/// - An old install has `true` in the user settings and no answer.
-///   With no terminal, riff takes the entry out: riff is installed and
-///   off. It names each repository that used riff ([`used`]).
+/// - An old install, of a release up to v0.8.0, has `true` in the user
+///   settings and no answer: that release installed the plugin in the
+///   user scope. Its choice is each repository. With no terminal, riff
+///   keeps the entry: riff stays on in each repository of the machine.
+/// - A person who answers `repo` or `none` takes the entry of the user
+///   settings out. riff then names each repository that used riff
+///   ([`used`]).
 ///
 /// ```
 /// use riff::enable::{Files, Scope, scope, set};
@@ -635,17 +893,16 @@ pub struct Files<'a> {
 /// let dir = tempfile::tempdir()?;
 /// let user = dir.path().join("user.json");
 /// let files = Files { user: Some(&user), riff: &dir.path().join("config.toml"), claude: None };
-/// // An old install, and nobody to ask: riff is off after it.
+/// // An old install, and nobody to ask: riff stays on in each repository.
 /// set(&user, Some(true))?;
 /// let done = scope(dir.path(), files, None, || Ok(None))?;
-/// assert_eq!(done.moved, Some(vec![]));
-/// assert!(!done.global);
-/// // The person answers: each repository.
-/// let done = scope(dir.path(), files, None, || Ok(Some(Scope::Global)))?;
-/// assert!(done.global);
+/// assert_eq!((done.answer, done.moved, done.global), (None, None, true));
+/// // The person answers: not now. The entry of the user settings goes.
+/// let done = scope(dir.path(), files, None, || Ok(Some(Scope::None)))?;
+/// assert_eq!((done.moved, done.global), (Some(vec![]), false));
 /// // The answer is kept, so riff asks no more, and an update changes nothing.
 /// let done = scope(dir.path(), files, None, || unreachable!())?;
-/// assert_eq!((done.answer, done.moved, done.global), (None, None, true));
+/// assert_eq!((done.answer, done.moved, done.global), (None, None, false));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn scope(
@@ -661,11 +918,9 @@ pub fn scope(
         (None, None) => ask()?,
     };
     let global = || files.user.and_then(entry_at) == Some(true);
-    let take_out = match answer {
-        Some(Scope::Global) => false,
-        Some(_) => true,
-        None => earlier.is_none(),
-    };
+    // With no answer now, the entries stay: an old install keeps its
+    // choice, each repository.
+    let take_out = matches!(answer, Some(Scope::Repo | Scope::None));
     let mut moved = None;
     if take_out && global() {
         if let Some(user) = files.user {
@@ -772,7 +1027,8 @@ pub fn mcp_off_in(state: Option<&Path>, dir: &Path, repo: Option<&Repo>) -> bool
 /// The repositories of the Claude Code state text `text` that used
 /// riff: each project that is a main clone and whose project settings
 /// or local settings name riff. `riff connect claude` names them when
-/// it moves an old install (01M3XY2SR3VJZAKEPC6CBCS292).
+/// a person takes the entry of the user settings out
+/// (01M3XY2SR3VJZAKEPC6CBCS292).
 pub fn used(text: &str) -> Vec<PathBuf> {
     let names_riff = |path: PathBuf| {
         std::fs::read_to_string(path).is_ok_and(|text| text.contains("mcp__plugin_riff_riff"))
@@ -806,17 +1062,136 @@ mod tests {
         tree
     }
 
+    /// A main clone and a linked worktree of it, both made by git.
+    fn git_worktree(dir: &Path) -> (PathBuf, PathBuf) {
+        let main = dir.canonicalize().unwrap().join("app");
+        let tree = main.join(".claude/worktrees/issue-12");
+        std::fs::create_dir(&main).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&main)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+        git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "issue-12",
+            tree.to_str().unwrap(),
+        ]);
+        (main, tree)
+    }
+
     /// 01M3XY2T2YEV7GT7DKJHSMMHYR.
     #[test]
     fn a_linked_worktree_reads_the_local_settings_of_the_main_clone() {
         let dir = tempfile::tempdir().unwrap();
-        let main = repo(dir.path());
-        let tree = linked(&main);
+        let (main, tree) = git_worktree(dir.path());
         assert!(!State::of(&tree, None, false).on);
         let done = enable(&tree, Place::Local, None).unwrap();
         assert_eq!(done.file, main.join(".claude/settings.local.json"));
         assert!(done.state.on);
         assert!(State::of(&main, None, false).on);
+    }
+
+    /// 01M3YCGKGP3VC93S8FA1G4K3QK: the text of a `.git` file names a
+    /// main clone, and git does not confirm it. riff writes nothing
+    /// there.
+    #[test]
+    fn enable_writes_no_settings_of_a_main_clone_that_git_does_not_confirm() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = repo(dir.path());
+        let tree = linked(&main);
+        for change in [enable, disable] {
+            let error = change(&tree, Place::Local, None).unwrap_err();
+            let error = format!("{error:#}");
+            assert!(error.contains("git does not confirm"), "{error}");
+            assert!(error.contains("--shared"), "{error}");
+        }
+        let settings = main.join(".claude/settings.local.json");
+        assert!(!settings.exists(), "riff wrote in the main clone");
+        // The shared settings are in the tree itself: no main clone.
+        let done = enable(&tree, Place::Shared, None).unwrap();
+        assert_eq!(done.file, real(&tree.join(".claude/settings.json")));
+    }
+
+    /// 01M3YCGKGP3VC93S8FA1G4K3QK: riff writes through a symbolic link,
+    /// and names the real path of the file. The link stays.
+    #[test]
+    fn enable_writes_through_a_symbolic_link_and_names_the_real_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path().canonicalize().unwrap();
+        let repo = dir.join("app");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        let target = dir.join("dotfiles/settings.json");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "{\"keep\": 1}\n").unwrap();
+        let link = repo.join(".claude/settings.local.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let done = enable(&repo, Place::Local, None).unwrap();
+        assert_eq!(done.file, target);
+        assert!(done.changed && done.state.on);
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        let text = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(
+            text,
+            "{\"keep\": 1, \"enabledPlugins\": {\"riff@riff\": true}}\n"
+        );
+        let done = disable(&repo, Place::Local, None).unwrap();
+        assert_eq!(done.file, target);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "{\"keep\": 1}\n");
+    }
+
+    /// 01M3XY2SKQ27K3TE4NV28FHTVV: each byte of the rest of the file
+    /// stays, for each form of a settings file.
+    #[test]
+    fn a_change_of_the_entry_keeps_each_other_byte_of_the_file() {
+        let forms = [
+            "{\n    \"model\": \"opus\",\n    \"permissions\": {\"allow\": [\"Bash(ls)\", \"Bash(cat:*)\"]}\n}\n",
+            "{\n\t\"a\": \"x, y } \\\" {\",\n\t\"enabledPlugins\": {\n\t\t\"a@b\": true\n\t},\n\t\"z\": [1, 2]\n}",
+            "{\"enabledPlugins\":{\"x@y\":false},\"b\":null}",
+            "  {\"a\":1}  \n",
+            "{\n  \"enabledPlugins\": {\n    \"riff@riff\": false,\n    \"a@b\": true\n  }\n}\n",
+        ];
+        for form in forms {
+            let had = entry(form);
+            let on = with_entry(form, Some(true)).unwrap().unwrap();
+            assert_eq!(entry(&on), Some(true), "{on}");
+            // The text with no entry of riff is the same before and after.
+            let none = |text: &str| with_entry(text, None).unwrap().unwrap_or(text.to_owned());
+            assert_eq!(none(&on), none(form), "{form}");
+            if had.is_none() {
+                assert_eq!(none(&on), form, "enable, then disable: {form}");
+            }
+            let no = with_entry(&on, Some(false)).unwrap().unwrap();
+            assert_eq!(
+                no,
+                on.replace("\"riff@riff\": true", "\"riff@riff\": false")
+            );
+            // Each line of the file that has no part of the entry stays.
+            let lines = form.lines().filter(|_| form.lines().count() > 1);
+            for line in lines.filter(|l| !l.contains("enabledPlugins") && !l.contains(KEY)) {
+                let line = line.trim_end_matches(',');
+                assert!(on.contains(line), "{line:?} is not in {on:?}");
+            }
+        }
+        // A key two times: the text edit would change the wrong one, so
+        // riff writes the plain form, with the right values.
+        let twice =
+            "{\"enabledPlugins\": {\"riff@riff\": false}, \"enabledPlugins\": {\"a@b\": true}}";
+        let on = with_entry(twice, Some(true)).unwrap().unwrap();
+        assert_eq!(entry(&on), Some(true));
     }
 
     #[test]

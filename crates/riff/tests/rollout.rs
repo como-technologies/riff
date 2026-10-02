@@ -395,20 +395,28 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
 /// The rollout starts no worker where riff is off in the main clone
 /// (01M3XY2T542DCHBN95H9PX4AGQ). A worker there is a plain session: it
 /// never joins the riff, so each look would start one more. The lead
-/// works in a linked worktree whose project settings turn riff on.
+/// works in a linked worktree whose project settings turn riff on. The
+/// lead gets one note with the reason (01M3YCGKKRDNFC338K1JSK30JK).
 /// `riff enable` in the main clone lets the rollout start a worker.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_rollout_starts_no_worker_where_riff_is_off_in_the_main_clone() {
     let lead = lead_with(5, On::Worktree).await;
     lead.issues(TWO_FREE);
     lead.riff(RiffState::Running).await;
-    lead.looked().await;
+    let note = "a: riff starts no worker here: riff off. To turn it on: riff enable. The rollout \
+                starts no worker on a until riff is on in the main clone.";
+    let read = lead.reads(note).await;
+    assert_eq!(read.matches(note).count(), 1, "{read}");
     assert_eq!(
         lead.settled().await,
         0,
         "riff is off in the main clone: {}",
         lead.tmux_log()
     );
+    // More looks ran in that time: the note came one time.
+    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+    let later = riff::text::inbox(&inbox, &lead.me);
+    assert!(!later.contains("riff starts no worker"), "{later}");
 
     riff::enable::enable(&lead.main, riff::enable::Place::Local, None).unwrap();
     lead.until_workers(1).await;

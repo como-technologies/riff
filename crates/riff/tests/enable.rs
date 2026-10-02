@@ -184,19 +184,25 @@ fn connect_turns_riff_on_nowhere_and_names_riff_enable() {
 /// `riff connect claude` in a pseudo-terminal, with `keys` typed. It
 /// gives what the terminal showed.
 fn connect_in_a_terminal(machine: &Machine, dir: &Path, keys: &str) -> String {
+    let claude = machine.bin().join("claude");
+    let args = ["connect", "claude", "--claude", claude.to_str().unwrap()];
+    in_a_terminal(machine.riff(dir, &args), keys)
+}
+
+/// Runs `cmd` in a pseudo-terminal, with `keys` typed. It gives what
+/// the terminal showed. The command must succeed.
+fn in_a_terminal(mut cmd: Command, keys: &str) -> String {
     let pty = nix::pty::openpty(None, None).unwrap();
     let slave = std::fs::File::from(pty.slave);
-    let claude = machine.bin().join("claude");
-    let mut child = machine
-        .riff(
-            dir,
-            &["connect", "claude", "--claude", claude.to_str().unwrap()],
-        )
+    let mut child = cmd
         .stdin(slave.try_clone().unwrap())
         .stdout(slave.try_clone().unwrap())
         .stderr(slave)
         .spawn()
         .unwrap();
+    // The spawn made copies: drop the ones of this process, so that the
+    // read ends when the child exits.
+    drop(cmd);
     let mut master = std::fs::File::from(pty.master);
     master.write_all(keys.as_bytes()).unwrap();
     let mut reader = master.try_clone().unwrap();
@@ -308,11 +314,10 @@ fn connect_with_no_terminal_keeps_a_choice_and_never_turns_the_global_scope_on()
     assert_eq!(riff::enable::entry_at(&machine.user()), None);
 }
 
-/// 01M3XY2SR3VJZAKEPC6CBCS292: an old install has the entry in the user
-/// settings, and no answer.
-#[test]
-fn connect_moves_an_old_install_to_off_and_names_the_repositories() {
-    let machine = Machine::new();
+/// An old install: the user settings turn riff on, riff has no answer,
+/// and two projects are in the state file of Claude Code. One of them
+/// has the riff permission rules.
+fn old_install(machine: &Machine) -> (PathBuf, PathBuf) {
     let (used, other) = (machine.repo("used"), machine.repo("other"));
     riff::enable::set(&machine.user(), Some(true)).unwrap();
     std::fs::create_dir_all(used.join(".claude")).unwrap();
@@ -327,9 +332,38 @@ fn connect_moves_an_old_install_to_off_and_names_the_repositories() {
         projects.to_string(),
     )
     .unwrap();
+    (used, other)
+}
 
-    let out = machine.connect(&other, &[]);
+/// 01M3XY2SR3VJZAKEPC6CBCS292: an old install, of a release up to
+/// v0.8.0, has the entry in the user settings, and no answer. Its
+/// choice is each repository. With no terminal, as in an update, riff
+/// keeps it: riff stays on in each repository, and riff records no
+/// answer. A person who then answers "this repository" takes the entry
+/// out, and riff names the repositories that used riff.
+#[test]
+fn an_old_install_stays_on_and_an_answer_takes_the_entry_out() {
+    let machine = Machine::new();
+    let (used, other) = old_install(&machine);
+
+    for _ in 0..2 {
+        let out = machine.connect(&other, &[]);
+        assert_eq!(riff::enable::entry_at(&machine.user()), Some(true));
+        assert!(!out.contains("Now it is on only"), "{out}");
+        assert!(
+            out.ends_with(
+                "riff is on in each repository on this machine. Start a new Claude Code \
+                 session in a repository to use it. To turn it off: riff disable --global\n"
+            ),
+            "{out}"
+        );
+        assert_eq!(machine.riff_settings(), "", "nobody answered");
+        assert!(!local(&other).exists() && !local(&used).exists());
+    }
+
+    let out = machine.connect(&other, &["--scope", "repo"]);
     assert_eq!(riff::enable::entry_at(&machine.user()), None);
+    assert_eq!(riff::enable::entry_at(&local(&other)), Some(true));
     assert!(
         out.contains("Now it is on only where you turn it on."),
         "{out}"
@@ -339,11 +373,196 @@ fn connect_moves_an_old_install_to_off_and_names_the_repositories() {
         "{out}"
     );
     assert!(!out.contains(&format!("cd {} ", other.display())), "{out}");
-    assert!(out.ends_with("cd REPO && riff enable\n"), "{out}");
     // The next update changes nothing, and names nothing.
     let out = machine.connect(&other, &[]);
     assert_eq!(riff::enable::entry_at(&machine.user()), None);
     assert!(!out.contains("Now it is on only"), "{out}");
+}
+
+/// 01M3XY2SR3VJZAKEPC6CBCS292: `riff update` asks nothing, also when a
+/// person runs it in a terminal: the connect of the update has no
+/// terminal. A new install stays off. An old install stays on in each
+/// repository. The update runs a fake `cargo`, the `riff` of this build
+/// and a fake `riff-server`.
+#[test]
+fn riff_update_in_a_terminal_asks_nothing_and_keeps_the_choice() {
+    for old in [false, true] {
+        let machine = Machine::new();
+        let script = |name: &str| {
+            let path = machine.bin().join(name);
+            std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let cargo = script("cargo");
+        script("riff-server");
+        std::os::unix::fs::symlink(machine.env.riff_path(), machine.bin().join("riff")).unwrap();
+        let repo = match old {
+            true => old_install(&machine).0,
+            false => machine.repo("app"),
+        };
+        let user_before = std::fs::read_to_string(machine.user()).ok();
+
+        let claude = machine.bin().join("claude");
+        let mut update = machine.riff(&repo, &["update", "--tag", "v0.8.0"]);
+        update
+            .arg("--cargo")
+            .arg(&cargo)
+            .arg("--claude")
+            .arg(&claude);
+        // A person who types an answer gets no question for it.
+        let shown = in_a_terminal(update, "2\n2\n");
+
+        assert!(!shown.contains("Where do you want riff on?"), "{shown}");
+        assert!(!shown.contains("Your choice"), "{shown}");
+        assert_eq!(machine.riff_settings(), "", "nobody answered: {shown}");
+        assert!(!local(&repo).exists(), "{shown}");
+        assert_eq!(
+            riff::enable::entry_at(&machine.user()),
+            old.then_some(true),
+            "{shown}"
+        );
+        let last = match old {
+            true => "riff is on in each repository on this machine.",
+            false => {
+                "riff is installed but off. To turn it on in a repository: cd REPO && riff enable"
+            }
+        };
+        assert!(shown.contains(last), "{shown}");
+        assert!(!shown.contains("Now it is on only"), "{shown}");
+        if let Some(before) = user_before {
+            // The update added only the status line to the user settings.
+            let after: Value = read(&machine.user());
+            let before: Value = serde_json::from_str(&before).unwrap();
+            assert_eq!(after["enabledPlugins"], before["enabledPlugins"]);
+        }
+        assert!(machine.claude_calls().contains("plugin marketplace add"));
+    }
+}
+
+/// 01M3XY2SKQ27K3TE4NV28FHTVV: `riff enable` and `riff disable` change
+/// only the entry of riff, as text. Each other byte of the file stays:
+/// the indent, the order and the lines.
+#[test]
+fn enable_and_disable_keep_each_other_byte_of_the_settings_file() {
+    let machine = Machine::new();
+    let repo = machine.repo("app");
+    let text = "{\n    \"permissions\": {\"allow\": [\"Bash(ls)\", \"Bash(cat:*)\"]},\n    \"model\": \"opus\"\n}\n";
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    for (flag, file) in [("--local", local(&repo)), ("--shared", shared(&repo))] {
+        std::fs::write(&file, text).unwrap();
+        machine.run(&repo, &["enable", flag]);
+        let on = std::fs::read_to_string(&file).unwrap();
+        let entry = ",\n    \"enabledPlugins\": {\n        \"riff@riff\": true\n    }";
+        assert_eq!(on, text.replace("\"opus\"", &format!("\"opus\"{entry}")));
+        machine.run(&repo, &["disable", flag]);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text, "{flag}");
+    }
+    // The user settings: `riff enable --global`, then a no for this
+    // repository, then both back.
+    let user = "{\"model\": \"opus\", \"enabledPlugins\": {\"a@b\": true}}";
+    std::fs::create_dir_all(machine.user().parent().unwrap()).unwrap();
+    std::fs::write(machine.user(), user).unwrap();
+    std::fs::write(local(&repo), text).unwrap();
+    machine.run(&repo, &["enable", "--global"]);
+    assert_eq!(
+        std::fs::read_to_string(machine.user()).unwrap(),
+        user.replace("true}", "true, \"riff@riff\": true}")
+    );
+    machine.run(&repo, &["disable"]);
+    let no = std::fs::read_to_string(local(&repo)).unwrap();
+    assert!(no.contains("\"riff@riff\": false"), "{no}");
+    machine.run(&repo, &["disable", "--global"]);
+    assert_eq!(std::fs::read_to_string(machine.user()).unwrap(), user);
+    machine.run(&repo, &["disable"]);
+    assert_eq!(std::fs::read_to_string(local(&repo)).unwrap(), text);
+}
+
+/// 01M3YCGKGP3VC93S8FA1G4K3QK: riff writes through a symbolic link,
+/// and the output names the real path of the file that it wrote.
+#[test]
+fn enable_writes_through_a_symbolic_link_and_names_the_real_path() {
+    let machine = Machine::new();
+    let repo = machine.repo("app");
+    let dotfiles = machine.plain("dotfiles");
+    let target = dotfiles.join("riff-settings.json");
+    std::fs::write(&target, "{\"keep\": 1}\n").unwrap();
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    std::os::unix::fs::symlink(&target, local(&repo)).unwrap();
+
+    let out = machine.run(&repo, &["enable"]);
+    assert!(
+        out.starts_with(&format!("Turned riff on in {}.", target.display())),
+        "{out}"
+    );
+    assert!(!out.contains("settings.local.json"), "{out}");
+    assert!(
+        local(&repo)
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(riff::enable::entry_at(&target), Some(true));
+    let out = machine.run(&repo, &["disable"]);
+    assert!(out.contains(&target.display().to_string()), "{out}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "{\"keep\": 1}\n");
+}
+
+/// 01M3YCGKGP3VC93S8FA1G4K3QK: the main clone of a linked worktree
+/// comes from git. A tree whose `.git` file names a main clone that git
+/// does not confirm gets no write: `riff enable` refuses and says why.
+/// In a worktree that git made, `riff enable` writes the local settings
+/// of the main clone.
+#[test]
+fn enable_in_a_worktree_asks_git_for_the_main_clone() {
+    let machine = Machine::new();
+    // A victim repository, and a tree from an archive that names it.
+    let victim = machine.repo("victim");
+    std::fs::create_dir_all(victim.join(".git/worktrees/x")).unwrap();
+    let tree = machine.plain("archive");
+    let gitdir = victim.join(".git/worktrees/x");
+    std::fs::write(tree.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+    for command in ["enable", "disable"] {
+        let out = machine.riff(&tree, &[command]).output().unwrap();
+        assert!(!out.status.success(), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("git does not confirm"), "{stderr}");
+        assert!(stderr.contains(&victim.display().to_string()), "{stderr}");
+    }
+    assert!(!victim.join(".claude").exists(), "riff wrote in the victim");
+
+    // A worktree that git made.
+    let main = machine.repo("app");
+    let wt = main.join(".claude/worktrees/issue-12");
+    for args in [
+        &["commit", "-q", "--allow-empty", "-m", "x"][..],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "issue-12",
+            wt.to_str().unwrap(),
+        ][..],
+    ] {
+        let git = machine
+            .env
+            .command("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&main)
+            .output()
+            .unwrap();
+        assert!(git.status.success(), "git {args:?}: {git:?}");
+    }
+    let out = machine.run(&wt, &["enable"]);
+    assert!(
+        out.starts_with(&format!("Turned riff on in {}.", local(&main).display())),
+        "{out}"
+    );
+    assert_eq!(riff::enable::entry_at(&local(&main)), Some(true));
 }
 
 /// 01M3XY2SKQ27K3TE4NV28FHTVV.

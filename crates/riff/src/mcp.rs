@@ -767,6 +767,7 @@ impl Tools {
             tmux: crate::terminal::Tmux::from_env(),
             claude: "claude".into(),
             gh: Arc::new(crate::pr::Gh::default()),
+            off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
     }

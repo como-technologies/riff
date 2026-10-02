@@ -572,7 +572,8 @@ pub fn riff_set(
 /// assert!(text.contains("\"Find the pane of a session\""));
 /// assert!(text.contains("`riff statusline`"));
 ///
-/// // An old install: riff was on in each repository.
+/// // A person took the entry of the user settings out: riff was on in
+/// // each repository.
 /// scoped = Scoped { answer: None, moved: Some(vec!["/r".into()]), state: off.clone(), global: false };
 /// let text = riff::text::connected(&done, &scoped);
 /// assert!(text.contains("Now it is on only where you turn it on."), "{text}");
@@ -768,6 +769,23 @@ pub fn enabled(done: &crate::enable::Changed, on: bool) -> String {
 /// ```
 pub fn workers_off(state: &crate::enable::State) -> String {
     format!("riff starts no worker here: {}", riff_here(state))
+}
+
+/// The note to the lead when the rollout starts no worker on its
+/// machine `host`, because riff is off in the main clone
+/// (01M3YCGKKRDNFC338K1JSK30JK). `why` is [`workers_off`].
+///
+/// ```
+/// assert_eq!(
+///     riff::text::rollout_off("pangolin", "riff starts no worker here: riff off. To turn it on: riff enable"),
+///     "pangolin: riff starts no worker here: riff off. To turn it on: riff enable. The rollout \
+///      starts no worker on pangolin until riff is on in the main clone."
+/// );
+/// ```
+pub fn rollout_off(host: &str, why: &str) -> String {
+    format!(
+        "{host}: {why}. The rollout starts no worker on {host} until riff is on in the main clone."
+    )
 }
 
 /// The instructions of `riff mcp` in a directory where riff is off

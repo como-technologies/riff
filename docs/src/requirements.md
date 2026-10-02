@@ -225,10 +225,17 @@
   it to the project settings. `--global` writes it to the user
   settings. `riff disable` removes the entry from the same file. With
   no flag, when another file then still turns riff on, `riff disable`
-  writes `false` to the local settings. Each command keeps each other
-  key of the file, changes no other file, and says whether riff is on
-  in the working directory. With `--global`, the answer of
+  writes `false` to the local settings. Each command changes only the
+  entry of riff, as text: each other byte of the file stays. It
+  changes no other file, and says whether riff is on in the working
+  directory. With `--global`, the answer of
   01M3XY2SNXQJRSH5QX82AFVM2S becomes `global` or `none`.
+- **01M3YCGKGP3VC93S8FA1G4K3QK** `riff enable` and `riff disable`
+  write through a symbolic link, and name the real path of the file
+  that they wrote. Before they write the local settings of the main
+  clone of a linked worktree, git must confirm the worktree: its
+  common directory (`git rev-parse --git-common-dir`) is the `.git` of
+  that main clone. If not, the command writes nothing, and says why.
 - **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
   marketplace to Claude Code with the `claude` command on the PATH.
   `--claude PATH` names another one. It installs the plugin in no
@@ -241,11 +248,16 @@
   nowhere.
 - **01M3XY2SR3VJZAKEPC6CBCS292** An update never turns riff on for
   each repository: only the answer `global` writes the entry `true` to
-  the user settings. When the user settings have the entry `true` and
-  riff has no answer, the install is old. With no terminal,
-  `riff connect claude` then removes the entry, and names each
-  repository of the Claude Code state file whose settings have a riff
-  permission rule, with the command `riff enable`.
+  the user settings. `riff update` asks nothing, also in a terminal:
+  it runs `riff connect claude` with no terminal. With no terminal,
+  `riff connect claude` changes no entry and records no answer. So a
+  new install stays off. An install of a release up to v0.8.0 has the
+  entry `true` in the user settings, because that release installed
+  the plugin in the user scope: its choice is each repository, and it
+  stays on in each repository. When a person answers `repo` or `none`,
+  `riff connect claude` removes that entry, and names each repository
+  of the Claude Code state file whose settings have a riff permission
+  rule, with the command `riff enable`.
 - **01M3XY2ST8R67SKTXJECAYJZRX** Where riff is off, each entry of the
   plugin does nothing: `riff hook` and `riff statusline` make no call
   to the server, run no `git`, and print nothing. `riff mcp` serves no
@@ -273,6 +285,10 @@
   off in the main clone of the repository: `riff workers start`
   starts nothing and names `riff enable`, and the rollout of the lead
   and a workers host start none.
+- **01M3YCGKKRDNFC338K1JSK30JK** When riff is off in the main clone of
+  the lead, the rollout posts one note to the lead: the host, the
+  reason and `riff enable`. The next note comes only after riff was on
+  there again.
 - **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
   people use under the headings Get started, Work in the riff, Pull
   requests, Lead and Members, in that order. Each command has one
