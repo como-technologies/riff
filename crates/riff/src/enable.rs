@@ -735,7 +735,9 @@ pub fn mcp_off_in(state: Option<&Path>, dir: &Path, repo: Option<&Repo>) -> bool
     let Some(text) = state.and_then(|path| std::fs::read_to_string(path).ok()) else {
         return false;
     };
-    let tops = repo.into_iter().flat_map(|r| [Some(&r.top), r.main.as_ref()]);
+    let tops = repo
+        .into_iter()
+        .flat_map(|r| [Some(&r.top), r.main.as_ref()]);
     let dirs: Vec<&Path> = std::iter::once(dir)
         .chain(tops.flatten().map(PathBuf::as_path))
         .collect();
@@ -755,7 +757,8 @@ pub fn used(text: &str) -> Vec<PathBuf> {
         .map(|(path, _)| path)
         .filter(|path| Repo::of(path).is_some_and(|r| r.top == *path && r.main.is_none()))
         .filter(|path| {
-            names_riff(Repo::file(path, Place::Shared)) || names_riff(Repo::file(path, Place::Local))
+            names_riff(Repo::file(path, Place::Shared))
+                || names_riff(Repo::file(path, Place::Local))
         })
         .collect()
 }

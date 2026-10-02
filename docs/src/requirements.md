@@ -205,11 +205,71 @@
   `~/.local/share/riff/claude-plugin`.
 - **R75** `riff connect claude` removes the user-scope MCP server entry
   `riff`, if it exists. The plugin gives the riff tools instead.
-- **R76** `riff connect claude` installs the plugin in user scope. It
-  runs the `claude` command on the PATH. `--claude PATH` names another
-  one.
+- **R76** Replaced by 01M3XY2SNXQJRSH5QX82AFVM2S.
 - **R77** `riff connect claude` does not need a riff session or a git
   repository. It works in any directory.
+- **01M3XY2SHGXQR9NVXF7QJBN09T** riff is off in a Claude Code session
+  until a person turns it on for the repository of the session. The
+  state is the entry `riff@riff` in the key `enabledPlugins` of the
+  Claude Code settings. The first file that has the entry decides, in
+  this order: the local settings of the repository
+  (`.claude/settings.local.json` at its top), its project settings
+  (`.claude/settings.json`), the user settings. A directory that is
+  not in a git repository is off.
+- **01M3XY2T2YEV7GT7DKJHSMMHYR** In a linked worktree, riff also reads
+  the local settings and the project settings of the main clone. The
+  local settings come before the project settings.
+- **01M3XY2SKQ27K3TE4NV28FHTVV** `riff enable` writes the entry `true`
+  to the local settings of the repository of the working directory:
+  in a linked worktree, to those of the main clone. `--shared` writes
+  it to the project settings. `--global` writes it to the user
+  settings. `riff disable` removes the entry from the same file. With
+  no flag, when another file then still turns riff on, `riff disable`
+  writes `false` to the local settings. Each command keeps each other
+  key of the file, changes no other file, and says whether riff is on
+  in the working directory. With `--global`, the answer of
+  01M3XY2SNXQJRSH5QX82AFVM2S becomes `global` or `none`.
+- **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
+  marketplace to Claude Code with the `claude` command on the PATH.
+  `--claude PATH` names another one. It installs the plugin in no
+  scope, and turns riff on nowhere by itself. In a terminal, it asks
+  one time where the person wants riff on: only in this repository
+  (the default), in each repository on this machine, or not now.
+  `--scope repo|global|none` gives the answer with no question. riff
+  keeps the answer in its settings, `connect.scope`. With an answer
+  there, or with no terminal, it asks nothing and turns riff on
+  nowhere.
+- **01M3XY2SR3VJZAKEPC6CBCS292** An update never turns riff on for
+  each repository: only the answer `global` writes the entry `true` to
+  the user settings. When the user settings have the entry `true` and
+  riff has no answer, the install is old. With no terminal,
+  `riff connect claude` then removes the entry, and names each
+  repository of the Claude Code state file whose settings have a riff
+  permission rule, with the command `riff enable`.
+- **01M3XY2ST8R67SKTXJECAYJZRX** Where riff is off, each entry of the
+  plugin does nothing: `riff hook` and `riff statusline` make no call
+  to the server, run no `git`, and print nothing. `riff mcp` serves no
+  tool, makes no call to the server, and names `riff enable` in its
+  instructions. A `riff mcp` that an update starts again serves a
+  session that runs, so it goes on.
+- **01M3XY2SWEK0N8MC3MY4TMYTD3** `RIFF_ON=1` turns riff on for the
+  processes that have it, also outside a repository. `just dev` and
+  the helper crate `isolated` set it.
+- **01M3XY2SYKG91SAB2FS1QNCZ2H** The state is obvious. The last line
+  of `riff connect claude` says where riff is on, or
+  `riff is installed but off`, with the command to change it.
+  `riff server` shows `riff on` or `riff off` for the working
+  directory, the file that decides, and the command to change it. The
+  start context names the file that turned riff on, and
+  `riff disable`.
+- **01M3XY2T0R2Q39XYX8AYV7T0RK** When the Claude Code state file has
+  `plugin:riff:riff` in `disabledMcpServers` of the project, a person
+  turned the riff server off there in `/mcp`. The start context then
+  says that the session has no riff tools, how to turn the server on,
+  and to tell the lead with `riff tell lead`. The status line says it
+  too.
+- **01M3XY2T542DCHBN95H9PX4AGQ** `riff workers start` starts nothing
+  where riff is off, and names `riff enable`.
 - **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
   people use under the headings Get started, Work in the riff, Pull
   requests, Lead and Members, in that order. Each command has one

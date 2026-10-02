@@ -1540,6 +1540,13 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
 /// session that is not the lead (01M3JPQT79FE47518Z8DFFQYYG). Outside
 /// tmux, it starts nothing and fails (01M3JD3973J7A9BG8G9EP9TVDP).
 async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
+    // A worker in a repository with riff off has no riff
+    // (01M3XY2T542DCHBN95H9PX4AGQ).
+    let here = enable::State::here();
+    if !here.on {
+        eprintln!("{}", text::workers_off(&here));
+        std::process::exit(1);
+    }
     if let Some(why) = start_refusal(server).await {
         eprintln!("{why}");
         std::process::exit(1);
@@ -2122,7 +2129,10 @@ fn set_enabled(place: enable::Place, on: bool) -> Result<enable::Changed> {
 
 /// The scope step of `riff connect claude` ([`enable::scope`]). It asks
 /// the scope question only in a terminal.
-fn connect_scope(user: Option<&std::path::Path>, flag: Option<enable::Scope>) -> Result<enable::Scoped> {
+fn connect_scope(
+    user: Option<&std::path::Path>,
+    flag: Option<enable::Scope>,
+) -> Result<enable::Scoped> {
     use std::io::IsTerminal;
     let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let riff = settings::path()?;

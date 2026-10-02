@@ -622,7 +622,8 @@ pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
         }
     }
     out.push('\n');
-    if scoped.state.on {
+    let by_global = matches!(scoped.state.by, Some((crate::enable::Place::Global, _)));
+    if scoped.state.on && !by_global {
         let file = match &scoped.state.by {
             Some((_, file)) => format!(" ({})", file.display()),
             None => String::new(),
@@ -679,10 +680,9 @@ pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
 pub fn riff_here(state: &crate::enable::State) -> String {
     match (&state.by, state.on) {
         _ if state.forced => "riff on (RIFF_ON=1)".into(),
-        (Some((_, file)), true) => format!(
-            "riff on ({}). To turn it off: riff disable",
-            file.display()
-        ),
+        (Some((_, file)), true) => {
+            format!("riff on ({}). To turn it off: riff disable", file.display())
+        }
         (None, true) => "riff on. To turn it off: riff disable".into(),
         _ if state.repo.is_none() => "riff off: this directory is not in a git repository. To \
                                       turn riff on in a repository: cd REPO && riff enable"
@@ -751,6 +751,23 @@ pub fn enabled(done: &crate::enable::Changed, on: bool) -> String {
             .to_owned(),
     };
     format!("{first}\n{then}")
+}
+
+/// The refusal of `riff workers start` in a directory where riff is
+/// off: a worker there has no riff (01M3XY2T542DCHBN95H9PX4AGQ).
+///
+/// ```
+/// use riff::enable::{Repo, State};
+///
+/// let repo = Some(Repo { top: "/r".into(), main: None });
+/// let state = State { on: false, by: None, forced: false, repo };
+/// assert_eq!(
+///     riff::text::workers_off(&state),
+///     "riff starts no worker here: riff off. To turn it on: riff enable"
+/// );
+/// ```
+pub fn workers_off(state: &crate::enable::State) -> String {
+    format!("riff starts no worker here: {}", riff_here(state))
 }
 
 /// The instructions of `riff mcp` in a directory where riff is off
