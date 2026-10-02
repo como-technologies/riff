@@ -699,9 +699,11 @@
   records, or one log line. A command that is refused, or that makes no
   record, gives one line with `caller`, `key`, `command` and `result`
   (`refused` or `no_change`). A refusal also has `code` and `reason`.
-  `key` is the thumbprint of the device key of the token. A chunk that
-  is not written gives one line with the result `failed` and the
-  severity `ERROR` for each of its commands. The writer makes these
+  `key` is the thumbprint of the device key of the token. A chunk
+  whose write fails gives one line with the result `failed` and the
+  severity `ERROR` for each of its commands. A command that waits in
+  the queue when the server stops gives a `failed` line with the
+  severity `WARNING` and the reason of the stop. The writer makes these
   lines. A command with records, a signal and a query give no line.
 - **01M3X4Z64ZNRD0G0F4JV1M64FN** The token layer writes one line with
   the result `denied` for each call that it refuses. The line has

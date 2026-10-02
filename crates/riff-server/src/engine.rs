@@ -107,7 +107,7 @@
 //!             Ok(written) => writer.finish(chunk, written),
 //!             Err(_) => {
 //!                 writer.fail(chunk);
-//!                 writer.stop();
+//!                 writer.stop("the write of a chunk failed");
 //!                 break;
 //!             }
 //!         }
@@ -840,7 +840,7 @@ impl Engine {
     pub fn finish(&self, chunk: Chunk, written: Written) {
         if !written.covers(&chunk.records()) {
             self.fail(chunk);
-            self.stop();
+            self.stop("the writer gave the proof of other records");
             return;
         }
         {
@@ -864,20 +864,20 @@ impl Engine {
     }
     // ANCHOR_END: finish
 
-    /// Ends each command of a chunk that the writer did not write: one
-    /// log line `failed` for each (01M3X4Z62RJREQ5H8F18Y85T6V). Each call of the chunk
+    /// Ends each command of a chunk whose write failed: one log line
+    /// `failed` with the severity `ERROR` for each (01M3X4Z62RJREQ5H8F18Y85T6V). Each call of the chunk
     /// fails with [`Failed::Stopped`]. The writer then stops the server
     /// for good.
     pub fn fail(&self, chunk: Chunk) {
-        Engine::failed(chunk.entries);
+        Engine::failed(chunk.entries, Outcome::Failed);
     }
 
     /// Writes the line `failed` of each command of `entries`, and drops
     /// them: each call fails.
-    fn failed(entries: Vec<Entry>) {
+    fn failed(entries: Vec<Entry>, outcome: Outcome<'_>) {
         for entry in entries {
             if let Some(sent) = &entry.sent {
-                sent.traced.line(Outcome::Failed);
+                sent.traced.line(outcome);
             }
         }
     }
@@ -908,14 +908,17 @@ impl Engine {
 
     /// Stops for good: no entry is done from now on. Each call that
     /// waits, and each later command, fails with [`Failed::Stopped`].
-    /// Each command that waits in the queue gets the log line `failed`.
-    pub fn stop(&self) {
+    /// Each command that waits in the queue gets the log line `failed`
+    /// with the severity `WARNING` and `why` as its reason: its chunk
+    /// did not fail, so the line is no error. So a stop for a lost
+    /// lease, as at a deploy, sends no alert.
+    pub fn stop(&self, why: &str) {
         let waiting = {
             let mut core = self.core();
             core.stopped = true;
             std::mem::take(&mut core.queue)
         };
-        Engine::failed(waiting);
+        Engine::failed(waiting, Outcome::Stopped(why));
     }
 }
 

@@ -15,7 +15,8 @@
 //!     T -->|a signal or a query| N[no line]
 //!     T -->|a command| E[the entry in the queue]
 //!     E --> W{the writer}
-//!     W -->|the chunk is not written| F["line: failed, ERROR"]
+//!     W -->|the write of the chunk fails| F["line: failed, ERROR"]
+//!     E -->|the server stops first| FW["line: failed, WARNING"]
 //!     W -->|records| L[no line: the records are the trace]
 //!     W -->|refused| R["line: refused<br/>code, reason"]
 //!     W -->|accepted, no record| NC["line: no_change"]
@@ -29,7 +30,8 @@
 //! |---|---|---|---|
 //! | `refused` | `permits` or `handle` refused the command. | `INFO` | the writer |
 //! | `no_change` | `handle` accepted the command, and it made no record. | `INFO` | the writer |
-//! | `failed` | The chunk was not written, and the instance stopped. | `ERROR` | the writer |
+//! | `failed` | The write of the chunk of the command failed, and the instance stopped. | `ERROR` | the writer |
+//! | `failed` | The command waited in the queue when the server stopped, for example for a lost lease. The line has the `reason` of the stop. | `WARNING` | the engine |
 //! | `denied` | The token layer refused the call: a command, a query or a signal. | `INFO` | the token layer |
 //!
 //! | Field | In | Holds |
@@ -38,6 +40,7 @@
 //! | `key` | `refused`, `no_change`, `failed` | The thumbprint of the device key of the token. It is not a secret. A call with no token has none. |
 //! | `command` | `refused`, `no_change`, `failed` | The kind of the command. |
 //! | `code`, `reason` | `refused` | The code of the refusal ([`Code`](crate::state::Code)) and its reason as text. |
+//! | `reason` | `failed` with `WARNING` | Why the server stopped. |
 //! | `named` | `denied` | The caller that the call named: the `me` of the body, or the `uri` of the query. |
 //! | `proved` | `denied` | `false`: no token proved the name. |
 //! | `named_cut` | `denied` | `true` when the name was longer than [`NAMED_MAX`] characters: the line has its start. |
@@ -95,8 +98,11 @@ pub enum Outcome<'a> {
     Refused(&'a Refused),
     /// The command is accepted, and it made no record.
     NoChange,
-    /// The chunk of the command was not written.
+    /// The chunk of the command was not written: the write failed.
     Failed,
+    /// The server stopped while the command waited in the queue. The
+    /// text says why it stopped, for example a lost lease.
+    Stopped(&'a str),
 }
 
 /// Who sent a command, for its line: the caller, the key of its token
@@ -142,6 +148,15 @@ impl Traced {
                 key,
                 command,
                 result = "failed",
+                "failed"
+            ),
+            Outcome::Stopped(why) => tracing::warn!(
+                target: TARGET,
+                caller,
+                key,
+                command,
+                result = "failed",
+                reason = why,
                 "failed"
             ),
         }
@@ -361,6 +376,16 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0]["severity"], "ERROR");
         assert_eq!(lines[0]["result"], "failed");
+        assert_eq!(lines[0]["command"], "claim");
+    }
+
+    #[test]
+    fn a_command_that_waits_at_a_stop_gives_a_line_with_the_severity_warning() {
+        let lines = capture(|| traced().line(Outcome::Stopped("another instance holds the lease")));
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["severity"], "WARNING");
+        assert_eq!(lines[0]["result"], "failed");
+        assert_eq!(lines[0]["reason"], "another instance holds the lease");
         assert_eq!(lines[0]["command"], "claim");
     }
 

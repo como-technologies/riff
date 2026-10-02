@@ -824,7 +824,7 @@ line to its own log for it, with the field `result`:
 |---|---|
 | `refused` | The server refused the command. The line has the `code` and the `reason`. |
 | `no_change` | The server took the command, and nothing changed. |
-| `failed` | The server did not write the change, and stopped. The severity is `ERROR`. |
+| `failed` | The server did not write the change, and stopped. The severity is `ERROR` when the write failed. It is `WARNING`, with the `reason`, when the server stopped first. |
 | `denied` | The server refused the token of the call, or the call had none. The line has the `path` of the call. |
 
 ```mermaid

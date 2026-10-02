@@ -314,16 +314,23 @@ line has the format of each other log line (`severity`, `time`,
 |---|---|---|
 | `refused` | `permits` or `handle` refused the command. | `INFO` |
 | `no_change` | `handle` accepted the command, and it made no record. | `INFO` |
-| `failed` | The chunk was not written, and the instance stopped. | `ERROR` |
+| `failed` | The write of the chunk of the command failed, and the instance stopped. | `ERROR` |
+| `failed` | The command waited in the queue when the server stopped. The line has the `reason` of the stop. | `WARNING` |
 | `denied` | The token layer refused the call: a command, a query or a signal. | `INFO` |
 
 - The writer makes the lines `refused`, `no_change` and `failed`
   (`Engine::finish` and `Engine::fail`, 01M3X4Z62RJREQ5H8F18Y85T6V). The
   token layer makes the line `denied` (01M3X4Z64ZNRD0G0F4JV1M64FN). The
   module `crates/riff-server/src/trace.rs` holds each line.
-- `failed`: one line for each command of the chunk that was not
-  written, and one for each command that waits in the queue when the
-  server stops.
+- `failed`: one line with the severity `ERROR` for each command of a
+  chunk whose write failed. A command that waits in the queue when the
+  server stops gets a `failed` line with the severity `WARNING`, and
+  the reason of the stop: its chunk did not fail. So a stop for a lost
+  lease, as at a deploy, sends no alert email.
+- At a stop signal, the server first writes what waits: `shutdown`
+  closes the gate, and then waits until the writer is done with each
+  entry of the queue (`Engine::settle`), while the instance holds the
+  lease. So a normal stop gives no `failed` line.
 - A refusal has a `code` and a `reason` as text. A test of a refusal
   compares the code. The codes of this release: `not_allowed` (the
   class or the role of the caller), `no_sign_in` (a command of the

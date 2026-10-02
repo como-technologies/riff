@@ -623,7 +623,7 @@ impl Server {
             tracing::warn!("stopped for good: {why}");
             self.facts().stopped = Some(why.to_owned());
         }
-        self.engine.stop();
+        self.engine.stop(why);
     }
 
     fn facts(&self) -> MutexGuard<'_, Facts> {
@@ -3532,6 +3532,44 @@ mod tests {
         assert_eq!(lines[0]["command"], "post");
         assert!(capture.results("refused").is_empty());
         assert!(capture.results("no_change").is_empty());
+    }
+
+    /// A command that waits in the queue when the server stops for a
+    /// lost lease gives the line `failed` with the severity `WARNING`
+    /// and the reason of the stop: no alert goes out
+    /// (01M3X4Z62RJREQ5H8F18Y85T6V).
+    #[tokio::test(start_paused = true)]
+    async fn a_command_that_waits_at_a_stop_gives_a_failed_line_that_is_no_error() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        let capture = Capture::start();
+        // The writer waits in a write, and a second command waits in
+        // the queue.
+        store.hold.store(true, Ordering::SeqCst);
+        let tries = store.tries.load(Ordering::SeqCst);
+        let first = tokio::spawn(send(&service, post_body(&mike(), "one")));
+        store.tried(tries + 1).await;
+        let second = tokio::spawn(send(&service, claim_of(&brett(), "issue-8")));
+        sleep(Duration::from_millis(50)).await;
+        service.0.stop("another instance holds the lease");
+        assert_eq!(second.await.unwrap().unwrap_err(), Failed::Stopped);
+        let lines = capture.results("failed");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["severity"], "WARNING");
+        assert_eq!(
+            lines[0]["caller"],
+            serde_json::json!({"session": "brett/b"})
+        );
+        assert_eq!(lines[0]["command"], "claim");
+        assert_eq!(lines[0]["reason"], "another instance holds the lease");
+        store.release();
+        let _ = first.await;
+        let errors: Vec<_> = capture
+            .lines()
+            .into_iter()
+            .filter(|line| line["severity"] == "ERROR")
+            .collect();
+        assert!(errors.is_empty(), "{errors:?}");
     }
 
     /// The role of a caller with no token comes from the trust of the
