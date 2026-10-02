@@ -1719,17 +1719,19 @@
   `riff top --once` prints one table and exits. The header has the
   facts of `riff who`: the state, the owner and the build. The board of
   the current wave follows: the wave, then one line for each group of
-  its open items, `free`, `claimed` and `verify`. An item with no
-  claim whose pull request waits for a verify or for the merge is in
-  `verify`, not in `free` (01M3Z9N6X92KT051P10CKKV7EK): `riff top`
-  reads the open pull requests with `gh pr list`, and keeps them as
-  long as the issues. The first line of a
+  its open items, `free`, `claimed` and `verify`
+  (01M3Z9N6X92KT051P10CKKV7EK). The first line of a
   session has the short session ID, the tag of its role, and its state.
   Under it comes one line for each fact of the detail of the state
   (01M3QB6CJ1XCQG5B1BVR8AF3B4). The titles and the wave come from
   `gh issue list`, kept for one minute. With no `gh`, the rows still
   print. `--color` works as in
   `riff who`.
+- **01M3Z9N6X92KT051P10CKKV7EK** On the board of `riff top`, an item
+  with no claim whose pull request waits for a verify or for the merge
+  is in `verify`, not in `free`. An item with a failed verify is in
+  `free`. `riff top` reads the open pull requests with `gh pr list`,
+  and keeps them as long as the issues.
 - **01M3WNHCD659FH3Z5VYYH69WWR** The first line of a session in
   `riff top` names the place of the session after the short session
   ID, in the form of `riff who`: `REPO#WORKTREE`, or `REPO` in the main
