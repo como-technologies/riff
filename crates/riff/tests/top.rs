@@ -541,7 +541,7 @@ async fn a_worker_with_no_claim_shows_must_clear_then_idle_not_its_old_step() {
     let released = output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
     // The reply to the release carries the ask to clear.
     assert!(
-        released.contains("clear your context before your next claim"),
+        released.contains("riff clears your context when your turn ends"),
         "{released}"
     );
 
