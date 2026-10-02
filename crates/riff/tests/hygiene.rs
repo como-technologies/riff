@@ -302,7 +302,8 @@ async fn the_clear_of_a_worker_keeps_a_main_clone_with_local_changes_and_tells_t
     // A read takes the message: keep what the first full read gives.
     let told = std::cell::RefCell::new(Vec::new());
     wait_for("the message to the lead", async || {
-        told.borrow_mut().extend(unread(&api, &lead).await);
+        let new = unread(&api, &lead).await;
+        told.borrow_mut().extend(new);
         !told.borrow().is_empty()
     })
     .await;
