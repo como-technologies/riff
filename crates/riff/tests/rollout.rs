@@ -147,6 +147,29 @@ impl Lead {
         }
     }
 
+    /// The looks of the rollout that got to `gh`: a look of a running
+    /// riff with room on a machine asks `gh` for the waves one time.
+    fn looks(&self) -> usize {
+        std::fs::read_to_string(self.fake.path().join("gh.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.starts_with("api "))
+            .count()
+    }
+
+    /// Waits until one full look ran after this call: the look read
+    /// the settings and the sessions, and it got to `gh`. The first new
+    /// call of `gh` can be of a look that read them before this call.
+    /// The second one is of a look that started after the first. The
+    /// riff runs, and a machine has room.
+    async fn looked(&self) {
+        let (start, before) = (Instant::now(), self.looks());
+        while self.looks() < before + 2 {
+            assert!(start.elapsed() < WAIT, "timed out: no look of the rollout");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Waits until the count of workers stays the same for [`QUIET`],
     /// and gives that count.
     async fn settled(&self) -> usize {
@@ -525,6 +548,12 @@ fn riff_workers_interval_shows_and_sets_the_interval() {
 /// value, the new value and the host, and it says that the rollout
 /// starts a worker. The rollout starts it
 /// (01M3X30KHKB6W11C3NBAW7KCGW, 01M3X30R4PSBP3RQWM02BJ6GK3).
+///
+/// The test does not depend on the moment of the change: one look uses
+/// each limit one time, and the note comes before the start
+/// (01M3XFHSYJEN9V6QEKWJGJWQ8Q). The first worker shows that a look
+/// with the old limit ended, and its claim is on the server before the
+/// change.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_higher_limit_tells_the_lead_and_the_rollout_starts_a_worker() {
     let lead = lead(1).await;
@@ -596,8 +625,9 @@ async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
         blocked: None,
     };
     lead.api.status(&host, &status(2)).await.unwrap();
-    // The lead looked at the host one time or more.
-    tokio::time::sleep(QUIET).await;
+    // The lead looked at the host one time or more, with no wait for a
+    // fixed time.
+    lead.looked().await;
 
     lead.api.status(&host, &status(3)).await.unwrap();
     lead.reads("note: workers: limit 2 to 3 on b.").await;

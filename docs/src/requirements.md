@@ -2382,6 +2382,11 @@
   settings of its machine each 5 seconds. It sets its status at once
   when its limit or its floor changes. It posts a note to the lead
   when its MCP servers change.
+- **01M3XFHSYJEN9V6QEKWJGJWQ8Q** One look of the rollout reads each
+  worker limit one time. It uses that value for the changes and for
+  the start of a worker. It tells the lead each change first, and then
+  it starts the worker. A limit that changes in the middle of a look
+  has no effect before the next look.
 - **01M3WFYZP9Y4N41QGH5SWKFZZC** The skill tells each session: run one
   build or test command at a time. To run a test many times, run that
   test by its name in a loop, not the full `just ci`.
