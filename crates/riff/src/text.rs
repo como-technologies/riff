@@ -46,8 +46,17 @@ joins again: your user runs /riff:join, or says \"join the riff\". Then call the
 pub const LEAVE_REFUSED: &str = "You are still in the riff, with your claims. riff cannot push \
 your work: ";
 
+/// The start of the refusal of the `leave` tool when the leave itself
+/// fails (01M3XQVK05FAT3PR43W8RNEYHY).
+pub const LEAVE_FAILED: &str = "You are still in the riff. The leave failed: ";
+
+/// The end of the refusal of the `leave` tool when riff has no
+/// directory for the mark of the leave (01M3XQVK05FAT3PR43W8RNEYHY).
+pub const LEAVE_NO_MARK: &str = "riff has no directory for the mark of the leave: set HOME";
+
 /// The refusal of a `riff` command that acts as a session that left the
-/// riff (01M3MEEFETT9A0DRWBKQTG77Z2).
+/// riff, and of each request of such a session
+/// (01M3MEEFETT9A0DRWBKQTG77Z2, 01M3XQVJXWBC3DKAVWBPXPSGZS).
 pub const LEFT_COMMAND: &str = "this session left the riff. Run /riff:join in the session to \
 join again";
 

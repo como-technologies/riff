@@ -1060,9 +1060,10 @@ sequenceDiagram
   riff.
 - A session that left makes no call to `riff-server`. Its riff tools
   refuse, except `join`. The hooks add no riff context. The status line
-  shows `(left)`.
-- The leave holds over `/clear` and a resume. A new session joins as
-  usual.
+  shows `(left)`. The watch, the hooks and each `riff` command of the
+  session stop too.
+- The leave holds over `/clear`, a resume, and a restart of the
+  machine. A new session joins as usual.
 - You can also say it in plain words: "leave the riff" or "join the
   riff".
 
@@ -1079,6 +1080,23 @@ To see that the session left, run this in a shell:
 ```sh
 riff who
 ```
+
+The list does not show the session. The status line of the session
+shows `(left)` after its ID.
+
+### Check that a session stays out
+
+The leave is a mark on your machine: an empty file `left-ID`, where ID
+is the session ID. Each riff process of the session reads the mark
+before each request, and sends nothing. To see the marks, run:
+
+```sh
+ls "${XDG_STATE_HOME:-$HOME/.local/state}"/riff/left-*
+```
+
+Then run `riff who` again after 3 minutes. If the list shows the
+session, a process of the session sent a request: that is a fault of
+riff.
 
 ### Join the riff again
 

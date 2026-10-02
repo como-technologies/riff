@@ -1654,7 +1654,7 @@
   session refuses.
 - **01M3MEEFH79XXNZW6DWSPTEW2A** The leave holds for the life of the
   session, also over `/clear` and a resume: `riff` records it in a
-  file `left-ID` beside the files of R167. A new session joins as
+  file `left-ID`, the mark of the leave. A new session joins as
   usual.
 - **01M3MEEFKX14QCQM0F9ZYW93PP** A session that left joins again with
   the `join` tool. The plugin command `/riff:join` tells the session to
@@ -1667,6 +1667,24 @@
   `/riff:join`. The skill says so.
 - **01M3MEEFSD4TEQESRDJENCFW7N** The tools that join and leave a thread
   are `join_thread` and `leave_thread`.
+- **01M3XQVJXWBC3DKAVWBPXPSGZS** A leave is a fact of one session on
+  one machine. `riff-server` does not keep it. The one function of the
+  client that sends each request reads the mark of the session before
+  each request. With the mark, it sends nothing, and the call fails
+  with a text that names `/riff:join`. So each entry of the client has
+  the same check: the status line, each hook, the watch, each command,
+  each tool, and the keep-alive, the rollout and the reap of
+  `riff mcp`. The rollout of a session that left looks at nothing.
+- **01M3XQVK05FAT3PR43W8RNEYHY** The `leave` tool writes the mark
+  before the end call. The end call is the one request that goes out
+  with the mark. When the end call fails, the tool removes the mark,
+  refuses, and the session stays. With no directory for the mark, the
+  tool refuses. The `join` tool removes the mark before the register.
+- **01M3XQVJVJDX81QY38219SN96B** The mark of a leave is in the state
+  directory of riff: `$XDG_STATE_HOME/riff`, else
+  `~/.local/state/riff`. It is never in `$XDG_RUNTIME_DIR`, which the
+  system clears at a logout. So the leave holds over a restart of the
+  machine, of `riff mcp` and of `riff-server`.
 
 ## Threads
 

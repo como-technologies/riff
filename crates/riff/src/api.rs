@@ -54,6 +54,35 @@
 //! old sign-in: the user of a sign-in is the user of each session, so
 //! only the person removes it.
 //!
+//! # A session that left the riff
+//!
+//! Each call of a gone session brings it back (R207). So a session that
+//! left the riff makes no request (01M3MEEFETT9A0DRWBKQTG77Z2). The
+//! leave is a mark on this machine: the file `left-ID` in
+//! [`local::marks`]. The client of a session reads the mark before each
+//! request, in the one function that sends each request
+//! (`Api::send_with`, 01M3XQVJXWBC3DKAVWBPXPSGZS). A request of a
+//! session with the mark fails with [`Left`], and nothing goes to the
+//! server. So the status line, each hook, the watch, each tool and each
+//! task of `riff mcp` have the same check, and a new call site has it
+//! too.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     T[a tool, a hook, the watch, the status line, a task of riff mcp] --> S[Api::send_with]
+//!     S --> M{the mark left-ID of the session?}
+//!     M -- yes --> L[the error Left: no request]
+//!     M -- no --> R[the request to riff-server]
+//!     V[Api::leave_riff] -- "writes the mark, then the end call" --> R
+//!     J[Api::join_riff] -- "removes the mark, then the register" --> S
+//! ```
+//!
+//! [`Api::signed_in`] gives the client of a session its mark.
+//! [`Api::leave_riff`] writes the mark first, and then sends the end
+//! call: the one request that goes out with the mark
+//! (01M3XQVK05FAT3PR43W8RNEYHY). [`Api::join_riff`] removes the mark,
+//! and registers.
+//!
 //! # Signatures
 //!
 //! A signed-in client signs each post with its device key (R195, see
@@ -112,6 +141,7 @@
 //! ```
 
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -134,7 +164,7 @@ use riff_core::wire::{
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
-use crate::{auto_update, device, login, secrets, text};
+use crate::{auto_update, device, local, login, secrets, text};
 
 /// A change of the members that `riff-server` made, and the posts of
 /// its note (01M3MN14ZCTRVD3T455P6TFK1B). The change stands also when
@@ -503,6 +533,16 @@ pub struct Api {
     auth: Option<Arc<Auth>>,
     /// Where the client shows [`WAITING`]. `None` is stderr.
     waits: Option<WaitLine>,
+    /// The mark of the leave of the session of this client. `None` for
+    /// a person, and for a client that no session uses.
+    mark: Option<Arc<Mark>>,
+}
+
+/// Where the mark of the leave of one session is.
+struct Mark {
+    /// A directory as [`local::marks`].
+    dir: PathBuf,
+    session: String,
 }
 
 /// Where the tokens of a signed-in [`Api`] come from.
@@ -537,6 +577,52 @@ impl Api {
             base: base.trim_end_matches('/').to_owned(),
             auth: None,
             waits: None,
+            mark: None,
+        }
+    }
+
+    /// The same client for the session `session`, with the mark of its
+    /// leave in `dir`. See "A session that left the riff" in the module
+    /// doc. [`Api::signed_in`] calls it with [`local::marks`].
+    ///
+    /// ```
+    /// # #[tokio::main(flavor = "current_thread")] async fn main() -> anyhow::Result<()> {
+    /// use riff::api::{Api, Left};
+    ///
+    /// let marks = tempfile::tempdir()?;
+    /// let api = Api::new("http://127.0.0.1:1").for_session(marks.path(), "a6cf");
+    /// assert!(!api.left());
+    /// riff::local::leave(marks.path(), "a6cf")?;
+    /// assert!(api.left());
+    ///
+    /// // No request goes out: the error is the leave, not the connect.
+    /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let error = api.alive(&me).await.unwrap_err();
+    /// assert!(error.is::<Left>(), "{error:#}");
+    /// assert!(error.to_string().contains("/riff:join"));
+    /// # Ok(()) }
+    /// ```
+    pub fn for_session(mut self, dir: &Path, session: &str) -> Self {
+        self.mark = Some(Arc::new(Mark {
+            dir: dir.to_owned(),
+            session: session.to_owned(),
+        }));
+        self
+    }
+
+    /// True when the session of this client left the riff: its mark is
+    /// there. False for a client with no session.
+    pub fn left(&self) -> bool {
+        self.mark
+            .as_ref()
+            .is_some_and(|mark| local::left(&mark.dir, &mark.session))
+    }
+
+    /// The same client with no mark: only for the end call of a leave.
+    fn unmarked(&self) -> Api {
+        Api {
+            mark: None,
+            ..self.clone()
         }
     }
 
@@ -670,7 +756,14 @@ impl Api {
     /// caller (R19). Without a sign-in, the client sends no token. A
     /// keyring error is an error (R157). When riff cannot open the
     /// keyring, the client sends no token (R158).
+    ///
+    /// The client of a session also gets the mark of its leave, with or
+    /// without a sign-in ([`Api::for_session`],
+    /// 01M3XQVJXWBC3DKAVWBPXPSGZS).
     pub fn signed_in(mut self, session: Option<&str>) -> Result<Self> {
+        if let (Some(dir), Some(session)) = (local::marks(), session) {
+            self = self.for_session(&dir, session);
+        }
         if !secrets::has_keyring() || login::stored(&self.base)?.is_none() {
             return Ok(self);
         }
@@ -823,6 +916,11 @@ impl Api {
     /// the build (01M3QCMJ9F1GRTRRSB4AW9TC3D). After a 401 to a
     /// token, it sends the request once more with a new token
     /// (01M3MX4VCEBTY0DN4JMF624WYE).
+    ///
+    /// Each request of the client goes through this function. So it
+    /// has the one check of the leave: before each request, also before
+    /// a new try, it fails with [`Left`] when the session of the client
+    /// left the riff (01M3XQVJXWBC3DKAVWBPXPSGZS).
     async fn send_with(
         &self,
         method: reqwest::Method,
@@ -834,6 +932,9 @@ impl Api {
         let mut waited = Duration::ZERO;
         let mut again = true;
         loop {
+            if self.left() {
+                return Err(Left.into());
+            }
             // A box: a request may need a token, and a token is a request.
             let (request, token) = Box::pin(self.request(method.clone(), path)).await?;
             let response = match body(request).send().await {
@@ -933,6 +1034,37 @@ impl Api {
     /// The session ended (R205).
     pub async fn end(&self, me: &SessionUri) -> Result<()> {
         self.call(&End { me: me.clone() }).await
+    }
+
+    /// The session `me` of this client leaves the riff
+    /// (01M3XQVK05FAT3PR43W8RNEYHY). It writes the mark first, so each
+    /// other request of the session stops from now. Then it sends the
+    /// end call, the one request that goes out with the mark. When the
+    /// end call fails, it removes the mark: the session stays in the
+    /// riff. A client with no mark cannot keep a leave, and refuses.
+    pub async fn leave_riff(&self, me: &SessionUri) -> Result<()> {
+        let Some(mark) = &self.mark else {
+            bail!(text::LEAVE_NO_MARK);
+        };
+        local::leave(&mark.dir, &mark.session)
+            .with_context(|| format!("cannot write the mark of the leave in {:?}", mark.dir))?;
+        let ended = self.unmarked().end(me).await;
+        if ended.is_err() {
+            let _ = local::join(&mark.dir, &mark.session);
+        }
+        ended
+    }
+
+    /// The session `me` of this client joins the riff again
+    /// (01M3MEEFKX14QCQM0F9ZYW93PP): it removes the mark, and registers,
+    /// a worker or not.
+    pub async fn join_riff(&self, me: &SessionUri, worker: bool) -> Result<()> {
+        if let Some(mark) = &self.mark {
+            local::join(&mark.dir, &mark.session).with_context(|| {
+                format!("cannot remove the mark of the leave in {:?}", mark.dir)
+            })?;
+        }
+        self.register_as(me, worker).await
     }
 
     /// A new start of the session: a new agent process, a resume or a
@@ -1627,6 +1759,23 @@ enum Check {
     /// (01M3MX4V43SF2XFCZWANHD19WV).
     None,
 }
+
+/// The client sent no request: its session left the riff
+/// (01M3XQVJXWBC3DKAVWBPXPSGZS). The text names `/riff:join`.
+///
+/// ```
+/// assert_eq!(riff::api::Left.to_string(), riff::text::LEFT_COMMAND);
+/// ```
+#[derive(Debug)]
+pub struct Left;
+
+impl std::fmt::Display for Left {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(text::LEFT_COMMAND)
+    }
+}
+
+impl std::error::Error for Left {}
 
 /// `riff-server` refused a token request, with an OAuth error.
 ///

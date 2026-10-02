@@ -875,6 +875,11 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
     }
 
     async fn seen(&self) -> Result<Option<Seen>> {
+        // A session that left the riff is no lead, and makes no call
+        // (01M3XQVJXWBC3DKAVWBPXPSGZS).
+        if self.api.left() {
+            return Ok(None);
+        }
         let me = (self.me)();
         let sessions = self.api.who(&me, false).await?;
         let lead = sessions

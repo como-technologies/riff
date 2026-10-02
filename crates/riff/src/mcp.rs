@@ -39,7 +39,9 @@
 //! call is gone after 3 minutes with no keep-alive.
 //!
 //! A session that left the riff makes no call (see [`crate::leave`]).
-//! Each tool except `join` refuses, and the keep-alive waits.
+//! Each tool except `join` refuses, and the keep-alive, the rollout and
+//! the reap wait. The client of the tools refuses each request too
+//! ([`crate::api`], 01M3XQVJXWBC3DKAVWBPXPSGZS).
 //!
 //! After `riff update`, `riff mcp` runs the new binary in place at the
 //! first moment with no request in flight, with no end call, so that
@@ -83,7 +85,6 @@
 //! [`text::riff_step`] and [`text::LEAD_STEP`].
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -97,7 +98,7 @@ use serde::Deserialize;
 
 use crate::api::{Api, PauseScope};
 use crate::binary::{Follow, with_last, with_place};
-use crate::{dropped, identity, leave, local, relay, text};
+use crate::{dropped, identity, leave, relay, text};
 
 /// The hidden option that gives a new `riff mcp` the initialize request
 /// of its client, as JSON, after an update (01M3NT6WZTKAFKGDWGCFKC8TB5).
@@ -113,10 +114,6 @@ pub struct Tools {
     /// True when a granted claim looks for the earlier work on its item
     /// (01M3WFYER9QWA698KY2E1HNTCW).
     earlier: bool,
-    /// The directory of the files of [`local`], for the record of a leave.
-    local: Option<PathBuf>,
-    /// True while the session is out of the riff.
-    left: Arc<AtomicBool>,
     /// True in a worker session: each register says so
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
@@ -222,16 +219,14 @@ type ToolResult = Result<String, String>;
 #[tool_router]
 impl Tools {
     /// The tools of the session `me`, which works in the current
-    /// directory. With no [`Tools::in_local`], a leave holds only while
-    /// the tools run.
+    /// directory. The client `api` holds the mark of a leave
+    /// ([`Api::for_session`]). With no mark, the `leave` tool refuses.
     pub fn new(api: Api, me: SessionUri) -> Self {
         Self {
             api,
             me: Arc::new(Mutex::new(me)),
             dir: Arc::new(Mutex::new(std::env::current_dir().unwrap_or_default())),
             earlier: false,
-            local: None,
-            left: Arc::new(AtomicBool::new(false)),
             worker: false,
             wrapper: None,
         }
@@ -252,15 +247,14 @@ impl Tools {
         self
     }
 
-    /// Keeps the record of a leave in `local`. When the record is there,
-    /// the session left before, for example before a resume.
-    pub fn in_local(mut self, local: Option<PathBuf>) -> Self {
-        let left = match (&local, self.me().who().session()) {
-            (Some(dir), Some(id)) => local::left(dir, id),
-            _ => false,
-        };
-        self.left.store(left, Ordering::SeqCst);
-        self.local = local;
+    /// Keeps the mark of a leave of the session in `local`
+    /// ([`Api::for_session`]). When the mark is there, the session left
+    /// before, for example before a resume. `riff mcp` gets a client
+    /// with the mark from [`Api::signed_in`], so only a test calls it.
+    pub fn in_local(mut self, local: &std::path::Path) -> Self {
+        if let Some(id) = self.me().who().session() {
+            self.api = self.api.for_session(local, id);
+        }
         self
     }
 
@@ -279,9 +273,10 @@ impl Tools {
         self
     }
 
-    /// True while the session is out of the riff.
+    /// True while the session is out of the riff: its mark is there
+    /// ([`Api::left`]).
     pub fn left(&self) -> bool {
-        self.left.load(Ordering::SeqCst)
+        self.api.left()
     }
 
     #[tool(
@@ -375,11 +370,10 @@ commit and pushes the branch. Then it frees your claims, and you leave `who`. Ea
             let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
             Some(leave::wip(&dir).map_err(|e| format!("{}{e:#}", text::LEAVE_REFUSED))?)
         };
-        self.api.end(&me).await.map_err(err)?;
-        self.left.store(true, Ordering::SeqCst);
-        if let (Some(dir), Some(id)) = (&self.local, me.who().session()) {
-            local::leave(dir, id).map_err(err)?;
-        }
+        self.api
+            .leave_riff(&me)
+            .await
+            .map_err(|e| format!("{}{e:#}", text::LEAVE_FAILED))?;
         Ok(text::left(wip.as_deref(), &claims))
     }
 
@@ -389,11 +383,7 @@ or says \"join the riff\". Then start the watch and follow the start routine of 
     )]
     async fn join(&self) -> ToolResult {
         let me = self.me();
-        if let (Some(dir), Some(id)) = (&self.local, me.who().session()) {
-            local::join(dir, id).map_err(err)?;
-        }
-        self.api.register_as(&me, self.worker).await.map_err(err)?;
-        self.left.store(false, Ordering::SeqCst);
+        self.api.join_riff(&me, self.worker).await.map_err(err)?;
         Ok(text::joined(&me))
     }
 
@@ -795,7 +785,6 @@ pub async fn serve(
     let worker = crate::worker::is_worker();
     let tools = Tools::new(api.clone(), me.clone())
         .with_earlier_work()
-        .in_local(local::dir())
         .as_worker(worker)
         .in_wrapper(crate::worker::wrapper());
     // Start even if the server is down: each tool call reports the error.
