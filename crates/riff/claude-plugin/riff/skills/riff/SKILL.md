@@ -951,6 +951,9 @@ branch.
 - Call `claim` before you start a work item. Call `release` when you
   finish.
 - A claim belongs to a thread.
+- A release puts the tokens of the claim on its issue as a comment.
+  The result of `release` names them. `riff usage 12` shows the tokens
+  of issue 12.
 - A claim ends 5 minutes after your session stops, unless the session
   comes back first.
 - When another session holds the item that you must take, and it is

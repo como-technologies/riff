@@ -1268,7 +1268,9 @@ It looks at pull request 40 every 30 seconds (`--every SECONDS`) until
 GitHub merges it, and then prints the merge commit. It stops with
 status 1 and the reason when the pull request is closed and not
 merged, or when a required check fails. A session runs it as a
-background task.
+background task. After the merge, it adds the total of the tokens to
+the issue: see
+[See the tokens of an issue](development.md#see-the-tokens-of-an-issue).
 
 ### Report a verify
 

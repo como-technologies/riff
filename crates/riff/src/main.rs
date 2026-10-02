@@ -11,7 +11,7 @@ use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     auto_update, binary, dropped, help, hook, identity, lifecycle, local, login, mcp, next,
-    permissions, plugin, pr, settings, terminal, text, view, worker,
+    permissions, plugin, pr, settings, terminal, text, usage, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -186,6 +186,21 @@ enum Command {
         session: Option<String>,
         /// The work item, for example issue-12.
         item: String,
+    },
+    /// Show the tokens and the models of an issue
+    ///
+    /// With ISSUE, it sums the comments that riff put on the issue: the
+    /// total, then each work claim and each verify claim with its models.
+    /// With --wave, it lists each issue of the wave with its total. With
+    /// no issue and no wave, it shows each session of this machine: the
+    /// tokens of each item, and the tokens for no issue.
+    Usage {
+        /// The issue: 12, #12 or issue-12.
+        #[arg(conflicts_with = "wave")]
+        issue: Option<String>,
+        /// Each issue of this wave, for example "Wave 3".
+        #[arg(long, value_name = "TITLE")]
+        wave: Option<String>,
     },
     /// Make this session the lead of your user
     ///
@@ -744,6 +759,20 @@ enum HookEvent {
         #[arg(long)]
         pane: Option<String>,
     },
+    /// Report the tokens of each claim that a start or an end freed
+    ///
+    /// It ends each open claim in the marks of the session. The start
+    /// hook starts it at a new start, and the end hook starts it,
+    /// detached.
+    #[command(hide = true)]
+    Usage {
+        /// The riff session ID.
+        #[arg(long)]
+        session: String,
+        /// The time of the hook, in milliseconds since the Unix epoch.
+        #[arg(long)]
+        before: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -860,6 +889,19 @@ async fn main() -> Result<()> {
         }
         return Ok(());
     }
+    if let Command::Hook {
+        event: HookEvent::Usage { session, before },
+    } = &cli.command
+    {
+        if let Some(meter) = usage::Meter::here() {
+            meter.release_all(session, *before);
+        }
+        return Ok(());
+    }
+    if let Command::Usage { issue, wave } = &cli.command {
+        print!("{}", usage_text(issue.as_deref(), wave.as_deref())?);
+        return Ok(());
+    }
     if let Command::Lead {
         command: Some(LeadCommand::Compact { switch, quiet }),
     } = &cli.command
@@ -910,6 +952,11 @@ async fn main() -> Result<()> {
         eprintln!("{}", text::pr_waits(*number));
         let every = Duration::from_secs(*every);
         println!("{}", pr::wait(&pr::Gh::default(), *number, every)?);
+        // The merge is done: the total never fails the wait.
+        match total_after_merge(*number) {
+            Ok(line) => eprintln!("{line}"),
+            Err(e) => eprintln!("riff: cannot write the total of the tokens: {e:#}"),
+        }
         return Ok(());
     }
     let api = Api::new(&server);
@@ -1078,6 +1125,9 @@ async fn main() -> Result<()> {
             if !reply.granted {
                 std::process::exit(1);
             }
+            if let Some((meter, id)) = usage::Meter::here().zip(me.who().session()) {
+                meter.started(id, &thread.to_string(), &item);
+            }
             if let Some(line) = dropped::at_claim(&identity::working_dir()?, &item).await {
                 println!("{line}");
             }
@@ -1096,6 +1146,12 @@ async fn main() -> Result<()> {
                 None => {
                     let reply = api.release(&me, &thread, &item).await?;
                     println!("{}", text::released(&thread, &item, reply));
+                    let line = usage::Meter::here()
+                        .zip(me.who().session())
+                        .and_then(|(meter, id)| meter.release(id, &thread.to_string(), &item));
+                    if let Some(line) = line {
+                        println!("{line}");
+                    }
                 }
             }
         }
@@ -1182,6 +1238,7 @@ async fn main() -> Result<()> {
             served?
         }
         Command::Hook { .. }
+        | Command::Usage { .. }
         | Command::Statusline
         | Command::Connect { .. }
         | Command::Setup { .. }
@@ -1456,6 +1513,7 @@ fn stop_hook() {
     let Some(id) = identity::agent_session(input.session_id) else {
         return;
     };
+    count_usage(&id, input.transcript_path.as_deref(), false);
     if !riff::worker::is_worker() {
         if let Err(e) = start_compact_check(&id, input.transcript_path.as_deref()) {
             eprintln!("riff: cannot check the compact of the lead: {e:#}");
@@ -1508,6 +1566,84 @@ async fn clear_check(
     let api = api.signed_in(Some(id))?;
     next::check(&api, &me, pane, &dir, transcript).await?;
     Ok(())
+}
+
+/// Records the transcript of the session `id`. With `ends`, it starts
+/// `riff hook usage`, detached, when the marks of the session have an
+/// open claim: a new start and the end of a session free each claim
+/// (01M3Y1YP1ZA5TBRA01MKWM3VC6). A hook never waits for the report, and
+/// a failure goes to stderr.
+fn count_usage(id: &str, transcript: Option<&std::path::Path>, ends: bool) {
+    use std::os::unix::process::CommandExt;
+    let Some(meter) = usage::Meter::here() else {
+        return;
+    };
+    if let Some(transcript) = transcript {
+        meter.saw(id, transcript);
+    }
+    if !ends || !meter.holds(id) {
+        return;
+    }
+    let started = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .args(["hook", "usage", "--session", id, "--before"])
+            .arg(usage::now_ms().to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+    });
+    if let Err(e) = started {
+        eprintln!("riff: cannot report the tokens of the claims: {e}");
+    }
+}
+
+/// The text of `riff usage` ([`usage`]): of `issue`, of each issue of
+/// `wave`, or of the sessions of this machine.
+fn usage_text(issue: Option<&str>, wave: Option<&str>) -> Result<String> {
+    if issue.is_none() && wave.is_none() {
+        let dir = local::marks().context("this machine has no directory for the marks of riff")?;
+        return Ok(usage::machine_text(&dir, usage::now_ms()));
+    }
+    let thread = identity::place(&identity::working_dir()?)?
+        .default_thread()
+        .context("run riff usage in a git repository")?
+        .to_string();
+    let gh = pr::Gh::default();
+    let forge =
+        usage::Forge::of(&gh, &thread).with_context(|| format!("{thread} is no repository"))?;
+    if let Some(issue) = issue {
+        let number = issue.trim_start_matches('#');
+        let number = number.strip_prefix("issue-").unwrap_or(number);
+        let number: u64 = number
+            .parse()
+            .with_context(|| format!("{issue} is no issue: name it as 12, #12 or issue-12"))?;
+        let counted = usage::counted(number, &forge.comments(number)?);
+        return Ok(usage::issue_text(number, &counted));
+    }
+    let wave = wave.unwrap_or_default();
+    let mut rows = Vec::new();
+    for (number, title) in forge.wave(wave)? {
+        let counted = usage::counted(number, &forge.comments(number)?);
+        rows.push((number, title, usage::sum(&counted)));
+    }
+    Ok(usage::wave_text(wave, &rows))
+}
+
+/// After the merge of pull request `number`: the total of the tokens of
+/// its issue, as a comment on the issue (01M3Y1YP514MPX8DTKMTWDHE8Q).
+fn total_after_merge(number: u64) -> Result<String> {
+    let meter = usage::Meter::here().context("this machine has no directory for the marks")?;
+    let issue = pr::issue_of(&meter.gh, number)?;
+    let thread = identity::place(&identity::working_dir()?)?
+        .default_thread()
+        .context("this directory is in no git repository")?;
+    meter.merged(
+        identity::session_id().as_deref(),
+        &thread.to_string(),
+        issue,
+    )
 }
 
 /// Starts `riff hook compact` for the session `id`, detached, so that
@@ -1720,6 +1856,10 @@ async fn session_start(server: &str) -> String {
     if id.as_deref().is_some_and(local::left_here) {
         return String::new();
     }
+    if let Some(id) = &id {
+        let transcript = input.transcript_path.as_deref();
+        count_usage(id, transcript, input.source.is_new_start());
+    }
     let api = Api::new(server);
     let cwd = std::env::current_dir().ok();
     let uri = id.as_deref().zip(cwd.as_deref()).and_then(|(id, cwd)| {
@@ -1928,6 +2068,7 @@ async fn session_end(server: &str) {
     if local::left_here(&id) {
         return;
     }
+    count_usage(&id, input.transcript_path.as_deref(), true);
     let ended = async {
         let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);

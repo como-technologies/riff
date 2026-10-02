@@ -196,6 +196,57 @@ async fn a_leave_pushes_the_work_frees_the_claims_and_a_join_comes_back() {
     assert!(!error, "{me}");
 }
 
+/// A leave ends each claim of the session, and puts its tokens on the
+/// issue (01M3Y1YP1ZA5TBRA01MKWM3VC6).
+#[tokio::test]
+async fn a_leave_reports_the_tokens_of_each_claim() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let run = tempfile::tempdir().unwrap();
+    let marks = tempfile::tempdir().unwrap();
+    // A fake gh: it has no comment, and keeps each body that it gets.
+    let gh = root.path().join("gh");
+    std::fs::write(&gh, "#!/bin/sh\ncat >> \"$(dirname \"$0\")/sent\"\n").unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let meter = riff::usage::Meter {
+        dir: marks.path().to_owned(),
+        gh: riff::pr::Gh::at(&gh),
+    };
+    let work = clone_on(root.path(), "worktree-issue-12");
+    let api = start_server().await;
+    let mike: SessionUri = MIKE.parse().unwrap();
+    let tools = Tools::new(api.clone(), mike.clone())
+        .in_local(run.path())
+        .in_dir(work)
+        .with_meter(Some(meter));
+    let m = connect(&api, tools, &mike).await;
+
+    let transcript = marks.path().join("a1.jsonl");
+    riff::usage::saw(marks.path(), "a1", &transcript).unwrap();
+    call(&m, "claim", json!({ "item": "issue-12" })).await;
+    let at = chrono::Utc::now().to_rfc3339();
+    let reply = json!({
+        "timestamp": at,
+        "message": { "id": "m1", "model": "opus", "usage": { "output_tokens": 7 } },
+    });
+    std::fs::write(&transcript, reply.to_string()).unwrap();
+
+    let (left, error) = call(&m, "leave", json!({})).await;
+    assert!(!error, "{left}");
+    assert!(
+        left.ends_with(
+            "The claim of issue-12 took 7 tokens (input 0, output 7, cache write 0, cache read \
+             0). riff put them on #12 as a comment."
+        ),
+        "{left}"
+    );
+    let sent = std::fs::read_to_string(root.path().join("sent")).unwrap();
+    assert!(
+        sent.contains("riff usage: issue-12, work, session a1, "),
+        "{sent}"
+    );
+}
+
 #[tokio::test]
 async fn a_leave_on_the_default_branch_keeps_the_claims() {
     let root = tempfile::tempdir().unwrap();

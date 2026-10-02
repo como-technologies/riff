@@ -156,7 +156,8 @@ async fn pr_wait_waits_while_the_pull_request_is_open() {
         .await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "9f8e7d6c\n");
-    assert_eq!(log(machine.bin.path()).matches("gh pr view 40").count(), 3);
+    let log = log(machine.bin.path());
+    assert_eq!(log.matches("gh pr view 40 --json state").count(), 3);
 }
 
 #[tokio::test]
