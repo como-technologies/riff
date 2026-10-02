@@ -545,13 +545,15 @@ sequenceDiagram
     participant W as worker
     participant S as riff-server
     participant L as lead
-    W->>W: remove the worktree and its branch
     W->>S: release (the last claim)
     S->>S: released with must_clear: the worker is in MustClear
-    S-->>W: reply: clear your context
+    S-->>W: reply: riff clears your context when your turn ends
     L->>S: tell the worker: request: claim issue-12
     S->>S: posted. The wake waits.
-    W->>W: riff clears the context
+    W->>W: the turn ends: the Stop hook starts the check
+    W->>S: keep-alive
+    S-->>W: reply: clear
+    W->>W: riff types /clear
     W->>S: start (clear)
     S->>S: session_started (clear): the worker is Ready
     W->>S: watch
@@ -559,12 +561,16 @@ sequenceDiagram
     W->>S: claim issue-12
 ```
 
-- The release is the last step of an item. The skill removes the
-  worktree and its branch first.
-- The reply to the release that puts a worker in MustClear tells riff
-  to clear its context. The reply to a keep-alive of a worker in
-  MustClear tells it too, so a lost reply does not leave the worker
-  there.
+- The clear comes when the turn of the worker ends, not at the
+  release. So a step of an item that comes after the release, for
+  example the removal of the worktree, runs before the clear.
+- The reply to a keep-alive of a worker in MustClear tells riff to
+  clear its context. The Stop hook of a worker starts a check that
+  sends one keep-alive, and types the clear when the reply asks for it
+  (01M3XV0562D3H3P22CJDBPAZBH, `crates/riff/src/next.rs`). So the
+  clear does not depend on the reply to the release, or on a call of
+  the worker. The reply to the release carries the ask too: riff shows
+  it in the text of the release.
 - The engine sends no wake to a session in MustClear. The message is in
   its thread, and its `posted` record names the session in `woken`.
   The wake waits in the written copy, as an unread message that woke
@@ -575,12 +581,13 @@ sequenceDiagram
   the newest unread message that woke the session
   (`State::written`). A watch that starts after the clear gets the
   same wake. A start of the server loses nothing: the next watch start
-  gives the wake.
+  gives the wake. One message gives one wake: when the `posted` record
+  and the `session_started` record are in one chunk, the writer does
+  not send the wake of the `posted` record too
+  (01M3XV0588C2XZKZ3NM67JXCKJ).
 - The reply to a release is `ReleaseReply` with `must_clear`. The reply
   to a keep-alive is `AliveReply` with `clear`: the state adds it to
-  the reply of the signal, from the written copy. Until #353, riff
-  shows the ask in the text of the release, and does not act on
-  `clear`.
+  the reply of the signal, from the written copy.
 - `who`, `top` and `riff workers` show MustClear, and the time since
   the last fresh start of each worker.
 
@@ -990,8 +997,9 @@ and the refusals in the `post` command and in `Engine::admit`
 
 Other items:
 
-- #353 (riff clears a worker) needs E4. It changes the skill: the
-  release is the last step of an item.
+- #353 (riff clears a worker) needs E4. It changes the skill: a
+  worker ends its turn after its last release, and runs no command for
+  the clear.
 - #354 (`riff audit`) needs E2, E4 and #353.
 - #341 (go live) needs E6, #381 (the token of a session) and #363 (the
   guards of `log cut`).
@@ -1016,8 +1024,8 @@ Other items:
 8. One table, `permits`, says who can send each command.
 9. MustClear comes only from the release of a worker itself. `handle`
    decides, and the `released` record holds it.
-10. The server starts the clear of a worker. The release is the last
-    step of an item.
+10. The server starts the clear of a worker: its reply to a keep-alive
+    asks for it. riff acts on the ask when the turn of the worker ends.
 11. `apply` only stores what a record says.
 12. A worker is never the lead.
 13. Each change of the people is a record kind of its own. The people

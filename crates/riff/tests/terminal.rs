@@ -866,6 +866,7 @@ fn the_book_has_a_how_to_for_each_step() {
         ("### Stop the workers", "riff workers stop\n"),
         ("### Stop the workers", "riff workers stop %3"),
         ("### A worker goes to its next item", "riff who\n"),
+        ("### Clear a worker by hand", "riff workers stop %3"),
         ("### A worker with no work waits idle", "riff workers\n"),
     ] {
         let how = &part[part.find(heading).unwrap()..];

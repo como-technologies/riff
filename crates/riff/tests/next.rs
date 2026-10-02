@@ -16,7 +16,8 @@ use riff_core::name::{SessionUri, Who};
 use riff_core::record::Change;
 use riff_core::wire::{RiffState, StartReason};
 use riff_server::store::Memory;
-use riff_server::{Config, Service};
+use riff_server::Service;
+use riff_server::auth::Config;
 
 const FAKE_TMUX: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/log\"\n";
 
@@ -223,7 +224,9 @@ impl Riff {
         assert!(out.status.success(), "{out:?}");
         let who = stdout(&out);
         let line = who.lines().find(|l| l.contains("(w1)"));
-        line.unwrap_or_else(|| panic!("no worker in {who}")).into()
+        let line = line.unwrap_or_else(|| panic!("no worker in {who}"));
+        // The columns have a width: one space between the words.
+        line.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 }
 
@@ -339,8 +342,22 @@ async fn a_request_that_comes_in_the_wait_is_done_after_the_clear() {
 async fn riff_who_shows_the_time_since_the_last_clear_of_a_worker() {
     let r = Riff::with_a_worker().await;
     r.release();
+    // The watch of the worker: a session with no watch shows as offline.
+    let mut watch: Child = r
+        .w
+        .riff("w1", true, &["watch"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let end = Instant::now() + Duration::from_secs(20);
+    while r.who().contains("offline") {
+        assert!(Instant::now() < end, "{}", r.who());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     let waits = r.who();
-    assert!(waits.contains("  must clear  worker  "), "{waits}");
+    assert!(waits.contains(" must clear worker "), "{waits}");
 
     r.w.stop_hook("w1", true);
     r.w.keys(0).await;
@@ -349,7 +366,9 @@ async fn riff_who_shows_the_time_since_the_last_clear_of_a_worker() {
     assert!(old >= 4, "{old}");
     r.w.clear("w1");
     let cleared = r.who();
-    assert!(cleared.contains("  idle  worker  "), "{cleared}");
+    watch.kill().unwrap();
+    watch.wait().unwrap();
+    assert!(cleared.contains(" idle worker "), "{cleared}");
     assert!(fresh_secs(&cleared) < old, "{cleared}");
 }
 

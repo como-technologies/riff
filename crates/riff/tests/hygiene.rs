@@ -294,12 +294,15 @@ async fn the_clear_of_a_worker_keeps_a_main_clone_with_local_changes_and_tells_t
     let (api, lead) = riff_in(&clone.main()).await;
     let m = Machine::new(api.base());
     m.turn_ends(&clone.main(), "w1");
+    // A read takes the message: keep what the first full read gives.
+    let told = std::cell::RefCell::new(Vec::new());
     wait_for("the message to the lead", async || {
-        !unread(&api, &lead).await.is_empty()
+        told.borrow_mut().extend(unread(&api, &lead).await);
+        !told.borrow().is_empty()
     })
     .await;
     assert_eq!(clone.head(), before);
-    let told = unread(&api, &lead).await;
+    let told = told.into_inner();
     assert!(
         told.iter()
             .any(|b| b.contains("stays as it is: it has local changes.")),

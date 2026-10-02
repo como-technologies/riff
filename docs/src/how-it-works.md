@@ -1137,8 +1137,8 @@ sequenceDiagram
 
 A session removes only its own worktree, and only when the work is
 safe on the default branch. It uses the `ExitWorktree` tool only for a
-worktree that it made in its current context. After `/clear` or
-`riff workers next`, the tool says that the session is not the owner.
+worktree that it made in its current context. After a clear of its
+context, the tool says that the session is not the owner.
 Then the session runs `git worktree remove` in the main worktree.
 
 ## Acceptance criteria
@@ -3126,41 +3126,36 @@ host never waits behind its watch.
 ### A worker goes to its next item
 
 A worker starts each item with a fresh context. It does not carry the
-file reads, diffs and messages of its last item. When its item is
-merged, its claim is released and its worktree is removed, the worker
-runs:
+file reads, diffs and messages of its last item. riff clears the
+context by itself. The worker runs no command for it, and you do
+nothing.
 
-```sh
-riff workers next
-```
-
-Then it ends its turn. riff types `/clear` into the pane of the worker,
-and then "Join the riff.". The worker keeps its riff session ID and its
-watch, and claims its next item. You do nothing.
+When a worker releases its last claim, it must clear its context. It
+does the steps that are left, for example the removal of its worktree,
+and ends its turn. Then riff types `/clear` into the pane of the
+worker, and then "Join the riff.". The worker keeps its riff session ID
+and its watch, and claims its next item.
 
 ```mermaid
 sequenceDiagram
     participant W as worker
+    participant S as riff-server
     participant R as riff
     participant T as tmux pane
-    W->>R: riff workers next
-    R-->>W: end your turn now
+    W->>S: release (the last claim)
+    S-->>W: released: riff clears your context when your turn ends
+    Note over S: the worker is in must clear
     W->>R: the turn ends (Stop hook)
+    R->>S: must this worker clear its context?
+    S-->>R: yes
     R->>T: /clear
+    T->>S: start (clear)
+    Note over S: the worker is ready
     R->>T: Join the riff.
     T->>W: start routine, next claim
 ```
 
-`riff workers next` works only in a worker that holds no claims. riff
-never clears the lead: you work in it. It compacts the lead at the end
-of a wave (see the next section). To see the context of a worker, type
-`/context` in its pane.
-
-### A worker that must clear its context
-
-A worker that released its last claim must clear its context before
-its next claim. Its context still has the old item. To see such a
-worker:
+To see when each worker last started with a fresh context:
 
 ```sh
 riff who
@@ -3172,22 +3167,32 @@ mike@thelio:riff (5b1e)  must clear  worker  must clear its context before its n
 mike@thelio:riff (9c0d)  idle        worker  ready for work for 6m  fresh start 2m ago
 ```
 
-- `must clear` is the state of the worker. `riff top` and
-  `riff workers` show the same words.
 - `fresh start 41m ago` is the time since the worker last started with
-  a fresh context: a new agent process, or `/clear`. Each worker that
-  is not offline shows it.
-- The reply to the release tells the worker to clear. The reply to each
-  keep-alive tells it too.
-- A claim before the clear fails: `clear your context first: type
-  /clear, or run riff workers next`.
-- The worker clears itself with `riff workers next` (see
-  [A worker goes to its next item](#a-worker-goes-to-its-next-item)).
-  To clear it by hand, type `/clear` in its pane.
+  a fresh context: a new agent process, or a clear. Each worker that
+  is not offline shows it. `riff top` and `riff workers` show the same
+  words.
+- `must clear` is the state of a worker between its last release and
+  its clear. It lasts until the turn of the worker ends.
+- The log has a record for each start of a session, with its reason:
+  a new process, a resume or a clear. So the log shows each clear of
+  each worker, with its time.
+
+riff never clears the lead: you work in it. It compacts the lead at the
+end of a wave (see
+[riff compacts the lead at the end of a wave](#riff-compacts-the-lead-at-the-end-of-a-wave)).
+To see the context of a worker, type `/context` in its pane.
+
+### A worker that must clear its context
+
+Between its last release and its clear, a worker takes no new work:
+
+- A claim before the clear fails: `clear your context first: end your
+  turn and riff clears it, or type /clear`.
+- `riff-server` sends the worker no wake until the clear. A message to
+  it waits in its thread. After the clear, the worker gets one wake for
+  the message.
 - A resume and a compaction are no fresh context. The worker still
   must clear.
-- `riff-server` sends the worker no wake until the clear. A message to
-  it waits in its thread. After the clear, the worker gets the wake.
 
 ```mermaid
 sequenceDiagram
@@ -3195,13 +3200,13 @@ sequenceDiagram
     participant S as riff-server
     participant L as lead
     W->>S: release (the last claim)
-    S-->>W: released: clear your context
+    S-->>W: released: riff clears your context when your turn ends
     Note over S: the worker is in must clear
     L->>S: tell the worker: request: claim issue-12
     Note over S: the message waits, no wake
     W->>S: claim issue-12
     S-->>W: refused: clear your context first
-    W->>W: riff workers next, then /clear
+    W->>W: the turn ends, riff types /clear
     W->>S: start (clear)
     S-->>W: the wake that it missed
     W->>S: claim issue-12
@@ -3213,6 +3218,20 @@ another way leaves the worker ready: a new start, an end, a release by
 the lead, or a claim of another session after the worker was gone for
 5 minutes. So a worker that you resume in the middle of an item claims
 its item again, and goes on.
+
+### Clear a worker by hand
+
+riff types the clear only when the turn of the worker ends. When a
+worker stays in `must clear`, for example because you typed in its
+pane, type `/clear` in its pane. Or stop the worker:
+
+```sh
+riff workers stop %3
+```
+
+`%3` is the pane of the worker in `riff workers`. riff then starts a
+new worker with a fresh context for the free work (see
+[riff starts workers by itself](#riff-starts-workers-by-itself)).
 
 ### riff compacts the lead at the end of a wave
 
@@ -3273,22 +3292,22 @@ riff lead compact --quiet 120
 ### Workers keep good git hygiene
 
 Workers start in the main clone, and each new worktree branches from
-it. So `riff workers start`, and `riff workers next` before the fresh
-context, fast-forward the main clone to `origin` first. You do not
+it. So `riff workers start`, and riff before it clears the context of
+a worker, fast-forward the main clone to `origin` first. You do not
 pull by hand.
 
 ```mermaid
 flowchart TD
-    A[riff workers start / next] --> B{main clone on main, no local changes?}
+    A[riff workers start / the clear of a worker] --> B{main clone on main, no local changes?}
     B -- yes --> C[git fetch --prune, git merge --ff-only]
     C --> D["the main clone moved 2 commits forward to origin/main."]
     B -- no --> E["the main clone stays as it is: WHY"]
-    E --> F[riff workers next tells the lead]
+    E --> F[the clear of a worker tells the lead]
 ```
 
 When the main clone is on another branch, has local changes, or has
 commits that `origin` does not have, riff changes nothing and says
-why. A worker also tells the lead. With no `origin`, riff says
+why. The clear of a worker tells the lead. With no `origin`, riff says
 nothing.
 
 Each worker also fetches before it makes a worktree, pushes its work
@@ -3423,7 +3442,7 @@ PANE  ID        STATE  DETAIL
 A request of your lead wakes it, and it claims the item (see
 [riff starts workers by itself](#riff-starts-workers-by-itself)).
 A worker that finished an
-item runs `riff workers next` first (see
+item gets a fresh context first (see
 [A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
 waits idle only when its start routine then finds no work. A worker
 that waits for a verify keeps its claim, and waits.
