@@ -28,6 +28,10 @@ const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 /// (01M3MEEFETT9A0DRWBKQTG77Z2).
 const LEFT_POLL: Duration = Duration::from_millis(250);
 
+/// The hidden option in which a watch gives the end of its wait to the
+/// new binary of an update (01M3Z64J08GW6N1H42AR2FZQZ4).
+const UNTIL_ARG: &str = "--until";
+
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
 #[command(version = riff_core::build::VERSION, about)]
@@ -246,12 +250,19 @@ enum Command {
     ///
     /// The plugin runs it. One watch runs for each session: a second one
     /// stops at once.
-    #[command(hide = true)]
+    #[command(hide = true, args_conflicts_with_subcommands = true)]
     Watch {
-        /// Exit after the first wake. For a runner that wakes the
-        /// session when the command exits.
+        /// Exit after the first wake, or after the time of `riff watch
+        /// limit` with no wake. For a runner that wakes the session
+        /// when the command exits.
         #[arg(long)]
         once: bool,
+        /// The time at which the watch of before an update ends with no
+        /// wake, in seconds since 1970. Only riff gives it.
+        #[arg(long, hide = true)]
+        until: Option<u64>,
+        #[command(subcommand)]
+        command: Option<WatchCommand>,
     },
     /// Serve the riff tools to an agent session over stdio
     ///
@@ -694,6 +705,21 @@ enum Workers {
 }
 
 #[derive(Subcommand)]
+enum WatchCommand {
+    /// Show or set the longest wait of riff watch --once
+    ///
+    /// Claude Code stops a background task after 2 hours at most. So
+    /// riff watch --once ends by itself after this time with no wake,
+    /// and the session starts it again. The default is 6000 seconds. It
+    /// is in $XDG_CONFIG_HOME/riff/config.toml, key watch.limit.
+    Limit {
+        /// The seconds. 0 is no limit. Leave it out to show the
+        /// setting.
+        seconds: Option<u64>,
+    },
+}
+
+#[derive(Subcommand)]
 enum LeadCommand {
     /// Show or set how riff compacts the lead at the end of a wave
     ///
@@ -1006,6 +1032,19 @@ async fn main() -> Result<()> {
         anstream::println!("{}", view::lead_compact(on, quiet, &path));
         return Ok(());
     }
+    if let Command::Watch {
+        command: Some(WatchCommand::Limit { seconds }),
+        ..
+    } = &cli.command
+    {
+        let path = settings::path()?;
+        if let Some(seconds) = seconds {
+            settings::set_watch_limit(&path, *seconds)?;
+        }
+        let limit = settings::watch_limit(&path)?;
+        anstream::println!("{}", view::watch_limit(limit, &path));
+        return Ok(());
+    }
     if let Command::Statusline = cli.command {
         println!("{}", statusline(&server).await);
         return Ok(());
@@ -1307,13 +1346,13 @@ async fn main() -> Result<()> {
             tail(&api, &me, &thread_or_default(thread, &here)?, &here).await;
         }
         Command::Top { once } => top(&api, &me, here.default_thread(), once).await?,
-        Command::Watch { once } => {
+        Command::Watch { once, until, .. } => {
             let me = identity::session(&here, api.base())?;
             let Some(_lock) = lock_watch(&me) else {
                 println!("{}", text::WATCH_RUNS);
                 std::process::exit(1);
             };
-            watch(&api, &me, once).await
+            watch(&api, &me, once, watch_limit(once), until).await
         }
         Command::Mcp { client } => {
             let me = identity::session(&here, api.base())?;
@@ -2453,10 +2492,22 @@ async fn draw_top(
 
 /// Runs until stopped, or with `once` until the first wake (R170). It
 /// connects again when the stream ends (R131). It stops when the session
-/// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2). On a new binary, it runs
-/// it (01M3MNVTC248YYJJQKFD9H1WY9). It sends a keep-alive each minute
-/// while it runs ([`api::keep_alive`], 01M3WG240PNMQYZ7TX6Z7ZF6M9).
-async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
+/// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2). It sends a keep-alive
+/// each minute while it runs ([`api::keep_alive`],
+/// 01M3WG240PNMQYZ7TX6Z7ZF6M9).
+///
+/// With a `limit`, it ends with one line and status 0 when no wake came
+/// in that time (01M3Z64J08GW6N1H42AR2FZQZ4). On a new binary, it runs
+/// it (01M3MNVTC248YYJJQKFD9H1WY9), and gives it the end of the wait in
+/// `--until`: an update does not start the time again. `until` is that
+/// end, from the watch of before an update.
+async fn watch(
+    api: &Api,
+    me: &riff_core::name::SessionUri,
+    once: bool,
+    limit: Option<Duration>,
+    until: Option<u64>,
+) {
     let stream = follow(|| api.watch(me), RETRY);
     let left = async {
         let Some(id) = me.who().session() else {
@@ -2466,12 +2517,60 @@ async fn watch(api: &Api, me: &riff_core::name::SessionUri, once: bool) {
             tokio::time::sleep(LEFT_POLL).await;
         }
     };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let until = limit.map(|limit| {
+        let until = until.map_or(now + limit, Duration::from_secs);
+        (limit, until.min(now + limit))
+    });
+    let no_wake = async {
+        match until {
+            Some((limit, until)) => {
+                tokio::time::sleep(until.saturating_sub(now)).await;
+                println!("{}", text::watch_no_wake(limit));
+            }
+            None => std::future::pending().await,
+        }
+    };
+    let update = async {
+        let follow = binary::Follow::this();
+        follow.new_one().await;
+        let mut args = binary::with_place(std::env::args_os().skip(1), me.place());
+        if let Some((_, until)) = until {
+            args = binary::with_last(args, UNTIL_ARG, until.as_secs().to_string());
+        }
+        follow.run(args);
+        std::future::pending().await
+    };
     tokio::select! {
         () = print_each(stream, text::wake_line, once) => {}
         () = api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY) => {}
         () = left => println!("{}", text::WATCH_LEFT),
-        () = binary::follow_update(me.place()) => {}
+        () = update => {}
+        () = no_wake => {}
     }
+}
+
+/// The longest wait of a `riff watch --once`: `watch.limit`
+/// (01M3Z64J08GW6N1H42AR2FZQZ4). `None` is no limit: a watch with no
+/// `--once`, or the setting 0. A settings file that riff cannot read
+/// gives the default, so that the watch still ends before the limit of
+/// the harness.
+fn watch_limit(once: bool) -> Option<Duration> {
+    if !once {
+        return None;
+    }
+    let secs = settings::path()
+        .and_then(|path| settings::watch_limit(&path))
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "riff: the watch uses the limit of {} seconds: {e:#}",
+                settings::WATCH_LIMIT
+            );
+            settings::WATCH_LIMIT
+        });
+    (secs > 0).then(|| Duration::from_secs(secs))
 }
 
 /// Prints one line for each item, or with `once` only the first line.

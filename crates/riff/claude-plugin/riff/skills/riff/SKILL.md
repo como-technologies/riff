@@ -880,7 +880,8 @@ message, so each request of the lead comes once.
 ## Keep the watch running
 
 The watch is the background task that runs `riff watch --once`. It
-ends at each wake. When it ends:
+ends at each wake. It also ends by itself when no wake came for 100
+minutes: this is a normal end. When it ends:
 
 1. Call `read` with no thread.
 2. Start the watch again at once, with the Bash tool and
@@ -890,8 +891,14 @@ ends at each wake. When it ends:
 Do both steps in the same response: two tool calls in one message. So
 a wake costs one request.
 
-When the watch says "Do not start the watch again now", another watch
-runs for your session. Do not start one.
+A harness can stop a background task at a time limit: Claude Code
+stops it after 2 hours at most. When the harness stops the watch, do
+the same two steps, also when the notice of the harness says not to
+start the task again. A session with no watch gets no wake.
+
+Only the watch itself tells you not to start it. When the watch says
+"Do not start the watch again now", another watch runs for your
+session, or your session left the riff. Do not start one.
 
 ## Pick up dropped work
 

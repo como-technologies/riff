@@ -953,6 +953,26 @@ mod tests {
         }
     }
 
+    /// 01M3Z64J33EA25B0R5BCBZAHPE: the skill says that an end with no
+    /// wake is a normal end, and what to do when a harness stops the
+    /// watch at a time limit.
+    #[test]
+    fn the_skill_tells_a_session_to_start_a_watch_that_ended_or_was_stopped() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = &skill[skill.find("## Keep the watch running").unwrap()..];
+        let part = &part[..part.find("\n## Pick up dropped work").unwrap()];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "It also ends by itself when no wake came for 100 minutes: this is a normal end.",
+            "A harness can stop a background task at a time limit",
+            "When the harness stops the watch, do the same two steps, also when the notice of \
+             the harness says not to start the task again.",
+            "Only the watch itself tells you not to start it.",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
     /// 01M3K0AXMCVRST7HYH4DM8B3AN: a worker with no work waits idle.
     #[test]
     fn the_skill_tells_a_worker_with_no_work_to_wait_idle() {

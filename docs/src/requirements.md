@@ -177,6 +177,22 @@
   status 0.
 - **R171** A session starts the watch again as its next action after
   the task ends, also in the middle of a turn.
+- **01M3Z64J08GW6N1H42AR2FZQZ4** `riff watch --once` ends by itself
+  when no wake came in 6000 seconds (100 minutes): Claude Code stops a
+  background task after 2 hours at most. It prints one line and exits
+  with status 0. The line says that no wake came and that the end is
+  normal, and tells the session to read and to start the watch again.
+  The setting `watch.limit` changes the time in seconds, and 0 turns
+  the limit off. `riff watch limit` shows it, and `riff watch limit
+  SECONDS` sets it. A watch with no `--once` has no limit. The watch
+  that an update of riff starts keeps the end of the wait.
+- **01M3Z64J33EA25B0R5BCBZAHPE** The start hook and the skill say that
+  an end of the watch with no wake is a normal end: the session reads
+  and starts the watch again in the same response. They say that a
+  session does the same when its harness stops the watch at a time
+  limit, also when the notice of the harness says not to start the task
+  again. Only a line of the watch itself, "Do not start the watch again
+  now", stops a new start.
 - **R69** The start hook never stops a session start. It exits with
   status 0, also when riff cannot find the session.
 - **01M3JN21T9C5GX6VX8N032JYWE** The start hook runs `git fetch

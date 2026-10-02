@@ -444,7 +444,26 @@ async fn runs_the_new_binary(url: &str, args: &[&str]) {
     let (place, rest) = line.trim().split_once(' ').unwrap();
     assert_eq!(place, "--place", "{line}");
     assert!(rest.starts_with("heron/-#"), "{line}");
-    assert_eq!(rest.split_once(' ').unwrap().1, args.join(" "), "{line}");
+    let ran = rest.split_once(' ').unwrap().1;
+    // A watch with `--once` also gives the end of its wait, at most
+    // the default limit from now (01M3Z64J08GW6N1H42AR2FZQZ4).
+    let ran = match ran.split_once(" --until ") {
+        Some((ran, until)) if args.contains(&"--once") => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let until: u64 = until.parse().unwrap();
+            let limit = riff::settings::WATCH_LIMIT;
+            assert!((now + limit - 60..=now + limit).contains(&until), "{line}");
+            ran
+        }
+        _ => {
+            assert!(!args.contains(&"--once"), "no --until: {line}");
+            ran
+        }
+    };
+    assert_eq!(ran, args.join(" "), "{line}");
     assert!(
         read(&err).contains("a new riff is on disk"),
         "{}",

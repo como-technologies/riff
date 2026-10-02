@@ -19,6 +19,9 @@
 //! [update]
 //! auto = true
 //!
+//! [watch]
+//! limit = 6000
+//!
 //! [connect]
 //! scope = "repo"
 //! ```
@@ -34,6 +37,7 @@
 //! | `workers.floor` | 4 | The available memory in GB under which riff starts no new worker (01M3WFZ01PTAYYKG3T5CFA2W4D). |
 //! | `lead.compact` | true | riff compacts the lead at the end of a wave (see [`compact`](crate::compact)). |
 //! | `lead.quiet` | 60 | The seconds with no input in the pane of the lead before riff compacts it. |
+//! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
 //! | `connect.scope` | none | The answer to the scope question of `riff connect claude`: `repo`, `global` or `none` (see [`enable`](crate::enable), 01M3XY2SNXQJRSH5QX82AFVM2S). With no key, nobody answered yet. |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
 
@@ -396,6 +400,42 @@ pub fn set_lead_quiet(path: &Path, secs: u64) -> Result<()> {
 
 /// The default quiet time, in seconds.
 pub const LEAD_QUIET: u64 = 60;
+
+/// The default of `watch.limit`, in seconds: 100 minutes
+/// (01M3Z64J08GW6N1H42AR2FZQZ4). Claude Code stops a background task
+/// after 2 hours at most.
+pub const WATCH_LIMIT: u64 = 6000;
+
+/// The longest time that `riff watch --once` waits for a wake:
+/// `watch.limit`, in seconds (01M3Z64J08GW6N1H42AR2FZQZ4).
+/// [`WATCH_LIMIT`] when the file or the key is missing. With 0, the
+/// watch waits with no limit.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::watch_limit(&path)?, 6000);
+/// riff::settings::set_watch_limit(&path, 1500)?;
+/// assert_eq!(riff::settings::watch_limit(&path)?, 1500);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn watch_limit(path: &Path) -> Result<u64> {
+    let doc = read(path)?;
+    let Some(limit) = doc.get("watch").and_then(|w| w.get("limit")) else {
+        return Ok(WATCH_LIMIT);
+    };
+    let Some(limit) = limit.as_integer() else {
+        bail!("watch.limit in {} is not a number", path.display());
+    };
+    u64::try_from(limit)
+        .with_context(|| format!("watch.limit in {} is out of range", path.display()))
+}
+
+/// Sets `watch.limit`. It keeps each other key.
+pub fn set_watch_limit(path: &Path, secs: u64) -> Result<()> {
+    let secs = i64::try_from(secs).context("the limit is too long")?;
+    set(path, "watch", "limit", value(secs))
+}
 
 /// The answer of the person to the scope question of `riff connect
 /// claude`: `connect.scope` (01M3XY2SNXQJRSH5QX82AFVM2S). `None` when
