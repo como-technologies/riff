@@ -4,7 +4,7 @@
 mod common;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures::StreamExt;
 use riff::api::Api;
@@ -49,9 +49,11 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let api = Api::new(&url);
     let jkt = riff::device::key(api.base()).unwrap().thumbprint();
+    // The sign-in of a person, as the provider does it: the log knows
+    // the person, so the sign-in and its key stay after a restart.
     let pair = service
-        .tokens()
-        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
+        .admit("mike@comotechnologies.io", false, &jkt)
+        .await
         .unwrap();
     let sign_in = SignIn {
         user: pair.user,
