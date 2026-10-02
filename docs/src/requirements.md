@@ -95,8 +95,9 @@
   `verify-ITEM` and removes its verify worktree.
 - **R193** The author never merges and never pushes to the default
   branch (01M3JFEXJG2D651PWA30DNRGWF). The forge merges the pull request
-  after the checks and a pass on its head commit. When no session takes
-  the request, the author keeps its claim and waits. It does not verify
+  after the checks and a pass on its head commit. An author that is
+  not a worker keeps its claim and waits (01M3Z9N6NFNMW62JZ796RV4643),
+  also when no session takes the request. It does not verify
   while it waits (01M3K0FZ5M08Z4YPSVKFADCAKC). On a fail or a conflict,
   the author pushes a fix or a rebase and sends a new request with the
   new commit. On a pass, the author waits for the merge, posts that it
@@ -105,9 +106,49 @@
   after the release. It does not stop a pass. The verifier names it in
   the result. The pull
   request links the issue so that the merge leaves it open, and the
-  issue stays open until that check passes. After the merge, the author
-  adds a comment to the issue: `Merged in #PR (COMMIT)`, and the check
-  that is left.
+  issue stays open until that check passes. After the merge, the
+  session that does the steps after the merge adds a comment to the
+  issue: `Merged in #PR (COMMIT)`, and the check that is left.
+- **01M3Z9N6AK6W9KCA1MN72X78B6** One context holds one item. The work
+  of a worker on an item ends at its verify request. After the request,
+  the worker writes the state on the issue as a comment: the pull
+  request, the commit, what is left after the merge, and what a session
+  must know when the verify fails. Then it releases the item and ends
+  its turn. It does not wait for the verify, and it starts no second
+  item in that context. The release is its last release, so the worker
+  must clear its context (01M3X9XAK1KPZZVM1AJR2H8DSS). The skill and
+  the start hook say so.
+- **01M3Z9N6GQK0NYCMGQ66FW406V** On a pass, when no session holds the
+  item, the verifier does the steps after the merge: it waits for the
+  merge, adds the `Merged in` comment when a check after the release is
+  left, posts the done note, and removes the worktree and the branch of
+  the item on its machine. It releases `verify-ITEM` after the note. On
+  a fail, it releases at once. The item is then free with its earlier
+  work (01M3WFYEP1H3VPW8G90KQDE6FW): the next session that claims it
+  reads the result, goes on from the branch, and sends a new verify
+  request for the same pull request. The skill says so.
+- **01M3Z9N6NFNMW62JZ796RV4643** A session that is not a worker keeps
+  its claim after its verify request, and does the steps after the
+  merge itself (R193). The skill says so.
+- **01M3Z9MY0CDBB1G749XBVMVV8X** riff makes the state of the pull
+  request of an item from the status `riff/verify` of its head commit.
+  The pull request is open, is not a draft, and its branch names the
+  issue. With no status, it waits for a verify. With `success`, it
+  waits for the merge. With `failure` or `error`, the verify failed.
+- **01M3Z9N6SPWPSSCBEVDCKBESSV** The answer to a granted claim of
+  `issue-N` names the open pull request of the item and the state of
+  its verify (01M3Z9MY0CDBB1G749XBVMVV8X), from `riff claim` and from
+  the `claim` tool. For a failed verify, the line names the commit and
+  the URL of the result, and tells the session to go on from the
+  branch. For a pull request that waits for a verify or for the merge,
+  the line tells the session to release the item. riff asks `gh` only
+  when the clone knows a pushed branch of the item, and waits at most 5
+  seconds. With no `gh`, the claim has no such line. A verify claim
+  gets no such line.
+- **01M3Z9N70J4H79VJN4ZKKH3G6S** `riff verify` posts the result to the
+  holder of the issue (01M3NB6FYXXKX80VHEVA5CV6RY). When no session
+  holds the issue in the repository, the post also wakes the lead of
+  the user of the verifier in that repository.
 - **01M3W62QG36F9RD4SZ1X508T3A** A verify result holds only the check
   of the item against its `Done when:` line. No public text on the
   forge holds a live security fault: a security fault in the code of
@@ -397,6 +438,11 @@
   (`worktree-issue-12`, `worktree-issue-12-book`), is open, not a draft,
   has no status `riff/verify` on its head, and no session claims
   `verify-issue-N` for it. Both count as free work.
+- **01M3Z9N5HHHS1E17NFGMVBKZ0K** An item counts one time as free work.
+  An open issue with no claim whose pull request waits for a verify or
+  for the merge (01M3Z9MY0CDBB1G749XBVMVV8X) is no free item: it is
+  work for a verify, not for a build. An open issue with no claim whose
+  verify failed is a free item.
 
 ## Issue hygiene on GitHub
 
@@ -682,7 +728,8 @@
   settings, local files, the riff of the machine on 127.0.0.1:7878, or
   the shared server. Each integration test runs `riff` and
   `riff-server` only through the helper crate `isolated`. It removes
-  each `RIFF_` and `CLAUDE_` variable, `TMUX` and `TMUX_PANE`. It sets
+  each `RIFF_` and `CLAUDE_` variable, `TMUX`, `TMUX_PANE`, `GH_TOKEN`
+  and `GITHUB_TOKEN`. It sets
   `RIFF_SERVER` to `http://127.0.0.1:9`, where nothing listens, unless
   the test names its own server. It sets `RIFF_HOME`, `HOME`, the XDG
   dirs and `TMPDIR` to a temp dir of the test, a D-Bus address that
@@ -1672,7 +1719,11 @@
   `riff top --once` prints one table and exits. The header has the
   facts of `riff who`: the state, the owner and the build. The board of
   the current wave follows: the wave, then one line for each group of
-  its open items, `free`, `claimed` and `verify`. The first line of a
+  its open items, `free`, `claimed` and `verify`. An item with no
+  claim whose pull request waits for a verify or for the merge is in
+  `verify`, not in `free` (01M3Z9N6X92KT051P10CKKV7EK): `riff top`
+  reads the open pull requests with `gh pr list`, and keeps them as
+  long as the issues. The first line of a
   session has the short session ID, the tag of its role, and its state.
   Under it comes one line for each fact of the detail of the state
   (01M3QB6CJ1XCQG5B1BVR8AF3B4). The titles and the wave come from
@@ -1961,7 +2012,8 @@
 - **01M3JPMQG9FDB719BC8MDCBNBA** The skill tells a session to wake
   only the sessions that must act. A board, "started", "done" and other
   news are notes. A verify request wakes the lead of the author's user.
-  A verify result wakes the holder of the item. A question or a request
+  A verify result wakes the holder of the item, and the lead when no
+  session holds it (01M3Z9N70J4H79VJN4ZKKH3G6S). A question or a request
   goes to one session with `tell`.
 - **01M3JY1TBPQHH6WPPBTF42T64H** In a thread, a selector with
   `lead=true` that matches no live session matches each live session
@@ -2573,8 +2625,8 @@
   start context of such a session says that it is a worker.
 - **01M3K0AXMCVRST7HYH4DM8B3AN** A worker with no claim, and no free
   item or verify request, keeps its watch, and ends its turn. It does
-  not end its session. A worker that waits for a verify keeps its claim
-  and waits. The start hook and the skill say so.
+  not end its session. A worker does not wait for a verify
+  (01M3Z9N6AK6W9KCA1MN72X78B6). The start hook and the skill say so.
 - **01M3K0AXPFSWNG7YPVXE65W464** Replaced by
   01M3Q5A0NKY1FCS0YH6N6YD3GN and 01M3Q5A11RKZW1610SWGSMTE3W.
 - **01M3K0AXRNA0F2920E9QCSDFQZ** The skill tells the lead: when an item

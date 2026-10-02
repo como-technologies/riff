@@ -649,6 +649,57 @@ fn how_to(heading: &str) -> String {
     rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)].to_owned()
 }
 
+/// The book shows the flow of an item with a mermaid diagram: the work
+/// of a worker ends at the verify request, and the verifier does the
+/// steps after the merge (01M3Z9N6AK6W9KCA1MN72X78B6,
+/// 01M3Z9N6GQK0NYCMGQ66FW406V). Its how-to shows the lines of a claim
+/// as the code gives them (01M3Z9N6SPWPSSCBEVDCKBESSV).
+#[test]
+fn the_book_shows_how_a_session_works_on_an_item() {
+    let part = book::part("how-it-works.md", "How a session works on an item");
+    let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    for text in [
+        "```mermaid sequenceDiagram",
+        "A->>E: post verify request A->>G: comment on issue 6: the state A->>E: release issue-6",
+        "Note over A: the turn ends, riff clears the context",
+        "V->>E: note \"done issue-6\" V->>V: remove the worktree and the branch of issue-6",
+        "Note over E: issue-6 is free, with its branch",
+        "E-->>N: granted, and the failed verify of PR #40",
+        "One context holds one item.",
+        "| `failure` | is free, with its earlier work | a build |",
+        "A session that is not a worker keeps the rule of before",
+    ] {
+        assert!(flat.contains(text), "no {text:?} in {part}");
+    }
+
+    let how_to = how_to("See the pull request of an item at a claim");
+    assert_eq!(book::commands_in(&how_to), ["riff claim issue-12"]);
+    let url = "https://github.com/como-technologies/riff/pull/40#issuecomment-7";
+    let pull = |checks| riff::rollout::Pull {
+        number: 40,
+        branch: "worktree-issue-12".into(),
+        head: "1a2b3c4d5e6f".into(),
+        checks,
+        ..riff::rollout::Pull::default()
+    };
+    let verify = |state: &str| riff::rollout::Check {
+        url: Some(url.into()),
+        ..riff::rollout::Check::verify(state)
+    };
+    for checks in [
+        vec![],
+        vec![verify("SUCCESS")],
+        vec![verify("FAILURE")],
+    ] {
+        let line = riff::rollout::claim_line("issue-12", &[pull(checks)]).unwrap();
+        assert!(how_to.contains(&format!("\n{line}\n```")), "no {line:?} in {how_to}");
+    }
+    assert!(how_to.contains(&format!(
+        "waits at most {} seconds",
+        riff::rollout::PULL_WAIT.as_secs()
+    )));
+}
+
 /// Each command has a how-to with a copyable `sh` block, and each
 /// command and flag of the how-to is in `--help`.
 #[test]

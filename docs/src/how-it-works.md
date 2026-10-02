@@ -932,7 +932,9 @@ riff top
 The header shows the state of the riff, the owner and the build, as in
 `riff who`. The board of the current wave comes next: the wave with
 its repository, one line for the `free` items, one for the `claimed`
-items, and one for the items in `verify`. Under it, a tree shows each
+items, and one for the items in `verify`. An item is in `verify` when
+a session verifies it, and when no session holds it and its pull
+request waits for a verify or for the merge. Under it, a tree shows each
 person, the hosts of the person, and the sessions on each host:
 
 ```text
@@ -1321,18 +1323,110 @@ sequenceDiagram
     S->>G: worktree add .claude/worktrees/issue-6
     S->>E: move (worktree issue-6)
     S->>E: post "started issue-6"
-    S->>E: post verify request, wait for a pass
-    S->>E: post "done issue-6", release issue-6
-    S->>G: branch merged, worktree clean, issue closed?
-    S->>E: move (main worktree)
-    S->>G: remove .claude/worktrees/issue-6 and its branch
+    S->>E: post verify request
 ```
 
-A session removes only its own worktree, and only when the work is
-safe on the default branch. It uses the `ExitWorktree` tool only for a
+What comes after the verify request is in
+[How a session works on an item](#how-a-session-works-on-an-item).
+
+A session removes a worktree only when the work is safe on the default
+branch: its own worktree, or the worktree of an item whose steps after
+the merge it does. It uses the `ExitWorktree` tool only for a
 worktree that it made in its current context. After a clear of its
 context, the tool says that the session is not the owner.
 Then the session runs `git worktree remove` in the main worktree.
+
+## How a session works on an item
+
+One context holds one item. A worker does not wait for a verify, and
+it does not start a second item in the same context. So the work of a
+worker on an item ends at the verify request. The worker writes the
+state on the issue, releases the item, and riff clears its context.
+The session that verifies does the steps after the merge.
+
+```mermaid
+sequenceDiagram
+    participant A as author (worker)
+    participant G as GitHub
+    participant E as riff-server
+    participant V as verifier
+    participant N as next session
+    A->>E: claim issue-6
+    A->>A: the work, the checks
+    A->>G: riff pr open: the pull request, auto-merge on
+    A->>E: post verify request
+    A->>G: comment on issue 6: the state
+    A->>E: release issue-6
+    Note over A: the turn ends, riff clears the context
+    V->>E: claim verify-issue-6
+    V->>V: test each criterion
+    V->>G: riff verify: the result, riff/verify
+    alt pass
+        G->>G: squash merge
+        V->>E: note "done issue-6"
+        V->>V: remove the worktree and the branch of issue-6
+        V->>E: release verify-issue-6
+    else fail
+        V->>E: release verify-issue-6
+        Note over E: issue-6 is free, with its branch
+        N->>E: claim issue-6
+        E-->>N: granted, and the failed verify of PR #40
+        N->>N: read the result, go on from the branch
+        N->>E: post a new verify request
+    end
+```
+
+The state on the issue is a comment. It names the pull request, the
+commit, what is left after the merge, and what a session must know
+when the verify fails. The next session reads it: it has no other
+memory of the work.
+
+riff reads where the pull request of an item is from the status
+`riff/verify` of its head commit:
+
+| Status `riff/verify` | The item | Work |
+|---|---|---|
+| none | waits for a verify | a verify |
+| `success` | waits for the merge | none |
+| `failure` | is free, with its earlier work | a build |
+
+An item counts one time. While its pull request waits for a verify or
+for the merge, the item is no free work for a build:
+[riff starts workers by itself](#riff-starts-workers-by-itself) does
+not start a worker for it, and the board of `riff top` shows it in
+`verify`.
+
+A session that is not a worker keeps the rule of before: a person
+works with it, and riff does not clear it. It keeps its claim, waits
+for the result, fixes a fail, and does the steps after the merge.
+
+### See the pull request of an item at a claim
+
+A claim of an item with a pushed branch names its open pull request
+and the state of its verify:
+
+```sh
+riff claim issue-12
+```
+
+```text
+You hold issue-12 in como-technologies/riff.
+Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 (2 hours ago). Go on from it, and do not start again: see "Pick up dropped work" in the riff skill.
+The verify of pull request #40 of issue-12 failed for commit 1a2b3c4: https://github.com/como-technologies/riff/pull/40#issuecomment-7. Read the result, go on from the branch, and send a new verify request: see "Pick up dropped work" in the riff skill.
+```
+
+The line says when the item is no work for a build:
+
+```text
+Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4. The build is done: do not build it again. Release issue-12. To verify the work, claim verify-issue-12.
+```
+
+```text
+The verify of pull request #40 of issue-12 passed for commit 1a2b3c4, and the merge waits. The build is done: do not build it again. Release issue-12.
+```
+
+riff asks the `gh` of your machine, and waits at most 5 seconds. With
+no `gh`, the claim has no such line.
 
 ## Acceptance criteria
 
@@ -1396,8 +1490,12 @@ sequenceDiagram
     end
 ```
 
-Only a session that holds no claim verifies. A session that waits for
-its own verify keeps its claim and does not verify: a verify fills its
+The diagram shows an author that is not a worker: it keeps its claim.
+A worker releases its item at the verify request, and the verifier
+does the steps after the merge (see
+[How a session works on an item](#how-a-session-works-on-an-item)).
+
+Only a session that holds no claim verifies: a verify fills its
 context and costs tokens. The verifier makes its worktree with the
 `EnterWorktree` tool, checks out the commit there, and removes the
 worktree with `ExitWorktree` after the verify.
@@ -1493,7 +1591,8 @@ It puts the result on pull request 40 as a comment that names its
 head commit. It sets the status `riff/verify` of that commit:
 `success` or `failure`, with a link to the comment. Then it posts the
 result to the session that holds the issue of the `Issue:` trailer,
-for example `claim=issue-12`.
+for example `claim=issue-12`. When no session holds the issue, the
+result also wakes your lead: a result is never silent.
 
 ### Keep a live security fault out of public text
 
@@ -1966,7 +2065,7 @@ The skill tells each session which posts wake:
 |---|---|
 | A board, "started", "done", other news | nobody: a note |
 | A verify request | the lead of the author's user, or its free sessions when no lead is live |
-| A verify result | the author: `claim=ITEM` |
+| A verify result | the holder of the item: `claim=ITEM`. With no holder, also the lead of the verifier |
 | A question or a request | the one session: `tell` |
 | A status request | the sessions that it selects |
 
@@ -2493,7 +2592,7 @@ sequenceDiagram
     A->>L: tell lead "started issue-12"
     B->>L: tell lead "blocked on issue-7: needs issue-5"
     L->>B: tell "request: release issue-7, claim issue-9"
-    A->>L: tell lead "issue-12 waits for a verify"
+    A->>L: tell lead "issue-12: the verify request is sent, and I released the item"
 ```
 
 To see what each of your sessions holds and does, run this in the
@@ -3161,7 +3260,10 @@ flowchart TD
   current wave (see [Waves](waves.md)). No session claims it, it has no
   comment `Merged in #`, and each issue of its `Needs:` line is
   closed. A pull request counts only when its branch names an issue,
-  for example `worktree-issue-12`.
+  for example `worktree-issue-12`. An item counts one time: while its
+  pull request waits for a verify or for the merge, the item is no
+  free item. After a failed verify it is free again (see
+  [How a session works on an item](#how-a-session-works-on-an-item)).
 - **Idle workers.** Workers with no claim in the repository of your
   lead. A worker in another repository does not count. A new worker
   counts as idle until it claims an item. riff starts a worker only
@@ -3397,8 +3499,10 @@ file reads, diffs and messages of its last item. riff clears the
 context by itself. The worker runs no command for it, and you do
 nothing.
 
-When a worker releases its last claim, it must clear its context. It
-does the steps that are left, for example the removal of its worktree,
+When a worker releases its last claim, it must clear its context. An
+author releases its item at the verify request, and a verifier
+releases after the steps after the merge. The worker does the steps
+that are left, for example the removal of a worktree,
 and ends its turn. Then riff types `/clear` into the pane of the
 worker, and then "Join the riff.". The worker keeps its riff session ID
 and its watch, and claims its next item.
@@ -3615,7 +3719,7 @@ flowchart TD
     I -- "a request of the lead" --> N[it claims the item]
     I -- "idle too long, and another idle worker on its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
     Q -- "riff workers stop" --> S[the pane closes, no message]
-    Q -- "it waits for a verify" --> K[it keeps its claim and waits]
+    Q -- "it sent a verify request" --> K["it releases the item:<br/>riff clears its context"]
     Q -- "the pane dies: a memory kill, a crash, a closed pane" --> D["riff ends its session:<br/>its claims are free at once,<br/>the lead gets a note"]
     D --> R[riff starts a new worker for the free item]
 ```
@@ -3716,7 +3820,8 @@ A worker that finished an
 item gets a fresh context first (see
 [A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
 waits idle only when its start routine then finds no work. A worker
-that waits for a verify keeps its claim, and waits.
+never waits for a verify: its work on an item ends at the verify
+request.
 
 ### The server stops idle workers
 
