@@ -10,8 +10,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    auto_update, binary, dropped, help, hook, identity, lifecycle, local, login, mcp,
-    next, permissions, plugin, pr, settings, terminal, text, view, worker,
+    auto_update, binary, dropped, help, hook, identity, lifecycle, local, login, mcp, next,
+    permissions, plugin, pr, settings, terminal, text, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};

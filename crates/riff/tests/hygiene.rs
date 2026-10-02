@@ -195,7 +195,12 @@ async fn riff_in(dir: &Path) -> (Api, SessionUri) {
     api.start(&w1, StartReason::Process, true).await.unwrap();
     let thread = w1.default_thread().unwrap();
     api.claim(&w1, &thread, "issue-12").await.unwrap();
-    assert!(api.release(&w1, &thread, "issue-12").await.unwrap().must_clear);
+    assert!(
+        api.release(&w1, &thread, "issue-12")
+            .await
+            .unwrap()
+            .must_clear
+    );
     (api, lead)
 }
 

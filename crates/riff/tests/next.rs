@@ -15,9 +15,9 @@ use riff::identity;
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::Change;
 use riff_core::wire::{RiffState, StartReason};
-use riff_server::store::Memory;
 use riff_server::Service;
 use riff_server::auth::Config;
+use riff_server::store::Memory;
 
 const FAKE_TMUX: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/log\"\n";
 
@@ -298,14 +298,13 @@ async fn the_log_has_session_started_with_the_reason_clear_after_the_clear() {
 async fn a_request_that_comes_in_the_wait_is_done_after_the_clear() {
     let r = Riff::with_a_worker().await;
     r.release();
-    let mut watch: Child = r
-        .w
-        .riff("w1", true, &["watch", "--once"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut watch: Child =
+        r.w.riff("w1", true, &["watch", "--once"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
     r.api
         .tell(&r.w.uri("l1"), "w1", "request: claim issue-13")
         .await
@@ -343,14 +342,13 @@ async fn riff_who_shows_the_time_since_the_last_clear_of_a_worker() {
     let r = Riff::with_a_worker().await;
     r.release();
     // The watch of the worker: a session with no watch shows as offline.
-    let mut watch: Child = r
-        .w
-        .riff("w1", true, &["watch"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut watch: Child =
+        r.w.riff("w1", true, &["watch"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
     let end = Instant::now() + Duration::from_secs(20);
     while r.who().contains("offline") {
         assert!(Instant::now() < end, "{}", r.who());
