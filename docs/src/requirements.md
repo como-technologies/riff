@@ -1418,6 +1418,20 @@
   the how-to in the book. `just cloud oauth-client` puts the client
   secret in Secret Manager and the client ID in `deploy/cloud.env`. The
   secret is never in the repository or in a downloaded file.
+- **01M3ZE3Z26N1CG090D5D5FZ3NW** The stage is a second riff-server in
+  the project, for the rehearsal of a release. `deploy/stage.env` holds
+  its settings. It has its own service, bucket, accounts, sign-in client
+  and secret, and no alert, domain or CI deploy. No setting of one riff
+  names the bucket, the service, the secret or another resource of a
+  different riff. A test proves it.
+- **01M3ZE3Z580RB5AYAJX6321DFW** `just cloud` takes the settings of a
+  riff by name: `stage` reads `deploy/stage.env`. With no name, it uses
+  `deploy/cloud.env`, the shared riff. `just cloud deploy NAME TAG`
+  deploys the image that CI built for the release tag. Only a recipe
+  for the shared riff changes the GitHub variable `CLOUD_DEPLOY`.
+- **01M3ZE3Z80274JFTN53DNJ2F2G** A release that moves the state of the
+  shared riff is rehearsed on the stage before its tag, by the how-to
+  in the book. The results go on its issue.
 
 ## One instance
 

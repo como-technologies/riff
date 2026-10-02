@@ -2,18 +2,31 @@
 # Deploys riff-server to Cloud Run (R5, R6, R29, R32, R130, R131,
 # R134). Run `just cloud setup` first.
 #
-# With no argument, Cloud Build builds the image from the source, and
-# the script maps the domain once. With `--image IMAGE`, the script
-# deploys that image and does nothing else. CI does that
+# Usage: deploy.sh [NAME] [TAG], or deploy.sh --image IMAGE. NAME names
+# the settings, for example `stage` (01M3ZE3Z580RB5AYAJX6321DFW). With
+# no name, the shared riff.
+#
+# With no tag, Cloud Build builds the image from the source, and the
+# script maps the domain once. With a release tag `vX.Y.Z`, the script
+# deploys the image that CI built for that tag. With `--image IMAGE`,
+# the script deploys that image and does nothing else. CI does that
 # (01M3NJAZ6BYH7TWKDYTVEK78PG).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-. deploy/cloud.env
+. deploy/settings.sh
 where=(--project "$CLOUD_PROJECT" --region "$CLOUD_REGION")
 account() { echo "$1@$CLOUD_PROJECT.iam.gserviceaccount.com"; }
 
 if [ "${1:-}" = --image ] && [ -n "${2:-}" ]; then
     image=$2
+    from=(--image "$image")
+elif [ -n "${1:-}" ]; then
+    if ! [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$1 is not a release tag. Give vX.Y.Z, for example v0.8.0." >&2
+        exit 1
+    fi
+    # The image that the CI deploy job built for the tag.
+    image=$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$1
     from=(--image "$image")
 else
     image=
@@ -26,7 +39,7 @@ else
 fi
 
 if [ -z "$RIFF_OIDC_CLIENT_ID" ]; then
-    echo "deploy/cloud.env has no client ID. Run: just cloud oauth-client" >&2
+    echo "deploy/$(basename "$CLOUD_SETTINGS") has no client ID. Run: just cloud oauth-client${CLOUD_NAME:+ $CLOUD_NAME}" >&2
     exit 1
 fi
 # The owner of the cloud riff (01M3JN3ASSV9SA0QZKXXJ0RTEV). The
@@ -50,7 +63,8 @@ gcloud run deploy "$CLOUD_SERVICE" "${from[@]}" --quiet "${where[@]}" \
     --set-env-vars "RIFF_PUBLIC_URL=$CLOUD_URL,RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID=$RIFF_OIDC_CLIENT_ID,RIFF_BUCKET=$CLOUD_BUCKET,RIFF_OWNER=$RIFF_OWNER" \
     --set-secrets "RIFF_OIDC_CLIENT_SECRET=$CLOUD_SECRET:latest"
 
-if [ -n "$image" ] || [ "$CLOUD_URL" != "https://$CLOUD_DOMAIN" ]; then
+# A riff with no domain, or with the Cloud Run URL, maps no domain.
+if [ -n "$image" ] || [ -z "$CLOUD_DOMAIN" ] || [ "$CLOUD_URL" != "https://$CLOUD_DOMAIN" ]; then
     exit 0
 fi
 # Only the beta commands take --region.
