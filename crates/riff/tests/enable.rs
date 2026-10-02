@@ -624,7 +624,10 @@ fn the_how_tos_of_the_book_name_real_commands() {
         "riff connect claude --scope none",
         "riff server",
     ] {
-        assert!(connect.iter().any(|c| c == command), "{command}: {connect:?}");
+        assert!(
+            connect.iter().any(|c| c == command),
+            "{command}: {connect:?}"
+        );
     }
     let riff: Vec<String> = connect
         .into_iter()
@@ -633,8 +636,16 @@ fn the_how_tos_of_the_book_name_real_commands() {
     book::each_is_real(&riff);
 
     for (page, heading, commands) in [
-        ("start-a-riff.md", "Turn riff on in a project", ["riff enable"]),
-        ("join-a-riff.md", "Turn riff on in your project", ["riff enable"]),
+        (
+            "start-a-riff.md",
+            "Turn riff on in a project",
+            ["riff enable"],
+        ),
+        (
+            "join-a-riff.md",
+            "Turn riff on in your project",
+            ["riff enable"],
+        ),
         (
             "start-a-team-riff.md",
             "Turn riff on in the project",

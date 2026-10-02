@@ -28,6 +28,7 @@
 //! | `true` in the local or project settings of a project, no install | Only in that project. |
 //! | `false` or none in the user settings, `true` in a project | Only in that project. |
 //! | `true` in the user settings, `false` in the local settings of a project | In each directory but that project. |
+//! | `true` in the user settings, written by hand, no install record | In each directory, also outside a repository (Claude Code 2.1.287). |
 //!
 //! `claude plugin install --scope local` writes the same entry, but it
 //! also keeps a record of the install for each scope, and `claude plugin

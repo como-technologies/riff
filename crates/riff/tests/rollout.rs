@@ -413,7 +413,10 @@ async fn the_rollout_starts_no_worker_where_riff_is_off_in_the_main_clone() {
     riff::enable::enable(&lead.main, riff::enable::Place::Local, None).unwrap();
     lead.until_workers(1).await;
     let log = lead.tmux_log();
-    assert!(!log.contains("RIFF_ON"), "no RIFF_ON made the lead on: {log}");
+    assert!(
+        !log.contains("RIFF_ON"),
+        "no RIFF_ON made the lead on: {log}"
+    );
 }
 
 /// An idle worker of another user in another repository cannot take the
