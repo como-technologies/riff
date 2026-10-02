@@ -1413,17 +1413,33 @@ pub struct TakeOwner {}
 ///     r#"{"admin":"bob@gmail.com","owner":"ada@gmail.com","answer_secs":600}"#,
 /// ).unwrap();
 /// assert_eq!(asked.owner.as_deref(), Some("ada@gmail.com"));
+/// assert!(!asked.already());
+///
+/// // The owner asked: nothing changed (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
+/// let same: OwnerAsked = serde_json::from_str(
+///     r#"{"admin":"ada@gmail.com","owner":"ada@gmail.com","answer_secs":0}"#,
+/// ).unwrap();
+/// assert!(same.already());
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OwnerAsked {
     /// The email of the admin that asked, in lower case.
     pub admin: String,
     /// The email of the owner that answers. `None` when the riff had no
-    /// owner: the admin is the owner now.
+    /// owner: the admin is the owner now. The email of `admin` when the
+    /// admin that asked is the owner already: nothing changed.
     pub owner: Option<String>,
     /// The time that the owner has to answer, in seconds. With no
     /// answer, the admin is the owner.
     pub answer_secs: u64,
+}
+
+impl OwnerAsked {
+    /// True when the admin that asked is the owner already
+    /// (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
+    pub fn already(&self) -> bool {
+        self.owner.as_deref() == Some(self.admin.as_str())
+    }
 }
 
 /// `POST /v1/owner/deny`: the owner keeps the owner role that an admin

@@ -373,6 +373,9 @@ pub enum Took {
     Owner { owner: String },
     /// The request waits for the answer of `owner`.
     Asked { owner: String, admin: String },
+    /// The caller is the `owner` already. Nothing changed
+    /// (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
+    Already { owner: String },
 }
 
 /// A change of the owner role that no person made: the server makes it
@@ -672,7 +675,8 @@ impl Tokens {
     /// answers with [`Tokens::pass_owner`] or [`Tokens::deny_owner`], and
     /// [`Tokens::owner_due`] grants it when `wait` ends. One request
     /// waits at a time: a second request is refused, with the email of
-    /// the admin that asked first.
+    /// the admin that asked first. The owner is the owner already: the
+    /// call changes nothing (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
     ///
     /// ```
     /// use std::time::{Duration, Instant};
@@ -695,6 +699,10 @@ impl Tokens {
     /// // A second request waits for the first.
     /// let refused = tokens.take_owner("carol", &[], wait, now).unwrap_err();
     /// assert!(refused.contains("bob@gmail.com asked for the owner role first"), "{refused}");
+    /// // The owner has the role already. The request of bob still waits.
+    /// let already = tokens.take_owner("ada", &[], wait, now).unwrap();
+    /// assert_eq!(already, Took::Already { owner: "ada@gmail.com".into() });
+    /// assert_eq!(tokens.asks(), Some("bob@gmail.com"));
     ///
     /// // With no answer in time, bob is the owner.
     /// assert_eq!(tokens.owner_due(now), None);
@@ -723,7 +731,7 @@ impl Tokens {
             return Ok(Took::Owner { owner: email });
         };
         if owner == email {
-            return Err(format!("{email} is the owner of this riff already"));
+            return Ok(Took::Already { owner });
         }
         if let Some(take) = &self.take {
             return Err(format!(

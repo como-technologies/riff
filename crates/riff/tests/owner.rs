@@ -225,6 +225,64 @@ async fn a_member_cannot_take_the_owner_role() {
     assert!(error.to_string().contains("not an admin"), "{error}");
 }
 
+/// `riff owner --take` by the owner is not an error, and changes nothing
+/// (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
+#[tokio::test]
+async fn the_owner_is_the_owner_already() {
+    let (service, api, _) = start(timing(LONG, LONG, 3)).await;
+    let ada = as_person(&service, &api, "ada@gmail.com");
+    let asked = ada.take_owner().await.unwrap();
+    assert!(asked.already(), "{asked:?}");
+    assert_eq!(
+        text::owner_asked(&asked),
+        "You are the owner already. Nothing changed."
+    );
+    assert_eq!(service.tokens().owner(), Some("ada@gmail.com"));
+    assert_eq!(service.tokens().asks(), None, "no request waits");
+    let (_, admins, _) = service.tokens().roles(&[]);
+    assert_eq!(admins, ["bob@gmail.com", "carol@gmail.com"]);
+    // The riff posts no note, and tells no lead.
+    let notes = ada.read(&lead("ada"), &repo(), true).await.unwrap();
+    assert!(notes.is_empty(), "{notes:?}");
+    for user in ["ada", "bob", "carol"] {
+        assert_eq!(told(&api, user).await, [""; 0], "{user}");
+    }
+
+    // The request of an admin still waits after a take of the owner.
+    as_person(&service, &api, "bob@gmail.com")
+        .take_owner()
+        .await
+        .unwrap();
+    let ada = as_person(&service, &api, "ada@gmail.com");
+    assert!(ada.take_owner().await.unwrap().already());
+    assert_eq!(service.tokens().owner(), Some("ada@gmail.com"));
+    assert_eq!(service.tokens().asks(), Some("bob@gmail.com"));
+}
+
+/// Another user does not get the owner role while the riff has an owner:
+/// an admin asks and waits, and a member is refused.
+#[tokio::test]
+async fn another_user_does_not_take_the_role_from_an_owner() {
+    let (service, api, _) = start(timing(LONG, LONG, 3)).await;
+    service.tokens().invite("dan@gmail.com").unwrap();
+    let error = as_person(&service, &api, "dan@gmail.com")
+        .take_owner()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("403"), "{error}");
+    assert!(error.contains("not an admin"), "{error}");
+
+    let asked = as_person(&service, &api, "bob@gmail.com")
+        .take_owner()
+        .await
+        .unwrap();
+    assert!(!asked.already(), "{asked:?}");
+    assert_eq!(asked.owner.as_deref(), Some("ada@gmail.com"));
+    assert_eq!(service.tokens().owner(), Some("ada@gmail.com"));
+    assert_eq!(service.tokens().asks(), Some("bob@gmail.com"));
+}
+
 /// A server whose owner ada has no live lead: her lead ended. The checks
 /// run each 50 ms, and 2 misses in a row make her gone.
 async fn gone_owner() -> (Service, Api) {

@@ -1919,13 +1919,26 @@ fn owner_only(s: &Server, caller: &Who, what: &str) -> Result<(), (StatusCode, S
 }
 
 /// An admin asks for the owner role (01M3N7K3ZAZFGABN7032AYJWEM). The
-/// server posts the note, and tells each live lead of the owner.
+/// server posts the note, and tells each live lead of the owner. The
+/// owner gets a reply that names the owner as the admin, with no note
+/// (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
 async fn take_owner(
     AxumState(s): AxumState<Shared>,
     Extension(SignedIn { who: caller, .. }): Extension<SignedIn>,
     Json(TakeOwner {}): Json<TakeOwner>,
 ) -> Reply<OwnerAsked> {
     admin_only(&s, &caller, "take the owner role")?;
+    // The owner is the owner already: no change of the store, no note
+    // and no message.
+    let already = |owner: String| OwnerAsked {
+        admin: owner.clone(),
+        owner: Some(owner),
+        answer_secs: 0,
+    };
+    if s.tokens().is_owner(caller.user()) {
+        let owner = s.tokens().owner().unwrap_or_default().to_owned();
+        return Ok(Json(already(owner)));
+    }
     let answer = s.config.owner_role.answer;
     let mark = s.tokens_changes.load(Ordering::SeqCst);
     let took = s
@@ -1935,6 +1948,7 @@ async fn take_owner(
     saved(&s, mark).await?;
     let user = caller.user();
     let (reply, news, tell) = match took {
+        Took::Already { owner } => return Ok(Json(already(owner))),
         Took::Owner { owner } => {
             let news = owner::took_news(user, &owner);
             let reply = OwnerAsked {
