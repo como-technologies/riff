@@ -16,8 +16,11 @@
 //!     O -- no --> N[a new riff: make_riff]
 //!     O -- yes --> P[read the old objects: Old::read]
 //!     P -->|an object does not read| X[error: no lease.<br/>The old instance serves on]
-//!     P --> T[take the lease]
-//!     T --> K[the sign-ins: Tokens::import, saved]
+//!     P --> T[take the lease, wait for the old instance]
+//!     T --> A{a log now?}
+//!     A -- yes --> R
+//!     A -- no --> G[read the old objects again]
+//!     G --> K[the sign-ins: Tokens::import, saved]
 //!     K --> I[the command import: the records of Old::changes, one chunk]
 //!     I --> M[the memory of each session: State::imported]
 //!     M --> C[a checkpoint with the read cursors]
@@ -27,6 +30,17 @@
 //! - [`Old::read`] reads the old objects before the server takes the
 //!   lease. An object that does not read stops the start, and changes
 //!   nothing.
+//! - The old instance serves and saves its objects until it reads the
+//!   new lease. So the server reads the old objects again after the
+//!   wait, and imports from that read (01M3ZCDNQY2G9ET537B6SBYCBB): no call to the
+//!   old instance is lost, and a refresh token that it gave works.
+//! - When the log is there after the wait, another instance made the
+//!   import in that time. The second read then gives none: this
+//!   instance replays the log, and does not change the sign-ins.
+//! - A signed message of v0.8.0 has no payload. The import makes the
+//!   payload from the fields of the message, so a reader verifies the
+//!   message as before (01M3ZCDNR0DT9J5XXXS89APTQ2). A message whose signature does
+//!   not sign that payload stays not verified.
 //! - [`Old::changes`] gives the changes of the command `import`
 //!   ([`crate::state::Import`]), in this order:
 //!   1. `riff_made`, with the riff ID of today.
@@ -87,6 +101,7 @@ use riff_core::record::{
     AdminSet, Change, Claimed, Email, Forgotten, Member, OwnerAsked, OwnerSet, PauseSet,
     PersonJoined, Posted, RiffMade, Scope, SessionStarted, SettingChanged,
 };
+use riff_core::signed::Content;
 use riff_core::wire::{Idle, Message, RiffState, StartReason, Status};
 use serde::Deserialize;
 
@@ -231,6 +246,36 @@ struct Take {
 
 fn millis(time: std::time::Duration) -> u64 {
     u64::try_from(time.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The message of v0.8.0 with its payload (01M3ZCDNR0DT9J5XXXS89APTQ2). A signed
+/// message of v0.8.0 has `sig` and no `payload`: the sender signed the
+/// JSON of the [`Content`] of its fields. This build verifies a message
+/// only with its kept payload. So the import makes the payload from the
+/// fields of the message in `thread`. It keeps the payload only when
+/// `sig` signs it. If not, the message stays as it is: not verified.
+fn with_payload(thread: &ThreadName, mut message: Message) -> Message {
+    let Some(sig) = &message.sig else {
+        return message;
+    };
+    if message.payload.is_some() {
+        return message;
+    }
+    let payload = Content {
+        from: message.from.who(),
+        lead: message.from.lead(),
+        // The signature of a direct message names no thread.
+        thread: (!thread.is_direct()).then_some(thread),
+        to: &message.to,
+        body: &message.body,
+        kind: message.kind,
+        at_ms: message.at_ms,
+    }
+    .payload();
+    if riff_core::signed::check(&payload, sig).is_ok() {
+        message.payload = Some(payload);
+    }
+    message
 }
 
 impl Old {
@@ -388,7 +433,7 @@ impl Old {
                 }
                 changes.push(Change::Posted(Box::new(Posted {
                     thread: thread.name.clone(),
-                    message: stored.message.clone(),
+                    message: with_payload(&thread.name, stored.message.clone()),
                     woken: stored.woken.clone(),
                 })));
             }
@@ -724,6 +769,75 @@ mod tests {
             .find_map(|s| s.status.as_ref())
             .unwrap();
         assert_eq!(status.0.step, "issue-341: writes the import");
+    }
+
+    /// Each signed message of the fixture gets the payload that its
+    /// signature signs (01M3ZCDNR0DT9J5XXXS89APTQ2).
+    #[test]
+    fn a_signed_message_of_the_old_server_gets_its_payload() {
+        let changes = old().changes(SAVED_MS);
+        let messages: Vec<&Message> = changes
+            .iter()
+            .filter_map(|c| match c {
+                Change::Posted(p) => Some(&p.message),
+                _ => None,
+            })
+            .collect();
+        let signed: Vec<_> = messages.iter().filter(|m| m.sig.is_some()).collect();
+        // The board, the verify request, two strata messages, the
+        // message of another key, and the request of the lead.
+        assert_eq!(signed.len(), 6);
+        for message in signed {
+            let (sig, payload) = (message.sig.as_ref(), message.payload.as_ref());
+            assert!(
+                riff_core::signed::check(payload.unwrap(), sig.unwrap()).is_ok(),
+                "{}",
+                message.body
+            );
+        }
+        let plain = messages.iter().filter(|m| m.sig.is_none());
+        assert!(plain.clone().count() > 0 && plain.into_iter().all(|m| m.payload.is_none()));
+    }
+
+    #[test]
+    fn only_a_message_that_its_signature_signs_gets_a_payload() {
+        use riff_core::dpop::Key;
+        use riff_core::wire::{Keys, Kind, Post};
+
+        let key = Key::generate();
+        let me: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+        let name: ThreadName = "acme/app".parse().unwrap();
+        let mut post = Post::new(&me, Some(name.clone()), vec![], "request: claim issue-7");
+        post.sign(&key, 1_000);
+        // The form of v0.8.0: the signature, and no payload.
+        let message = Message {
+            seq: 1,
+            from: me,
+            to: vec![],
+            body: post.body.clone(),
+            at_ms: 1_000,
+            kind: Kind::Message,
+            sig: post.sig.clone(),
+            payload: None,
+        };
+        let keys = Keys::from([("ann".to_owned(), vec![key.thumbprint()])]);
+        assert!(!message.verified(&name, &keys));
+        let made = with_payload(&name, message.clone());
+        assert_eq!(made.payload, post.payload);
+        assert!(made.verified(&name, &keys));
+
+        // A changed body: the signature does not sign the payload.
+        let changed = Message {
+            body: "request: claim issue-8".into(),
+            ..message.clone()
+        };
+        assert_eq!(with_payload(&name, changed.clone()), changed);
+        // A payload that is there stays.
+        let kept = Message {
+            payload: Some("kept".into()),
+            ..message
+        };
+        assert_eq!(with_payload(&name, kept.clone()), kept);
     }
 
     #[test]

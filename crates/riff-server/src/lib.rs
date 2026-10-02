@@ -250,9 +250,10 @@ async fn load_tokens(store: &dyn Store) -> Result<(Tokens, Option<Version>), Sto
 
 /// Reads the objects of a riff-server from before the log, when the
 /// store has them and no log: the import of go-live
-/// (01M3Z8MRDZEKTXSKZTDTDSCZ3W). It reads each object now, before the
+/// (01M3Z8MRDZEKTXSKZTDTDSCZ3W). The load reads each object before the
 /// lease: an object that does not read stops the start, and changes
-/// nothing.
+/// nothing. It reads them again after the wait for the old instance,
+/// and imports from that read (01M3ZCDNQY2G9ET537B6SBYCBB).
 async fn read_old_objects(store: &dyn Store) -> Result<Option<Old>, StoreError> {
     let Some(old) = Old::read(store).await? else {
         return Ok(None);
@@ -1051,7 +1052,11 @@ impl Service {
     /// - A store with the objects of a riff-server from before the log,
     ///   and no log, gets the import of go-live before the load ends
     ///   (01M3Z8MRDZEKTXSKZTDTDSCZ3W, see [`import`]). So the port opens
-    ///   only after the import.
+    ///   only after the import. The old instance wrote its objects until
+    ///   it read the new lease, so the load reads them again after the
+    ///   wait, and imports from that read (01M3ZCDNQY2G9ET537B6SBYCBB). When the log
+    ///   is there after the wait, another instance made the import: this
+    ///   one does not import, and does not change the sign-ins.
     /// - The claim timer of each session starts at the load (R125).
     ///
     /// ```
@@ -1140,6 +1145,15 @@ impl Service {
         let skipped = skipped.or(since.skipped);
         facts.skipped = skips + since.skips;
         facts.chunks = since.chunks;
+        // An old instance from before the log wrote its objects until it
+        // read the new lease. So the import reads them again
+        // (01M3ZCDNQY2G9ET537B6SBYCBB). When another instance made the
+        // import in that time, the log is there, and this read gives
+        // none: this instance does not import.
+        let old = match old {
+            Some(_) => read_old_objects(&*store).await?,
+            None => None,
+        };
         // The old instance can also write a checkpoint until it reads
         // the new lease. This build writes none past a checkpoint of a
         // later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).

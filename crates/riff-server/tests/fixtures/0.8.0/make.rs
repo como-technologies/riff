@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Kind, Post, RiffState, Status};
+use riff_core::wire::{Keys, Kind, Post, RiffState, Status};
 use riff_server::state::{Object, State};
 use riff_server::token::Tokens;
 use serde_json::json;
@@ -16,6 +17,14 @@ const SAVED_MS: u64 = 1_790_000_000_000;
 
 fn uri(text: &str) -> SessionUri {
     text.parse().unwrap()
+}
+
+/// A post with the signature of `key` at `at_ms`, as a `riff` of v0.8.0
+/// sends it.
+fn signed(mut post: Post, kind: Kind, key: &Key, at_ms: u64) -> Post {
+    post.kind = kind;
+    post.sign(key, at_ms);
+    post
 }
 
 fn main() {
@@ -31,20 +40,29 @@ fn main() {
     let ms = |t: Instant| SAVED_MS - u64::try_from((saved - t).as_millis()).unwrap();
     let wall = UNIX_EPOCH + Duration::from_millis(SAVED_MS);
 
-    // The people and the sign-ins.
+    // The people and the sign-ins. Each person has a device key: the
+    // key of its sign-in, which signs its messages. `other_key` is the
+    // key of no sign-in.
+    let (mike_key, brett_key, gone_key) = (Key::generate(), Key::generate(), Key::generate());
+    let other_key = Key::generate();
+    let (jkt_mike, jkt_brett, jkt_gone) = (
+        mike_key.thumbprint(),
+        brett_key.thumbprint(),
+        gone_key.thumbprint(),
+    );
     let mut tokens = Tokens::default();
     let soon = saved - 2 * day;
     let mike = tokens
-        .admit("mike@comotechnologies.io", false, &[], "jkt-mike", soon)
+        .admit("mike@comotechnologies.io", false, &[], &jkt_mike, soon)
         .unwrap();
     tokens.invite("brett@comotechnologies.io").unwrap();
     let brett = tokens
-        .admit("brett@comotechnologies.io", false, &[], "jkt-brett", soon)
+        .admit("brett@comotechnologies.io", false, &[], &jkt_brett, soon)
         .unwrap();
     tokens.add_admin("brett@comotechnologies.io").unwrap();
     tokens.invite("gone@example.com").unwrap();
     let gone = tokens
-        .admit("gone@example.com", false, &[], "jkt-gone", soon)
+        .admit("gone@example.com", false, &[], &jkt_gone, soon)
         .unwrap();
     tokens.remove("gone@example.com").unwrap();
     tokens.invite("new@comotechnologies.io").unwrap();
@@ -53,10 +71,10 @@ fn main() {
         .unwrap();
     // Mike used one refresh token, and has a session pair.
     let mike_now = tokens
-        .refresh(&mike.refresh_token, "jkt-mike", saved - 2 * min)
+        .refresh(&mike.refresh_token, &jkt_mike, saved - 2 * min)
         .unwrap();
     let mike_session = tokens
-        .for_session(&mike_now.access_token, "jkt-mike", "m1", saved - min)
+        .for_session(&mike_now.access_token, &jkt_mike, "m1", saved - min)
         .unwrap();
 
     // The sessions.
@@ -98,30 +116,55 @@ fn main() {
         post.kind = Kind::Note;
         state.post(post, start, ms(start)).unwrap();
     }
-    // The worker reads them, then two more messages come.
+    // The worker reads them, then two more messages come. Each real
+    // message is signed: the shared riff has a sign-in. The board is a
+    // signed post of the lead, to a selector with three fields.
     state.read(&m2, &riff, false, start).unwrap();
-    let to_mike = vec!["user=mike".parse().unwrap()];
-    let board = Post::new(&m1, Some(riff.clone()), to_mike, "the board of Wave 18");
-    state.post(board, start + min, ms(start + min)).unwrap();
-    let verify = Post::new(&m2, Some(riff.clone()), vec![], "verify request: issue-341");
+    let at = ms(start + min);
+    let lead_m1 = m1.clone().with_lead(true);
+    let lead_b1 = b1.clone().with_lead(true);
+    let to_repo = vec!["user=mike,repo=como-technologies/riff".parse().unwrap()];
+    let board = Post::new(&lead_m1, Some(riff.clone()), to_repo, "the board of Wave 18");
+    let board = signed(board, Kind::Message, &mike_key, at);
+    state.post(board, start + min, at).unwrap();
+    let to_lead = vec![
+        "user=mike,repo=como-technologies/riff,lead=true"
+            .parse()
+            .unwrap(),
+    ];
+    let verify = Post::new(&m2, Some(riff.clone()), to_lead, "verify request: issue-341");
+    let verify = signed(verify, Kind::Message, &mike_key, ms(start + 2 * min));
     state
         .post(verify, start + 2 * min, ms(start + 2 * min))
         .unwrap();
-    let hello = Post::new(&b1, Some(strata.clone()), vec![], "strata: the plan");
-    state.post(hello, start + min, ms(start + min)).unwrap();
+    // The strata thread: a signed message of the lead, and a signed
+    // status request.
+    let hello = Post::new(&lead_b1, Some(strata.clone()), vec![], "strata: the plan");
+    let hello = signed(hello, Kind::Message, &brett_key, at);
+    state.post(hello, start + min, at).unwrap();
+    let to_strata = vec!["user=brett,repo=como-technologies/strata".parse().unwrap()];
+    let ask = Post::new(&lead_b1, Some(strata.clone()), to_strata, "");
+    let ask = signed(ask, Kind::Status, &brett_key, at + 1);
+    state.post(ask, start + min, at + 1).unwrap();
+    // The design thread: a message with no signature, and a message
+    // that the key of no sign-in signed. The two are not verified.
     let idea = Post::new(&b1, Some(design.clone()), vec![], "an idea for the design");
-    state.post(idea, start + min, ms(start + min)).unwrap();
-    // Direct messages: one between two live sessions, one between two
-    // sessions that end.
+    state.post(idea, start + min, at).unwrap();
+    let forged = Post::new(&m1, Some(design.clone()), vec![], "signed by another key");
+    let forged = signed(forged, Kind::Message, &other_key, at + 1);
+    state.post(forged, start + min, at + 1).unwrap();
+    // Direct messages: a signed request of a lead between two live
+    // sessions, and one between two sessions that end.
     let request = Post::new(
-        &b1,
+        &lead_b1,
         None,
         vec!["session=b2".parse().unwrap()],
         "request: claim issue-7",
     );
-    state.post(request, start + min, ms(start + min)).unwrap();
+    let request = signed(request, Kind::Message, &brett_key, at);
+    state.post(request, start + min, at).unwrap();
     let last = Post::new(&m3, None, vec!["session=m4".parse().unwrap()], "bye");
-    state.post(last, start + min, ms(start + min)).unwrap();
+    state.post(last, start + min, at).unwrap();
     let status = Status {
         step: "issue-341: writes the import".into(),
         blocked: None,
@@ -164,6 +207,11 @@ fn main() {
         .filter(|s| s.worker)
         .map(|s| s.uri.who().to_string())
         .collect();
+    // The keys of the sign-ins, as a `read` of v0.8.0 gives them.
+    let keys = Keys::from([
+        ("mike".to_owned(), vec![jkt_mike.clone()]),
+        ("brett".to_owned(), vec![jkt_brett.clone()]),
+    ]);
     let mut unread = BTreeMap::new();
     let mut messages = BTreeMap::new();
     for me in [&m1, &m2, &m3, &m4, &m5, &b1, &b2] {
@@ -174,7 +222,16 @@ fn main() {
             let keep = all.len().saturating_sub(200);
             let kept: Vec<_> = all[keep..]
                 .iter()
-                .map(|m| json!({"seq": m.seq, "body": m.body, "from": m.from.who().to_string()}))
+                .map(|m| {
+                    json!({
+                        "seq": m.seq,
+                        "body": m.body,
+                        "from": m.from.who().to_string(),
+                        "lead": m.from.lead(),
+                        "kind": m.kind,
+                        "verified": m.verified(&info.thread, &keys),
+                    })
+                })
                 .collect();
             messages.insert(info.thread.to_string(), kept);
         }
@@ -191,12 +248,17 @@ fn main() {
         "messages": messages,
         "riff": reply.state,
         "idle": loaded.idle(),
+        "keys": {
+            "mike": mike_key.to_secret(),
+            "brett": brett_key.to_secret(),
+            "gone": gone_key.to_secret(),
+        },
         "refresh": {
-            "mike": {"jkt": "jkt-mike", "token": mike_now.refresh_token},
-            "mike_used": {"jkt": "jkt-mike", "token": mike.refresh_token},
-            "mike_session": {"jkt": "jkt-mike", "token": mike_session.refresh_token},
-            "brett": {"jkt": "jkt-brett", "token": brett.refresh_token},
-            "gone": {"jkt": "jkt-gone", "token": gone.refresh_token},
+            "mike": mike_now.refresh_token,
+            "mike_used": mike.refresh_token,
+            "mike_session": mike_session.refresh_token,
+            "brett": brett.refresh_token,
+            "gone": gone.refresh_token,
         },
     });
     let facts = serde_json::to_string_pretty(&facts).unwrap();

@@ -942,6 +942,15 @@
   time: it gives the first pair of a new chain. A used token, a
   session token and an access token of the old server give nothing. No
   person runs `riff login` at go-live.
+- **01M3ZCDNQY2G9ET537B6SBYCBB** The import reads the old objects two
+  times: before the server takes the lease, as the check, and again
+  after its wait for the old instance. It imports from the second
+  read. When the store has a log after the wait, the server does not
+  import and does not change the sign-ins: it replays the log.
+- **01M3ZCDNR0DT9J5XXXS89APTQ2** The import makes the payload of a
+  signed message of release 0.8.0 from the fields of the message. A
+  message that was verified before the import is verified after it. A
+  message whose signature does not sign that payload stays as it is.
 - **01M3WRD9G5GAF65EX8P6D5DMQM** A riff with no sign-in takes a call
   with no token: the caller is then the `me` of the body, with the role
   of an admin. A call whose body names no `me` needs a token.

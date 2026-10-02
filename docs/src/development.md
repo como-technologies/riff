@@ -1488,12 +1488,19 @@ flowchart TD
 
 1. Agree on the time of the deploy with the lead of each other
    repository of the riff. Post the time in each repository thread.
-2. Pause the whole riff, and stop the workers of each host. Each
-   session pushes its work, and keeps its claims:
+2. Pause the whole riff. Each session pushes its work, and keeps its
+   claims. Then stop the workers of your machine:
 
    ```sh
    riff pause --riff
    riff workers stop
+   ```
+
+   `riff workers` lists each other host with workers. Stop the workers
+   of each one:
+
+   ```sh
+   riff workers stop --host HOST
    ```
 
 3. Make the release (see [Make a release](#make-a-release)). The tag
@@ -1511,11 +1518,17 @@ flowchart TD
    and the old server serves on. The log names the object.
 5. Each machine updates itself. No person runs `riff login`.
 6. The whole riff is paused after the import. The owner or an admin
-   resumes it. Then start the workers again:
+   resumes it. riff then starts the workers by itself:
 
    ```sh
    riff resume --riff
-   riff workers start
+   ```
+
+   When the rollout is off (`riff workers interval` shows 0), start
+   the workers with a count:
+
+   ```sh
+   riff workers start 2
    ```
 
 The import changes no old object. Keep them until the first wave after

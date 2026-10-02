@@ -986,7 +986,9 @@ sequenceDiagram
     participant T as token store
     M->>B: read sessions, tokens, threads/
     Note over M: an object that does not read stops the start
-    M->>B: take the lease
+    M->>B: take the lease, wait for the old instance
+    M->>B: read sessions, tokens, threads/ again
+    Note over M: a log now: another instance made the import. Replay it
     M->>T: the sign-ins of the old tokens object
     T->>B: signins.json
     M->>E: import (the changes of the old objects)
@@ -996,6 +998,18 @@ sequenceDiagram
     Note over M: open the port
 ```
 
+- The old instance serves and saves its objects until it reads the
+  new lease. So the server reads the old objects again after its wait,
+  and imports from that read. The first read is the check before the
+  lease.
+- When the log is there after the wait, another new instance made the
+  import. The server then replays the log. It does not import, and it
+  does not change the sign-ins.
+- A signed message of release 0.8.0 has a signature and no payload.
+  The import makes the payload from the fields of the message. So a
+  message that was verified before go-live is verified after it, also
+  a request of a lead. A message whose signature does not sign that
+  payload stays not verified.
 - The import writes only kinds of 1.0.0, and it can make each of
   them.
 - An imported `posted` record keeps its old seq. So a thread can start
