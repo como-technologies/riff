@@ -59,7 +59,7 @@
 //! It takes each entry of the queue ([`Engine::take`]), writes their
 //! records as one chunk outside the lock, and gives the chunk back with
 //! the proof of the write ([`Engine::finish`],
-//! [`Written`](crate::log::Written)). So the types show that only a
+//! [`Written`]). So the types show that only a
 //! written chunk reaches the written copy (01M3X4Z6DSWKMJ2R549R4TSYP0). `finish`
 //! applies the records to the written copy in the order of their
 //! positions, sends the wakes and the `tail` events of each `posted`

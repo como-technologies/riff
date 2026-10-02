@@ -136,7 +136,8 @@ flowchart TD
   a token: the caller is then the caller of the token. So a riff with
   no sign-in takes no such call (01M3WRD9G5GAF65EX8P6D5DMQM).
 - The role of a caller with no token comes from the trust of the riff
-  (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in, else a member.
+  (01M3X4Z6G0TG0B4FT2N1FSPDHS): an admin in a riff with no sign-in, else
+  a member.
 
 ### The commands
 
@@ -251,9 +252,9 @@ fails, and the worker asks in its own terminal.
   `Presence::applied`, with the record, the riff after the `apply`,
   and the time of the call that made the record. A replay gives no
   time, and then `Presence::applied` sets no time.
-- A session whose item another session takes has a `released` record
-  of its own (01M3X4Z6BKM251H7CS2CEGR205). So `Presence::applied` reads only the record
-  and the riff.
+- A session whose item another session takes has a `released` record of
+  its own (01M3X4Z6BKM251H7CS2CEGR205). So `Presence::applied` reads
+  only the record and the riff.
 - `who` shows the time of a change after the write of its record: each
   reader sees the written copy.
 - A status is a signal. The wire type refuses a bad text. A `register`
@@ -289,9 +290,9 @@ envelope has the caller (`by`) and the kind of the command
 ```
 
 - The records of one command are in one chunk, one after another
-  (01M3X4Z60G1FXQTDC5XDJ05BAX). `State::queue` gives the records of a command their
-  positions and their cause under one lock, and the writer takes whole
-  entries of the queue.
+  (01M3X4Z60G1FXQTDC5XDJ05BAX). `State::queue` gives the records of a
+  command their positions and their cause under one lock, and the writer
+  takes whole entries of the queue.
 - A record from before E2 has no `by` and no `command`. It reads, and
   its cause is not known. `riff-server log` prints the cause of each
   record.
@@ -317,9 +318,9 @@ line has the format of each other log line (`severity`, `time`,
 | `denied` | The token layer refused the call: a command, a query or a signal. | `INFO` |
 
 - The writer makes the lines `refused`, `no_change` and `failed`
-  (`Engine::finish` and `Engine::fail`, 01M3X4Z62RJREQ5H8F18Y85T6V). The token layer
-  makes the line `denied` (01M3X4Z64ZNRD0G0F4JV1M64FN). The module
-  `crates/riff-server/src/trace.rs` holds each line.
+  (`Engine::finish` and `Engine::fail`, 01M3X4Z62RJREQ5H8F18Y85T6V). The
+  token layer makes the line `denied` (01M3X4Z64ZNRD0G0F4JV1M64FN). The
+  module `crates/riff-server/src/trace.rs` holds each line.
 - `failed`: one line for each command of the chunk that was not
   written, and one for each command that waits in the queue when the
   server stops.
@@ -368,8 +369,8 @@ line has the format of each other log line (`severity`, `time`,
 - `key` is the thumbprint of the device key of the token. It is not a
   secret. A call with no token has no `key`.
 - A line never holds the body of a post, a token or a key
-  (01M3X4Z675D0ZQX93E93F3M8FA). A test runs each command with a marked body and a
-  marked token, and finds no mark in the lines.
+  (01M3X4Z675D0ZQX93E93F3M8FA). A test runs each command with a marked
+  body and a marked token, and finds no mark in the lines.
 - A command with records gets no line. A signal and a query that the
   token layer accepts get no line. The request log of Cloud Run holds
   each call with its path and its status.
@@ -503,12 +504,12 @@ so no command can make a stage or lock the state.
 | `Queued<C>` | `Checked::queue`, in the call | The records have positions. The entry of the command is in the queue, and its records are in the pending copy. The lock is free. |
 | `Applied<C>` | `Queued::applied`, from the word of the writer | The chunk of each record is in the log, and the written copy has the records, in order. The log line and the effects of the command are done. |
 
-The writer has a proof too (01M3X4Z6DSWKMJ2R549R4TSYP0). `log::write` gives the value
-`Written`, and only the module `log` makes it. `Engine::finish` takes
-the chunk and its `Written`. So the types show that only a written
-chunk reaches the written copy. A chunk with no record needs no object:
-a write of no record gives its `Written` with no I/O. A chunk that is
-not written goes to `Engine::fail`.
+The writer has a proof too (01M3X4Z6DSWKMJ2R549R4TSYP0). `log::write`
+gives the value `Written`, and only the module `log` makes it.
+`Engine::finish` takes the chunk and its `Written`. So the types show
+that only a written chunk reaches the written copy. A chunk with no
+record needs no object: a write of no record gives its `Written` with no
+I/O. A chunk that is not written goes to `Engine::fail`.
 
 - Only `Applied` gives the reply. So a handler cannot reply before the
   write. The writer sends the effects, so no wake goes out for a record
