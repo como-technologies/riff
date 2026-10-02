@@ -2575,6 +2575,9 @@ sequenceDiagram
     L->>H: workers start 1
 ```
 
+The note comes first. Then the rollout starts the worker, in the same
+look.
+
 | You change | The lead gets |
 |---|---|
 | `riff workers limit` on its machine or on a host | `workers: limit 3 to 4 on pangolin.` |

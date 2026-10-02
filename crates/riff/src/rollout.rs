@@ -86,7 +86,12 @@
 //!
 //! [`effect`] finds what the change does (01M3X30R4PSBP3RQWM02BJ6GK3). The message is a note
 //! when the lead has nothing to do. It wakes the lead only when work
-//! waits that the change lets start and the rollout is off (01M3X30RA3X08JBJ2JBVCCNEH3). A
+//! waits that the change lets start and the rollout is off (01M3X30RA3X08JBJ2JBVCCNEH3).
+//! One look uses each limit one time: the view of the look takes the
+//! limits that the look read for the changes ([`View::with_limits`]).
+//! So a limit that changes in the middle of a look starts no worker
+//! before the next look, and the note comes before the start
+//! (01M3XFHSYJEN9V6QEKWJGJWQ8Q). A
 //! workers host sets its status at once when its limit changes, and
 //! posts the note for a change of its own MCP servers
 //! ([`crate::host`], 01M3X30RJS8YE5TXJBQDC2FT0C).
@@ -161,6 +166,39 @@ pub struct View {
     pub idle: usize,
     /// The machines, the machine of the lead first.
     pub places: Vec<Place>,
+}
+
+impl View {
+    /// The view with the limits of `seen`: each machine gets the limit
+    /// that the look read for the changes (01M3XFHSYJEN9V6QEKWJGJWQ8Q).
+    /// A machine that `seen` does not have keeps its limit.
+    ///
+    /// ```
+    /// use riff::rollout::{Place, Seen, View};
+    ///
+    /// let place = |host: &str| Place {
+    ///     host: host.into(),
+    ///     session: None,
+    ///     limit: 2,
+    ///     workers: 1,
+    ///     floor: 4,
+    ///     machine: None,
+    /// };
+    /// let view = View { running: true, work: 1, idle: 0, places: vec![place("a"), place("b")] };
+    /// // A person set the limit of `a` from 1 to 2 after the look read it.
+    /// let seen = Seen { limits: [("a".to_owned(), 1)].into(), ..Seen::default() };
+    /// let view = view.with_limits(&seen);
+    /// assert_eq!(view.places[0].limit, 1);
+    /// assert_eq!(view.places[1].limit, 2);
+    /// ```
+    pub fn with_limits(mut self, seen: &Seen) -> View {
+        for place in &mut self.places {
+            if let Some(&limit) = seen.limits.get(&place.host) {
+                place.limit = limit;
+            }
+        }
+        self
+    }
 }
 
 /// The machine with room and the most free capacity, or `None`. On a
@@ -461,6 +499,10 @@ pub trait Env {
 /// At each look it tells the lead each change of a worker setting
 /// (01M3X30KHKB6W11C3NBAW7KCGW). A rollout that is off looks at the settings each
 /// [`OFF_WAIT`], and starts no worker.
+///
+/// One look reads each limit one time, tells the changes, and then
+/// starts the worker ([`View::with_limits`], 01M3XFHSYJEN9V6QEKWJGJWQ8Q).
+/// So the note of a higher limit comes before the start that it names.
 pub async fn run(env: impl Env) {
     let mut last_error = None;
     let mut known: Option<Seen> = None;
@@ -474,8 +516,10 @@ pub async fn run(env: impl Env) {
             };
             let on = seen.interval > 0;
             let changed = known.as_ref().map(|k| k.changes(&seen)).unwrap_or_default();
+            // One look uses each limit one time: a limit that changes
+            // after `seen` has no effect before the next look.
             let view = if on || !changed.is_empty() {
-                env.look().await?
+                env.look().await?.map(|view| view.with_limits(&seen))
             } else {
                 None
             };
@@ -1028,6 +1072,11 @@ mod tests {
         stops: usize,
         /// Each message to the lead, with true when it wakes the lead.
         told: Vec<(String, bool)>,
+        /// A person sets this limit on the first machine in the middle
+        /// of the next look: after its `seen`, before its `look`.
+        limit_in_look: Option<u16>,
+        /// What the rollout did, in order: `told` and `start`.
+        order: Vec<&'static str>,
     }
 
     impl World {
@@ -1088,18 +1137,25 @@ mod tests {
 
         async fn seen(&self) -> Result<Option<Seen>> {
             Ok(self.with(|w| {
-                w.lead.then(|| Seen {
+                let seen = w.lead.then(|| Seen {
                     host: w.places[0].host.clone(),
                     interval: w.interval.as_secs() as u16,
                     mcp: vec!["riff".into()],
                     idle: Some(Idle::default()),
                     limits: w.places.iter().map(|p| (p.host.clone(), p.limit)).collect(),
-                })
+                });
+                if let Some(limit) = w.limit_in_look.take() {
+                    w.places[0].limit = limit;
+                }
+                seen
             }))
         }
 
         async fn tell(&self, body: &str, wake: bool) -> Result<()> {
-            self.with(|w| w.told.push((body.to_owned(), wake)));
+            self.with(|w| {
+                w.told.push((body.to_owned(), wake));
+                w.order.push("told");
+            });
             Ok(())
         }
 
@@ -1122,6 +1178,7 @@ mod tests {
                 let now = tokio::time::Instant::now();
                 w.new.push((place.host.clone(), now));
                 w.starts.push((place.host.clone(), now));
+                w.order.push("start");
             });
             Ok(())
         }
@@ -1173,6 +1230,8 @@ mod tests {
             starts: Vec::new(),
             stops: 0,
             told: Vec::new(),
+            limit_in_look: None,
+            order: Vec::new(),
         }
     }
 
@@ -1341,6 +1400,47 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(10)).await;
         task.abort();
         assert_eq!(fake.hosts(), ["pangolin", "pangolin"]);
+        assert_eq!(
+            fake.with(|w| w.told.clone()),
+            [(
+                "workers: limit 1 to 2 on pangolin: the rollout starts 1 worker.".to_owned(),
+                false
+            )]
+        );
+    }
+
+    /// A person sets a higher limit in the middle of a look: after the
+    /// look read the limits, before it reads the machines. That look
+    /// starts no worker with the new limit. The next look tells the
+    /// lead that the rollout starts a worker, and then starts it
+    /// (01M3XFHSYJEN9V6QEKWJGJWQ8Q).
+    #[tokio::test(start_paused = true)]
+    async fn a_limit_that_changes_in_a_look_gives_the_note_before_the_start() {
+        let mut w = world(3);
+        w.places = vec![Place {
+            limit: 1,
+            ..pangolin()
+        }];
+        let fake = Fake::new(w);
+        let task = tokio::spawn(run(fake.clone()));
+        // The looks at 10, 20 and 30 s: one worker, and it claimed.
+        tokio::time::sleep(Duration::from_secs(35)).await;
+        assert_eq!(fake.with(|w| w.order.clone()), ["start"]);
+
+        // The look at 40 s reads the limit 1. Then the limit is 2.
+        fake.with(|w| w.limit_in_look = Some(2));
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert_eq!(fake.with(|w| w.places[0].limit), 2);
+        assert_eq!(
+            fake.with(|w| w.order.clone()),
+            ["start"],
+            "the look with the old limit starts no worker"
+        );
+
+        // The look at 50 s.
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        task.abort();
+        assert_eq!(fake.with(|w| w.order.clone()), ["start", "told", "start"]);
         assert_eq!(
             fake.with(|w| w.told.clone()),
             [(
