@@ -367,7 +367,7 @@ pub async fn prune(
 mod tests {
     use super::*;
     use crate::store::Memory;
-    use riff_core::record::{Change, Record, RiffStateSet};
+    use riff_core::record::{Change, PauseSet, Record, Scope};
     use riff_core::wire::RiffState;
     use std::time::Instant;
 
@@ -377,7 +377,8 @@ mod tests {
             written_at_ms: 0,
             by: None,
             command: None,
-            change: Change::RiffStateSet(RiffStateSet {
+            change: Change::PauseSet(PauseSet {
+                scope: Scope::Riff,
                 state: RiffState::Running,
             }),
         }

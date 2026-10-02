@@ -212,7 +212,7 @@ impl Presence {
     ///   claims of the session (01M3Q551WCMPQRCNJ8FXQEBFY4). A session
     ///   whose item another session takes has a `released` record of
     ///   its own, before the `claimed` record (01M3X4Z6BKM251H7CS2CEGR205).
-    /// - `pause_set`, and `riff_state_set` of an old log: the time for a
+    /// - `pause_set`: the time for a
     ///   stale status (01M3Q551YHYZBFV2NDS1QCYXCD), for the riff or for
     ///   the repository of the record.
     /// - `session_forgotten`: the session leaves memory, with its read
@@ -221,7 +221,6 @@ impl Presence {
         match &record.change {
             Change::Claimed(claimed) => self.claims_changed(claimed.session.who(), at),
             Change::Released(released) => self.claims_changed(released.session.who(), at),
-            Change::RiffStateSet(_) => self.riff_changed = at.or(self.riff_changed),
             Change::PauseSet(set) => match (&set.scope, at) {
                 (Scope::Riff, _) => self.riff_changed = at.or(self.riff_changed),
                 (Scope::Repository(thread), Some(at)) => {
@@ -425,7 +424,7 @@ mod tests {
     use std::time::Duration;
 
     use riff_core::name::SessionUri;
-    use riff_core::record::{Claimed, Forgotten, Member, PauseSet, Released, RiffStateSet};
+    use riff_core::record::{Claimed, Forgotten, Member, PauseSet, Released};
     use riff_core::wire::RiffState;
 
     use super::super::riff::apply;
@@ -509,18 +508,6 @@ mod tests {
     }
 
     #[test]
-    fn a_riff_state_set_record_sets_the_time_for_a_stale_status() {
-        let since = Instant::now();
-        let at = since + Duration::from_secs(9);
-        let mut presence = presence(since);
-        let record = record(Change::RiffStateSet(RiffStateSet {
-            state: RiffState::Running,
-        }));
-        presence.applied(&record, &Riff::default(), Some(at));
-        assert_eq!(presence.riff_changed, Some(at));
-    }
-
-    #[test]
     fn a_pause_set_record_sets_the_time_for_its_scope() {
         let since = Instant::now();
         let at = since + Duration::from_secs(9);
@@ -555,7 +542,8 @@ mod tests {
         let changes = [
             Change::Claimed(claim_of(&bob())),
             Change::Released(Released::of(claim_of(&bob()))),
-            Change::RiffStateSet(RiffStateSet {
+            Change::PauseSet(PauseSet {
+                scope: Scope::Riff,
                 state: RiffState::Running,
             }),
         ];

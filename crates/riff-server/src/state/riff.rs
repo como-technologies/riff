@@ -42,14 +42,14 @@
 //! | each record that names a session | It keeps the URI of the session and the time of the record. | Yes. |
 //! | `session_started` | It stores the worker mark. A record with the reason `process` or `clear` also stores its time, and ends MustClear. A record with the reason `other` changes nothing. | Yes. |
 //! | `released` | A record with `must_clear` sets the MustClear mark of its session. | Yes. |
-//! | `pause_set`, `riff_state_set` | It keeps the `by` and the time of the record with the pause: who set it, and when (01M3XAHZBGSSJB3YX23K88W01K). A `riff_state_set` record of an old log sets the pause of the whole riff. A scope that this build does not know changes nothing. | Yes. |
+//! | `pause_set` | It keeps the `by` and the time of the record with the pause: who set it, and when (01M3XAHZBGSSJB3YX23K88W01K). A scope that this build does not know changes nothing. | Yes. |
 //! | `riff_made` | A riff keeps its first ID: a second record changes nothing. `handle` makes the record only for a riff with no ID. | Yes. |
 //! | `person_joined` | The first email keeps a USER (R209): a record for a USER that another email holds changes nothing. `handle` refuses such a sign-in. | Yes. |
 //! | `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins (01M3XA87A9GGFA89RQXWSKY0V6). | Yes. |
 //! | `signins_ended` | It keeps the position of the record for the USER. | Yes. |
 //! | `owner_set` | It ends the request for the owner role that waits. A record with no email says that the owner is gone. | Yes. |
 
-use riff_core::record::{Change, Record, Scope};
+use riff_core::record::{Change, Record};
 
 use super::people::People;
 use super::sessions::Sessions;
@@ -72,12 +72,12 @@ use super::work::Work;
 /// A record changes the riff, through [`apply`]:
 ///
 /// ```
-/// use riff_core::record::{Change, Record, RiffStateSet};
+/// use riff_core::record::{Change, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::state::{Riff, apply};
 ///
 /// let mut riff = Riff::default();
-/// let change = Change::RiffStateSet(RiffStateSet { state: RiffState::Running });
+/// let change = Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running });
 /// apply(&mut riff, &Record { position: 7, written_at_ms: 0, by: None, command: None, change });
 /// assert_eq!(riff.position(), 7);
 /// ```
@@ -194,7 +194,6 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         }
         Change::SessionStarted(started) => riff.sessions.started(started, record.written_at_ms),
         Change::LeadSet(member) => riff.work.lead_set(member),
-        Change::RiffStateSet(set) => riff.the_riff.pause_set(&Scope::Riff, set.state, record),
         Change::PauseSet(set) => riff.the_riff.pause_set(&set.scope, set.state, record),
         Change::SettingChanged(changed) => riff.the_riff.setting_changed(changed),
         Change::SessionForgotten(forgotten) => {

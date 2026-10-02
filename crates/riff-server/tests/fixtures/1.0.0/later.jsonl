@@ -1,0 +1,6 @@
+{"format":1,"first":1}
+{"position":1,"written_at_ms":1800000000000,"by":{"person":"ann"},"command":"pause","change":{"pause_set":{"scope":"host","state":"paused"}}}
+{"position":2,"written_at_ms":1800000001000,"by":{"person":"ann"},"command":"pause","change":{"pause_set":{"scope":{"wave":"17"},"state":"paused"}}}
+{"position":3,"written_at_ms":1800000002000,"by":{"session":"ann/a1"},"command":"start","change":{"session_started":{"session":"riff://ann@heron/acme/app?session=a1","reason":"wake"}}}
+{"position":4,"written_at_ms":1800000003000,"by":"cron","command":"sweep","change":{"setting_changed":{"idle":{"per_host":2,"after_secs":300}}}}
+{"position":5,"written_at_ms":1800000004000,"by":{"robot":"r2"},"command":"invite","change":{"member_invited":{"email":"gina@acme.io"}}}
