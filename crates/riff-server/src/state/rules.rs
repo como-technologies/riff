@@ -14,8 +14,8 @@
 //! The tests do no I/O.
 
 use riff_core::record::{
-    By, Claimed, Forgotten, Member, PauseSet, Released, RiffMade, RiffStateSet, Scope,
-    SessionStarted, SettingChanged,
+    By, Claimed, Forgotten, Member, PauseSet, Released, RiffMade, Scope, SessionStarted,
+    SettingChanged,
 };
 use riff_core::wire;
 
@@ -1109,18 +1109,17 @@ fn a_pause_of_one_repository_stops_no_claim_in_another() {
         })]);
 }
 
-/// A `riff_state_set` record of an old log sets the pause of the whole
-/// riff, and a scope that the build does not know changes no pause
+/// A scope that the build does not know changes no pause
 /// (01M3XAHZG26ECNARX35JD73YXJ).
 #[test]
-fn an_old_record_sets_the_pause_of_the_riff_and_an_unknown_scope_changes_nothing() {
-    let old = |state| Change::RiffStateSet(RiffStateSet { state });
-    let state = given(&[old(RiffState::Running)]).state;
+fn a_pause_with_a_scope_that_the_build_does_not_know_changes_nothing() {
+    let riff = |state| pause_set(Scope::Riff, state);
+    let state = given(&[riff(RiffState::Running)]).state;
     assert!(state.pauses().riff().is_none());
-    let state = given(&[old(RiffState::Running), old(RiffState::Paused)]).state;
+    let state = given(&[riff(RiffState::Running), riff(RiffState::Paused)]).state;
     assert!(state.pauses().riff().is_some());
     let other = pause_set(Scope::Other, RiffState::Paused);
-    let state = given(&[old(RiffState::Running), other]).state;
+    let state = given(&[riff(RiffState::Running), other]).state;
     assert!(state.pauses().check(&repo()).is_none());
     assert_eq!(state.position(), 2);
 }

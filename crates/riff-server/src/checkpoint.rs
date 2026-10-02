@@ -32,7 +32,9 @@
 //! - The server writes a checkpoint each [`Settings::every_records`]
 //!   records, or each [`Settings::every`] when records came.
 //! - A build writes no checkpoint past the first record that it skipped
-//!   ([`crate::log::Replayed::skipped`]). A build writes no checkpoint
+//!   ([`crate::log::Replayed::skipped`]): a record of a kind that it
+//!   does not know, or with a value that it read as `other`
+//!   (01M3XM2C18TT8VSKGD77YPZG53). A build writes no checkpoint
 //!   while the newest checkpoint comes from a later version, or does not
 //!   read ([`Found::blocked`]). So a rollback and a roll forward lose no
 //!   record: the newer build replays each record after its own
@@ -367,7 +369,7 @@ pub async fn prune(
 mod tests {
     use super::*;
     use crate::store::Memory;
-    use riff_core::record::{Change, Record, RiffStateSet};
+    use riff_core::record::{Change, PauseSet, Record, Scope};
     use riff_core::wire::RiffState;
     use std::time::Instant;
 
@@ -377,7 +379,8 @@ mod tests {
             written_at_ms: 0,
             by: None,
             command: None,
-            change: Change::RiffStateSet(RiffStateSet {
+            change: Change::PauseSet(PauseSet {
+                scope: Scope::Riff,
                 state: RiffState::Running,
             }),
         }

@@ -5,8 +5,7 @@
 //!
 //! - Part of the riff: [`TheRiff`]. The pauses ([`Pauses`]), and the
 //!   settings of idle workers.
-//! - `apply`: `TheRiff::pause_set` for a `pause_set` record and for a
-//!   `riff_state_set` record of an old log, and
+//! - `apply`: `TheRiff::pause_set` for a `pause_set` record, and
 //!   `TheRiff::setting_changed` for a `setting_changed` record. The
 //!   `session_forgotten` record of [`Forget`] changes each part: see
 //!   [`super::riff`].

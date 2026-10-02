@@ -635,6 +635,19 @@ impl State {
         Some((who, wake))
     }
 
+    /// The written copy: the riff that the written records give.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::state::{Riff, State};
+    ///
+    /// let state = State::replay([], Instant::now(), 0);
+    /// assert_eq!(*state.written_riff(), Riff::default());
+    /// ```
+    pub fn written_riff(&self) -> &Riff {
+        &self.written
+    }
+
     /// True when the state that the log gives is the same in both
     /// states: the written copies.
     pub fn same_log_state(&self, other: &State) -> bool {

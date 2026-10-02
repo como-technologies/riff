@@ -1122,12 +1122,16 @@ pub struct Start {
 /// let read = |json: &str| serde_json::from_str::<StartReason>(json).unwrap();
 /// assert_eq!(read(r#""process""#), StartReason::Process);
 /// assert_eq!(read(r#""wake""#), StartReason::Other);
+/// // A reason of a later build can have each form of JSON.
+/// for later in [r#"{"wake":"timer"}"#, "7", "null", r#"["clear"]"#] {
+///     assert_eq!(read(later), StartReason::Other, "{later}");
+/// }
 /// assert!(StartReason::Clear.is_fresh() && StartReason::Process.is_fresh());
 /// assert!(!StartReason::Resume.is_fresh() && !StartReason::Join.is_fresh());
 /// assert!(StartReason::Resume.is_start() && !StartReason::Join.is_start());
 /// assert_eq!(StartReason::Clear.word(), "clear");
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StartReason {
     Process,
@@ -1135,8 +1139,26 @@ pub enum StartReason {
     Clear,
     Join,
     /// A reason that this build does not know.
-    #[serde(other)]
     Other,
+}
+
+/// The set of reasons can grow. A build reads each value that it does
+/// not know as [`StartReason::Other`]: a text, and each other form of
+/// JSON (01M3XM2C18TT8VSKGD77YPZG53).
+impl<'de> Deserialize<'de> for StartReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let known = [
+            StartReason::Process,
+            StartReason::Resume,
+            StartReason::Clear,
+            StartReason::Join,
+        ];
+        Ok(known
+            .into_iter()
+            .find(|reason| value.as_str() == Some(reason.word()))
+            .unwrap_or(StartReason::Other))
+    }
 }
 
 impl StartReason {

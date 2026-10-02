@@ -177,7 +177,7 @@ server      https://riff.example.com  (from RIFF_SERVER)
 | `serves` | `yes`, or `no, it replies 503` and why. A server that does not serve still gives its facts. |
 | `error` | The last error of the server since its start, with its age. |
 | `log` | The position of the last record, and the time and the duration of the last chunk write. |
-| `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped. |
+| `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped: a record of a kind that this build does not know, or with a value that it does not know. |
 | `saved` | The newest checkpoint: its position, its age and its release. When this build writes no checkpoint, the line says why. |
 | `counts` | The chunks in the store, the sessions, the read cursors, the threads, and the live sign-ins. |
 | `memory` | The memory that the server uses. |

@@ -284,104 +284,64 @@ impl Cause {
     }
 }
 
-/// The kind of a command: its name in a record and in a log line. A
-/// kind is never renamed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CommandKind {
-    Register,
-    Start,
-    End,
-    Join,
-    Leave,
-    Post,
-    Announce,
-    Claim,
-    Release,
-    ReleaseFor,
-    Lead,
-    MakeRiff,
-    Pause,
-    Resume,
-    SetIdle,
-    Forget,
-    Admit,
-    Invite,
-    Remove,
-    SetAdmin,
-    PassOwner,
-    TakeOwner,
-    DenyOwner,
-    GrantOwner,
-    EndOwner,
-    NameOwner,
-    Revoke,
+/// Makes the enum [`CommandKind`], the list [`CommandKind::ALL`] and
+/// [`CommandKind::as_str`] from one list of kinds. So a kind cannot be
+/// missing from the list.
+macro_rules! command_kinds {
+    ($($variant:ident = $name:literal,)*) => {
+        /// The kind of a command: its name in a record and in a log
+        /// line. A kind is never renamed, and the name of a removed kind
+        /// is never used again (01M3XM2C3MND6YB24SGZ565353).
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum CommandKind {
+            $($variant,)*
+        }
+
+        impl CommandKind {
+            /// Each kind of this build.
+            pub const ALL: [CommandKind; [$($name),*].len()] = [$(CommandKind::$variant),*];
+
+            /// The name of the kind.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(CommandKind::$variant => $name,)*
+                }
+            }
+        }
+    };
+}
+
+command_kinds! {
+    Register = "register",
+    Start = "start",
+    End = "end",
+    Join = "join",
+    Leave = "leave",
+    Post = "post",
+    Announce = "announce",
+    Claim = "claim",
+    Release = "release",
+    ReleaseFor = "release_for",
+    Lead = "lead",
+    MakeRiff = "make_riff",
+    Pause = "pause",
+    Resume = "resume",
+    SetIdle = "set_idle",
+    Forget = "forget",
+    Admit = "admit",
+    Invite = "invite",
+    Remove = "remove",
+    SetAdmin = "set_admin",
+    PassOwner = "pass_owner",
+    TakeOwner = "take_owner",
+    DenyOwner = "deny_owner",
+    GrantOwner = "grant_owner",
+    EndOwner = "end_owner",
+    NameOwner = "name_owner",
+    Revoke = "revoke",
 }
 
 impl CommandKind {
-    /// Each kind of this build.
-    pub const ALL: [CommandKind; 27] = [
-        CommandKind::Register,
-        CommandKind::Start,
-        CommandKind::End,
-        CommandKind::Join,
-        CommandKind::Leave,
-        CommandKind::Post,
-        CommandKind::Announce,
-        CommandKind::Claim,
-        CommandKind::Release,
-        CommandKind::ReleaseFor,
-        CommandKind::Lead,
-        CommandKind::MakeRiff,
-        CommandKind::Pause,
-        CommandKind::Resume,
-        CommandKind::SetIdle,
-        CommandKind::Forget,
-        CommandKind::Admit,
-        CommandKind::Invite,
-        CommandKind::Remove,
-        CommandKind::SetAdmin,
-        CommandKind::PassOwner,
-        CommandKind::TakeOwner,
-        CommandKind::DenyOwner,
-        CommandKind::GrantOwner,
-        CommandKind::EndOwner,
-        CommandKind::NameOwner,
-        CommandKind::Revoke,
-    ];
-
-    /// The name of the kind.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            CommandKind::Register => "register",
-            CommandKind::Start => "start",
-            CommandKind::End => "end",
-            CommandKind::Join => "join",
-            CommandKind::Leave => "leave",
-            CommandKind::Post => "post",
-            CommandKind::Announce => "announce",
-            CommandKind::Claim => "claim",
-            CommandKind::Release => "release",
-            CommandKind::ReleaseFor => "release_for",
-            CommandKind::Lead => "lead",
-            CommandKind::MakeRiff => "make_riff",
-            CommandKind::Pause => "pause",
-            CommandKind::Resume => "resume",
-            CommandKind::SetIdle => "set_idle",
-            CommandKind::Forget => "forget",
-            CommandKind::Admit => "admit",
-            CommandKind::Invite => "invite",
-            CommandKind::Remove => "remove",
-            CommandKind::SetAdmin => "set_admin",
-            CommandKind::PassOwner => "pass_owner",
-            CommandKind::TakeOwner => "take_owner",
-            CommandKind::DenyOwner => "deny_owner",
-            CommandKind::GrantOwner => "grant_owner",
-            CommandKind::EndOwner => "end_owner",
-            CommandKind::NameOwner => "name_owner",
-            CommandKind::Revoke => "revoke",
-        }
-    }
-
     /// True for a command of the group "people". A riff with no sign-in
     /// refuses each of them (01M3WRD9G5GAF65EX8P6D5DMQM), and the log
     /// line of each has no reason: the reason can name an email

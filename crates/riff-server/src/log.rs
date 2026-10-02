@@ -55,6 +55,13 @@
 //! the position of the first skipped record: the server writes no
 //! checkpoint past it (see [`crate::checkpoint`]).
 //!
+//! A record with a value that this build read as `other`
+//! ([`Record::other`]) counts as a skipped record too
+//! (01M3XM2C18TT8VSKGD77YPZG53). The replay gives it to the state, and
+//! `apply` changes nothing for the value. A later build knows the
+//! value, so a checkpoint of this build past the record loses what the
+//! record says.
+//!
 //! A start from a checkpoint reads only the records after its position
 //! ([`replay_after`]): from the chunk that holds the next position.
 //!
@@ -62,7 +69,7 @@
 //!
 //! ```
 //! # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
-//! use riff_core::record::{Change, Record, RiffStateSet};
+//! use riff_core::record::{Change, PauseSet, Record, Scope};
 //! use riff_core::wire::RiffState;
 //! use riff_server::log::{Timing, replay, write};
 //! use riff_server::store::Memory;
@@ -73,7 +80,7 @@
 //!     written_at_ms: 0,
 //!     by: None,
 //!     command: None,
-//!     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
+//!     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 //! };
 //! let serving = || true;
 //! write(&store, &[record(1), record(2)], &Timing::default(), serving).await?;
@@ -158,7 +165,7 @@ pub fn encode(records: &[Record]) -> Vec<u8> {
 /// Reads the lines of a chunk.
 ///
 /// ```
-/// use riff_core::record::{Change, Line, Record, RiffStateSet};
+/// use riff_core::record::{Change, Line, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::log::{decode, encode};
 ///
@@ -167,7 +174,7 @@ pub fn encode(records: &[Record]) -> Vec<u8> {
 ///     written_at_ms: 0,
 ///     by: None,
 ///     command: None,
-///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Paused }),
+///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Paused }),
 /// };
 /// let (header, lines) = decode(&encode(&[record.clone()])).unwrap();
 /// assert_eq!((header.format, header.first), (1, 7));
@@ -253,7 +260,7 @@ pub async fn write(
 /// ```
 /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
 /// use std::sync::atomic::{AtomicU64, Ordering};
-/// use riff_core::record::{Change, Record, RiffStateSet};
+/// use riff_core::record::{Change, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::log::{Timing, write_counted};
 /// use riff_server::store::Memory;
@@ -263,7 +270,7 @@ pub async fn write(
 ///     written_at_ms: 0,
 ///     by: None,
 ///     command: None,
-///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
+///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 /// };
 /// let (store, failed) = (Memory::default(), AtomicU64::new(0));
 /// write_counted(&store, &[record.clone()], &Timing::default(), || true, &failed).await?;
@@ -366,7 +373,7 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 ///
 /// ```
 /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
-/// use riff_core::record::{Change, Record, RiffStateSet};
+/// use riff_core::record::{Change, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::log::{Timing, replay_after, write};
 /// use riff_server::store::Memory;
@@ -377,7 +384,7 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 ///     written_at_ms: 0,
 ///     by: None,
 ///     command: None,
-///     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
+///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 /// };
 /// write(&store, &[record(1), record(2)], &Timing::default(), || true).await?;
 /// write(&store, &[record(3)], &Timing::default(), || true).await?;
@@ -385,6 +392,17 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 /// let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
 /// assert_eq!(positions, [2, 3]);
 /// assert!(replay_after(&store, 3).await?.records.is_empty());
+///
+/// // A later build wrote a pause with a scope that this build does not
+/// // know. The record counts as a skipped record.
+/// let later = Record {
+///     change: Change::PauseSet(PauseSet { scope: Scope::Other, state: RiffState::Paused }),
+///     ..record(4)
+/// };
+/// write(&store, &[later], &Timing::default(), || true).await?;
+/// let replayed = replay_after(&store, 3).await?;
+/// assert_eq!(replayed.records.len(), 1);
+/// assert_eq!((replayed.skipped, replayed.skips), (Some(4), 1));
 /// # Ok(()) }
 /// ```
 pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, StoreError> {
@@ -432,7 +450,17 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
                 continue;
             }
             match line {
-                Line::Record(record) => records.push(*record),
+                Line::Record(record) => {
+                    if let Some(field) = record.other() {
+                        tracing::warn!(
+                            position = record.position,
+                            "read a value of the field {field} that this build does not know as other"
+                        );
+                        skipped = skipped.or(Some(record.position));
+                        skips += 1;
+                    }
+                    records.push(*record);
+                }
                 Line::Unknown { position, kind } => {
                     tracing::warn!(position, "skipped a record of the unknown kind {kind}");
                     skipped = skipped.or(Some(position));
@@ -465,15 +493,18 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
 /// The log as [`replay`] reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Replayed {
-    /// Each record of a kind that this build knows, in order.
+    /// Each record of a kind that this build knows, in order. A record
+    /// with a value that this build read as `other` is here too.
     pub records: Vec<Record>,
     /// The position of the last record, also of a skipped one. The next
     /// record comes after it, so it never takes the position of a skipped
     /// record.
     pub last: u64,
-    /// The position of the first record that this build skipped.
+    /// The position of the first record that this build skipped, or
+    /// read with a value `other`.
     pub skipped: Option<u64>,
-    /// The number of records that this build skipped.
+    /// The number of records that this build skipped, or read with a
+    /// value `other`.
     pub skips: u64,
     /// The number of chunks in the store, also the ones that the replay
     /// did not read.

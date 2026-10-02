@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use isolated::Isolated;
 use riff_core::name::Who;
-use riff_core::record::{By, Change, Claimed, Record, RiffStateSet};
+use riff_core::record::{By, Change, Claimed, PauseSet, Record, Scope};
 use riff_core::wire::RiffState;
 use riff_server::checkpoint::{self, Checkpoint};
 use riff_server::log::{self, chunk_name};
@@ -27,7 +27,8 @@ fn running(position: u64) -> Record {
         written_at_ms: 1_790_000_000_000,
         by: None,
         command: None,
-        change: Change::RiffStateSet(RiffStateSet {
+        change: Change::PauseSet(PauseSet {
+            scope: Scope::Riff,
             state: RiffState::Running,
         }),
     }
@@ -104,7 +105,7 @@ async fn log_prints_the_records_as_text() {
     assert_eq!(lines.len(), 6, "{stdout}");
     assert_eq!(
         lines[0],
-        "1  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)"
+        "1  2026-09-21T14:13:20Z  pause_set  the riff  running  (cause not known)"
     );
     assert_eq!(
         lines[1],
@@ -190,7 +191,7 @@ async fn log_cut_removes_the_chunks_after_a_position_and_names_the_records() {
         [
             "4  2026-09-21T14:13:20Z  claimed  issue-4 in acme/app by \
              riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
-            "5  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)",
+            "5  2026-09-21T14:13:20Z  pause_set  the riff  running  (cause not known)",
             "6  2026-09-21T14:13:20Z  claimed  issue-6 in acme/app by \
              riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
             &format!("checkpoint  {}", checkpoint.display()),
@@ -367,7 +368,7 @@ async fn log_cut_with_no_yes_is_a_dry_run() {
         [
             "4  2026-09-21T14:13:20Z  claimed  issue-4 in acme/app by \
              riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
-            "5  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)",
+            "5  2026-09-21T14:13:20Z  pause_set  the riff  running  (cause not known)",
             "6  2026-09-21T14:13:20Z  claimed  issue-6 in acme/app by \
              riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)",
             &format!("checkpoint  {}", checkpoint.display()),

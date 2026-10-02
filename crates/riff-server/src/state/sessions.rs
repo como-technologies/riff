@@ -96,8 +96,7 @@ fn named(change: &Change) -> Option<&SessionUri> {
         Change::Claimed(c) => Some(&c.session),
         Change::Released(r) => Some(&r.session),
         Change::SessionStarted(s) => Some(&s.session),
-        Change::RiffStateSet(_)
-        | Change::SettingChanged(_)
+        Change::SettingChanged(_)
         | Change::SessionForgotten(_)
         | Change::PauseSet(_)
         | Change::RiffMade(_)

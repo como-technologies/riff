@@ -56,7 +56,7 @@
 //!
 //! ```
 //! # #[tokio::main] async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use riff_core::record::{Change, Record, RiffStateSet};
+//! use riff_core::record::{Change, PauseSet, Record, Scope};
 //! use riff_core::wire::RiffState;
 //! use riff_server::log::{Timing, write};
 //! use riff_server::store::Memory;
@@ -68,13 +68,13 @@
 //!     written_at_ms: 1_790_000_000_000,
 //!     by: None,
 //!     command: None,
-//!     change: Change::RiffStateSet(RiffStateSet { state: RiffState::Running }),
+//!     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 //! };
 //! write(&store, &[record(1), record(2), record(3)], &Timing::default(), || true).await?;
 //!
 //! let mut lines = Vec::new();
 //! print(&store, 2, &mut |line| lines.push(line)).await?;
-//! assert_eq!(lines[0], "2  2026-09-21T14:13:20Z  riff_state_set  running  (cause not known)");
+//! assert_eq!(lines[0], "2  2026-09-21T14:13:20Z  pause_set  the riff  running  (cause not known)");
 //! assert_eq!(lines.len(), 2);
 //!
 //! assert!(verify(&store).await?.problems.is_empty());
@@ -230,7 +230,6 @@ pub fn show(record: &Record) -> String {
             if s.worker { ", a worker" } else { "" }
         ),
         Change::LeadSet(m) => format!("lead_set  {} by {}", m.thread, m.session),
-        Change::RiffStateSet(s) => format!("riff_state_set  {}", s.state),
         Change::SettingChanged(s) => format!(
             "setting_changed  idle workers: {}",
             serde_json::to_string(&s.idle).unwrap_or_default()
@@ -283,8 +282,7 @@ fn thread_of(record: &Record) -> Option<String> {
             Scope::Repository(thread) => Some(thread.to_string()),
             Scope::Riff | Scope::Other => None,
         },
-        Change::RiffStateSet(_)
-        | Change::SettingChanged(_)
+        Change::SettingChanged(_)
         | Change::SessionForgotten(_)
         | Change::SessionStarted(_)
         | Change::RiffMade(_)
@@ -1023,7 +1021,7 @@ mod tests {
     use crate::state::State;
     use crate::store::Memory;
     use futures::future::{BoxFuture, FutureExt};
-    use riff_core::record::{Claimed, RiffStateSet};
+    use riff_core::record::{Claimed, PauseSet};
     use riff_core::wire::RiffState;
     use std::time::{Duration, Instant};
 
@@ -1033,7 +1031,8 @@ mod tests {
             written_at_ms: 0,
             by: None,
             command: None,
-            change: Change::RiffStateSet(RiffStateSet {
+            change: Change::PauseSet(PauseSet {
+                scope: Scope::Riff,
                 state: RiffState::Running,
             }),
         }

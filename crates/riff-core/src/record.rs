@@ -26,6 +26,24 @@
 //!   name of a removed field again.
 //! - A new kind of change gets a new name. A build that does not know a
 //!   kind skips the record ([`Line::Unknown`]).
+//! - A kind is never renamed, and the name of a removed kind is never
+//!   used again (01M3XM2C3MND6YB24SGZ565353). The file
+//!   `crates/riff-server/tests/fixtures/1.0.0/kinds.json` lists the
+//!   kinds of the release, and a test fails when a name of the list is
+//!   gone from the code.
+//! - The enum [`Change`] and the list [`Change::KINDS`] come from one
+//!   macro. So a variant cannot be missing from the list. The order of
+//!   the list is not a part of the format.
+//! - A field with a set of named values that can grow has the value
+//!   `other`: the class in [`By`], the [`Scope`] of a pause, and the
+//!   reason of a start ([`StartReason`]). A build reads a value that it
+//!   does not know as `other`: a text, and each other form of JSON.
+//!   `apply` stores nothing for such a value. Such a record counts as a
+//!   skipped record ([`Record::other`]): the build writes no checkpoint
+//!   past it (01M3XM2C18TT8VSKGD77YPZG53). The `state` of a `pause_set`
+//!   has two values and no `other`.
+//! - `command` is text. A reader takes a kind of command that it does
+//!   not know as text.
 //!
 //! # Example
 //!
@@ -51,8 +69,8 @@
 //! );
 //! assert_eq!(Line::parse(&line)?, Line::Record(Box::new(record)));
 //!
-//! // A record from before the cause reads. Its cause is not known.
-//! let old = r#"{"position":7,"written_at_ms":1,"change":{"riff_state_set":{"state":"running"}}}"#;
+//! // A record with no cause reads. Its cause is not known.
+//! let old = r#"{"position":7,"written_at_ms":1,"change":{"member_invited":{"email":"ann@acme.io"}}}"#;
 //! let Line::Record(old) = Line::parse(old)? else { panic!("a known kind") };
 //! assert_eq!((old.by, old.command), (None, None));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -64,6 +82,35 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::name::{SessionUri, ThreadName, Who};
 use crate::wire::{Idle, Message, RiffState, StartReason};
+
+/// Makes the enum [`Change`], the list [`Change::KINDS`] and
+/// [`Change::kind`] from one list of variants. Each variant gives its
+/// name in the JSON of a record. So a variant cannot be missing from the
+/// list of the kinds.
+macro_rules! changes {
+    ($($(#[$doc:meta])* $variant:ident($body:ty) = $kind:literal,)*) => {
+        /// What happened.
+        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum Change {
+            $($(#[$doc])* #[serde(rename = $kind)] $variant($body),)*
+        }
+
+        impl Change {
+            /// The name of each kind of change, as the JSON of a record
+            /// has it. The order of the list is not a part of the
+            /// format: a reader finds a kind by its name. So a new kind
+            /// can go in at any place.
+            pub const KINDS: &[&str] = &[$($kind),*];
+
+            /// The name of the kind of this change.
+            pub fn kind(&self) -> &'static str {
+                match self {
+                    $(Change::$variant(_) => $kind,)*
+                }
+            }
+        }
+    };
+}
 
 // ANCHOR: record
 /// One line of the log.
@@ -87,60 +134,53 @@ pub struct Record {
     pub change: Change,
 }
 
-/// What happened.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Change {
+changes! {
     /// A message, with its seq in its thread and the sessions that it
     /// woke.
-    Posted(Box<Posted>),
+    Posted(Box<Posted>) = "posted",
     /// A session joined a thread.
-    JoinedThread(Member),
+    JoinedThread(Member) = "joined_thread",
     /// A session left a thread. It is no longer the lead there.
-    LeftThread(Member),
+    LeftThread(Member) = "left_thread",
     /// A session took a claim. It replaces the old holder.
-    Claimed(Claimed),
+    Claimed(Claimed) = "claimed",
     /// A claim is free. The record of the last claim of a worker, made
     /// by its own release, says that the worker must clear its context.
-    Released(Released),
+    Released(Released) = "released",
     /// A session became the lead of its user in a repository thread.
-    LeadSet(Member),
-    /// The whole riff is paused or running. A log from before the kind
-    /// `pause_set` has it. No command makes it
-    /// (01M3XAHZG26ECNARX35JD73YXJ).
-    RiffStateSet(RiffStateSet),
+    LeadSet(Member) = "lead_set",
     /// A setting of the riff changed.
-    SettingChanged(SettingChanged),
+    SettingChanged(SettingChanged) = "setting_changed",
     /// A session had no sign of life for `SESSION_EXPIRY`. The state
     /// drops it: its read cursors, its memberships, its claims, its lead,
     /// and each direct thread whose two sessions are gone.
-    SessionForgotten(Forgotten),
+    SessionForgotten(Forgotten) = "session_forgotten",
     /// A session started, or came with no new start. The record has the
     /// worker mark of the session (01M3X9X9M079WGFPJZHNXH9VEP).
-    SessionStarted(SessionStarted),
+    SessionStarted(SessionStarted) = "session_started",
     /// A pause is set or ended: the pause of the whole riff, or the
     /// pause of one repository (01M3XAHZG26ECNARX35JD73YXJ).
-    PauseSet(PauseSet),
+    PauseSet(PauseSet) = "pause_set",
     /// The riff has its ID. It is the first record of a new log.
-    RiffMade(RiffMade),
+    RiffMade(RiffMade) = "riff_made",
     /// An email signed in for the first time, and holds its USER.
-    PersonJoined(PersonJoined),
+    PersonJoined(PersonJoined) = "person_joined",
     /// An email is a member of the riff.
-    MemberInvited(Email),
+    MemberInvited(Email) = "member_invited",
     /// An email is no member of the riff. Each sign-in of its USER from
     /// before this record is ended.
-    MemberRemoved(Email),
+    MemberRemoved(Email) = "member_removed",
     /// An email is an admin that the owner made, or it is not.
-    AdminSet(AdminSet),
+    AdminSet(AdminSet) = "admin_set",
     /// An email is the owner. With no email, the owner is gone, and the
     /// riff has no owner. The request for the owner role ends.
-    OwnerSet(OwnerSet),
+    OwnerSet(OwnerSet) = "owner_set",
     /// An admin asks for the owner role.
-    OwnerAsked(OwnerAsked),
+    OwnerAsked(OwnerAsked) = "owner_asked",
     /// The owner keeps the owner role that an admin asked for.
-    OwnerDenied(Email),
+    OwnerDenied(Email) = "owner_denied",
     /// Each sign-in of a USER from before this record is ended.
-    SigninsEnded(SigninsEnded),
+    SigninsEnded(SigninsEnded) = "signins_ended",
 }
 // ANCHOR_END: record
 
@@ -277,32 +317,42 @@ impl<'de> Deserialize<'de> for By {
     }
 }
 
-impl Change {
-    /// The name of each kind of change, as the JSON of a record has it.
-    /// The order of the list is not a part of the format: a reader
-    /// finds a kind by its name. So a new kind can go in at any place.
-    pub const KINDS: &[&str] = &[
-        "posted",
-        "joined_thread",
-        "left_thread",
-        "claimed",
-        "released",
-        "lead_set",
-        "riff_state_set",
-        "setting_changed",
-        "session_forgotten",
-        "session_started",
-        "pause_set",
-        "riff_made",
-        "person_joined",
-        "member_invited",
-        "member_removed",
-        "admin_set",
-        "owner_set",
-        "owner_asked",
-        "owner_denied",
-        "signins_ended",
-    ];
+impl Record {
+    /// The field of this record whose value this build read as `other`:
+    /// `by`, `scope` or `reason`. `None` when the build knows each
+    /// value. A record with such a value counts as a skipped record:
+    /// the build writes no checkpoint past it (01M3XM2C18TT8VSKGD77YPZG53).
+    ///
+    /// ```
+    /// use riff_core::record::{Change, Line};
+    ///
+    /// let read = |line: &str| match Line::parse(line).unwrap() {
+    ///     Line::Record(record) => record,
+    ///     Line::Unknown { .. } => panic!("a known kind"),
+    /// };
+    /// let known = r#"{"position":2,"written_at_ms":1,"by":{"person":"ann"},"command":"pause","change":{"pause_set":{"scope":"riff","state":"paused"}}}"#;
+    /// assert_eq!(read(known).other(), None);
+    /// assert_eq!(read(known).change.kind(), "pause_set");
+    /// assert!(Change::KINDS.contains(&"pause_set"));
+    /// // The values of a later build.
+    /// assert_eq!(read(&known.replace(r#""riff""#, r#"{"wave":"17"}"#)).other(), Some("scope"));
+    /// assert_eq!(read(&known.replace(r#""riff""#, r#""host""#)).other(), Some("scope"));
+    /// assert_eq!(read(&known.replace("person", "robot")).other(), Some("by"));
+    /// // The state of a pause has no `other`: the line does not read.
+    /// assert!(Line::parse(&known.replace(r#""paused""#, r#""slow""#)).is_err());
+    /// ```
+    pub fn other(&self) -> Option<&'static str> {
+        if self.by == Some(By::Other) {
+            return Some("by");
+        }
+        match &self.change {
+            Change::PauseSet(set) if set.scope == Scope::Other => Some("scope"),
+            Change::SessionStarted(started) if started.reason == StartReason::Other => {
+                Some("reason")
+            }
+            _ => None,
+        }
+    }
 }
 
 /// A message in a thread.
@@ -404,11 +454,6 @@ pub struct SessionStarted {
     /// True when the session is a worker.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub worker: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RiffStateSet {
-    pub state: RiffState,
 }
 
 /// A pause that a command set or ended. The envelope of the record
@@ -715,9 +760,6 @@ mod tests {
                 ..Released::of(claim)
             }),
             Change::LeadSet(member),
-            Change::RiffStateSet(RiffStateSet {
-                state: RiffState::Running,
-            }),
             Change::SettingChanged(SettingChanged {
                 idle: Idle::default(),
             }),
@@ -757,8 +799,15 @@ mod tests {
     #[test]
     fn each_kind_reads_back_and_has_its_name() {
         let changes = one_of_each();
-        assert_eq!(changes.len(), Change::KINDS.len());
-        for (change, kind) in changes.into_iter().zip(Change::KINDS) {
+        let kinds: BTreeSet<&str> = changes.iter().map(Change::kind).collect();
+        assert_eq!(kinds, BTreeSet::from_iter(Change::KINDS.iter().copied()));
+        assert_eq!(
+            kinds.len(),
+            Change::KINDS.len(),
+            "a name is in the list two times"
+        );
+        for change in changes {
+            let kind = change.kind();
             let record = Record {
                 position: 3,
                 written_at_ms: 4,
@@ -774,16 +823,18 @@ mod tests {
 
     #[test]
     fn an_unknown_field_is_skipped() {
-        let line = r#"{"position":2,"written_at_ms":1,"later":true,"change":{"riff_state_set":{"state":"running","why":"x"}}}"#;
+        let line = r#"{"position":2,"written_at_ms":1,"later":true,"change":{"pause_set":{"scope":"riff","state":"running","why":"x"}}}"#;
         let Line::Record(record) = Line::parse(line).unwrap() else {
             panic!("a known kind");
         };
         assert_eq!(
             record.change,
-            Change::RiffStateSet(RiffStateSet {
+            Change::PauseSet(PauseSet {
+                scope: Scope::Riff,
                 state: RiffState::Running
             })
         );
+        assert_eq!(record.other(), None);
     }
 
     #[test]
@@ -821,11 +872,12 @@ mod tests {
                 "{json}"
             );
         }
-        let line = r#"{"position":2,"written_at_ms":1,"by":{"robot":"r2"},"command":"sweep","change":{"riff_state_set":{"state":"running"}}}"#;
+        let line = r#"{"position":2,"written_at_ms":1,"by":{"robot":"r2"},"command":"sweep","change":{"pause_set":{"scope":"riff","state":"running"}}}"#;
         let Line::Record(record) = Line::parse(line).unwrap() else {
             panic!("a known kind");
         };
         assert_eq!(record.by, Some(By::Other));
+        assert_eq!(record.other(), Some("by"));
         // The kind of a command is text: a kind of a later build reads.
         assert_eq!(record.command.as_deref(), Some("sweep"));
     }
@@ -870,12 +922,53 @@ mod tests {
                 state: RiffState::Paused
             })
         );
+        assert_eq!(record.other(), Some("scope"));
+    }
+
+    #[test]
+    fn a_reason_that_the_build_does_not_know_reads_as_other() {
+        let line = r#"{"position":2,"written_at_ms":1,"change":{"session_started":{"session":"riff://ann@heron/acme/app?session=s1","reason":"wake"}}}"#;
+        let Line::Record(record) = Line::parse(line).unwrap() else {
+            panic!("a known kind");
+        };
+        assert_eq!(record.other(), Some("reason"));
+        let known = line.replace("wake", "join");
+        let Line::Record(record) = Line::parse(&known).unwrap() else {
+            panic!("a known kind");
+        };
+        assert_eq!(record.other(), None);
+        // A reason of a later build can have each form of JSON.
+        for later in [r#"{"wake":"timer"}"#, "7", "null", r#"["join"]"#] {
+            let line = line.replace(r#""wake""#, later);
+            let Line::Record(record) = Line::parse(&line).unwrap() else {
+                panic!("a known kind");
+            };
+            assert_eq!(record.other(), Some("reason"), "{later}");
+        }
+    }
+
+    #[test]
+    fn a_state_of_a_pause_that_the_build_does_not_know_does_not_read() {
+        let line = r#"{"position":2,"written_at_ms":1,"change":{"pause_set":{"scope":"riff","state":"slow"}}}"#;
+        assert!(Line::parse(line).is_err());
+    }
+
+    #[test]
+    fn a_record_of_the_kind_riff_state_set_is_of_no_kind_of_this_build() {
+        let line =
+            r#"{"position":2,"written_at_ms":1,"change":{"riff_state_set":{"state":"running"}}}"#;
+        assert_eq!(
+            Line::parse(line).unwrap(),
+            Line::Unknown {
+                position: 2,
+                kind: "riff_state_set".into()
+            }
+        );
     }
 
     #[test]
     fn a_record_with_no_cause_reads_and_writes_no_cause() {
-        let line =
-            r#"{"position":2,"written_at_ms":1,"change":{"riff_state_set":{"state":"running"}}}"#;
+        let line = r#"{"position":2,"written_at_ms":1,"change":{"pause_set":{"scope":"riff","state":"running"}}}"#;
         let Line::Record(record) = Line::parse(line).unwrap() else {
             panic!("a known kind");
         };
