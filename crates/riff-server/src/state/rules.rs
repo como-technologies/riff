@@ -363,6 +363,7 @@ whole!(
     Announce,
     Forget,
     MakeRiff,
+    Import,
     Admit,
     GrantOwner,
     EndOwner,
@@ -1283,6 +1284,25 @@ fn make_riff_keeps_the_id_that_the_riff_has() {
     // `apply` keeps the first ID too.
     let state = given(&[riff_made("r1")]).apply(&[riff_made("r2")]);
     assert_eq!(state.riff_id().as_deref(), Some("r1"));
+}
+
+/// The import of go-live writes the changes that it gets, and only in
+/// a log with no record (01M3Z8MRDZEKTXSKZTDTDSCZ3W,
+/// 01M3Z8MRKTAN8CBAQB721JNZAK).
+#[test]
+fn import_writes_its_changes_only_in_a_log_with_no_record() {
+    let server = crate::owner::server_uri();
+    let changes = vec![riff_made("old"), riff_set(RiffState::Paused)];
+    let import = || Import {
+        changes: changes.clone(),
+    };
+    given(&[]).when(&server, import()).then(&changes);
+    given(&team())
+        .when(&server, import())
+        .then_refused_as(Code::BadRequest, "the log has records");
+    given(&team())
+        .when(&ann(), import())
+        .then_refused_as(Code::NotAllowed, "a session cannot send the command import");
 }
 
 /// Only the server sends a command of the server

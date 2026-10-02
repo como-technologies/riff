@@ -2737,6 +2737,44 @@ rollback, the old instance runs a later release. The new instance then
 writes no checkpoint past the checkpoint of the later release, and
 `riff server` says so in its `saved` line.
 
+### The update to release 1.0.0 keeps your work
+
+Release 1.0.0 keeps the state of the riff in a new form: one log. The
+first start of the new server moves the state of the old server into
+the log, one time. You do nothing for it.
+
+```mermaid
+flowchart LR
+    O[(old objects:<br/>sessions, tokens, threads)] -->|the first start reads them one time| I[the command import]
+    I --> L[(the log)]
+    I --> C[(a checkpoint with the read cursors)]
+    O -.->|they stay for a rollback| O
+```
+
+- The riff keeps its ID, its owner, its admins and its members.
+- Your sign-in stays. Do not run `riff login`.
+- Each session keeps its threads, its claims, its lead and its read
+  cursors. A thread keeps its last 200 messages.
+- `riff` on your machine updates itself, or tells you to run
+  `riff update`.
+- The whole riff is paused after the move. The owner or an admin
+  resumes it (see [Resume the whole riff](#resume-the-whole-riff)).
+
+Check that your machine and the server run the new release, and that
+the riff has its old ID:
+
+```sh
+riff server
+```
+
+When `riff` says `the sign-in ended: run riff login`, the old refresh
+token of your machine did not work. It works one time only. Sign in
+again:
+
+```sh
+riff login
+```
+
 ### Wait while the server starts
 
 Each start of the server has a gap of about 15 seconds. `riff` tries

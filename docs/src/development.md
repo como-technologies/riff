@@ -795,7 +795,8 @@ that cannot load takes no lease, and the old one serves on. See
 
 ### Start again with an empty state
 
-`riff-server` does not migrate saved state of an old format. When it
+`riff-server` migrates only the saved state of release 0.8.0 (see
+[Go live with release 1.0.0](#go-live-with-release-100)). When it
 cannot read an object of the bucket, it stops at start, before it takes
 the lease. An old instance that still runs serves on. With no old
 instance, Cloud Run starts the server again and again, and each call
@@ -1465,6 +1466,103 @@ same release:
 
 ```sh
 riff server
+```
+
+### Go live with release 1.0.0
+
+Release 1.0.0 keeps the state in one log. Its first start on the
+bucket of release 0.8.0 is the import: it reads the old objects
+(`sessions`, `tokens`, `threads/`) one time, and writes their state to
+the log. It needs no flag. See
+[how it works](how-it-works.md#the-update-to-release-100-keeps-your-work).
+
+```mermaid
+flowchart TD
+    A[agree on the time with the lead of each repository] --> P[pause the whole riff, stop the workers]
+    P --> T[push the tag v1.0.0: the deploy]
+    T --> I[the new server imports the old objects, then opens its port]
+    I --> C[check: riff server, the log line of the import]
+    C --> U[each machine updates itself: check riff server again]
+    U --> R[resume the whole riff, start the workers]
+    R --> D[after the first wave: delete the old objects]
+```
+
+1. Agree on the time of the deploy with the lead of each other
+   repository of the riff. Post the time in each repository thread.
+2. Pause the whole riff. Each session pushes its work, and keeps its
+   claims. Then stop the workers of your machine. Each machine still
+   has riff 0.8.0: its `riff pause` pauses the whole riff, and it has
+   no `--riff` flag:
+
+   ```sh
+   riff pause
+   riff workers stop
+   ```
+
+   `riff workers` lists each other host with workers. Stop the workers
+   of each one:
+
+   ```sh
+   riff workers stop --host HOST
+   ```
+
+3. Make the release (see [Make a release](#make-a-release)). The tag
+   deploys it.
+4. Check the import. The log of the server has one line for it, with
+   the number of records and of sign-ins:
+
+   ```sh
+   riff server
+   just cloud log --log-filter 'jsonPayload.message:"imported the objects"'
+   ```
+
+   riff 0.8.0 shows the release of the new server on its `release`
+   line: `v1.0.0 … another build; this riff cannot talk to it`. Its
+   last line is `Run riff update`. When an old object does not read,
+   the new server does not start, and the old server serves on: the
+   line shows `v0.8.0  same build ✓`. The log names the object.
+5. Each machine updates itself. No person runs `riff login`. Then
+   check the riff ID on each machine:
+
+   ```sh
+   riff who
+   riff server
+   ```
+
+   `riff who` checks the riff ID of your sign-in against the riff ID
+   of the server. Another riff ID removes the sign-in. So when
+   `riff server` then shows `v1.0.0  same build ✓` on the `release`
+   line and `yes, signed in as USER` on the `sign-in` line, the riff
+   ID is the one of before.
+6. The whole riff is paused after the import. The owner or an admin
+   resumes it. riff then starts the workers by itself:
+
+   ```sh
+   riff resume --riff
+   ```
+
+   When the rollout is off (`riff workers interval` shows 0), start
+   the workers with a count:
+
+   ```sh
+   riff workers start 2
+   ```
+
+The import changes no old object. Keep them until the first wave after
+go-live ends. Then delete them:
+
+```sh
+gcloud storage rm gs://como-riff-state/sessions gs://como-riff-state/tokens 'gs://como-riff-state/threads/**'
+```
+
+To roll back before that, deploy release 0.8.0 again (see
+[Deploy a release again, or roll back](#deploy-a-release-again-or-roll-back)).
+The old server reads the old objects, so each change since go-live is
+lost. Before the next go-live, delete the log, so that the new server
+imports again:
+
+```sh
+gcloud storage rm 'gs://como-riff-state/log/**' 'gs://como-riff-state/checkpoint/**' gs://como-riff-state/signins.json
 ```
 
 ### Deploy a release again, or roll back

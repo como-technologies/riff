@@ -37,6 +37,7 @@
     "resume",
     "set_idle",
     "forget",
+    "import",
     "admit",
     "invite",
     "remove",

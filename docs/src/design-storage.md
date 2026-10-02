@@ -541,13 +541,17 @@ is paused. Another repository can hold claims: they stay.
    a member again, and each claim and each lead stays.
 4. Each machine updates itself: the old riff sees the new build in the
    `riff-build` header of each reply.
-5. Each person signs in again with `riff login`, on each machine.
+5. No person signs in again: a refresh token of today works one time
+   on the new server, and gives a token of a new chain.
 6. Each lead is the lead as before. It reads its handoff from the
    release issue. The owner or an admin resumes the riff.
 7. The old objects (`sessions`, `tokens`, `threads/`) stay until the
    first wave after go-live ends, for a rollback. Then the lead deletes
    them. The new server uses the same `lease` object, so an old and a
    new instance never serve at the same time.
+
+The steps for the person who deploys are in
+[Go live with release 1.0.0](development.md#go-live-with-release-100).
 
 ## Build items
 

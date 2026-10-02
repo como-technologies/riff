@@ -289,6 +289,10 @@ pub struct Tokens {
     /// The chains of refresh tokens, by chain ID.
     chains: HashMap<String, Chain>,
     next_sign_in: u64,
+    /// The refresh tokens of a riff-server from before the log, by
+    /// hash, with the sign-in of each (01M3Z8MRGWWA0CNZ003D67H6R4).
+    /// The import of go-live makes them ([`Tokens::import`]).
+    old: HashMap<Hash, u64>,
     /// The position of the log of the last end of the sign-ins of each
     /// USER. No sign-in of the USER starts below it
     /// (01M3XA87A9GGFA89RQXWSKY0V6). It is only in memory: a load gets
@@ -551,13 +555,109 @@ impl Tokens {
     }
 
     /// True when `token` names a chain of a live sign-in on the device
-    /// key `jkt`. It checks no generation and no secret, and it changes
+    /// key `jkt`, or is a refresh token of the old server for such a
+    /// sign-in. It checks no generation and no secret, and it changes
     /// nothing.
     pub fn knows_refresh(&self, token: &str, jkt: &str) -> bool {
-        Presented::parse(token)
-            .and_then(|t| self.chains.get(t.chain))
-            .and_then(|c| self.sign_ins.get(&c.sign_in))
+        let sign_in = match Presented::parse(token) {
+            Some(presented) => self.chains.get(presented.chain).map(|c| c.sign_in),
+            None => self.old.get(&hash(token)).copied(),
+        };
+        sign_in
+            .and_then(|id| self.sign_ins.get(&id))
             .is_some_and(|s| s.jkt == jkt)
+    }
+
+    /// The sign-ins of a riff-server from before the log: the import of
+    /// go-live (01M3Z8MRGWWA0CNZ003D67H6R4). `bytes` is its `tokens`
+    /// object.
+    ///
+    /// - Each sign-in that is live at `wall` keeps its user, its device
+    ///   key and its idle time. It gets `position`: a position that the
+    ///   log holds after the import, so a load keeps it
+    ///   (01M3XGNZYD1E35DXYTHHJT1CR7).
+    /// - Each person refresh token that was not used works one time
+    ///   with [`Tokens::refresh`]: it starts the chain of its sign-in.
+    ///   So no person signs in again.
+    /// - A session refresh token is not in the import: a session token
+    ///   has no chain (01M3WFVAB44T8EP4QZD4KS7DRF). No access token is
+    ///   in it.
+    /// - The people of the object are not here: the command `import`
+    ///   writes them to the log.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant, UNIX_EPOCH};
+    /// use riff_server::token::{Refused, Tokens};
+    ///
+    /// // The object has the hash of the refresh token `old-token`.
+    /// let object = br#"{"next_sign_in":1,"users":{"mike":"mike@x.io"},
+    ///     "sign_ins":[{"id":0,"user":"mike","jkt":"k","idle_until":2000}],"access":[],
+    ///     "refresh":[{"hash":"m98QppGhz9qJ2f9mYp0WCasXbOybajFGqJKfKJN6n84","sign_in":0,"session":null,"used":null}]}"#;
+    /// let (now, wall) = (Instant::now(), UNIX_EPOCH + Duration::from_millis(1000));
+    /// let mut tokens = Tokens::import(object, 7, now, wall).unwrap();
+    /// assert_eq!(tokens.keys("mike", now), ["k"]);
+    ///
+    /// // Another key cannot use the token, and it stays good.
+    /// assert_eq!(tokens.refresh("old-token", "thief", now), Err(Refused::WrongKey));
+    /// let pair = tokens.refresh("old-token", "k", now).unwrap();
+    /// assert_eq!(tokens.signed_in(&pair.access_token, "k", now).unwrap().1, 7);
+    /// // The pair is the first generation of a new chain.
+    /// assert_eq!(pair.refresh_token.split('.').nth(1), Some("1"));
+    /// // The old token works one time.
+    /// assert_eq!(tokens.refresh("old-token", "k", now), Err(Refused::Unknown));
+    /// assert!(tokens.refresh(&pair.refresh_token, "k", now).is_ok());
+    /// ```
+    pub fn import(
+        bytes: &[u8],
+        position: u64,
+        now: Instant,
+        wall: SystemTime,
+    ) -> Result<Tokens, LoadError> {
+        let saved: OldSaved =
+            serde_json::from_slice(bytes).map_err(|e| LoadError(e.to_string()))?;
+        let clock = Clock { now, wall };
+        let mut tokens = Tokens {
+            next_sign_in: saved.next_sign_in,
+            ..Tokens::default()
+        };
+        for s in saved.sign_ins {
+            if s.id >= saved.next_sign_in {
+                return Err(LoadError(format!(
+                    "sign-in {} is not below next_sign_in",
+                    s.id
+                )));
+            }
+            if let Some(idle_until) = clock.load(s.idle_until) {
+                let sign_in = SignIn {
+                    user: s.user,
+                    jkt: s.jkt,
+                    position,
+                    idle_until,
+                };
+                tokens.sign_ins.insert(s.id, sign_in);
+            }
+        }
+        for r in saved.refresh {
+            let person = r.session.is_none() && r.used.is_none();
+            if person && tokens.sign_ins.contains_key(&r.sign_in) {
+                tokens.old.insert(unhash(&r.hash)?, r.sign_in);
+            }
+        }
+        Ok(tokens)
+    }
+
+    /// Swaps a refresh token of the old server for the first pair of a
+    /// new chain of its sign-in (01M3Z8MRGWWA0CNZ003D67H6R4). The token
+    /// works one time: each old token of the sign-in ends.
+    fn refresh_old(&mut self, token: &str, jkt: &str, now: Instant) -> Result<TokenReply, Refused> {
+        let id = *self.old.get(&hash(token)).ok_or(Refused::Unknown)?;
+        let sign_in = self.sign_ins.get_mut(&id).ok_or(Refused::Unknown)?;
+        if sign_in.jkt != jkt {
+            return Err(Refused::WrongKey);
+        }
+        sign_in.idle_until = now + REFRESH_IDLE;
+        self.old.retain(|_, sign_in| *sign_in != id);
+        Ok(self.start_chain(id, now))
     }
 
     /// Swaps a refresh token for the next pair of its chain. It works
@@ -584,7 +684,10 @@ impl Tokens {
     /// ```
     pub fn refresh(&mut self, token: &str, jkt: &str, now: Instant) -> Result<TokenReply, Refused> {
         self.sweep(now);
-        let presented = Presented::parse(token).ok_or(Refused::Unknown)?;
+        // A token of the old server has no parts.
+        let Some(presented) = Presented::parse(token) else {
+            return self.refresh_old(token, jkt, now);
+        };
         let chain = self.chains.get(presented.chain).ok_or(Refused::Unknown)?;
         let id = chain.sign_in;
         let sign_in = self.sign_ins.get_mut(&id).ok_or(Refused::Unknown)?;
@@ -671,9 +774,16 @@ impl Tokens {
         })
     }
 
-    /// The number of live chains: one for each sign-in.
+    /// The number of live chains: one for each sign-in that got a pair
+    /// from this store.
     pub fn chains(&self) -> usize {
         self.chains.len()
+    }
+
+    /// The number of sign-ins. A sign-in of the import of go-live has
+    /// no chain until its first refresh.
+    pub fn sign_ins(&self) -> usize {
+        self.sign_ins.len()
     }
 
     /// Returns the user of a live access token, used with the device key
@@ -808,6 +918,14 @@ impl Tokens {
                     before: c.before.map(|h| URL_SAFE_NO_PAD.encode(h)),
                 })
                 .collect(),
+            old: self
+                .old
+                .iter()
+                .map(|(hash, sign_in)| SavedOld {
+                    hash: URL_SAFE_NO_PAD.encode(hash),
+                    sign_in: *sign_in,
+                })
+                .collect(),
         };
         serde_json::to_vec(&saved).expect("the saved form is JSON")
     }
@@ -850,6 +968,9 @@ impl Tokens {
                 loaded: true,
             };
             tokens.chains.insert(c.id, chain);
+        }
+        for o in saved.old {
+            tokens.old.insert(unhash(&o.hash)?, o.sign_in);
         }
         tokens.sweep(now);
         Ok(tokens)
@@ -926,6 +1047,7 @@ impl Tokens {
         self.sign_ins.remove(&sign_in);
         self.access.retain(|_, a| a.sign_in != sign_in);
         self.chains.retain(|_, c| c.sign_in != sign_in);
+        self.old.retain(|_, id| *id != sign_in);
     }
 
     /// Forgets expired access tokens, and idle sign-ins with their
@@ -936,6 +1058,7 @@ impl Tokens {
         self.access
             .retain(|_, a| now < a.expires && live.contains_key(&a.sign_in));
         self.chains.retain(|_, c| live.contains_key(&c.sign_in));
+        self.old.retain(|_, id| live.contains_key(id));
     }
 }
 
@@ -960,6 +1083,46 @@ struct Saved {
     next_sign_in: u64,
     sign_ins: Vec<SavedSignIn>,
     chains: Vec<SavedChain>,
+    /// The refresh tokens of the old server that were not used
+    /// (01M3Z8MRGWWA0CNZ003D67H6R4). A form from before the import has
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    old: Vec<SavedOld>,
+}
+
+/// The hash of a refresh token of the old server, and its sign-in.
+#[derive(Serialize, Deserialize)]
+struct SavedOld {
+    hash: String,
+    sign_in: u64,
+}
+
+/// The `tokens` object of a riff-server from before the log: the parts
+/// that [`Tokens::import`] reads. Each time is in milliseconds since
+/// the Unix epoch.
+#[derive(Deserialize)]
+struct OldSaved {
+    next_sign_in: u64,
+    sign_ins: Vec<OldSignIn>,
+    refresh: Vec<OldRefresh>,
+}
+
+#[derive(Deserialize)]
+struct OldSignIn {
+    id: u64,
+    user: String,
+    jkt: String,
+    idle_until: u64,
+}
+
+#[derive(Deserialize)]
+struct OldRefresh {
+    hash: String,
+    sign_in: u64,
+    /// The session of a session token. `None` for a person token.
+    session: Option<String>,
+    /// The time until the server kept a used token.
+    used: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]

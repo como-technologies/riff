@@ -1,7 +1,7 @@
 //! The group "the riff": the commands [`MakeRiff`], [`Pause`],
-//! [`Resume`], [`SetIdle`] and [`Forget`], and what is one for the whole
-//! riff. [`MakeRiff`] and [`Forget`] are commands of the server: no
-//! client can send them.
+//! [`Resume`], [`SetIdle`], [`Forget`] and [`Import`], and what is one
+//! for the whole riff. [`MakeRiff`], [`Forget`] and [`Import`] are
+//! commands of the server: no client can send them.
 //!
 //! - Part of the riff: [`TheRiff`]. The pauses ([`Pauses`]), and the
 //!   settings of idle workers.
@@ -292,6 +292,60 @@ impl Command for MakeRiff {
     }
 
     fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
+}
+
+/// The import of go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): the state of a
+/// riff-server from before the log, as changes. The server reads the
+/// old objects, and gives their changes to this command
+/// ([`crate::import::Old::changes`]). It can make each kind of record.
+/// It runs only in a log with no record, so it runs one time
+/// (01M3Z8MRKTAN8CBAQB721JNZAK). The reply is the number of its
+/// records.
+///
+/// ```
+/// use std::time::Instant;
+/// use riff_core::record::{Change, RiffMade};
+/// use riff_server::state::{Caller, Code, Import, State};
+///
+/// let made = Change::RiffMade(RiffMade { riff_id: "r1".into() });
+/// let import = Import { changes: vec![made] };
+/// let mut state = State::default();
+/// let now = Instant::now();
+/// assert_eq!(state.run(&Caller::server(), &import, now).unwrap().0.len(), 1);
+/// assert_eq!(state.riff_id().as_deref(), Some("r1"));
+/// // A second import is refused: the log has records.
+/// let refused = state.run(&Caller::server(), &import, now).unwrap_err();
+/// assert_eq!(refused.code, Code::BadRequest);
+/// ```
+#[derive(Clone, Debug)]
+pub struct Import {
+    /// The changes that the old objects give, in the order of the log.
+    pub changes: Vec<Change>,
+}
+
+impl Command for Import {
+    const KIND: CommandKind = CommandKind::Import;
+    type Reply = usize;
+    type Note = ();
+
+    fn handle(
+        &self,
+        _caller: &Caller,
+        view: &View<'_>,
+        _now: Now,
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        if view.riff.position() != 0 {
+            return Err(Refused::new(
+                Code::BadRequest,
+                "the log has records: the import runs only in a log with no record",
+            ));
+        }
+        Ok((self.changes.clone(), ()))
+    }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, done: &Done, (): (), _: Now) -> usize {
+        done.made.len()
+    }
 }
 
 /// The repository of a call: for a session, the repository of its

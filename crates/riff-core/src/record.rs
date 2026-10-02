@@ -88,7 +88,8 @@
 //! |---|---|---|
 //! | The query of a session URI ([`SessionUri`]) | `session` of a change, `from` of a message | The URI keeps the part, and the record counts as a skipped record: a part with a new name, `lead` with a value other than `true`, a second `session`, and a `claim` with a character that is not allowed. |
 //! | The other parts of a session URI | the same | The line does not read. They never grow: `riff://USER@HOST`, then `/OWNER/REPO` or `/-`, then `#WORKTREE`, and each part holds only ASCII letters, digits, `-`, `_`, `.` and `~`. A new fact of a session is a new query part. |
-//! | A thread name ([`ThreadName`]) | `thread` | The line does not read. The grammar never grows: a text that is not empty and has no white space. Each new sort of thread name fits it, as `dm:` did. The read does not take a name apart. |
+//! | The session ID of a session URI | the `session` part of the query | The line does not read when the ID is empty or has a character that is not allowed. The grammar never grows: the ID is a name with only ASCII letters, digits, `-`, `_`, `.` and `~`, and a new fact of a session is a new query part. |
+//! | A thread name ([`ThreadName`]) | `thread` | The line does not read. The grammar never grows: a text that is not empty and has no white space. Each new sort of thread name fits it, as `dm:` did. A name that starts with `dm:` reads with each character, also white space. The read does not take a name apart. |
 //! | The caller in `by` | `{"session":"USER/ID"}` | `other` ([`By`]) |
 //! | A session in `woken` ([`Who`]) | `posted` | The read checks no character. A field that the build does not know is skipped. |
 //! | The signature and the payload of a message | `sig`, `payload` | The read keeps the text, and checks nothing. A reader checks them: a text that does not check gives a message that is not verified. |

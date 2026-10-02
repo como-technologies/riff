@@ -136,15 +136,24 @@ fn the_fixture_log_has_a_record_of_each_kind() {
     assert_eq!(found, set(Change::KINDS.iter().copied()));
     // No record of the release has a value that reads as `other`.
     assert!(records.iter().all(|record| record.other().is_none()));
-    // A record with no cause reads, and a kind of command that the
-    // build does not know reads as text.
+    // A record with no cause reads.
     assert!(records.iter().any(|record| record.by.is_none()));
+    // The first records come from the command `import` of go-live.
     let import = records[0].command.as_deref();
-    assert_eq!(import, Some("import"));
+    assert_eq!(import, Some(CommandKind::Import.as_str()));
+    // A kind of command that the build does not know reads as text.
+    let later = serde_json::to_string(&records[0])
+        .unwrap()
+        .replace(r#""command":"import""#, r#""command":"merge""#);
+    let Line::Record(later) = Line::parse(&later).unwrap() else {
+        panic!("a known kind of record");
+    };
+    let merge = later.command.as_deref();
+    assert_eq!(merge, Some("merge"));
     assert!(
         CommandKind::ALL
             .iter()
-            .all(|kind| Some(kind.as_str()) != import)
+            .all(|kind| Some(kind.as_str()) != merge)
     );
 }
 

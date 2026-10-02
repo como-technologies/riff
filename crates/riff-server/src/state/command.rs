@@ -10,7 +10,7 @@
 //! | sessions | [`super::sessions`] | [`Register`](riff_core::wire::Register), [`Arrive`](super::Arrive), [`Start`](riff_core::wire::Start), [`End`](riff_core::wire::End) |
 //! | threads | [`super::threads`] | [`Join`](riff_core::wire::Join), [`Leave`](riff_core::wire::Leave), [`Post`](riff_core::wire::Post), [`Announce`](super::Announce) |
 //! | work | [`super::work`] | [`Claim`](riff_core::wire::Claim), [`Release`](riff_core::wire::Release), [`ReleaseFor`](riff_core::wire::ReleaseFor), [`Lead`](riff_core::wire::Lead) |
-//! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget) |
+//! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import) |
 //! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
@@ -328,6 +328,7 @@ command_kinds! {
     Resume = "resume",
     SetIdle = "set_idle",
     Forget = "forget",
+    Import = "import",
     Admit = "admit",
     Invite = "invite",
     Remove = "remove",
@@ -552,6 +553,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         CommandKind::MakeRiff
         | CommandKind::Announce
         | CommandKind::Forget
+        | CommandKind::Import
         | CommandKind::GrantOwner
         | CommandKind::EndOwner
         | CommandKind::NameOwner => &[Server],
@@ -708,6 +710,7 @@ mod tests {
             CommandKind::MakeRiff
             | CommandKind::Announce
             | CommandKind::Forget
+            | CommandKind::Import
             | CommandKind::GrantOwner
             | CommandKind::EndOwner
             | CommandKind::NameOwner => (&[Server], true),
@@ -746,7 +749,9 @@ mod tests {
             StartReason, TakeOwner,
         };
 
-        use crate::state::{Admit, Announce, EndOwner, Forget, GrantOwner, MakeRiff, NameOwner};
+        use crate::state::{
+            Admit, Announce, EndOwner, Forget, GrantOwner, Import, MakeRiff, NameOwner,
+        };
 
         let of = Needs(caller);
         let email = "bob@acme.io".to_owned();
@@ -805,6 +810,7 @@ mod tests {
                 of.of(set, kind)
             }
             CommandKind::Forget => of.of(Forget, kind),
+            CommandKind::Import => of.of(Import { changes: vec![] }, kind),
             CommandKind::Admit => {
                 let admit = Admit {
                     email,
@@ -872,7 +878,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (27 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (28 + 2) * 4 * 2 * 3);
     }
 
     #[test]

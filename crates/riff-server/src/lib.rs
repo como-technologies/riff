@@ -103,9 +103,9 @@
 //!   server stops for good: each waiting call gets 503, and `main`
 //!   exits.
 //! - The first start of a riff sends the command `make_riff`
-//!   (01M3WRD99M99PNGP8ME50KC6WS). A store with the objects of a
-//!   riff-server from before the log, and no log, is refused
-//!   (01M3WRD9DYJWVN1QRBAC3ZVVZD).
+//!   (01M3WRD99M99PNGP8ME50KC6WS). A start on a store with the objects
+//!   of a riff-server from before the log, and no log, is the import of
+//!   go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): see [`import`].
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
 //!   deletes the old checkpoints and the chunks that no kept checkpoint
@@ -170,6 +170,7 @@ pub mod checkpoint;
 pub mod engine;
 pub mod gcs;
 pub mod idle;
+pub mod import;
 pub mod lease;
 pub mod listen;
 pub mod log;
@@ -214,10 +215,13 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::engine::{Admitted, Engine, Failed, SignIns, command};
+use crate::import::Old;
 use crate::lease::Lease;
 use crate::oidc::Identity;
 use crate::owner::{Check, Checks};
-use crate::state::{Announce, Code, OwnerChange, Refused, Settings, Signal, State, may_read};
+use crate::state::{
+    Announce, Code, OwnerChange, Refused, Settings, Signal, Snapshot, State, may_read,
+};
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
 use crate::trace::DeniedCode;
@@ -244,34 +248,21 @@ async fn load_tokens(store: &dyn Store) -> Result<(Tokens, Option<Version>), Sto
     Ok((tokens, Some(loaded.version)))
 }
 
-/// Refuses a store of a riff-server from before the log
-/// (01M3WRD9DYJWVN1QRBAC3ZVVZD): it has the old objects `sessions`,
-/// `tokens` or `threads/`, and no log. This build does not read them:
-/// go-live (#341) imports them.
-async fn refuse_old_objects(store: &dyn Store) -> Result<(), StoreError> {
-    let has_log = !store.list(log::LOG).await?.is_empty()
-        || !store.list(checkpoint::CHECKPOINT).await?.is_empty();
-    if has_log {
-        return Ok(());
+/// Reads the objects of a riff-server from before the log, when the
+/// store has them and no log: the import of go-live
+/// (01M3Z8MRDZEKTXSKZTDTDSCZ3W). The load reads each object before the
+/// lease: an object that does not read stops the start, and changes
+/// nothing. It reads them again after the wait for the old instance,
+/// and imports from that read (01M3ZCDNQY2G9ET537B6SBYCBB).
+async fn read_old_objects(store: &dyn Store) -> Result<Option<Old>, StoreError> {
+    let Some(old) = Old::read(store).await? else {
+        return Ok(None);
+    };
+    if let Some(bytes) = old.tokens() {
+        Tokens::import(bytes, 0, Instant::now(), SystemTime::now())
+            .map_err(|e| StoreError::not_valid(store, import::TOKENS, e))?;
     }
-    let mut old = Vec::new();
-    for name in ["sessions", "tokens"] {
-        if store.load(name).await?.is_some() {
-            old.push(format!("`{name}`"));
-        }
-    }
-    if !store.list("threads/").await?.is_empty() {
-        old.push("`threads/`".to_owned());
-    }
-    if old.is_empty() {
-        return Ok(());
-    }
-    Err(StoreError::Failed(format!(
-        "the store has the objects of a riff-server from before the log ({}), and no log. \
-         This build does not import them, so it does not start. Use the release that \
-         imports them, or an empty store.",
-        old.join(", ")
-    )))
+    Ok(Some(old))
 }
 
 /// The sign-ins of the riff, for the engine: the token store.
@@ -760,9 +751,13 @@ impl Server {
             let due = came >= settings.every_records || at.elapsed() >= settings.every;
             (came > 0 && due).then(|| state.snapshot(Instant::now(), now_ms()))
         });
-        let Some(snapshot) = snapshot else {
-            return;
-        };
+        if let Some(snapshot) = snapshot {
+            self.write_checkpoint(settings, snapshot).await;
+        }
+    }
+
+    /// Writes the checkpoint of `snapshot`, then prunes.
+    async fn write_checkpoint(&self, settings: &checkpoint::Settings, snapshot: Snapshot) {
         let position = snapshot.position;
         let checkpoint = checkpoint::Checkpoint::new(&settings.build, now_ms(), snapshot);
         match checkpoint::write(&*self.log, &checkpoint).await {
@@ -796,6 +791,68 @@ impl Server {
             }
             Err(error) => tracing::warn!("the delete of old checkpoints failed: {error}"),
         }
+    }
+
+    /// The import of go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W), after the
+    /// lease and before the port opens. See [`import`] for the steps.
+    ///
+    /// - The token store takes the sign-ins of the old `tokens` object,
+    ///   at the position of the end of the import
+    ///   (01M3Z8MRGWWA0CNZ003D67H6R4), and the server saves it. This
+    ///   save comes before the log. So a server that stops between the
+    ///   two steps finds no log at its next start, and imports again:
+    ///   no stop loses the sign-ins.
+    /// - The command `import` writes the records of the old objects as
+    ///   one chunk, and the state takes the memory of each session.
+    /// - A riff whose old objects have no ID gets one.
+    /// - The server writes a checkpoint at once: it keeps the read
+    ///   cursors.
+    async fn import(&self, old: &Old) -> Result<(), StoreError> {
+        let failed = |what: &str, why: String| {
+            StoreError::Failed(format!(
+                "the import of the old objects failed: {what}: {why}"
+            ))
+        };
+        let at_ms = now_ms();
+        let changes = old.changes(at_ms);
+        // The log has no record, so the last record of the import has
+        // this position.
+        let position = changes.len() as u64;
+        let mut sign_ins = 0;
+        if let Some(bytes) = old.tokens() {
+            let tokens = Tokens::import(bytes, position, Instant::now(), SystemTime::now())
+                .map_err(|e| failed("the old object tokens", e.to_string()))?;
+            sign_ins = tokens.sign_ins();
+            let mark = self.tokens_changes.load(Ordering::SeqCst);
+            *self.tokens_change() = tokens;
+            self.save_tokens_since(mark)
+                .await
+                .map_err(|e| failed("the save of the sign-ins", e.to_string()))?;
+        }
+        let records = self
+            .engine
+            .import(changes, old.memory(at_ms))
+            .await
+            .map_err(|e| failed("the command import", e.text()))?;
+        let has_id = self.engine.read(|state| state.riff_id().is_some());
+        if !has_id {
+            self.engine.make_riff(token::random_token());
+        }
+        let blocked = self.checkpoints().blocked.is_some();
+        if !blocked {
+            let snapshot = self
+                .engine
+                .read(|state| state.snapshot(Instant::now(), now_ms()));
+            let settings = self.config.checkpoint.clone();
+            self.write_checkpoint(&settings, snapshot).await;
+        }
+        tracing::info!(
+            records,
+            position,
+            sign_ins,
+            "imported the objects of a riff-server from before the log"
+        );
+        Ok(())
     }
 
     fn checkpoints(&self) -> MutexGuard<'_, Checkpoints> {
@@ -961,6 +1018,7 @@ impl Service {
             now_ms() / 1000,
             Checkpoints::new(None, None),
             Facts::start(),
+            false,
         )
     }
 
@@ -991,6 +1049,14 @@ impl Service {
     ///   within [`Config::save_every`], while the service lives (R30).
     /// - It fails when another instance took the lease during the wait,
     ///   or when the log does not read (see [`log::replay`]).
+    /// - A store with the objects of a riff-server from before the log,
+    ///   and no log, gets the import of go-live before the load ends
+    ///   (01M3Z8MRDZEKTXSKZTDTDSCZ3W, see [`import`]). So the port opens
+    ///   only after the import. The old instance wrote its objects until
+    ///   it read the new lease, so the load reads them again after the
+    ///   wait, and imports from that read (01M3ZCDNQY2G9ET537B6SBYCBB). When the log
+    ///   is there after the wait, another instance made the import: this
+    ///   one does not import, and does not change the sign-ins.
     /// - The claim timer of each session starts at the load (R125).
     ///
     /// ```
@@ -1029,7 +1095,7 @@ impl Service {
         // is, and the old instance serves on.
         let mut facts = Facts::start();
         let replayed = Instant::now();
-        refuse_old_objects(&*store).await?;
+        let old = read_old_objects(&*store).await?;
         load_tokens(&*store).await?;
         let build = config.checkpoint.build.clone();
         let found = checkpoint::load(&*store, &build).await?;
@@ -1079,6 +1145,15 @@ impl Service {
         let skipped = skipped.or(since.skipped);
         facts.skipped = skips + since.skips;
         facts.chunks = since.chunks;
+        // An old instance from before the log wrote its objects until it
+        // read the new lease. So the import reads them again
+        // (01M3ZCDNQY2G9ET537B6SBYCBB). When another instance made the
+        // import in that time, the log is there, and this read gives
+        // none: this instance does not import.
+        let old = match old {
+            Some(_) => read_old_objects(&*store).await?,
+            None => None,
+        };
         // The old instance can also write a checkpoint until it reads
         // the new lease. This build writes none past a checkpoint of a
         // later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).
@@ -1117,6 +1192,7 @@ impl Service {
             start,
             checkpoints,
             facts,
+            old.is_some(),
         );
         // Save the token store once: the load can drop sign-ins
         // (01M3XA87A9GGFA89RQXWSKY0V6), and a store that does not save
@@ -1130,12 +1206,17 @@ impl Service {
         }
         service.keep_lease(lease, taken);
         service.save_each_second();
+        if let Some(old) = old {
+            service.0.import(&old).await?;
+        }
         Ok(service)
     }
 
     /// `log` is the store of the log. `until` is the end of the first
     /// serve time of a server with a lease. `start` is the second when it
-    /// starts to serve.
+    /// starts to serve. With `import`, the import of go-live follows: it
+    /// gives the riff its ID and its owner, so the build sends no
+    /// `make_riff` and no `name_owner`.
     #[allow(clippy::too_many_arguments)]
     fn build(
         config: Config,
@@ -1148,6 +1229,7 @@ impl Service {
         start: u64,
         checkpoints: Checkpoints,
         facts: Facts,
+        import: bool,
     ) -> Self {
         let settings = Settings::new(&config.admins, &config.public_url, config.owner_role);
         let state = state.with_settings(settings);
@@ -1192,10 +1274,10 @@ impl Service {
             trusted: config.trusted(),
         };
         let engine = Engine::new(state, sign_ins);
-        if first {
+        if first && !import {
             engine.make_riff(token::random_token());
         }
-        if let Some(owner) = named {
+        if let Some(owner) = named.filter(|_| !import) {
             engine.name_owner(&owner);
         }
         let service = Service(Arc::new(Server {
@@ -3747,31 +3829,67 @@ mod tests {
         );
     }
 
-    /// A store of a riff-server from before the log is refused, and the
-    /// error says why (01M3WRD9DYJWVN1QRBAC3ZVVZD). The server takes no
-    /// lease.
+    /// An old object that does not read stops the start, and the error
+    /// names the object (01M3Z8MRDZEKTXSKZTDTDSCZ3W). The server takes
+    /// no lease, and writes no log.
     #[tokio::test(start_paused = true)]
-    async fn a_store_with_the_old_objects_and_no_log_is_refused() {
+    async fn an_old_object_that_does_not_read_stops_the_start() {
         for name in ["sessions", "tokens", "threads/acme%2Fapp"] {
             let store = Memory::default();
-            store.save(name, b"{}".to_vec(), None).await.unwrap();
+            store.save(name, b"[".to_vec(), None).await.unwrap();
             let loaded = Service::load(config(), Arc::new(store.clone())).await;
             let error = loaded.err().expect("the load fails").to_string();
-            assert!(error.contains("from before the log"), "{error}");
-            assert!(error.contains("no log"), "{error}");
+            assert!(error.contains(name), "{error}");
             assert!(store.load(store::LEASE).await.unwrap().is_none());
+            assert!(store.list(log::LOG).await.unwrap().is_empty());
         }
+    }
 
-        // A store with a log starts, also with an old object next to it.
+    /// A start on a store with the old objects and no log is the import
+    /// (01M3Z8MRDZEKTXSKZTDTDSCZ3W): the first chunk has its records,
+    /// each with the cause `import` of the server, and a checkpoint
+    /// follows at once. A second start does not import again
+    /// (01M3Z8MRKTAN8CBAQB721JNZAK).
+    #[tokio::test(start_paused = true)]
+    async fn a_start_on_the_old_objects_and_no_log_is_the_import() {
         let store = Arc::new(Gated::default());
-        let service = running(store.clone()).await;
+        let sessions = br#"{"saved_ms":1,"sessions":[],"cursors":[],"claims":[],"riff":"running"}"#;
+        let tokens = br#"{"next_sign_in":0,"users":{"ann":"ann@acme.io"},"owner":"ann@acme.io","riff_id":"old-id","sign_ins":[],"access":[],"refresh":[]}"#;
+        for (name, bytes) in [("sessions", &sessions[..]), ("tokens", &tokens[..])] {
+            store.store.save(name, bytes.to_vec(), None).await.unwrap();
+        }
+        let service = Service::load(config(), store.clone()).await.unwrap();
+        assert_eq!(service.riff_id().as_deref(), Some("old-id"));
+        let chunks = records(&store).await;
+        assert_eq!(chunks.len(), 1);
+        let kinds: Vec<&str> = chunks[0].iter().map(|r| r.change.kind()).collect();
+        assert_eq!(
+            kinds,
+            [
+                "riff_made",
+                "person_joined",
+                "owner_set",
+                "pause_set",
+                "setting_changed"
+            ]
+        );
+        for record in &chunks[0] {
+            assert_eq!(record.by, Some(riff_core::record::By::Server));
+            assert_eq!(record.command.as_deref(), Some("import"));
+        }
+        assert_eq!(checkpoints(&store).await.len(), 1);
+        // The old objects stay.
+        assert!(store.store.load("sessions").await.unwrap().is_some());
+        assert!(store.store.load("tokens").await.unwrap().is_some());
+
+        // A second start replays the log, also with the old objects
+        // next to it.
         drop(service);
-        store
-            .store
-            .save("sessions", b"{}".to_vec(), None)
-            .await
-            .unwrap();
-        assert!(Service::load(config(), store).await.is_ok());
+        let again = Service::load(config(), store.clone()).await.unwrap();
+        again.save().await.unwrap();
+        assert_eq!(records(&store).await.len(), 1);
+        assert_eq!(position(&again), 5);
+        assert_eq!(again.riff_id().as_deref(), Some("old-id"));
     }
 
     /// The records of each chunk of the log, in order.
