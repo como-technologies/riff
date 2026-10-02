@@ -514,17 +514,18 @@ pub struct Reported {
 }
 
 /// The sessions that the result of a verify of `issue` wakes: the
-/// holder of the issue. When no live session of `sessions` holds the
-/// issue in the repository of the verifier `me`, also the lead of the
-/// user of `me` there (01M3Z9N70J4H79VJN4ZKKH3G6S).
+/// holder of the issue. When no session of `sessions` holds the issue
+/// in the repository of the verifier `me`, also the lead of the user of
+/// `me` there (01M3Z9N70J4H79VJN4ZKKH3G6S). `sessions` is the list of
+/// `who`: it has no session that is gone.
 ///
 /// ```
 /// use riff::pr::result_to;
 /// use riff_core::wire::SessionInfo;
 ///
-/// let info = |uri: &str, live| SessionInfo {
+/// let info = |uri: &str| SessionInfo {
 ///     uri: uri.parse().unwrap(),
-///     live,
+///     live: true,
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker: true,
@@ -538,21 +539,21 @@ pub struct Reported {
 ///     let me = "riff://mike@pangolin/o/r?session=v1&claim=verify-issue-12".parse().unwrap();
 ///     result_to(12, &me, sessions).iter().map(ToString::to_string).collect()
 /// };
-/// let holder = info("riff://mike@thelio/o/r?session=a1&claim=issue-12", true);
+/// let holder = info("riff://mike@thelio/o/r?session=a1&claim=issue-12");
 /// assert_eq!(to(&[holder]), ["claim=issue-12"]);
-/// // The author released the item, its session is gone, or the claim
-/// // is in another repository: the lead wakes.
+/// // The author released the item, or the claim is in another
+/// // repository: the lead wakes.
 /// let lead = ["claim=issue-12", "user=mike,repo=o/r,lead=true"];
 /// assert_eq!(to(&[]), lead);
-/// assert_eq!(to(&[info("riff://mike@thelio/o/r?session=a1&claim=issue-12", false)]), lead);
-/// assert_eq!(to(&[info("riff://mike@thelio/o/s?session=a1&claim=issue-12", true)]), lead);
+/// assert_eq!(to(&[info("riff://mike@thelio/o/r?session=a1")]), lead);
+/// assert_eq!(to(&[info("riff://mike@thelio/o/s?session=a1&claim=issue-12")]), lead);
 /// ```
 pub fn result_to(issue: u64, me: &SessionUri, sessions: &[SessionInfo]) -> Vec<Selector> {
     let item = format!("issue-{issue}");
     let repo = me.place().repo_text();
     let held = sessions
         .iter()
-        .any(|s| s.live && s.uri.place().repo_text() == repo && s.uri.claims().contains(&item));
+        .any(|s| s.uri.place().repo_text() == repo && s.uri.claims().contains(&item));
     let mut to = vec![Selector {
         claim: Some(item),
         ..Selector::default()

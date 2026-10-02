@@ -292,6 +292,114 @@ async fn verify_fail_sets_failure() {
     verify("fail", "failure").await;
 }
 
+/// The author released the item at its verify request. So no session
+/// holds the issue, and the result wakes the lead of the verifier: a
+/// result is never silent (01M3Z9N70J4H79VJN4ZKKH3G6S). With a holder,
+/// the lead does not wake.
+#[tokio::test]
+async fn a_verify_result_wakes_the_lead_when_no_session_holds_the_item() {
+    let machine = Machine::new(VERIFY).await;
+    machine.ok("lead", &["lead"]).await;
+    machine.ok("lead", &["resume", "--riff"]).await;
+    let result = machine.write("result.md", "1. The wave does not show.\n");
+    let verify = [
+        "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.ok("verifier", &verify).await;
+    assert!(out.contains("Woke mike@thelio:riff (lead)"), "{out}");
+    assert!(out.contains("No session matches claim=issue-12"), "{out}");
+    let inbox = machine.ok("lead", &["read"]).await;
+    assert!(
+        inbox.contains("verify result: FAIL for issue-12, PR #40, commit 1a2b3c4d."),
+        "{inbox}"
+    );
+
+    // A session holds the item: only it wakes.
+    machine.ok("author", &["claim", "issue-12"]).await;
+    let out = machine.ok("verifier", &verify).await;
+    assert!(out.contains("Woke mike@thelio:riff (author)"), "{out}");
+    assert!(!out.contains("(lead)"), "{out}");
+    assert!(!out.contains("No session matches"), "{out}");
+}
+
+/// The fake `gh` gives one open pull request for the branch of issue 12,
+/// with the status `riff/verify` of `STATUS` on its head.
+fn pulls(status: &str) -> String {
+    format!(
+        r#"*'pr list'*) echo '[{{"number":40,"headRefName":"worktree-issue-12","headRefOid":"1a2b3c4d5e6f","isDraft":false,"statusCheckRollup":[{{"__typename":"CheckRun","name":"Gate","conclusion":"SUCCESS"}}{status}]}}]' ;;"#
+    )
+}
+
+/// A granted claim of an item names its open pull request and the state
+/// of its verify (01M3Z9N6SPWPSSCBEVDCKBESSV): the author released the
+/// item at the verify request, so the next session must know it. riff
+/// asks `gh` only for an item with a pushed branch.
+#[tokio::test]
+async fn a_claim_names_the_pull_request_of_the_item_and_its_verify() {
+    let status = |state: &str| {
+        format!(
+            r#",{{"__typename":"StatusContext","context":"riff/verify","state":"{state}","targetUrl":"https://github.com/como-technologies/riff/pull/40#issuecomment-7"}}"#
+        )
+    };
+    for (status, line) in [
+        (
+            status("FAILURE"),
+            "The verify of pull request #40 of issue-12 failed for commit 1a2b3c4: \
+             https://github.com/como-technologies/riff/pull/40#issuecomment-7. Read the result, \
+             go on from the branch, and send a new verify request: see \"Pick up dropped work\" \
+             in the riff skill.",
+        ),
+        (
+            String::new(),
+            "Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4. The build is \
+             done: do not build it again. Release issue-12. To verify the work, claim \
+             verify-issue-12.",
+        ),
+        (
+            status("SUCCESS"),
+            "The verify of pull request #40 of issue-12 passed for commit 1a2b3c4, and the merge \
+             waits. The build is done: do not build it again. Release issue-12.",
+        ),
+    ] {
+        let machine = Machine::new(&pulls(&status)).await;
+        machine.ok("lead", &["lead"]).await;
+        machine.ok("lead", &["resume", "--riff"]).await;
+
+        // No pushed branch: riff does not ask `gh`.
+        let out = machine.ok("next", &["claim", "issue-12"]).await;
+        assert_eq!(out, "You hold issue-12 in como-technologies/riff.\n");
+        assert!(!log(machine.bin.path()).contains("pr list"));
+        machine.ok("next", &["release", "issue-12"]).await;
+
+        // The branch of the author is on `origin`.
+        let head = commit(&machine);
+        let git = Command::new("git")
+            .args(["update-ref", "refs/remotes/origin/worktree-issue-12", &head])
+            .current_dir(machine.repo.path())
+            .status();
+        assert!(git.unwrap().success());
+        let out = machine.ok("next", &["claim", "issue-12"]).await;
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "{out}");
+        assert!(lines[1].starts_with("Earlier work on issue-12: the pushed branch"));
+        assert_eq!(lines[2], line);
+        assert!(
+            log(machine.bin.path()).contains(
+                "gh pr list --repo como-technologies/riff --state open --limit 100 --json \
+                 number,headRefName,headRefOid,isDraft,statusCheckRollup"
+            ),
+            "{}",
+            log(machine.bin.path())
+        );
+
+        // A verify claim, and an item with no pull request, get no line.
+        let out = machine.ok("verifier", &["claim", "verify-issue-12"]).await;
+        assert_eq!(out, "You hold verify-issue-12 in como-technologies/riff.\n");
+        let out = machine.ok("verifier", &["claim", "issue-13"]).await;
+        assert_eq!(out, "You hold issue-13 in como-technologies/riff.\n");
+    }
+}
+
 /// Makes one empty commit in the clone of `machine`, and returns it.
 fn commit(machine: &Machine) -> String {
     let git = |args: &[&str]| {

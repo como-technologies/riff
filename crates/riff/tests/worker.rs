@@ -451,7 +451,8 @@ async fn riff_workers_idle_shows_and_sets_the_settings() {
 }
 
 /// The start hook tells a session with `RIFF_WORKER=1` that it is a
-/// worker, to wait idle with no work, and to wait for a verify.
+/// worker, to wait idle with no work, and that its work on an item
+/// ends at the verify request (01M3Z9N6AK6W9KCA1MN72X78B6).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_start_hook_tells_a_worker() {
     let api = start_server().await;
@@ -484,7 +485,10 @@ async fn the_start_hook_tells_a_worker() {
         "{worker}"
     );
     assert!(
-        worker.contains("While you wait for a verify, keep your claim and wait."),
+        worker.contains(
+            "Your work on an item ends at the verify request: write the state on the issue, \
+             release the item, and end your turn. Do not wait for the verify."
+        ),
         "{worker}"
     );
     assert!(!context(false).contains("You are a worker"));

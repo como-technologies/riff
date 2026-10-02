@@ -11,6 +11,7 @@
 //! | Variable | Value |
 //! |---|---|
 //! | Each `RIFF_…` and `CLAUDE_…` variable, `TMUX`, `TMUX_PANE` | removed |
+//! | `GH_TOKEN`, `GITHUB_TOKEN` | removed: the `gh` of the machine has no sign-in in a test, so no test reaches the forge |
 //! | `RIFF_SERVER` | [`DEAD_SERVER`]: nothing listens there |
 //! | `RIFF_MACHINE` | [`MACHINE`]: the numbers of a machine with free memory and no load, so no test depends on the machine that runs it (01M3WFZ08D8VT9KD6HXY09NHSE) |
 //! | `RIFF_ON` | `1`: riff is on in each directory, so a test of a hook needs no repository with `riff enable`. A test of the state removes it (01M3XY2SWEK0N8MC3MY4TMYTD3) |
@@ -56,8 +57,10 @@ pub const DEAD_SERVER: &str = "http://127.0.0.1:9";
 /// own: 8 cores, 32 GB of memory, all of it available, and no load.
 pub const MACHINE: &str = "cpu 8x3000MHz, mem 32GB, 32GB available, load 0.00";
 
-/// The other variables that the helper removes: the tmux of the person.
-pub const REMOVED: [&str; 2] = ["TMUX", "TMUX_PANE"];
+/// The other variables that the helper removes: the tmux of the person,
+/// and the tokens of `gh`. With `HOME` in a temp dir, `gh` then has no
+/// sign-in, so a test never reaches the forge.
+pub const REMOVED: [&str; 4] = ["TMUX", "TMUX_PANE", "GH_TOKEN", "GITHUB_TOKEN"];
 
 /// A test environment in a temp dir of its own.
 pub struct Isolated {
@@ -217,6 +220,8 @@ impl Isolated {
 /// assert!(isolated::removed("RIFF_SERVER".as_ref()));
 /// assert!(isolated::removed("CLAUDE_CODE_SESSION_ID".as_ref()));
 /// assert!(isolated::removed("TMUX".as_ref()));
+/// assert!(isolated::removed("GH_TOKEN".as_ref()));
+/// assert!(isolated::removed("GITHUB_TOKEN".as_ref()));
 /// assert!(!isolated::removed("PATH".as_ref()));
 /// ```
 pub fn removed(name: &OsStr) -> bool {

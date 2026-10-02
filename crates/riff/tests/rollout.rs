@@ -39,15 +39,16 @@ esac
 exit 0
 "#;
 
-/// The wave `Wave 1` holds the issues of the file `issues`. No pull
-/// request is open.
+/// The wave `Wave 1` holds the issues of the file `issues`. The open
+/// pull requests are in the file `pulls`. With no file, no pull request
+/// is open.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/gh.log"
 case "$1 $2" in
   api*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
   "issue list") cat "$dir/issues" ;;
-  "pr list") echo '[]' ;;
+  "pr list") cat "$dir/pulls" 2>/dev/null || echo '[]' ;;
   *) exit 1 ;;
 esac
 "#;
@@ -94,6 +95,21 @@ impl Lead {
 
     fn issues(&self, json: &str) {
         std::fs::write(self.fake.path().join("issues"), json).unwrap();
+    }
+
+    /// One open pull request for the branch of issue 1, with the
+    /// status `riff/verify` of `state` on its head, or with no status.
+    fn pull(&self, state: Option<&str>) {
+        let status = state.map_or(String::new(), |state| {
+            format!(r#"{{"__typename":"StatusContext","context":"riff/verify","state":"{state}"}}"#)
+        });
+        let json = format!(
+            r#"[{{"number":40,"headRefName":"worktree-issue-1","headRefOid":"1a2b3c4d","isDraft":false,"statusCheckRollup":[{status}]}}]"#
+        );
+        // A rename: a look never reads half of the file.
+        let new = self.fake.path().join("pulls.new");
+        std::fs::write(&new, json).unwrap();
+        std::fs::rename(new, self.fake.path().join("pulls")).unwrap();
     }
 
     async fn riff(&self, state: RiffState) {
@@ -390,6 +406,56 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
     lead.riff(RiffState::Running).await;
     lead.claim(3, "issue-5").await;
     lead.until_workers(4).await;
+}
+
+const ONE_ITEM: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#;
+
+/// The author of a pull request released its item at the verify
+/// request. The item is no free work for a build
+/// (01M3Z9N5HHHS1E17NFGMVBKZ0K): while the pull request waits for the
+/// merge, the rollout starts no worker. After a failed verify the item
+/// is free again, and the rollout starts a worker for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_item_with_an_open_pull_request_and_no_claim_is_no_build() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    lead.pull(Some("SUCCESS"));
+    lead.riff(RiffState::Running).await;
+    lead.looked().await;
+    assert_eq!(
+        lead.settled().await,
+        0,
+        "the pull request waits for the merge: {}",
+        lead.tmux_log()
+    );
+
+    lead.pull(Some("FAILURE"));
+    lead.until_workers(1).await;
+    // The next session holds the item: no more work.
+    lead.claim(1, "issue-1").await;
+    lead.looked().await;
+    assert_eq!(lead.settled().await, 1, "{}", lead.tmux_log());
+}
+
+/// A pull request that waits for a verify is one unit of work: a
+/// verify. The rollout starts one worker for it, and the worker takes
+/// the verify claim. Then no work is left: the item is no build
+/// (01M3Z9N5HHHS1E17NFGMVBKZ0K).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pull_request_that_waits_for_a_verify_counts_one_time() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    lead.pull(None);
+    lead.riff(RiffState::Running).await;
+    lead.until_workers(1).await;
+    lead.claim(1, "verify-issue-1").await;
+    lead.looked().await;
+    assert_eq!(
+        lead.settled().await,
+        1,
+        "a second worker for the build: {}",
+        lead.tmux_log()
+    );
 }
 
 /// The rollout starts no worker where riff is off in the main clone

@@ -171,6 +171,51 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     let release = at("Call `release` with `verify-issue-12`.");
     let remove = at("call `ExitWorktree` with action `remove` and `discard_changes` set to true.");
     assert!(enter < name && name < checkout && checkout < release && release < remove);
+
+    // The work of a worker ends at the verify request
+    // (01M3Z9N6AK6W9KCA1MN72X78B6), and the verifier does the steps
+    // after the merge (01M3Z9N6GQK0NYCMGQ66FW406V). A session that is
+    // not a worker keeps its claim (01M3Z9N6NFNMW62JZ796RV4643).
+    let author = section[ask..check]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let in_author = |text: &str| {
+        author
+            .find(text)
+            .unwrap_or_else(|| panic!("no {text:?} in {author}"))
+    };
+    let request = in_author("Post a verify request to your repository thread.");
+    let ends = in_author("In a worker (`RIFF_WORKER=1`), your work on the item ends here.");
+    let state = in_author(
+        "Write the state on the issue as a comment: the pull request, the commit, what is left \
+         after the merge (for example a check after the release), and what a session must know \
+         when the verify fails.",
+    );
+    let free = in_author("Call `release` with the item.");
+    let clear = in_author("End your turn. riff clears your context");
+    let person = in_author("A session that is not a worker keeps its claim and waits");
+    assert!(request < ends && ends < state && state < free && free < clear && clear < person);
+    for text in [
+        "One context holds one item.",
+        "do not start a second item in this context",
+        "On a fail, the item is free with its branch",
+    ] {
+        in_author(text);
+    }
+    assert!(!author.contains("Set your status to blocked"), "{author}");
+    let pass = at("When no session holds it, the author was a worker and released the item.");
+    let wait = at("`riff pr wait 40`, with `run_in_background` true. Keep your claim while you wait.");
+    let done = at("Post a note that the item is done");
+    let item = at("remove the worktree and the branch of the item, when your machine has them");
+    assert!(checkout < pass && pass < wait && wait < done && done < release && remove < item);
+    for text in [
+        "When no session holds the item, the result also wakes your lead.",
+        "On a fail with no holder, the item `issue-12` is free with its branch.",
+        "sees the failed verify in the result of `claim`",
+    ] {
+        at(text);
+    }
     assert!(!verifier.contains("worktree add"), "{verifier}");
     assert!(!verifier.contains("`keep`"), "{verifier}");
 }
