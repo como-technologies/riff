@@ -207,7 +207,7 @@ use crate::lease::Lease;
 use crate::owner::{Check, Checks};
 use crate::state::{Announce, Role, Signal, State, may_read};
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
-use crate::token::{NO_OWNER, OwnerChange, Tokens, Took};
+use crate::token::{NO_OWNER, NoSignIn, OwnerChange, Tokens, Took};
 use crate::trace::{DeniedCode, Named};
 
 /// The least time between two writes of the token store (R127): the
@@ -516,6 +516,43 @@ impl Server {
         self.replay
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Signs in a person with the verified email `email` on the device
+    /// key `jkt`: the one path of the handler `exchange` and of
+    /// [`Service::admit`]. The rules of "Owner and members" decide
+    /// ([`Tokens::admit`]). The caller saves the token store.
+    fn sign_in(
+        &self,
+        email: &str,
+        allowed_domain: bool,
+        jkt: &str,
+    ) -> Result<TokenReply, NoSignIn> {
+        self.tokens_change().admit(
+            email,
+            allowed_domain,
+            &self.config.admins,
+            jkt,
+            Instant::now(),
+        )
+    }
+
+    /// Who may join the riff: the one path of the handler `members` and
+    /// of [`Service::members`]. Each person shows once, with the highest
+    /// role (01M3MN157X8N9QKER1AJEPEJVX).
+    fn members(&self) -> MembersReply {
+        let (owner, admins, members) = self.tokens().roles(&self.config.admins);
+        MembersReply {
+            owner,
+            admins,
+            members,
+            allowed_domains: self
+                .config
+                .provider
+                .as_ref()
+                .map(|p| p.allowed_domains.clone())
+                .unwrap_or_default(),
+        }
     }
 
     /// The token store for a change. The change is counted, and
@@ -1624,6 +1661,95 @@ impl Service {
         self.0.tokens()
     }
 
+    /// Signs in a person with the verified email `email` on the device
+    /// key `jkt`, as the sign-in of the provider does: the rules of
+    /// "Owner and members" in [`token`] decide. `allowed_domain` is true
+    /// when the account is in an allowed domain (R15). The reply comes
+    /// after the save of the token store (R128). The error is the text
+    /// that the person reads.
+    ///
+    /// ```
+    /// # #[tokio::main] async fn main() {
+    /// use riff_server::Service;
+    /// use riff_server::auth::Config;
+    ///
+    /// let service = Service::new(Config {
+    ///     require_sign_in: true,
+    ///     ..Config::default()
+    /// });
+    /// assert!(!service.owned());
+    /// // The first person is the owner, from any domain.
+    /// let ada = service.admit("Ada@gmail.com", false, "k1").await.unwrap();
+    /// assert_eq!(ada.user, "ada");
+    /// assert_eq!(service.members().owner.as_deref(), Some("ada@gmail.com"));
+    /// assert!(service.owned());
+    ///
+    /// // A person with no invite and no allowed domain is refused.
+    /// let refused = service.admit("bob@gmail.com", false, "k2").await.unwrap_err();
+    /// assert!(refused.ends_with("run: riff invite bob@gmail.com"), "{refused}");
+    /// // A person of an allowed domain signs in.
+    /// assert!(service.admit("bob@gmail.com", true, "k2").await.is_ok());
+    ///
+    /// // Another email that gives the USER `ada` is refused (R209).
+    /// let taken = service.admit("ada@x.io", true, "k3").await.unwrap_err();
+    /// assert_eq!(taken, "the user ada belongs to another account; ask an admin");
+    /// # }
+    /// ```
+    pub async fn admit(
+        &self,
+        email: &str,
+        allowed_domain: bool,
+        jkt: &str,
+    ) -> Result<TokenReply, String> {
+        let mark = self.0.tokens_changes.load(Ordering::SeqCst);
+        let reply = self.0.sign_in(email, allowed_domain, jkt);
+        self.0
+            .save_tokens_since(mark)
+            .await
+            .map_err(|error| error.to_string())?;
+        reply.map_err(|refused| refused.to_string())
+    }
+
+    /// Who may join the riff: what `POST /v1/members` replies. Each
+    /// person shows once, with the highest role. The admins of the
+    /// settings are in it (R210).
+    ///
+    /// ```
+    /// use riff_server::Service;
+    /// use riff_server::auth::Config;
+    ///
+    /// let service = Service::new(Config {
+    ///     admins: vec![" Dan@X.io".into()],
+    ///     ..Config::default()
+    /// });
+    /// let list = service.members();
+    /// assert_eq!(list.owner, None);
+    /// assert_eq!(list.admins, ["dan@x.io"]);
+    /// assert!(list.members.is_empty());
+    /// assert_eq!(service.asks(), None);
+    /// ```
+    pub fn members(&self) -> MembersReply {
+        self.0.members()
+    }
+
+    /// The email of the admin whose request for the owner role waits
+    /// (01M3N7K3ZAZFGABN7032AYJWEM).
+    pub fn asks(&self) -> Option<String> {
+        self.0.tokens().asks().map(str::to_owned)
+    }
+
+    /// The ID of the riff, when it has one (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
+    /// `GET /v1/sign-in` gives the same ID.
+    pub fn riff_id(&self) -> Option<String> {
+        Some(self.0.tokens().riff_id().to_owned())
+    }
+
+    /// True when the riff has an owner, or had one: a riff whose owner
+    /// was gone counts (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+    pub fn owned(&self) -> bool {
+        self.0.tokens().owned()
+    }
+
     /// The number of proof IDs that this server keeps (R114).
     pub fn proofs_kept(&self) -> usize {
         self.0.replay().len()
@@ -2132,18 +2258,7 @@ async fn members(
     Extension(_): Extension<SignedIn>,
     Json(Members {}): Json<Members>,
 ) -> Json<MembersReply> {
-    let (owner, admins, members) = s.tokens().roles(&s.config.admins);
-    Json(MembersReply {
-        owner,
-        admins,
-        members,
-        allowed_domains: s
-            .config
-            .provider
-            .as_ref()
-            .map(|p| p.allowed_domains.clone())
-            .unwrap_or_default(),
-    })
+    Json(s.members())
 }
 
 /// Lets a request through only with a live access token in the
@@ -2283,14 +2398,7 @@ async fn exchange(
     })?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
     let pair = s
-        .tokens_change()
-        .admit(
-            &identity.email,
-            identity.allowed_domain,
-            &s.config.admins,
-            &proof.jkt,
-            Instant::now(),
-        )
+        .sign_in(&identity.email, identity.allowed_domain, &proof.jkt)
         .map_err(|e| {
             tracing::info!("sign-in refused for {}: {e}", identity.email);
             // The person is not a member, another email holds the USER

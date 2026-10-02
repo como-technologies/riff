@@ -152,12 +152,20 @@ async fn a_second_email_does_not_get_the_user_of_the_first() {
     let error: TokenError = reply.json().await.unwrap();
     assert_eq!(error.error, "access_denied");
 
-    // Only the sign-in of the first email is there.
-    assert_eq!(
-        service.tokens().email_of("o-brien"),
-        Some("o'brien@comotechnologies.io")
+    let why = error.error_description.unwrap();
+    assert!(
+        why.contains("the user o-brien belongs to another account"),
+        "{why}"
     );
-    assert_eq!(service.tokens().revoke_user("o-brien"), 1);
+
+    // The first email holds the USER: it signs in again, on another
+    // device.
+    let reply = exchange(&server, &first).await;
+    assert_eq!(reply.status(), 200);
+    let pair: TokenReply = reply.json().await.unwrap();
+    assert_eq!(pair.user, "o-brien");
+    // Only the two sign-ins of the first email are there.
+    assert_eq!(service.tokens().revoke_user("o-brien"), 2);
 }
 
 /// Each allowed domain has its own accounts, and a USER belongs to one
@@ -190,10 +198,16 @@ async fn two_domains_do_not_share_a_user() {
     assert_eq!(reply.status(), 400);
     let error: TokenError = reply.json().await.unwrap();
     assert_eq!(error.error, "access_denied");
-    assert_eq!(
-        service.tokens().email_of("alice"),
-        Some("alice@comotechnologies.io")
+    let why = error.error_description.unwrap();
+    assert!(
+        why.contains("the user alice belongs to another account"),
+        "{why}"
     );
+
+    // The account of the first domain holds the USER: it signs in
+    // again. Only its two sign-ins are there.
+    assert_eq!(exchange(&server, &first).await.status(), 200);
+    assert_eq!(service.tokens().revoke_user("alice"), 2);
 }
 
 /// An account from another domain, with no invite, is refused once

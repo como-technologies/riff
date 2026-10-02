@@ -81,7 +81,8 @@ async fn a_new_server_stops_the_old_one() {
 #[tokio::test]
 async fn a_new_server_refuses_a_proof_from_before_it_served() {
     let before = common::now();
-    let (service, base) = common::start_on(Arc::new(Memory::default())).await;
+    // A riff with sign-in: only there, a person ends a sign-in.
+    let (service, base) = common::start_signed_on(Arc::new(Memory::default())).await;
     let key = Key::generate();
     let pair = service
         .tokens()
@@ -110,7 +111,8 @@ async fn a_new_server_refuses_a_proof_from_before_it_served() {
 #[tokio::test]
 async fn a_server_with_no_store_refuses_a_proof_from_before_it_started() {
     let before = common::now() - 1;
-    let (service, base) = common::start(false, &[]).await;
+    // A riff with sign-in: only there, a person ends a sign-in.
+    let (service, base) = common::start(true, &[]).await;
     let key = Key::generate();
     let pair = service
         .tokens()

@@ -360,7 +360,7 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
             Service::new(config)
         }
     };
-    let owned = service.tokens().owned();
+    let owned = service.owned();
     listen::check(cli.listen, trusted, cli.insecure, owned)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let listener = port.open()?;
