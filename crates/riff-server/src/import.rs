@@ -459,8 +459,7 @@ impl Old {
 mod tests {
     use super::*;
 
-    const SESSIONS_JSON: &[u8] =
-        include_bytes!("../tests/fixtures/0.8.0/sessions");
+    const SESSIONS_JSON: &[u8] = include_bytes!("../tests/fixtures/0.8.0/sessions");
     const TOKENS_JSON: &[u8] = include_bytes!("../tests/fixtures/0.8.0/tokens");
     const SAVED_MS: u64 = 1_790_000_000_000;
 
@@ -639,11 +638,17 @@ mod tests {
             })
             .collect();
         assert_eq!(forgotten, ["brett/b1", "mike/m1", "mike/m2"]);
-        assert!(!changes.iter().any(|c| matches!(c, Change::SessionStarted(_))));
+        assert!(
+            !changes
+                .iter()
+                .any(|c| matches!(c, Change::SessionStarted(_)))
+        );
         // No direct thread is left.
-        assert!(!changes.iter().any(
-            |c| matches!(c, Change::Posted(p) if p.thread.is_direct())
-        ));
+        assert!(
+            !changes
+                .iter()
+                .any(|c| matches!(c, Change::Posted(p) if p.thread.is_direct()))
+        );
     }
 
     /// The log of the import alone gives the state: a replay is the

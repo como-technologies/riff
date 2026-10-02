@@ -916,10 +916,32 @@
   commands, each with a path of its own: `/v1/pause`, `/v1/resume` and
   `/v1/idle/set`. A read of the pause (`/v1/riff`) and of the settings
   of idle workers (`/v1/idle`) is a query.
-- **01M3WRD9DYJWVN1QRBAC3ZVVZD** `riff-server` does not start on a store
-  that has the objects of a `riff-server` from before the log
-  (`sessions`, `tokens` or `threads/`) and no log. The error names the
-  objects. The server takes no lease.
+- **01M3WRD9DYJWVN1QRBAC3ZVVZD** Replaced by
+  01M3Z8MRDZEKTXSKZTDTDSCZ3W.
+- **01M3Z8MRDZEKTXSKZTDTDSCZ3W** Go live keeps the work of each
+  repository of the riff. A start of `riff-server` on a store that has
+  the objects of a `riff-server` from before the log (`sessions`,
+  `tokens` or `threads/`) and no log is the import: the command
+  `import` of the server writes the state of the old objects to the log
+  as one chunk. The riff keeps its ID, its people, its settings, each
+  session with its threads, its claims and its lead, and the last 200
+  messages of each thread with their seq. A session with no sign of
+  life for 30 days is not in the import. A session that ended, or that
+  stopped more than 5 minutes before the save, keeps no claim and no
+  lead. The riff is paused after the import. The server writes a
+  checkpoint with the read cursors at once, and opens its port only
+  after the import. An old object that does not read stops the start,
+  and the server takes no lease.
+- **01M3Z8MRKTAN8CBAQB721JNZAK** The import runs one time. The command
+  `import` is refused in a log that has a record. A start on a store
+  with a log does not read the old objects. The import changes no old
+  object and deletes none.
+- **01M3Z8MRGWWA0CNZ003D67H6R4** The import keeps each live sign-in of
+  the old `tokens` object, at the position of the end of the import. A
+  person refresh token of the old server that was not used works one
+  time: it gives the first pair of a new chain. A used token, a
+  session token and an access token of the old server give nothing. No
+  person runs `riff login` at go-live.
 - **01M3WRD9G5GAF65EX8P6D5DMQM** A riff with no sign-in takes a call
   with no token: the caller is then the `me` of the body, with the role
   of an admin. A call whose body names no `me` needs a token.

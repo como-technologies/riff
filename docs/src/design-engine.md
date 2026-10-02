@@ -85,8 +85,9 @@ flowchart TD
   role, end the role of an owner who is gone, post a note of the
   server, name the owner of the settings. The engine has one function
   for each command of the server: `Engine::make_riff`,
-  `Engine::announce`, `Engine::forget`, `Engine::name_owner`,
-  `Engine::grant_owner` and `Engine::end_owner`. The function makes
+  `Engine::announce`, `Engine::forget`, `Engine::import`,
+  `Engine::name_owner`, `Engine::grant_owner` and
+  `Engine::end_owner`. The function makes
   the `Authenticated` value inside the engine module.
   `Engine::sign_in` sends the command `admit` of the token path, with
   the proof of the sign-in (01M3XA877YZQ649SWB5TN60V5P).
@@ -103,8 +104,9 @@ flowchart TD
   and a `pause_set` record that pauses the riff. `make_riff` never
   replaces an
   ID that the riff has (01M3XA87HE06Z6M32ZJPSYSYRZ): in a log with
-  records and no ID, it makes only `riff_made`. The import of go-live
-  gives the ID of the riff of today.
+  records and no ID, it makes only `riff_made`. At go-live, the
+  command `import` makes the `riff_made` record with the ID of the
+  riff of today, and the server sends no `make_riff`.
 - A call from a session that the state does not know first runs the
   command `register` for that session, also when the call is a query
   or a signal. It is a command of its own, with an entry of its own:
@@ -957,33 +959,69 @@ pub struct PauseInfo { by: Option<By>, at_ms: u64 }
 
 A start that finds the old objects and no log is the import. It needs
 no flag: the deploy of release 1.0.0 is the import. The server reads
-the old objects before the dispatch, and gives what it read to the
-command `import` of the server. `Engine::dispatch` writes these
-records, with `by` `server` and `command` `import`:
+the old objects before it takes the lease, and gives what it read to
+the command `import` of the server. `Engine::dispatch` writes these
+records as one chunk, with `by` `server` and `command` `import`:
 
 1. `riff_made`, with the riff ID of today.
 2. `person_joined` for each user, with its email.
 3. `member_invited`, `admin_set` and `owner_set`; `owner_asked` when a
    request for the owner role waits.
 4. `pause_set` for the riff, paused; `setting_changed`.
-5. For each session that did not end: `session_started` (the reason
-   `join`, the worker mark), then its `joined_thread`, `lead_set` and
-   `claimed` records.
-6. The `posted` records: the last 200 messages of each thread, as the
-   checkpoint keeps them. A direct thread whose two sessions ended is
-   not in the import.
+5. The `posted` records: the last 200 messages of each thread, as the
+   checkpoint keeps them. A direct thread with no session that did not
+   end is not in the import.
+6. `session_forgotten` for each sender of a message that is no session
+   of the import. A `posted` record names its sender, and this record
+   takes the sender out again.
+7. For each session: `session_started` (the reason `join`, the worker
+   mark), then its `joined_thread` records. For a session that held at
+   the save: its `lead_set` and `claimed` records.
+
+```mermaid
+sequenceDiagram
+    participant M as main
+    participant B as bucket
+    participant E as Engine
+    participant T as token store
+    M->>B: read sessions, tokens, threads/
+    Note over M: an object that does not read stops the start
+    M->>B: take the lease
+    M->>E: import (the changes of the old objects)
+    E->>B: one chunk of the log
+    E->>E: the memory of each session, the read cursors
+    M->>T: the sign-ins of the old tokens object
+    T->>B: signins.json
+    M->>B: a checkpoint
+    Note over M: open the port
+```
 
 - The import writes only kinds of 1.0.0, and it can make each of
   them.
 - An imported `posted` record keeps its old seq. So a thread can start
   at a seq that is not 1.
+- The session records come after the `posted` records. So each session
+  is in the place of the old `sessions` object, not in the place of
+  its last message.
+- A session with no sign of life for 30 days is not in the import. A
+  session that ended is in the import with its threads and its read
+  cursors, and with no claim and no lead. A session that comes back
+  reads no message a second time.
+- A session held at the save when it did not end and its last sign of
+  life was at most 5 minutes before the save. Only such a session
+  keeps its claims and its lead.
 - After the import, the server writes a checkpoint with the read
   cursors of the old objects. So no session reads a message of the
   import a second time.
 - A worker that holds no claim at the import is Ready.
-- A second start finds the log, and does not import again.
-- Until the import is built (#341), `riff-server` refuses to start on
-  a store that has the old objects and no log.
+- A second start finds the log, and does not import again. The command
+  `import` is refused in a log that has a record.
+- The token store takes each live sign-in of the old `tokens` object,
+  at the position of the end of the import. A person refresh token of
+  today works one time: it gives the first pair of a new chain. So no
+  person signs in again. A session token has no chain: the session
+  swaps the new person token.
+- The import changes no old object. They stay for a rollback.
 - After go-live, only the owner and the admins resume the whole riff.
 
 ## Build items

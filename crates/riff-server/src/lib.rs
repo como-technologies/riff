@@ -805,7 +805,9 @@ impl Server {
     ///   cursors.
     async fn import(&self, old: &Old) -> Result<(), StoreError> {
         let failed = |what: &str, why: String| {
-            StoreError::Failed(format!("the import of the old objects failed: {what}: {why}"))
+            StoreError::Failed(format!(
+                "the import of the old objects failed: {what}: {why}"
+            ))
         };
         let at_ms = now_ms();
         let records = self
@@ -3844,7 +3846,13 @@ mod tests {
         let kinds: Vec<&str> = chunks[0].iter().map(|r| r.change.kind()).collect();
         assert_eq!(
             kinds,
-            ["riff_made", "person_joined", "owner_set", "pause_set", "setting_changed"]
+            [
+                "riff_made",
+                "person_joined",
+                "owner_set",
+                "pause_set",
+                "setting_changed"
+            ]
         );
         for record in &chunks[0] {
             assert_eq!(record.by, Some(riff_core::record::By::Server));

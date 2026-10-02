@@ -156,8 +156,14 @@ async fn the_import_gives_the_state_of_the_old_server() {
         .map(|uri| uri.as_str().unwrap().to_owned())
         .collect();
     assert_eq!(who(&base).await, old);
-    assert!(old.iter().any(|uri| uri.contains("session=m2&claim=issue-341")));
-    assert!(old.iter().any(|uri| uri.contains("session=b2&claim=issue-7")));
+    assert!(
+        old.iter()
+            .any(|uri| uri.contains("session=m2&claim=issue-341"))
+    );
+    assert!(
+        old.iter()
+            .any(|uri| uri.contains("session=b2&claim=issue-7"))
+    );
     assert!(old.iter().any(|uri| uri.contains("session=m1&lead=true")));
 
     // The worker marks.
@@ -229,7 +235,10 @@ async fn the_import_gives_the_state_of_the_old_server() {
     }
     let riff = messages(&base, m1, RIFF).await;
     assert_eq!(riff.len(), KEEP);
-    assert_eq!((riff[0]["seq"].clone(), riff[199]["seq"].clone()), (json!(8), json!(207)));
+    assert_eq!(
+        (riff[0]["seq"].clone(), riff[199]["seq"].clone()),
+        (json!(8), json!(207))
+    );
 
     // The riff is paused after the import: a claim fails. The owner or
     // an admin resumes the whole riff. The settings stay.
@@ -250,7 +259,12 @@ async fn the_import_gives_the_state_of_the_old_server() {
     let m2 = &uris["mike/m2"];
     let post = json!({ "me": m2, "thread": RIFF, "body": "after go-live" });
     assert_eq!(call(&base, "post", post).await["seq"], 208);
-    assert!(who(&base).await.iter().any(|uri| uri.contains("session=m2&claim=issue-341")));
+    assert!(
+        who(&base)
+            .await
+            .iter()
+            .any(|uri| uri.contains("session=m2&claim=issue-341"))
+    );
     let held = json!({ "me": m1, "thread": RIFF, "item": "issue-341" });
     let reply = common::client()
         .post(format!("{base}/v1/claim"))
@@ -309,7 +323,11 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
     let facts = facts();
     let token = |name: &str| facts["refresh"][name]["token"].as_str().unwrap().to_owned();
     let (mike, brett, gone) = (Key::generate(), Key::generate(), Key::generate());
-    let keys = [("jkt-mike", &mike), ("jkt-brett", &brett), ("jkt-gone", &gone)];
+    let keys = [
+        ("jkt-mike", &mike),
+        ("jkt-brett", &brett),
+        ("jkt-gone", &gone),
+    ];
     let store = old_store(&keys).await;
     let (service, base) = common::start_signed_on(Arc::new(store.clone())).await;
 
@@ -317,12 +335,21 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
     // first sign-in.
     assert_eq!(service.tokens().sign_ins(), 2);
     // A token of another key is refused, and stays good.
-    assert_eq!(refresh(&base, &brett, &token("mike")).await.err(), Some(400));
+    assert_eq!(
+        refresh(&base, &brett, &token("mike")).await.err(),
+        Some(400)
+    );
     // A removed person gets no token.
     assert_eq!(refresh(&base, &gone, &token("gone")).await.err(), Some(400));
     // A used token and a session token of the old server give nothing.
-    assert_eq!(refresh(&base, &mike, &token("mike_used")).await.err(), Some(400));
-    assert_eq!(refresh(&base, &mike, &token("mike_session")).await.err(), Some(400));
+    assert_eq!(
+        refresh(&base, &mike, &token("mike_used")).await.err(),
+        Some(400)
+    );
+    assert_eq!(
+        refresh(&base, &mike, &token("mike_session")).await.err(),
+        Some(400)
+    );
 
     // The person token of today gives a pair of a new chain.
     let person = refresh(&base, &mike, &token("mike")).await.unwrap();
@@ -353,9 +380,13 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
     };
 
     // It keeps its claim.
-    let reply = send("who", json!({ "me": m2, "all": true }), &session.access_token)
-        .await
-        .unwrap();
+    let reply = send(
+        "who",
+        json!({ "me": m2, "all": true }),
+        &session.access_token,
+    )
+    .await
+    .unwrap();
     assert_eq!(reply.status(), 200);
     let listed: Value = reply.json().await.unwrap();
     let uris: Vec<&str> = listed["sessions"]
@@ -365,7 +396,8 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
         .map(|s| s["uri"].as_str().unwrap())
         .collect();
     assert!(
-        uris.iter().any(|uri| uri.contains("session=m2&claim=issue-341")),
+        uris.iter()
+            .any(|uri| uri.contains("session=m2&claim=issue-341")),
         "{uris:?}"
     );
     // The owner of today resumes the riff, and the session posts.
@@ -375,9 +407,13 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
     assert_eq!(reply.status(), 200, "mike is the owner");
     let mut post = Post::new(&m2, Some(RIFF.parse().unwrap()), vec![], "after go-live");
     post.sign(&mike, now_ms());
-    let reply = send("post", serde_json::to_value(&post).unwrap(), &session.access_token)
-        .await
-        .unwrap();
+    let reply = send(
+        "post",
+        serde_json::to_value(&post).unwrap(),
+        &session.access_token,
+    )
+    .await
+    .unwrap();
     assert_eq!(reply.status(), 200);
     assert_eq!(reply.json::<Value>().await.unwrap()["seq"], 208);
 
@@ -405,9 +441,33 @@ async fn a_riff_of_v0_8_gets_the_build_header_in_each_reply() {
     assert_ne!(old.to_string(), VERSION);
     // Each path that a riff of v0.8.0 calls.
     let paths = [
-        "admin", "alive", "claim", "end", "idle", "invite", "join", "lead", "leave", "members",
-        "owner", "owner/deny", "owner/take", "post", "read", "register", "release", "remove",
-        "revoke", "riff", "sign-in", "start", "status", "tail", "threads", "token", "watch",
+        "admin",
+        "alive",
+        "claim",
+        "end",
+        "idle",
+        "invite",
+        "join",
+        "lead",
+        "leave",
+        "members",
+        "owner",
+        "owner/deny",
+        "owner/take",
+        "post",
+        "read",
+        "register",
+        "release",
+        "remove",
+        "revoke",
+        "riff",
+        "sign-in",
+        "start",
+        "status",
+        "tail",
+        "threads",
+        "token",
+        "watch",
         "who",
     ];
     let client = reqwest::Client::new();
@@ -419,7 +479,11 @@ async fn a_riff_of_v0_8_gets_the_build_header_in_each_reply() {
             } else {
                 client.post(&url).json(&json!({}))
             };
-            let reply = request.header(HEADER, old.to_string()).send().await.unwrap();
+            let reply = request
+                .header(HEADER, old.to_string())
+                .send()
+                .await
+                .unwrap();
             let theirs = reply.headers().get(HEADER).map(|v| v.to_str().unwrap());
             assert_eq!(theirs, Some(VERSION), "{path}, status {}", reply.status());
         }
