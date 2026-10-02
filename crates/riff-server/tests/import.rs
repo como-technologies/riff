@@ -139,7 +139,8 @@ async fn who(base: &str) -> BTreeSet<String> {
 /// `verified` is true when a key of the fixture signed the message as it
 /// is.
 async fn messages(base: &str, me: &str, thread: &str) -> Vec<Value> {
-    let name: ThreadName = thread.parse().unwrap();
+    // A direct thread has no name that parses from text: read it as JSON.
+    let name: ThreadName = serde_json::from_value(json!(thread)).unwrap();
     let keys = fixture_keys();
     let mut all = Vec::new();
     let mut after = Some(0);
@@ -456,7 +457,10 @@ async fn a_write_of_the_old_server_during_the_lease_wait_is_in_the_import() {
     // The new server holds the lease now, and waits for the old one.
     tokio::time::sleep(SLOW / 3).await;
     assert!(store.load("lease").await.unwrap().is_some());
-    assert!(store.list("log/").await.unwrap().is_empty(), "no import yet");
+    assert!(
+        store.list("log/").await.unwrap().is_empty(),
+        "no import yet"
+    );
     // The old server did not read the lease yet. It takes a claim and a
     // post, and saves, as each second.
     let version = store.load("sessions").await.unwrap().unwrap().version;
@@ -531,7 +535,11 @@ async fn a_second_instance_does_not_import_and_keeps_the_sign_ins() {
     let second = load.await.unwrap().expect("the second instance serves");
     serve(&second, listener);
     second.save().await.unwrap();
-    assert_eq!(store.list("log/").await.unwrap(), chunks, "no second import");
+    assert_eq!(
+        store.list("log/").await.unwrap(),
+        chunks,
+        "no second import"
+    );
     assert_eq!(second.riff_id(), first.riff_id());
     assert_eq!(second.tokens().sign_ins(), 2);
     // The sign-ins are the sign-ins of the first instance.
@@ -578,7 +586,6 @@ async fn a_stop_between_the_sign_ins_and_the_log_loses_no_sign_in() {
     let store = old_store().await;
     let stopped = common::load_on(Arc::new(NoLog(store.clone()))).await;
     assert!(stopped.is_err(), "the import fails with no log");
-    drop(stopped);
     assert!(store.load(SIGN_INS).await.unwrap().is_some());
     assert!(store.list("log/").await.unwrap().is_empty());
 
@@ -655,7 +662,7 @@ async fn a_refresh_token_of_the_old_server_works_one_time_with_no_login() {
     assert_eq!(reply.status(), 200);
     let b2_token: TokenReply = reply.json().await.unwrap();
     let b2 = "riff://brett@kadomony/como-technologies/strata?session=b2#issue-7";
-    let direct: ThreadName = "dm:brett/b1|brett/b2".parse().unwrap();
+    let direct: ThreadName = serde_json::from_value(json!("dm:brett/b1|brett/b2")).unwrap();
     let read = json!({ "me": b2, "thread": direct, "all": true });
     let url = format!("{base}/v1/read");
     let reply = common::post(&url, &brett, Some(&b2_token.access_token))

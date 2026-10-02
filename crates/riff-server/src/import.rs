@@ -582,7 +582,7 @@ mod tests {
         let Change::RiffMade(made) = &changes[0] else {
             panic!("the first record is riff_made");
         };
-        assert_eq!(made.riff_id, "rPj_u8SJv17e8VPwciGGxitcBSKepm_xlwgMssv5YB0");
+        assert_eq!(made.riff_id, "VGaWIEp70l_i0U-tQlNqGvWdyO1Yts0vLoDAUs2fbJw");
         let paused = Change::PauseSet(PauseSet {
             scope: Scope::Riff,
             state: RiffState::Paused,
