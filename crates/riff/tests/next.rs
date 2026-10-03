@@ -461,6 +461,35 @@ async fn a_check_with_a_late_reply_types_nothing_into_a_new_turn() {
     r.w.keys(0).await;
 }
 
+/// A wake waits in the queue of the agent at the end of a turn of a
+/// worker that released its last claim. The next turn starts when the
+/// Stop hook returns, before its check counts the prompts. The Stop hook
+/// counted them, so the check types nothing into that turn. The clear
+/// comes when that turn ends (01M3XZCWQED9M9ZB29F730EA58).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_that_a_waiting_wake_starts_gets_no_keys() {
+    let mut r = Riff::with_a_worker().await;
+    let gate = Gate::before(&r.w.server).await;
+    r.w.server = gate.url.clone();
+    let transcript = r.w.run.path().join("transcript.jsonl");
+    std::fs::write(&transcript, format!("{PROMPT}\n")).unwrap();
+    r.release();
+    assert!(r.claim_is_refused("issue-13").await);
+
+    // The turn ends. The server holds the reply, so the check of the
+    // Stop hook cannot be first.
+    gate.open.send(false).unwrap();
+    r.w.stop_hook_with("w1", true, Some(&transcript));
+    // The waiting wake starts the next turn at once.
+    std::fs::write(&transcript, format!("{PROMPT}\n{PROMPT}\n")).unwrap();
+    gate.open.send(true).unwrap();
+    r.w.no_keys(0).await;
+
+    // That turn ends: its check clears the worker.
+    r.w.stop_hook_with("w1", true, Some(&transcript));
+    r.w.keys(0).await;
+}
+
 /// The seconds of `fresh start Ns ago` in a line of `riff who`.
 fn fresh_secs(line: &str) -> u64 {
     let (_, rest) = line.split_once("fresh start ").expect(line);
