@@ -3253,6 +3253,29 @@ workers.mcp  riff  (/home/mike/.config/riff/config.toml)
 Change it with: riff workers mcp add NAME, or riff workers mcp remove NAME
 ```
 
+#### The language server of a worker
+
+A plugin of Claude Code can bring a language server, for example
+`rust-analyzer-lsp`. The server lives as long as its `claude`, and a
+worker keeps one `claude` for many items. So each worker kept a server
+of some GB for each worktree that was gone, and filled the memory of
+the machine.
+
+A worker starts with no language server. `riff workers start` turns
+off each installed plugin with a language server, on the command line
+of each worker. Your settings file does not change, and your own
+sessions keep the plugin. You do nothing.
+
+Check that no worker runs a language server. Only your own sessions
+show a line:
+
+```sh
+pgrep -a rust-analyzer
+```
+
+A worker that started before this release keeps its server. Stop it
+with `riff workers stop`. riff starts new workers by itself.
+
 #### Give workers another MCP server
 
 Add a server by its name in your Claude Code config. `claude mcp list`

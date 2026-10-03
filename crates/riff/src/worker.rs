@@ -84,7 +84,7 @@ use crate::api::Api;
 use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
-use crate::{enable, hygiene, identity, local, settings, text, worker_mcp};
+use crate::{enable, hygiene, identity, local, settings, text, worker_lsp, worker_mcp};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -282,7 +282,8 @@ pub fn on_env(forced: bool) -> Option<(String, String)> {
 /// Starts at most `count` workers in `tmux`, in the main worktree of
 /// `dir` (01M3JD392Q5ANX0FPZ51W7B0E3): at most the limit of the machine
 /// minus the workers that run (01M3JPQT57PJCRBQYJNDVESS04). Each loads
-/// only the MCP servers of `workers.mcp` (01M3NB5R92ZC61VW6Y45SJEAY9). It
+/// only the MCP servers of `workers.mcp` (01M3NB5R92ZC61VW6Y45SJEAY9), and
+/// no plugin with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). It
 /// starts none while the available memory is less than the floor
 /// (01M3WFZ01PTAYYKG3T5CFA2W4D). It makes the slice of the workers ready
 /// first (01M3WFYZX6GVFYW6NTTTKF144R). It starts none where riff is off
@@ -323,15 +324,20 @@ pub fn start(
     let riff = crate::binary::this_on_disk()?;
     let mcp = worker_mcp::prepare(&main, &riff)?;
     let scope = limits::scope(&settings, &machine, local::dir().as_deref())?;
+    let flags = terminal::worker_settings(&worker_lsp::here());
+    let claude = terminal::Claude {
+        bin: claude,
+        mcp: &mcp,
+        settings: &flags,
+    };
     let programs: Vec<Program> = (0..start)
         .map(|_| {
             let mut worker = Program::worker(
                 &riff,
-                claude,
+                &claude,
                 &main,
                 &base,
                 &terminal::new_session_id(),
-                &mcp,
                 scope.slice,
             );
             worker.env.extend(on_env(enable::forced()));
