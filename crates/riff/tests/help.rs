@@ -90,7 +90,7 @@ fn the_help_shows_the_groups_in_order() {
         riff(&["help", &name]);
     }
     assert!(
-        help.contains("  invite   Let a person join this riff\n"),
+        help.contains("  invite     Let a person join this riff\n"),
         "{help}"
     );
     assert!(

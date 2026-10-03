@@ -686,10 +686,8 @@ mod tests {
             "`ExitWorktree`",
             "`discard_changes`",
             "If you made the worktree with `EnterWorktree` in this context",
-            "git -C MAIN worktree remove PATH",
-            "git -C MAIN update-ref -d refs/heads/BRANCH HEADREF",
+            "call `ExitWorktree` with action `keep`, then run `riff worktrees clean` in the main worktree",
             "you made it before the clear of your context.",
-            "Do not force",
             "Never remove a worktree of another live session",
         ] {
             assert!(skill.contains(word), "the skill does not say {word:?}");

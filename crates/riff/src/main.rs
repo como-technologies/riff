@@ -465,6 +465,11 @@ enum Command {
         #[arg(long, value_name = "SHA")]
         commit: Option<String>,
     },
+    /// Tidy the worktrees of this clone
+    ///
+    /// riff decides by facts, not by the word of an agent.
+    #[command(subcommand)]
+    Worktrees(WorktreesCommand),
     /// Start, list and stop the workers of this machine
     ///
     /// Workers are agent sessions in tmux. With no subcommand, it lists
@@ -674,6 +679,18 @@ enum Workers {
         #[arg(long)]
         host: Option<String>,
     },
+    /// Stop the orphan processes of the workers of this machine
+    ///
+    /// An orphan is a process that an earlier context of the worker
+    /// started, for example a `just ci` in the background before a clear.
+    /// riff keeps `claude`, its MCP servers, the watch and each process
+    /// of the current context. It prints each process that it stopped.
+    /// With PANE, only the worker in PANE.
+    Reap {
+        /// The tmux pane of one worker, for example %3, or its session ID
+        /// or the first 8 characters of it. `riff workers` shows them.
+        pane: Option<String>,
+    },
     /// Show or set how the server stops idle workers
     ///
     /// The server keeps at most PER_HOST idle workers on each host. It
@@ -702,6 +719,19 @@ enum Workers {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum WorktreesCommand {
+    /// Tidy the worktrees that no live session owns
+    ///
+    /// For each linked worktree: it unlocks a lock whose process is gone.
+    /// It removes a clean worktree whose pull request is merged with its
+    /// HEAD, and its branch. It removes a clean detached worktree whose
+    /// commit is on origin. It commits the work of a worktree with no
+    /// live owner as WIP, pushes its branch, and posts a note to your
+    /// lead. It keeps each other worktree, and says why.
+    Clean,
 }
 
 #[derive(Subcommand)]
@@ -1077,6 +1107,12 @@ async fn main() -> Result<()> {
         println!("{}", text::enabled(&set_enabled(place.place(), on)?, on));
         return Ok(());
     }
+    if let Command::Worktrees(WorktreesCommand::Clean) = &cli.command {
+        for line in riff::worktrees::clean_as_person(&identity::working_dir()?, &server).await? {
+            println!("{line}");
+        }
+        return Ok(());
+    }
     if let Command::Workers { command, long } = &cli.command {
         return workers(command.as_ref(), *long, &server).await;
     }
@@ -1387,6 +1423,7 @@ async fn main() -> Result<()> {
         | Command::Server
         | Command::Update { .. }
         | Command::Workers { .. }
+        | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. }),
         }
@@ -1455,6 +1492,13 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 None => riff::host::Request::Stop,
             };
             ask_host(host, request, server).await
+        }
+        Some(Workers::Reap { pane }) => {
+            let dir = local::dir().context("no HOME: riff has no local dir")?;
+            for line in riff::worker::reap(&Tmux::machine(), pane.as_deref(), &dir)? {
+                println!("{line}");
+            }
+            Ok(())
         }
         Some(Workers::Idle { per_host, after }) => {
             let here = identity::place(&identity::working_dir()?)?;
@@ -1620,6 +1664,11 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     );
     for line in [&started.limited, &started.no_scope].into_iter().flatten() {
         println!("{line}");
+    }
+    // The worktrees of the sessions that ended (01M3ZV0TM7ANJ1QQ7XTBDJQE1V).
+    match riff::worktrees::clean_as_person(&started.main, server).await {
+        Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
+        Err(e) => eprintln!("riff: cannot clean the worktrees: {e:#}"),
     }
     Ok(())
 }
@@ -2018,6 +2067,15 @@ async fn session_start(server: &str) -> String {
     if let Some(id) = &id {
         let transcript = input.transcript_path.as_deref();
         count_usage(id, transcript, input.source.is_new_start());
+        // The start of the context, for `riff workers reap`
+        // (01M3ZV0TJX2H77RW6ZA3ERZT9H).
+        if riff::worker::is_worker()
+            && input.source.is_new_start()
+            && let Some(dir) = local::dir()
+            && let Err(e) = riff::workload::mark(&dir, id)
+        {
+            eprintln!("riff: cannot write the start of the context: {e:#}");
+        }
     }
     let api = Api::new(server);
     let cwd = std::env::current_dir().ok();

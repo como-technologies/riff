@@ -84,7 +84,7 @@ use crate::api::Api;
 use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
-use crate::{enable, hygiene, identity, local, settings, text, worker_lsp, worker_mcp};
+use crate::{enable, hygiene, identity, local, settings, text, worker_lsp, worker_mcp, workload};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -150,6 +150,10 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .args(&command[1..])
         .env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
+        // A tmux server that a context started gives each pane the
+        // variable of that context. `claude` is of no context
+        // (01M3ZV0QSFVCHRSEKYK57B88VA).
+        .env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode))
         .envs(limits::JOBS_VARS.map(|var| (var, limit.jobs.to_string())))
         .spawn()
         .with_context(|| format!("cannot start {}", Path::new(&command[0]).display()))?;
@@ -356,7 +360,9 @@ pub fn start(
 }
 
 /// Ends each worker of `tmux`, or the one in `pane`: it kills the pane,
-/// then sends the end call of the session (01M3JPQTDFW3C7QBSZZ2M831MH).
+/// stops each process of the worker that lives after the pane
+/// (01M3ZV0TMNQDK9WC3BR1NPGAC2), then sends the end call of the session
+/// (01M3JPQTDFW3C7QBSZZ2M831MH).
 /// `pane` is a pane, or the session ID of a worker or its start
 /// (01M3Q5A0Z5DK0YV1MWTM4AQD5Z). Returns the number of stopped workers.
 pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Result<usize> {
@@ -369,8 +375,19 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
     }
     let here = identity::place(&identity::working_dir()?)?;
     let api = Api::new(server);
+    let var = crate::next::Agent::context_var(&crate::next::ClaudeCode);
     for worker in &panes {
         tmux.kill(&worker.pane)?;
+        // Each process of the worker, also one that left the pane
+        // (01M3ZV0TMNQDK9WC3BR1NPGAC2).
+        let all = workload::all(var);
+        let stopped = workload::stop(
+            &workload::of_worker(&all, &worker.session, std::process::id()),
+            var,
+        );
+        if !stopped.is_empty() {
+            println!("{}", text::stopped_after_pane(&worker.pane, &stopped));
+        }
         let ended = async {
             let me = identity::agent(&here, &worker.session, api.base())?;
             api.clone().signed_in(Some(&worker.session))?.end(&me).await
@@ -385,4 +402,35 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
         }
     }
     Ok(panes.len())
+}
+
+/// Stops the orphan processes of each worker of `tmux`, or of the one
+/// in `pane` (01M3ZV0TKBP201FKY32ZD81G4E): each process of an old
+/// context of the worker ([`workload::old_context`]). The start of the
+/// current context comes from the local dir `dir`. Returns one line for
+/// each worker and each process that it stopped.
+pub fn reap(tmux: &dyn Terminal, pane: Option<&str>, dir: &Path) -> Result<Vec<String>> {
+    let mut panes = tmux.worker_panes()?;
+    if let Some(pane) = pane {
+        panes.retain(|w| is_one(w, pane));
+        if panes.is_empty() {
+            anyhow::bail!("no worker runs in the pane {pane}. `riff workers` lists them");
+        }
+    }
+    let var = crate::next::Agent::context_var(&crate::next::ClaudeCode);
+    let all = workload::all(var);
+    let mut lines = Vec::new();
+    for worker in &panes {
+        let Some(since) = workload::context_start(dir, &worker.session) else {
+            lines.push(text::reap_no_start(&worker.pane));
+            continue;
+        };
+        let old = workload::old_context(&all, &worker.session, std::process::id(), Some(since));
+        let stopped = workload::stop(&old, var);
+        if stopped.is_empty() {
+            lines.push(text::reaped_none(&worker.pane));
+        }
+        lines.extend(stopped.iter().map(|p| text::reaped(&worker.pane, p)));
+    }
+    Ok(lines)
 }

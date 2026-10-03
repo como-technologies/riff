@@ -492,6 +492,11 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
         None => None,
     };
     println!("{}", text::host_serves(&me, limit));
+    // The worktrees of the sessions that ended (01M3ZV0TM7ANJ1QQ7XTBDJQE1V).
+    match crate::worktrees::clean_as_person(&main, server).await {
+        Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
+        Err(e) => eprintln!("riff: cannot clean the worktrees: {e:#}"),
+    }
     let host = Host {
         api: api.signed_in(Some(&id))?,
         me,

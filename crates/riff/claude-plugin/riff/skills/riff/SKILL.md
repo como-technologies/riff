@@ -438,18 +438,18 @@ To remove your stale worktree:
    `ExitWorktree` with action `remove` and `discard_changes` set to
    true. The tool compares with the local default branch, which can be
    behind. The three checks show that no work is lost.
-3. In each other case, run `git -C MAIN worktree remove PATH`, then
-   `git -C MAIN update-ref -d refs/heads/BRANCH HEADREF`. MAIN is the
-   path of the main worktree: the first line of `git worktree list`.
-   The other cases are: you entered the worktree with `path`, or you
-   made it before the clear of your context. After a new
-   context, `ExitWorktree` says that this session is not the owner.
-   It is also the case when you do the steps after the merge for a
-   worker that released its item.
-   HEADREF is the head commit of the merged pull request. A squash
-   merge leaves the branch out of the default branch, so
-   `git branch -d` refuses it. The `update-ref` deletes the branch only
-   while it points at HEADREF. Do not force.
+3. In each other case, call `ExitWorktree` with action `keep`, then
+   run `riff worktrees clean` in the main worktree. The other cases
+   are: you entered the worktree with `path`, or you made it before the
+   clear of your context. After a new context, `ExitWorktree` says that
+   this session is not the owner. It is also the case when you do the
+   steps after the merge for a worker that released its item. riff
+   checks the facts itself. It removes the worktree and its branch,
+   and prints what it did and why:
+
+   ```sh
+   riff worktrees clean
+   ```
 4. Prune, and check that nothing of the item is left. Run the
    commands of "Clean up after a merge" in "Keep good git hygiene".
 
@@ -551,12 +551,34 @@ The last two commands show nothing. If one shows the item, post it to
 the thread.
 
 The lead lists each worktree and each local branch that no live
-session owns on the board. To find them, compare with `who`:
+session owns on the board. First run `riff worktrees clean` in the
+main worktree. It unlocks the lock of a session that is gone, removes
+each merged worktree, and saves the work of a worktree with no live
+owner as a WIP commit on its branch. Then compare the rest with `who`:
 
 ```sh
 git worktree list
 git branch --list 'worktree-*'
 ```
+
+## Orphan processes and stale worktrees
+
+riff stops processes and tidies worktrees itself, with its own checks.
+Never stop a process by its ID, and never unlock or remove a worktree
+of another session with a raw git command. The auto mode check of the
+agent tool refuses them, and it is right to. Use the riff command:
+
+| Case | Run |
+|---|---|
+| A process that an earlier context of a worker started, for example a `just ci` after a clear | `riff workers reap`, or `riff workers reap PANE` for one worker |
+| A worker that must stop with each of its processes | `riff workers stop PANE` |
+| A lock of a session that is gone, a merged worktree, the work of a session that ended | `riff worktrees clean` in the main worktree |
+
+riff stops the processes of the old context of a worker by itself at
+the clear. `riff workers start` runs `riff worktrees clean`.
+
+A refusal of a raw command never blocks your work. When no riff
+command covers your case, file an issue for it, and `tell` the lead.
 
 ## Build and test
 
