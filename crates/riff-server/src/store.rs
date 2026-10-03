@@ -103,6 +103,9 @@ pub enum StoreError {
     Conflict(String),
     /// The store did not do the call.
     Failed(String),
+    /// The store did not do the call because the calls on the object
+    /// are over its rate limit, for example HTTP 429 of Cloud Storage.
+    Busy(String),
     /// The store holds an object that the server cannot read. `object`
     /// is its full name, from [`Store::locate`].
     NotValid {
@@ -138,7 +141,7 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StoreError::Conflict(name) => write!(f, "another version of {name} is in the store"),
-            StoreError::Failed(message) => f.write_str(message),
+            StoreError::Failed(message) | StoreError::Busy(message) => f.write_str(message),
             StoreError::NotValid { object, why, fix } => {
                 write!(
                     f,
