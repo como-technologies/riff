@@ -18,8 +18,10 @@
 //!     O -- no --> D{"work that is not committed?"}
 //!     D -- "yes, on a branch" --> W["WIP commit, push,<br/>a note to the lead"]
 //!     D -- "yes, detached" --> K
-//!     D -- no --> M{"the pull request of the branch is merged,<br/>and its head is HEAD?<br/>detached: HEAD is on origin?"}
-//!     M -- yes --> R["remove the worktree<br/>and its branch"]
+//!     D -- no --> A{"HEAD is on the default<br/>branch of origin?"}
+//!     A -- yes --> R["remove the worktree<br/>and its branch"]
+//!     A -- no --> M{"a merged pull request has HEAD as its head?<br/>detached: or HEAD is on origin?"}
+//!     M -- yes --> R
 //!     M -- no --> K
 //! ```
 //!
@@ -33,6 +35,13 @@
 //!   process ID is of a person: riff keeps it ([`Lock::of`]).
 //! - A live session owns a worktree when `riff who` shows it live, on
 //!   this host, in this repository, in that worktree.
+//! - A clean worktree whose `HEAD` is on the default branch of `origin`
+//!   has no commit of its own. riff removes it, with or with no pull
+//!   request (01M41XFFXEQPEPDVM4HNT69FVP).
+//! - riff finds the pull request of a branch by its name. When that
+//!   fails, and for a detached worktree, riff finds a merged pull
+//!   request by the commit of `HEAD`. So the verify worktree of a merged
+//!   pull request goes, also after the merge deleted the branch.
 //! - riff deletes the branch only while it points at HEAD
 //!   (`git update-ref -d`). It never forces.
 //! - `riff workers start` and the start of `riff workers host` run it
@@ -43,8 +52,8 @@
 //! ```
 //! use riff::worktrees::{Facts, Lock, Pr, decide, Step};
 //!
-//! let facts = Facts { agent: true, lock: Lock::Dead, owned: false, changed: false, branch: true, pr: Some(Pr::MergedAtHead(40)), on_origin: true };
-//! assert_eq!(decide(&facts), [Step::Unlock, Step::Remove]);
+//! let facts = Facts { agent: true, lock: Lock::Dead, owned: false, changed: false, branch: true, pr: Some(Pr::MergedAtHead(40)), on_origin: true, on_main: false };
+//! assert_eq!(decide(&facts), [Step::Unlock, Step::Remove("its pull request #40 is merged".into())]);
 //! let facts = Facts { agent: true, lock: Lock::Live, ..facts };
 //! assert_eq!(decide(&facts), [Step::Keep("a live process holds its lock".into())]);
 //! ```
@@ -145,13 +154,17 @@ pub struct Facts {
     pub pr: Option<Pr>,
     /// Its `HEAD` is on a branch of `origin`.
     pub on_origin: bool,
+    /// Its `HEAD` is on the default branch of `origin`: it has no commit
+    /// of its own.
+    pub on_main: bool,
 }
 
 /// One step for a worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     Unlock,
-    Remove,
+    /// Remove the worktree and its branch, for this reason.
+    Remove(String),
     /// A WIP commit of the work, and a push of the branch.
     Save,
     /// Keep the worktree, for this reason.
@@ -163,13 +176,19 @@ pub enum Step {
 /// ```
 /// use riff::worktrees::{Facts, Lock, Pr, decide, Step};
 ///
-/// let free = Facts { agent: true, lock: Lock::None, owned: false, changed: false, branch: true, pr: None, on_origin: false };
+/// let free = Facts { agent: true, lock: Lock::None, owned: false, changed: false, branch: true, pr: None, on_origin: false, on_main: false };
 /// let changed = Facts { changed: true, ..free.clone() };
 /// assert_eq!(decide(&changed), [Step::Save]);
 /// let detached = Facts { branch: false, ..changed.clone() };
 /// assert_eq!(decide(&detached), [Step::Keep("it has work on no branch".into())]);
 /// let verify = Facts { branch: false, on_origin: true, ..free.clone() };
-/// assert_eq!(decide(&verify), [Step::Remove]);
+/// assert_eq!(decide(&verify), [Step::Remove("it holds no work, and its commit is on origin".into())]);
+/// let gone = Facts { branch: false, pr: Some(Pr::MergedAtHead(40)), ..free.clone() };
+/// assert_eq!(decide(&gone), [Step::Remove("its commit is the head of the merged pull request #40".into())]);
+/// let lost = Facts { branch: false, ..free.clone() };
+/// assert_eq!(decide(&lost), [Step::Keep("its commit is on no branch of origin and is the head of no merged pull request".into())]);
+/// let fresh = Facts { on_main: true, pr: Some(Pr::NotMerged(41)), ..free.clone() };
+/// assert_eq!(decide(&fresh), [Step::Remove("its HEAD is on the default branch of origin: it has no commit of its own".into())]);
 /// let open = Facts { pr: Some(Pr::NotMerged(41)), ..free.clone() };
 /// assert_eq!(decide(&open), [Step::Keep("pull request #41 is not merged".into())]);
 /// let owned = Facts { owned: true, lock: Lock::Dead, ..free };
@@ -194,15 +213,26 @@ pub fn decide(facts: &Facts) -> Vec<Step> {
         Step::Save
     } else if facts.changed {
         Step::Keep("it has work on no branch".into())
+    } else if facts.on_main {
+        Step::Remove(
+            "its HEAD is on the default branch of origin: it has no commit of its own".into(),
+        )
     } else if !facts.branch {
-        if facts.on_origin {
-            Step::Remove
-        } else {
-            Step::Keep("its commit is on no branch of origin".into())
+        match &facts.pr {
+            Some(Pr::MergedAtHead(n)) => Step::Remove(format!(
+                "its commit is the head of the merged pull request #{n}"
+            )),
+            _ if facts.on_origin => {
+                Step::Remove("it holds no work, and its commit is on origin".into())
+            }
+            _ => Step::Keep(
+                "its commit is on no branch of origin and is the head of no merged pull request"
+                    .into(),
+            ),
         }
     } else {
         match &facts.pr {
-            Some(Pr::MergedAtHead(_)) => Step::Remove,
+            Some(Pr::MergedAtHead(n)) => Step::Remove(format!("its pull request #{n} is merged")),
             Some(Pr::MergedElsewhere(n)) => {
                 Step::Keep(format!("its HEAD is not the head of pull request #{n}"))
             }
@@ -301,6 +331,25 @@ fn pr_of(gh: &Gh, branch: &str, head: &str) -> Pr {
     }
 }
 
+/// A merged pull request, found by its head commit `head`
+/// (01M41XFFXEQPEPDVM4HNT69FVP). Its branch can be gone.
+fn merged_at(gh: &Gh, head: &str) -> Option<u64> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Found {
+        number: u64,
+        head_ref_oid: String,
+    }
+    let args = [
+        "pr", "list", "--state", "merged", "--search", head, "--json", "number,headRefOid",
+    ];
+    let found = gh.json::<Vec<Found>>(&args).ok()?;
+    found
+        .into_iter()
+        .find(|p| p.head_ref_oid == head)
+        .map(|p| p.number)
+}
+
 fn first_line(e: &anyhow::Error) -> String {
     let text = format!("{e:#}");
     crate::text::safe(text.lines().next().unwrap_or_default())
@@ -331,12 +380,20 @@ pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -
                 branch: tree.branch.is_some(),
                 pr: None,
                 on_origin: false,
+                on_main: false,
             };
             let free = matches!(facts.lock, Lock::None | Lock::Dead) && !facts.owned;
             if free && !facts.changed {
-                match &tree.branch {
-                    Some(branch) => facts.pr = Some(pr_of(gh, branch, &tree.head)),
-                    None => {
+                facts.on_main = on_main(main, &tree.head);
+                if !facts.on_main {
+                    facts.pr = match tree.branch.as_ref().map(|b| pr_of(gh, b, &tree.head)) {
+                        Some(Pr::Unknown(why)) => Some(
+                            merged_at(gh, &tree.head).map_or(Pr::Unknown(why), Pr::MergedAtHead),
+                        ),
+                        Some(pr) => Some(pr),
+                        None => merged_at(gh, &tree.head).map(Pr::MergedAtHead),
+                    };
+                    if tree.branch.is_none() {
                         let on = git(main, &["branch", "-r", "--contains", &tree.head]);
                         facts.on_origin = on.is_ok_and(|out| !out.trim().is_empty());
                     }
@@ -345,6 +402,14 @@ pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -
             act(main, &tree, &facts)
         })
         .collect()
+}
+
+/// True when `head` is on the default branch of `origin` in the clone
+/// of `main`: the branch of `origin/HEAD`, else `main`.
+fn on_main(main: &Path, head: &str) -> bool {
+    let branch = crate::permissions::Project::of(main).branch;
+    let base = format!("refs/remotes/origin/{branch}");
+    git(main, &["merge-base", "--is-ancestor", head, &base]).is_ok()
 }
 
 /// The worktrees of the agent tool in the clone of `main` that no live
@@ -380,7 +445,7 @@ fn act(main: &Path, tree: &Tree, facts: &Facts) -> Done {
         let did = match &step {
             Step::Unlock => git(main, &["worktree", "unlock", path_arg])
                 .map(|_| "unlocked: the process of its lock is gone".to_owned()),
-            Step::Remove => remove(main, tree),
+            Step::Remove(why) => remove(main, tree, why),
             Step::Save => save(tree).inspect(|_| saved = true),
             Step::Keep(why) => Ok(format!("kept: {why}")),
         };
@@ -400,17 +465,16 @@ fn act(main: &Path, tree: &Tree, facts: &Facts) -> Done {
 }
 
 /// Removes the worktree, then its branch while it points at `HEAD`.
-fn remove(main: &Path, tree: &Tree) -> std::result::Result<String, String> {
+/// `why` is the reason in the line.
+fn remove(main: &Path, tree: &Tree, why: &str) -> std::result::Result<String, String> {
     let path = tree.path.display().to_string();
     git(main, &["worktree", "remove", &path])?;
     let Some(branch) = &tree.branch else {
-        return Ok("removed: it holds no work, and its commit is on origin".into());
+        return Ok(format!("removed: {why}"));
     };
     let reference = format!("refs/heads/{branch}");
     git(main, &["update-ref", "-d", &reference, &tree.head])?;
-    Ok(format!(
-        "removed with its branch {branch}: its pull request is merged"
-    ))
+    Ok(format!("removed with its branch {branch}: {why}"))
 }
 
 /// Commits the work of the worktree as WIP, and pushes its branch.

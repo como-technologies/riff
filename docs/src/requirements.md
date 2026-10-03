@@ -3191,6 +3191,12 @@
   detached worktree whose commit is on a branch of `origin`. It keeps
   each other worktree. It prints one line for each worktree with what
   it did and why. It keeps each worktree outside `.claude/worktrees`.
+- **01M41XFFXEQPEPDVM4HNT69FVP** `riff worktrees clean` removes a clean
+  worktree with no live owner whose `HEAD` is on the default branch of
+  `origin`, with or with no pull request, and its branch. It also
+  removes a clean worktree with no live owner whose `HEAD` is the head
+  of a merged pull request that it finds by the commit, also when the
+  branch is gone.
 - **01M3ZV0TM7ANJ1QQ7XTBDJQE1V** `riff workers start` and the start of
   `riff workers host` run `riff worktrees clean`.
 - **01M41A118QPQKFAAHGQFFX4F3B** A workers host and the `riff mcp` of

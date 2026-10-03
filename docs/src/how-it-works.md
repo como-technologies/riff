@@ -3758,14 +3758,16 @@ riff worktrees clean
 | a lock of a live process, or a lock with no process ID | keeps it |
 | a live session of `riff who` works in it | keeps it |
 | work that is not committed, and no live owner | commits it as WIP, pushes its branch, and posts a note to the lead |
-| clean, and its pull request is merged at its `HEAD` | removes it and its branch |
+| clean, and its `HEAD` is on the default branch of `origin`: no commit of its own | removes it and its branch |
+| clean, and a merged pull request has its `HEAD` as head, also when the branch is gone | removes it and its branch |
 | clean, detached, and its commit is on `origin` | removes it |
 | each other case | keeps it |
 
 It prints one line for each worktree, with what it did and why:
 
 ```text
-/home/mike/src/riff/.claude/worktrees/issue-12: unlocked: the process of its lock is gone; removed with its branch worktree-issue-12: its pull request is merged
+/home/mike/src/riff/.claude/worktrees/issue-12: unlocked: the process of its lock is gone; removed with its branch worktree-issue-12: its pull request #40 is merged
+/home/mike/src/riff/.claude/worktrees/verify-issue-14-a6cf: removed: its commit is the head of the merged pull request #41
 /home/mike/src/riff/.claude/worktrees/issue-13: kept: a live session works in it
 ```
 
