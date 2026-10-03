@@ -129,7 +129,15 @@ pub fn item_facts(issues: &[OpenIssue], pulls: &[Pull]) -> Vec<ItemFact> {
 pub fn forge_facts(gh: &Gh, repo: &str) -> Result<Vec<ItemFact>> {
     let pulls = crate::rollout::pulls(gh, repo)?;
     let issues: Vec<OpenIssue> = gh.json(&[
-        "issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json",
+        "issue",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "1000",
+        "--json",
         "number,body",
     ])?;
     Ok(item_facts(&issues, &pulls))

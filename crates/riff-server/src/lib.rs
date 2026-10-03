@@ -216,13 +216,13 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, Alive, AliveReply, Call, CheckpointFacts, Claim, DenyOwner, End, FactError,
-    ID_TOKEN_TYPE, Idle, IdleQuery, Invite, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply,
-    MeReply, Members, MembersReply, PassOwner, Pause, Person, Post, Read, ReadReply, Register,
-    Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply,
-    ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetStatus, SignInConfig, Start,
-    TOKEN_EXCHANGE, BlockedLook, BlockedLookReply, ItemFacts, Unanswered,
-    TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
+    Claim, DenyOwner, End, FactError, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join,
+    Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, PassOwner, Pause,
+    Person, Post, Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume,
+    Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked,
+    SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply,
+    TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -2036,7 +2036,9 @@ async fn alive(
     Json(r): Json<Alive>,
 ) -> Reply<AliveReply> {
     let caller = admit(&s, &proof, &r.me)?;
-    let alive = Signal::Alive { activity: r.activity };
+    let alive = Signal::Alive {
+        activity: r.activity,
+    };
     Ok(Json(s.engine.signal(&caller, alive).await?))
 }
 
@@ -2137,10 +2139,9 @@ async fn item_facts(
     Json(r): Json<ItemFacts>,
 ) -> Reply<()> {
     let caller = admit(&s, &proof, &r.me)?;
-    let thread = r
-        .me
-        .default_thread()
-        .ok_or_else(|| bad_request("the session is in no repository".into()))?;
+    let thread =
+        r.me.default_thread()
+            .ok_or_else(|| bad_request("the session is in no repository".into()))?;
     let facts = Signal::Facts {
         thread,
         items: r.items,
@@ -3825,7 +3826,10 @@ mod tests {
         let reply = alive(
             AxumState(service.0.clone()),
             Proof::none(),
-            Json(Alive { me: new.clone(), activity: None }),
+            Json(Alive {
+                me: new.clone(),
+                activity: None,
+            }),
         )
         .await
         .unwrap();
@@ -3912,7 +3916,10 @@ mod tests {
             alive(
                 AxumState(service.0.clone()),
                 Proof::none(),
-                Json(Alive { me: worker.clone(), activity: None }),
+                Json(Alive {
+                    me: worker.clone(),
+                    activity: None,
+                }),
             )
         };
         // The reply to a keep-alive carries it too.
@@ -4270,7 +4277,10 @@ mod tests {
         let Json(reply) = alive(
             AxumState(service.0.clone()),
             Proof::none(),
-            Json(Alive { me: mike(), activity: None }),
+            Json(Alive {
+                me: mike(),
+                activity: None,
+            }),
         )
         .await
         .unwrap();
@@ -4747,7 +4757,10 @@ mod tests {
                     let refused = alive(
                         AxumState(service.0.clone()),
                         proof(),
-                        Json(Alive { me: mike(), activity: None }),
+                        Json(Alive {
+                            me: mike(),
+                            activity: None,
+                        }),
                     )
                     .await
                     .unwrap_err();
@@ -4796,7 +4809,10 @@ mod tests {
             let refused = alive(
                 AxumState(service.0.clone()),
                 proof,
-                Json(Alive { me: mike(), activity: None }),
+                Json(Alive {
+                    me: mike(),
+                    activity: None,
+                }),
             )
             .await
             .unwrap_err();
@@ -4884,7 +4900,10 @@ mod tests {
         let refused = alive(
             AxumState(service.0.clone()),
             proof,
-            Json(Alive { me: mike(), activity: None }),
+            Json(Alive {
+                me: mike(),
+                activity: None,
+            }),
         )
         .await
         .unwrap_err();

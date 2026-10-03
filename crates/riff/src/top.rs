@@ -856,7 +856,12 @@ fn block_line(s: &SessionInfo) -> String {
         let _ = write!(line, " {}", safe(&s.uri.claims().join(" ")));
     }
     if let Some(block) = &s.blocked {
-        let _ = write!(line, ": {}, for {}", safe(&block.reason), crate::text::ago(block.secs));
+        let _ = write!(
+            line,
+            ": {}, for {}",
+            safe(&block.reason),
+            crate::text::ago(block.secs)
+        );
         if block.unanswered {
             line.push_str(", the lead gave no answer");
         }

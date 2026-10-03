@@ -255,7 +255,7 @@ use riff_core::wire::{
     Activity, AliveReply, BlockedInfo, Claim, End, Freed, Idle, ItemFact, Join, Keys, Kind, Lead,
     LeadReply, Leave, Message, Pause, Post, Register, Release, ReleaseFor, ReleaseReply, Resume,
     RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle, Start, StartReason,
-    Status, StatusInfo, Tailed, ThreadInfo, Wake, Waits,
+    Status, StatusInfo, Tailed, ThreadInfo, Waits, Wake,
 };
 
 pub mod command;
@@ -4238,9 +4238,7 @@ mod tests {
     }
 
     fn set_step(state: &mut State, me: &SessionUri, step: &str, now: Instant) {
-        let status = Status {
-            step: step.into(),
-        };
+        let status = Status { step: step.into() };
         state.set_status(me, status, now, T0).unwrap();
     }
 
@@ -4284,16 +4282,28 @@ mod tests {
         assert_eq!(of(&state, 1), SessionState::Idle);
         state.claim(&docs(), &repo(), "issue-12", t(2)).unwrap();
         assert_eq!(of(&state, 2), SessionState::Busy);
-        state.set_facts(&api(), repo(), vec![pull_fact(12, PullState::Asked)], true, t(3));
+        state.set_facts(
+            &api(),
+            repo(),
+            vec![pull_fact(12, PullState::Asked)],
+            true,
+            t(3),
+        );
         assert_eq!(of(&state, 3), SessionState::Waiting);
         let waits = info(&state, &docs(), t(3)).waits;
         assert_eq!(waits, Some(Waits::Verify { pull: 40 }));
-        state.set_blocked(&docs(), "which design?".into(), t(4), T0).unwrap();
+        state
+            .set_blocked(&docs(), "which design?".into(), t(4), T0)
+            .unwrap();
         assert_eq!(of(&state, 4), SessionState::Blocked);
         state.riff(&api(), Some(RiffState::Paused), t(5)).unwrap();
         assert_eq!(of(&state, 5), SessionState::Paused);
         state.riff(&api(), Some(RiffState::Running), t(6)).unwrap();
-        assert_eq!(of(&state, 6), SessionState::Blocked, "a pause ends no block");
+        assert_eq!(
+            of(&state, 6),
+            SessionState::Blocked,
+            "a pause ends no block"
+        );
         state.watch_ended(docs().who(), t(7));
         assert_eq!(of(&state, 7), SessionState::Offline);
     }
@@ -4325,9 +4335,13 @@ mod tests {
         let t = |secs| now + Duration::from_secs(secs);
         let of = |state: &State, secs| info(state, &docs(), t(secs)).state.unwrap();
         state.watch_started(&docs(), t(0));
-        state.claim(&docs(), &repo(), "verify-issue-12", t(0)).unwrap();
+        state
+            .claim(&docs(), &repo(), "verify-issue-12", t(0))
+            .unwrap();
         let reason = "waits for the rebased commit of PR #418";
-        state.set_blocked(&docs(), reason.into(), t(10), T0).unwrap();
+        state
+            .set_blocked(&docs(), reason.into(), t(10), T0)
+            .unwrap();
 
         // Work with no answer: the session still needs the decision.
         state.alive_with(&docs(), work(0), t(20));
@@ -4335,7 +4349,12 @@ mod tests {
 
         // The answer: a message that wakes the session.
         let to = vec!["session=c3".parse().unwrap()];
-        let answer = Post::new(&api(), Some(repo()), to, "verify request: PR #418, commit 1a2b");
+        let answer = Post::new(
+            &api(),
+            Some(repo()),
+            to,
+            "verify request: PR #418, commit 1a2b",
+        );
         assert_eq!(state.post(answer, t(30), T0).unwrap().wakes.len(), 1);
         assert!(info(&state, &docs(), t(30)).blocked.unwrap().answered);
 
@@ -4343,7 +4362,11 @@ mod tests {
         state.alive_with(&docs(), work(15), t(40));
         assert_eq!(of(&state, 40), SessionState::Blocked);
         // A turn that ended is no work.
-        let ended = Activity { tool: None, turn: false, secs: 0 };
+        let ended = Activity {
+            tool: None,
+            turn: false,
+            secs: 0,
+        };
         state.alive_with(&docs(), ended, t(45));
         assert_eq!(of(&state, 45), SessionState::Blocked);
 
@@ -4360,7 +4383,9 @@ mod tests {
     fn a_note_is_no_answer_to_a_block() {
         let now = Instant::now();
         let mut state = setup(now);
-        state.set_blocked(&docs(), "which design?".into(), now, T0).unwrap();
+        state
+            .set_blocked(&docs(), "which design?".into(), now, T0)
+            .unwrap();
         let to = vec!["session=c3".parse().unwrap()];
         for kind in [Kind::Note, Kind::Status] {
             let mut post = Post::new(&api(), Some(repo()), to.clone(), "the board");
@@ -4376,13 +4401,19 @@ mod tests {
         let now = Instant::now();
         let mut state = setup(now);
         let blocked = |state: &State| info(state, &docs(), now).blocked.is_some();
-        state.set_blocked(&docs(), "which design?".into(), now, T0).unwrap();
+        state
+            .set_blocked(&docs(), "which design?".into(), now, T0)
+            .unwrap();
         state.claim(&docs(), &repo(), "issue-12", now).unwrap();
         assert!(!blocked(&state));
-        state.set_blocked(&docs(), "which design?".into(), now, T0).unwrap();
+        state
+            .set_blocked(&docs(), "which design?".into(), now, T0)
+            .unwrap();
         state.release(&docs(), &repo(), "issue-12", now).unwrap();
         assert!(!blocked(&state));
-        state.set_blocked(&docs(), "which design?".into(), now, T0).unwrap();
+        state
+            .set_blocked(&docs(), "which design?".into(), now, T0)
+            .unwrap();
         state.start(&docs(), StartReason::Clear, now);
         assert!(!blocked(&state));
     }
@@ -4403,7 +4434,9 @@ mod tests {
             let (again, unanswered) = state.look_blocks(&lead(api()), after, t(secs)).unwrap();
             (again.len(), unanswered.len())
         };
-        state.set_blocked(&docs(), "which design?".into(), t(0), T0).unwrap();
+        state
+            .set_blocked(&docs(), "which design?".into(), t(0), T0)
+            .unwrap();
         assert_eq!(look(&mut state, 300), (0, 0));
         assert_eq!(look(&mut state, 600), (1, 0));
         assert!(info(&state, &docs(), t(600)).blocked.unwrap().woken_again);
@@ -4412,11 +4445,15 @@ mod tests {
         assert_eq!(look(&mut state, 1800), (0, 0), "one time");
 
         // A block of a session of another user is not for this lead.
-        state.set_blocked(&tests(), "which API?".into(), t(0), T0).unwrap();
+        state
+            .set_blocked(&tests(), "which API?".into(), t(0), T0)
+            .unwrap();
         assert_eq!(look(&mut state, 2400), (0, 0));
 
         // An answer: no second wake.
-        state.set_blocked(&docs(), "which design?".into(), t(2400), T0).unwrap();
+        state
+            .set_blocked(&docs(), "which design?".into(), t(2400), T0)
+            .unwrap();
         let to = vec!["session=c3".parse().unwrap()];
         let answer = Post::new(&api(), Some(repo()), to, "take the first one");
         state.post(answer, t(2500), T0).unwrap();
@@ -4438,25 +4475,41 @@ mod tests {
         state.watch_started(&lead(tests()), now);
         let of = |state: &State, me: &SessionUri| info(state, me, now).state.unwrap();
         state.claim(&docs(), &repo(), "issue-12", now).unwrap();
-        state.claim(&tests(), &repo(), "verify-issue-12", now).unwrap();
+        state
+            .claim(&tests(), &repo(), "verify-issue-12", now)
+            .unwrap();
         let set = |state: &mut State, facts| state.set_facts(&api(), repo(), facts, true, now);
 
         set(&mut state, vec![pull_fact(12, PullState::Asked)]);
         assert_eq!(of(&state, &docs()), SessionState::Waiting);
-        assert_eq!(of(&state, &tests()), SessionState::Busy, "the verifier works");
+        assert_eq!(
+            of(&state, &tests()),
+            SessionState::Busy,
+            "the verifier works"
+        );
 
         set(&mut state, vec![pull_fact(12, PullState::Passed)]);
         assert_eq!(of(&state, &docs()), SessionState::Waiting);
         assert_eq!(of(&state, &tests()), SessionState::Waiting);
-        assert_eq!(info(&state, &tests(), now).waits, Some(Waits::Merge { pull: 40 }));
+        assert_eq!(
+            info(&state, &tests(), now).waits,
+            Some(Waits::Merge { pull: 40 })
+        );
 
         set(&mut state, vec![pull_fact(12, PullState::Failed)]);
         assert_eq!(of(&state, &docs()), SessionState::Busy);
 
         // A fact of one item replaces only that fact.
-        let needs = ItemFact { item: "issue-12".into(), pull: None, needs: vec![9] };
+        let needs = ItemFact {
+            item: "issue-12".into(),
+            pull: None,
+            needs: vec![9],
+        };
         state.set_facts(&api(), repo(), vec![needs], false, now);
-        assert_eq!(info(&state, &docs(), now).waits, Some(Waits::Needs { issues: vec![9] }));
+        assert_eq!(
+            info(&state, &docs(), now).waits,
+            Some(Waits::Needs { issues: vec![9] })
+        );
 
         // A second claim that does not wait: busy.
         state.claim(&docs(), &repo(), "issue-13", now).unwrap();

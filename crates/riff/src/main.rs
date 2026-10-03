@@ -10,8 +10,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    activity, audit, auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local, login,
-    mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view, worker,
+    activity, audit, auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local,
+    login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -1217,7 +1217,8 @@ async fn main() -> Result<()> {
         // The merge is a fact of the item (01M41FZP2C4Z4J6WKRXZ5B31EH).
         // It never fails the wait.
         let api = Api::new(&server);
-        let me = identity::here(cli.place.as_ref()).and_then(|here| identity::me(&here, api.base()));
+        let me =
+            identity::here(cli.place.as_ref()).and_then(|here| identity::me(&here, api.base()));
         if let (Ok(me), Ok(issue)) = (me, pr::issue_of(&pr::Gh::default(), *number)) {
             riff::look::tell_fact(&api, &me, issue, *number, PullState::Merged).await;
         }

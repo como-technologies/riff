@@ -69,7 +69,10 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
     assert_eq!(session.uri.claims(), ["issue-1"]);
     let status = session.status.expect("A has a status");
     assert_eq!(status.status.step, "tests");
-    assert_eq!(session.blocked.expect("A is blocked").reason, "which design?");
+    assert_eq!(
+        session.blocked.expect("A is blocked").reason,
+        "which design?"
+    );
     // A has no open watch stream.
     assert_eq!(session.state, Some(SessionState::Offline));
     assert_eq!(reply.build, riff_core::build::VERSION);

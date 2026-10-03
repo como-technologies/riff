@@ -121,7 +121,10 @@ async fn the_hooks_and_the_keep_alive_show_the_work() {
         .into_iter()
         .map(|(line, _)| line)
         .collect();
-    assert!(lines[1].starts_with("runs Bash: Run just ci for "), "{lines:?}");
+    assert!(
+        lines[1].starts_with("runs Bash: Run just ci for "),
+        "{lines:?}"
+    );
 
     // A riff tool is no work: the fact stays.
     let read = r#"{"tool_name":"mcp__riff__read","tool_input":{}}"#;
@@ -171,7 +174,10 @@ async fn the_facts_of_the_forge_make_waiting() {
     look::once(&api, &lead, &gh, Duration::from_secs(600), None)
         .await
         .unwrap();
-    assert_eq!(info(&api, &lead, &worker).await.state, Some(SessionState::Busy));
+    assert_eq!(
+        info(&api, &lead, &worker).await.state,
+        Some(SessionState::Busy)
+    );
 }
 
 /// A block wakes the lead, then wakes it again, then `riff top` shows
@@ -209,7 +215,10 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     assert!(api.blocked(&worker, "which design?").await.unwrap());
     let first = bodies(api.inbox(&lead, None, false).await.unwrap());
     assert_eq!(first, ["blocked: which design?"]);
-    assert_eq!(info(&api, &lead, &worker).await.state, Some(SessionState::Blocked));
+    assert_eq!(
+        info(&api, &lead, &worker).await.state,
+        Some(SessionState::Blocked)
+    );
 
     // No answer for the wake time: the second wake of the lead.
     tokio::time::sleep(Duration::from_millis(1100)).await;

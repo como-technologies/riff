@@ -946,21 +946,26 @@ riff   running
 owner  mike (mike@example.com)
 build  v0.7.0  (10df8a4, 2026-09-29)
 
+blocked  3a3f8d5d issue-8: which of the two designs?, for 32m, the lead gave no answer
+
 Wave 3 (como-technologies/riff)
   free: #9
-  claimed: #7
+  claimed: #7 #8
 
 ann  admin  offline  seen 1h ago
 mike  owner  online
 ├─ pangolin
 │  ├─ 5b1e2a90  riff#issue-7  worker  busy
 │  │    working on #7 Fix the help
-│  │    2m ago: tests
+│  │    runs Bash: run just ci for 12m
+│  │    20m ago: tests
 │  └─ 9c0d1e2f  riff  worker  idle
 │       ready for work for 6m
 └─ thelio
-   ├─ 3a3f8d5d  riff  blocked
-   │    waits for a review (step: merge, 1m ago)
+   ├─ 3a3f8d5d  riff#issue-8  blocked
+   │    which of the two designs? (32m ago)
+   │    the lead gave no answer
+   │    working on #8
    ├─ 4e54d4e5  riff  lead  idle
    │    monitoring work for 2h
    │    5m ago: plan the next wave
@@ -970,6 +975,9 @@ mike  owner  online
         seen 4m ago
 ```
 
+- A blocked session has a red line before the board: the session, its
+  claims, the reason and the time that it waits. When the lead gave no
+  answer, the line says so. See [A blocked session](#a-blocked-session).
 - A person line: the user in a bold color, the tag `owner` or `admin`,
   and `online` when a session of the person is online. Else `offline`,
   with the time since the last call. Each member of the riff has a
@@ -2226,16 +2234,40 @@ fact `paused` is a repository that is paused, with who set its pause.
 
 ## A status
 
-Each session has a status: its current step, and a reason when it is
-blocked. A session sets its status when it changes step, and when it
-is blocked. `riff who` shows each status with its age, in the DETAIL
+riff makes the state of each session from facts. No session reports
+it. Each session also has a status: its current step, in its own
+words. The words help a person, and make no state. `riff who` shows
+the state, then its detail, then the step with its age, in the DETAIL
 column of the row of its session:
 
 ```text
 SESSION                            STATE    ROLE  DETAIL
-mike@pangolin:riff#issue-6 (a6cf)  busy           working on #6  4m ago: write the tests
-brett@heron:riff#issue-7 (77e0)    blocked        waits for a review (step: merge, 1m ago)  working on #7
+mike@pangolin:riff#issue-6 (a6cf)  busy           working on #6  runs Bash: run just ci for 4m  6m ago: write the tests
+brett@heron:riff#issue-7 (77e0)    waiting        working on #7  waits for a verify of PR #418
 ```
+
+The facts come from three places:
+
+```mermaid
+flowchart LR
+    H["the hooks of the session:<br/>each tool call, the end of each turn"] --> F[(a file on the machine)]
+    F --> K["riff mcp: the keep-alive"]
+    G["riff pr open, riff verify, riff pr wait,<br/>the look of the lead (gh)"] --> S
+    K --> S["riff-server"]
+    C["claims, pauses, clears"] --> S
+    S --> W["the state in riff who, riff top, riff workers"]
+```
+
+- The hooks see each tool call and the end of each turn. A hook writes
+  the newest fact to a file on the machine, and makes no call. The
+  keep-alive of `riff mcp` carries it to the server, each minute, and
+  each 10 seconds in a worker. A riff tool and `riff watch` are no
+  work. The text of a Bash call is its description, never its command.
+- The server has no credential of GitHub. `riff pr open`, `riff
+  verify`, `riff pr wait` and the look of the lead each minute tell it
+  the state of each pull request, and the open items of each `Needs:`
+  line.
+- The claims, the pauses and the clears are in the server already.
 
 A status request is a post of kind `status`. It wakes each session
 that its `to` list selects. Each woken session answers with its
@@ -2251,9 +2283,9 @@ sequenceDiagram
     E->>A: wake (status request)
     E->>B: wake (status request)
     A->>E: read, then status "write the tests"
-    B->>E: read, then status "merge", blocked "waits for a review"
+    B->>E: read, then status "merge"
     P->>E: who
-    E-->>P: each session with its status and age
+    E-->>P: each session with its state, and its status with the age
 ```
 
 ### Ask each session for its status
@@ -2268,45 +2300,48 @@ riff who
 
 ### The state of a session
 
-No session reports its state. `riff-server` derives it from what it
-knows, and `riff who`, `riff top`, `riff workers` and the `who` tool
-show it. The first state that matches wins:
+`riff-server` derives the state from the facts, and `riff who`, `riff
+top`, `riff workers` and the `who` tool show it. The first state that
+matches wins:
 
 | State | Color | When | Detail |
 |---|---|---|---|
 | `offline` | grey | the session has no open watch | `seen 2h ago` |
 | `paused` | yellow | the riff or the repository of the session is paused | the claims, and `stopped at:` the step |
-| `blocked` | red | the session set a blocked status | the reason and the step, then the claims |
+| `blocked` | red | the session said `blocked`, and the block holds | the reason with its age, `the lead gave no answer` when the lead gave none, then the claims |
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
-| `busy` | green | the session holds a claim | `working on #7`, or `reviewing #7` for a verify claim, then the step |
+| `waiting` | cyan | each claim waits for a verify, a merge, or an item of its `Needs:` line | the claims, then `waits for a verify of PR #418`, `waits for the merge of PR #418` or `waits for #12` |
+| `busy` | green | the session holds a claim | `working on #7`, or `reviewing #7` for a verify claim, then the work, then the step |
 | `idle` | dim | each other session | `ready for work for 6m`, or `monitoring work for 6m` for the lead, then a current step |
+
+The work is the newest fact of the hooks: `runs Bash: run just ci for
+12m`, `works, 5s ago` between two tools, or `turn ended 5m ago`.
+
+The author of an item waits for the verify, then for the merge. The
+session that verifies works until its result, then waits for the
+merge. A wait wakes nobody: the verify request is the wake. A wait
+ends when its fact ends.
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> busy: claim
+    busy --> waiting: a verify is asked, a merge waits, a need is open
+    waiting --> busy: the fact ends
+    busy --> blocked: blocked REASON (wakes the lead)
+    blocked --> busy: an answer, then a sign of work
+    busy --> must_clear: the last release of a worker
+    must_clear --> idle: a clear
+```
 
 The lead takes no claims: it conducts the other sessions. So an idle
 lead shows `monitoring work`. The time of `idle` counts from the last
-release of the session. An
-older `riff-server` sends no state. Then riff derives the state from
-the other facts that the server sends. For `must clear`, see
+release of the session. For `must clear`, see
 [A worker that must clear its context](#a-worker-that-must-clear-its-context).
-
-```mermaid
-flowchart TD
-    S[session] --> L{open watch?}
-    L -- no --> Off[offline]
-    L -- yes --> P{riff or repository paused?}
-    P -- yes --> Pa[paused]
-    P -- no --> B{current status blocked?}
-    B -- yes --> Bl[blocked]
-    B -- no --> M{worker that must clear?}
-    M -- yes --> Mc[must clear]
-    M -- no --> C{holds a claim?}
-    C -- yes --> Bu[busy]
-    C -- no --> I[idle]
-```
 
 A step goes stale when the state of the session changes after the step
 was set: a claim, a release, a pause, a resume, or a new start of
-`riff-server`. A stale step is dim, and says `stale`. It is not the
-current state. A stale block does not make the session `blocked`.
+`riff-server`. A stale step is dim, and says `stale`.
 
 ```mermaid
 stateDiagram-v2
@@ -2337,11 +2372,74 @@ set a status from a terminal:
 riff status write the tests
 ```
 
-When you cannot go on, give the reason:
+### A blocked session
+
+A session is blocked when it cannot go on with no decision of a
+person. One command says so. It shows the session as `blocked`, and
+the message `blocked: REASON` wakes the lead of its user. A session
+calls the `blocked` tool. From a terminal:
 
 ```sh
-riff status --blocked "waits for a review" merge
+riff blocked "which of the two designs?"
 ```
+
+Do not use it to wait for a verify, a merge or a need: riff shows that
+wait as `waiting` by itself.
+
+A message that wakes the blocked session is its answer. The block ends
+at the next work of the session after the answer: a tool call, a
+claim, a release, or a new start. A note or a status request is no
+answer.
+
+When the lead gives no answer, riff tells the person:
+
+```mermaid
+sequenceDiagram
+    participant W as blocked session
+    participant S as riff-server
+    participant L as the lead
+    participant P as you
+    W->>S: blocked "which design?"
+    S->>L: blocked: which design? (wake 1)
+    Note over S: 15 minutes, no answer
+    S->>L: blocked: ... has no answer after 15 minutes (wake 2)
+    Note over S: 15 minutes more, no answer
+    S-->>L: unanswered
+    L->>P: a desktop notification
+    Note over P: riff top: the lead gave no answer
+```
+
+The `riff mcp` of the lead looks each minute. The notification holds
+the session, its item and the reason, and no text of a message. It
+needs a desktop: a display and `notify-send`, as on GNOME. A machine
+with no desktop gets no notification, and nothing fails.
+
+### Set the wake time of a block
+
+The time is a setting of the machine of the lead. The default is 15
+minutes. Run this on the machine of the lead:
+
+```sh
+riff lead blocked --wake 30
+```
+
+```text
+lead.wake  30  (/home/mike/.config/riff/config.toml)
+lead.notify  true  (/home/mike/.config/riff/config.toml)
+A block with no answer for 30 minutes wakes the lead again. After 30 minutes more, riff top shows "the lead gave no answer", and a desktop notification tells you. Turn it off with: riff lead blocked --notify off
+```
+
+Run `riff lead blocked` with no flag to see the settings. The keys are
+`lead.wake` and `lead.notify` in the settings file.
+
+### Turn off the desktop notification
+
+```sh
+riff lead blocked --notify off
+```
+
+`riff top` still shows `the lead gave no answer`. Turn the
+notification on again with `riff lead blocked --notify on`.
 
 ### See what the lead does
 
@@ -2374,9 +2472,9 @@ only the session.
 
 For work that riff cannot see, the lead sets its status with the
 `status` tool, for example `read the review report`. That status stays
-until the next of these calls. A `blocked` reason of the lead stays
-until the lead sets its status again. The step of each other session
-changes only when the session sets it.
+until the next of these calls. A step does not end a block of the
+lead. The step of each other session changes only when the session
+sets it.
 
 ## The lead
 

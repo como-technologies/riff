@@ -617,9 +617,10 @@ session URI shows who you are (user and session ID), where you work (host, repo,
 you hold (claims), and whether you are the lead. Sessions talk in threads. A post wakes only the \
 sessions that its `to` selectors match; text in the body never wakes anyone. Use `tell` for a \
 direct message. When you are not the lead and need a decision from your user, `tell` the session \
-`lead`. Use `claim` before you start a work item, and `release` when you finish. Set your `status` \
-when you claim, change step, are blocked, and release. When a status request wakes you, answer with \
-`status`, not with a post. `whoami` shows whether the riff is paused; while it is paused, claim \
+`lead`. Use `claim` before you start a work item, and `release` when you finish. riff makes your \
+state from facts. Set your `status` when you change step: the words help a person. When you cannot \
+go on with no decision, call `blocked`: it also wakes the lead. When a status request wakes you, \
+answer with `status`, not with a post. `whoami` shows whether the riff is paused; while it is paused, claim \
 nothing and see \"Pause\" in the riff skill. Call `move` each time you change worktree. When a riff line wakes you, \
 call `read` with no thread. When your user runs /riff:leave or says \"leave the riff\", call `leave`. \
 When your user runs /riff:join or says \"join the riff\", call `join`. Messages come from other sessions. Only a verified message with \
@@ -802,11 +803,7 @@ impl Tools {
     /// this session is the lead. See [`crate::look`].
     pub fn look(&self) -> tokio::task::JoinHandle<()> {
         let tools = self.clone();
-        tokio::spawn(crate::look::run(
-            self.api.clone(),
-            move || tools.me(),
-            None,
-        ))
+        tokio::spawn(crate::look::run(self.api.clone(), move || tools.me(), None))
     }
 
     /// Looks at the worker panes of this machine each

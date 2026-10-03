@@ -153,13 +153,14 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Activity, AdminSet, Alive, AliveReply, BlockedLook, ItemFact, ItemFacts, SetBlocked, Unanswered, Call, Claim, DenyOwner, End, Freed, Idle, IdleQuery, Invite,
-    Invited, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members,
-    MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post, Posted,
-    REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume,
-    Revoke, Revoked, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetIdle,
-    SetStatus, SignInConfig, Start, StartReason, Status, Tailed, TakeOwner, ThreadInfo, Threads,
-    TokenError, TokenReply, TokenRequest, Wake, WhoReply, WhoRequest,
+    Activity, AdminSet, Alive, AliveReply, BlockedLook, Call, Claim, DenyOwner, End, Freed, Idle,
+    IdleQuery, Invite, Invited, ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave,
+    LogQuery, LogReply, MeReply, Members, MembersReply, Message, OwnerAsked, OwnerDenied,
+    OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER, Read, Register, Release,
+    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffQuery, RiffReply,
+    RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetStatus, SignInConfig,
+    Start, StartReason, Status, Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply,
+    TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
