@@ -359,6 +359,48 @@ async fn top_never_prints_color_to_a_pipe() {
     );
 }
 
+/// The author of a pull request released its item at the verify
+/// request. The board shows an item with no claim whose pull request
+/// waits for a verify or for the merge in `verify`, not in `free`
+/// (01M3Z9N6X92KT051P10CKKV7EK). An item with a failed verify is free.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    let issue =
+        |n: u64| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#);
+    let pull = |n: u64, issue: u64, checks: &str| {
+        format!(
+            r#"{{"number": {n}, "headRefName": "worktree-issue-{issue}", "headRefOid": "1a2b3c4d", "isDraft": false, "statusCheckRollup": [{checks}]}}"#
+        )
+    };
+    let status = |state: &str| format!(r#"{{"context": "riff/verify", "state": "{state}"}}"#);
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            "case \"$1\" in\n  pr) echo '[{}, {}, {}]' ;;\n  *) echo '[{}, {}, {}, {}]' ;;\nesac",
+            pull(40, 12, ""),
+            pull(41, 13, &status("SUCCESS")),
+            pull(42, 14, &status("FAILURE")),
+            issue(12),
+            issue(13),
+            issue(14),
+            issue(15),
+        ),
+    );
+    live(&server, "pangolin", "a1").await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert!(
+        top.contains("\n\nWave 3 (como-technologies/riff)\n  free: #14 #15\n  verify: #12 #13\n\n"),
+        "{top}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn with_no_gh_the_row_still_prints() {
     let (server, _) = start_server().await;

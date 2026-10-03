@@ -77,7 +77,9 @@ Do these steps when your session starts:
 3. Call `claim` with the item, for example `issue-12`. If the claim
    fails, another session holds the item. Pick a different item. The
    result names the pushed branch and the worktree of an earlier
-   session on the item, when there is one.
+   session on the item, when there is one. It also names the pull
+   request of the item and the state of its verify. Do what the line
+   says.
 4. Read the issue. Find its `Done when:` line: the acceptance criteria.
    If the line is missing, or a session cannot test it, do not start
    work. Do the steps in "Write acceptance criteria". Then look for the
@@ -100,12 +102,17 @@ Do these steps when your session starts:
 9. When you finish, open a pull request with auto-merge on, and ask
    another session to verify the work. See "Ask for a verify". You
    never merge, and you never push to the default branch.
-10. On a pass, the forge merges the pull request. Post a note that you
+10. In a worker (`RIFF_WORKER=1`), your work on the item ends at the
+    verify request. Write the state on the issue, call `release`, and
+    go to step 12. The session that verifies does the steps after the
+    merge. A session that is not a worker keeps its claim and waits.
+    On a pass, the forge merges the pull request. Post a note that you
     are done, then call `release`.
 11. After the merge, remove your worktree and its branch. See "Remove
-    a stale worktree".
-12. In a worker (`RIFF_WORKER=1`), after you release your last claim
-    and do step 11, end your turn with no more tool calls. riff clears
+    a stale worktree". A worker that released its item at the verify
+    request does not do this step.
+12. In a worker (`RIFF_WORKER=1`), after you release your last claim,
+    end your turn with no more tool calls. riff clears
     your context by itself and tells you to join the riff, so you
     start your next item fresh. You run no command for the clear. When
     the start routine then finds no work, wait idle. See "When you are
@@ -254,13 +261,30 @@ are in "Pull requests on GitHub".
    repository with no claim wakes in its place. Each other session sees
    it at its next `read`. For example:
    `verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4`.
-5. Keep your claim. Set your status to blocked: waits for a verify.
-   While you wait, do not verify the work of another session. If no
-   session takes the request, wait.
-6. On a fail, fix the work, rebase it on a fresh default branch, and
-   push it. On a conflict with the default branch, rebase and push. A pass counts only for its commit, so
-   send a new request with the new commit.
-7. On a pass, wait until the forge merges the pull request:
+5. In a worker (`RIFF_WORKER=1`), your work on the item ends here.
+   One context holds one item. Do not wait for the verify, and do not
+   start a second item in this context.
+   - Write the state on the issue as a comment: the pull request, the
+     commit, what is left after the merge (for example a check after
+     the release), and what a session must know when the verify
+     fails.
+   - Call `release` with the item. Leave your worktree and its branch:
+     the session that verifies removes them after the merge.
+   - End your turn. riff clears your context (step 12 of the start
+     routine), and you take your next item there.
+
+   The session that verifies does the steps after the merge. On a
+   fail, the item is free with its branch, and the next session that
+   claims it goes on from your work.
+6. A session that is not a worker keeps its claim and waits: a person
+   works with it, and riff does not clear it. Steps 7 and 8 are for
+   that session. While you wait, do not verify the work of another
+   session. If no session takes the request, wait.
+7. On a fail, fix the work, rebase it on a fresh default branch, and
+   push it. On a conflict with the default branch, rebase and push. A
+   pass counts only for its commit, so send a new request with the new
+   commit.
+8. On a pass, wait until the forge merges the pull request:
    `riff pr wait 40`, with `run_in_background` true. It prints the
    merge commit, or stops with the reason. Then post a note that you
    are done, and call `release`. The forge deletes the branch.
@@ -287,7 +311,8 @@ release. It does not stop a pass. The verifier names it in the result.
 Link the issue so that the merge leaves it open. After the merge, add a
 comment to the issue: `Merged in #PR (COMMIT)`, and the check that is
 left. The comment tells the other sessions that the item is merged (see
-"Waves").
+"Waves"). The session that does the steps after the merge adds it: the
+verifier for a worker, the author in each other case.
 
 ### Verify the work of another session
 
@@ -326,14 +351,35 @@ claim, or starts a worker for it.
    you tested. It puts the result on
    the pull request as a comment that names the commit, and sets the
    verify status of that commit: success on a pass, failure on a fail.
-   It posts the result to the author, with `to`
-   `[{"claim": "issue-12"}]`. A success lets the forge merge.
-7. Call `release` with `verify-issue-12`.
-8. Remove the verify worktree: call `ExitWorktree` with action
+   It posts the result to the session that holds the item, with `to`
+   `[{"claim": "issue-12"}]`. When no session holds the item, the
+   result also wakes your lead. A success lets the forge merge.
+7. On a pass, see in `who` whether a session holds `issue-12`. When
+   one holds it, that session does the steps after the merge: go to
+   step 8. When no session holds it, the author was a worker and
+   released the item. Do the steps after the merge:
+   - Wait until the forge merges the pull request: `riff pr wait 40`,
+     with `run_in_background` true. Keep your claim while you wait.
+   - Read the state that the author wrote on the issue. When a check
+     after the release is left, add the comment
+     `Merged in #PR (COMMIT)` and the check to the issue.
+   - Post a note that the item is done: the item, the pull request,
+     the merge commit and the commit that you verified.
+8. Call `release` with `verify-issue-12`. On a fail with no holder,
+   the item `issue-12` is free with its branch. The next session that
+   claims it sees the failed verify in the result of `claim`, reads
+   your result and goes on from the branch.
+9. Remove the verify worktree: call `ExitWorktree` with action
    `remove` and `discard_changes` set to true. The worktree holds no
    work: the commit is on the branch of the author. Call `move` with
    the path where you are now. If the tool fails, post the path to the
    thread.
+10. After a pass with no holder, remove the worktree and the branch of
+    the item, when your machine has them. See "Remove a stale
+    worktree". Run its `git -C MAIN` steps from the main worktree: you
+    did not make that worktree. When the worktree is on another
+    machine, post its name to the thread.
+11. In a worker, end your turn: riff clears your context.
 
 ### Pull requests on GitHub
 
@@ -398,6 +444,8 @@ To remove your stale worktree:
    The other cases are: you entered the worktree with `path`, or you
    made it before the clear of your context. After a new
    context, `ExitWorktree` says that this session is not the owner.
+   It is also the case when you do the steps after the merge for a
+   worker that released its item.
    HEADREF is the head commit of the merged pull request. A squash
    merge leaves the branch out of the default branch, so
    `git branch -d` refuses it. The `update-ref` deletes the branch only
@@ -407,9 +455,10 @@ To remove your stale worktree:
 
 If a step fails, leave the worktree and post its name to the thread.
 
-Remove only your own worktrees. Never remove a worktree of another
-live session. Post a worktree with no owner to the thread. Your user
-decides.
+Remove only your own worktrees, and the stale worktree of an item
+whose steps after the merge you do. Never remove a worktree of another
+live session. Post each other worktree with no owner to the thread.
+Your user decides.
 
 ## Keep good git hygiene
 
@@ -567,7 +616,7 @@ at their next `read`.
 | A board, or a change to the waves | `note` | `[{"repo": "OWNER/REPO"}]` |
 | "started", "done", new criteria, other news | `note` | the session that planned the work, or the repository |
 | A verify request | `message` | `[{"user": "USER", "repo": "OWNER/REPO", "lead": true}]` |
-| A verify result | `message` | `[{"claim": "issue-12"}]` |
+| A verify result | `message` | `[{"claim": "issue-12"}]`, and your lead when no session holds the item |
 | A question or a request to one session | `tell` | the session |
 | A status request | `status` | the sessions |
 
@@ -857,7 +906,9 @@ The start hook tells a worker that it is one (`RIFF_WORKER=1`).
   running, and end your turn. Do not end this session. The lead gives
   you work with a request. The server stops an idle worker when too
   many wait on its host.
-- While you wait for a verify, keep your claim and wait.
+- Your work on an item ends at the verify request. Write the state
+  on the issue, release the item, and end your turn. Do not wait for
+  the verify. See "Ask for a verify".
 
 ## A request from your lead
 
@@ -872,7 +923,8 @@ message, so each request of the lead comes once.
    that item. If the claim fails, `tell` the lead.
 2. Report back to the lead with `tell` and the session `lead`:
    - When you start: the item, your branch and your worktree.
-   - When you finish: merged, or waits for a verify.
+   - When you finish: merged, or the verify request is sent and you
+     released the item.
    - When you are blocked: the reason. Set your status to blocked too.
 3. A scope from your own user wins over a request from the lead. Tell
    the lead when your user changes your work.
@@ -939,6 +991,14 @@ Go on from the earlier work. Do not start again.
   your new worktree, run `git reset --hard origin/worktree-issue-12`.
 - Then rebase the work on the default branch (see "Rebase before each
   push"). Work that is old is not wrong: the rebase makes it fresh.
+- An item with a failed verify: the result of `claim` names the pull
+  request, the commit and the result. Read the result and the state
+  that the author wrote on the issue. Go on from the branch, fix the
+  work, push it to the same pull request, and send a new verify
+  request. Do not open a second pull request.
+- An item whose pull request waits for a verify or for the merge is
+  no work for a build. The result of `claim` says so. Release the
+  item.
 - Never use the worktree of another live session.
 - Start again only when the earlier work is wrong. First delete the
   pushed branch of the earlier work, so that its commits do not mix

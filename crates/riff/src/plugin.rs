@@ -904,7 +904,7 @@ mod tests {
         let routine = &routine[..routine.find("\n## ").unwrap()];
         let flat = routine.split_whitespace().collect::<Vec<_>>().join(" ");
         for word in [
-            "In a worker (`RIFF_WORKER=1`), after you release your last claim and do step 11, end your turn with no more tool calls.",
+            "In a worker (`RIFF_WORKER=1`), after you release your last claim, end your turn with no more tool calls.",
             "riff clears your context by itself",
             "You run no command for the clear.",
         ] {
@@ -985,7 +985,8 @@ mod tests {
             "and you hold no claim, you are idle.",
             "you are idle. Keep the watch running, and end your turn.",
             "Do not end this session.",
-            "While you wait for a verify, keep your claim and wait.",
+            "Your work on an item ends at the verify request.",
+            "Do not wait for the verify.",
         ] {
             assert!(flat.contains(word), "the skill does not say {word:?}");
         }
@@ -1075,7 +1076,7 @@ mod tests {
             "A note wakes nobody.",
             "| A board, or a change to the waves | `note` |",
             "| A verify request | `message` | `[{\"user\": \"USER\", \"repo\": \"OWNER/REPO\", \"lead\": true}]` |",
-            "| A verify result | `message` | `[{\"claim\": \"issue-12\"}]` |",
+            "| A verify result | `message` | `[{\"claim\": \"issue-12\"}]`, and your lead when no session holds the item |",
             "When your user has no live lead, each live session of your user in the repository with no claim wakes in its place.",
             "Post a note that you are done",
             "post the board as a note",

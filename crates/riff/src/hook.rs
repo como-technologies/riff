@@ -448,20 +448,27 @@ impl Source {
 
 /// The line of the start context of a worker: a session with
 /// `RIFF_WORKER=1` (01M3JQC8ETHRAWSJPHMKA062SQ). A worker with no work
-/// waits idle, and a worker that waits for a verify keeps its claim
-/// (01M3K0AXMCVRST7HYH4DM8B3AN).
+/// waits idle (01M3K0AXMCVRST7HYH4DM8B3AN). Its work on an item ends
+/// at the verify request: it does not wait for the verify
+/// (01M3Z9N6AK6W9KCA1MN72X78B6).
 ///
 /// ```
 /// assert!(!riff::hook::WORKER_LINE.contains("set your status"));
 /// assert!(!riff::hook::WORKER_LINE.contains("workers done"));
+/// assert!(!riff::hook::WORKER_LINE.contains("keep your claim"));
+/// assert!(riff::hook::WORKER_LINE.contains(
+///     "Your work on an item ends at the verify request: write the state on the issue, \
+///      release the item, and end your turn. Do not wait for the verify."
+/// ));
 /// ```
 pub const WORKER_LINE: &str = "- You are a worker (RIFF_WORKER=1). After you release your last \
 claim, do the steps that are left for the item, then end your turn: riff clears your context by \
 itself (step 12 of the start routine). When the start routine finds no free item and \
 no free verify request, and you hold no claim, keep your watch running, and end your turn. riff \
 shows you as idle. Do not end this session: the lead gives you work with a request, and the \
-server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). While you wait for \
-a verify, keep your claim and wait.\n";
+server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). Your work on an \
+item ends at the verify request: write the state on the issue, release the item, and end your \
+turn. Do not wait for the verify.\n";
 
 /// The line of the start context that names the file that turned riff
 /// on, and how to turn it off (01M3XY2SYKG91SAB2FS1QNCZ2H). `None` when

@@ -1259,7 +1259,12 @@ async fn main() -> Result<()> {
             if let Some((meter, id)) = usage::Meter::here().zip(me.who().session()) {
                 meter.started(id, &thread.to_string(), &item);
             }
-            if let Some(line) = dropped::at_claim(&identity::working_dir()?, &item).await {
+            let dir = identity::working_dir()?;
+            if let Some(line) = dropped::at_claim(&dir, &item).await {
+                println!("{line}");
+            }
+            let repo = me.place().repo_text();
+            if let Some(line) = riff::rollout::at_claim(&dir, &repo, &item).await {
                 println!("{line}");
             }
         }
@@ -1335,10 +1340,10 @@ async fn main() -> Result<()> {
                 &result,
             )?;
             println!("{}", text::verify_reported(verdict, number, &reported));
-            let to: Selector = format!("claim=issue-{}", reported.issue).parse()?;
+            let to = pr::result_to(reported.issue, &me, &api.who(&me, false).await?);
             let body = text::verify_post(verdict, number, &reported, &result);
             let posted = api
-                .post(&me, Some(&thread), &[to], &body, Kind::Message)
+                .post(&me, Some(&thread), &to, &body, Kind::Message)
                 .await?;
             println!("{}", text::posted(&posted));
         }

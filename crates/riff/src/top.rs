@@ -16,6 +16,13 @@
 //! the last issues ([`Issues::newest`], 01M3ZC09FA9DZPTHK31XECZ566): a
 //! network fault stops `gh` too.
 //!
+//! The author of a pull request releases its item at the verify
+//! request. So an item with no claim can wait for a verify or for the
+//! merge. One `gh pr list` of the open pull requests gives these items
+//! ([`Issues::verify`], [`crate::rollout::in_verify`]). The board shows
+//! them in `verify`, not in `free` (01M3Z9N6X92KT051P10CKKV7EK). When
+//! that call fails, the board counts only the claims.
+//!
 //! The rows are a tree for each person: the person, each host, and each
 //! session on the host (01M3NT4M5D36KTZ5XZMDP6QFQT). A session gets only
 //! the tag of its role, `lead` or `worker`, from the server, so each
@@ -33,7 +40,7 @@
 //!     participant T as riff top
 //!     participant G as gh
 //!     participant S as riff-server
-//!     T->>G: issue list (each ISSUES_TTL)
+//!     T->>G: issue list, pr list (each ISSUES_TTL)
 //!     loop each REFRESH, and each message of the thread
 //!         T->>S: riff, who
 //!         T->>T: draw the table in place
@@ -68,7 +75,7 @@
 //!     Fault --> [*]: another fault, the error
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -101,6 +108,9 @@ pub struct Issues {
     /// The current wave: the open `Wave N` milestone with the lowest N,
     /// and its open issues.
     pub wave: Option<(String, Vec<u64>)>,
+    /// The issues whose pull request waits for a verify or for the
+    /// merge (01M3Z9N6X92KT051P10CKKV7EK).
+    pub verify: BTreeSet<u64>,
 }
 
 #[derive(Deserialize)]
@@ -173,22 +183,70 @@ impl Issues {
         Some(Issues {
             titles: list.into_iter().map(|i| (i.number, i.title)).collect(),
             wave,
+            verify: BTreeSet::new(),
         })
+    }
+
+    /// These issues with the open pull requests in the JSON of
+    /// `gh pr list --json` with [`crate::rollout::PULL_FIELDS`]. Other
+    /// text gives no pull request.
+    ///
+    /// ```
+    /// use riff::top::Issues;
+    ///
+    /// let issues = Issues::parse(r#"[{"number": 12, "title": "a", "milestone": null}]"#).unwrap();
+    /// let pulls = r#"[
+    ///   {"number": 40, "headRefName": "worktree-issue-12", "isDraft": false, "statusCheckRollup": []},
+    ///   {"number": 41, "headRefName": "worktree-issue-13", "isDraft": false,
+    ///    "statusCheckRollup": [{"context": "riff/verify", "state": "FAILURE"}]}
+    /// ]"#;
+    /// assert_eq!(issues.clone().with_pulls(pulls).verify, [12].into());
+    /// assert!(issues.with_pulls("not json").verify.is_empty());
+    /// ```
+    #[must_use]
+    pub fn with_pulls(mut self, json: &str) -> Issues {
+        let pulls: Vec<crate::rollout::Pull> = serde_json::from_str(json).unwrap_or_default();
+        self.verify = crate::rollout::in_verify(&pulls).into_iter().collect();
+        self
+    }
+
+    /// The arguments of `gh` for the open pull requests of `repo`.
+    pub fn gh_pull_args(repo: &str) -> Vec<String> {
+        [
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            crate::rollout::PULL_FIELDS,
+        ]
+        .map(String::from)
+        .to_vec()
     }
 
     /// The open issues of `repo` from `gh`. `None` when `gh` is not
     /// there or fails.
     pub fn from_gh(repo: &str) -> Option<Issues> {
-        let out = std::process::Command::new("gh")
-            .args(Self::gh_args(repo))
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        Self::parse(&String::from_utf8_lossy(&out.stdout))
+        let gh = |args: Vec<String>| {
+            let out = std::process::Command::new("gh")
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        };
+        let issues = Self::parse(&gh(Self::gh_args(repo))?)?;
+        Some(match gh(Self::gh_pull_args(repo)) {
+            Some(pulls) => issues.with_pulls(&pulls),
+            None => issues,
+        })
     }
 
     /// The issues after a new read of `gh`: `new`, or `last` when `gh`
@@ -401,7 +459,9 @@ impl Top<'_> {
     /// - The board: the current wave with its repository
     ///   ([`Top::repo`]), then one line for each group of its open
     ///   items: `free`, `claimed`, and `verify` for an item with a
-    ///   verify claim. Only a claim in that repository counts.
+    ///   verify claim, and for an item with no claim whose pull request
+    ///   waits for a verify or for the merge. Only a claim in that
+    ///   repository counts.
     /// - A person line: the USER in bold color, the role tag `owner` or
     ///   `admin`, and [`state::person`]. Each member of `who` gets a
     ///   line, also when away.
@@ -466,8 +526,13 @@ impl Top<'_> {
     /// let issues = Issues::parse(
     ///     r#"[{"number": 12, "title": "Show the wave in the board of riff top", "milestone": {"title": "Wave 3"}},
     ///         {"number": 13, "title": "Later", "milestone": {"title": "Wave 3"}},
-    ///         {"number": 14, "title": "Free", "milestone": {"title": "Wave 3"}}]"#,
+    ///         {"number": 14, "title": "Free", "milestone": {"title": "Wave 3"}},
+    ///         {"number": 15, "title": "Asked", "milestone": {"title": "Wave 3"}}]"#,
     /// );
+    /// // The author of #15 asked for a verify and released the item.
+    /// let issues = issues.map(|i| i.with_pulls(
+    ///     r#"[{"number": 40, "headRefName": "worktree-issue-15", "isDraft": false, "statusCheckRollup": []}]"#,
+    /// ));
     /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
     /// let running = RiffState::Running.into();
     /// let mut top = Top {
@@ -483,7 +548,7 @@ impl Top<'_> {
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// assert!(text.starts_with("riff   running\nowner  mike (m@x.io)\nbuild  "), "{text}");
-    /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  claimed: #12\n  verify: #13\n\n"), "{text}");
+    /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
     /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
     /// assert_eq!(tree, [
     ///     "ann  admin  offline  seen 1h ago",
@@ -633,10 +698,14 @@ impl Top<'_> {
 
     /// The board of the wave: one line for each group of its open
     /// items that is not empty. An item with a verify claim is in
-    /// `verify`, an item with another claim in `claimed`, each other
-    /// item in `free`. Only a claim in the repository of the board
-    /// counts: an issue of another repository can have the same number.
+    /// `verify`, an item with another claim in `claimed`. An item with
+    /// no claim whose pull request waits for a verify or for the merge
+    /// is in `verify` too: it is no work for a build
+    /// (01M3Z9N6X92KT051P10CKKV7EK). Each other item is in `free`. Only
+    /// a claim in the repository of the board counts: an issue of
+    /// another repository can have the same number.
     fn board(&self, items: &[u64]) -> Vec<Line> {
+        let waits = |n: &u64| self.issues.is_some_and(|i| i.verify.contains(n));
         let mut groups: [(&str, Vec<String>); 3] =
             [("free", vec![]), ("claimed", vec![]), ("verify", vec![])];
         for n in items {
@@ -647,7 +716,9 @@ impl Top<'_> {
                 .flat_map(|s| s.uri.claims().iter())
                 .filter(|c| issue_of(c) == Some(*n))
                 .collect();
-            let group = if claims.iter().any(|c| c.starts_with("verify-")) {
+            let group = if claims.iter().any(|c| c.starts_with("verify-"))
+                || (claims.is_empty() && waits(n))
+            {
                 2
             } else if claims.is_empty() {
                 0
