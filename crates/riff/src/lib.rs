@@ -102,4 +102,5 @@ pub mod top;
 pub mod usage;
 pub mod view;
 pub mod worker;
+pub mod worker_lsp;
 pub mod worker_mcp;

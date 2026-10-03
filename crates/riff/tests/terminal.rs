@@ -271,6 +271,57 @@ fn workers_start_leaves_the_user_settings_file() {
     );
 }
 
+/// A worker starts no language server: each installed plugin with one
+/// is off in the flag settings of the worker. The user settings file
+/// does not change (01M3ZJ1FAF7EJXP9CSET8ZY1K3).
+#[test]
+fn a_worker_starts_with_each_plugin_with_a_language_server_off() {
+    let m = Machine::new("http://riff.test:7878");
+    m.limit(1);
+    let root = tempfile::tempdir().unwrap();
+    let (_, wt) = repository(root.path());
+    let home = tempfile::tempdir().unwrap();
+    let claude = home.path().join(".claude");
+    let market = home.path().join("market");
+    std::fs::create_dir_all(market.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        market.join(".claude-plugin/marketplace.json"),
+        r#"{"plugins": [{"name": "rust-analyzer-lsp", "lspServers": {"rust-analyzer": {}}}]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(claude.join("plugins")).unwrap();
+    std::fs::write(
+        claude.join("plugins/known_marketplaces.json"),
+        serde_json::json!({"official": {"installLocation": market}}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        claude.join("plugins/installed_plugins.json"),
+        r#"{"plugins": {"rust-analyzer-lsp@official": [], "riff@riff": []}}"#,
+    )
+    .unwrap();
+    let text = r#"{"enabledPlugins": {"rust-analyzer-lsp@official": true}}"#;
+    std::fs::write(claude.join("settings.json"), text).unwrap();
+    let out = m
+        .riff(&wt, &["start", "1"], true)
+        .env("HOME", home.path())
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        m.log().contains(
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
+        ),
+        "{}",
+        m.log()
+    );
+    assert_eq!(
+        std::fs::read_to_string(claude.join("settings.json")).unwrap(),
+        text
+    );
+}
+
 /// A worker loads only the MCP servers of `workers.mcp`: riff by
 /// default (01M3NB5R92ZC61VW6Y45SJEAY9), and riff plus NAME after
 /// `riff workers mcp add NAME` (01M3NB5R6X5AV79DQNKKJBH5J8).
@@ -854,6 +905,10 @@ fn the_book_has_a_how_to_for_each_step() {
         ("### Start the lead in tmux", "claude --remote-control"),
         ("### Start workers", "riff workers start 3"),
         ("### Start workers", "riff workers start 1 --claude "),
+        (
+            "#### The language server of a worker",
+            "pgrep -a rust-analyzer",
+        ),
         (
             "#### Change the rate of the rollout",
             "riff workers interval 30",

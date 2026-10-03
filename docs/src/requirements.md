@@ -2508,6 +2508,13 @@
 - **01M3MN0D429T4Q80DYBE9S9XR7** `riff workers start` runs each worker
   with the flag settings `{"awaySummaryEnabled":false}` too. So a worker
   shows no recap of Claude Code. The user settings file does not change.
+- **01M3ZJ1FAF7EJXP9CSET8ZY1K3** `riff workers start` turns off each
+  installed plugin with a language server in the flag settings of each
+  worker: `"enabledPlugins": {"PLUGIN": false}`. A plugin has a
+  language server when its marketplace entry, its `.lsp.json` or its
+  `plugin.json` has `lspServers`. So a worker starts no language
+  server, and keeps none for a worktree that is gone. The user settings
+  file does not change.
 - **01M3JD3973J7A9BG8G9EP9TVDP** Outside tmux, `riff workers start`
   says that it needs tmux, starts nothing and exits with status 1.
 - **01M3JD399ABBWE3DJT5BVXAFH5** tmux is one terminal backend. Its

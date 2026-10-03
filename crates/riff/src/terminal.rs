@@ -40,11 +40,13 @@
 //!
 //! A worker starts with no Remote Control, so the Claude app lists only
 //! the lead (01M3JD394YFA3TQRE3E72ZER4Z). The flag settings
-//! [`WORKER_SETTINGS`] outrank the user settings, so a worker has no
+//! [`worker_settings`] outrank the user settings, so a worker has no
 //! Remote Control also when the user settings turn on
 //! `remoteControlAtStartup` (01M3JV0ZNGKDFMRR9ACT0480V9). They also turn
 //! off the recap of Claude Code, because no person reads a worker pane
-//! (01M3MN0D429T4Q80DYBE9S9XR7). The user settings file does not change. The clear of a
+//! (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin with a language server
+//! ([`crate::worker_lsp`], 01M3ZJ1FAF7EJXP9CSET8ZY1K3). The user settings
+//! file does not change. The clear of a
 //! worker ([`crate::next`]) keeps the same process, so each next item has the same settings.
 //!
 //! Each pane gets the riff-server URL of the session that makes it, so
@@ -96,9 +98,33 @@ pub const WORKERS_WINDOW: &str = "riff-workers";
 /// The first prompt of a worker.
 pub const JOIN: &str = "Join the riff.";
 /// The flag settings of a worker: no Remote Control, also when the
-/// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), and no recap
-/// (01M3MN0D429T4Q80DYBE9S9XR7).
-pub const WORKER_SETTINGS: &str = r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false}"#;
+/// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no recap
+/// (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin of `lsp` off: the
+/// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3).
+///
+/// ```
+/// use riff::terminal::worker_settings;
+/// assert_eq!(
+///     worker_settings(&[]),
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false}"#,
+/// );
+/// assert_eq!(
+///     worker_settings(&["rust-analyzer-lsp@claude-plugins-official".into()]),
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}}"#,
+/// );
+/// ```
+pub fn worker_settings(lsp: &[String]) -> String {
+    let mut settings = serde_json::json!({
+        "remoteControlAtStartup": false,
+        "awaySummaryEnabled": false,
+    });
+    if !lsp.is_empty() {
+        let off: serde_json::Map<String, serde_json::Value> =
+            lsp.iter().map(|p| (p.clone(), false.into())).collect();
+        settings["enabledPlugins"] = off.into();
+    }
+    settings.to_string()
+}
 
 /// A program to run in a new pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +138,18 @@ pub struct Program {
     /// The riff session ID of a worker. Its pane gets it as the mark
     /// [`SESSION_MARK`].
     pub session: Option<String>,
+}
+
+/// The `claude` of a worker and its flags.
+#[derive(Debug, Clone, Copy)]
+pub struct Claude<'a> {
+    /// The `claude` program.
+    pub bin: &'a Path,
+    /// The file with the only MCP servers of the worker (see
+    /// [`crate::worker_mcp`]).
+    pub mcp: &'a Path,
+    /// The flag settings (see [`worker_settings`]).
+    pub settings: &'a str,
 }
 
 /// A worker pane of this machine.
@@ -182,23 +220,27 @@ impl Program {
 
     /// A worker: `claude "Join the riff."` through `riff workers run`
     /// (see [`crate::worker`]) in the main worktree, with
-    /// `RIFF_WORKER=1`, its riff session ID in `RIFF_SESSION`, only the
-    /// MCP servers of the file `mcp` (see [`crate::worker_mcp`]), and no
-    /// Remote Control and no recap: the flag settings [`WORKER_SETTINGS`].
+    /// `RIFF_WORKER=1`, its riff session ID in `RIFF_SESSION`, and the
+    /// flags of `claude` (see [`Claude`]).
     /// With `slice`, the wrapper runs `claude` in a scope of that slice
     /// (see [`crate::limits`]).
     /// `--mcp-config` takes more than one value, so `--settings` comes
     /// after it.
     ///
     /// ```
-    /// use riff::terminal::Program;
+    /// use riff::terminal::{Claude, Program};
+    /// let claude = Claude {
+    ///     bin: "claude".as_ref(),
+    ///     mcp: "/run/riff/workers-mcp.json".as_ref(),
+    ///     settings: r#"{"awaySummaryEnabled":false}"#,
+    /// };
     /// let worker = Program::worker(
-    ///     "/bin/riff".as_ref(), "claude".as_ref(), "/src/riff".as_ref(), "http://h:7878", "w1",
-    ///     "/run/riff/workers-mcp.json".as_ref(), Some("riff-workers.slice"),
+    ///     "/bin/riff".as_ref(), &claude, "/src/riff".as_ref(), "http://h:7878", "w1",
+    ///     Some("riff-workers.slice"),
     /// );
     /// assert_eq!(
     ///     worker.command,
-    ///     r#"'/bin/riff' workers run 'claude' '--strict-mcp-config' '--mcp-config' '/run/riff/workers-mcp.json' '--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false}' 'Join the riff.'"#,
+    ///     r#"'/bin/riff' workers run 'claude' '--strict-mcp-config' '--mcp-config' '/run/riff/workers-mcp.json' '--settings' '{"awaySummaryEnabled":false}' 'Join the riff.'"#,
     /// );
     /// assert!(worker.env.contains(&("RIFF_WORKER".into(), "1".into())));
     /// assert!(worker.env.contains(&("RIFF_SESSION".into(), "w1".into())));
@@ -208,11 +250,10 @@ impl Program {
     /// ```
     pub fn worker(
         riff: &Path,
-        claude: &Path,
+        claude: &Claude,
         main: &Path,
         server: &str,
         session: &str,
-        mcp: &Path,
         slice: Option<&str>,
     ) -> Self {
         let mut env = vec![
@@ -229,12 +270,12 @@ impl Program {
             command: format!(
                 "{} workers run {} {} {} {} {} {} {}",
                 quote(&riff.to_string_lossy()),
-                quote(&claude.to_string_lossy()),
+                quote(&claude.bin.to_string_lossy()),
                 quote("--strict-mcp-config"),
                 quote("--mcp-config"),
-                quote(&mcp.to_string_lossy()),
+                quote(&claude.mcp.to_string_lossy()),
                 quote("--settings"),
-                quote(WORKER_SETTINGS),
+                quote(claude.settings),
                 quote(JOIN)
             ),
             session: Some(session.into()),
