@@ -2122,8 +2122,8 @@
   blocked --notify off`). It is on by default.
 - **01M41FZR4XRP55M409YBCPTHPH** `riff top` has one red line for each
   blocked session before the board: `blocked`, the short session ID,
-  its claims, the reason, the time that it waits, and `the lead gave
-  no answer` when the lead gave none. A `waiting` session is cyan, not
+  its claims, the time that it waits, `the lead gave no answer` when
+  the lead gave none, then the reason. A `waiting` session is cyan, not
   red.
 - **01M3MEEFC9ZQVW2KC9FNJ75MTY** A session leaves the riff with the
   `leave` tool. The plugin command `/riff:leave` tells the session to

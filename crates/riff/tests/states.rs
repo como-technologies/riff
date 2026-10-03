@@ -236,8 +236,12 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     assert_eq!(unanswered.len(), 1);
     let sessions = api.who(&lead, false).await.unwrap();
     let board = top(&sessions);
+    let line = board
+        .lines()
+        .find(|l| l.starts_with("blocked  w1 issue-12, "));
+    let line = line.unwrap_or_else(|| panic!("{board}"));
     assert!(
-        board.contains("blocked  w1 issue-12: which design?, for 2s, the lead gave no answer"),
+        line.ends_with("s, the lead gave no answer: which design?"),
         "{board}"
     );
     assert!(look().await.unwrap().is_empty(), "one time");

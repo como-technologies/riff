@@ -564,7 +564,7 @@ impl Top<'_> {
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// assert!(text.starts_with("riff   running\nowner  mike (m@x.io)\nbuild  "), "{text}");
     /// assert!(
-    ///     text.contains("\n\nblocked  dddd4444 verify-issue-13: waits for the lead, for 25m, the lead gave no answer\n"),
+    ///     text.contains("\n\nblocked  dddd4444 verify-issue-13, 25m, the lead gave no answer: waits for the…\n"),
     ///     "{text}"
     /// );
     /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
@@ -848,23 +848,20 @@ fn branch(last: bool) -> &'static str {
 
 /// The line of a blocked session before the board
 /// (01M41FZR4XRP55M409YBCPTHPH): `blocked`, the short session ID, its
-/// claims, the reason and the time that it waits, then `the lead gave
-/// no answer` when the lead gave none (01M41FZQCHWY1YVGAZ60ZHJK21).
+/// claims, the time that it waits, `the lead gave no answer` when the
+/// lead gave none (01M41FZQCHWY1YVGAZ60ZHJK21), then the reason. The
+/// facts come first: a narrow terminal cuts the end.
 fn block_line(s: &SessionInfo) -> String {
     let mut line = format!("blocked  {}", short(s));
     if !s.uri.claims().is_empty() {
         let _ = write!(line, " {}", safe(&s.uri.claims().join(" ")));
     }
     if let Some(block) = &s.blocked {
-        let _ = write!(
-            line,
-            ": {}, for {}",
-            safe(&block.reason),
-            crate::text::ago(block.secs)
-        );
+        let _ = write!(line, ", {}", crate::text::ago(block.secs));
         if block.unanswered {
             line.push_str(", the lead gave no answer");
         }
+        let _ = write!(line, ": {}", safe(&block.reason));
     }
     line
 }

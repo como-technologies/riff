@@ -30,9 +30,9 @@ flowchart LR
   machines join it (see [Join a Riff](join-a-riff.md)). The shared
   server on Cloud Run is off.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
-  `threads`, `join_thread`, `leave_thread`, `post`, `status`, `tell`,
-  `read`, `claim`, `release`, `lead`, `pause`, `resume`, `move`,
-  `leave` and `join`.
+  `threads`, `join_thread`, `leave_thread`, `post`, `status`,
+  `blocked`, `tell`, `read`, `claim`, `release`, `lead`, `pause`,
+  `resume`, `move`, `leave` and `join`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 - **The start hook** runs `riff hook session-start` when a session
@@ -870,7 +870,7 @@ build  v0.7.0  (f45be4d, 2026-09-29)
 SESSION                            STATE    ROLE      DETAIL
 mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6
 mike@thelio:riff#issue-7 (5b1e)    busy     worker    working on #7  4m ago: write the tests
-brett@heron:riff (77e0)            blocked            waits for a review (step: merge, 1m ago)
+brett@heron:riff (77e0)            blocked            which of the two designs? (1m ago)
 ```
 
 `you` marks your own row. A tag shows the role of a session:
@@ -946,7 +946,7 @@ riff   running
 owner  mike (mike@example.com)
 build  v0.7.0  (10df8a4, 2026-09-29)
 
-blocked  3a3f8d5d issue-8: which of the two designs?, for 32m, the lead gave no answer
+blocked  3a3f8d5d issue-8, 32m, the lead gave no answer: which of the two designs?
 
 Wave 3 (como-technologies/riff)
   free: #9

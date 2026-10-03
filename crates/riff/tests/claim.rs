@@ -568,7 +568,9 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     .await;
     assert_eq!(out, "Your status is now: write the tests\n");
     assert_eq!(code, 0);
-    let blocked = ["status", "--blocked", "waits for a review", "merge"];
+    let (_, code) = agent(&server, dir, "mike", "b2", &["status", "merge"]).await;
+    assert_eq!(code, 0);
+    let blocked = ["blocked", "waits for a review"];
     let (_, code) = agent(&server, dir, "mike", "b2", &blocked).await;
     assert_eq!(code, 0);
 
@@ -600,7 +602,7 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     assert!(row("(a1)").ends_with("  AGE ago: write the tests"), "{out}");
     assert!(row("(b2)").contains("  blocked  "), "{out}");
     assert!(
-        row("(b2)").ends_with("  waits for a review (step: merge, AGE ago)"),
+        row("(b2)").ends_with("  waits for a review (AGE ago)"),
         "{out}"
     );
 

@@ -144,10 +144,8 @@ async fn three_sessions(server: &str, dir: &Path, path: &Path) {
     for (id, args) in [
         ("b2", &["claim", "issue-12"][..]),
         ("b2", &["status", "tests"][..]),
-        (
-            "c3",
-            &["status", "--blocked", "waits for a review", "merge"][..],
-        ),
+        ("c3", &["status", "merge"][..]),
+        ("c3", &["blocked", "waits for a review"][..]),
     ] {
         output(riff(server, dir, Some(id), path, args)).await;
     }
@@ -276,7 +274,7 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
             "mike  online",
             "├─ pangolin",
             "│  ├─ c3  riff  blocked",
-            "│  │    waits for a review (step: merge, Ns ago)",
+            "│  │    waits for a review (Ns ago)",
             "│  └─ a1  riff  lead  idle",
             "│       monitoring work for Ns",
             "└─ thelio",
@@ -791,12 +789,7 @@ async fn twelve_sessions_fit_in_80_columns() {
             output(riff(&server, dir, Some(&id), bin.path(), &["claim", claim])).await;
         }
         live(&server, "thelio", &id).await;
-        let status = [
-            "status",
-            "--blocked",
-            long,
-            "waits for a verify of the pull request",
-        ];
+        let status = ["blocked", long];
         let step = ["status", long];
         let args: &[&str] = if n % 4 == 0 { &status } else { &step };
         output(riff(&server, dir, Some(&id), bin.path(), args)).await;
