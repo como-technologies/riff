@@ -198,33 +198,82 @@ fn nice_here() -> u8 {
     stdout(&out).trim().parse().unwrap()
 }
 
-/// 01M3WFYZRK5CT22GJW6ZHYT9CC: the wrapper gives `claude` the cores
-/// divided by the worker limit in `CARGO_BUILD_JOBS` and
-/// `RUST_TEST_THREADS`, and 2 or more. The setting replaces the number.
+/// 01M3WFYZRK5CT22GJW6ZHYT9CC and 01M3ZGZMJ9RF1C4AHG78GQ2NM4: the wrapper
+/// holds the pool and gives `claude` its `MAKEFLAGS`, the test runner,
+/// the fixed share in `RUST_TEST_THREADS`, and no `CARGO_BUILD_JOBS`.
+/// The setting turns the pool off and replaces the number.
 #[test]
 fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     let m = Machine::new(isolated::DEAD_SERVER);
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
-        "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS\" > '{}'",
+        "echo \"[$CARGO_BUILD_JOBS] $RUST_TEST_THREADS [$MAKEFLAGS] [${}]\" > '{}'\n\
+         cat '{}/state/jobs/size' >> '{}'",
+        riff::limits::runner_var(),
+        seen.display(),
+        m.root.path().join("home").display(),
         seen.display()
     ));
-    // 16 cores and 4 workers: 4 jobs each.
+    // 16 cores and 4 workers: a pool of 16 - 1 - 4 tokens, 15 / 4 test
+    // threads each.
+    m.workers(&["limit", "4"]);
+    let out = m.wrapper(&claude, &[("CARGO_BUILD_JOBS", "64")]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let fifo = m.root.path().join("home/state/jobs/fifo");
+    let seen_now = read(&seen);
+    let prefix = format!("[] 3 [-j --jobserver-auth=fifo:{}] [/", fifo.display());
+    assert!(
+        seen_now.starts_with(&prefix) && seen_now.ends_with(" workers test-run]\n11"),
+        "the variables of the person do not win over the pool: {seen_now}"
+    );
+    assert_eq!(
+        riff::jobserver::state(&m.root.path().join("home/state/jobs")),
+        None,
+        "the pool ends with the wrapper"
+    );
+    // 16 cores and 16 workers: 1 or more.
+    m.workers(&["limit", "16"]);
+    m.wrapper(&claude, &[]);
+    assert!(read(&seen).starts_with("[] 1 [-j"), "{}", read(&seen));
+    // The setting wins, with no pool.
+    m.workers(&["jobs", "6"]);
+    m.wrapper(&claude, &[("CARGO_BUILD_JOBS", "64")]);
+    assert!(read(&seen).starts_with("[6] 6 [] []"), "{}", read(&seen));
+}
+
+/// 01M3ZGZMRHXRBP762QPVCV0YX8: when riff cannot make the pool, the
+/// wrapper gives the fixed share and says why. `riff workers start`
+/// says so one time.
+#[test]
+fn with_no_pool_the_worker_gets_the_fixed_share() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let state = m.root.path().join("home/state");
+    std::fs::create_dir_all(&state).unwrap();
+    // A file where the pool must go.
+    std::fs::write(state.join("jobs"), "").unwrap();
+    let seen = m.bin().join("seen");
+    let claude = m.claude(&format!(
+        "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS [$MAKEFLAGS]\" > '{}'",
+        seen.display()
+    ));
     m.workers(&["limit", "4"]);
     let out = m.wrapper(&claude, &[]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(read(&seen).trim(), "4 4");
-    // 16 cores and 16 workers: 2 or more.
-    m.workers(&["limit", "16"]);
-    m.wrapper(&claude, &[]);
-    assert_eq!(read(&seen).trim(), "2 2");
-    // The setting wins.
-    m.workers(&["jobs", "6"]);
-    m.wrapper(&claude, &[]);
-    assert_eq!(read(&seen).trim(), "6 6");
-    // The variables of the person do not win over the limit.
-    m.wrapper(&claude, &[("CARGO_BUILD_JOBS", "64")]);
-    assert_eq!(read(&seen).trim(), "6 6");
+    assert_eq!(read(&seen).trim(), "3 3 []");
+    assert!(
+        stderr(&out).contains("riff cannot make the pool of build jobs ("),
+        "{out:?}"
+    );
+
+    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
+    let first = m.workers(&["start", "1"]);
+    assert!(first.contains("Started 1 worker in"), "{first}");
+    assert!(
+        first.contains("so each worker builds with a fixed share of the cores."),
+        "{first}"
+    );
+    let second = m.workers(&["start", "1"]);
+    assert!(!second.contains("pool"), "one time: {second}");
 }
 
 /// 01M3ZV0QSFVCHRSEKYK57B88VA: the wrapper starts `claude` with no
@@ -275,7 +324,7 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
-        "echo \"$RIFF_WORKER $CARGO_BUILD_JOBS $1\" > '{}'",
+        "echo \"$RIFF_WORKER $RUST_TEST_THREADS $1\" > '{}'",
         seen.display()
     ));
     m.workers(&["limit", "4"]);
@@ -283,7 +332,7 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     let out = m.wrapper(&claude, &[]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(m.log("systemd-run.log"), "", "no slice: no scope");
-    assert_eq!(read(&seen).trim(), "1 4 Join the riff.");
+    assert_eq!(read(&seen).trim(), "1 3 Join the riff.");
 
     std::fs::remove_file(&seen).unwrap();
     let out = m.wrapper(&claude, &[("RIFF_WORKER_SLICE", "riff-workers.slice")]);
@@ -293,7 +342,7 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
         "--user --scope --quiet --slice=riff-workers.slice"
     );
     // claude still gets its marks, its jobs and its arguments.
-    assert_eq!(read(&seen).trim(), "1 4 Join the riff.");
+    assert_eq!(read(&seen).trim(), "1 3 Join the riff.");
 }
 
 /// 01M3WFZ03Z9Y60HPHJJ9ZE6AQZ: the OS kills `claude`, as it does when
@@ -476,14 +525,16 @@ fn each_setting_of_the_limits_shows_and_sets_its_value() {
     assert_eq!(
         m.workers(&["jobs"]),
         format!(
-            "workers.jobs  0  {file}\nEach worker builds with 4 jobs and tests with 4 threads: \
-             the cores divided by the limit of workers. Set it with: riff workers jobs N (0: \
-             riff makes the number)\n"
+            "workers.jobs  0  {file}\nAll workers take their compile jobs from one pool of 11 \
+             tokens: the physical cores less 1, less the limit of workers. Each build also has \
+             one job of its own. No worker runs now. Each worker tests with 3 threads, from \
+             the same pool. Set it with: riff workers jobs N (N turns the pool off; 0: the \
+             pool)\n"
         )
     );
     assert!(
         m.workers(&["jobs", "6"])
-            .contains("builds with 6 jobs and tests with 6 threads.")
+            .contains("No pool: each worker builds with 6 jobs and tests with 6 threads.")
     );
 
     assert_eq!(
@@ -547,6 +598,7 @@ fn the_book_has_a_how_to_for_each_limit() {
             "#### Choose the limit from the memory",
             "riff workers limit 3",
         ),
+        ("#### See the pool of build jobs", "riff workers jobs"),
         ("#### Set the jobs of a worker", "riff workers jobs 4"),
         (
             "#### Set the nice value of the workers",
@@ -574,15 +626,16 @@ fn the_book_has_a_how_to_for_each_limit() {
         .into_iter()
         .filter(|c| c.starts_with("riff "))
         .collect();
-    assert_eq!(commands.len(), 7, "{commands:?}");
+    assert_eq!(commands.len(), 8, "{commands:?}");
     book::each_is_real(&commands);
 }
 
 /// 01M3WFYZP9Y4N41QGH5SWKFZZC and 01M3WFZ0676C5HJDXCGVZ715K2: the skill
-/// says that a session runs one build or test command at a time, and
-/// that only the user sets the limits.
+/// says that the pool shares the cores, that a worker keeps the
+/// variables of riff, and that only the user sets the limits. It no
+/// longer says "one build at a time".
 #[test]
-fn the_skill_says_one_build_at_a_time() {
+fn the_skill_says_the_pool_shares_the_cores() {
     let skill = read_file(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
     );
@@ -592,13 +645,16 @@ fn the_skill_says_one_build_at_a_time() {
     let part = &skill[start..];
     let part = &part[..part[3..].find("\n## ").map_or(part.len(), |n| n + 3)];
     for text in [
-        "Run one build or test command at a time.",
+        "one pool of build jobs",
+        "`MAKEFLAGS`, `RUST_TEST_THREADS` and the\n  cargo test runner",
+        "do not replace the test runner",
         "run that test by its name in a loop",
         "not the full `just ci`",
-        "`CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`",
+        "`CARGO_BUILD_JOBS` and\n  `RUST_TEST_THREADS`",
     ] {
         assert!(part.contains(text), "\"Build and test\" has no {text:?}");
     }
+    assert!(!skill.contains("one build or test command at a time"));
     for setting in ["jobs", "nice", "memory", "floor"] {
         let command = format!("`riff workers {setting}`");
         assert!(skill.contains(&command), "the skill has no {command}");

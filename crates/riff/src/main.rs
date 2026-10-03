@@ -614,12 +614,14 @@ enum Workers {
         /// The new interval in seconds. Leave it out to show it.
         seconds: Option<u16>,
     },
-    /// Show or set the compile jobs and test threads of each worker
+    /// Show the pool of build jobs, or set the jobs of each worker
     ///
-    /// Each worker gets the number in CARGO_BUILD_JOBS and
-    /// RUST_TEST_THREADS. The default is 0: the cores of this machine
-    /// divided by the limit of workers, and 2 or more. The next worker
-    /// that starts gets the new number. It is in
+    /// With the default 0, all workers of this machine take their compile
+    /// jobs and test threads from one pool: the physical cores less 1,
+    /// less the limit of workers, and 1 or more. It shows the size of the
+    /// pool and the tokens in use. A number N turns the pool off: each
+    /// worker gets N in CARGO_BUILD_JOBS and RUST_TEST_THREADS. The next
+    /// worker that starts gets the new number. It is in
     /// $XDG_CONFIG_HOME/riff/config.toml, key workers.jobs.
     Jobs {
         /// The new number of jobs. Leave it out to show it.
@@ -716,6 +718,19 @@ enum Workers {
         /// The claude command.
         claude: std::path::PathBuf,
         /// The arguments of CLAUDE.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Run PROGRAM as the test runner of a worker, and wait
+    ///
+    /// For a test program of cargo, it takes RUST_TEST_THREADS tokens
+    /// from the pool of build jobs that MAKEFLAGS names, and gives them
+    /// back at the end. Each worker gets it in CARGO_TARGET_<TRIPLE>_RUNNER.
+    #[command(hide = true)]
+    TestRun {
+        /// The program.
+        program: std::path::PathBuf,
+        /// The arguments of PROGRAM.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -1544,13 +1559,12 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 settings::set_workers_jobs(&path, *jobs)?;
             }
             let machine = riff::machine::Machine::here();
+            let limits = riff::limits::Limits::of(&path, riff::limits::physical(&machine))?;
+            let pool = riff::local::dir()
+                .and_then(|dir| riff::jobserver::state(&riff::jobserver::dir(&dir)));
             anstream::println!(
                 "{}",
-                view::workers_jobs(
-                    settings::workers_jobs(&path)?,
-                    riff::limits::Limits::of(&path, &machine)?.jobs,
-                    &path
-                )
+                view::workers_jobs(settings::workers_jobs(&path)?, &limits, pool, &path)
             );
             Ok(())
         }
@@ -1623,6 +1637,9 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
         Some(Workers::Run { claude, args }) => {
             std::process::exit(worker::run(claude, args, server).await?)
         }
+        Some(Workers::TestRun { program, args }) => {
+            std::process::exit(riff::jobserver::test_run(program, args).await?)
+        }
     }
 }
 
@@ -1662,7 +1679,10 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         "{}",
         text::workers_started(n, &started.window, &started.main)
     );
-    for line in [&started.limited, &started.no_scope].into_iter().flatten() {
+    for line in [&started.limited, &started.no_scope, &started.no_pool]
+        .into_iter()
+        .flatten()
+    {
         println!("{line}");
     }
     // The worktrees of the sessions that ended (01M3ZV0TM7ANJ1QQ7XTBDJQE1V).

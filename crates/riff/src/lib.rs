@@ -78,6 +78,7 @@ pub mod hook;
 pub mod host;
 pub mod hygiene;
 pub mod identity;
+pub mod jobserver;
 pub mod leave;
 pub mod lifecycle;
 pub mod limits;
