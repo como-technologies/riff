@@ -1770,8 +1770,10 @@ mod tests {
         );
     }
 
-    /// A lower limit stops no worker, and the lead gets a note that says
-    /// so. A change with no free work gives a note with only the change.
+    /// A lower limit stops no worker at once, and the lead gets a note
+    /// that says how many end after their item
+    /// (01M402VFGAJQM1QW8B42NKMJM4). A change with no free work gives a
+    /// note with only the change.
     #[tokio::test(start_paused = true)]
     async fn a_lower_limit_gives_a_note_and_stops_no_worker() {
         let mut w = world(0);
@@ -1790,8 +1792,8 @@ mod tests {
             fake.with(|w| w.told.clone()),
             [
                 (
-                    "workers: limit 4 to 2 on pangolin: 3 workers run there, and riff stops \
-                     none."
+                    "workers: limit 4 to 2 on pangolin: 3 workers run there. 1 worker ends after \
+                     its item. riff stops no worker in the middle of an item."
                         .to_owned(),
                     false
                 ),
