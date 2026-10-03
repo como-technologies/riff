@@ -400,7 +400,10 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     let main = r.main();
 
     let dead = worktree(&r, "issue-1");
-    git(&dead, &["commit", "-q", "--allow-empty", "-m", "not pushed"]);
+    git(
+        &dead,
+        &["commit", "-q", "--allow-empty", "-m", "not pushed"],
+    );
     lock(&r, &dead, "claude session issue-1 (pid 999999999 start 5)");
     let live = worktree(&r, "issue-2");
     let reason = format!(
@@ -514,9 +517,18 @@ async fn worktrees_clean_removes_a_worktree_with_no_work_of_its_own() {
     let verify = main.join(".claude/worktrees/verify-issue-8-a6cf");
     git(
         &main,
-        &["worktree", "add", "-q", "--detach", &verify.to_string_lossy()],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &verify.to_string_lossy(),
+        ],
     );
-    git(&verify, &["commit", "-q", "--allow-empty", "-m", "the head"]);
+    git(
+        &verify,
+        &["commit", "-q", "--allow-empty", "-m", "the head"],
+    );
     let head = git(&verify, &["rev-parse", "HEAD"]).trim().to_owned();
     std::fs::write(
         r.fake.path().join(format!("merged-{head}.json")),

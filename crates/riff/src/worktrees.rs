@@ -341,7 +341,14 @@ fn merged_at(gh: &Gh, head: &str) -> Option<u64> {
         head_ref_oid: String,
     }
     let args = [
-        "pr", "list", "--state", "merged", "--search", head, "--json", "number,headRefOid",
+        "pr",
+        "list",
+        "--state",
+        "merged",
+        "--search",
+        head,
+        "--json",
+        "number,headRefOid",
     ];
     let found = gh.json::<Vec<Found>>(&args).ok()?;
     found
