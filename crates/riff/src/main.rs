@@ -10,8 +10,8 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local, login, mcp, next,
-    permissions, plugin, pr, settings, terminal, text, usage, view, worker,
+    audit, auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local, login,
+    mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -470,6 +470,18 @@ enum Command {
     /// riff decides by facts, not by the word of an agent.
     #[command(subcommand)]
     Worktrees(WorktreesCommand),
+    /// Check that a wave followed the rules
+    ///
+    /// It reads the log of the repository of this directory from the
+    /// riff, and the issues and pull requests of the wave with gh. It
+    /// prints each rule with pass, fail or not checked, and the records
+    /// that show it. It exits with 1 when a rule fails. Only the owner or
+    /// an admin can.
+    Audit {
+        /// The wave, for example "Wave 3".
+        #[arg(long, value_name = "TITLE")]
+        wave: String,
+    },
     /// Start, list and stop the workers of this machine
     ///
     /// Workers are agent sessions in tmux. With no subcommand, it lists
@@ -1185,6 +1197,18 @@ async fn main() -> Result<()> {
             anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
             return Ok(());
         }
+        Command::Audit { wave } => {
+            let here = identity::place(&identity::working_dir()?)?;
+            let repo = audit::repo_of(&here)?;
+            let log = api.signed_in(None)?.log(&repo).await?;
+            let forge = audit::Forge::read(&pr::Gh::default(), &here.repo_text(), wave)?;
+            let report = audit::audit(wave, &log.records, &forge, audit::now_ms())?;
+            print!("{}", audit::render(&report, &here.repo_text()));
+            if report.failed() {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
         Command::Admin { command } => {
             let (email, admin) = match command {
                 Admin::Add { email } => (email, true),
@@ -1450,6 +1474,7 @@ async fn main() -> Result<()> {
         | Command::Invite { .. }
         | Command::Remove { .. }
         | Command::Members
+        | Command::Audit { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
         | Command::Owner { .. } => unreachable!("handled before the identity"),

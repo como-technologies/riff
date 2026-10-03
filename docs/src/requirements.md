@@ -413,6 +413,30 @@
   the shared server, tells its user to update each machine, and tells
   the sessions to run their checks after the release. When each item is
   closed, the lead ends the wave.
+- **01M3ZWRC6H0P7EF6CMECCYZ2RC** `riff audit --wave TITLE` checks
+  that a wave followed the rules, from the log of the riff and from
+  the forge. It changes nothing. It checks seven rules: (1) each item
+  of the wave has a claim, a pull request, a verify by another session,
+  a merge and a release; (2) each verifier held no other claim and is
+  not the author; (3) each worker had a clear between its last release
+  and its next claim; (4) no claim while the riff or the repository was
+  paused; (5) no claim of an item of a later wave or with an open need;
+  (6) the lead held no claim of a work item; (7) each request came from
+  the lead of the user of its sender. It prints each rule with pass,
+  fail or not checked, and names the records by their position. A
+  rule with nothing to check, and a check that the facts cannot prove,
+  is not checked, with the reason. It exits with 1 when a rule fails.
+- **01M3ZWRCC46EHYKQ4Q2NZS9TEB** Rule 1 of the audit takes a release
+  of an item by its holder as early when it comes before the merge and
+  before a verify result of the item. A release of a worker after its
+  verify request is not early (01M3Z9N6AK6W9KCA1MN72X78B6). The span of
+  a wave starts when it is the current wave: at its start, or at the
+  end of the last wave before it. It ends at the end of the wave, or
+  now. Rule 1 looks at the whole log; the rules 2 to 7 look at the
+  records in the span. A wave whose earlier wave is open has no span,
+  and the audit refuses it.
+- **01M3ZWRCF5H95R4SYX09CWAJS8** `riff audit` checks one wave. It has
+  no span of time of its own.
 - **R222** The skill, the requirements and the book name the concept
   of waves first. Each keeps the form of a forge in one part of its
   own. A new forge needs no change to the concept. Outside these
@@ -448,6 +472,12 @@
   for the merge (01M3Z9MY0CDBB1G749XBVMVV8X) is no free item: it is
   work for a verify, not for a build. An open issue with no claim whose
   verify failed is a free item.
+- **01M3ZWRC9F7TGSHB966TPVVS9Q** On GitHub, `riff audit` reads with
+  `gh`: each milestone `Wave N` with its start and its close, each
+  issue with its milestone, its `Needs:` line and the time when it was
+  merged (its close, or its first comment `Merged in #`, the earlier
+  one), each pull request of the milestone with its `Issue:` trailer
+  and its merge, and the last status `riff/verify` of the head of each.
 
 ## Issue hygiene on GitHub
 
@@ -1293,6 +1323,18 @@
   the log, and removes no record before the first problem. When the
   first problem is before the oldest kept checkpoint, `log verify`
   names no cut, and `log cut` refuses.
+- **01M3ZWRC11R5M9V1KTF05P240W** `POST /v1/log` gives the records of
+  one repository thread, for an audit. Only the owner and the admins
+  can read them; each other person gets 403. The server reads the log
+  from the store. A record of the repository is a post, a membership,
+  a lead, a claim or a release in its thread; a direct message from a
+  session in the repository; the start or the end of a session in the
+  repository; and a pause of the riff or of the repository.
+- **01M3ZWRC3XBFN8FJDGE8XWZ5EA** A post in the reply of `POST /v1/log`
+  has no text of its body, no signature and no payload. Its body is
+  only its mark: `request`, `verify request` or `verify result` when
+  the body starts with that word and a colon, else empty. The kind,
+  the sender, the `to` and the time stay.
 - **01M3TJWHYB9FTZ3G8G227V0N05** With a bucket, a tool of the log takes
   its access token from the metadata server of Cloud Run. When that
   server does not answer in 2 seconds, the tool takes the token of the

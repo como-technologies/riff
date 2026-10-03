@@ -48,6 +48,10 @@
 //!   member again. `POST /v1/owner` lets the owner pass the owner
 //!   role. `POST /v1/owner/take` lets an admin ask for it, and `POST
 //!   /v1/owner/deny` lets the owner keep it.
+//! - `POST /v1/log` gives the records of one repository to the owner
+//!   and the admins, for `riff audit` (01M3ZWRC11R5M9V1KTF05P240W). It
+//!   reads the log from the store, and a post has only its mark
+//!   (01M3ZWRC3XBFN8FJDGE8XWZ5EA).
 //! - A sign-in has two steps (01M3XA877YZQ649SWB5TN60V5P): the command
 //!   `admit` through the engine, which decides if the person may join,
 //!   and then the start of the chain in the token store. The end of
@@ -200,14 +204,15 @@ use futures::{Stream, StreamExt};
 use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, Call, CheckpointFacts, Claim, DenyOwner, End, FactError,
-    ID_TOKEN_TYPE, Idle, IdleQuery, Invite, Join, Keys, Kind, Lead, Leave, MeReply, Members,
-    MembersReply, PassOwner, Pause, Person, Post, Read, ReadReply, Register, Release, ReleaseFor,
-    Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts,
-    ServerMetadata, SetAdmin, SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, WhoReply, WhoRequest,
+    ID_TOKEN_TYPE, Idle, IdleQuery, Invite, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply,
+    MeReply, Members, MembersReply, PassOwner, Pause, Person, Post, Read, ReadReply, Register,
+    Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply,
+    ServerFacts, ServerMetadata, SetAdmin, SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE,
+    TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -220,7 +225,7 @@ use crate::lease::Lease;
 use crate::oidc::Identity;
 use crate::owner::{Check, Checks};
 use crate::state::{
-    Announce, Code, OwnerChange, Refused, Settings, Signal, Snapshot, State, may_read,
+    Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
 };
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
@@ -1736,6 +1741,7 @@ impl Service {
             .route(TakeOwner::PATH, post(command::<TakeOwner>))
             .route(DenyOwner::PATH, post(command::<DenyOwner>))
             .route(Members::PATH, post(members))
+            .route(LogQuery::PATH, post(log_records))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -2151,6 +2157,35 @@ async fn members(
     Json(Members {}): Json<Members>,
 ) -> Json<MembersReply> {
     Json(s.members())
+}
+
+/// Gives the records of one repository for an audit
+/// (01M3ZWRC11R5M9V1KTF05P240W): only to the owner and the admins. It
+/// reads the log from the store, so it has each record, also the
+/// records before the last checkpoint. A post has only its mark
+/// (01M3ZWRC3XBFN8FJDGE8XWZ5EA).
+async fn log_records(
+    AxumState(s): AxumState<Shared>,
+    Extension(signed_in): Extension<SignedIn>,
+    Json(r): Json<LogQuery>,
+) -> Reply<LogReply> {
+    let user = signed_in.who.user();
+    if s.engine.read(|state| state.role(user)) < Role::Admin {
+        let reason = "only the owner and the admins can read the log";
+        return Err(Failed::Refused(Refused::new(Code::NotAllowed, reason)).into());
+    }
+    let replayed = log::replay(&*s.log).await.map_err(|error| {
+        tracing::error!("the log for an audit did not read: {error}");
+        let text = format!("the log did not read: {error}");
+        (StatusCode::SERVICE_UNAVAILABLE, text)
+    })?;
+    let records = replayed
+        .records
+        .into_iter()
+        .filter(|record| record.of_repository(&r.repo))
+        .map(Record::for_audit)
+        .collect();
+    Ok(Json(LogReply { records }))
 }
 
 /// Lets a request through only with a live access token in the

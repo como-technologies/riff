@@ -321,6 +321,51 @@ sequenceDiagram
   that the comment of the claim is on the issue, and that the total is
   not updated.
 
+## Check that a wave followed the rules
+
+`riff audit` reads the log of the riff and the forge, and checks that
+the sessions followed the flow of a wave. Only the owner or an admin
+can read the log. Run it in your clone. It needs `gh`.
+
+```sh
+riff audit --wave "Wave 18"
+```
+
+It prints each rule with `pass`, `fail` or `not checked`. Rule 1 has a
+line for each item of the wave. Each other rule has the number of its
+checks that pass, and a line for each check that fails. A line names
+the records of the log by their position. Find a record with
+`riff-server log` (see "Print the log"). The command exits with 1 when
+a rule fails.
+
+| Rule | It checks |
+|---|---|
+| 1 | Each item has a claim, a pull request, a verify by another session, a merge and a release. No release comes before the merge or a verify result. A worker can release at its verify request. |
+| 2 | Each verifier held no other claim, and is not the author. |
+| 3 | Each worker had a clear between its last release and its next claim. |
+| 4 | No session claimed while the riff or the repository was paused. |
+| 5 | No session claimed an item of a later wave, or an item with an open need. |
+| 6 | The lead held no claim of a work item. |
+| 7 | Each request came from the lead of the user of its sender. |
+
+```mermaid
+flowchart LR
+    L[log of the riff] -->|the records of this repository| A[riff audit]
+    F[forge, with gh] -->|waves, issues, pull requests, verify status| A
+    A --> R[each rule: pass, fail or not checked]
+```
+
+- A wave starts when it is the current wave: when the wave before it
+  ends. It ends when the lead ends it. The audit of an open wave ends
+  now. Rule 1 looks at the whole log. The other rules look only at the
+  records from the start to the end of the wave.
+- The audit sees no text of a message. The log gives it only the mark
+  of a message: `request`, `verify request` or `verify result`, from
+  the start of its text.
+- A rule with nothing to check is `not checked`, with the reason. So
+  is a check that the facts cannot prove, for example a claim of an
+  item that is in no wave.
+
 ## Sign in on this machine
 
 Sign-in uses the OAuth client of the Google Cloud project `como-riff`.
