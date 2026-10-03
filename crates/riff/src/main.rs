@@ -1966,6 +1966,9 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
         "{}",
         view::host_heading(&host, limit, panes.len(), Some(&machine), floor)
     );
+    let disk = identity::main_worktree(&identity::working_dir()?)
+        .and_then(|main| riff::disk::Disk::here(&main));
+    anstream::print!("{}", view::disk_line(disk.as_ref()));
     anstream::print!("{}", view::workers(&panes, &sessions, long));
     let Ok(me) = me else {
         return Ok(());
@@ -1986,6 +1989,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
                 status.floor
             )
         );
+        anstream::print!("{}", view::disk_line(status.disk.as_ref()));
         anstream::print!("{}", view::workers(&panes, &sessions, long));
     }
     Ok(())

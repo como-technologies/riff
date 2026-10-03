@@ -128,6 +128,7 @@ use riff_core::wire::{Idle, Kind, RiffState, SessionInfo};
 use serde::Deserialize;
 
 use crate::api::Api;
+use crate::disk::Disk;
 use crate::host::{self, Request};
 use crate::machine::Machine;
 use crate::pr::Gh;
@@ -154,14 +155,28 @@ pub struct Place {
     pub floor: u32,
     /// The numbers of the machine, if it tells them.
     pub machine: Option<Machine>,
+    /// The disk of the machine, if it tells it.
+    pub disk: Option<Disk>,
 }
 
 impl Place {
     /// True when the machine can take one more worker: fewer workers
-    /// than its limit, not busy, and not low on memory.
+    /// than its limit, not busy, not low on memory, and not low on disk
+    /// (01M41A11DX1QRP48YPTDNT67W4).
+    ///
+    /// ```
+    /// use riff::disk::Disk;
+    /// use riff::rollout::Place;
+    ///
+    /// let place = Place { host: "pangolin".into(), session: None, limit: 2, workers: 0, floor: 4, machine: None, disk: None };
+    /// assert!(place.room());
+    /// assert!(Place { disk: Some(Disk { free_gb: 50, total_gb: 455 }), ..place.clone() }.room());
+    /// assert!(!Place { disk: Some(Disk { free_gb: 16, total_gb: 455 }), ..place }.room());
+    /// ```
     pub fn room(&self) -> bool {
         self.workers < usize::from(self.limit)
             && !self.machine.is_some_and(|m| m.busy() || m.low(self.floor))
+            && !self.disk.is_some_and(|d| d.low())
     }
 
     /// The free capacity: the score less the workers. A machine that
@@ -203,6 +218,7 @@ impl View {
     ///     workers: 1,
     ///     floor: 4,
     ///     machine: None,
+    ///     disk: None,
     /// };
     /// let view = View { running: true, work: 1, idle: 0, places: vec![place("a"), place("b")] };
     /// // A person set the limit of `a` from 1 to 2 after the look read it.
@@ -235,6 +251,7 @@ impl View {
 ///     workers,
 ///     floor: 4,
 ///     machine: Some(Machine { cores, mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 }),
+///     disk: None,
 /// };
 /// let places = [place("thelio", 32, 0), place("pangolin", 8, 0)];
 /// assert_eq!(pick(&places), Some(0));
@@ -265,7 +282,7 @@ pub fn pick(places: &[Place]) -> Option<usize> {
 /// ```
 /// use riff::rollout::{Place, View, decide};
 ///
-/// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, floor: 4, machine: None };
+/// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, floor: 4, machine: None, disk: None };
 /// let view = View { running: true, work: 2, idle: 0, places: vec![here] };
 /// assert_eq!(decide(&view), Some(0));
 /// assert_eq!(decide(&View { running: false, ..view.clone() }), None);
@@ -451,6 +468,7 @@ impl Effect {
 ///     workers: 3,
 ///     floor: 4,
 ///     machine: None,
+///     disk: None,
 /// };
 /// let view = View { running: true, work: 2, idle: 0, places: vec![pangolin] };
 /// let raise = Change::Limit { host: "pangolin".into(), old: 3, new: 4 };
@@ -1218,6 +1236,8 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 workers: here.len(),
                 floor: settings::workers_floor(&settings)?,
                 machine: Some(Machine::here()),
+                disk: identity::main_worktree(&identity::working_dir()?)
+                    .and_then(|main| Disk::here(&main)),
             });
             panes.extend(here);
         }
@@ -1232,6 +1252,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 workers: status.workers.len(),
                 floor: status.floor,
                 machine: status.machine,
+                disk: status.disk,
             });
             panes.extend(status.workers.iter().map(|(pane, short)| WorkerPane {
                 pane: pane.clone(),

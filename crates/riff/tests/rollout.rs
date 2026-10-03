@@ -769,6 +769,7 @@ async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
             limit,
             floor: 4,
             machine: None,
+            disk: None,
             workers: vec![],
         }
         .line(),

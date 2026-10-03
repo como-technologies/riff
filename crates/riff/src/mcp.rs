@@ -31,7 +31,9 @@
 //!
 //! The `riff mcp` of the lead also starts workers by itself when the
 //! wave has free work (see [`crate::rollout`]). It ends the session of a
-//! worker of its machine whose pane is gone (see [`crate::reap`]).
+//! worker of its machine whose pane is gone (see [`crate::reap`]). Each
+//! 10 minutes it tidies the worktrees and the disk of its machine (see
+//! [`crate::tidy`]).
 //!
 //! A keep-alive is not a call: `who` still shows the time since the
 //! last call (R204). After the end call, the session leaves `who`, and
@@ -834,6 +836,42 @@ impl Tools {
         })
     }
 
+    /// Tidies the clone of this machine each [`crate::tidy::every`], for
+    /// as long as the tools run, while this session is the lead
+    /// (01M41A118QPQKFAAHGQFFX4F3B): the worktrees of merged pull
+    /// requests and the disk. See [`crate::tidy`].
+    pub fn tidy(&self) -> tokio::task::JoinHandle<()> {
+        let tools = self.clone();
+        tokio::spawn(async move {
+            let mut timer = crate::tidy::timer();
+            let mut guard = crate::tidy::Guard::default();
+            loop {
+                timer.tick().await;
+                if tools.left() {
+                    continue;
+                }
+                let me = tools.me();
+                let lead = match tools.api.who(&me, false).await {
+                    Ok(sessions) => sessions
+                        .iter()
+                        .any(|s| s.uri.who() == me.who() && s.uri.lead()),
+                    Err(_) => false,
+                };
+                if !lead {
+                    continue;
+                }
+                let Ok(dir) = crate::identity::working_dir() else {
+                    continue;
+                };
+                if let Err(e) =
+                    crate::tidy::tidy_as_person(&dir, tools.api.base(), &mut guard).await
+                {
+                    eprintln!("riff: cannot tidy the worktrees: {e:#}");
+                }
+            }
+        })
+    }
+
     /// Tells the server that the session ended (R205). It waits at most
     /// [`END_WAIT`].
     pub async fn end(&self) {
@@ -888,6 +926,7 @@ pub async fn serve(
     // A worker is never the lead.
     let rollout = (!worker).then(|| tools.rollout());
     let reap = (!worker).then(|| tools.reap());
+    let tidy = (!worker).then(|| tools.tidy());
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
@@ -947,6 +986,9 @@ pub async fn serve(
         if let Some(reap) = &reap {
             reap.abort();
         }
+        if let Some(tidy) = &tidy {
+            tidy.abort();
+        }
         let args = with_place(std::env::args_os().skip(1), tools.me().place());
         let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let _ = std::env::set_current_dir(dir);
@@ -959,6 +1001,9 @@ pub async fn serve(
     }
     if let Some(reap) = reap {
         reap.abort();
+    }
+    if let Some(tidy) = tidy {
+        tidy.abort();
     }
     tools.end().await;
     result

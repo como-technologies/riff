@@ -3555,6 +3555,80 @@ pub fn worktrees_saved(lines: &[&str]) -> String {
     )
 }
 
+/// The line for a worktree whose `target` riff removed
+/// (01M41A11BB4HAD8595DNSBAZ0D).
+pub const TARGET_REMOVED: &str =
+    "removed its target: the disk is tight, and no live session owns it";
+
+/// The note to the lead after riff removed build folders
+/// (01M41A11BB4HAD8595DNSBAZ0D).
+///
+/// ```
+/// use riff::disk::Disk;
+///
+/// let disk = Some(Disk { free_gb: 90, total_gb: 455 });
+/// assert_eq!(
+///     riff::text::targets_removed("pangolin", disk, &["/r/.claude/worktrees/issue-1: removed".into()]),
+///     "pangolin: the disk was under 15% free. riff removed the target of 1 worktree(s) with \
+///      no live owner, now disk 90GB free of 455GB (19%): /r/.claude/worktrees/issue-1: removed"
+/// );
+/// ```
+pub fn targets_removed(host: &str, disk: Option<crate::disk::Disk>, lines: &[String]) -> String {
+    let now = disk.map(|d| format!(", now {d}")).unwrap_or_default();
+    format!(
+        "{host}: the disk was under {}% free. riff removed the target of {} worktree(s) with \
+         no live owner{now}: {}",
+        crate::disk::TIGHT_PERCENT,
+        lines.len(),
+        lines.join(" | ")
+    )
+}
+
+/// The note to the lead when the disk of `host` goes under the low mark
+/// (01M41A11DX1QRP48YPTDNT67W4).
+///
+/// ```
+/// use riff::disk::Disk;
+///
+/// assert_eq!(
+///     riff::text::disk_low("pangolin", &Disk { free_gb: 16, total_gb: 455 }),
+///     "pangolin: disk 16GB free of 455GB (3%), under 5%. riff starts no worker here until \
+///      more is free. riff worktrees clean removes the worktrees of merged pull requests."
+/// );
+/// ```
+pub fn disk_low(host: &str, disk: &crate::disk::Disk) -> String {
+    format!(
+        "{host}: {disk}, under {}%. riff starts no worker here until more is free. riff \
+         worktrees clean removes the worktrees of merged pull requests.",
+        crate::disk::LOW_PERCENT
+    )
+}
+
+/// Why a machine starts no worker: its disk is low
+/// (01M41A11DX1QRP48YPTDNT67W4).
+///
+/// ```
+/// use riff::disk::Disk;
+///
+/// assert_eq!(
+///     riff::text::low_disk(&Disk { free_gb: 16, total_gb: 455 }),
+///     "disk 16GB free of 455GB (3%), under 5%."
+/// );
+/// ```
+pub fn low_disk(disk: &crate::disk::Disk) -> String {
+    format!("{disk}, under {}%.", crate::disk::LOW_PERCENT)
+}
+
+/// The refusal of `riff workers start` when the disk is low
+/// (01M41A11DX1QRP48YPTDNT67W4).
+pub fn workers_disk_low(disk: &crate::disk::Disk) -> String {
+    format!(
+        "riff: {} riff workers start started nothing. riff worktrees clean removes the \
+         worktrees of merged pull requests.",
+        low_disk(disk)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
