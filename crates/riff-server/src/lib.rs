@@ -2122,8 +2122,11 @@ pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> Str
         [] => String::new(),
         claims => format!(" ({})", claims.join(", ")),
     };
-    let minutes = after_secs.div_ceil(60);
-    format!("blocked: {short}{claims} has no answer after {minutes} minutes: {reason}")
+    let minutes = match after_secs.div_ceil(60) {
+        1 => "1 minute".to_owned(),
+        n => format!("{n} minutes"),
+    };
+    format!("blocked: {short}{claims} has no answer after {minutes}: {reason}")
 }
 
 /// Keeps the facts of the items of the repository of the caller

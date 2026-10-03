@@ -224,9 +224,8 @@ pub fn notification(block: &Unanswered) -> (String, String) {
 
 /// One look of the lead `me`: it sends the facts of the forge, when it
 /// can read them, and looks at the blocks with the wake time `wake`. It
-/// shows each block that is unanswered now with `notifier`, when
-/// `notify` is on and the machine has a desktop. It gives the blocks
-/// that are unanswered now.
+/// shows each block that is unanswered now with `notify`, when it has
+/// one. It gives the blocks that are unanswered now.
 pub async fn once(
     api: &Api,
     me: &SessionUri,
@@ -241,7 +240,7 @@ pub async fn once(
         api.item_facts(me, facts, true).await?;
     }
     let unanswered = api.look_blocks(me, wake.as_secs()).await?;
-    if let Some(notifier) = notify.filter(|n| n.here()) {
+    if let Some(notifier) = notify {
         for block in &unanswered {
             notifier.show(block);
         }
@@ -265,7 +264,9 @@ pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf
                 return anyhow::Ok(());
             }
             let (wake, notify) = read_settings(settings.as_deref());
-            once(&api, &me, &gh, wake, notify.then_some(&notifier)).await?;
+            // A machine with no desktop gets no notification.
+            let notify = (notify && notifier.here()).then_some(&notifier);
+            once(&api, &me, &gh, wake, notify).await?;
             Ok(())
         };
         match step.await {
