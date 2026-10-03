@@ -3048,11 +3048,46 @@ It names the command that starts the workers:
 workers: limit 1 to 3 on pangolin: free work waits, and the rollout is off. Start workers with: riff workers start 2 --host pangolin
 ```
 
-A lower limit stops no worker. The message says how many workers run:
+### Lower the limit while workers run
+
+A lower limit stops no worker in the middle of an item. When more
+workers run than the limit, each worker that ends its item ends, in
+place of its clear. This goes on until the workers are as many as the
+limit.
+
+```sh
+riff workers limit 2
+```
+
+The lead gets a note with the change:
 
 ```text
-workers: limit 4 to 3 on pangolin: 4 workers run there, and riff stops none.
+workers: limit 4 to 2 on pangolin: 4 workers run there. 2 workers end after their item. riff stops no worker in the middle of an item.
 ```
+
+`riff workers` shows how many workers end after their item:
+
+```text
+pangolin  limit 2  runs 4: 2 workers end after their item
+```
+
+For each worker that ends, the lead gets a note:
+
+```text
+workers: limit 2, runs 4 on pangolin: the worker in the pane %3 ends after its item, in place of a clear. 3 workers run there now.
+```
+
+```mermaid
+flowchart TD
+    R["a worker releases its last claim, and its turn ends"] --> C{"more workers than the limit?"}
+    C -- no --> K["riff clears its context: the next item"]
+    C -- yes --> E["the worker ends: riff closes its pane"]
+```
+
+A limit of 0 ends each worker after its item.
+
+To stop a worker at once, also in the middle of an item, see [Stop the
+workers](#stop-the-workers).
 
 ### Limit the workers of a machine
 

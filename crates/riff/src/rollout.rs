@@ -77,8 +77,9 @@
 //!   (01M3YCGKKRDNFC338K1JSK30JK). A workers host can still take the
 //!   work.
 //!
-//! riff never stops a worker here. The server stops idle workers
-//! (#259).
+//! The rollout never stops a worker. The server stops idle workers
+//! (#259). A worker over the limit of its machine ends after its item
+//! ([`crate::next`], 01M402VFGAJQM1QW8B42NKMJM4).
 //!
 //! # A change of the worker settings
 //!
@@ -99,7 +100,7 @@
 //!     C -- yes --> E{"what does the change do?"}
 //!     E -- "a higher limit gives room, and the rollout is on" --> N1["note: the rollout starts 1 worker"]
 //!     E -- "a higher limit gives room, and the rollout is off" --> W["message that wakes the lead:<br/>riff workers start N"]
-//!     E -- "more workers run than the new limit" --> N2["note: riff stops no worker"]
+//!     E -- "more workers run than the new limit" --> N2["note: the workers over the limit end after their item"]
 //!     E -- "nothing" --> N3["note: the change"]
 //! ```
 //!
@@ -421,7 +422,8 @@ pub enum Effect {
     /// workers host.
     Waits { count: usize, remote: bool },
     /// This many workers run on the machine: more than its new limit.
-    /// riff stops none.
+    /// The workers over the limit end after their item
+    /// (01M402VFGAJQM1QW8B42NKMJM4).
     Over(usize),
 }
 

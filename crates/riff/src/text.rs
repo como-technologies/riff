@@ -1429,8 +1429,9 @@ pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
 ///      Start workers with: riff workers start 1"
 /// );
 /// assert_eq!(
-///     setting_changed(&limit(4, 3), &Effect::Over(4)),
-///     "workers: limit 4 to 3 on pangolin: 4 workers run there, and riff stops none."
+///     setting_changed(&limit(4, 2), &Effect::Over(4)),
+///     "workers: limit 4 to 2 on pangolin: 4 workers run there. 2 workers end after their \
+///      item. riff stops no worker in the middle of an item."
 /// );
 /// assert_eq!(setting_changed(&limit(4, 3), &Effect::Nothing), "workers: limit 4 to 3 on pangolin.");
 ///
@@ -1492,12 +1493,13 @@ pub fn setting_changed(change: &crate::rollout::Change, effect: &crate::rollout:
                     )
                 }
                 Effect::Over(runs) => format!(
-                    "{what}: {} there, and riff stops none.",
+                    "{what}: {} there. {}. riff stops no worker in the middle of an item.",
                     if *runs == 1 {
                         "1 worker runs".to_owned()
                     } else {
                         format!("{runs} workers run")
-                    }
+                    },
+                    end_after_item(*new, *runs).unwrap_or_default()
                 ),
             }
         }
@@ -3371,6 +3373,48 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
         done.url,
         verdict.state(),
         result.trim_end()
+    )
+}
+
+/// How many of `runs` workers end after their item under `limit`
+/// (01M402VFQHC5PH39DTFV6AH60F), or `None` when they are not more than
+/// the limit.
+///
+/// ```
+/// use riff::text::end_after_item;
+/// assert_eq!(end_after_item(2, 4).as_deref(), Some("2 workers end after their item"));
+/// assert_eq!(end_after_item(3, 4).as_deref(), Some("1 worker ends after its item"));
+/// assert_eq!(end_after_item(4, 4), None);
+/// ```
+pub fn end_after_item(limit: u16, runs: usize) -> Option<String> {
+    match runs.saturating_sub(usize::from(limit)) {
+        0 => None,
+        1 => Some("1 worker ends after its item".into()),
+        n => Some(format!("{n} workers end after their item")),
+    }
+}
+
+/// The note to the lead when the worker in `pane` on `host` ends after
+/// its item, because `runs` workers ran over the `limit`
+/// (01M402VFKXEJARG7CM60TDCMKW).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::worker_over_limit("pangolin", "%3", 2, 4),
+///     "workers: limit 2, runs 4 on pangolin: the worker in the pane %3 ends after its item, \
+///      in place of a clear. 3 workers run there now."
+/// );
+/// ```
+pub fn worker_over_limit(host: &str, pane: &str, limit: u16, runs: usize) -> String {
+    let now = runs - 1;
+    format!(
+        "workers: limit {limit}, runs {runs} on {host}: the worker in the pane {pane} ends after \
+         its item, in place of a clear. {now} {} there now.",
+        if now == 1 {
+            "worker runs"
+        } else {
+            "workers run"
+        }
     )
 }
 

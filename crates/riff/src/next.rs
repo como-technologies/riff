@@ -80,11 +80,34 @@
 //! - riff never clears the lead: a worker is never the lead
 //!   (01M3X9XA3H6YF0QCYSNB2P0CT2), and only a worker comes into
 //!   MustClear.
+//!
+//! # A lower limit
+//!
+//! A person can set a lower limit of workers while more workers run
+//! (`riff workers limit`). riff stops no worker in the middle of an
+//! item. When the reply asks for the clear, [`check`] first counts the
+//! workers of the machine ([`over_limit`]). When they are more than the
+//! limit, the worker ends in place of the clear
+//! (01M402VFGAJQM1QW8B42NKMJM4): riff posts a note to the lead
+//! (01M402VFKXEJARG7CM60TDCMKW) and ends the worker as
+//! `riff workers stop PANE` does ([`crate::worker::stop`]). The count
+//! and the end are one step under the lock file [`LIMIT_LOCK`], so two
+//! workers that end their items at one time do not both end when only
+//! one is over the limit.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     R["the reply asks for the clear"] --> L["lock workers-limit.lock"]
+//!     L --> C{"more workers than the limit?"}
+//!     C -- no --> K["/clear and the start prompt"]
+//!     C -- yes --> N["note to the lead"]
+//!     N --> E["end the worker: close the pane, end the session"]
+//! ```
 
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
 use riff_core::wire::Kind;
@@ -92,12 +115,18 @@ use serde::Deserialize;
 
 use crate::api::{Api, LEAD};
 use crate::hygiene;
-use crate::terminal::{Terminal, Tmux};
+use crate::terminal::{Terminal, Tmux, WorkerPane};
+use crate::{local, settings};
 
 /// How many times [`check`] sends its keep-alive, when the call fails.
 pub const ASKS: u32 = 5;
 /// How long [`check`] waits after a failed keep-alive.
 pub const ASK_WAIT: Duration = Duration::from_secs(2);
+
+/// The lock file in the local dir that makes the count of the workers
+/// and the end of one worker one step on the machine
+/// (01M402VFGAJQM1QW8B42NKMJM4).
+pub const LIMIT_LOCK: &str = "workers-limit.lock";
 
 /// How long [`keys`] waits before it types `/clear`, so that the agent
 /// tool is ready for input after its turn.
@@ -237,6 +266,11 @@ pub async fn check(
     if !reply?.clear {
         return Ok(false);
     }
+    match end_over_limit(api, me, pane).await {
+        Ok(true) => return Ok(false),
+        Ok(false) => {}
+        Err(e) => eprintln!("riff: cannot count the workers of this machine: {e:#}"),
+    }
     let fresh = hygiene::fast_forward(dir);
     if let Some(line) = fresh.line()
         && fresh.tells_the_lead()
@@ -262,6 +296,57 @@ pub async fn check(
         }
     }
     Ok(typed)
+}
+
+/// The number of workers that run, when they are more than `limit`
+/// and the worker in `pane` is one of them: then that worker ends after
+/// its item (01M402VFGAJQM1QW8B42NKMJM4). `None` when it clears and
+/// goes on.
+///
+/// ```
+/// use riff::next::over_limit;
+/// use riff::terminal::WorkerPane;
+///
+/// let panes: Vec<WorkerPane> = (3..7)
+///     .map(|n| WorkerPane { pane: format!("%{n}"), session: format!("w{n}") })
+///     .collect();
+/// assert_eq!(over_limit(&panes, "%3", 2), Some(4));
+/// assert_eq!(over_limit(&panes, "%3", 4), None);
+/// assert_eq!(over_limit(&panes, "%9", 2), None);
+/// assert_eq!(over_limit(&panes, "%3", 0), Some(4));
+/// ```
+pub fn over_limit(panes: &[WorkerPane], pane: &str, limit: u16) -> Option<usize> {
+    let runs = panes.len();
+    (runs > usize::from(limit) && panes.iter().any(|w| w.pane == pane)).then_some(runs)
+}
+
+/// Ends the worker `me` in `pane` when more workers run on this machine
+/// than its limit (01M402VFGAJQM1QW8B42NKMJM4). It holds [`LIMIT_LOCK`]
+/// from the count to the end, posts a note to the lead
+/// (01M402VFKXEJARG7CM60TDCMKW), and ends the worker with
+/// [`crate::worker::stop`]. True when it ended the worker.
+async fn end_over_limit(api: &Api, me: &SessionUri, pane: &str) -> Result<bool> {
+    let limit = settings::workers_limit(&settings::path()?)?;
+    let dir = local::dir().context("no HOME: riff has no local dir")?;
+    std::fs::create_dir_all(&dir)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(LIMIT_LOCK))?;
+    lock.lock()?;
+    let tmux = Tmux::machine();
+    let Some(runs) = over_limit(&tmux.worker_panes()?, pane, limit) else {
+        return Ok(false);
+    };
+    let to = Selector::lead(me.who().user(), &me.place().repo_text());
+    let note = crate::text::worker_over_limit(me.place().host(), pane, limit, runs);
+    if let Err(e) = api.post(me, None, &[to], &note, Kind::Note).await {
+        eprintln!("riff: cannot post the note to the lead: {e:#}");
+    }
+    crate::worker::stop(&tmux, Some(pane), api.base()).await?;
+    drop(lock);
+    Ok(true)
 }
 
 /// Stops each process of the old context of the worker `me`, just
