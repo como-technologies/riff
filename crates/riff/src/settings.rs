@@ -283,7 +283,12 @@ pub fn workers_tmp(path: &Path) -> Result<Option<PathBuf>> {
 
 /// Sets `workers.tmp`. It keeps each other key.
 pub fn set_workers_tmp(path: &Path, dir: &Path) -> Result<()> {
-    set(path, "workers", "tmp", value(dir.to_string_lossy().as_ref()))
+    set(
+        path,
+        "workers",
+        "tmp",
+        value(dir.to_string_lossy().as_ref()),
+    )
 }
 
 /// The number `workers.KEY`, or `default` when the file or the key is

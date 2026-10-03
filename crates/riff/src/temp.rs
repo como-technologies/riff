@@ -229,7 +229,10 @@ impl User {
     /// assert!(u.uses("/t/w3".as_ref()));
     /// ```
     pub fn holds(&self, path: &Path) -> bool {
-        self.cwd.iter().chain(&self.files).any(|p| p.starts_with(path))
+        self.cwd
+            .iter()
+            .chain(&self.files)
+            .any(|p| p.starts_with(path))
     }
 
     /// True when [`holds`](Self::holds), or when a variable of [`VARS`]
@@ -295,16 +298,12 @@ fn both(dir: &Path) -> Vec<PathBuf> {
 
 /// True when a process of `users` uses `dir` ([`User::uses`]).
 fn used(dir: &Path, users: &[User]) -> bool {
-    both(dir)
-        .iter()
-        .any(|d| users.iter().any(|u| u.uses(d)))
+    both(dir).iter().any(|d| users.iter().any(|u| u.uses(d)))
 }
 
 /// True when a process of `users` holds `path` ([`User::holds`]).
 fn held(path: &Path, users: &[User]) -> bool {
-    both(path)
-        .iter()
-        .any(|p| users.iter().any(|u| u.holds(p)))
+    both(path).iter().any(|p| users.iter().any(|u| u.holds(p)))
 }
 
 /// Deletes the temp folder `dir` of a worker that ended, when no
@@ -504,10 +503,7 @@ mod tests {
             .unwrap();
         let mut child_held = false;
         for _ in 0..100 {
-            if users()
-                .iter()
-                .any(|u| u.pid == child.id() && u.holds(&w1))
-            {
+            if users().iter().any(|u| u.pid == child.id() && u.holds(&w1)) {
                 child_held = true;
                 break;
             }

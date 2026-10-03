@@ -259,10 +259,7 @@ async fn a_stop_deletes_the_temp_folder() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let claude = fake_claude(
-        dir.path(),
-        "echo x > \"$TMPDIR/rustc.tmp\"\nexec sleep 30",
-    );
+    let claude = fake_claude(dir.path(), "echo x > \"$TMPDIR/rustc.tmp\"\nexec sleep 30");
     let mut child = riff(&api, dir.path(), "w4")
         .args(["workers", "run"])
         .arg(&claude)
@@ -312,10 +309,7 @@ async fn a_live_process_keeps_the_temp_folder_until_the_tidy() {
     assert!(riff::temp::sweep(&root, &riff::temp::users(), later).is_empty());
 
     let pid = std::fs::read_to_string(pid).unwrap();
-    let killed = Command::new("kill")
-        .arg(pid.trim())
-        .status()
-        .unwrap();
+    let killed = Command::new("kill").arg(pid.trim()).status().unwrap();
     assert!(killed.success());
     let begin = Instant::now();
     while riff::temp::users()
