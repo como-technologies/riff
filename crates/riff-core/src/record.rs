@@ -462,6 +462,82 @@ impl Record {
     }
 }
 
+impl Record {
+    /// True when this record is a record of the repository thread `repo`
+    /// for an audit (01M3ZWRC11R5M9V1KTF05P240W): a post, a
+    /// membership, a lead, a claim or a release in that thread; a direct
+    /// message from a session in that repository; the start or the end
+    /// of a session in that repository; and a pause of the riff or of
+    /// that repository. Each other record is not.
+    ///
+    /// ```
+    /// use riff_core::record::{Change, Claimed, Line, PauseSet, Record, Scope};
+    /// use riff_core::wire::RiffState;
+    ///
+    /// let repo = "acme/app".parse()?;
+    /// let record = |change| Record { position: 1, written_at_ms: 1, by: None, command: None, change };
+    /// let claim = |thread: &str| record(Change::Claimed(Claimed {
+    ///     session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
+    ///     thread: thread.parse().unwrap(),
+    ///     item: "issue-7".into(),
+    /// }));
+    /// assert!(claim("acme/app").of_repository(&repo));
+    /// assert!(!claim("acme/web").of_repository(&repo));
+    ///
+    /// let pause = |scope| record(Change::PauseSet(PauseSet { scope, state: RiffState::Paused }));
+    /// assert!(pause(Scope::Riff).of_repository(&repo));
+    /// assert!(pause(Scope::Repository(repo.clone())).of_repository(&repo));
+    /// assert!(!pause(Scope::Repository("acme/web".parse()?)).of_repository(&repo));
+    ///
+    /// // A record of the people is not a record of a repository.
+    /// let invited = r#"{"position":7,"written_at_ms":1,"change":{"member_invited":{"email":"ann@acme.io"}}}"#;
+    /// let Line::Record(invited) = Line::parse(invited)? else { panic!("a known kind") };
+    /// assert!(!invited.of_repository(&repo));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn of_repository(&self, repo: &ThreadName) -> bool {
+        let here = |session: &SessionUri| session.default_thread().as_ref() == Some(repo);
+        match &self.change {
+            Change::Posted(posted) if posted.thread.is_direct() => here(&posted.message.from),
+            Change::Posted(posted) => &posted.thread == repo,
+            Change::JoinedThread(m) | Change::LeftThread(m) | Change::LeadSet(m) => {
+                &m.thread == repo
+            }
+            Change::Claimed(c) => &c.thread == repo,
+            Change::Released(r) => &r.thread == repo,
+            Change::SessionStarted(s) => here(&s.session),
+            Change::SessionForgotten(f) => here(&f.session),
+            Change::PauseSet(set) => match &set.scope {
+                Scope::Riff => true,
+                Scope::Repository(thread) => thread == repo,
+                Scope::Other => false,
+            },
+            Change::SettingChanged(_)
+            | Change::RiffMade(_)
+            | Change::PersonJoined(_)
+            | Change::MemberInvited(_)
+            | Change::MemberRemoved(_)
+            | Change::AdminSet(_)
+            | Change::OwnerSet(_)
+            | Change::OwnerAsked(_)
+            | Change::OwnerDenied(_)
+            | Change::SigninsEnded(_) => false,
+        }
+    }
+
+    /// This record for an audit: a post has only its mark
+    /// ([`Posted::for_audit`]). Each other record stays as it is.
+    pub fn for_audit(self) -> Record {
+        match self.change {
+            Change::Posted(posted) => Record {
+                change: Change::Posted(Box::new(posted.for_audit())),
+                ..self
+            },
+            _ => self,
+        }
+    }
+}
+
 /// A message in a thread.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Posted {
@@ -472,6 +548,69 @@ pub struct Posted {
     /// Each session that the message woke.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub woken: BTreeSet<Who>,
+}
+
+/// The marks of a post for an audit, longest first: the start of a
+/// body that names the step of the flow (01M3ZWRC3XBFN8FJDGE8XWZ5EA).
+pub const MARKS: [&str; 3] = ["verify request", "verify result", "request"];
+
+impl Posted {
+    /// The mark of `body`: the first of [`MARKS`] that starts it, before
+    /// a colon. An empty text when no mark starts it.
+    ///
+    /// ```
+    /// use riff_core::record::Posted;
+    ///
+    /// assert_eq!(Posted::mark("request: claim issue-12"), "request");
+    /// assert_eq!(Posted::mark("verify request: issue-12, PR #40"), "verify request");
+    /// assert_eq!(Posted::mark("verify result: PASS for issue-12"), "verify result");
+    /// assert_eq!(Posted::mark("Lead: request: claim issue-12"), "");
+    /// assert_eq!(Posted::mark("requests are free"), "");
+    /// ```
+    pub fn mark(body: &str) -> &'static str {
+        MARKS
+            .into_iter()
+            .find(|mark| {
+                body.strip_prefix(mark)
+                    .is_some_and(|rest| rest.starts_with(':'))
+            })
+            .unwrap_or_default()
+    }
+
+    /// The post for an audit (01M3ZWRC3XBFN8FJDGE8XWZ5EA): its body is
+    /// only its [mark](Posted::mark), and it has no signature and no
+    /// payload. The kind, the sender, the `to` and the time stay.
+    ///
+    /// ```
+    /// use riff_core::record::Posted;
+    /// use riff_core::wire::Message;
+    ///
+    /// let posted = Posted {
+    ///     thread: "acme/app".parse()?,
+    ///     message: Message {
+    ///         seq: 4,
+    ///         from: "riff://ann@heron/acme/app?session=s1".parse()?,
+    ///         to: Vec::new(),
+    ///         body: "request: claim issue-12. The token is t0p.".into(),
+    ///         at_ms: 9,
+    ///         kind: Default::default(),
+    ///         sig: Some("sig".into()),
+    ///         payload: Some("payload".into()),
+    ///     },
+    ///     woken: Default::default(),
+    /// };
+    /// let audit = posted.clone().for_audit();
+    /// assert_eq!(audit.message.body, "request");
+    /// assert_eq!((audit.message.sig, audit.message.payload), (None, None));
+    /// assert_eq!((audit.message.seq, audit.message.at_ms), (4, 9));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn for_audit(mut self) -> Posted {
+        self.message.body = Posted::mark(&self.message.body).to_owned();
+        self.message.sig = None;
+        self.message.payload = None;
+        self
+    }
 }
 
 /// A session and a thread.

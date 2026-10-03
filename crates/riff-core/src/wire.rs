@@ -58,11 +58,12 @@
 //! | `POST /v1/invite` | [`Invite`] | [`Invited`] | an admin |
 //! | `POST /v1/remove` | [`Remove`] | [`Removed`] | an admin |
 //! | `POST /v1/members` | [`Members`] | [`MembersReply`] | each person |
+//! | `POST /v1/log` | [`LogQuery`] | [`LogReply`] | an admin |
 //! | `POST /v1/admin` | [`SetAdmin`] | [`AdminSet`] | the owner |
 //! | `POST /v1/owner` | [`PassOwner`] | [`OwnerPassed`] | the owner |
 //!
-//! A person who is not an admin gets status 403 from `invite` and
-//! `remove`. A person who is not the owner gets status 403 from
+//! A person who is not an admin gets status 403 from `invite`,
+//! `remove` and `log`. A person who is not the owner gets status 403 from
 //! `admin` and `owner`. `owner` to a person who is not a member or an
 //! admin gets status 400. `remove` of the owner or of an admin gets status 400.
 //!
@@ -122,7 +123,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dpop::Key;
 use crate::name::{SessionUri, ThreadName};
-use crate::record::By;
+use crate::record::{By, Record};
 use crate::selector::Selector;
 use crate::signed::Content;
 
@@ -201,6 +202,7 @@ calls! {
     Invite => "/v1/invite", Invited;
     Remove => "/v1/remove", Removed;
     Members => "/v1/members", MembersReply;
+    LogQuery => "/v1/log", LogReply;
     SetAdmin => "/v1/admin", AdminSet;
     PassOwner => "/v1/owner", OwnerPassed;
     TakeOwner => "/v1/owner/take", OwnerAsked;
@@ -1800,6 +1802,32 @@ pub struct OwnerDenied {
     pub owner: String,
     /// The email of the admin that asked.
     pub admin: String,
+}
+
+/// `POST /v1/log`: the records of the log of one repository, for an
+/// audit (01M3ZWRC11R5M9V1KTF05P240W). Only the owner and the admins
+/// can read them.
+///
+/// ```
+/// use riff_core::wire::{Call, LogQuery};
+///
+/// let query = LogQuery { repo: "acme/app".parse()? };
+/// assert_eq!(serde_json::to_string(&query).unwrap(), r#"{"repo":"acme/app"}"#);
+/// assert_eq!(LogQuery::PATH, "/v1/log");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LogQuery {
+    /// The repository thread, for example `acme/app`.
+    pub repo: ThreadName,
+}
+
+/// The reply to [`LogQuery`]: each record of the repository
+/// ([`Record::of_repository`]), in log order. A post has only its mark
+/// ([`Record::for_audit`], 01M3ZWRC3XBFN8FJDGE8XWZ5EA).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogReply {
+    pub records: Vec<Record>,
 }
 
 /// `POST /v1/members`: shows who may join the riff.
