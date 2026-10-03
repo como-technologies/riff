@@ -3067,7 +3067,7 @@ flowchart TD
     S["riff workers start"] --> F{"available memory<br/>less than the floor?"}
     F -- yes --> N["start no worker, say why"]
     F -- no --> M["give the slice riff-workers.slice<br/>its memory limit and CPU weight"]
-    M --> W["each worker: claude in a scope of the slice,<br/>with nice 10, CARGO_BUILD_JOBS and RUST_TEST_THREADS"]
+    M --> W["each worker: claude in a scope of the slice,<br/>with nice 10 and the pool of build jobs"]
     W --> K{"the workers take<br/>too much memory?"}
     K -- yes --> L["the OS stops work of the workers only.<br/>The lead gets a message"]
 ```
@@ -3075,7 +3075,7 @@ flowchart TD
 | Limit | Default | Command |
 |---|---|---|
 | The most workers | 0 | `riff workers limit` |
-| The compile jobs and test threads of one worker | cores / limit, 2 or more | `riff workers jobs` |
+| The compile jobs and test threads of all workers | one pool: physical cores - 1 - workers (the limit, or the workers that run when they are more), 1 or more | `riff workers jobs` |
 | The priority of the workers | nice 10 | `riff workers nice` |
 | The memory of all workers | three quarters of the memory | `riff workers memory` |
 | The available memory that a new worker needs | 4 GB | `riff workers floor` |
@@ -3085,19 +3085,19 @@ while the workers run.
 
 #### Choose the limit from the memory
 
-riff gives each worker the cores of the machine divided by the limit
-of workers as its number of compile jobs. So all workers together use
-at most each core. Plan 1 GB of memory for each compile job, and 1 GB
-for each worker:
+All workers together run at most the physical cores of the machine
+less 1 compile jobs (see
+[See the pool of build jobs](#see-the-pool-of-build-jobs)). Plan 1 GB
+of memory for each compile job, and 1 GB for each worker:
 
 ```text
-memory of the workers in GB = cores + limit
+memory of the workers in GB = physical cores - 1 + limit
 ```
 
 This number must be less than the memory of the workers: three
 quarters of the memory of the machine. Leave the last quarter for your
-own work. For example, pangolin has 16 cores and 30 GB. With 3
-workers, the workers need 19 GB of the 23 GB that they get:
+own work. For example, pangolin has 8 physical cores and 30 GB. With 3
+workers, the workers need 10 GB of the 23 GB that they get:
 
 ```sh
 riff workers limit 3
@@ -3109,33 +3109,93 @@ the machine. When the number does not fit, set fewer jobs (see
 also has a worktree with its own build files. In the riff repository,
 they take 23 to 44 GB of disk for each worker.
 
+#### See the pool of build jobs
+
+All workers of a machine take their compile jobs and test threads
+from one pool. When only one worker builds, it gets the full pool. When
+three workers build, they share it. The pool is a named pipe: a
+jobserver of GNU make 4.4, which cargo reads. Each byte in it is a
+token for one job.
+
+```mermaid
+flowchart LR
+    P[("pool of the machine<br/>pangolin: 4 tokens")]
+    A["worker 1: cargo build<br/>1 job of its own + tokens"] <--> P
+    B["worker 2: cargo build<br/>1 job of its own + tokens"] <--> P
+    C["worker 3: cargo test<br/>riff workers test-run takes<br/>RUST_TEST_THREADS tokens"] <--> P
+```
+
+Each cargo has one job of its own, with no token. So the pool holds
+the physical cores less 1, less the workers. The workers are the limit
+of workers, or the workers that run when they are more. Then all
+builds together run at most the physical cores less 1 jobs. pangolin
+has 8 physical cores and a limit of 3:
+
+```text
+tokens = 8 - 1 - 3 = 4
+one build alone:       4 + 1 = 5 jobs
+three builds at once:  4 + 3 = 7 jobs
+```
+
+A test program runs its tests as threads, and Rust does not read the
+pool. So riff gives each worker a test runner. It takes
+`RUST_TEST_THREADS` tokens for each test program, and gives them back
+at the end, also when the test is killed. `RUST_TEST_THREADS` is the
+fixed share: the physical cores less 1, divided by the workers.
+pangolin with a limit of 2 gives each worker 7 / 2 = 3 threads. With a
+limit of 4, each worker gets 1.
+
+riff reads the physical cores in `/proc/cpuinfo`. pangolin has 16
+logical CPUs, but 8 physical cores. On a machine where riff cannot read
+them, riff counts half of the logical CPUs. `riff workers start` says
+so one time, and `riff workers jobs` says so each time.
+
+When you lower the limit, the workers that run go on (see
+[Limit the workers of a machine](#limit-the-workers-of-a-machine)). Then
+more workers run than the pool counts. Each worker after the count
+keeps one token out of the pool, and gives it back when other workers
+end. So 4 workers with a limit of 2 do not get twice the cores:
+
+```text
+pool for 2 workers = 8 - 1 - 2 = 5 tokens
+4 workers run:       2 tokens kept out
+four builds at once: (5 - 2) + 4 = 7 jobs
+```
+
+The first worker makes the pool, and it ends with the last worker. See
+the pool and the tokens in use:
+
+```sh
+riff workers jobs
+```
+
+```text
+workers.jobs  0  (/home/mike/.config/riff/config.toml)
+The machine has 8 physical cores. All workers take their compile jobs from one pool of 4 tokens: the physical cores less 1, less 3 workers (the limit, or the workers that run when they are more). Each build also has one job of its own. Now 3 tokens are in use. Each worker tests with 2 threads, from the same pool. Set it with: riff workers jobs N (N turns the pool off; 0: the pool)
+```
+
+When riff cannot make the pool, each worker gets the fixed share in
+`CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`. `riff workers start` says
+so one time.
+
 #### Set the jobs of a worker
 
-Each worker gets one number in `CARGO_BUILD_JOBS` and
-`RUST_TEST_THREADS`: its compile jobs and its test threads. The
-default is the cores of the machine divided by the limit of workers,
-and 2 or more. Set another number:
+A number turns the pool off. Each worker then gets the number in
+`CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`: its compile jobs and its
+test threads.
 
 ```sh
 riff workers jobs 4
 ```
 
-`riff workers jobs` with no number shows the setting, and the number
-that each worker gets:
-
-```text
-workers.jobs  0  (/home/mike/.config/riff/config.toml)
-Each worker builds with 4 jobs and tests with 4 threads: the cores divided by the limit of workers. Set it with: riff workers jobs N (0: riff makes the number)
-```
-
-With 0, riff makes the number again:
+With 0, riff uses the pool again:
 
 ```sh
 riff workers jobs 0
 ```
 
-The next worker that starts gets the new number. A worker that runs
-keeps its number until you stop it.
+The next worker that starts gets the new setting. A worker that runs
+keeps its setting until you stop it.
 
 #### Set the nice value of the workers
 

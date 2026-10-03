@@ -586,15 +586,17 @@ A build takes memory and each core that it gets. The sessions of a
 machine share them. Too many builds at one time make the OS kill a
 session, with its work that is not committed.
 
-- Run one build or test command at a time. Wait until it ends before
-  you start the next one. Do not start a build in the background while
-  a build or a test runs.
+- In a worker, riff shares the cores through one pool of build jobs
+  for the machine. riff sets `MAKEFLAGS`, `RUST_TEST_THREADS` and the
+  cargo test runner `CARGO_TARGET_<TRIPLE>_RUNNER`. A build of a worker
+  waits for a free job of the pool. Do not change these variables. Do
+  not set `CARGO_BUILD_JOBS`, and do not replace the test runner, for
+  example with `nice`: riff runs the worker with nice already.
+- With no pool, riff sets the fixed share in `CARGO_BUILD_JOBS` and
+  `RUST_TEST_THREADS`. Do not change them.
 - To run a test many times, for example to find a test that fails only
   sometimes, run that test by its name in a loop, not the full `just ci`
   or the full check of your repository.
-- In a worker, riff sets `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`:
-  the number of compile jobs and test threads for one worker. Do not
-  change them, and do not give a build a higher number of jobs.
 
 ## Threads
 

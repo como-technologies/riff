@@ -84,7 +84,9 @@ use crate::api::Api;
 use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
-use crate::{enable, hygiene, identity, local, settings, text, worker_lsp, worker_mcp, workload};
+use crate::{
+    enable, hygiene, identity, jobserver, local, settings, text, worker_lsp, worker_mcp, workload,
+};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -131,6 +133,57 @@ pub fn wrapper_value(value: Option<&str>) -> Option<u32> {
     value?.parse().ok()
 }
 
+/// Holds the pool of build jobs of this machine in `dir` with the
+/// `tokens` for the `counted` workers of `limits`, or `None`: 0 tokens,
+/// no local dir, or a pool that riff cannot make. Then the worker gets
+/// the fixed share (01M3ZGZMRHXRBP762QPVCV0YX8).
+fn hold_pool(dir: Option<&Path>, limits: &Limits) -> Option<jobserver::Pool> {
+    if limits.tokens == 0 {
+        return None;
+    }
+    jobserver::Pool::hold(dir?, limits.tokens, limits.counted)
+        .inspect_err(|e| eprintln!("{}", text::no_jobserver(&e.to_string())))
+        .ok()
+}
+
+/// The thread that checks the share of a worker in the pool each
+/// [`jobserver::SHARE_EVERY`] ([`jobserver::share`]). The drop stops it
+/// and gives its token back.
+struct Share {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Share {
+    fn start(pool: &jobserver::Pool, member: jobserver::Member) -> Share {
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let (fifo, counted) = (pool.fifo(), pool.counted());
+        let thread = std::thread::spawn(move || {
+            let mut kept = None;
+            loop {
+                jobserver::share(&fifo, counted, &member, &mut kept);
+                match stopped.recv_timeout(jobserver::SHARE_EVERY) {
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    _ => break,
+                }
+            }
+        });
+        Share {
+            stop: Some(stop),
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for Share {
+    fn drop(&mut self) {
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// Runs `claude` with `args` as a worker, and waits. It gives `claude`
 /// the limits of a worker of this machine (see [`crate::limits`]): the
 /// jobs (01M3WFYZRK5CT22GJW6ZHYT9CC), the nice value
@@ -141,20 +194,43 @@ pub fn wrapper_value(value: Option<&str>) -> Option<u32> {
 pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let mut term = signal(SignalKind::terminate())?;
     let mut hup = signal(SignalKind::hangup())?;
-    let limit = Limits::of(&settings::path()?, &Machine::here())?;
+    let dir = local::dir().map(|local| jobserver::dir(&local));
+    // This worker counts in the workers that run (01M3WFYZRK5CT22GJW6ZHYT9CC).
+    let member = dir
+        .as_deref()
+        .and_then(|dir| jobserver::Member::join(dir).ok());
+    let workers = dir.as_deref().map_or(0, jobserver::workers);
+    let cores = limits::Cores::here(&Machine::here());
+    let limit = Limits::of(&settings::path()?, cores.physical, workers)?;
     let slice = std::env::var(limits::SLICE_VAR)
         .ok()
         .filter(|s| !s.is_empty());
     let command = limits::command(claude, args, limit.nice, slice.as_deref());
-    let mut child = tokio::process::Command::new(&command[0])
-        .args(&command[1..])
+    // The pool lives while this wrapper lives (01M3ZGZMJ9RF1C4AHG78GQ2NM4).
+    let pool = hold_pool(dir.as_deref(), &limit);
+    // A worker past the count of the pool keeps one token out of it.
+    // With no pool, the worker still counts while it lives.
+    let (_share, _member) = match (&pool, member) {
+        (Some(pool), Some(member)) => (Some(Share::start(pool, member)), None),
+        (_, member) => (None, member),
+    };
+    let riff = crate::binary::this_on_disk()?;
+    let mut cmd = tokio::process::Command::new(&command[0]);
+    cmd.args(&command[1..])
         .env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
         // A tmux server that a context started gives each pane the
         // variable of that context. `claude` is of no context
         // (01M3ZV0QSFVCHRSEKYK57B88VA).
-        .env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode))
-        .envs(limits::JOBS_VARS.map(|var| (var, limit.jobs.to_string())))
+        .env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode));
+    let makeflags = pool.as_ref().map(jobserver::Pool::makeflags);
+    for (var, value) in limits::jobs_env(&limit, makeflags.as_deref(), &riff) {
+        match value {
+            Some(value) => cmd.env(var, value),
+            None => cmd.env_remove(var),
+        };
+    }
+    let mut child = cmd
         .spawn()
         .with_context(|| format!("cannot start {}", Path::new(&command[0]).display()))?;
     let status = tokio::select! {
@@ -257,6 +333,12 @@ pub struct Started {
     /// What riff says the first time that the workers of the machine
     /// run with no scope (01M3WFYZZENNHVH8Z2BAFSR6TS).
     pub no_scope: Option<String>,
+    /// What riff says the first time that it cannot make the pool of
+    /// build jobs of the machine (01M3ZGZMRHXRBP762QPVCV0YX8).
+    pub no_pool: Option<String>,
+    /// What riff says the first time that it cannot read the physical
+    /// cores of the machine (01M3WFYZRK5CT22GJW6ZHYT9CC).
+    pub no_cores: Option<String>,
 }
 
 /// The refusal of a start of workers for `dir`, when riff is off where
@@ -356,6 +438,8 @@ pub fn start(
         fresh,
         limited: (start < count).then(|| text::workers_limited(count - start, limit, run)),
         no_scope: scope.said,
+        no_pool: jobserver::check(local::dir().as_deref()),
+        no_cores: limits::say_cores(&limits::Cores::here(&machine), local::dir().as_deref()),
     }))
 }
 
