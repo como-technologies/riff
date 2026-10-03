@@ -3213,7 +3213,9 @@ The machine has 8 physical cores. All workers take their compile jobs from one p
 
 When riff cannot make the pool, each worker gets the fixed share in
 `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`. `riff workers start` says
-so one time.
+so one time. With no pool, a worker gets no `MAKEFLAGS`,
+`CARGO_MAKEFLAGS` or test runner, also when you start it from a
+worker with a pool.
 
 #### Set the jobs of a worker
 
