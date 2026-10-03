@@ -205,8 +205,8 @@ pub async fn in_time<T>(
 ///     "workers host: limit 3, floor 4GB, cpu 16x4500MHz, mem 32GB, 24GB available, load 1.50, \
 ///      workers: %3 1a2b3c4d, %4 5e6f7a8b",
 /// );
-/// assert_eq!(HostStatus::parse(&two.line()), Some(two));
-/// assert_eq!(HostStatus::parse(&none.line()), Some(none));
+/// assert_eq!(HostStatus::parse(&two.line()), Some(two.clone()));
+/// assert_eq!(HostStatus::parse(&none.line()), Some(none.clone()));
 /// assert_eq!(HostStatus::parse("idle: waits for work"), None);
 ///
 /// // The disk of the host (01M41A11GHP78E2VYN14JSE27P).
