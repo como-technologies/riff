@@ -36,7 +36,9 @@
 //! - riff deletes the branch only while it points at HEAD
 //!   (`git update-ref -d`). It never forces.
 //! - `riff workers start` and the start of `riff workers host` run it
-//!   too (01M3ZV0TM7ANJ1QQ7XTBDJQE1V).
+//!   too (01M3ZV0TM7ANJ1QQ7XTBDJQE1V). A workers host and the `riff mcp`
+//!   of the lead run it each 10 minutes ([`crate::tidy`],
+//!   01M41A118QPQKFAAHGQFFX4F3B).
 //!
 //! ```
 //! use riff::worktrees::{Facts, Lock, Pr, decide, Step};
@@ -345,6 +347,29 @@ pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -
         .collect()
 }
 
+/// The worktrees of the agent tool in the clone of `main` that no live
+/// owner has: no lock of a live process or of a person, no live
+/// session in it (`owned`), and not the worktree of `here`
+/// (01M41A11BB4HAD8595DNSBAZ0D).
+pub fn ownerless(main: &Path, here: &Path, owned: impl Fn(&Tree) -> bool) -> Vec<Tree> {
+    let Ok(list) = git(main, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    let start = |pid| workload::read(pid, "").map(|p| p.start);
+    parse(&list)
+        .into_iter()
+        .filter(|tree| {
+            tree.path.starts_with(main.join(AGENT_DIR))
+                && matches!(
+                    Lock::of(tree.lock.as_deref(), start),
+                    Lock::None | Lock::Dead
+                )
+                && !here.starts_with(&tree.path)
+                && !owned(tree)
+        })
+        .collect()
+}
+
 /// Does the steps of `facts` for `tree`.
 fn act(main: &Path, tree: &Tree, facts: &Facts) -> Done {
     let path = tree.path.display().to_string();
@@ -474,9 +499,16 @@ pub async fn clean_here(
     let who = api.who(me, false).await?;
     let host = me.place().host().to_owned();
     let repo = me.place().repo_text();
-    let done = clean(&main, dir, &Gh::default(), |tree| {
-        owned_by(&who, &host, &repo, tree)
-    });
+    // git and gh: keep them off the runtime.
+    let done = {
+        let (here, repo) = (dir.to_owned(), repo.clone());
+        tokio::task::spawn_blocking(move || {
+            clean(&main, &here, &Gh::default(), |tree| {
+                owned_by(&who, &host, &repo, tree)
+            })
+        })
+        .await?
+    };
     let saved: Vec<&str> = done
         .iter()
         .filter(|d| d.saved)

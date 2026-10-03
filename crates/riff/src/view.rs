@@ -777,6 +777,38 @@ pub fn host_heading(
     out
 }
 
+/// The line of the disk of one machine in `riff workers`, under its
+/// heading (01M41A11GHP78E2VYN14JSE27P). Under the low mark it says that
+/// the machine starts no worker (01M41A11DX1QRP48YPTDNT67W4). No disk
+/// gives no line.
+///
+/// ```
+/// use riff::disk::Disk;
+///
+/// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
+/// assert_eq!(plain(riff::view::disk_line(Some(&Disk { free_gb: 200, total_gb: 455 }))), "disk 200GB free of 455GB (43%)\n");
+/// assert_eq!(
+///     plain(riff::view::disk_line(Some(&Disk { free_gb: 16, total_gb: 455 }))),
+///     "disk 16GB free of 455GB (3%)\nStarts no worker: disk 16GB free of 455GB (3%), under 5%.\n"
+/// );
+/// assert_eq!(riff::view::disk_line(None), "");
+/// ```
+pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
+    let Some(disk) = disk else {
+        return String::new();
+    };
+    let mut out = format!("{}\n", styled(DIM, &disk.to_string()));
+    if disk.low() {
+        let why = text::low_disk(disk);
+        let _ = writeln!(
+            out,
+            "{}",
+            styled(WARNING, &format!("Starts no worker: {why}"))
+        );
+    }
+    out
+}
+
 /// The table of `riff workers` for the worker panes of one machine
 /// (01M3JPQTBDGT54WN7FZP9CD6B5): PANE, ID (8 characters; the full
 /// session ID with `long`), STATE and DETAIL from `sessions`. A

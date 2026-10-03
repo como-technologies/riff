@@ -3654,8 +3654,53 @@ It prints one line for each worktree, with what it did and why:
 ```
 
 `riff workers start` and the start of `riff workers host` run it too.
-riff never touches a worktree outside `.claude/worktrees`: a person
-made it.
+A workers host and the `riff mcp` of the lead also run it each 10
+minutes. So the worktree of a merged pull request goes away within 10
+minutes of the merge, with no session and no person. riff never
+touches a worktree outside `.claude/worktrees`: a person made it.
+
+### See the free disk of a host
+
+Each worktree has its own `target`, often 30 GB or more. riff watches
+the disk of the main clone. `riff workers` shows it under the line of
+each machine:
+
+```sh
+riff workers
+```
+
+```text
+pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, 20GB available, load 1.20  score 16.0
+disk 16GB free of 455GB (3%)
+Starts no worker: disk 16GB free of 455GB (3%), under 5%.
+```
+
+Each 10 minutes, a workers host and the `riff mcp` of the lead look at
+the disk:
+
+```mermaid
+flowchart TD
+    L["each 10 minutes"] --> C["riff worktrees clean"]
+    C --> T{"free disk under 15%?"}
+    T -- yes --> R["remove the target of each worktree with no live owner,<br/>a note to the lead"]
+    T -- no --> S
+    R --> S{"free disk under 5%?"}
+    S -- yes --> N["start no worker on this machine,<br/>one note to the lead"]
+```
+
+- Under 15% free, riff removes the `target` of each worktree with no
+  live owner: no lock of a live process, no lock of a person, and no
+  live session in it. The source and the branch stay. The next build
+  makes the `target` again.
+- Under 5% free, `riff workers start`, the rollout and a workers host
+  start no worker on the machine. The lead gets one note when the disk
+  goes under 5%.
+
+To get space back, remove the worktrees of merged pull requests:
+
+```sh
+riff worktrees clean
+```
 
 ### Offer workers from another machine
 

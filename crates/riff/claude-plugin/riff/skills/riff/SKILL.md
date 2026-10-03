@@ -421,6 +421,11 @@ change the ruleset.
 
 ## Remove a stale worktree
 
+A workers host and the `riff mcp` of the lead run
+`riff worktrees clean` each 10 minutes. So riff removes a stale
+worktree with no live owner by itself. Remove your own stale worktree
+with the steps below.
+
 A worktree is stale when all of these are true:
 
 - Its pull request is merged, and the head commit of the pull request

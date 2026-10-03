@@ -383,7 +383,8 @@ pub fn on_env(forced: bool) -> Option<(String, String)> {
 /// only the MCP servers of `workers.mcp` (01M3NB5R92ZC61VW6Y45SJEAY9), and
 /// no plugin with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). It
 /// starts none while the available memory is less than the floor
-/// (01M3WFZ01PTAYYKG3T5CFA2W4D). It makes the slice of the workers ready
+/// (01M3WFZ01PTAYYKG3T5CFA2W4D), and while the disk of the main clone is
+/// low (01M41A11DX1QRP48YPTDNT67W4). It makes the slice of the workers ready
 /// first (01M3WFYZX6GVFYW6NTTTKF144R). It starts none where riff is off
 /// in the main clone ([`off`], 01M3XY2T542DCHBN95H9PX4AGQ): the command,
 /// the rollout of the lead and a workers host all start workers here.
@@ -417,6 +418,9 @@ pub fn start(
     }
     let main = identity::main_worktree(dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
+    if let Some(disk) = crate::disk::Disk::here(&main).filter(|d| d.low()) {
+        return Ok(Err(text::workers_disk_low(&disk)));
+    }
     let fresh = hygiene::fast_forward(&main).line();
     let base = Api::new(server).base().to_owned();
     let riff = crate::binary::this_on_disk()?;

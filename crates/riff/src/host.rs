@@ -125,6 +125,7 @@ use riff_core::wire::{Kind, SessionInfo, Status};
 
 use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
+use crate::disk::Disk;
 use crate::machine::Machine;
 use crate::reap::{self, Reaper, Watched};
 use crate::rollout::{Change, Effect};
@@ -186,15 +187,17 @@ pub async fn in_time<T>(
 /// each worker.
 ///
 /// ```
+/// use riff::disk::Disk;
 /// use riff::host::HostStatus;
 /// use riff::machine::Machine;
 ///
-/// let none = HostStatus { limit: 2, floor: 4, machine: None, workers: vec![] };
+/// let none = HostStatus { limit: 2, floor: 4, machine: None, disk: None, workers: vec![] };
 /// assert_eq!(none.line(), "workers host: limit 2, floor 4GB, no workers");
 /// let two = HostStatus {
 ///     limit: 3,
 ///     floor: 4,
 ///     machine: Some(Machine { cores: 16, mhz: 4500, mem_gb: 32, avail_gb: 24, load: 1.5 }),
+///     disk: None,
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()), ("%4".into(), "5e6f7a8b".into())],
 /// };
 /// assert_eq!(
@@ -202,9 +205,18 @@ pub async fn in_time<T>(
 ///     "workers host: limit 3, floor 4GB, cpu 16x4500MHz, mem 32GB, 24GB available, load 1.50, \
 ///      workers: %3 1a2b3c4d, %4 5e6f7a8b",
 /// );
-/// assert_eq!(HostStatus::parse(&two.line()), Some(two));
-/// assert_eq!(HostStatus::parse(&none.line()), Some(none));
+/// assert_eq!(HostStatus::parse(&two.line()), Some(two.clone()));
+/// assert_eq!(HostStatus::parse(&none.line()), Some(none.clone()));
 /// assert_eq!(HostStatus::parse("idle: waits for work"), None);
+///
+/// // The disk of the host (01M41A11GHP78E2VYN14JSE27P).
+/// let disk = Some(Disk { free_gb: 16, total_gb: 455 });
+/// let with_disk = HostStatus { disk, ..two.clone() };
+/// assert!(with_disk.line().contains(", load 1.50, disk 16GB free of 455GB (3%), workers: %3"));
+/// assert_eq!(HostStatus::parse(&with_disk.line()), Some(with_disk));
+/// let only_disk = HostStatus { disk, ..none.clone() };
+/// assert_eq!(only_disk.line(), "workers host: limit 2, floor 4GB, disk 16GB free of 455GB (3%), no workers");
+/// assert_eq!(HostStatus::parse(&only_disk.line()), Some(only_disk));
 ///
 /// // A host of the release before: no floor, no available memory
 /// // (01M407J917F9AH072C8DE80CRJ).
@@ -226,6 +238,9 @@ pub struct HostStatus {
     /// The numbers of the machine. `None` from a host that does not
     /// tell them.
     pub machine: Option<Machine>,
+    /// The disk of the main clone (01M41A11GHP78E2VYN14JSE27P). `None`
+    /// from a host that does not tell it.
+    pub disk: Option<Disk>,
     /// The pane and the first 8 characters of the session ID of each
     /// worker.
     pub workers: Vec<(String, String)>,
@@ -238,6 +253,7 @@ impl HostStatus {
             limit,
             floor,
             machine: Some(machine),
+            disk: None,
             workers: panes
                 .iter()
                 .map(|w| (w.pane.clone(), w.session.chars().take(8).collect()))
@@ -248,7 +264,8 @@ impl HostStatus {
     /// The status line. It fits in a status for 10 workers.
     pub fn line(&self) -> String {
         let machine = self.machine.map(|m| format!("{m}, ")).unwrap_or_default();
-        let machine = format!("floor {}GB, {machine}", self.floor);
+        let disk = self.disk.map(|d| format!("{d}, ")).unwrap_or_default();
+        let machine = format!("floor {}GB, {machine}{disk}", self.floor);
         if self.workers.is_empty() {
             return format!("{MARK}: limit {}, {machine}no workers", self.limit);
         }
@@ -278,6 +295,17 @@ impl HostStatus {
             }
             None => (crate::settings::WORKERS_FLOOR, rest),
         };
+        // The disk comes after the numbers of the machine
+        // (01M41A11GHP78E2VYN14JSE27P). A host of the release before
+        // tells none.
+        let mut disk = None;
+        let without;
+        if let Some(at) = rest.find("disk ") {
+            let end = at + rest[at..].find(", ")?;
+            disk = Some(Disk::parse(&rest[at..end])?);
+            without = format!("{}{}", &rest[..at], &rest[end + 2..]);
+            rest = &without;
+        }
         let mut machine = None;
         if rest.starts_with("cpu ") {
             let end = rest
@@ -291,6 +319,7 @@ impl HostStatus {
                 limit,
                 floor,
                 machine,
+                disk,
                 workers: Vec::new(),
             });
         }
@@ -306,6 +335,7 @@ impl HostStatus {
             limit,
             floor,
             machine,
+            disk,
             workers,
         })
     }
@@ -536,6 +566,8 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     // True while the host did not read the requests of a wake.
     let mut unread = false;
     let mut mine = Mine::read()?;
+    let mut tidy = crate::tidy::timer();
+    let mut guard = crate::tidy::Guard::default();
     loop {
         let mut changed = true;
         tokio::select! {
@@ -560,6 +592,14 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
                 }
             }
             _ = look.tick() => changed = false,
+            _ = tidy.tick() => {
+                // Each 10 minutes: the worktrees and the disk
+                // (01M41A118QPQKFAAHGQFFX4F3B).
+                match crate::tidy::tidy_as_person(&host.main, &host.server, &mut guard).await {
+                    Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
+                    Err(e) => eprintln!("riff: cannot tidy the worktrees: {e:#}"),
+                }
+            }
         }
         let lost = reap::lost(&mut reaper, &host.tmux);
         if !lost.is_empty() {
@@ -616,12 +656,13 @@ impl Host {
     /// Sets the status: the limit and the workers of the machine.
     async fn set_status(&self) -> Result<()> {
         let settings = settings::path()?;
-        let status = HostStatus::of(
+        let mut status = HostStatus::of(
             settings::workers_limit(&settings)?,
             settings::workers_floor(&settings)?,
             Machine::here(),
             &self.tmux.worker_panes()?,
         );
+        status.disk = Disk::here(&self.main);
         let status = Status {
             step: status.line(),
             blocked: None,
