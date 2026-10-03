@@ -205,6 +205,17 @@ pub async fn in_time<T>(
 /// assert_eq!(HostStatus::parse(&two.line()), Some(two));
 /// assert_eq!(HostStatus::parse(&none.line()), Some(none));
 /// assert_eq!(HostStatus::parse("idle: waits for work"), None);
+///
+/// // A host of the release before: no floor, no available memory
+/// // (01M407J917F9AH072C8DE80CRJ).
+/// let old = HostStatus::parse(
+///     "workers host: limit 3, cpu 16x4500MHz, mem 32GB, load 1.50, workers: %3 1a2b3c4d",
+/// )
+/// .unwrap();
+/// assert_eq!((old.limit, old.floor), (3, riff::settings::WORKERS_FLOOR));
+/// assert_eq!(old.machine.map(|m| m.avail_gb), Some(32));
+/// assert_eq!(old.workers, [("%3".to_owned(), "1a2b3c4d".to_owned())]);
+/// assert!(HostStatus::parse("workers host: limit 2, no workers").is_some());
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostStatus {
@@ -258,8 +269,15 @@ impl HostStatus {
         let rest = step.strip_prefix(MARK)?.strip_prefix(": limit ")?;
         let (limit, rest) = rest.split_once(", ")?;
         let limit = limit.parse().ok()?;
-        let (floor, mut rest) = rest.strip_prefix("floor ")?.split_once("GB, ")?;
-        let floor = floor.parse().ok()?;
+        // A host of the release before tells no floor
+        // (01M407J917F9AH072C8DE80CRJ).
+        let (floor, mut rest) = match rest.strip_prefix("floor ") {
+            Some(rest) => {
+                let (floor, rest) = rest.split_once("GB, ")?;
+                (floor.parse().ok()?, rest)
+            }
+            None => (crate::settings::WORKERS_FLOOR, rest),
+        };
         let mut machine = None;
         if rest.starts_with("cpu ") {
             let end = rest

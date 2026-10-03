@@ -22,8 +22,10 @@
 //!     F -- no --> P["systemctl --user set-property --runtime<br/>riff-workers.slice MemoryHigh MemoryMax CPUWeight"]
 //!     P -- ok --> T["tmux pane: riff workers run<br/>RIFF_WORKER_SLICE=riff-workers.slice"]
 //!     P -- "no systemd" --> U["tmux pane: riff workers run<br/>say it one time"]
-//!     T --> C["systemd-run --user --scope --slice=riff-workers.slice<br/>nice -n 10 claude<br/>jobs_env: the pool or the fixed share"]
-//!     U --> D["nice -n 10 claude<br/>jobs_env: the pool or the fixed share"]
+//!     T --> Q{"systemd-run --user --scope<br/>works in the pane?"}
+//!     Q -- yes --> C["systemd-run --user --scope --slice=riff-workers.slice<br/>nice -n (10 - nice of the wrapper) claude<br/>jobs_env: the pool or the fixed share"]
+//!     Q -- "no, say it one time" --> D
+//!     U --> D["nice -n (10 - nice of the wrapper) claude<br/>jobs_env: the pool or the fixed share"]
 //! ```
 //!
 //! - **Jobs** (01M3WFYZRK5CT22GJW6ZHYT9CC, 01M3ZGZMJ9RF1C4AHG78GQ2NM4).
@@ -35,7 +37,9 @@
 //!   next item of the worker, so the variables stay too.
 //! - **Nice** (01M3WFYZTX05CGDP2NQF9B356K). The wrapper starts `claude`
 //!   through `nice`. Each build of the worker gives way to the other
-//!   work of the machine.
+//!   work of the machine. The value is absolute
+//!   (01M407J8R79WVYVABVCSHFAMJ9): `nice -n` adds only the difference to
+//!   the nice value of the wrapper ([`nice_by`]).
 //! - **Slice** (01M3WFYZX6GVFYW6NTTTKF144R). All workers of a machine
 //!   run in the slice [`SLICE`] of the systemd user manager, each in a
 //!   scope of its own. The slice has `MemoryHigh`, `MemoryMax` and
@@ -45,7 +49,11 @@
 //!   person goes on.
 //! - **No systemd** (01M3WFYZZENNHVH8Z2BAFSR6TS). When `systemctl`
 //!   cannot set the slice, the workers run with no scope. riff says so
-//!   one time ([`scope`]).
+//!   one time ([`scope`]). When `systemd-run --user --scope` fails in
+//!   the pane of a worker, for example with no user bus in the
+//!   environment of the tmux server, the wrapper starts `claude` with no
+//!   scope, and says so one time in the pane ([`worker_slice`],
+//!   01M407J8X25H9AT8M789EG5RQZ).
 //! - **Floor** (01M3WFZ01PTAYYKG3T5CFA2W4D). riff starts no worker while
 //!   the available memory is less than the floor.
 //!
@@ -165,6 +173,42 @@ pub const SAID: &str = "no-systemd";
 /// the physical cores of this machine.
 pub const SAID_CORES: &str = "no-physical-cores";
 
+/// The file in the local dir that says: riff said that `systemd-run`
+/// cannot make a scope in the pane of a worker.
+pub const SAID_SCOPE: &str = "no-scope";
+
+/// Says `line` one time: the file `said` holds that riff said it. With
+/// no `line`, the next line is a first time again.
+///
+/// ```
+/// use riff::limits::once;
+///
+/// let dir = tempfile::tempdir()?;
+/// let said = dir.path().join("sub/said");
+/// assert_eq!(once(Some(&said), Some("x".into())), Some("x".into()));
+/// assert_eq!(once(Some(&said), Some("x".into())), None, "one time");
+/// assert_eq!(once(Some(&said), None), None);
+/// assert_eq!(once(Some(&said), Some("x".into())), Some("x".into()), "again after a clear");
+/// assert_eq!(once(None, Some("x".into())), Some("x".into()), "no local dir: each time");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn once(said: Option<&Path>, line: Option<String>) -> Option<String> {
+    let Some(line) = line else {
+        if let Some(said) = said {
+            let _ = std::fs::remove_file(said);
+        }
+        return None;
+    };
+    let first = said.is_none_or(|said| !said.exists());
+    if let Some(said) = said {
+        if let Some(dir) = said.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(said, "");
+    }
+    first.then_some(line)
+}
+
 /// The fixed share of one worker: `setting`, or with 0 the `physical`
 /// cores less 1, divided by the worker `limit`, and [`MIN_JOBS`] or
 /// more (01M3WFYZRK5CT22GJW6ZHYT9CC).
@@ -282,20 +326,7 @@ impl Cores {
 /// ```
 pub fn say_cores(cores: &Cores, local: Option<&Path>) -> Option<String> {
     let said = local.map(|dir| dir.join(SAID_CORES));
-    let Some(line) = cores.said() else {
-        if let Some(said) = said {
-            let _ = std::fs::remove_file(said);
-        }
-        return None;
-    };
-    let first = said.as_ref().is_none_or(|said| !said.exists());
-    if let Some(said) = said {
-        if let Some(dir) = said.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(said, "");
-    }
-    first.then_some(line)
+    once(said.as_deref(), cores.said())
 }
 
 /// The physical cores in the text of `/proc/cpuinfo`, or `None`.
@@ -421,8 +452,8 @@ impl Limits {
 }
 
 /// The command that runs `claude` with `args` for a worker: through
-/// `nice` when `nice` is more than 0, and in a scope of `slice` when
-/// the machine has one.
+/// `nice -n` when the increment `nice` is more than 0 ([`nice_by`]),
+/// and in a scope of `slice` when the machine has one.
 ///
 /// ```
 /// use riff::limits::command;
@@ -496,28 +527,118 @@ pub fn scope(path: &Path, machine: &Machine, local: Option<&Path>) -> Result<Sco
     let said = local.map(|dir| dir.join(SAID));
     match set_slice(max_gb) {
         Ok(()) => {
-            if let Some(said) = said {
-                let _ = std::fs::remove_file(said);
-            }
+            once(said.as_deref(), None);
             Ok(Scope {
                 slice: Some(SLICE),
                 said: None,
             })
         }
-        Err(why) => {
-            let first = said.as_ref().is_none_or(|said| !said.exists());
-            if let Some(said) = said {
-                if let Some(dir) = said.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                let _ = std::fs::write(said, "");
-            }
-            Ok(Scope {
-                slice: None,
-                said: first.then(|| crate::text::no_systemd(&why)),
-            })
-        }
+        Err(why) => Ok(Scope {
+            slice: None,
+            said: once(said.as_deref(), Some(crate::text::no_systemd(&why))),
+        }),
     }
+}
+
+/// Checks that `systemd-run --user --scope` can make a scope of `slice`
+/// here: it runs `true` in one. The error is the reason in words, for
+/// example no user bus in the environment of the tmux server
+/// (01M407J8X25H9AT8M789EG5RQZ).
+pub fn try_scope(slice: &str) -> std::result::Result<(), String> {
+    let out = Command::new("systemd-run")
+        .args(["--user", "--scope", "--quiet"])
+        .arg(format!("--slice={slice}"))
+        .args(["--", "true"])
+        .output()
+        .map_err(|e| format!("cannot run systemd-run: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Err(stderr
+        .lines()
+        .next()
+        .unwrap_or("systemd-run failed")
+        .trim()
+        .to_owned())
+}
+
+/// The slice of a worker that the wrapper got in `slice`, when a scope
+/// of it works here, and the line to say. With no scope, the line comes
+/// one time: the file [`SAID_SCOPE`] in `local` holds that
+/// (01M407J8X25H9AT8M789EG5RQZ).
+///
+/// ```
+/// use riff::limits::worker_slice;
+///
+/// let local = tempfile::tempdir()?;
+/// let works = |_: &str| Ok(());
+/// let fails = |_: &str| Err("Failed to connect to bus".to_owned());
+/// assert_eq!(worker_slice(None, Some(local.path()), fails), (None, None));
+/// assert_eq!(worker_slice(Some("s.slice"), Some(local.path()), works), (Some("s.slice".into()), None));
+/// let (slice, said) = worker_slice(Some("s.slice"), Some(local.path()), fails);
+/// assert_eq!(slice, None);
+/// assert!(said.is_some_and(|line| line.contains("Failed to connect to bus")));
+/// assert_eq!(worker_slice(Some("s.slice"), Some(local.path()), fails), (None, None), "one time");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn worker_slice(
+    slice: Option<&str>,
+    local: Option<&Path>,
+    try_scope: impl Fn(&str) -> std::result::Result<(), String>,
+) -> (Option<String>, Option<String>) {
+    let Some(slice) = slice else {
+        return (None, None);
+    };
+    let said = local.map(|dir| dir.join(SAID_SCOPE));
+    match try_scope(slice) {
+        Ok(()) => {
+            once(said.as_deref(), None);
+            (Some(slice.to_owned()), None)
+        }
+        Err(why) => (
+            None,
+            once(said.as_deref(), Some(crate::text::no_scope(&why))),
+        ),
+    }
+}
+
+/// The nice value in the text of `/proc/PID/stat`, or `None`.
+///
+/// ```
+/// let stat = "4242 (just ci) S 4200 4242 4200 0 -1 4194560 0 0 0 0 0 0 0 0 30 10 1 0 98765 0 0";
+/// assert_eq!(riff::limits::nice_from(stat), Some(10));
+/// assert_eq!(riff::limits::nice_from("4242 (x"), None);
+/// ```
+pub fn nice_from(stat: &str) -> Option<i8> {
+    // The name of the program can hold spaces and parentheses.
+    let (_, rest) = stat.rsplit_once(')')?;
+    rest.split_whitespace().nth(16)?.parse().ok()
+}
+
+/// The nice value of this process. 0 when riff cannot read it.
+pub fn nice_here() -> u8 {
+    std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|stat| nice_from(&stat))
+        .map_or(0, |nice| nice.max(0).unsigned_abs())
+}
+
+/// What `nice -n` adds for a worker with the absolute nice value `nice`
+/// in a wrapper at the nice value `here` (01M407J8R79WVYVABVCSHFAMJ9).
+/// A process cannot lower its own nice value with no privileges, so a
+/// wrapper at a higher value adds 0.
+///
+/// ```
+/// use riff::limits::nice_by;
+///
+/// assert_eq!(nice_by(10, 0), 10);
+/// assert_eq!(nice_by(10, 5), 5, "the wrapper runs at nice 5: claude gets 10");
+/// assert_eq!(nice_by(10, 15), 0, "claude keeps 15");
+/// assert_eq!(nice_by(0, 5), 0);
+/// ```
+pub fn nice_by(nice: u8, here: u8) -> u8 {
+    nice.saturating_sub(here)
 }
 
 #[cfg(test)]

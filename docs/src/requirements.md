@@ -3001,6 +3001,18 @@
 - **01M3WFYZZENNHVH8Z2BAFSR6TS** On a machine where `systemctl --user`
   cannot set the slice, `riff workers start` says one time that the
   workers run with no memory limit, and starts them with no scope.
+- **01M407J8R79WVYVABVCSHFAMJ9** The nice value of `workers.nice` is
+  absolute: `claude` of a worker runs at that value, also when
+  `riff workers run` runs at a nice value of its own. When the wrapper
+  runs at a higher value, `claude` keeps the value of the wrapper, and
+  the wrapper says so in its pane.
+- **01M407J8X25H9AT8M789EG5RQZ** When `systemd-run --user --scope`
+  fails in the pane of a worker, `riff workers run` starts `claude`
+  with no scope. It says so one time on the machine, in the pane.
+- **01M407J917F9AH072C8DE80CRJ** The lead reads the status line of a
+  workers host of the release before: a line with no floor and no
+  available memory. riff then counts the default floor and all of the
+  memory as available.
 - **01M3WFZ01PTAYYKG3T5CFA2W4D** `riff workers start` and the rollout
   start no new worker on a machine while its available memory is less
   than the setting `workers.floor` in GB. The default is 4. 0 turns the

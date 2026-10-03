@@ -180,18 +180,30 @@ impl Machine {
     /// assert_eq!(m.to_string(), "cpu 32x5883MHz, mem 124GB, 100GB available, load 18.96");
     /// assert_eq!(Machine::parse(&m.to_string()), Some(m));
     /// assert_eq!(Machine::parse("limit 2"), None);
+    /// // The release before tells no available memory: all of it counts.
+    /// let old = Machine::parse("cpu 32x5883MHz, mem 124GB, load 18.96").unwrap();
+    /// assert_eq!(old.avail_gb, 124);
     /// ```
     pub fn parse(text: &str) -> Option<Machine> {
         let rest = text.strip_prefix("cpu ")?;
         let (cores, rest) = rest.split_once('x')?;
         let (mhz, rest) = rest.split_once("MHz, mem ")?;
         let (mem, rest) = rest.split_once("GB, ")?;
-        let (avail, load) = rest.split_once("GB available, load ")?;
+        let mem_gb = mem.parse().ok()?;
+        // A host of the release before tells no available memory
+        // (01M407J917F9AH072C8DE80CRJ).
+        let (avail_gb, load) = match rest.strip_prefix("load ") {
+            Some(load) => (mem_gb, load),
+            None => {
+                let (avail, load) = rest.split_once("GB available, load ")?;
+                (avail.parse().ok()?, load)
+            }
+        };
         Some(Machine {
             cores: cores.parse().ok()?,
             mhz: mhz.parse().ok()?,
-            mem_gb: mem.parse().ok()?,
-            avail_gb: avail.parse().ok()?,
+            mem_gb,
+            avail_gb,
             load: load.parse().ok()?,
         })
     }

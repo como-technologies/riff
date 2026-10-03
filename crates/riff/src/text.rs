@@ -1660,6 +1660,40 @@ pub fn no_systemd(why: &str) -> String {
     )
 }
 
+/// What `riff workers run` says one time in its pane when
+/// `systemd-run --user --scope` fails there (01M407J8X25H9AT8M789EG5RQZ).
+/// `why` is the error of `systemd-run`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_scope("Failed to connect to bus"),
+///     "riff: systemd-run cannot make a scope in this pane (Failed to connect to bus), so \
+///      this worker runs with no memory limit."
+/// );
+/// ```
+pub fn no_scope(why: &str) -> String {
+    format!(
+        "riff: systemd-run cannot make a scope in this pane ({why}), so this worker runs with \
+         no memory limit."
+    )
+}
+
+/// What `riff workers run` says in its pane when it runs at a higher
+/// nice value than `workers.nice` (01M407J8R79WVYVABVCSHFAMJ9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::nice_above(15, 10),
+///     "riff: this wrapper runs at nice 15, more than workers.nice 10. claude runs at nice 15."
+/// );
+/// ```
+pub fn nice_above(here: u8, nice: u8) -> String {
+    format!(
+        "riff: this wrapper runs at nice {here}, more than workers.nice {nice}. claude runs at \
+         nice {here}."
+    )
+}
+
 /// What `riff workers start` says one time when riff cannot make the
 /// pool of build jobs (01M3ZGZMRHXRBP762QPVCV0YX8).
 ///
