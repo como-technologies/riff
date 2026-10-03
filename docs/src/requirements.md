@@ -3103,6 +3103,27 @@
   it did and why. It keeps each worktree outside `.claude/worktrees`.
 - **01M3ZV0TM7ANJ1QQ7XTBDJQE1V** `riff workers start` and the start of
   `riff workers host` run `riff worktrees clean`.
+- **01M41A118QPQKFAAHGQFFX4F3B** A workers host and the `riff mcp` of
+  the lead run `riff worktrees clean` on the clone of their machine
+  each 10 minutes. The `riff mcp` does it only while its session is
+  the lead. A merge starts no clean of its own: the 10 minutes bound
+  the time to the removal.
+- **01M41A11BB4HAD8595DNSBAZ0D** At each such clean, when less than
+  15% of the disk of the main clone is free, riff removes the `target`
+  directory of each worktree in `.claude/worktrees` with no live
+  owner: no lock of a live process, no lock with no process ID, no
+  live session of `riff who` in it, and not the worktree of the
+  caller. It keeps the source and the branch. It posts one note to the
+  lead with each `target` that it removed.
+- **01M41A11DX1QRP48YPTDNT67W4** When less than 5% of the disk of the
+  main clone is free, `riff workers start`, the rollout and a workers
+  host start no worker on the machine, and say why. The lead gets one
+  note when the disk of a machine goes under 5%, not one at each
+  clean.
+- **01M41A11GHP78E2VYN14JSE27P** `riff workers` shows the free disk of
+  each machine under its line. A workers host tells its disk in its
+  status, after the numbers of its machine. The lead reads a status
+  with no disk as a host that does not tell it.
 - **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`
   and `riff worktrees clean` for orphan processes and stale worktrees.
   No line of the skill tells a session to run `kill`, `pkill`,
