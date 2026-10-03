@@ -154,8 +154,8 @@ pub fn here(session: &str) -> Option<PathBuf> {
 
 /// `args` of `claude` with the variables of `dir` in the `env` of its
 /// flag settings (01M41VAGJC69S9R2TD1B1EQ4W4). It changes the first
-/// `--settings` that holds a JSON object, and else puts a new
-/// `--settings` first.
+/// `--settings` that holds a JSON object, and else adds a new
+/// `--settings` at the end.
 ///
 /// ```
 /// use riff::temp::with_env;
@@ -167,7 +167,7 @@ pub fn here(session: &str) -> Option<PathBuf> {
 /// );
 /// assert_eq!(
 ///     with_env(&args(&["Join the riff."]), "/t/w1".as_ref()),
-///     args(&["--settings", r#"{"env":{"TMPDIR":"/t/w1","CLAUDE_CODE_TMPDIR":"/t/w1"}}"#, "Join the riff."]),
+///     args(&["Join the riff.", "--settings", r#"{"env":{"TMPDIR":"/t/w1","CLAUDE_CODE_TMPDIR":"/t/w1"}}"#]),
 /// );
 /// ```
 pub fn with_env(args: &[String], dir: &Path) -> Vec<String> {
@@ -198,12 +198,9 @@ pub fn with_env(args: &[String], dir: &Path) -> Vec<String> {
     }
     let mut settings = serde_json::Map::new();
     add(&mut settings);
-    let mut first = vec![
-        "--settings".to_owned(),
-        serde_json::Value::Object(settings).to_string(),
-    ];
-    first.append(&mut out);
-    first
+    out.push("--settings".to_owned());
+    out.push(serde_json::Value::Object(settings).to_string());
+    out
 }
 
 /// What a process of this user holds in the file system.
@@ -521,8 +518,8 @@ mod tests {
     fn a_settings_value_that_is_not_an_object_gets_a_new_flag() {
         let args = vec!["--settings".to_owned(), "x.json".to_owned()];
         let out = with_env(&args, Path::new("/t"));
-        assert_eq!(out[0], "--settings");
-        assert!(out[1].contains("\"TMPDIR\":\"/t\""));
-        assert_eq!(out[2..], args[..]);
+        assert_eq!(out[..2], args[..]);
+        assert_eq!(out[2], "--settings");
+        assert!(out[3].contains("\"TMPDIR\":\"/t\""));
     }
 }
