@@ -178,9 +178,9 @@
 - **01M3K0FZA21H0PPSDANFMMY47C** A session removes a stale worktree
   with the `ExitWorktree` tool only when it made the worktree with
   `EnterWorktree` in its current context. In each other case, for
-  example after a clear of its context, it runs
-  `git -C MAIN worktree remove` and deletes the branch with
-  `git -C MAIN update-ref -d` (R165).
+  example after a clear of its context, it leaves the worktree with
+  `ExitWorktree`, action `keep`, and runs `riff worktrees clean` in the
+  main worktree (01M3ZV0TKSHNW5QC2NG1XTJEJB).
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, waves (R213), the verify flow (R188), selectors,
   direct messages, threads, claims, `move`, the restart of the watch

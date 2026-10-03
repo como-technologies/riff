@@ -1336,7 +1336,9 @@ branch: its own worktree, or the worktree of an item whose steps after
 the merge it does. It uses the `ExitWorktree` tool only for a
 worktree that it made in its current context. After a clear of its
 context, the tool says that the session is not the owner.
-Then the session runs `git worktree remove` in the main worktree.
+Then the session runs `riff worktrees clean` in the main worktree
+(see
+[Clean the worktrees of sessions that ended](#clean-the-worktrees-of-sessions-that-ended)).
 
 ## How a session works on an item
 
