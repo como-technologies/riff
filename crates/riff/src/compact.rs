@@ -322,6 +322,7 @@ impl Record {
 /// A milestone in the JSON of the forge.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Milestone {
+    #[serde(deserialize_with = "crate::text::forge_de")]
     pub title: String,
     pub open_issues: u64,
     pub closed_issues: u64,
@@ -405,6 +406,7 @@ pub mod forge {
 
     #[derive(Deserialize)]
     struct Title {
+        #[serde(deserialize_with = "crate::text::forge_de")]
         title: String,
     }
 

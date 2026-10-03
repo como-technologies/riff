@@ -98,6 +98,10 @@
 //!   claim counts as a report of that person.
 //! - A sum never fails on a large number: it stays at the largest
 //!   number ([`Tokens::total`]).
+//! - It says how many comments with the mark it did not count, and why
+//!   ([`uncounted`], 01M3ZRQY9F9P7DF187Q0PJDS30).
+//! - Each login and title of the forge goes through
+//!   [`text::forge`](crate::text::forge) (01M3ZRQY6YQ8QAKZPGWH1XD6WW).
 //!
 //! After the merge, `riff pr wait` adds one comment with the total of
 //! the issue ([`Forge::total`], 01M3Y1YP514MPX8DTKMTWDHE8Q). Each later
@@ -141,6 +145,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::pr::Gh;
+use crate::text;
 
 /// The mark of the comment of one claim: the summary of its `details`
 /// block.
@@ -855,6 +860,7 @@ fn minute(at_ms: u64) -> String {
 pub struct Comment {
     pub id: u64,
     /// Who wrote the comment.
+    #[serde(deserialize_with = "crate::text::forge_de")]
     pub login: String,
     pub body: String,
 }
@@ -948,15 +954,16 @@ impl<'a> Forge<'a> {
 
     fn login(&self) -> Result<String> {
         let out = self.gh.run(&["api", "user", "--jq", ".login"], None)?;
-        Ok(out.trim().to_owned())
+        Ok(text::forge(out.trim()))
     }
 
     /// Puts `report` on `issue`: it replaces the comment of the same
     /// claim that this person wrote, else it adds a comment
     /// (01M3Y1YP2TVYQC7GCCAMN6111K). Then it writes the total of the
     /// issue again, when the issue has one. A total that it cannot
-    /// write does not fail the report.
-    pub fn publish(&self, issue: u64, report: &Report) -> Result<()> {
+    /// write does not fail the report: it returns why
+    /// (01M3ZRQY9F9P7DF187Q0PJDS30).
+    pub fn publish(&self, issue: u64, report: &Report) -> Result<Option<String>> {
         let comments = self.comments(issue)?;
         let same: Vec<&Comment> = comments
             .iter()
@@ -977,9 +984,9 @@ impl<'a> Forge<'a> {
         // the edit of a total that another person wrote: that is no
         // failure of the report.
         if comments.iter().any(|c| c.body.starts_with(TOTAL_MARK)) {
-            let _ = self.total(issue);
+            return Ok(self.total(issue).err().map(|e| format!("{e:#}")));
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Writes the comment with the total of `issue`
@@ -994,7 +1001,16 @@ impl<'a> Forge<'a> {
         }
         let body = total_comment(issue, &counted);
         match comments.iter().find(|c| c.body.starts_with(TOTAL_MARK)) {
-            Some(old) => self.edit(old.id, &body)?,
+            Some(old) => {
+                let login = self.login()?;
+                if old.login != login {
+                    anyhow::bail!(
+                        "the total comment is of the account {}, and GitHub lets only that account edit it",
+                        old.login
+                    );
+                }
+                self.edit(old.id, &body)?
+            }
             None => self.add(issue, &body)?,
         }
         Ok(sum(&counted))
@@ -1006,6 +1022,7 @@ impl<'a> Forge<'a> {
         #[derive(Deserialize)]
         struct Issue {
             number: u64,
+            #[serde(deserialize_with = "crate::text::forge_de")]
             title: String,
         }
         let mut issues: Vec<Issue> = self.gh.json(&[
@@ -1086,8 +1103,9 @@ fn claims(n: usize) -> String {
 /// What a report of an ended claim did.
 #[derive(Debug)]
 pub enum Outcome {
-    /// The sum is a comment on the issue.
-    Posted { issue: u64 },
+    /// The sum is a comment on the issue. `total` says why the total
+    /// comment of the issue is not updated, when riff could not write it.
+    Posted { issue: u64, total: Option<String> },
     /// The sum stays in the marks of this machine, and why.
     Kept { why: String },
     /// The claim has no tokens: riff writes no comment.
@@ -1109,7 +1127,7 @@ pub fn report(gh: &Gh, session: &str, claim: &Claim) -> Outcome {
         return kept(format!("{} is no repository", claim.thread));
     };
     match forge.publish(issue, &report) {
-        Ok(()) => Outcome::Posted { issue },
+        Ok(total) => Outcome::Posted { issue, total },
         Err(e) => kept(format!("riff cannot write the comment on #{issue}: {e:#}")),
     }
 }
@@ -1128,9 +1146,17 @@ pub fn report(gh: &Gh, session: &str, claim: &Claim) -> Outcome {
 ///     models: [("opus".to_owned(), Tokens { output: 1_500, ..Tokens::default() })].into(),
 /// };
 /// assert_eq!(
-///     reported(&claim, &Outcome::Posted { issue: 7 }),
+///     reported(&claim, &Outcome::Posted { issue: 7, total: None }),
 ///     "The claim of issue-7 took 1,500 tokens (input 0, output 1,500, cache write 0, \
 ///      cache read 0). riff put them on #7 as a comment."
+/// );
+/// let why = "the total comment is of the account bot, and the forge lets only that account edit it";
+/// assert_eq!(
+///     reported(&claim, &Outcome::Posted { issue: 7, total: Some(why.into()) }),
+///     "The claim of issue-7 took 1,500 tokens (input 0, output 1,500, cache write 0, \
+///      cache read 0). riff put them on #7 as a comment. The total comment of #7 is not \
+///      updated: the total comment is of the account bot, and the forge lets only that \
+///      account edit it."
 /// );
 /// assert_eq!(
 ///     reported(&claim, &Outcome::Kept { why: "gh is not installed".into() }),
@@ -1151,12 +1177,34 @@ pub fn reported(claim: &Claim, outcome: &Outcome) -> String {
         total(&claim.models).text()
     );
     match outcome {
-        Outcome::Posted { issue } => format!("{took} riff put them on #{issue} as a comment."),
+        Outcome::Posted { issue, total: None } => {
+            format!("{took} riff put them on #{issue} as a comment.")
+        }
+        Outcome::Posted {
+            issue,
+            total: Some(why),
+        } => format!(
+            "{took} riff put them on #{issue} as a comment. {}",
+            total_not_updated(*issue, why)
+        ),
         Outcome::Kept { why } => {
             format!("{took} They stay on this machine: {why}. `riff usage` shows them here.")
         }
         Outcome::Empty => format!("riff counted no tokens for the claim of {}.", claim.item),
     }
+}
+
+/// The words for a total comment of `issue` that riff could not write,
+/// and `why` (01M3ZRQY9F9P7DF187Q0PJDS30).
+///
+/// ```
+/// assert_eq!(
+///     riff::usage::total_not_updated(7, "the total comment is of the account bot"),
+///     "The total comment of #7 is not updated: the total comment is of the account bot."
+/// );
+/// ```
+pub fn total_not_updated(issue: u64, why: &str) -> String {
+    format!("The total comment of #{issue} is not updated: {why}.")
 }
 
 /// The marks of this machine and its `gh`: what counts the claims of a
@@ -1239,15 +1287,94 @@ impl Meter {
             let claim = so_far(&self.dir, id, &item, now_ms())?;
             Some(Report::of(&claim, id)?.1).filter(|r| total(&r.models).total() > 0)
         });
-        if let Some(report) = open {
-            forge.publish(issue, &report)?;
-        }
-        let total = forge.total(issue)?;
+        let posted = match open {
+            Some(report) => {
+                forge.publish(issue, &report)?;
+                format!("The comment of the claim of #{issue} is on the issue. ")
+            }
+            None => String::new(),
+        };
+        let total = match forge.total(issue) {
+            Ok(total) => total,
+            Err(e) => {
+                return Ok(format!(
+                    "{posted}{}",
+                    total_not_updated(issue, &format!("{e:#}"))
+                ));
+            }
+        };
         Ok(match total.total() {
             0 => format!("#{issue} has no comment with tokens."),
             _ => format!("The total of #{issue} is on the issue: {}.", total.text()),
         })
     }
+}
+
+/// The line of `riff usage ISSUE` for the comments of `issue` with the
+/// mark [`MARK`] that it did not count, with how many for each cause
+/// (01M3ZRQY9F9P7DF187Q0PJDS30). `None` when it counted each one.
+///
+/// ```
+/// use riff::usage::{Comment, uncounted};
+///
+/// let marked = |id, json: &str| Comment {
+///     id,
+///     login: "mallory".into(),
+///     body: format!("riff usage\n\n<details><summary>riff:usage</summary>\n\n```json\n{json}\n```\n"),
+/// };
+/// let report = |item: &str, session: &str| format!(
+///     r#"{{"item":"{item}","kind":"work","session":"{session}","from_ms":1,"to_ms":2,"models":{{}}}}"#
+/// );
+/// let comments = [
+///     marked(1, &report("issue-8", "a6cf0123")),
+///     marked(2, &report("issue-7", "a6cf 0123")),
+///     marked(3, "not json"),
+///     marked(4, &report("issue-7", "a6cf0123")),
+///     Comment { id: 5, login: "mike".into(), body: "LGTM".into() },
+/// ];
+/// assert_eq!(
+///     uncounted(7, &comments).unwrap(),
+///     "riff did not count 3 comments with the mark riff:usage: 1 with an item of another \
+///      issue, 1 with a text that is no name, 1 with no report that riff can read."
+/// );
+/// assert_eq!(uncounted(7, &comments[3..]), None);
+/// ```
+pub fn uncounted(issue: u64, comments: &[Comment]) -> Option<String> {
+    let mark = format!("<summary>{MARK}</summary>");
+    let (mut other, mut no_name, mut unread) = (0, 0, 0);
+    for comment in comments.iter().filter(|c| c.body.contains(&mark)) {
+        match Report::parse(&comment.body) {
+            None => unread += 1,
+            Some(r) if r.valid(issue) => {}
+            Some(r)
+                if issue_of(&r.item) == Some((issue, r.kind))
+                    && r.item == claim_item(issue, r.kind) =>
+            {
+                no_name += 1
+            }
+            Some(_) => other += 1,
+        }
+    }
+    let causes: Vec<String> = [
+        (other, "with an item of another issue"),
+        (no_name, "with a text that is no name"),
+        (unread, "with no report that riff can read"),
+    ]
+    .into_iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, cause)| format!("{n} {cause}"))
+    .collect();
+    let all = other + no_name + unread;
+    let comments = match all {
+        1 => "1 comment".to_owned(),
+        n => format!("{n} comments"),
+    };
+    (all > 0).then(|| {
+        format!(
+            "riff did not count {comments} with the mark {MARK}: {}.",
+            causes.join(", ")
+        )
+    })
 }
 
 /// The text of `riff usage ISSUE`: the total, then the work claims and

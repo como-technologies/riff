@@ -509,7 +509,16 @@ async fn usage_takes_only_numbers_and_names_from_a_comment_of_another_person() {
     );
     assert_eq!(shown.matches("Comment of mike.").count(), 1, "{shown}");
     assert_eq!(shown.matches("Comment of mallory.").count(), 1, "{shown}");
-    assert_eq!(shown.lines().count(), 6, "{shown}");
+    assert_eq!(shown.lines().count(), 7, "{shown}");
+    // It says which comments with the mark it did not count, and why
+    // (01M3ZRQY9F9P7DF187Q0PJDS30).
+    assert!(
+        shown.ends_with(
+            "riff did not count 3 comments with the mark riff:usage: 1 with an item of another \
+             issue, 2 with a text that is no name.\n"
+        ),
+        "{shown}"
+    );
     assert!(
         shown.chars().all(|c| c == '\n' || !c.is_control()),
         "{shown:?}"
@@ -521,14 +530,17 @@ async fn usage_takes_only_numbers_and_names_from_a_comment_of_another_person() {
     // The sum of a wave does not fail on the largest number.
     std::fs::write(
         machine.bin.path().join("wave"),
-        r#"[{"number":12,"title":"T"}]"#,
+        r#"[{"number":12,"title":"T\u001b]0;TITLE\u0007\nX\u001b[2K"}]"#,
     )
     .unwrap();
     let wave = machine.ok("s1", &["usage", "--wave", "Wave 3"]).await;
+    // A title of the forge has no escape code and no line break
+    // (01M3ZRQY6YQ8QAKZPGWH1XD6WW).
     assert!(
-        wave.contains("  #12 T: 18,446,744,073,709,551,615 tokens\n"),
-        "{wave}"
+        wave.contains("  #12 T X: 18,446,744,073,709,551,615 tokens\n"),
+        "{wave:?}"
     );
+    assert_eq!(wave.lines().count(), 2, "{wave}");
 }
 
 #[tokio::test]
@@ -655,6 +667,35 @@ async fn pr_wait_writes_the_total_and_the_release_replaces_the_comment_of_its_cl
     assert!(
         shown.starts_with("#12: 1,110 tokens (input 1,011, output 22, cache write 33, cache read 44) in 2 claims\n"),
         "{shown}"
+    );
+
+    // Another account cannot edit the total comment of mike. The text
+    // says that the comment of the claim is on the issue, and why the
+    // total is not updated (01M3ZRQY9F9P7DF187Q0PJDS30).
+    std::fs::write(machine.bin.path().join("login"), "brett").unwrap();
+    machine.ok("author", &["claim", "issue-12"]).await;
+    machine.says("author", &[reply(&now(), "a3", OPUS, [5, 0, 0, 0])]);
+    let why = "The total comment of #12 is not updated: the total comment is of the account \
+               mike, and GitHub lets only that account edit it.";
+    let out = machine.run("author", &["pr", "wait", "40"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains(&format!(
+            "The comment of the claim of #12 is on the issue. {why}"
+        )),
+        "{}",
+        text(&out.stderr)
+    );
+    let released = machine.ok("author", &["release", "issue-12"]).await;
+    assert!(
+        released.contains(&format!("riff put them on #12 as a comment. {why}")),
+        "{released}"
+    );
+    let comments = machine.comments(12);
+    assert_eq!(comments.lines().count(), 4, "{comments}");
+    assert!(
+        comments.contains("riff usage total of #12: 1,110 tokens"),
+        "{comments}"
     );
 }
 

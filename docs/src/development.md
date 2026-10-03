@@ -308,14 +308,18 @@ sequenceDiagram
 - Each person who can write a comment can write one with numbers. So
   `riff usage 12` names who wrote each comment that it sums. It takes
   only numbers and names from a comment, and a comment of another
-  person never replaces your numbers.
+  person never replaces your numbers. Its last line says how many
+  comments with the mark it did not count, and why.
 - Tokens in a time with two claims of one session count for the claim
   that started last.
 - With no `gh`, or for an item that names no issue, the release still
   works. The tokens stay on the machine, and `riff usage` shows them.
 - After the merge, `riff pr wait` adds one comment with the total of
   the issue. A later release of a claim of the issue writes that
-  comment again.
+  comment again. GitHub lets only the account that wrote the total
+  edit it. For each other account, the release and `riff pr wait` say
+  that the comment of the claim is on the issue, and that the total is
+  not updated.
 
 ## Sign in on this machine
 

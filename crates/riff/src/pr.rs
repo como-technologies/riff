@@ -97,7 +97,7 @@ impl Gh {
     pub fn run(&self, args: &[&str], input: Option<&str>) -> Result<String> {
         let (ok, stdout, stderr) = self.output(args, input)?;
         if !ok {
-            bail!("gh {}: {}", args.join(" "), stderr.trim());
+            bail!("gh {}: {}", args.join(" "), text::forge(stderr.trim()));
         }
         Ok(stdout)
     }
@@ -259,6 +259,15 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
     let Some(milestone) = found.milestone.as_ref().map(|m| m.title.clone()) else {
         bail!("issue #{issue} has no milestone. Ask the lead to put it in a wave.");
     };
+    // The milestone goes into the body and into `gh pr create`: a text
+    // of the forge that `text::forge` changes is refused whole.
+    if text::forge(&milestone) != milestone {
+        bail!(
+            "the milestone of issue #{issue} ({}) has a control character or is too long. Ask \
+             the lead to rename it.",
+            text::forge(&milestone)
+        );
+    }
     let link = if refs {
         hygiene::Link::Refs(issue)
     } else {
@@ -286,7 +295,7 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
         "--body-file",
         "-",
     ];
-    let url = gh.run(&args, Some(&body))?.trim().to_owned();
+    let url = text::forge(gh.run(&args, Some(&body))?.trim());
     let number = url
         .rsplit('/')
         .next()
@@ -327,6 +336,7 @@ pub struct PrState {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Commit {
     /// The full hash.
+    #[serde(deserialize_with = "crate::text::forge_de")]
     pub oid: String,
 }
 
@@ -334,6 +344,7 @@ pub struct Commit {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Check {
     /// The name, for example `Gate`.
+    #[serde(deserialize_with = "crate::text::forge_de")]
     pub name: String,
     /// `pass`, `fail`, `pending`, `skipping` or `cancel`.
     pub bucket: String,
@@ -455,6 +466,7 @@ impl Verdict {
 #[serde(rename_all = "camelCase")]
 pub struct Head {
     /// The head commit.
+    #[serde(deserialize_with = "crate::text::forge_de")]
     pub head_ref_oid: String,
     /// The body, with the `Issue:` trailer.
     pub body: String,
@@ -624,10 +636,10 @@ pub fn report(
     };
     let commit = head.head_ref_oid;
     let text = comment(verdict, issue, &commit, result);
-    let url = gh
-        .run(&["pr", "comment", &n, "--body-file", "-"], Some(&text))?
-        .trim()
-        .to_owned();
+    let url = text::forge(
+        gh.run(&["pr", "comment", &n, "--body-file", "-"], Some(&text))?
+            .trim(),
+    );
     let path = format!("repos/{repo}/statuses/{commit}");
     let state = format!("state={}", verdict.state());
     let description = format!("description={}: verify-issue-{issue}", verdict.word());

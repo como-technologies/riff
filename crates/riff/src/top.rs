@@ -116,12 +116,14 @@ pub struct Issues {
 #[derive(Deserialize)]
 struct GhIssue {
     number: u64,
+    #[serde(deserialize_with = "crate::text::forge_de")]
     title: String,
     milestone: Option<GhMilestone>,
 }
 
 #[derive(Deserialize)]
 struct GhMilestone {
+    #[serde(deserialize_with = "crate::text::forge_de")]
     title: String,
 }
 

@@ -2522,6 +2522,56 @@ pub fn safe(text: &str) -> String {
         .collect()
 }
 
+/// The most characters of a text of the forge that riff keeps
+/// ([`forge`]). It is the limit of an issue title on GitHub, so a real
+/// title, milestone, login or branch name stays whole.
+pub const FORGE_MAX: usize = 256;
+
+/// A text of the forge, safe to print, to store and to put in a
+/// message (01M3ZRQY6YQ8QAKZPGWH1XD6WW): the title of an issue, a pull
+/// request or a milestone, a login, a branch name, a check, a commit,
+/// a URL, or an error of `gh`. It removes each escape sequence and
+/// each control character, makes each line break and tab a space, and
+/// keeps at most [`FORGE_MAX`] characters, the last one `…` when it
+/// cuts.
+///
+/// ```
+/// use riff::text::{FORGE_MAX, forge};
+///
+/// assert_eq!(forge("Fix\x1b]0;owned\x07 it\r\nnow\t\x1b[2K!"), "Fix it  now !");
+/// let long = forge(&"a".repeat(FORGE_MAX + 9));
+/// assert_eq!(long.chars().count(), FORGE_MAX);
+/// assert!(long.ends_with("a…"));
+/// assert_eq!(forge(&"b".repeat(FORGE_MAX)), "b".repeat(FORGE_MAX));
+/// ```
+pub fn forge(text: &str) -> String {
+    let flat: Vec<char> = anstream::adapter::strip_str(text)
+        .to_string()
+        .chars()
+        .filter_map(|c| match c {
+            '\n' | '\r' | '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect();
+    match flat.len() > FORGE_MAX {
+        true => flat[..FORGE_MAX - 1].iter().chain(['…'].iter()).collect(),
+        false => flat.into_iter().collect(),
+    }
+}
+
+/// Reads a text of the forge from JSON through [`forge`]. Use it with
+/// `#[serde(deserialize_with = "crate::text::forge_de")]` on each
+/// field of a reply of `gh` that riff prints, stores or sends.
+pub fn forge_de<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    <String as serde::Deserialize>::deserialize(d).map(|s| forge(&s))
+}
+
+/// [`forge_de`] for a text of the forge that can be missing.
+pub fn forge_de_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    <Option<String> as serde::Deserialize>::deserialize(d).map(|s| s.as_deref().map(forge))
+}
+
 /// A message for people, as `riff tail` shows it
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). It has ANSI styles: print it through
 /// `anstream`, which removes them when the output has no color.
