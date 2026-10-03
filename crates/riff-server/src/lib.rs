@@ -4696,9 +4696,13 @@ mod tests {
                 }),
                 path: Alive::PATH.to_owned(),
             };
-            let refused = alive(AxumState(service.0.clone()), proof, Json(Alive { me: mike() }))
-                .await
-                .unwrap_err();
+            let refused = alive(
+                AxumState(service.0.clone()),
+                proof,
+                Json(Alive { me: mike() }),
+            )
+            .await
+            .unwrap_err();
             assert_eq!(refused.0, StatusCode::FORBIDDEN);
         }
         let denied = capture.results("denied");
@@ -4711,7 +4715,10 @@ mod tests {
         let dropped = capture.results("dropped");
         assert_eq!(dropped.len(), 1, "{dropped:?}");
         assert_eq!(dropped[0]["count"], 1000 - open);
-        assert_eq!(dropped[0]["counts"], serde_json::json!({"no_token": 1000 - open}));
+        assert_eq!(
+            dropped[0]["counts"],
+            serde_json::json!({"no_token": 1000 - open})
+        );
     }
 
     /// A stop of the server ends the window of the limit of rate: the

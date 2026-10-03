@@ -143,7 +143,10 @@ fn a_thousand_refused_calls_give_the_lines_of_the_limit_and_one_count() {
         let open = DENIED_MAX - DENIED_KEPT;
         assert_eq!(written, open);
         assert_eq!(dropped[0]["count"], 1000 - open);
-        assert_eq!(dropped[0]["counts"], serde_json::json!({"old_build": 1000 - open}));
+        assert_eq!(
+            dropped[0]["counts"],
+            serde_json::json!({"old_build": 1000 - open})
+        );
     }
     for line in denied {
         assert_eq!(line["code"], "old_build");
