@@ -81,7 +81,10 @@ impl Riff {
         let origin = root.path().join("origin.git");
         git(root.path(), &["init", "-q", "--bare", "origin.git"]);
         let main = root.path().join("main");
-        git(root.path(), &["clone", "-q", &origin.to_string_lossy(), "main"]);
+        git(
+            root.path(),
+            &["clone", "-q", &origin.to_string_lossy(), "main"],
+        );
         git(&main, &["commit", "-q", "--allow-empty", "-m", "first"]);
         git(&main, &["push", "-q", "origin", "HEAD"]);
         let r = Riff {
@@ -196,7 +199,12 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .arg("-C")
         .arg(dir)
         .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-        .args(["-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ])
         .args(args)
         .output()
         .unwrap();
@@ -259,7 +267,10 @@ async fn reap_stops_the_orphan_of_an_old_context_and_keeps_the_new_one() {
     std::thread::sleep(Duration::from_millis(100));
     let mut new = sleeper(id, true);
 
-    let out = r.riff(&r.main(), &["workers", "reap", "%5"]).output().unwrap();
+    let out = r
+        .riff(&r.main(), &["workers", "reap", "%5"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{out:?}");
     let printed = stdout(&out);
     assert_eq!(
@@ -287,7 +298,10 @@ async fn reap_with_no_start_of_the_context_stops_nothing() {
     let id = "wreap2";
     r.pane(id);
     let mut child = sleeper(id, true);
-    let out = r.riff(&r.main(), &["workers", "reap", "%5"]).output().unwrap();
+    let out = r
+        .riff(&r.main(), &["workers", "reap", "%5"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{out:?}");
     assert_eq!(
         stdout(&out).trim(),
@@ -311,7 +325,10 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
     let mut all = [sleeper(id, false), sleeper(id, false), sleeper(id, true)];
     let mut other = sleeper("wother2", true);
 
-    let out = r.riff(&r.main(), &["workers", "stop", "%5"]).output().unwrap();
+    let out = r
+        .riff(&r.main(), &["workers", "stop", "%5"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{out:?}");
     assert!(stdout(&out).contains("also stopped 3 processes"), "{out:?}");
     for child in &mut all {
@@ -327,12 +344,31 @@ fn worktree(r: &Riff, name: &str) -> PathBuf {
     let main = r.main();
     let path = main.join(".claude/worktrees").join(name);
     let branch = format!("worktree-{name}");
-    git(&main, &["worktree", "add", "-q", "-b", &branch, &path.to_string_lossy()]);
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            &branch,
+            &path.to_string_lossy(),
+        ],
+    );
     path
 }
 
 fn lock(r: &Riff, path: &Path, reason: &str) {
-    git(&r.main(), &["worktree", "lock", "--reason", reason, &path.to_string_lossy()]);
+    git(
+        &r.main(),
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            reason,
+            &path.to_string_lossy(),
+        ],
+    );
 }
 
 /// The start of this process in clock ticks, from `/proc`.
@@ -353,10 +389,17 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     let dead = worktree(&r, "issue-1");
     lock(&r, &dead, "claude session issue-1 (pid 999999999 start 5)");
     let live = worktree(&r, "issue-2");
-    let reason = format!("claude session issue-2 (pid {} start {})", std::process::id(), own_start());
+    let reason = format!(
+        "claude session issue-2 (pid {} start {})",
+        std::process::id(),
+        own_start()
+    );
     lock(&r, &live, &reason);
     let merged = worktree(&r, "issue-3");
-    git(&merged, &["commit", "-q", "--allow-empty", "-m", "the work"]);
+    git(
+        &merged,
+        &["commit", "-q", "--allow-empty", "-m", "the work"],
+    );
     git(&merged, &["push", "-q", "origin", "HEAD"]);
     let head = git(&merged, &["rev-parse", "HEAD"]).trim().to_owned();
     std::fs::write(
@@ -376,7 +419,17 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     // An open watch makes the session live.
     let _live = Box::pin(r.api.watch(&session).await.unwrap());
     let person = main.parent().unwrap().join("by-hand");
-    git(&main, &["worktree", "add", "-q", "-b", "by-hand", &person.to_string_lossy()]);
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "by-hand",
+            &person.to_string_lossy(),
+        ],
+    );
     std::fs::write(person.join("work.txt"), "a person works").unwrap();
 
     let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
@@ -400,16 +453,29 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
         line(&merged),
         "removed with its branch worktree-issue-3: its pull request is merged"
     );
-    assert!(line(&dirty).starts_with("saved: a WIP commit on worktree-issue-4"), "{printed}");
+    assert!(
+        line(&dirty).starts_with("saved: a WIP commit on worktree-issue-4"),
+        "{printed}"
+    );
     assert_eq!(line(&owned), "kept: a live session works in it");
-    assert_eq!(line(&person), "kept: it is not a worktree of an agent session");
+    assert_eq!(
+        line(&person),
+        "kept: it is not a worktree of an agent session"
+    );
 
     let list = git(&main, &["worktree", "list", "--porcelain"]);
     assert!(!list.contains("issue-3"), "{list}");
-    assert!(git(&main, &["branch", "--list", "worktree-issue-3"]).trim().is_empty());
+    assert!(
+        git(&main, &["branch", "--list", "worktree-issue-3"])
+            .trim()
+            .is_empty()
+    );
     let locks: Vec<&str> = list.lines().filter(|l| l.starts_with("locked")).collect();
     assert_eq!(locks, [format!("locked {reason}")], "{list}");
-    let pushed = git(&main, &["log", "-1", "--format=%s", "origin/worktree-issue-4"]);
+    let pushed = git(
+        &main,
+        &["log", "-1", "--format=%s", "origin/worktree-issue-4"],
+    );
     assert!(pushed.starts_with("WIP: riff worktrees clean"), "{pushed}");
     assert!(owned.join("work.txt").exists());
 }
@@ -460,12 +526,7 @@ fn the_skill_names_the_riff_commands_and_no_raw_command() {
     ] {
         assert!(skill.contains(text), "the skill has no {text:?}");
     }
-    for raw in [
-        "`kill ",
-        "`pkill",
-        "worktree unlock",
-        "worktree remove",
-    ] {
+    for raw in ["`kill ", "`pkill", "worktree unlock", "worktree remove"] {
         let lines: Vec<&str> = skill.lines().filter(|l| l.contains(raw)).collect();
         assert!(lines.is_empty(), "the skill has {raw:?}: {lines:?}");
     }

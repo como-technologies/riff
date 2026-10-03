@@ -84,9 +84,7 @@ use crate::api::Api;
 use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
-use crate::{
-    enable, hygiene, identity, local, settings, text, worker_lsp, worker_mcp, workload,
-};
+use crate::{enable, hygiene, identity, local, settings, text, worker_lsp, worker_mcp, workload};
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
