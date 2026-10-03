@@ -811,6 +811,15 @@
   saves it again, and gets 503 when that save fails too.
 - **R150** When that save fails, `riff-server` replies 503. The next
   save tries the change again.
+- **01M3ZZQ9TRG9385GRQGM79RCXX** When the store refuses a save of the
+  token store for its rate limit (HTTP 429), `riff-server` doubles the
+  least time to the next save, to at most 32 seconds. A good save sets
+  it back to one second.
+- **01M3ZZQCEKEYK9CE8MGPM80Z2P** While the last save of the token store
+  failed for the rate limit, a refresh does not save the token store.
+  `riff-server` replies to the refresh while the last good save is
+  younger than the least time to the next save, and replies 503 after
+  that.
 - **R129** On SIGTERM, `riff-server` replies 503 to each new call,
   writes each record in the queue, saves the token store, then exits.
   Ctrl-C does the same.

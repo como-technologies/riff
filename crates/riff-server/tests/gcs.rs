@@ -252,6 +252,20 @@ async fn a_failed_call_is_a_failure_not_a_conflict() {
     }
 }
 
+/// A 429 of Cloud Storage is the rate limit of the object: the store
+/// is busy (01M3ZZQ9TRG9385GRQGM79RCXX).
+#[tokio::test]
+async fn a_429_is_a_busy_store() {
+    let (fake, url) = start().await;
+    let store = store(&url);
+    fake.lock().unwrap().broken = Some(StatusCode::TOO_MANY_REQUESTS);
+    let result = store.save(LEASE, vec![], None).await;
+    assert!(
+        matches!(&result, Err(StoreError::Busy(m)) if m.contains("429")),
+        "{result:?}"
+    );
+}
+
 #[tokio::test]
 async fn no_metadata_server_is_a_failure() {
     let (_fake, url) = start().await;

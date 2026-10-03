@@ -116,8 +116,14 @@
 //!   [`Service::save`] waits until the queue is written, and saves the
 //!   token store; `main` calls it on SIGTERM (R129).
 //! - The token store is the object [`store::SIGN_INS`]. The server
-//!   writes it when it changed, at most one time each
-//!   [`auth::Config::save_every`] (R127). The server knows the
+//!   writes it when it changed, at most one time each write window
+//!   (R127). One lock holds each write: the writes of each sign-in, of
+//!   each refresh and of the task of each second wait for the same
+//!   window. The window is [`auth::Config::save_every`]. A store that
+//!   is busy ([`store::StoreError::Busy`], a 429 of Cloud Storage)
+//!   doubles the window, to at most [`BUSY_WINDOW_MOST`] times
+//!   `save_every`. A good write sets it back
+//!   (01M3ZZQ9TRG9385GRQGM79RCXX). The server knows the
 //!   [`store::Version`] of the object. Each write names it, so a write
 //!   over the changes of another instance fails (R141). A sign-in gets
 //!   its reply only after the write (R128). When that write fails, the
@@ -130,6 +136,9 @@
 //!   one generation behind, and [`token::Tokens::refresh`] takes the next
 //!   generation as good. While the last write failed, a refresh first
 //!   writes the store again, and gets 503 when that write fails too.
+//!   While the store is busy, a refresh writes nothing: it goes on
+//!   while the last good write is less than one window old, and gets
+//!   503 after that (01M3ZZQCEKEYK9CE8MGPM80Z2P).
 //! - A server with a store loads first, then takes the [`lease`], and
 //!   keeps reading it (see [`Service::load`]). `main` opens the port
 //!   only after that ([`listen::Port`]). A gate replies 503 to each call
@@ -230,6 +239,11 @@ use crate::trace::DeniedCode;
 /// default of [`auth::Config::save_every`].
 pub const SAVE_EVERY: Duration = Duration::from_secs(1);
 
+/// The write window of the token store grows to at most this many
+/// [`auth::Config::save_every`] while the store is busy
+/// (01M3ZZQ9TRG9385GRQGM79RCXX).
+pub const BUSY_WINDOW_MOST: u32 = 32;
+
 /// The server looks for sessions to forget this often
 /// ([`state::State::forget_expired`]).
 pub const FORGET_EVERY: Duration = Duration::from_secs(60 * 60);
@@ -315,9 +329,8 @@ struct Server {
     tokens_changes: Arc<AtomicU64>,
     /// The number of changes to the token store that are saved.
     tokens_saved: AtomicU64,
-    /// True while the last write of the token store failed
-    /// (01M3TFG527M04TA7ESM970X3B8).
-    tokens_failed: AtomicBool,
+    /// How the last writes of the token store went.
+    tokens_writes: Mutex<TokenWrites>,
     replay: Mutex<Replay>,
     http: reqwest::Client,
     saved: Option<Saved>,
@@ -424,6 +437,72 @@ struct Saved {
     /// The last write of the token store. The lock lets only one write
     /// run at a time.
     written: tokio::sync::Mutex<Written>,
+}
+
+/// How the last writes of the token store went, for the window of the
+/// next write and for a refresh (01M3TFG527M04TA7ESM970X3B8,
+/// 01M3ZZQ9TRG9385GRQGM79RCXX).
+#[derive(Clone, Copy, Debug)]
+struct TokenWrites {
+    /// How the last write failed. `None` after a good write.
+    failed: Option<WriteFailed>,
+    /// The start of the last good write, or the load of the store.
+    good: tokio::time::Instant,
+    /// The least time from the start of one write to the start of the
+    /// next.
+    window: Duration,
+}
+
+/// How a write of the token store failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WriteFailed {
+    /// The object is over the rate limit of the store
+    /// ([`StoreError::Busy`]).
+    Busy,
+    /// Each other failure.
+    Failed,
+}
+
+impl TokenWrites {
+    /// The writes of a store that holds each change now.
+    fn new(every: Duration) -> Self {
+        TokenWrites {
+            failed: None,
+            good: tokio::time::Instant::now(),
+            window: every,
+        }
+    }
+
+    /// Takes the result of the write that started at `started`. A good
+    /// write sets the window back to `every`. A busy store doubles the
+    /// window, to at most [`BUSY_WINDOW_MOST`] times `every`.
+    fn after<T>(
+        &mut self,
+        result: &Result<T, StoreError>,
+        started: tokio::time::Instant,
+        every: Duration,
+    ) {
+        match result {
+            Ok(_) => {
+                *self = TokenWrites {
+                    failed: None,
+                    good: started,
+                    window: every,
+                };
+            }
+            Err(StoreError::Busy(_)) => {
+                self.failed = Some(WriteFailed::Busy);
+                self.window = (self.window * 2).min(every * BUSY_WINDOW_MOST);
+            }
+            Err(_) => self.failed = Some(WriteFailed::Failed),
+        }
+    }
+
+    /// True while the last good write is less than one window old at
+    /// `now`.
+    fn fresh(&self, now: tokio::time::Instant) -> bool {
+        now.saturating_duration_since(self.good) < self.window
+    }
 }
 
 /// The last write of the token store.
@@ -585,10 +664,12 @@ impl Server {
     }
 
     async fn save_tokens(&self, saved: &Saved, written: &mut Written) -> Result<(), StoreError> {
-        // At most one write each `save_every` (R127). Each call that
-        // waits for the lock finds its change in this write.
+        // At most one write each window: `save_every`, or more while
+        // the store is busy (R127, 01M3ZZQ9TRG9385GRQGM79RCXX). Each call
+        // that waits for the lock finds its change in this write.
         if let Some(at) = written.at {
-            tokio::time::sleep_until(at + self.config.save_every).await;
+            let window = self.token_writes().window;
+            tokio::time::sleep_until(at + window).await;
         }
         let (bytes, changes) = {
             let tokens = self.tokens();
@@ -598,9 +679,11 @@ impl Server {
         if !self.leased() {
             return Err(StoreError::Failed("the server does not serve now".into()));
         }
-        written.at = Some(tokio::time::Instant::now());
+        let started = tokio::time::Instant::now();
+        written.at = Some(started);
         let result = saved.store.save(SIGN_INS, bytes, written.version).await;
-        self.tokens_failed.store(result.is_err(), Ordering::SeqCst);
+        self.token_writes()
+            .after(&result, started, self.config.save_every);
         let version = match result {
             Ok(version) => version,
             Err(error) => {
@@ -615,14 +698,32 @@ impl Server {
         Ok(())
     }
 
+    fn token_writes(&self) -> MutexGuard<'_, TokenWrites> {
+        self.tokens_writes
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
     /// Lets a refresh go on, which gets its reply before the write of
     /// the token store (01M3TFG527M04TA7ESM970X3B8). While the last write
     /// failed, it writes the store again first, and refuses when that
     /// write fails too. So the saved store does not fall more and more
     /// generations behind.
+    ///
+    /// While the store is busy, a refresh does not write: a write adds
+    /// to the load of the object. The refresh goes on while the last
+    /// good write is less than one window old, and gets 503 after that.
+    /// The task of [`Service::save_each_second`] writes the store again
+    /// after the window (01M3ZZQCEKEYK9CE8MGPM80Z2P).
     async fn tokens_written(&self) -> Result<(), TokenError> {
-        if !self.tokens_failed.load(Ordering::SeqCst) {
-            return Ok(());
+        let writes = *self.token_writes();
+        match writes.failed {
+            None => return Ok(()),
+            Some(WriteFailed::Busy) if writes.fresh(tokio::time::Instant::now()) => {
+                return Ok(());
+            }
+            Some(WriteFailed::Busy) => return Err(no(UNAVAILABLE)),
+            Some(WriteFailed::Failed) => {}
         }
         self.save_tokens_since(0).await.map_err(|error| {
             self.error(format!("the token store was not saved: {error}"));
@@ -1280,13 +1381,14 @@ impl Service {
         if let Some(owner) = named.filter(|_| !import) {
             engine.name_owner(&owner);
         }
+        let save_every = config.save_every;
         let service = Service(Arc::new(Server {
             config,
             engine,
             tokens,
             tokens_changes,
             tokens_saved: AtomicU64::new(0),
-            tokens_failed: AtomicBool::new(false),
+            tokens_writes: Mutex::new(TokenWrites::new(save_every)),
             replay: Mutex::new(replay),
             http,
             saved,
@@ -2527,6 +2629,10 @@ mod tests {
         /// second text in the place of the first one. So a value that
         /// this build knows reads as a value of a later build.
         later: Mutex<Option<(&'static str, &'static str)>>,
+        /// The start of each write of the token store.
+        token_saves: Mutex<Vec<tokio::time::Instant>>,
+        /// Each write of the token store fails with this error.
+        token_fail: Mutex<Option<StoreError>>,
     }
 
     impl Gated {
@@ -2593,6 +2699,16 @@ mod tests {
             known: Option<Version>,
         ) -> BoxFuture<'a, Result<Version, StoreError>> {
             Box::pin(async move {
+                if name == SIGN_INS {
+                    self.token_saves
+                        .lock()
+                        .unwrap()
+                        .push(tokio::time::Instant::now());
+                    let fail = self.token_fail.lock().unwrap().clone();
+                    if let Some(error) = fail {
+                        return Err(error);
+                    }
+                }
                 if name.starts_with(log::LOG) {
                     self.tries.fetch_add(1, Ordering::SeqCst);
                     while self.hold.load(Ordering::SeqCst) {
@@ -5136,5 +5252,88 @@ mod tests {
         let text = capture.text();
         assert!(!text.contains(EMAIL_MARK), "{text}");
         assert!(!text.contains('@'), "{text}");
+    }
+
+    /// Each writer of the token store together with the others writes
+    /// it at most one time each window: each sign-in, each refresh and
+    /// the save of each second (R127). While the store is busy, the
+    /// window doubles (01M3ZZQ9TRG9385GRQGM79RCXX).
+    #[tokio::test(start_paused = true)]
+    async fn all_writers_of_the_token_store_keep_one_window_between_two_writes() {
+        let store = Arc::new(Gated::default());
+        let service = Service::load(config(), store.clone()).await.unwrap();
+        let every = service.0.config.save_every;
+        let mut tasks = Vec::new();
+        for n in 0..8 {
+            let server = service.0.clone();
+            tasks.push(tokio::spawn(async move {
+                for _ in 0..40 {
+                    if n % 2 == 0 {
+                        // A sign-in waits for the write of its change.
+                        let mark = server.tokens_changes.load(Ordering::SeqCst);
+                        drop(server.tokens_change());
+                        let _ = server.save_tokens_since(mark).await;
+                    } else if server.tokens_written().await.is_ok() {
+                        // A refresh.
+                        drop(server.tokens_change());
+                    }
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }));
+        }
+        sleep(2 * every).await;
+        let busy = tokio::time::Instant::now();
+        *store.token_fail.lock().unwrap() = Some(StoreError::Busy("429".into()));
+        sleep(6 * every).await;
+        *store.token_fail.lock().unwrap() = None;
+        let back = tokio::time::Instant::now();
+        for task in tasks {
+            task.await.unwrap();
+        }
+        service.save().await.unwrap();
+
+        let saves = store.token_saves.lock().unwrap().clone();
+        assert!(saves.len() >= 6, "{} writes", saves.len());
+        for two in saves.windows(2) {
+            assert!(two[1] - two[0] >= every, "{:?}", two[1] - two[0]);
+        }
+        // Without the longer window, the busy time has 6 writes. With
+        // it, the writes start one, two and four windows apart.
+        let in_busy = saves.iter().filter(|at| busy <= **at && **at < back);
+        assert!(in_busy.count() <= 3, "{saves:?}");
+    }
+
+    /// A busy store gives no 503 to a refresh while the last good write
+    /// is less than one window old, and the refresh writes nothing. After
+    /// that, a refresh gets 503 until a write works
+    /// (01M3ZZQCEKEYK9CE8MGPM80Z2P).
+    #[tokio::test(start_paused = true)]
+    async fn a_busy_store_gives_no_503_to_a_refresh_in_the_window() {
+        let store = Arc::new(Gated::default());
+        let service = Service::load(config(), store.clone()).await.unwrap();
+        let server = &service.0;
+        let every = server.config.save_every;
+        let writes = || store.token_saves.lock().unwrap().len();
+        drop(server.tokens_change());
+        server.save_tokens_since(0).await.unwrap();
+
+        *store.token_fail.lock().unwrap() = Some(StoreError::Busy("429".into()));
+        drop(server.tokens_change());
+        assert!(server.save_tokens_since(0).await.is_err());
+        let before = writes();
+        assert!(server.tokens_written().await.is_ok());
+        assert_eq!(writes(), before, "a refresh does not write to a busy store");
+
+        // The window grows to at most `BUSY_WINDOW_MOST` times `every`,
+        // so the last good write is now older than the window.
+        sleep(every * (2 * BUSY_WINDOW_MOST + 6)).await;
+        assert_eq!(server.token_writes().window, every * BUSY_WINDOW_MOST);
+        let refused = server.tokens_written().await.unwrap_err();
+        assert_eq!(refused.error, UNAVAILABLE);
+
+        *store.token_fail.lock().unwrap() = None;
+        server.save_tokens_since(0).await.unwrap();
+        assert!(server.tokens_written().await.is_ok());
+        assert_eq!(server.token_writes().window, every);
     }
 }

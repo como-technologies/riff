@@ -390,7 +390,7 @@ impl Store for Gcs {
 }
 
 /// The reply, or [`StoreError::Failed`] when the call failed or its
-/// status is not a success.
+/// status is not a success. A 429 is [`StoreError::Busy`].
 async fn check(
     reply: Result<reqwest::Response, reqwest::Error>,
     url: &str,
@@ -401,7 +401,11 @@ async fn check(
         return Ok(reply);
     }
     let body = reply.text().await.unwrap_or_default();
-    Err(StoreError::Failed(format!("{url}: {status}: {body}")))
+    let message = format!("{url}: {status}: {body}");
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return Err(StoreError::Busy(message));
+    }
+    Err(StoreError::Failed(message))
 }
 
 fn failed(url: &str, error: reqwest::Error) -> StoreError {
