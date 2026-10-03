@@ -219,7 +219,14 @@ impl Riff {
         let branch = format!("worktree-{name}");
         git(
             &main,
-            &["worktree", "add", "-q", "-b", &branch, &path.to_string_lossy()],
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                &branch,
+                &path.to_string_lossy(),
+            ],
         );
         path
     }
@@ -275,7 +282,10 @@ async fn a_host_removes_a_merged_worktree_at_its_next_tidy() {
 
     // The worktrees come after the first clean of the host.
     let merged = r.worktree("issue-3");
-    git(&merged, &["commit", "-q", "--allow-empty", "-m", "the work"]);
+    git(
+        &merged,
+        &["commit", "-q", "--allow-empty", "-m", "the work"],
+    );
     git(&merged, &["push", "-q", "origin", "HEAD"]);
     let head = git(&merged, &["rev-parse", "HEAD"]).trim().to_owned();
     std::fs::write(
@@ -376,7 +386,11 @@ async fn under_the_low_mark_no_worker_starts_and_the_lead_gets_one_note() {
         ),
         "{list}"
     );
-    let list = r.riff(&["workers"]).env("RIFF_DISK", TIGHT).output().unwrap();
+    let list = r
+        .riff(&["workers"])
+        .env("RIFF_DISK", TIGHT)
+        .output()
+        .unwrap();
     let list = stdout(&list);
     assert!(list.contains("disk 50GB free of 455GB (10%)"), "{list}");
     assert!(!list.contains("Starts no worker"), "{list}");

@@ -124,7 +124,12 @@ pub fn trim(trees: &[Tree]) -> Vec<String> {
 /// (01M41A118QPQKFAAHGQFFX4F3B): the clean, then the guard of the disk.
 /// It posts a note to the lead for the targets that it removed and when
 /// the disk goes under the low mark. Returns the lines to print.
-pub async fn tidy(api: &Api, me: &SessionUri, dir: &Path, guard: &mut Guard) -> Result<Vec<String>> {
+pub async fn tidy(
+    api: &Api,
+    me: &SessionUri,
+    dir: &Path,
+    guard: &mut Guard,
+) -> Result<Vec<String>> {
     let mut lines = worktrees::clean_here(api, me, dir).await?;
     let main = identity::main_worktree(dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
@@ -134,7 +139,8 @@ pub async fn tidy(api: &Api, me: &SessionUri, dir: &Path, guard: &mut Guard) -> 
     if Disk::here(&main).is_some_and(|d| d.tight()) {
         let who = api.who(me, false).await?;
         let trimmed = {
-            let (main, here, host, repo) = (main.clone(), dir.to_owned(), host.clone(), repo.clone());
+            let (main, here, host, repo) =
+                (main.clone(), dir.to_owned(), host.clone(), repo.clone());
             tokio::task::spawn_blocking(move || {
                 let trees = worktrees::ownerless(&main, &here, |tree| {
                     worktrees::owned_by(&who, &host, &repo, tree)

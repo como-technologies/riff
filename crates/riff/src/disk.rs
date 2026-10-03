@@ -65,11 +65,11 @@ impl Disk {
             return Disk::parse(&text);
         }
         let stat = nix::sys::statvfs::statvfs(dir).ok()?;
-        let block = u64::from(stat.fragment_size());
+        let block = stat.fragment_size();
         let gb = |blocks: u64| blocks.saturating_mul(block) / 1024 / 1024 / 1024;
         Some(Disk {
-            free_gb: gb(u64::from(stat.blocks_available())),
-            total_gb: gb(u64::from(stat.blocks())),
+            free_gb: gb(stat.blocks_available()),
+            total_gb: gb(stat.blocks()),
         })
     }
 
@@ -151,6 +151,13 @@ mod tests {
         assert!(at(14).tight());
         assert!(!at(5).low());
         assert!(at(4).low());
-        assert_eq!(Disk { free_gb: 0, total_gb: 0 }.percent(), 100);
+        assert_eq!(
+            Disk {
+                free_gb: 0,
+                total_gb: 0
+            }
+            .percent(),
+            100
+        );
     }
 }

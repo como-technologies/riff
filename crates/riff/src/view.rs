@@ -800,7 +800,11 @@ pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
     let mut out = format!("{}\n", styled(DIM, &disk.to_string()));
     if disk.low() {
         let why = text::low_disk(disk);
-        let _ = writeln!(out, "{}", styled(WARNING, &format!("Starts no worker: {why}")));
+        let _ = writeln!(
+            out,
+            "{}",
+            styled(WARNING, &format!("Starts no worker: {why}"))
+        );
     }
     out
 }
