@@ -104,3 +104,5 @@ pub mod view;
 pub mod worker;
 pub mod worker_lsp;
 pub mod worker_mcp;
+pub mod workload;
+pub mod worktrees;

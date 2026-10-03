@@ -3279,6 +3279,109 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
     )
 }
 
+/// The note to the lead after riff stopped the old context of the
+/// worker in `pane`, just before its clear
+/// (01M3ZV0TJDQ6JCM7XG0036MSV1).
+///
+/// ```
+/// use riff::workload::Proc;
+/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, context: true };
+/// assert_eq!(
+///     riff::text::old_context_stopped("%3", &[p]),
+///     "riff stopped 1 process of the old context of the worker in the pane %3, before its \
+///      clear: 4242 just ci."
+/// );
+/// ```
+pub fn old_context_stopped(pane: &str, stopped: &[crate::workload::Proc]) -> String {
+    let n = stopped.len();
+    let list: Vec<String> = stopped.iter().map(proc_words).collect();
+    format!(
+        "riff stopped {n} {} of the old context of the worker in the pane {pane}, before its \
+         clear: {}.",
+        if n == 1 { "process" } else { "processes" },
+        list.join("; ")
+    )
+}
+
+/// A process in words: its ID and its command line, with no control
+/// character.
+fn proc_words(p: &crate::workload::Proc) -> String {
+    format!("{} {}", p.pid, safe(&p.line()))
+}
+
+/// The line of `riff workers reap` for a process that it stopped
+/// (01M3ZV0TKBP201FKY32ZD81G4E).
+///
+/// ```
+/// use riff::workload::Proc;
+/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, context: true };
+/// assert_eq!(riff::text::reaped("%3", &p), "pane %3: stopped 4242 just ci");
+/// ```
+pub fn reaped(pane: &str, p: &crate::workload::Proc) -> String {
+    format!("pane {pane}: stopped {}", proc_words(p))
+}
+
+/// The line of `riff workers reap` for a worker with no orphan.
+///
+/// ```
+/// assert_eq!(riff::text::reaped_none("%3"), "pane %3: no orphan process");
+/// ```
+pub fn reaped_none(pane: &str) -> String {
+    format!("pane {pane}: no orphan process")
+}
+
+/// The line of `riff workers reap` for a worker whose start of its
+/// context riff does not know.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::reap_no_start("%3"),
+///     "pane %3: riff knows no start of its context, so it stops nothing"
+/// );
+/// ```
+pub fn reap_no_start(pane: &str) -> String {
+    format!("pane {pane}: riff knows no start of its context, so it stops nothing")
+}
+
+/// The line of `riff workers stop` for each process of a worker that
+/// lived after its pane closed (01M3ZV0TMNQDK9WC3BR1NPGAC2).
+///
+/// ```
+/// use riff::workload::Proc;
+/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, context: true };
+/// assert_eq!(
+///     riff::text::stopped_after_pane("%3", &[p]),
+///     "pane %3: also stopped 1 process that lived after the pane: 4242 just ci"
+/// );
+/// ```
+pub fn stopped_after_pane(pane: &str, stopped: &[crate::workload::Proc]) -> String {
+    let n = stopped.len();
+    let list: Vec<String> = stopped.iter().map(proc_words).collect();
+    format!(
+        "pane {pane}: also stopped {n} {} that lived after the pane: {}",
+        if n == 1 { "process" } else { "processes" },
+        list.join("; ")
+    )
+}
+
+/// The note to the lead after `riff worktrees clean` saved work that
+/// no live session owned (01M3ZV0TKSHNW5QC2NG1XTJEJB).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::worktrees_saved(&["/r/wt: saved: a WIP commit on worktree-issue-12"]),
+///     "riff worktrees clean saved work that no live session owned. The next session of \
+///      the item goes on from the branch: /r/wt: saved: a WIP commit on worktree-issue-12"
+/// );
+/// ```
+pub fn worktrees_saved(lines: &[&str]) -> String {
+    format!(
+        "riff worktrees clean saved work that no live session owned. The next session of the \
+         item goes on from the branch: {}",
+        lines.join(" | ")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
