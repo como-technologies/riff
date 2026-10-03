@@ -4671,11 +4671,54 @@ mod tests {
         assert_eq!(capture.results("denied").len(), max);
     }
 
+    /// Done when of #447: 1000 calls with no token and 5 calls with a
+    /// valid token of the wrong session in one window give a `denied`
+    /// line for each of the 5 calls (01M419Z1V3YT48PR2NTFYWAXG9), and one
+    /// `dropped` line with a count for each code (01M419Z1RM0TDJ50F6SEJC40GB).
+    #[tokio::test(start_paused = true)]
+    async fn a_flood_with_no_token_does_not_hide_a_valid_token_of_the_wrong_session() {
+        let mut config = config();
+        config.require_sign_in = true;
+        let service = Service::new(config);
+        let capture = Capture::start();
+        let body = serde_json::to_string(&Lead { me: mike() }).unwrap();
+        for _ in 0..1000 {
+            let status = call(&service, "POST", Lead::PATH, None, body.clone()).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+            sleep(Duration::from_millis(1)).await;
+        }
+        for _ in 0..5 {
+            let proof = Proof {
+                signed_in: Some(SignedIn {
+                    who: brett().who().clone(),
+                    jkt: "key-of-brett".into(),
+                    started: 0,
+                }),
+                path: Alive::PATH.to_owned(),
+            };
+            let refused = alive(AxumState(service.0.clone()), proof, Json(Alive { me: mike() }))
+                .await
+                .unwrap_err();
+            assert_eq!(refused.0, StatusCode::FORBIDDEN);
+        }
+        let denied = capture.results("denied");
+        let of = |code: &str| denied.iter().filter(|line| line["code"] == code).count();
+        assert_eq!(of("not_you"), 5, "{denied:?}");
+        let open = trace::DENIED_MAX - trace::DENIED_KEPT;
+        assert_eq!(of("no_token") as u64, open);
+
+        sleep(trace::DENIED_INTERVAL).await;
+        let dropped = capture.results("dropped");
+        assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert_eq!(dropped[0]["count"], 1000 - open);
+        assert_eq!(dropped[0]["counts"], serde_json::json!({"no_token": 1000 - open}));
+    }
+
     /// A stop of the server ends the window of the limit of rate: the
     /// line with the count comes at once (01M3Z67DZX9BC3TYF3PWGFGZJ7).
     #[tokio::test(start_paused = true)]
     async fn a_stop_writes_the_count_of_the_denied_lines_that_were_not_written() {
-        let max = usize::try_from(trace::DENIED_MAX).unwrap();
+        let max = usize::try_from(trace::DENIED_MAX - trace::DENIED_KEPT).unwrap();
         for stop_for_good in [false, true] {
             let mut config = config();
             config.require_sign_in = true;
@@ -4694,6 +4737,7 @@ mod tests {
             let dropped = capture.results("dropped");
             assert_eq!(dropped.len(), 1, "{dropped:?}");
             assert_eq!(dropped[0]["count"], 5);
+            assert_eq!(dropped[0]["counts"], serde_json::json!({"no_token": 5}));
             // The timer of the window writes no second line.
             sleep(trace::DENIED_INTERVAL * 2).await;
             assert_eq!(capture.results("dropped").len(), 1);

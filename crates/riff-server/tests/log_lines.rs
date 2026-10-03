@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use isolated::Isolated;
 use riff_server::log::chunk_name;
-use riff_server::trace::{BODY_TIME, DENIED_INTERVAL, DENIED_MAX};
+use riff_server::trace::{BODY_TIME, DENIED_INTERVAL, DENIED_KEPT, DENIED_MAX};
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
@@ -140,8 +140,10 @@ fn a_thousand_refused_calls_give_the_lines_of_the_limit_and_one_count() {
     assert_eq!(written + counts.sum::<u64>(), 1000);
     assert!(!dropped.is_empty() && dropped.len() as u64 <= windows);
     if windows == 1 {
-        assert_eq!(written, DENIED_MAX);
-        assert_eq!(dropped[0]["count"], 1000 - DENIED_MAX);
+        let open = DENIED_MAX - DENIED_KEPT;
+        assert_eq!(written, open);
+        assert_eq!(dropped[0]["count"], 1000 - open);
+        assert_eq!(dropped[0]["counts"], serde_json::json!({"old_build": 1000 - open}));
     }
     for line in denied {
         assert_eq!(line["code"], "old_build");
