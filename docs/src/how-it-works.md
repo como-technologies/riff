@@ -528,7 +528,9 @@ riff update --tag v0.2.0
 
 The GitHub releases are the changelog of riff. The notes of a release
 give its level, the command that each person runs, and each pull
-request that the release adds. List the releases, and read one:
+request that the release adds. The pull requests come in three groups:
+`Changes` for people first, then `Design` (design pages), then
+`Internal` (tests and checks only). List the releases, and read one:
 
 ```sh
 gh release list --repo como-technologies/riff

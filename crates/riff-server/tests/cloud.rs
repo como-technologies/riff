@@ -1001,6 +1001,35 @@ fn the_release_notes_are_the_changelog() {
     );
 }
 
+/// The notes put the pull requests in three groups: the changes for
+/// people first, then `design`, then `internal`, and the book says so
+/// (01M40AB1D5KQ4SERC6M709Z3JF).
+#[test]
+fn the_release_notes_group_the_pull_requests() {
+    let root = deploy().join("..");
+    let config = fs::read_to_string(root.join(".github/release.yml")).unwrap();
+    let groups = &config[config.find("  categories:\n").expect("no groups")..];
+    assert!(
+        groups.contains(
+            "    - title: Changes\n      labels:\n        - \"*\"\n      \
+             exclude:\n        labels:\n          - design\n          - internal\n\
+             \x20   - title: Design\n      labels:\n        - design\n\
+             \x20   - title: Internal\n      labels:\n        - internal\n"
+        ),
+        "{groups}"
+    );
+    let page = fs::read_to_string(root.join("docs/src/how-it-works.md")).unwrap();
+    let part = &page[page
+        .find("### See what changed in a release\n")
+        .expect("no how-to")..];
+    let part = part.replace('\n', " ");
+    assert!(
+        part.contains("`Changes` for people first, then `Design`"),
+        "{part}"
+    );
+    assert!(part.contains("then `Internal`"), "{part}");
+}
+
 /// The settings that name a resource of one riff: its bucket, service,
 /// secret, accounts, URL, domain, alert and sign-in client.
 const RESOURCES: [&str; 10] = [
