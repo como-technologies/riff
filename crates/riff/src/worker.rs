@@ -152,6 +152,10 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .args(&command[1..])
         .env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
+        // A tmux server that a context started gives each pane the
+        // variable of that context. `claude` is of no context
+        // (01M3ZV0QSFVCHRSEKYK57B88VA).
+        .env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode))
         .envs(limits::JOBS_VARS.map(|var| (var, limit.jobs.to_string())))
         .spawn()
         .with_context(|| format!("cannot start {}", Path::new(&command[0]).display()))?;

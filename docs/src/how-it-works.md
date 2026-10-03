@@ -3433,10 +3433,12 @@ riff workers stop
 riff workers stop %3
 ```
 
-It closes the pane of each worker. The session leaves `riff who`, and
-its claims are free at once. Another session can take its item from
-its pushed branch. At the end of a wave, the lead stops the workers
-before the deploy and the update, and starts them again after them.
+It closes the pane of each worker. Then it stops each process of the
+worker that lives after the pane, for example a `just ci` in the
+background, and prints them. The session leaves `riff who`, and its
+claims are free at once. Another session can take its item from its
+pushed branch. At the end of a wave, the lead stops the workers before
+the deploy and the update, and starts them again after them.
 
 #### Stop one worker on another machine
 
@@ -3447,6 +3449,74 @@ host. The workers host on that machine stops only that worker:
 riff workers stop %3 --host pangolin
 riff workers stop 2a880834 --host pangolin
 ```
+
+### Stop the orphan processes of the workers
+
+A worker starts commands in the background, for example `just ci`. At
+the clear of its context, riff stops each process of the old context
+by itself, and posts a note to the lead. `claude`, its MCP servers and
+the watch stay. An agent never stops a process by its ID: the auto mode
+check refuses it.
+
+```mermaid
+flowchart TD
+    P["a process of the worker:<br/>RIFF_WORKER=1, RIFF_SESSION=ID"] --> C{"of a context:<br/>CLAUDE_PID set?"}
+    C -- "no: claude, its MCP servers" --> K[keep]
+    C -- yes --> W{"riff watch, or the caller?"}
+    W -- yes --> K
+    W -- no --> T{"started before the<br/>current context?"}
+    T -- yes --> S["stop: SIGTERM,<br/>SIGKILL after 3 s"]
+    T -- no --> K
+```
+
+When a process of an old context still runs, stop it. Give no pane
+for each worker of this machine, or the pane of one worker:
+
+```sh
+riff workers reap
+riff workers reap %3
+```
+
+It prints one line for each process that it stopped:
+
+```text
+pane %3: stopped 41234 just ci
+pane %4: no orphan process
+```
+
+A process of the current context stays. When riff knows no start of
+the context of a worker, it stops nothing and says so.
+
+### Clean the worktrees of sessions that ended
+
+A session that ends leaves its worktree in `.claude/worktrees`, often
+with a lock. riff decides by facts what to do with each one. Run it in
+the main worktree:
+
+```sh
+riff worktrees clean
+```
+
+| Facts | riff does |
+|---|---|
+| a lock whose process is gone | unlocks it, then goes on |
+| a lock of a live process, or a lock with no process ID | keeps it |
+| a live session of `riff who` works in it | keeps it |
+| work that is not committed, and no live owner | commits it as WIP, pushes its branch, and posts a note to the lead |
+| clean, and its pull request is merged at its `HEAD` | removes it and its branch |
+| clean, detached, and its commit is on `origin` | removes it |
+| each other case | keeps it |
+
+It prints one line for each worktree, with what it did and why:
+
+```text
+/home/mike/src/riff/.claude/worktrees/issue-12: unlocked: the process of its lock is gone; removed with its branch worktree-issue-12: its pull request is merged
+/home/mike/src/riff/.claude/worktrees/issue-13: kept: a live session works in it
+```
+
+`riff workers start` and the start of `riff workers host` run it too.
+riff never touches a worktree outside `.claude/worktrees`: a person
+made it.
 
 ### Offer workers from another machine
 

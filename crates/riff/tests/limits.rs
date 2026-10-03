@@ -227,6 +227,22 @@ fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     assert_eq!(read(&seen).trim(), "6 6");
 }
 
+/// 01M3ZV0QSFVCHRSEKYK57B88VA: the wrapper starts `claude` with no
+/// variable of a context, also when its tmux server has one. So the
+/// clear never stops `claude`.
+#[test]
+fn the_wrapper_starts_claude_with_no_variable_of_a_context() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let seen = m.bin().join("seen");
+    let claude = m.claude(&format!(
+        "echo \"pid=${{CLAUDE_PID-none}}\" > '{}'",
+        seen.display()
+    ));
+    let out = m.wrapper(&claude, &[("CLAUDE_PID", "4242")]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(read(&seen).trim(), "pid=none");
+}
+
 /// 01M3WFYZTX05CGDP2NQF9B356K: the wrapper starts `claude` with nice 10.
 /// The setting changes the value, and 0 turns it off.
 #[test]

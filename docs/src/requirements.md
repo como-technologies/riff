@@ -2913,6 +2913,56 @@
   the pane and then sends the end call, gives no note. riff ends only
   a session of its user in its repository, and posts no note for
   another one.
+- **01M3ZV0QSFVCHRSEKYK57B88VA** riff stops the processes of a worker
+  itself, in code. The agent never names a process ID. A process is of
+  the worker `ID` when its environment has `RIFF_WORKER=1` and
+  `RIFF_SESSION=ID`. A process is of a context when it also has the
+  variable that the agent tool gives to each command and hook, and not
+  to itself or its MCP servers: `CLAUDE_PID` for Claude Code.
+  `riff workers run` starts the agent tool with no such variable. riff
+  never stops `riff watch`, the process that calls it, or a parent of
+  one. It sends SIGTERM, then SIGKILL after 3 seconds. It sends no
+  signal to a process ID that a new process took.
+- **01M3ZV0TJDQ6JCM7XG0036MSV1** Just before the clear of a worker
+  (01M3XV0562D3H3P22CJDBPAZBH), riff stops each process of the old
+  context of the worker, for example a `just ci` in the background.
+  When it stopped one, it posts a note to the lead with the pane and
+  each process.
+- **01M3ZV0TJX2H77RW6ZA3ERZT9H** The start hook of a worker writes the
+  start of the new context to the file `context-ID` in the local dir:
+  the boot ID and the start of the hook process. A file of an earlier
+  boot gives no start.
+- **01M3ZV0TKBP201FKY32ZD81G4E** `riff workers reap` stops the orphan
+  processes of each worker of the machine, and `riff workers reap
+  PANE` of one: each process of a context that started before the
+  start of the current context (01M3ZV0TJX2H77RW6ZA3ERZT9H). It prints
+  one line for each process that it stopped, and one line for a worker
+  with none. With no start of the context, it stops nothing and says
+  so.
+- **01M3ZV0TMNQDK9WC3BR1NPGAC2** `riff workers stop` stops each process
+  of the worker after it closes the pane (01M3JPQTDFW3C7QBSZZ2M831MH),
+  and prints them.
+- **01M3ZV0TKSHNW5QC2NG1XTJEJB** `riff worktrees clean` decides by
+  facts for each worktree in `.claude/worktrees` of the main worktree.
+  It unlocks a lock whose process is gone or has another start. It
+  keeps a worktree with a lock of a live process, a lock with no
+  process ID, or a live session of `riff who` in it, and the worktree
+  of the caller. It commits the work of a worktree with no live owner
+  as WIP, pushes its branch, and posts a note to the lead. It removes a
+  clean worktree whose pull request is merged with its `HEAD`, and its
+  branch while the branch points at that `HEAD`. It removes a clean
+  detached worktree whose commit is on a branch of `origin`. It keeps
+  each other worktree. It prints one line for each worktree with what
+  it did and why. It keeps each worktree outside `.claude/worktrees`.
+- **01M3ZV0TM7ANJ1QQ7XTBDJQE1V** `riff workers start` and the start of
+  `riff workers host` run `riff worktrees clean`.
+- **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`
+  and `riff worktrees clean` for orphan processes and stale worktrees.
+  No line of the skill tells a session to run `kill`, `pkill`,
+  `git worktree unlock` or `git worktree remove`. A test checks it.
+- **01M3ZVS08H3PWV5WDJ31SDZM9G** The skill tells a session: a refusal
+  of a raw command never blocks work. When no riff command covers the
+  case, the session files an issue for it and tells the lead.
 
 ## Builds
 

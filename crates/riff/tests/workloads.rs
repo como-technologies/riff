@@ -6,6 +6,8 @@
 //! variable of the agent tool. A fake `tmux` lists the worker pane, and
 //! a fake `gh` gives the pull requests.
 
+mod book;
+
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -408,4 +410,61 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     let pushed = git(&main, &["log", "-1", "--format=%s", "origin/worktree-issue-4"]);
     assert!(pushed.starts_with("WIP: riff worktrees clean"), "{pushed}");
     assert!(owned.join("work.txt").exists());
+}
+
+/// The book has a how-to with an `sh` block for each new command, and
+/// each command in it runs with `--help`.
+#[test]
+fn the_book_has_a_how_to_for_each_workload_command() {
+    let page = book::page("how-it-works.md");
+    for (heading, command) in [
+        (
+            "### Stop the orphan processes of the workers",
+            "riff workers reap %3",
+        ),
+        (
+            "### Clean the worktrees of sessions that ended",
+            "riff worktrees clean",
+        ),
+        ("### Stop the workers", "riff workers stop %3"),
+    ] {
+        let start = page
+            .find(&format!("\n{heading}\n"))
+            .unwrap_or_else(|| panic!("the book has no {heading:?}"));
+        let how = &page[start + 1..];
+        let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+        let commands = book::commands_in(how);
+        assert!(
+            commands.iter().any(|c| c == command),
+            "{heading} has no {command:?}"
+        );
+        book::each_is_real(&commands);
+    }
+}
+
+/// 01M3ZVS08G1PES6N2MRM9N3PH4 and 01M3ZVS08H3PWV5WDJ31SDZM9G: the skill
+/// names the riff commands, and no line of it tells a session to stop a
+/// process or to unlock or remove a worktree with a raw command.
+#[test]
+fn the_skill_names_the_riff_commands_and_no_raw_command() {
+    let skill = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
+    )
+    .unwrap();
+    for text in [
+        "`riff workers reap`",
+        "`riff worktrees clean`",
+        "A refusal of a raw command never blocks your work.",
+    ] {
+        assert!(skill.contains(text), "the skill has no {text:?}");
+    }
+    for raw in [
+        "`kill ",
+        "`pkill",
+        "worktree unlock",
+        "worktree remove",
+    ] {
+        let lines: Vec<&str> = skill.lines().filter(|l| l.contains(raw)).collect();
+        assert!(lines.is_empty(), "the skill has {raw:?}: {lines:?}");
+    }
 }
