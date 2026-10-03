@@ -7,6 +7,7 @@ Each file here is the write-up of one review of a design page of the book, from 
 | [The store of riff-server](../../docs/src/design-storage.md) | `design/reviews/NN-point-of-view.md`, for example `02-operator.md`, and the report `08-report.md` | Wave 14 |
 | [The command engine of riff-server](../../docs/src/design-engine.md) | `design/reviews/engine-NN-name.md`, for example `engine-01-maintainer.md` | Wave 16 |
 | [The client link](../../docs/src/design-link.md) | `design/reviews/link-NN-name.md`, for example `link-01-maintainer.md`, and the crate review `link-00-crates.md` | Wave 19 |
+| [The plan on the server](../../docs/src/design-plan.md) | `design/reviews/plan-NN-name.md`, for example `plan-01-maintainer.md` | Wave 19 |
 
 The files are not in the book. The book shows the design, not its review.
 
