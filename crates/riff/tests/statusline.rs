@@ -265,12 +265,16 @@ async fn with_update_auto_on_the_tag_says_updating_then_installed() {
     // session (here: this test, the parent of riff statusline) still
     // runs an older one.
     let v = Build::this().semver().unwrap();
-    assert!(v.minor > 0, "this riff has no older release");
+    let older = match (v.major, v.minor) {
+        (0, 0) => panic!("this riff has no older release"),
+        (major, 0) => release(major - 1, 8),
+        (major, minor) => release(major, minor - 1),
+    };
     let build_file = state.join(format!("build-{}", std::process::id()));
     let mcp = riff::local::record(&state, std::process::id(), ID)
         .unwrap()
         .expect("free");
-    std::fs::write(&build_file, release(v.major, v.minor - 1).to_string()).unwrap();
+    std::fs::write(&build_file, older.to_string()).unwrap();
     let server = server_of(Build::this()).await;
     join(&server, dir.path()).await;
     assert_eq!(
