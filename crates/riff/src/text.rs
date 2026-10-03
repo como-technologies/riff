@@ -2418,7 +2418,11 @@ pub fn blocked_set(reason: &str, told: bool) -> String {
     } else {
         "No lead got the message: ask your own user."
     };
-    let stop = if reason.ends_with(['.', '?', '!']) { "" } else { "." };
+    let stop = if reason.ends_with(['.', '?', '!']) {
+        ""
+    } else {
+        "."
+    };
     format!("You are blocked: {reason}{stop} {lead}")
 }
 
