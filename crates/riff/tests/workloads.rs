@@ -373,6 +373,8 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     std::fs::write(owned.join("work.txt"), "the session works").unwrap();
     let session = r.uri(&owned, "a5a5");
     r.api.register(&session).await.unwrap();
+    // An open watch makes the session live.
+    let _live = Box::pin(r.api.watch(&session).await.unwrap());
     let person = main.parent().unwrap().join("by-hand");
     git(&main, &["worktree", "add", "-q", "-b", "by-hand", &person.to_string_lossy()]);
     std::fs::write(person.join("work.txt"), "a person works").unwrap();
