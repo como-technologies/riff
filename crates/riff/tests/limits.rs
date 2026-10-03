@@ -763,7 +763,11 @@ fn riff_workers_shows_the_cap_of_the_clock_and_the_clock_now() {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("cpuinfo_max_freq"), "4001000\n").unwrap();
         std::fs::write(dir.join("scaling_max_freq"), "3000000\n").unwrap();
-        let now = if core % 2 == 0 { "2980000\n" } else { "3000000\n" };
+        let now = if core % 2 == 0 {
+            "2980000\n"
+        } else {
+            "3000000\n"
+        };
         std::fs::write(dir.join("scaling_cur_freq"), now).unwrap();
     }
     let cpuinfo = m.root.path().join("cpuinfo");

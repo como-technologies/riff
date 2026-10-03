@@ -152,8 +152,9 @@ impl Machine {
             return m;
         }
         let read = |path: &Path| std::fs::read_to_string(path).unwrap_or_default();
-        let env_or =
-            |key: &str, path: &str| std::env::var_os(key).map_or_else(|| path.into(), PathBuf::from);
+        let env_or = |key: &str, path: &str| {
+            std::env::var_os(key).map_or_else(|| path.into(), PathBuf::from)
+        };
         let cores = std::thread::available_parallelism()
             .map_or(1, |n| u16::try_from(n.get()).unwrap_or(u16::MAX));
         Machine::from_proc(
@@ -309,13 +310,13 @@ impl Machine {
     pub fn parse(text: &str) -> Option<Machine> {
         let rest = text.strip_prefix("cpu ")?;
         let (cores, rest) = rest.split_once('x')?;
-        let (speed, rest) = rest.split_once("MHz, mem ")?;
+        let (speed, rest) = rest.split_once(", mem ")?;
         // A host of the release before tells no clock now
         // (01M419XAZBPV0Y08CAR51KQSZS).
         let (mhz, now_mhz) = match speed.split_once("MHz (now ") {
-            Some((mhz, now)) => (mhz.parse().ok()?, now.strip_suffix(')')?.parse().ok()?),
+            Some((mhz, now)) => (mhz.parse().ok()?, now.strip_suffix("MHz)")?.parse().ok()?),
             None => {
-                let mhz = speed.parse().ok()?;
+                let mhz = speed.strip_suffix("MHz")?.parse().ok()?;
                 (mhz, mhz)
             }
         };
