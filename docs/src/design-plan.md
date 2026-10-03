@@ -390,19 +390,19 @@ forge of today.
 
 ## Build items
 
-Each item is a build item with a `Needs:` line. The lead puts them in
+Each item is an issue with a `Needs:` line. The lead puts them in
 waves. The holds come first: they repair the fault of Wave 16, where
 the lead claimed #359 only to keep it from the workers, and they need
 no forge.
 
 | Item | What | Needs |
 |---|---|---|
-| H1 | The holds: the records `item_held` and `item_freed`, the commands `hold` and `free` with their checks, `permits` and `handle`; the part `plans` of the riff and of the checkpoint with only the holds; the check `on_hold` of a claim of a worker, and the warning for each other session; the fixture directory of the next release, the union of the kinds, and `LogReply` that skips a kind that it does not know; `riff plan hold`, `riff plan free`, the MCP tools `hold` and `free`; the skill. The book: how-tos for each command. | |
-| P1 | The plan on the server: the records `plan_set` and `plan_ended`, the commands `plan` and `plan_off` with `base` and `stale_base`, the signal `plan_seen`, the query `plan`, `PLAN_TTL`, the plan in the part `plans` and in the checkpoint. | H1 |
-| P2 | The checks of a claim of a worker against the plan: `not_in_wave` and `needs_open`, the warning for each other session, the status 409, the stale plan. A client of 1.0.0 shows the reason of a new code. | P1 |
-| P3 | The look of the lead: one GraphQL query for the plan and the facts of #424, `plan` or `plan_seen` each look, the drop of a need of another repository, the wait of one hour against an old server; `riff plan on`, `riff plan off`, `riff plan sync`. The server makes `waits` from the plan, and `ItemFact` has no `needs`. | P1, #424 |
-| P4 | `riff plan` (the view); the board of `riff top` from the plan; the rollout from the plan; the start routine of the skill. The book: how-tos. | P2, P3 |
-| P5 | `riff audit`: rule 5 from the `plan_set` records, the new rules 8 and 9, the list of the claims with a warning. | P1, #354 |
+| H1 (#498) | The holds: the records `item_held` and `item_freed`, the commands `hold` and `free` with their checks, `permits` and `handle`; the part `plans` of the riff and of the checkpoint with only the holds; the check `on_hold` of a claim of a worker, and the warning for each other session; the fixture directory of the next release, the union of the kinds, and `LogReply` that skips a kind that it does not know; `riff plan hold`, `riff plan free`, the MCP tools `hold` and `free`; the skill. The book: how-tos for each command. | |
+| P1 (#499) | The plan on the server: the records `plan_set` and `plan_ended`, the commands `plan` and `plan_off` with `base` and `stale_base`, the signal `plan_seen`, the query `plan`, `PLAN_TTL`, the plan in the part `plans` and in the checkpoint. | H1 |
+| P2 (#500) | The checks of a claim of a worker against the plan: `not_in_wave` and `needs_open`, the warning for each other session, the status 409, the stale plan. A client of 1.0.0 shows the reason of a new code. | P1 |
+| P3 (#501) | The look of the lead: one GraphQL query for the plan and the facts of #424, `plan` or `plan_seen` each look, the drop of a need of another repository, the wait of one hour against an old server; `riff plan on`, `riff plan off`, `riff plan sync`. The server makes `waits` from the plan, and `ItemFact` has no `needs`. | P1, #424 |
+| P4 (#503) | `riff plan` (the view); the board of `riff top` from the plan; the rollout from the plan; the start routine of the skill. The book: how-tos. | P2, P3 |
+| P5 (#502) | `riff audit`: rule 5 from the `plan_set` records, the new rules 8 and 9, the list of the claims with a warning. | P1, #354 |
 
 ## Decisions
 
