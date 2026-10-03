@@ -321,7 +321,7 @@ async fn a_live_process_keeps_the_temp_folder_until_the_tidy() {
     }
     assert_eq!(
         riff::temp::sweep(&root, &riff::temp::users(), later),
-        [folder.clone()]
+        std::slice::from_ref(&folder)
     );
     assert!(!folder.exists());
 }
