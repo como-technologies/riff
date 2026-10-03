@@ -153,7 +153,7 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    AdminSet, Alive, AliveReply, Call, Claim, DenyOwner, End, Freed, Idle, IdleQuery, Invite,
+    Activity, AdminSet, Alive, AliveReply, BlockedLook, ItemFact, ItemFacts, SetBlocked, Unanswered, Call, Claim, DenyOwner, End, Freed, Idle, IdleQuery, Invite,
     Invited, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members,
     MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post, Posted,
     REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume,
@@ -1029,7 +1029,60 @@ impl Api {
 
     /// A keep-alive: the session still runs (R204).
     pub async fn alive(&self, me: &SessionUri) -> Result<AliveReply> {
-        self.call(&Alive { me: me.clone() }).await
+        self.alive_with(me, None).await
+    }
+
+    /// A keep-alive with the newest fact of the hooks of the session
+    /// (01M41FZNTPXQNCZ1S99HE42PYQ).
+    pub async fn alive_with(
+        &self,
+        me: &SessionUri,
+        activity: Option<Activity>,
+    ) -> Result<AliveReply> {
+        let alive = Alive {
+            me: me.clone(),
+            activity,
+        };
+        self.call(&alive).await
+    }
+
+    /// Says that `me` cannot go on with no decision, in one command
+    /// (01M41FZPGEK4TNPSM2051W4VMS): it tells the lead of its user
+    /// `blocked: REASON`, and sets the block. It gives true when the lead
+    /// got the message. With no lead, the block holds, and the session
+    /// asks its own user.
+    pub async fn blocked(&self, me: &SessionUri, reason: &str) -> Result<bool> {
+        let set = SetBlocked {
+            me: me.clone(),
+            reason: reason.to_owned(),
+        };
+        set.check().map_err(anyhow::Error::msg)?;
+        let told = self.tell(me, LEAD, &format!("blocked: {reason}")).await;
+        self.call(&set).await?;
+        Ok(told.is_ok())
+    }
+
+    /// The look of the lead `me` at the blocks of the sessions of its
+    /// user (01M41FZQ545HQ9Q75CSKX8HF8H). It gives each block that the
+    /// look made unanswered.
+    pub async fn look_blocks(&self, me: &SessionUri, after_secs: u64) -> Result<Vec<Unanswered>> {
+        let look = BlockedLook {
+            me: me.clone(),
+            after_secs,
+        };
+        Ok(self.call(&look).await?.unanswered)
+    }
+
+    /// Gives the server what `me` saw of the items of its repository on
+    /// the forge (01M41FZP2C4Z4J6WKRXZ5B31EH). With `all`, the facts
+    /// replace each fact of the repository.
+    pub async fn item_facts(&self, me: &SessionUri, items: Vec<ItemFact>, all: bool) -> Result<()> {
+        let facts = ItemFacts {
+            me: me.clone(),
+            items,
+            all,
+        };
+        self.call(&facts).await
     }
 
     /// Reads the settings of idle workers. With a value, it sets each

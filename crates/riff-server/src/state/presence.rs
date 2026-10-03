@@ -46,7 +46,7 @@ use super::{CLAIM_GRACE, GONE};
 /// state.register(&mike, now);
 /// assert!(!state.take_queue().is_empty());
 ///
-/// let status = Status { step: "the tests run".into(), blocked: None };
+/// let status = Status { step: "the tests run".into() };
 /// state.set_status(&mike, status, now, 0).unwrap();
 /// state.alive(&mike, now);
 /// assert!(state.take_queue().is_empty());

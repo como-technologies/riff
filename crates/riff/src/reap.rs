@@ -245,6 +245,9 @@ pub fn lost(reaper: &mut Reaper, tmux: &Tmux) -> Vec<Watched> {
 ///     must_clear: false,
 ///     fresh_secs: None,
 ///     state: None,
+///     work: None,
+///     waits: None,
+///     blocked: None,
 /// };
 /// let sessions = [
 ///     info("riff://brett@kadomony/o/riff?session=w1aa"),

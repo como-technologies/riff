@@ -43,7 +43,7 @@
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
-//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). |
+//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). |
 //! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
 //! ```
@@ -431,6 +431,21 @@ mod tests {
         assert_eq!(stop.as_array().unwrap().len(), 1);
         assert_eq!(stop[0]["hooks"][0]["type"], "command");
         assert_eq!(stop[0]["hooks"][0]["command"], "riff hook stop");
+    }
+
+    /// 01M41FZNTPXQNCZ1S99HE42PYQ.
+    #[test]
+    fn the_tool_hooks_write_the_facts_of_each_tool() {
+        let hooks = json("riff/hooks/hooks.json");
+        for (event, command) in [
+            ("PreToolUse", "riff hook tool"),
+            ("PostToolUse", "riff hook tool --done"),
+        ] {
+            let hook = &hooks["hooks"][event];
+            assert_eq!(hook.as_array().unwrap().len(), 1);
+            assert_eq!(hook[0]["matcher"], "*", "each tool runs the hook");
+            assert_eq!(hook[0]["hooks"][0]["command"], command);
+        }
     }
 
     /// 01M3MEEFC9ZQVW2KC9FNJ75MTY, 01M3MEEFKX14QCQM0F9ZYW93PP.

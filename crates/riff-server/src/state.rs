@@ -1934,7 +1934,7 @@ impl State {
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
     /// let mut state = State::default();
-    /// let step = Status { step: "write the tests".into(), blocked: None };
+    /// let step = Status { step: "write the tests".into() };
     /// state.set_status(&mike, step.clone(), now, 1_000).unwrap();
     ///
     /// let status = state.who(now, 61_000, false)[0].status.clone().unwrap();

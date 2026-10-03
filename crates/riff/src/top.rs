@@ -476,13 +476,17 @@ impl Top<'_> {
     ///   the board.
     ///
     /// People come by USER, and hosts by name. In each person, blocked
-    /// sessions come first. It has ANSI styles: print it through
-    /// `anstream`.
+    /// sessions come first. Each blocked session also has a red line
+    /// before the board: the session, its claims, the reason, the time
+    /// that it waits, and `the lead gave no answer` when the lead gave
+    /// none (01M41FZR4XRP55M409YBCPTHPH, 01M41FZQCHWY1YVGAZ60ZHJK21). It
+    /// has ANSI styles: print it through `anstream`.
     ///
     /// ```
     /// use riff::top::{Issues, Top};
     /// use riff_core::wire::{
-    ///     Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState, Status, StatusInfo,
+    ///     BlockedInfo, Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState, Status,
+    ///     StatusInfo,
     /// };
     ///
     /// let info = |uri: &str, step: &str, blocked: Option<&str>, worker, state| SessionInfo {
@@ -490,7 +494,7 @@ impl Top<'_> {
     ///     live: state != SessionState::Offline,
     ///     idle_secs: 300,
     ///     status: Some(StatusInfo {
-    ///         status: Status { step: step.into(), blocked: blocked.map(Into::into) },
+    ///         status: Status { step: step.into() },
     ///         age_secs: 120,
     ///         stale: false,
     ///     }),
@@ -500,6 +504,15 @@ impl Top<'_> {
     ///     must_clear: false,
     ///     fresh_secs: None,
     ///     state: Some(state),
+    ///     work: None,
+    ///     waits: None,
+    ///     blocked: blocked.map(|reason| BlockedInfo {
+    ///         reason: reason.into(),
+    ///         secs: 1500,
+    ///         answered: false,
+    ///         woken_again: true,
+    ///         unanswered: true,
+    ///     }),
     /// };
     /// let sessions = [
     ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "plan", None, false, SessionState::Idle),
@@ -550,6 +563,10 @@ impl Top<'_> {
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// assert!(text.starts_with("riff   running\nowner  mike (m@x.io)\nbuild  "), "{text}");
+    /// assert!(
+    ///     text.contains("\n\nblocked  dddd4444 verify-issue-13: waits for the lead, for 25m, the lead gave no answer\n"),
+    ///     "{text}"
+    /// );
     /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
     /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
     /// assert_eq!(tree, [
@@ -557,7 +574,8 @@ impl Top<'_> {
     ///     "mike  owner  online",
     ///     "├─ pangolin",
     ///     "│  ├─ dddd4444  r#verify-13  worker  blocked",
-    ///     "│  │    waits for the lead (step: docs, 2m ago)",
+    ///     "│  │    waits for the lead (25m ago)",
+    ///     "│  │    the lead gave no answer",
     ///     "│  │    reviewing #13 Later",
     ///     "│  └─ eeee5555  s  lead  busy",
     ///     "│       working on #14",
@@ -606,6 +624,13 @@ impl Top<'_> {
             let _ = writeln!(out, "{}", fit(line, self.width));
         }
         let mut lines = Vec::new();
+        let blocks: Vec<&SessionInfo> = self.sessions.iter().filter(|s| blocked(s)).collect();
+        if !blocks.is_empty() {
+            lines.push(Line::new("", vec![]));
+        }
+        for s in blocks {
+            lines.push(Line::new("", vec![(block_line(s), ERROR)]));
+        }
         if let Some((wave, items)) = self.issues.and_then(|i| i.wave.as_ref()) {
             lines.push(Line::new("", vec![]));
             let wave = match self.repo {
@@ -819,6 +844,24 @@ fn person_line(user: &str, person: &PersonRow) -> Line {
 /// The branch of a tree row: the last one closes the tree.
 fn branch(last: bool) -> &'static str {
     if last { "└─ " } else { "├─ " }
+}
+
+/// The line of a blocked session before the board
+/// (01M41FZR4XRP55M409YBCPTHPH): `blocked`, the short session ID, its
+/// claims, the reason and the time that it waits, then `the lead gave
+/// no answer` when the lead gave none (01M41FZQCHWY1YVGAZ60ZHJK21).
+fn block_line(s: &SessionInfo) -> String {
+    let mut line = format!("blocked  {}", short(s));
+    if !s.uri.claims().is_empty() {
+        let _ = write!(line, " {}", safe(&s.uri.claims().join(" ")));
+    }
+    if let Some(block) = &s.blocked {
+        let _ = write!(line, ": {}, for {}", safe(&block.reason), crate::text::ago(block.secs));
+        if block.unanswered {
+            line.push_str(", the lead gave no answer");
+        }
+    }
+    line
 }
 
 /// True when the state of `s` is `blocked`.

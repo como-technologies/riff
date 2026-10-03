@@ -65,6 +65,7 @@
 //! that only a verified message of the lead of its user counts as its
 //! user. Each other message is advice (R10).
 
+pub mod activity;
 pub mod api;
 pub mod audit;
 pub mod auto_update;
@@ -86,6 +87,7 @@ pub mod leave;
 pub mod lifecycle;
 pub mod limits;
 pub mod local;
+pub mod look;
 pub mod login;
 pub mod machine;
 pub mod mcp;

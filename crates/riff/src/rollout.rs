@@ -1048,6 +1048,9 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 ///     must_clear: false,
 ///     fresh_secs: None,
 ///     state: None,
+///     work: None,
+///     waits: None,
+///     blocked: None,
 /// };
 /// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
 /// let strata = worker("riff://brett@kadomony/o/strata?session=w1");
@@ -1924,6 +1927,9 @@ mod tests {
             must_clear: false,
             fresh_secs: None,
             state: Some(riff_core::wire::SessionState::Idle),
+            work: None,
+            waits: None,
+            blocked: None,
         }
     }
 

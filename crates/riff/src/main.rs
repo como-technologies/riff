@@ -10,13 +10,15 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    audit, auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local, login,
+    activity, audit, auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local, login,
     mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Freed, Kind, RiffReply, RiffState, SessionInfo, StartReason, Status};
+use riff_core::wire::{
+    Freed, Kind, PullState, RiffReply, RiffState, SessionInfo, StartReason, Status,
+};
 
 /// The time between two tries to connect a stream.
 const RETRY: Duration = Duration::from_secs(5);
@@ -100,16 +102,23 @@ enum Command {
         /// The message. A status request needs none.
         body: Vec<String>,
     },
-    /// Set your status: your current step
+    /// Set your status: your current step, in your own words
     ///
-    /// `riff who` shows it with its age. It replaces your old status.
+    /// `riff who` shows it with its age, after the state that riff makes
+    /// from facts. It replaces your old status.
     Status {
-        /// You cannot go on. REASON says why.
-        #[arg(long, value_name = "REASON")]
-        blocked: Option<String>,
         /// Your current step, in one short line.
         #[arg(required = true)]
         step: Vec<String>,
+    },
+    /// Say that you cannot go on with no decision, and wake your lead
+    ///
+    /// riff shows you as blocked, and tells the lead of your user the
+    /// reason. The block ends at your next work after an answer.
+    Blocked {
+        /// Why you cannot go on, in one short line.
+        #[arg(required = true)]
+        reason: Vec<String>,
     },
     /// Send a direct message to one session
     ///
@@ -793,6 +802,22 @@ enum LeadCommand {
         #[arg(long)]
         quiet: Option<u64>,
     },
+    /// Show or set what riff does when a blocked session gets no answer
+    ///
+    /// riff wakes the lead again after the wake time with no answer.
+    /// After the wake time once more, riff top shows "the lead gave no
+    /// answer", and a desktop notification tells you, when this machine
+    /// has a desktop. It is in $XDG_CONFIG_HOME/riff/config.toml, keys
+    /// lead.wake and lead.notify.
+    Blocked {
+        /// The minutes with no answer before riff wakes the lead again.
+        /// The default is 15.
+        #[arg(long, value_name = "MINUTES")]
+        wake: Option<u64>,
+        /// Turn the desktop notification on or off. It is on by default.
+        #[arg(long)]
+        notify: Option<Switch>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -833,6 +858,16 @@ enum HookEvent {
     /// last claim, riff then gives its pane `/clear` and the start
     /// prompt. It always exits with status 0.
     Stop,
+    /// Run the PreToolUse or the PostToolUse hook
+    ///
+    /// It reads the hook input on stdin, and writes the newest fact of
+    /// the session on this machine: the tool that runs. It makes no
+    /// call. It always exits with status 0.
+    Tool {
+        /// The tool ended: the PostToolUse hook.
+        #[arg(long)]
+        done: bool,
+    },
     /// Check whether riff clears the context of a worker now
     ///
     /// The Stop hook starts it, detached, in each worker in tmux.
@@ -1032,6 +1067,20 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Hook {
+        event: HookEvent::Tool { done },
+    } = cli.command
+    {
+        let mut stdin = String::new();
+        let _ = std::io::stdin().read_to_string(&mut stdin);
+        let hook = if done {
+            activity::Hook::Post
+        } else {
+            activity::Hook::Pre
+        };
+        activity::run(hook, &stdin, None);
+        return Ok(());
+    }
+    if let Command::Hook {
         event:
             HookEvent::Clear {
                 session,
@@ -1093,6 +1142,21 @@ async fn main() -> Result<()> {
         anstream::println!("{}", view::lead_compact(on, quiet, &path));
         return Ok(());
     }
+    if let Command::Lead {
+        command: Some(LeadCommand::Blocked { wake, notify }),
+    } = &cli.command
+    {
+        let path = settings::path()?;
+        if let Some(wake) = wake {
+            settings::set_lead_wake(&path, *wake)?;
+        }
+        if let Some(notify) = notify {
+            settings::set_lead_notify(&path, matches!(notify, Switch::On))?;
+        }
+        let (wake, notify) = (settings::lead_wake(&path)?, settings::lead_notify(&path)?);
+        anstream::println!("{}", view::lead_blocked(wake, notify, &path));
+        return Ok(());
+    }
     if let Command::Watch {
         command: Some(WatchCommand::Limit { seconds }),
         ..
@@ -1150,6 +1214,13 @@ async fn main() -> Result<()> {
         eprintln!("{}", text::pr_waits(*number));
         let every = Duration::from_secs(*every);
         println!("{}", pr::wait(&pr::Gh::default(), *number, every)?);
+        // The merge is a fact of the item (01M41FZP2C4Z4J6WKRXZ5B31EH).
+        // It never fails the wait.
+        let api = Api::new(&server);
+        let me = identity::here(cli.place.as_ref()).and_then(|here| identity::me(&here, api.base()));
+        if let (Ok(me), Ok(issue)) = (me, pr::issue_of(&pr::Gh::default(), *number)) {
+            riff::look::tell_fact(&api, &me, issue, *number, PullState::Merged).await;
+        }
         // The merge is done: the total never fails the wait.
         match total_after_merge(*number) {
             Ok(line) => eprintln!("{line}"),
@@ -1308,13 +1379,17 @@ async fn main() -> Result<()> {
                 .await?;
             println!("{}", text::posted(&posted));
         }
-        Command::Status { blocked, step } => {
+        Command::Status { step } => {
             let status = Status {
                 step: step.join(" "),
-                blocked,
             };
             api.status(&me, &status).await?;
             println!("{}", text::status_set(&status));
+        }
+        Command::Blocked { reason } => {
+            let reason = reason.join(" ");
+            let told = api.blocked(&me, &reason).await?;
+            println!("{}", text::blocked_set(&reason, told));
         }
         Command::Tell { session, body } => {
             let posted = api.tell(&me, &session, &body.join(" ")).await?;
@@ -1395,6 +1470,7 @@ async fn main() -> Result<()> {
             };
             let (number, url) = pr::open(&pr::Gh::default(), &title, &summary, issue, refs)?;
             println!("{}", text::pr_opened(number, &url));
+            riff::look::tell_fact(&api, &me, issue, number, PullState::Asked).await;
         }
         Command::Verify {
             verdict,
@@ -1419,6 +1495,11 @@ async fn main() -> Result<()> {
                 &result,
             )?;
             println!("{}", text::verify_reported(verdict, number, &reported));
+            let state = match verdict {
+                pr::Verdict::Pass => PullState::Passed,
+                pr::Verdict::Fail => PullState::Failed,
+            };
+            riff::look::tell_fact(&api, &me, reported.issue, number, state).await;
             let to = pr::result_to(reported.issue, &me, &api.who(&me, false).await?);
             let body = text::verify_post(verdict, number, &reported, &result);
             let posted = api
@@ -1464,7 +1545,7 @@ async fn main() -> Result<()> {
         | Command::Workers { .. }
         | Command::Worktrees(_)
         | Command::Lead {
-            command: Some(LeadCommand::Compact { .. }),
+            command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
         }
         | Command::Pr {
             command: Pr::Wait { .. },
@@ -1762,6 +1843,7 @@ fn stop_hook() {
     let Some(id) = identity::agent_session(input.session_id) else {
         return;
     };
+    activity::run(activity::Hook::Stop, &stdin, Some(id.clone()));
     count_usage(&id, input.transcript_path.as_deref(), false);
     if !riff::worker::is_worker() {
         if let Err(e) = start_compact_check(&id, input.transcript_path.as_deref()) {
