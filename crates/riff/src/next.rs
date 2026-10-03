@@ -53,7 +53,8 @@
 //!   [`keys`] stops each process of the old context of the worker, for
 //!   example a `just ci` in the background ([`stop_old_context`],
 //!   01M3ZV0TJDQ6JCM7XG0036MSV1). It keeps `claude`, its MCP servers
-//!   and the watch. Then it counts again. When it stopped one, [`check`]
+//!   and the watch. It deletes the files of the old context in the
+//!   temp folder of the worker ([`end_old_temp`]). Then it counts again. When it stopped one, [`check`]
 //!   posts a note to the lead with the pane and each process.
 //! - The clear comes at the end of the turn, not at the release. So a
 //!   worker does the steps after its release in the same turn.
@@ -285,7 +286,10 @@ pub async fn check(
         turns,
         || prompts(transcript),
         std::thread::sleep,
-        || stopped = stop_old_context(&ClaudeCode, me),
+        || {
+            stopped = stop_old_context(&ClaudeCode, me);
+            end_old_temp(me);
+        },
         |text| tmux.type_line(pane, text),
     )?;
     if !stopped.is_empty() {
@@ -361,6 +365,15 @@ pub fn stop_old_context(agent: &dyn Agent, me: &SessionUri) -> Vec<crate::worklo
     let all = crate::workload::all(var);
     let old = crate::workload::old_context(&all, session, std::process::id(), None);
     crate::workload::stop(&old, var)
+}
+
+/// Deletes the files of the old context in the temp folder of the
+/// worker `me`, after [`stop_old_context`] (01M41VAGSCNESHTZ6216P2E133).
+/// See [`crate::temp::end_context`].
+pub fn end_old_temp(me: &SessionUri) {
+    if let Some(dir) = me.who().session().and_then(crate::temp::here) {
+        crate::temp::end_context(&dir, &crate::temp::users());
+    }
 }
 
 /// The number of prompts in the `transcript` of the agent

@@ -670,6 +670,19 @@ enum Workers {
         /// The new floor in GB. Leave it out to show it.
         gb: Option<u32>,
     },
+    /// Show or set the folder of the temp files of the workers
+    ///
+    /// Each worker gets a temp folder of its own in DIR, on disk: its
+    /// TMPDIR and CLAUDE_CODE_TMPDIR. riff deletes it when the worker
+    /// ends, and deletes the files of the old context at each clear. The
+    /// default is ~/.cache/riff/tmp. The next worker that starts gets the
+    /// new folder. It is in $XDG_CONFIG_HOME/riff/config.toml, key
+    /// workers.tmp.
+    Tmp {
+        /// The new folder. Leave it out to show the folder and its disk
+        /// use.
+        dir: Option<std::path::PathBuf>,
+    },
     /// Show or change the MCP servers of each worker
     ///
     /// These are the MCP servers that each worker of this machine loads.
@@ -1637,6 +1650,18 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             );
             Ok(())
         }
+        Some(Workers::Tmp { dir }) => {
+            let path = settings::path()?;
+            if let Some(dir) = dir {
+                settings::set_workers_tmp(&path, &std::path::absolute(dir)?)?;
+            }
+            let root = riff::temp::root(&path)?;
+            anstream::println!(
+                "{}",
+                view::workers_tmp(&root, riff::temp::size(&root), &path)
+            );
+            Ok(())
+        }
         Some(Workers::Mcp { command }) => {
             let path = settings::path()?;
             let mut names = settings::workers_mcp(&path)?;
@@ -1969,6 +1994,11 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     let disk = identity::main_worktree(&identity::working_dir()?)
         .and_then(|main| riff::disk::Disk::here(&main));
     anstream::print!("{}", view::disk_line(disk.as_ref()));
+    if let Ok(root) = riff::temp::root(&settings)
+        && root.is_dir()
+    {
+        anstream::print!("{}", view::temp_line(&root, riff::temp::size(&root)));
+    }
     anstream::print!("{}", view::workers(&panes, &sessions, long));
     let Ok(me) = me else {
         return Ok(());

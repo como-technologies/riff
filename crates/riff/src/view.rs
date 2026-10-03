@@ -777,6 +777,47 @@ pub fn host_heading(
     out
 }
 
+/// The line of the temp folders of the workers of this machine in
+/// `riff workers`, under the line of its disk
+/// (01M41VAGY396K07BTPSW9TNBX5).
+///
+/// ```
+/// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
+/// assert_eq!(
+///     plain(riff::view::temp_line("/h/.cache/riff/tmp".as_ref(), 3 << 30)),
+///     "temp 3.0GB in /h/.cache/riff/tmp\n"
+/// );
+/// ```
+pub fn temp_line(root: &Path, bytes: u64) -> String {
+    let line = format!("temp {} in {}", text::size_words(bytes), root.display());
+    format!("{}\n", styled(DIM, &line))
+}
+
+/// `riff workers tmp` (01M41VAGJC69S9R2TD1B1EQ4W4): the folder of the
+/// temp folders of the workers, and its disk use.
+///
+/// ```
+/// let out = riff::view::workers_tmp("/h/.cache/riff/tmp".as_ref(), 0, "/h/c.toml".as_ref());
+/// assert_eq!(
+///     anstream::adapter::strip_str(&out).to_string(),
+///     "workers.tmp  /h/.cache/riff/tmp  (/h/c.toml)\n\
+///      Each worker gets a temp folder of its own in it, and riff deletes it when the \
+///      worker ends. Now: 0MB. Set it with: riff workers tmp DIR"
+/// );
+/// ```
+pub fn workers_tmp(root: &Path, bytes: u64, path: &Path) -> String {
+    setting(
+        "workers.tmp",
+        &root.display().to_string(),
+        path,
+        &format!(
+            "Each worker gets a temp folder of its own in it, and riff deletes it when the \
+             worker ends. Now: {}. Set it with: riff workers tmp DIR",
+            text::size_words(bytes)
+        ),
+    )
+}
+
 /// The line of the disk of one machine in `riff workers`, under its
 /// heading (01M41A11GHP78E2VYN14JSE27P). Under the low mark it says that
 /// the machine starts no worker (01M41A11DX1QRP48YPTDNT67W4). No disk
