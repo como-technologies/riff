@@ -499,7 +499,7 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
 /// detached clean worktree at the head of a merged pull request whose
 /// branch is gone. It keeps a worktree with a commit that is not on
 /// `origin`.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn worktrees_clean_removes_a_worktree_with_no_work_of_its_own() {
     let r = Riff::new().await;
     let main = r.main();
