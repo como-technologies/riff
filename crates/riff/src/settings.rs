@@ -17,6 +17,11 @@
 //! floor = 4
 //! tmp = "/data/riff-tmp"
 //!
+//! [monitor]
+//! on = true
+//! every = 15
+//! load = 1.5
+//!
 //! [update]
 //! auto = true
 //!
@@ -37,6 +42,9 @@
 //! | `workers.memory` | 0 | The most memory of all workers of the machine, in GB. 0: riff makes the number from the machine (01M3WFYZX6GVFYW6NTTTKF144R). |
 //! | `workers.floor` | 4 | The available memory in GB under which riff starts no new worker (01M3WFZ01PTAYYKG3T5CFA2W4D). |
 //! | `workers.tmp` | `~/.cache/riff/tmp` | The folder of the temp folders of the workers (see [`temp`](crate::temp), 01M41VAGJC69S9R2TD1B1EQ4W4). |
+//! | `monitor.on` | false | The monitor of this machine runs (see [`monitor`](crate::monitor), 01M421QPKWPX00X24F8V6DT8Z3). |
+//! | `monitor.every` | 15 | The seconds between two looks of the monitor. |
+//! | `monitor.load` | 1.5 | The 5-minute load over which the monitor tells the lead, for each physical core. |
 //! | `lead.compact` | true | riff compacts the lead at the end of a wave (see [`compact`](crate::compact)). |
 //! | `lead.quiet` | 60 | The seconds with no input in the pane of the lead before riff compacts it. |
 //! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
@@ -378,6 +386,94 @@ pub fn update_auto(path: &Path) -> Result<bool> {
 /// Sets `update.auto`. It keeps each other key.
 pub fn set_update_auto(path: &Path, auto: bool) -> Result<()> {
     set(path, "update", "auto", value(auto))
+}
+
+/// The default of `monitor.every`, in seconds.
+pub const MONITOR_EVERY: u16 = 15;
+
+/// The default of `monitor.load`: the 5-minute load over which the
+/// monitor tells the lead, for each physical core.
+pub const MONITOR_LOAD: f64 = 1.5;
+
+/// The settings of the monitor of this machine
+/// (01M421QPKWPX00X24F8V6DT8Z3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Monitor {
+    /// `monitor.on`: the monitor runs. False when the key is missing.
+    pub on: bool,
+    /// `monitor.every`: the seconds between two looks, 1 or more.
+    pub every: u16,
+    /// `monitor.load`: the limit of the 5-minute load for each physical
+    /// core.
+    pub load: f64,
+}
+
+/// The settings of the monitor, with their defaults when the file or a
+/// key is missing.
+///
+/// ```
+/// use riff::settings::{Monitor, monitor};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(monitor(&path)?, Monitor { on: false, every: 15, load: 1.5 });
+/// riff::settings::set_monitor_on(&path, true)?;
+/// riff::settings::set_monitor_every(&path, 30)?;
+/// riff::settings::set_monitor_load(&path, 2.0)?;
+/// assert_eq!(monitor(&path)?, Monitor { on: true, every: 30, load: 2.0 });
+/// std::fs::write(&path, "[monitor]\nload = 2\n")?;
+/// assert_eq!(monitor(&path)?.load, 2.0);
+/// assert!(riff::settings::set_monitor_every(&path, 0).is_err());
+/// assert!(riff::settings::set_monitor_load(&path, 0.0).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn monitor(path: &Path) -> Result<Monitor> {
+    let doc = read(path)?;
+    let table = doc.get("monitor");
+    let key = |k: &str| table.and_then(|t| t.get(k));
+    let bad = |k: &str, what: &str| format!("monitor.{k} in {} is not {what}", path.display());
+    let on = match key("on") {
+        Some(on) => on.as_bool().with_context(|| bad("on", "true or false"))?,
+        None => false,
+    };
+    let every = match key("every") {
+        Some(every) => every
+            .as_integer()
+            .and_then(|n| u16::try_from(n).ok())
+            .filter(|&n| n > 0)
+            .with_context(|| bad("every", "a number of seconds"))?,
+        None => MONITOR_EVERY,
+    };
+    let load = match key("load") {
+        Some(load) => load
+            .as_float()
+            .or_else(|| load.as_integer().map(|n| n as f64))
+            .filter(|&n| n > 0.0)
+            .with_context(|| bad("load", "a number over 0"))?,
+        None => MONITOR_LOAD,
+    };
+    Ok(Monitor { on, every, load })
+}
+
+/// Sets `monitor.on`. It keeps each other key.
+pub fn set_monitor_on(path: &Path, on: bool) -> Result<()> {
+    set(path, "monitor", "on", value(on))
+}
+
+/// Sets `monitor.every`, 1 or more. It keeps each other key.
+pub fn set_monitor_every(path: &Path, seconds: u16) -> Result<()> {
+    if seconds == 0 {
+        bail!("the monitor looks each 1 second or more");
+    }
+    set(path, "monitor", "every", value(i64::from(seconds)))
+}
+
+/// Sets `monitor.load`, more than 0. It keeps each other key.
+pub fn set_monitor_load(path: &Path, load: f64) -> Result<()> {
+    if load.is_nan() || load <= 0.0 {
+        bail!("the load limit of the monitor is a number over 0");
+    }
+    set(path, "monitor", "load", value(load))
 }
 
 /// True when riff compacts the lead at the end of a wave: `lead.compact`

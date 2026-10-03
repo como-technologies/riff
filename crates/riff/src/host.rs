@@ -127,6 +127,7 @@ use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
 use crate::disk::Disk;
 use crate::machine::Machine;
+use crate::monitor::Numbers;
 use crate::reap::{self, Reaper, Watched};
 use crate::rollout::{Change, Effect};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
@@ -190,14 +191,16 @@ pub async fn in_time<T>(
 /// use riff::disk::Disk;
 /// use riff::host::HostStatus;
 /// use riff::machine::Machine;
+/// use riff::monitor::Numbers;
 ///
-/// let none = HostStatus { limit: 2, floor: 4, machine: None, disk: None, workers: vec![] };
+/// let none = HostStatus { limit: 2, floor: 4, machine: None, disk: None, monitor: None, workers: vec![] };
 /// assert_eq!(none.line(), "workers host: limit 2, floor 4GB, no workers");
 /// let two = HostStatus {
 ///     limit: 3,
 ///     floor: 4,
 ///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     disk: None,
+///     monitor: None,
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()), ("%4".into(), "5e6f7a8b".into())],
 /// };
 /// assert_eq!(
@@ -216,7 +219,22 @@ pub async fn in_time<T>(
 /// assert_eq!(HostStatus::parse(&with_disk.line()), Some(with_disk));
 /// let only_disk = HostStatus { disk, ..none.clone() };
 /// assert_eq!(only_disk.line(), "workers host: limit 2, floor 4GB, disk 16GB free of 455GB (3%), no workers");
-/// assert_eq!(HostStatus::parse(&only_disk.line()), Some(only_disk));
+/// assert_eq!(HostStatus::parse(&only_disk.line()), Some(only_disk.clone()));
+///
+/// // The numbers of the monitor come after the disk
+/// // (01M421QPX01BB15GJXHFYRETTX).
+/// let monitor = Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs: 2, kill: None });
+/// let with_monitor = HostStatus { monitor: monitor.clone(), ..with_disk.clone() };
+/// assert!(with_monitor.line().contains(
+///     "(3%), monitor on, load5 9.80 of 12.00, 8 cores, jobs 2, workers: %3"
+/// ));
+/// assert_eq!(HostStatus::parse(&with_monitor.line()), Some(with_monitor));
+/// let only_monitor = HostStatus { monitor, ..none.clone() };
+/// assert_eq!(
+///     only_monitor.line(),
+///     "workers host: limit 2, floor 4GB, monitor on, load5 9.80 of 12.00, 8 cores, jobs 2, no workers"
+/// );
+/// assert_eq!(HostStatus::parse(&only_monitor.line()), Some(only_monitor));
 ///
 /// // A host of the release before: no floor, no available memory
 /// // (01M407J917F9AH072C8DE80CRJ).
@@ -241,6 +259,9 @@ pub struct HostStatus {
     /// The disk of the main clone (01M41A11GHP78E2VYN14JSE27P). `None`
     /// from a host that does not tell it.
     pub disk: Option<Disk>,
+    /// The numbers of the monitor (01M421QPX01BB15GJXHFYRETTX). `None`
+    /// from a host that does not tell them.
+    pub monitor: Option<Numbers>,
     /// The pane and the first 8 characters of the session ID of each
     /// worker.
     pub workers: Vec<(String, String)>,
@@ -254,6 +275,7 @@ impl HostStatus {
             floor,
             machine: Some(machine),
             disk: None,
+            monitor: None,
             workers: panes
                 .iter()
                 .map(|w| (w.pane.clone(), w.session.chars().take(8).collect()))
@@ -261,11 +283,34 @@ impl HostStatus {
         }
     }
 
+    /// The status of this machine with `panes`: the settings, the
+    /// numbers of the machine and of its monitor, and the disk of the
+    /// clone `main`.
+    pub fn here(main: Option<&Path>, panes: &[WorkerPane]) -> Result<Self> {
+        let settings = settings::path()?;
+        let machine = Machine::here();
+        let mut status = HostStatus::of(
+            settings::workers_limit(&settings)?,
+            settings::workers_floor(&settings)?,
+            machine,
+            panes,
+        );
+        status.disk = main.and_then(Disk::here);
+        let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
+        status.monitor = Some(Numbers::here(&settings, &machine, workers)?);
+        Ok(status)
+    }
+
     /// The status line. It fits in a status for 10 workers.
     pub fn line(&self) -> String {
         let machine = self.machine.map(|m| format!("{m}, ")).unwrap_or_default();
         let disk = self.disk.map(|d| format!("{d}, ")).unwrap_or_default();
-        let machine = format!("floor {}GB, {machine}{disk}", self.floor);
+        let monitor = self
+            .monitor
+            .as_ref()
+            .map(|n| format!("{n}, "))
+            .unwrap_or_default();
+        let machine = format!("floor {}GB, {machine}{disk}{monitor}", self.floor);
         if self.workers.is_empty() {
             return format!("{MARK}: limit {}, {machine}no workers", self.limit);
         }
@@ -306,6 +351,19 @@ impl HostStatus {
             without = format!("{}{}", &rest[..at], &rest[end + 2..]);
             rest = &without;
         }
+        // The numbers of the monitor come after the disk
+        // (01M421QPX01BB15GJXHFYRETTX). A host of the release before
+        // tells none.
+        let mut monitor = None;
+        let without_monitor;
+        if let Some(at) = rest.find("monitor ") {
+            let end = at + rest[at..]
+                .find(", no workers")
+                .or_else(|| rest[at..].find(", workers: "))?;
+            monitor = Some(Numbers::parse(&rest[at..end])?);
+            without_monitor = format!("{}{}", &rest[..at], &rest[end + 2..]);
+            rest = &without_monitor;
+        }
         let mut machine = None;
         if rest.starts_with("cpu ") {
             let end = rest
@@ -320,6 +378,7 @@ impl HostStatus {
                 floor,
                 machine,
                 disk,
+                monitor,
                 workers: Vec::new(),
             });
         }
@@ -336,6 +395,7 @@ impl HostStatus {
             floor,
             machine,
             disk,
+            monitor,
             workers,
         })
     }
@@ -349,6 +409,10 @@ impl HostStatus {
 /// assert_eq!("workers start 2".parse(), Ok(Request::Start(2)));
 /// assert_eq!("workers stop".parse(), Ok(Request::Stop));
 /// assert_eq!("workers stop %3".parse(), Ok(Request::StopOne("%3".into())));
+/// assert_eq!("workers monitor on".parse(), Ok(Request::Monitor(true)));
+/// assert_eq!("workers monitor off".parse(), Ok(Request::Monitor(false)));
+/// assert_eq!(Request::Monitor(true).to_string(), "workers monitor on");
+/// assert!("workers monitor maybe".parse::<Request>().is_err());
 /// assert_eq!(Request::Start(3).to_string(), "workers start 3");
 /// assert_eq!(Request::Stop.to_string(), "workers stop");
 /// assert_eq!(Request::StopOne("1a2b3c4d".into()).to_string(), "workers stop 1a2b3c4d");
@@ -364,6 +428,9 @@ pub enum Request {
     /// Stop the worker in this pane, or with this session ID or its
     /// start (01M3Q5A0Z5DK0YV1MWTM4AQD5Z).
     StopOne(String),
+    /// Turn the monitor of the machine on or off
+    /// (01M421QPTQ8BQ0KMG8F7CRHNMX).
+    Monitor(bool),
 }
 
 impl FromStr for Request {
@@ -373,6 +440,8 @@ impl FromStr for Request {
         match body.split_whitespace().collect::<Vec<_>>()[..] {
             ["workers", "stop"] => Ok(Request::Stop),
             ["workers", "stop", one] => Ok(Request::StopOne(one.to_owned())),
+            ["workers", "monitor", "on"] => Ok(Request::Monitor(true)),
+            ["workers", "monitor", "off"] => Ok(Request::Monitor(false)),
             ["workers", "start", n] => match n.parse() {
                 Ok(n) if n > 0 => Ok(Request::Start(n)),
                 _ => Err(()),
@@ -388,6 +457,7 @@ impl fmt::Display for Request {
             Request::Start(n) => write!(f, "workers start {n}"),
             Request::Stop => write!(f, "workers stop"),
             Request::StopOne(one) => write!(f, "workers stop {one}"),
+            Request::Monitor(on) => write!(f, "workers monitor {}", if *on { "on" } else { "off" }),
         }
     }
 }
@@ -568,6 +638,9 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     let mut mine = Mine::read()?;
     let mut tidy = crate::tidy::timer();
     let mut guard = crate::tidy::Guard::default();
+    // The monitor of the machine (01M421QPKWPX00X24F8V6DT8Z3).
+    let monitor = tokio::spawn(crate::monitor::run(host.api.clone(), host.me.clone()));
+    let _monitor = AbortOnDrop(monitor);
     loop {
         let mut changed = true;
         tokio::select! {
@@ -623,6 +696,15 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     }
 }
 
+/// Ends a task when it drops.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// On Ctrl-C, SIGTERM or SIGHUP: ends the session in `session`, when it
 /// is set, and ends the process (01M3NBV405PVYHKTMQ5VN87FYN). It runs in
 /// a task of its own, so a step that blocks the host does not hold it.
@@ -655,14 +737,7 @@ fn stop_on_signal(session: Arc<OnceLock<(Api, SessionUri)>>) -> Result<()> {
 impl Host {
     /// Sets the status: the limit and the workers of the machine.
     async fn set_status(&self) -> Result<()> {
-        let settings = settings::path()?;
-        let mut status = HostStatus::of(
-            settings::workers_limit(&settings)?,
-            settings::workers_floor(&settings)?,
-            Machine::here(),
-            &self.tmux.worker_panes()?,
-        );
-        status.disk = Disk::here(&self.main);
+        let status = HostStatus::here(Some(&self.main), &self.tmux.worker_panes()?)?;
         let status = Status {
             step: status.line(),
         };
@@ -790,6 +865,15 @@ impl Host {
                 match worker::stop(&self.tmux, Some(&one), &self.server).await {
                     Ok(n) => format!("{host}: {}", text::workers_stopped(n)),
                     Err(e) => format!("{host}: riff workers stop failed: {e:#}"),
+                }
+            }
+            Request::Monitor(on) => {
+                let set = settings::path()
+                    .and_then(|path| settings::set_monitor_on(&path, on).map(|()| path))
+                    .and_then(|path| settings::monitor(&path));
+                match set {
+                    Ok(monitor) => format!("{host}: {}", text::monitor_set(&monitor)),
+                    Err(e) => format!("{host}: riff workers monitor failed: {e:#}"),
                 }
             }
         }

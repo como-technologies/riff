@@ -888,6 +888,174 @@ pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
     out
 }
 
+/// The line of the monitor of one machine in `riff workers`, under its
+/// heading (01M421QPX01BB15GJXHFYRETTX): on or off, and its last
+/// numbers. `ago` is the age in seconds of the last look, when riff
+/// knows it. A host that tells no numbers gives no line.
+///
+/// ```
+/// use riff::monitor::{Kill, Numbers};
+///
+/// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
+/// let n = Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs: 2, kill: None };
+/// assert_eq!(
+///     plain(riff::view::monitor_line(Some(&n), Some(12))),
+///     "monitor on  load5 9.80 of 12.00 (8 cores)  jobs 2  last look 12s ago\n"
+/// );
+/// let over = Numbers { load5: 13.0, ..n.clone() };
+/// assert!(plain(riff::view::monitor_line(Some(&over), None)).starts_with("monitor on  load5 13.00 of 12.00"));
+/// let kill = Some(Kill { at: 1727980000, by: "kernel".into(), what: String::new() });
+/// let killed = Numbers { kill, ..n.clone() };
+/// assert_eq!(
+///     plain(riff::view::monitor_line(Some(&killed), None)),
+///     format!("monitor on  load5 9.80 of 12.00 (8 cores)  jobs 2  last kill {} kernel\n", riff::text::clock(1727980000)),
+/// );
+/// let off = Numbers { on: false, ..n };
+/// assert_eq!(
+///     plain(riff::view::monitor_line(Some(&off), None)),
+///     "monitor off  load5 9.80 of 12.00 (8 cores)  jobs 2\n"
+/// );
+/// assert_eq!(riff::view::monitor_line(None, None), "");
+/// ```
+pub fn monitor_line(numbers: Option<&crate::monitor::Numbers>, ago: Option<u64>) -> String {
+    let Some(n) = numbers else {
+        return String::new();
+    };
+    let state = if n.on { "monitor on" } else { "monitor off" };
+    let load = format!("load5 {:.2} of {:.2} ({} cores)", n.load5, n.limit, n.physical);
+    let load = if n.load5 > n.limit {
+        styled(WARNING, &load)
+    } else {
+        styled(DIM, &load)
+    };
+    let mut out = format!(
+        "{}  {load}  {}",
+        styled(DIM, state),
+        styled(DIM, &format!("jobs {}", n.jobs))
+    );
+    if let Some(kill) = &n.kill {
+        let kill = format!("last kill {} {}", text::clock(kill.at), safe(&kill.by));
+        let _ = write!(out, "  {}", styled(WARNING, &kill));
+    }
+    if n.on
+        && let Some(ago) = ago
+    {
+        let _ = write!(out, "  {}", styled(DIM, &format!("last look {ago}s ago")));
+    }
+    out.push('\n');
+    out
+}
+
+/// `riff workers monitor` (01M421QPKWPX00X24F8V6DT8Z3): the settings,
+/// the limits that they give on this machine, and the last look.
+///
+/// ```
+/// use riff::monitor::{Saved, SavedLimits};
+/// use riff::settings::Monitor;
+///
+/// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
+/// let on = Monitor { on: true, every: 15, load: 1.5 };
+/// let out = plain(riff::view::workers_monitor(&on, 8, 4, None, "/h/c.toml".as_ref()));
+/// assert_eq!(
+///     out,
+///     "monitor.on  true  (/h/c.toml)\n\
+///      monitor.every  15\n\
+///      monitor.load  1.5\n\
+///      The monitor looks at this machine each 15 seconds. It tells the lead when the 5-minute \
+///      load goes over 12.00 (1.5 times 8 physical cores), when less than 4 GB of memory is \
+///      available (workers.floor), and at each kill. Set it with: riff workers monitor on|off \
+///      --every SECONDS --load N\n\
+///      No look yet. A workers host, or the riff mcp of the lead, runs the monitor.\n"
+/// );
+/// let saved = Saved {
+///     at: 1727980000,
+///     load1: 3.1,
+///     load5: 2.8,
+///     avail_gb: 20,
+///     limits: SavedLimits { load: 12.0, floor: 4 },
+///     kill: None,
+/// };
+/// let out = plain(riff::view::workers_monitor(&on, 8, 4, Some(&saved), "/h/c.toml".as_ref()));
+/// assert!(out.ends_with(&format!(
+///     "Last look {}: load 3.10 2.80, 20 GB available. No kill.\n",
+///     riff::text::clock(1727980000)
+/// )));
+/// let off = Monitor { on: false, ..on };
+/// let out = plain(riff::view::workers_monitor(&off, 8, 4, None, "/h/c.toml".as_ref()));
+/// assert!(out.ends_with("The monitor is off. Turn it on with: riff workers monitor on\n"), "{out}");
+/// ```
+pub fn workers_monitor(
+    monitor: &crate::settings::Monitor,
+    physical: u16,
+    floor: u32,
+    saved: Option<&crate::monitor::Saved>,
+    path: &Path,
+) -> String {
+    let mut out = format!(
+        "monitor.on  {}  {}\nmonitor.every  {}\nmonitor.load  {}\n",
+        monitor.on,
+        styled(DIM, &format!("({})", path.display())),
+        monitor.every,
+        monitor.load
+    );
+    if !monitor.on {
+        let _ = writeln!(
+            out,
+            "{}",
+            styled(
+                DIM,
+                "The monitor is off. Turn it on with: riff workers monitor on"
+            )
+        );
+        return out;
+    }
+    let limit = monitor.load * f64::from(physical);
+    let memory = if floor == 0 {
+        String::new()
+    } else {
+        format!(", when less than {floor} GB of memory is available (workers.floor)")
+    };
+    let _ = writeln!(
+        out,
+        "{}",
+        styled(
+            DIM,
+            &format!(
+                "The monitor looks at this machine each {} seconds. It tells the lead when the \
+                 5-minute load goes over {limit:.2} ({} times {physical} physical cores){memory}, \
+                 and at each kill. Set it with: riff workers monitor on|off --every SECONDS \
+                 --load N",
+                monitor.every, monitor.load
+            )
+        )
+    );
+    let last = match saved {
+        None => {
+            "No look yet. A workers host, or the riff mcp of the lead, runs the monitor.".to_owned()
+        }
+        Some(s) => {
+            let kill = match &s.kill {
+                None => "No kill.".to_owned(),
+                Some(k) => format!(
+                    "Last kill {}: {} killed {}.",
+                    text::clock(k.at),
+                    safe(&k.by),
+                    safe(&k.what)
+                ),
+            };
+            format!(
+                "Last look {}: load {:.2} {:.2}, {} GB available. {kill}",
+                text::clock(s.at),
+                s.load1,
+                s.load5,
+                s.avail_gb
+            )
+        }
+    };
+    let _ = writeln!(out, "{last}");
+    out
+}
+
 /// The table of `riff workers` for the worker panes of one machine
 /// (01M3JPQTBDGT54WN7FZP9CD6B5): PANE, ID (8 characters; the full
 /// session ID with `long`), STATE and DETAIL from `sessions`. A
