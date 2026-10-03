@@ -20,6 +20,7 @@
 //! | `message` | the text |
 //! | `target` | the module that wrote the line |
 //! | `caller`, `named` | a caller of a call as JSON, for example `{"session":"mike/84cf"}` ([`crate::trace`]) |
+//! | `counts` | the count of each code in a `dropped` line as JSON, for example `{"no_token":900}` ([`crate::trace`]) |
 //! | each other field | a value of the event, for example `position` |
 //!
 //! [`JsonLines`] is the event format for `tracing_subscriber`. [`init`]
@@ -54,9 +55,10 @@ use tracing_subscriber::registry::LookupSpan;
 const OWN: [&str; 4] = ["severity", "time", "message", "target"];
 
 /// The fields whose value is JSON: a caller of a call, as a record
-/// names it ([`crate::trace`]). The line holds the value as JSON, not
-/// as text. A value that is not JSON stays text.
-const JSON: [&str; 2] = ["caller", "named"];
+/// names it, and the counts of a `dropped` line ([`crate::trace`]).
+/// The line holds the value as JSON, not as text. A value that is not
+/// JSON stays text.
+const JSON: [&str; 3] = ["caller", "named", "counts"];
 
 /// The `severity` of Cloud Logging for a level.
 ///

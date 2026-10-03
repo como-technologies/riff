@@ -450,14 +450,19 @@ line has the format of each other log line (`severity`, `time`,
   |---|---|---|
   | The time of the read of the body | `BODY_TIME` | 2 seconds |
   | The `denied` lines in one window | `DENIED_MAX` in `DENIED_INTERVAL` | 100 lines in 10 seconds |
+  | The lines of a window kept for a valid token | `DENIED_KEPT` | 20 lines |
 
   ```mermaid
   flowchart TD
-      R[the token layer refuses a call] --> W{"fewer than 100 lines<br/>in this window?"}
+      R[the token layer refuses a call] --> V{"a valid token?<br/>not_you, bad_proof"}
+      V -->|yes| W{"fewer than 100 lines<br/>in this window?"}
+      V -->|no| K{"fewer than 80 lines<br/>in this window?"}
       W -->|yes| B["read the body for the name:<br/>at most 64 KiB, at most 2 seconds"]
+      K -->|yes| B
       B --> D[line: denied]
-      W -->|no| N["no read, no line:<br/>the count goes up"]
-      N -->|"the window ends,<br/>or the server stops"| C["line: dropped, with the count"]
+      W -->|no| N["no read, no line:<br/>the count of the code goes up"]
+      K -->|no| N
+      N -->|"the window ends,<br/>or the server stops"| C["line: dropped, with the count<br/>and the count of each code"]
       D --> S[the same reply]
       N --> S
   ```
@@ -473,13 +478,20 @@ line has the format of each other log line (`severity`, `time`,
   Over the limit, the server writes no line and does not read the
   body. At the end of a window with such calls, a timer writes one
   line with the result `dropped`, the severity `WARNING` and `count`:
-  the number of `denied` lines that the server did not write. So a
-  window has at most one `dropped` line. A stop of the server ends the
-  window, so no count is lost.
+  the number of `denied` lines that the server did not write. The line
+  also has `counts`: that number for each code
+  (01M419Z1RM0TDJ50F6SEJC40GB). So a window has at most one `dropped`
+  line. A stop of the server ends the window, so no count is lost.
 
   ```json
-  {"severity":"WARNING","time":"2026-10-01T12:00:10Z","target":"engine","message":"dropped","result":"dropped","count":900}
+  {"severity":"WARNING","time":"2026-10-01T12:00:10Z","target":"engine","message":"dropped","result":"dropped","count":920,"counts":{"no_token":918,"not_you":2}}
   ```
+
+- The kept lines (01M419Z1V3YT48PR2NTFYWAXG9): the last 20 lines of each
+  window are for a call with a valid token, with the code `not_you` or
+  `bad_proof`. A call with no token, a bad token or an old build takes
+  a line only from the first 80. So a flood of calls with no token does
+  not hide a member that acts as another session.
 
 - The count is one count for the whole server. Behind Cloud Run, the
   server knows no address of a caller that it can trust. So many

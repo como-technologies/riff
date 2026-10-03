@@ -972,7 +972,7 @@ line to its own log for it, with the field `result`:
 | `no_change` | The server took the command, and nothing changed. |
 | `failed` | The server did not write the change, and stopped. The severity is `ERROR` when the write failed. It is `WARNING`, with the `reason`, when the server stopped first. |
 | `denied` | The server refused the token of the call, or the call had none. The line has the `path` of the call. |
-| `dropped` | The server refused more calls than it writes `denied` lines for. The line has the `count` of the lines that it did not write. |
+| `dropped` | The server refused more calls than it writes `denied` lines for. The line has the `count` of the lines that it did not write, and `counts`: the count of each code. |
 
 ```mermaid
 flowchart LR
@@ -1010,16 +1010,25 @@ The log keeps its records for about 30 days.
 
 ### Find how many refused calls have no line
 
-The server writes at most 100 `denied` lines in 10 seconds. For each
-10 seconds with more refused calls, it writes one `dropped` line. Its
-`count` is the number of `denied` lines that it did not write:
+The server writes at most 100 `denied` lines in 10 seconds. It keeps
+20 of them for a call with a valid token (`not_you`, `bad_proof`). So
+a flood of calls with no token does not hide a member that acts as
+another session. For each 10 seconds with more refused calls, it
+writes one `dropped` line. Its `count` is the number of `denied` lines
+that it did not write. Its `counts` holds that number for each code:
 
 ```sh
 jq -c 'select(.result == "dropped")' server.log
 ```
 
 ```text
-{"severity":"WARNING","time":"2026-10-01T12:00:10.000Z","message":"dropped","target":"engine","count":900,"result":"dropped"}
+{"severity":"WARNING","time":"2026-10-01T12:00:10.000Z","message":"dropped","target":"engine","count":920,"counts":{"no_token":918,"not_you":2},"result":"dropped"}
+```
+
+To see the codes of each window:
+
+```sh
+jq -c 'select(.result == "dropped") | {time, counts}' server.log
 ```
 
 For the shared server:

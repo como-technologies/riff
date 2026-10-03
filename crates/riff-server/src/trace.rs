@@ -13,8 +13,8 @@
 //!     C[call] --> T{token layer}
 //!     T -->|refused| M{the limit of rate}
 //!     M -->|a line is free| D["line: denied<br/>named, path, code"]
-//!     M -->|over the limit| X["no line: the count goes up"]
-//!     X -->|the window ends| O["line: dropped<br/>count"]
+//!     M -->|over the limit| X["no line: the count of the code goes up"]
+//!     X -->|the window ends| O["line: dropped<br/>count, counts"]
 //!     T -->|a signal or a query| N[no line]
 //!     T -->|a command| E[the entry in the queue]
 //!     E --> W{the writer}
@@ -51,6 +51,7 @@
 //! | `path` | `denied` | The path of the call, in the place of `command`. |
 //! | `code` | `denied` | [`DeniedCode`]. |
 //! | `count` | `dropped` | The number of `denied` lines that the server did not write in the window. |
+//! | `counts` | `dropped` | The same number for each code: `{"no_token":900,"not_you":3}`. A code with no dropped line is not in it. |
 //!
 //! # Rules
 //!
@@ -85,8 +86,15 @@
 //!   the first refused call after the end of the last window. Over the
 //!   limit, the server writes no line and does not read the body. At
 //!   the end of a window with such calls, it writes one line `dropped`
-//!   with their `count`. A stop of the server ends the window
+//!   with their `count`, and with `counts`: the count of each code
+//!   (01M419Z1RM0TDJ50F6SEJC40GB). A stop of the server ends the window
 //!   ([`Limit::close`]), so no count is lost.
+//! - [`DENIED_KEPT`] lines of each window are kept for a call with a
+//!   valid token (01M419Z1V3YT48PR2NTFYWAXG9): the codes `not_you` and
+//!   `bad_proof` ([`DeniedCode::proved`]). Each other call can take
+//!   only the first [`DENIED_MAX`] minus [`DENIED_KEPT`] lines. So a
+//!   flood of calls with no token does not hide a member that acts as
+//!   another session.
 //! - The limits change only the lines. The reply to a refused call has
 //!   the same status and the same text with a line and with no line.
 //!
@@ -108,14 +116,16 @@
 //! The limit of rate:
 //!
 //! ```
-//! use riff_server::trace::{DENIED_MAX, Limit};
+//! use riff_server::trace::{DENIED_KEPT, DENIED_MAX, DeniedCode, Limit};
 //!
 //! let limit = Limit::default();
-//! // The first lines of a window are free.
-//! assert!((0..DENIED_MAX).all(|_| limit.take()));
+//! // The first lines of a window are free for each call.
+//! assert!((0..DENIED_MAX - DENIED_KEPT).all(|_| limit.take(DeniedCode::NoToken)));
+//! // The rest of the window is kept for a call with a valid token.
+//! assert!(!limit.take(DeniedCode::NoToken));
+//! assert!((0..DENIED_KEPT).all(|_| limit.take(DeniedCode::NotYou)));
 //! // Each later call of the window gets no line. The limit counts it.
-//! assert!(!limit.take());
-//! assert!(!limit.take());
+//! assert!(!limit.take(DeniedCode::NotYou));
 //! assert_eq!(limit.dropped(), 2);
 //! // The end of the window writes the line `dropped` with the count.
 //! limit.close();
@@ -150,6 +160,10 @@ pub const BODY_TIME: Duration = Duration::from_secs(2);
 /// The most `denied` lines that the server writes in one
 /// [`DENIED_INTERVAL`] (01M3Z67DZX9BC3TYF3PWGFGZJ7).
 pub const DENIED_MAX: u64 = 100;
+
+/// The `denied` lines of each window that only a call with a valid
+/// token can take (01M419Z1V3YT48PR2NTFYWAXG9). See [`DeniedCode::proved`].
+pub const DENIED_KEPT: u64 = 20;
 
 /// The length of one window of the limit of rate of the `denied` lines
 /// (01M3Z67DZX9BC3TYF3PWGFGZJ7).
@@ -272,6 +286,25 @@ impl DeniedCode {
             DeniedCode::NotYou => "not_you",
             DeniedCode::OldBuild => "old_build",
         }
+    }
+
+    /// True when the call of the code had a valid token: `not_you` and
+    /// `bad_proof`. Such a call can take the lines that the limit keeps
+    /// ([`DENIED_KEPT`], 01M419Z1V3YT48PR2NTFYWAXG9).
+    ///
+    /// ```
+    /// use riff_server::trace::DeniedCode;
+    ///
+    /// assert!(DeniedCode::NotYou.proved() && DeniedCode::BadProof.proved());
+    /// assert!(!DeniedCode::NoToken.proved() && !DeniedCode::OldBuild.proved());
+    /// ```
+    pub fn proved(self) -> bool {
+        matches!(self, DeniedCode::NotYou | DeniedCode::BadProof)
+    }
+
+    /// The place of the code in [`DeniedCode::ALL`].
+    fn index(self) -> usize {
+        self as usize
     }
 }
 
@@ -405,9 +438,24 @@ pub fn denied(path: &str, named: Option<&Named>, code: DeniedCode) {
 }
 
 /// Writes the one line of a window in which the server did not write
-/// `count` `denied` lines (01M3Z67DZX9BC3TYF3PWGFGZJ7).
-fn dropped(count: u64) {
-    tracing::warn!(target: TARGET, count, result = "dropped", "dropped");
+/// some `denied` lines (01M3Z67DZX9BC3TYF3PWGFGZJ7): their `count`, and
+/// `counts`, the count of each code (01M419Z1RM0TDJ50F6SEJC40GB).
+fn dropped(counts: &[u64; DeniedCode::ALL.len()]) {
+    let count: u64 = counts.iter().sum();
+    let each: serde_json::Map<String, Value> = DeniedCode::ALL
+        .iter()
+        .zip(counts)
+        .filter(|(_, count)| **count > 0)
+        .map(|(code, count)| (code.as_str().to_owned(), Value::from(*count)))
+        .collect();
+    let counts = Value::Object(each).to_string();
+    tracing::warn!(
+        target: TARGET,
+        count,
+        counts = counts.as_str(),
+        result = "dropped",
+        "dropped"
+    );
 }
 
 /// One window of the limit of rate.
@@ -417,16 +465,22 @@ struct Window {
     end: Option<Instant>,
     /// The `denied` lines of the window.
     written: u64,
-    /// The `denied` lines that the server did not write in the window.
-    dropped: u64,
+    /// The `denied` lines that the server did not write in the window,
+    /// for each code in the order of [`DeniedCode::ALL`].
+    dropped: [u64; DeniedCode::ALL.len()],
 }
 
 impl Window {
+    /// The `denied` lines that the server did not write in the window.
+    fn dropped(&self) -> u64 {
+        self.dropped.iter().sum()
+    }
+
     /// Ends the window: writes its line `dropped` when it has a count.
     fn close(&mut self) {
-        let count = std::mem::take(&mut self.dropped);
-        if count > 0 {
-            dropped(count);
+        let counts = std::mem::take(&mut self.dropped);
+        if counts.iter().any(|count| *count > 0) {
+            dropped(&counts);
         }
     }
 }
@@ -443,15 +497,17 @@ impl Limit {
         self.0.lock().unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// Takes one `denied` line of the window. It gives false when the
-    /// window has no line left: the caller writes no line, and the
-    /// limit counts it.
+    /// Takes one `denied` line of the window for a call refused with
+    /// `code`. It gives false when the window has no line left for the
+    /// code: the caller writes no line, and the limit counts it. A code
+    /// with no valid token leaves the last [`DENIED_KEPT`] lines
+    /// (01M419Z1V3YT48PR2NTFYWAXG9).
     ///
     /// The first call after the end of a window starts the next window.
     /// The first call over the limit starts a timer that writes the
     /// line `dropped` at the end of the window. With no runtime, the
     /// next call after the window writes that line.
-    pub fn take(&self) -> bool {
+    pub fn take(&self, code: DeniedCode) -> bool {
         let now = Instant::now();
         let mut window = self.window();
         let end = match window.end {
@@ -464,12 +520,17 @@ impl Limit {
                 end
             }
         };
-        if window.written < DENIED_MAX {
+        let max = if code.proved() {
+            DENIED_MAX
+        } else {
+            DENIED_MAX - DENIED_KEPT
+        };
+        if window.written < max {
             window.written += 1;
             return true;
         }
-        window.dropped += 1;
-        if window.dropped == 1
+        window.dropped[code.index()] += 1;
+        if window.dropped() == 1
             && let Ok(runtime) = tokio::runtime::Handle::try_current()
         {
             let limit = self.clone();
@@ -488,7 +549,7 @@ impl Limit {
     /// The `denied` lines that the server did not write in this window
     /// so far.
     pub fn dropped(&self) -> u64 {
-        self.window().dropped
+        self.window().dropped()
     }
 
     /// Writes the line `dropped` of this window now, when it has a
@@ -500,7 +561,7 @@ impl Limit {
     /// Writes the line `denied` of a call whose caller the server knows
     /// already, when the window has a line left.
     pub fn denied(&self, path: &str, named: Option<&Named>, code: DeniedCode) {
-        if self.take() {
+        if self.take(code) {
             denied(path, named, code);
         }
     }
@@ -511,7 +572,7 @@ impl Limit {
     /// body stopped before its end: the reply then closes the call
     /// ([`Found::whole`]).
     pub async fn refuse(&self, request: Request, code: DeniedCode) -> bool {
-        if !self.take() {
+        if !self.take(code) {
             return true;
         }
         let path = request.uri().path().to_owned();
@@ -526,6 +587,9 @@ mod tests {
     use super::*;
     use crate::logline::testing::{Capture, capture};
     use crate::state::{Caller, Code};
+
+    /// The lines of a window that each call can take.
+    const OPEN: u64 = DENIED_MAX - DENIED_KEPT;
 
     fn traced() -> Traced {
         let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=84cf"
@@ -656,8 +720,8 @@ mod tests {
         assert!(!lines[1].as_object().unwrap().contains_key("named_cut"));
     }
 
-    /// A window of the limit of rate (01M3Z67DZX9BC3TYF3PWGFGZJ7): the first
-    /// [`DENIED_MAX`] lines, then one line with the count at its end.
+    /// A window of the limit of rate (01M3Z67DZX9BC3TYF3PWGFGZJ7): the open
+    /// lines, then one line with the count at its end.
     #[tokio::test(start_paused = true)]
     async fn a_window_has_the_lines_of_the_limit_and_one_line_with_the_count() {
         let capture = Capture::start();
@@ -666,7 +730,7 @@ mod tests {
             limit.denied("/v1/claim", None, DeniedCode::NoToken);
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        assert_eq!(capture.results("denied").len() as u64, DENIED_MAX);
+        assert_eq!(capture.results("denied").len() as u64, OPEN);
         // The line with the count comes at the end of the window.
         assert!(capture.results("dropped").is_empty());
         tokio::time::sleep(DENIED_INTERVAL).await;
@@ -676,7 +740,8 @@ mod tests {
         assert_eq!(line["severity"], "WARNING");
         assert_eq!(line["target"], "engine");
         assert_eq!(line["message"], "dropped");
-        assert_eq!(line["count"], 1000 - DENIED_MAX);
+        assert_eq!(line["count"], 1000 - OPEN);
+        assert_eq!(line["counts"], json!({"no_token": 1000 - OPEN}));
         for absent in ["named", "path", "code", "caller"] {
             assert!(!line.contains_key(absent), "{absent}");
         }
@@ -684,7 +749,7 @@ mod tests {
         // The next window starts clean. A window with no dropped line
         // gives no line with a count.
         limit.denied("/v1/claim", None, DeniedCode::NoToken);
-        assert_eq!(capture.results("denied").len() as u64, DENIED_MAX + 1);
+        assert_eq!(capture.results("denied").len() as u64, OPEN + 1);
         tokio::time::sleep(DENIED_INTERVAL * 3).await;
         assert_eq!(capture.results("dropped").len(), 1);
     }
@@ -696,7 +761,7 @@ mod tests {
     async fn a_call_after_the_window_writes_its_count_one_time() {
         let capture = Capture::start();
         let limit = Limit::default();
-        for _ in 0..DENIED_MAX + 7 {
+        for _ in 0..OPEN + 7 {
             limit.denied("/v1/claim", None, DeniedCode::NoToken);
         }
         // The time moves, and the timer task does not run before the
@@ -707,7 +772,7 @@ mod tests {
         let dropped = capture.results("dropped");
         assert_eq!(dropped.len(), 1, "{dropped:?}");
         assert_eq!(dropped[0]["count"], 7);
-        assert_eq!(capture.results("denied").len() as u64, DENIED_MAX + 1);
+        assert_eq!(capture.results("denied").len() as u64, OPEN + 1);
     }
 
     /// A stop ends the window: `close` writes the count one time, also
@@ -717,17 +782,18 @@ mod tests {
         let lines = capture(|| {
             let limit = Limit::default();
             limit.close();
-            for _ in 0..DENIED_MAX + 3 {
+            for _ in 0..OPEN + 3 {
                 limit.denied("/v1/claim", None, DeniedCode::OldBuild);
             }
             assert_eq!(limit.dropped(), 3);
             limit.close();
             limit.close();
         });
-        assert_eq!(lines.len() as u64, DENIED_MAX + 1);
+        assert_eq!(lines.len() as u64, OPEN + 1);
         let last = lines.last().unwrap();
         assert_eq!(last["result"], "dropped");
         assert_eq!(last["count"], 3);
+        assert_eq!(last["counts"], json!({"old_build": 3}));
     }
 
     fn request(body: axum::body::Body) -> Request {
@@ -784,7 +850,7 @@ mod tests {
     async fn a_call_over_the_limit_gets_no_read_of_its_body() {
         let capture = Capture::start();
         let limit = Limit::default();
-        for _ in 0..DENIED_MAX {
+        for _ in 0..OPEN {
             assert!(
                 limit
                     .refuse(request("{}".into()), DeniedCode::NoToken)
@@ -796,7 +862,62 @@ mod tests {
         assert!(limit.refuse(slow, DeniedCode::NoToken).await);
         assert_eq!(start.elapsed(), Duration::ZERO);
         assert_eq!(limit.dropped(), 1);
-        assert_eq!(capture.results("denied").len() as u64, DENIED_MAX);
+        assert_eq!(capture.results("denied").len() as u64, OPEN);
+    }
+
+    /// Done when of #447: 1000 calls with no token and 5 calls with a
+    /// valid token of the wrong session in one window give a `denied`
+    /// line for each of the 5 calls (01M419Z1V3YT48PR2NTFYWAXG9), and a
+    /// `dropped` line with a count for each code (01M419Z1RM0TDJ50F6SEJC40GB).
+    #[tokio::test(start_paused = true)]
+    async fn a_flood_with_no_token_leaves_the_lines_of_a_valid_token() {
+        let capture = Capture::start();
+        let limit = Limit::default();
+        let named = Named::of_text("riff://mike@pangolin/como-technologies/riff?session=84cf");
+        for call in 0..1005 {
+            // The 5 calls with a token come last, after the flood.
+            if call < 1000 {
+                limit.denied("/v1/claim", None, DeniedCode::NoToken);
+            } else {
+                limit.denied("/v1/claim", Some(&named), DeniedCode::NotYou);
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let denied = capture.results("denied");
+        let of = |code: &str| denied.iter().filter(|line| line["code"] == code).count();
+        assert_eq!(of("not_you"), 5, "{denied:?}");
+        assert_eq!(of("no_token") as u64, OPEN);
+
+        tokio::time::sleep(DENIED_INTERVAL).await;
+        let dropped = capture.results("dropped");
+        assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert_eq!(dropped[0]["count"], 1000 - OPEN);
+        assert_eq!(dropped[0]["counts"], json!({"no_token": 1000 - OPEN}));
+    }
+
+    /// The kept lines also have an end: a flood of calls with a valid
+    /// token takes each line of the window, and the counts name each
+    /// code that lost a line.
+    #[test]
+    fn the_counts_name_each_code_that_lost_a_line() {
+        let lines = capture(|| {
+            let limit = Limit::default();
+            for _ in 0..OPEN + 2 {
+                limit.denied("/v1/claim", None, DeniedCode::BadToken);
+            }
+            for _ in 0..DENIED_KEPT + 3 {
+                limit.denied("/v1/claim", None, DeniedCode::BadProof);
+            }
+            limit.denied("/v1/claim", None, DeniedCode::NotYou);
+            limit.close();
+        });
+        let last = lines.last().unwrap();
+        assert_eq!(lines.len() as u64, DENIED_MAX + 1);
+        assert_eq!(last["count"], 6);
+        assert_eq!(
+            last["counts"],
+            json!({"bad_token": 2, "bad_proof": 3, "not_you": 1})
+        );
     }
 
     #[test]

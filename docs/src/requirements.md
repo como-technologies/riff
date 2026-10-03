@@ -1101,6 +1101,13 @@
   calls, it writes one line with the result `dropped`, the severity
   `WARNING` and their `count`. A stop of the server ends the window.
   The reply to a refused call is the same with a line and with no line.
+- **01M419Z1RM0TDJ50F6SEJC40GB** The `dropped` line also has `counts`:
+  a JSON object with the count of each code that lost a line, for
+  example `{"no_token":900,"not_you":3}`.
+- **01M419Z1V3YT48PR2NTFYWAXG9** The server keeps 20 of the `denied`
+  lines of each window (`trace::DENIED_KEPT`) for a call with a valid
+  token: the codes `not_you` and `bad_proof`. A call with another code
+  takes a line only while the window has more than 20 lines left.
 - **01M3X4Z675D0ZQX93E93F3M8FA** No line of a trace holds the body of a
   post, a token or a key.
 - **01M3X4Z69CFV23V4QZBE8RP1GJ** The codes of a refusal are a fixed set.
