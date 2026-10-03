@@ -53,15 +53,15 @@ async fn a_call_of_this_build_passes_the_check() {
 #[tokio::test]
 async fn a_riff_of_this_line_or_the_line_before_passes_the_check() {
     let (_service, url) = common::start(false, &[]).await;
-    let before = this().line_before().unwrap();
-    for version in [
-        Semver {
-            patch: this().patch + 3,
-            ..this()
-        },
-        before,
-        Semver { patch: 9, ..before },
-    ] {
+    let mut versions = vec![Semver {
+        patch: this().patch + 3,
+        ..this()
+    }];
+    // The line 1 has no line before: 0.x does not talk with it.
+    if let Some(before) = this().line_before() {
+        versions.extend([before, Semver { patch: 9, ..before }]);
+    }
+    for version in versions {
         for path in CALLS {
             let (status, theirs, body) = call(&url, path, Some(&at(version))).await;
             assert_ne!(status, 409, "{version} {path}: {body}");
@@ -73,7 +73,10 @@ async fn a_riff_of_this_line_or_the_line_before_passes_the_check() {
 #[tokio::test]
 async fn an_older_riff_is_refused_and_told_to_update_riff() {
     let (_service, url) = common::start(false, &[]).await;
-    let old = at(this().line_before().unwrap().line_before().unwrap());
+    let old = at(this()
+        .line_before()
+        .and_then(Semver::line_before)
+        .unwrap_or_else(|| "0.8.0".parse().unwrap()));
     for path in CALLS {
         let (status, theirs, body) = call(&url, path, Some(&old)).await;
         assert_eq!(status, 409, "{path}");
