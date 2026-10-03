@@ -295,7 +295,8 @@ const CUT_AFTER: Duration = Duration::from_secs(3);
 /// Registers `body` on `base`, and tries again while the gate replies
 /// 503, as `riff` does (R132). Under load, the last lease read of the
 /// instance can be older than the 500 ms of [`common::LEASE`] (R139).
-/// It panics when the instance stopped for good.
+/// It panics when the instance stopped for good. The test waits for
+/// the fact, not for a fixed time (01M41A0M2XWCWTWGF7T9DR03W0).
 async fn served(service: &Service, base: &str, body: Value) -> u16 {
     let started = Instant::now();
     loop {
