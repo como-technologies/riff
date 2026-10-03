@@ -4447,6 +4447,15 @@ mod tests {
         assert!(info(&state, &docs(), t(1200)).blocked.unwrap().unanswered);
         assert_eq!(look(&mut state, 1800), (0, 0), "one time");
 
+        // A late answer ends the line at once, before the next work. The
+        // session stays blocked until that work.
+        let to = vec!["session=c3".parse().unwrap()];
+        let late = Post::new(&api(), Some(repo()), to, "take the first one");
+        state.post(late, t(1900), T0).unwrap();
+        let block = info(&state, &docs(), t(1900)).blocked.unwrap();
+        assert!(block.answered && !block.unanswered);
+        assert_eq!(look(&mut state, 2000), (0, 0));
+
         // A block of a session of another user is not for this lead.
         state
             .set_blocked(&tests(), "which API?".into(), t(0), T0)

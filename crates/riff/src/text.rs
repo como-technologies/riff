@@ -2401,11 +2401,14 @@ pub fn status_set(status: &riff_core::wire::Status) -> String {
 }
 
 /// The answer to `blocked` (01M41FZPGEK4TNPSM2051W4VMS). `told` is true
-/// when the lead got the message.
+/// when the lead got the message. A reason that ends in a stop gets no
+/// second stop.
 ///
 /// ```
 /// let told = riff::text::blocked_set("which design?", true);
-/// assert_eq!(told, "You are blocked: which design?. The lead has the reason.");
+/// assert_eq!(told, "You are blocked: which design? The lead has the reason.");
+/// let told = riff::text::blocked_set("the build fails", true);
+/// assert_eq!(told, "You are blocked: the build fails. The lead has the reason.");
 /// let alone = riff::text::blocked_set("which design?", false);
 /// assert!(alone.contains("No lead got the message: ask your own user."), "{alone}");
 /// ```
@@ -2415,7 +2418,8 @@ pub fn blocked_set(reason: &str, told: bool) -> String {
     } else {
         "No lead got the message: ask your own user."
     };
-    format!("You are blocked: {reason}. {lead}")
+    let stop = if reason.ends_with(['.', '?', '!']) { "" } else { "." };
+    format!("You are blocked: {reason}{stop} {lead}")
 }
 
 /// The most characters of the text of a message in an automatic step

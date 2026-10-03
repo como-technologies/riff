@@ -182,7 +182,8 @@ async fn the_facts_of_the_forge_make_waiting() {
 
 /// A block wakes the lead, then wakes it again, then `riff top` shows
 /// "the lead gave no answer" and one desktop notification tells the
-/// person. An answer and the next work end the block
+/// person. An answer ends the line at once, and the next work ends the
+/// block
 /// (01M41FZPGEK4TNPSM2051W4VMS, 01M41FZQ545HQ9Q75CSKX8HF8H,
 /// 01M41FZQCHWY1YVGAZ60ZHJK21, 01M41FZQKZKW131Z8822G31T5G).
 #[tokio::test(flavor = "multi_thread")]
@@ -251,8 +252,16 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
         "--app-name=riff riff: the lead gave no answer w1 (issue-12) is blocked: which design?\n"
     );
 
-    // The answer, then work: the block ends.
+    // The answer ends the line at once, before the next work. The
+    // session stays blocked until that work.
     api.tell(&lead, "w1", "take the first one").await.unwrap();
+    let w1 = info(&api, &lead, &worker).await;
+    assert_eq!(w1.state, Some(SessionState::Blocked));
+    let board = top(&[w1]);
+    assert!(board.contains("blocked  w1 issue-12, "), "{board}");
+    assert!(!board.contains("the lead gave no answer"), "{board}");
+
+    // Then work: the block ends.
     let work = riff_core::wire::Activity {
         tool: Some("Edit".into()),
         turn: true,
@@ -328,7 +337,7 @@ async fn riff_blocked_sets_the_block_and_tells_the_lead() {
     let said = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         said,
-        "You are blocked: which design?. The lead has the reason.\n"
+        "You are blocked: which design? The lead has the reason.\n"
     );
     let block = info(&api, &lead, &worker).await.blocked.unwrap();
     assert_eq!(block.reason, "which design?");

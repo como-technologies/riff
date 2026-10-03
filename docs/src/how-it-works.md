@@ -2397,7 +2397,7 @@ wait as `waiting` by itself.
 A message that wakes the blocked session is its answer. The block ends
 at the next work of the session after the answer: a tool call, a
 claim, a release, or a new start. A note or a status request is no
-answer.
+answer. The answer ends the line `the lead gave no answer` at once.
 
 When the lead gives no answer, riff tells the person:
 

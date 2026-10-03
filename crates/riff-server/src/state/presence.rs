@@ -315,7 +315,8 @@ impl Presence {
     ///   cursors, and each cursor of a thread that is gone.
     /// - `posted`: a message, not a note and not a status request, that
     ///   wakes a blocked session answers its block
-    ///   (01M41FZPT31ATXP75QW965P3JB).
+    ///   (01M41FZPT31ATXP75QW965P3JB). The block is then not unanswered
+    ///   (01M41FZQCHWY1YVGAZ60ZHJK21).
     /// - `claimed`, `released` and `session_started` end the block of
     ///   the session: a change of its claims is work, and a new start
     ///   is a new context.
@@ -329,6 +330,7 @@ impl Presence {
                         let session = self.sessions.get_mut(who);
                         if let Some(block) = session.and_then(|s| s.blocked.as_mut()) {
                             block.answered.get_or_insert(at);
+                            block.unanswered = false;
                         }
                     }
                 }
