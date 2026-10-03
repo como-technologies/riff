@@ -791,6 +791,11 @@
   test in process that puts a new riff at its URL keeps its listener.
   A test that needs a URL where nothing listens holds the port with a
   socket that does not listen.
+- **01M41A0M2XWCWTWGF7T9DR03W0** A test waits for the fact that it
+  checks, for example a message, a line in a log or a look of a host.
+  It does not wait for a fixed time. A time limit of a wait only ends
+  a test that hangs, so it is generous. A test passes on a busy
+  machine. Only a check that a thing does not come waits for a time.
 - **01M3MY2KSV73WS8D902YCH2PRX** With `RIFF_HOME=DIR`, `riff` keeps its
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.
