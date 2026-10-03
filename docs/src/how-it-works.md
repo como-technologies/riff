@@ -3245,6 +3245,11 @@ riff workers nice 15
 `riff workers nice` with no number shows the value. The next worker
 that starts gets the new value.
 
+The value is absolute. A wrapper that runs at nice 5 adds 5, so
+`claude` runs at nice 10. A process cannot lower its own nice value.
+So a wrapper that runs at a higher value, for example 15, keeps 15 for
+`claude`, and says so in its pane.
+
 #### Set the memory of the workers
 
 On a machine with systemd, all workers of the machine run in one
@@ -3272,8 +3277,35 @@ the slice, its memory and its workers:
 systemctl --user status riff-workers.slice
 ```
 
+A dash in the name of a slice makes a tree. So systemd puts
+`riff-workers.slice` below `riff.slice`. `systemd-cgls` shows the
+workers there:
+
+```sh
+systemd-cgls --user-unit riff.slice
+```
+
 On a machine with no systemd, the first `riff workers start` says that
 the workers run with no memory limit. The other limits still apply.
+
+When `systemd-run --user --scope` fails in the pane of a worker, for
+example with no user bus in the environment of the tmux server, the
+worker starts with no scope. Its pane says so one time on the machine.
+
+#### Limit a session that you start by hand
+
+The limits apply only to workers. A session that you start by hand,
+and the lead, get no cap of jobs, no nice value and no scope. Give
+them the same limits when you start `claude`:
+
+```sh
+CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=2 \
+  systemd-run --user --scope --quiet --slice=riff-workers.slice \
+  nice -n 10 claude
+```
+
+Each build and test of the session then runs with 2 jobs, gives way to
+your own work, and counts in the memory limit of the workers.
 
 When a kill ends a worker, your lead gets a direct message with the
 signal (see [How a worker ends](#how-a-worker-ends)). The work of

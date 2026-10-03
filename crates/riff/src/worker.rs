@@ -186,9 +186,11 @@ impl Drop for Share {
 
 /// Runs `claude` with `args` as a worker, and waits. It gives `claude`
 /// the limits of a worker of this machine (see [`crate::limits`]): the
-/// jobs (01M3WFYZRK5CT22GJW6ZHYT9CC), the nice value
-/// (01M3WFYZTX05CGDP2NQF9B356K), and a scope in the slice that
-/// [`limits::SLICE_VAR`] names (01M3WFYZX6GVFYW6NTTTKF144R). When
+/// jobs (01M3WFYZRK5CT22GJW6ZHYT9CC), the absolute nice value
+/// (01M3WFYZTX05CGDP2NQF9B356K, 01M407J8R79WVYVABVCSHFAMJ9), and a scope
+/// in the slice that [`limits::SLICE_VAR`] names
+/// (01M3WFYZX6GVFYW6NTTTKF144R), when a scope works in the pane
+/// (01M407J8X25H9AT8M789EG5RQZ). When
 /// `claude` exits on its own, it tells the lead. Returns the exit code
 /// for the wrapper: the code of `claude`, or 0 after a stop.
 pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
@@ -205,7 +207,17 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let slice = std::env::var(limits::SLICE_VAR)
         .ok()
         .filter(|s| !s.is_empty());
-    let command = limits::command(claude, args, limit.nice, slice.as_deref());
+    let (slice, said) =
+        limits::worker_slice(slice.as_deref(), local::dir().as_deref(), limits::try_scope);
+    if let Some(said) = said {
+        eprintln!("{said}");
+    }
+    let here = limits::nice_here();
+    if limit.nice > 0 && here > limit.nice {
+        eprintln!("{}", crate::text::nice_above(here, limit.nice));
+    }
+    let nice = limits::nice_by(limit.nice, here);
+    let command = limits::command(claude, args, nice, slice.as_deref());
     // The pool lives while this wrapper lives (01M3ZGZMJ9RF1C4AHG78GQ2NM4).
     let pool = hold_pool(dir.as_deref(), &limit);
     // A worker past the count of the pool keeps one token out of it.

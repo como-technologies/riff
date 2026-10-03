@@ -614,6 +614,42 @@ async fn a_start_on_a_host_with_no_workers_host_fails() {
     );
 }
 
+/// A host of the release before tells no floor and no available memory
+/// in its status line. The lead still lists it, with the default floor
+/// (01M407J917F9AH072C8DE80CRJ).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_lead_reads_the_status_line_of_a_host_of_the_release_before() {
+    let api = start_server().await;
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    api.register(&lead).await.unwrap();
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let old = session(&main, "mike", "c", "c1");
+    api.register(&old).await.unwrap();
+    let status = Status {
+        step: "workers host: limit 3, cpu 16x4500MHz, mem 32GB, load 1.50, workers: %3 1a2b3c4d"
+            .into(),
+        blocked: None,
+    };
+    api.status(&old, &status).await.unwrap();
+    // The open watch keeps the old host live.
+    let _watch = api.watch(&old).await.unwrap();
+    let a = Machine::new("a", api.base());
+    let out = until("riff workers lists host c", || async {
+        let out = a.riff(&main, &[], Some("l1")).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let out = stdout(&out);
+        out.contains("\nc  ").then_some(out)
+    })
+    .await;
+    let host = out.lines().find(|l| l.starts_with("c  ")).unwrap();
+    assert!(
+        host.contains("limit 3  runs 1") && host.contains("mem 32GB, 32GB available"),
+        "{out}"
+    );
+}
+
 /// Puts a copy of `from` at `to` as `cargo install` does: a new file
 /// beside it, then a rename. A child process copies, so that no fork of
 /// a parallel test holds a write fd of the file.

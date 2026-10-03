@@ -132,12 +132,16 @@ impl Machine {
 
     /// `riff ARGS` in the main clone, as a person in a tmux pane.
     fn riff(&self, args: &[&str]) -> Command {
+        self.in_pane(Isolated::shared().riff(), args)
+    }
+
+    /// `cmd ARGS` in the main clone, as a person in a tmux pane.
+    fn in_pane(&self, mut cmd: Command, args: &[&str]) -> Command {
         let path = format!(
             "{}:{}",
             self.bin().display(),
             std::env::var("PATH").unwrap()
         );
-        let mut cmd = Isolated::shared().riff();
         cmd.args(args)
             .current_dir(self.main())
             .env("PATH", path)
@@ -172,8 +176,21 @@ impl Machine {
     /// `riff workers run CLAUDE` as the worker session `w1` in the pane
     /// `%5`, with `vars`.
     fn wrapper(&self, claude: &Path, vars: &[(&str, &str)]) -> Output {
-        self.riff(&["workers", "run"])
-            .arg(claude)
+        self.wrapper_in(self.riff(&["workers", "run"]), claude, vars)
+    }
+
+    /// [`Machine::wrapper`] with a nice value of its own: `nice -n ADD`
+    /// more than this test process.
+    fn wrapper_at(&self, add: u8, claude: &Path) -> Output {
+        let riff = Isolated::shared().riff_path();
+        let add = add.to_string();
+        let args = ["-n", add.as_str(), riff.to_str().unwrap(), "workers", "run"];
+        let nice = self.in_pane(Isolated::shared().command("nice"), &args);
+        self.wrapper_in(nice, claude, &[])
+    }
+
+    fn wrapper_in(&self, mut cmd: Command, claude: &Path, vars: &[(&str, &str)]) -> Output {
+        cmd.arg(claude)
             .arg("Join the riff.")
             .env("RIFF_SESSION", "w1")
             .env("TMUX_PANE", "%5")
@@ -379,25 +396,44 @@ fn the_numbers_count_the_workers_over_the_limit() {
 
 /// 01M3WFYZTX05CGDP2NQF9B356K: the wrapper starts `claude` with nice 10.
 /// The setting changes the value, and 0 turns it off.
+/// 01M407J8R79WVYVABVCSHFAMJ9: the value is absolute, also when the
+/// wrapper runs at a nice value of its own. A wrapper at a higher value
+/// keeps its own value, and says so.
 #[test]
 fn the_wrapper_starts_claude_with_nice() {
     let m = Machine::new(isolated::DEAD_SERVER);
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!("nice > '{}'", seen.display()));
     let base = nice_here();
-    let nice = |add: u8| (base + add).min(19).to_string();
+    let at = |nice: u8, wrapper: u8| nice.max(wrapper).to_string();
 
     let out = m.wrapper(&claude, &[]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(read(&seen).trim(), nice(10));
+    assert_eq!(read(&seen).trim(), at(10, base));
+
+    // The wrapper runs at a nice value of its own: claude still gets 10.
+    let own = (base + 5).min(19);
+    let out = m.wrapper_at(5, &claude);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(read(&seen).trim(), at(10, own));
+    let said = format!("runs at nice {own}, more than workers.nice 10");
+    assert_eq!(stderr(&out).contains(&said), own > 10, "{out:?}");
+
+    let out = m.wrapper_at(15, &claude);
+    let own = (base + 15).min(19);
+    assert_eq!(read(&seen).trim(), at(10, own), "{out:?}");
+    assert!(
+        stderr(&out).contains(&format!("runs at nice {own}")),
+        "{out:?}"
+    );
 
     m.workers(&["nice", "3"]);
     m.wrapper(&claude, &[]);
-    assert_eq!(read(&seen).trim(), nice(3));
+    assert_eq!(read(&seen).trim(), at(3, base));
 
     m.workers(&["nice", "0"]);
     m.wrapper(&claude, &[]);
-    assert_eq!(read(&seen).trim(), nice(0));
+    assert_eq!(read(&seen).trim(), at(0, base));
 }
 
 /// 01M3WFYZX6GVFYW6NTTTKF144R: with the slice in `RIFF_WORKER_SLICE`,
@@ -422,12 +458,49 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     std::fs::remove_file(&seen).unwrap();
     let out = m.wrapper(&claude, &[("RIFF_WORKER_SLICE", "riff-workers.slice")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
+    // The first scope is the check that a scope works in the pane.
     assert_eq!(
         m.log("systemd-run.log").trim(),
-        "--user --scope --quiet --slice=riff-workers.slice"
+        "--user --scope --quiet --slice=riff-workers.slice\n \
+         --user --scope --quiet --slice=riff-workers.slice"
     );
     // claude still gets its marks, its jobs and its arguments.
     assert_eq!(read(&seen).trim(), "1 3 Join the riff.");
+}
+
+/// A fake `systemd-run` with no user bus in the pane.
+const NO_BUS: &str = r#"#!/bin/sh
+echo "Failed to connect to bus: No medium found" >&2
+exit 1
+"#;
+
+/// 01M407J8X25H9AT8M789EG5RQZ: when `systemd-run --user --scope` fails
+/// in the pane, the wrapper starts `claude` with no scope, and says so
+/// one time.
+#[test]
+fn with_no_scope_in_the_pane_the_worker_starts_with_no_scope() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    script(&m.bin(), "systemd-run", NO_BUS);
+    let seen = m.bin().join("seen");
+    let claude = m.claude(&format!("echo \"$RIFF_WORKER $1\" > '{}'", seen.display()));
+    let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
+
+    let first = m.wrapper(&claude, &slice);
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+    assert_eq!(read(&seen).trim(), "1 Join the riff.");
+    assert!(
+        stderr(&first).contains(
+            "systemd-run cannot make a scope in this pane (Failed to connect to bus: No medium \
+             found), so this worker runs with no memory limit."
+        ),
+        "{first:?}"
+    );
+
+    std::fs::remove_file(&seen).unwrap();
+    let second = m.wrapper(&claude, &slice);
+    assert_eq!(second.status.code(), Some(0), "{second:?}");
+    assert_eq!(read(&seen).trim(), "1 Join the riff.");
+    assert!(!stderr(&second).contains("systemd-run"), "{second:?}");
 }
 
 /// 01M3WFZ03Z9Y60HPHJJ9ZE6AQZ: the OS kills `claude`, as it does when
@@ -697,6 +770,14 @@ fn the_book_has_a_how_to_for_each_limit() {
         (
             "#### Set the memory that a new worker needs",
             "riff workers floor 8",
+        ),
+        (
+            "#### Set the memory of the workers",
+            "systemd-cgls --user-unit riff.slice",
+        ),
+        (
+            "#### Limit a session that you start by hand",
+            "--slice=riff-workers.slice",
         ),
     ] {
         let how = &part[part
