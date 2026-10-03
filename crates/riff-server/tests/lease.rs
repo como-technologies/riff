@@ -285,6 +285,33 @@ async fn last_position(store: &Memory) -> u64 {
     verify(store).await.unwrap().last.unwrap()
 }
 
+/// The live time of the lease in the test of an instance that runs
+/// again after a cut.
+/// The instance stops for good when its last renewal is this old. So a
+/// stall of the test process under load must stay shorter than this
+/// before the cut (#485).
+const CUT_AFTER: Duration = Duration::from_secs(3);
+
+/// Registers `body` on `base`, and tries again while the gate replies
+/// 503, as `riff` does (R132). Under load, the last lease read of the
+/// instance can be older than the 500 ms of [`common::LEASE`] (R139).
+/// It panics when the instance stopped for good. The test waits for
+/// the fact, not for a fixed time (01M41A0M2XWCWTWGF7T9DR03W0).
+async fn served(service: &Service, base: &str, body: Value) -> u16 {
+    let started = Instant::now();
+    loop {
+        let code = status(base, "register", body.clone()).await;
+        if code != 503 || started.elapsed() > common::BUSY_LIMIT {
+            return code;
+        }
+        assert!(
+            !service.lease_ended(),
+            "the instance stopped for good: its last renewal is {CUT_AFTER:?} old"
+        );
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// The run that found the fault of #363, as a test. An instance holds
 /// the lease, does not run for more than the live time, and a cut runs.
 /// Then the instance runs again, with the removed records in its
@@ -295,13 +322,13 @@ async fn an_instance_that_runs_again_after_a_cut_does_not_serve_and_writes_no_ch
     let store = Arc::new(Flaky::default());
     let timing = Timing {
         renew_every: RENEW_EVERY,
-        ends_after: Duration::from_secs(1),
+        ends_after: CUT_AFTER,
         ..common::LEASE
     };
     let (service, base) = start_with(store.clone(), timing).await;
-    assert_eq!(status(&base, "register", json!({ "me": MIKE })).await, 200);
+    assert_eq!(served(&service, &base, json!({ "me": MIKE })).await, 200);
     service.save().await.unwrap();
-    assert_eq!(status(&base, "register", json!({ "me": BRETT })).await, 200);
+    assert_eq!(served(&service, &base, json!({ "me": BRETT })).await, 200);
     service.save().await.unwrap();
     let last = last_position(&store.store).await;
 
