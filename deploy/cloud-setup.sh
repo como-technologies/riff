@@ -3,9 +3,14 @@
 # checks each resource first, so it can run again. A person makes the
 # project and links its billing account with gcloud, by the how-to in
 # the book.
+#
+# Usage: cloud-setup.sh [NAME]. NAME names the settings, for example
+# `stage` (01M3ZE3Z580RB5AYAJX6321DFW). With no name, the shared riff.
+# Settings with no deploy account make no CI deploy, and settings with
+# no alert make no alert.
 set -euo pipefail
 cd "$(dirname "$0")"
-. ./cloud.env
+. ./settings.sh
 project=(--project "$CLOUD_PROJECT")
 howto='See "Set up the cloud project" on the Development page of the book.'
 
@@ -63,6 +68,9 @@ echo "Bucket $CLOUD_BUCKET: versioning on, lifecycle rules set."
 
 account() { echo "$1@$CLOUD_PROJECT.iam.gserviceaccount.com"; }
 for name in "$CLOUD_RUN_ACCOUNT" "$CLOUD_BUILD_ACCOUNT" "$CLOUD_DEPLOY_ACCOUNT"; do
+    if [ -z "$name" ]; then
+        continue
+    fi
     if gcloud iam service-accounts describe "$(account "$name")" "${project[@]}" >/dev/null 2>&1; then
         echo "Service account $name: exists."
     else
@@ -92,44 +100,48 @@ else
     gcloud artifacts repositories create "$CLOUD_REPOSITORY" --repository-format docker "${where[@]}"
 fi
 
-# GitHub Actions signs in with its OIDC token, only from the main branch
-# and the tags v* of the repository (01M3NJAZAQ3AKMAM0EGM7R3S89). No key
-# exists. A provider that exists gets this condition too.
-pool=(--workload-identity-pool github --location global "${project[@]}")
-condition="assertion.repository == '$CLOUD_GITHUB_REPO' && (assertion.ref == 'refs/heads/main' || assertion.ref.startsWith('refs/tags/v'))"
-if gcloud iam workload-identity-pools describe github --location global "${project[@]}" >/dev/null 2>&1; then
-    echo "Identity pool github: exists."
+if [ -z "$CLOUD_DEPLOY_ACCOUNT" ]; then
+    echo "CI deploy: none, because $(basename "$CLOUD_SETTINGS") has no deploy account."
 else
-    echo "Identity pool github: making it."
-    gcloud iam workload-identity-pools create github --location global \
-        --display-name "GitHub Actions" "${project[@]}"
-fi
-if gcloud iam workload-identity-pools providers describe github "${pool[@]}" >/dev/null 2>&1; then
-    echo "Identity provider github: exists. Setting its condition."
-    gcloud iam workload-identity-pools providers update-oidc github "${pool[@]}" \
-        --attribute-condition "$condition"
-else
-    echo "Identity provider github: making it."
-    gcloud iam workload-identity-pools providers create-oidc github "${pool[@]}" \
-        --issuer-uri https://token.actions.githubusercontent.com \
-        --attribute-mapping google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref \
-        --attribute-condition "$condition"
-fi
+    # GitHub Actions signs in with its OIDC token, only from the main branch
+    # and the tags v* of the repository (01M3NJAZAQ3AKMAM0EGM7R3S89). No key
+    # exists. A provider that exists gets this condition too.
+    pool=(--workload-identity-pool github --location global "${project[@]}")
+    condition="assertion.repository == '$CLOUD_GITHUB_REPO' && (assertion.ref == 'refs/heads/main' || assertion.ref.startsWith('refs/tags/v'))"
+    if gcloud iam workload-identity-pools describe github --location global "${project[@]}" >/dev/null 2>&1; then
+        echo "Identity pool github: exists."
+    else
+        echo "Identity pool github: making it."
+        gcloud iam workload-identity-pools create github --location global \
+            --display-name "GitHub Actions" "${project[@]}"
+    fi
+    if gcloud iam workload-identity-pools providers describe github "${pool[@]}" >/dev/null 2>&1; then
+        echo "Identity provider github: exists. Setting its condition."
+        gcloud iam workload-identity-pools providers update-oidc github "${pool[@]}" \
+            --attribute-condition "$condition"
+    else
+        echo "Identity provider github: making it."
+        gcloud iam workload-identity-pools providers create-oidc github "${pool[@]}" \
+            --issuer-uri https://token.actions.githubusercontent.com \
+            --attribute-mapping google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref \
+            --attribute-condition "$condition"
+    fi
 
-# The deploy account pushes images, deploys the service, and runs it as
-# riff-server. Only the repository may use the account
-# (01M3NJAZAQ3AKMAM0EGM7R3S89).
-deploy_account=serviceAccount:$(account "$CLOUD_DEPLOY_ACCOUNT")
-bind gcloud artifacts repositories add-iam-policy-binding "$CLOUD_REPOSITORY" \
-    --member "$deploy_account" --role roles/artifactregistry.writer "${where[@]}"
-bind gcloud projects add-iam-policy-binding "$CLOUD_PROJECT" --member "$deploy_account" \
-    --role roles/run.admin --condition None
-bind gcloud iam service-accounts add-iam-policy-binding "$(account "$CLOUD_RUN_ACCOUNT")" \
-    --member "$deploy_account" --role roles/iam.serviceAccountUser "${project[@]}"
-github=principalSet://iam.googleapis.com/projects/$CLOUD_PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/$CLOUD_GITHUB_REPO
-bind gcloud iam service-accounts add-iam-policy-binding "$(account "$CLOUD_DEPLOY_ACCOUNT")" \
-    --member "$github" --role roles/iam.workloadIdentityUser "${project[@]}"
-echo "CI deploy: set."
+    # The deploy account pushes images, deploys the service, and runs it as
+    # riff-server. Only the repository may use the account
+    # (01M3NJAZAQ3AKMAM0EGM7R3S89).
+    deploy_account=serviceAccount:$(account "$CLOUD_DEPLOY_ACCOUNT")
+    bind gcloud artifacts repositories add-iam-policy-binding "$CLOUD_REPOSITORY" \
+        --member "$deploy_account" --role roles/artifactregistry.writer "${where[@]}"
+    bind gcloud projects add-iam-policy-binding "$CLOUD_PROJECT" --member "$deploy_account" \
+        --role roles/run.admin --condition None
+    bind gcloud iam service-accounts add-iam-policy-binding "$(account "$CLOUD_RUN_ACCOUNT")" \
+        --member "$deploy_account" --role roles/iam.serviceAccountUser "${project[@]}"
+    github=principalSet://iam.googleapis.com/projects/$CLOUD_PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/$CLOUD_GITHUB_REPO
+    bind gcloud iam service-accounts add-iam-policy-binding "$(account "$CLOUD_DEPLOY_ACCOUNT")" \
+        --member "$github" --role roles/iam.workloadIdentityUser "${project[@]}"
+    echo "CI deploy: set."
+fi
 
 # riff-server keeps the state in memory (01M3TJWJEPTSF1S3S5PJD25Z7Y).
 # Each deploy sets the memory. A service that runs with another limit
@@ -151,7 +163,9 @@ fi
 # An alert on each log line of riff-server with the severity ERROR or
 # more goes to the owner by email (01M3TJWJ6J3M6JRXJTAETZ5M6F). The
 # repository is public, so the email comes from RIFF_OWNER.
-if [ -z "${RIFF_OWNER:-}" ]; then
+if [ -z "$CLOUD_ALERT" ]; then
+    echo "Alert: none, because $(basename "$CLOUD_SETTINGS") has no alert."
+elif [ -z "${RIFF_OWNER:-}" ]; then
     echo "Alert: not set, because RIFF_OWNER is not set."
     echo "  Run: RIFF_OWNER=YOUR_EMAIL just cloud setup"
 else
@@ -182,5 +196,5 @@ versions=$(gcloud secrets versions list "$CLOUD_SECRET" --filter=state=ENABLED \
 if [ -z "$RIFF_OIDC_CLIENT_ID" ] || [ -z "$versions" ]; then
     echo
     echo "Next: make the OAuth client by hand. See \"Make the OAuth client\""
-    echo "on the Development page of the book. Then run: just cloud oauth-client"
+    echo "on the Development page of the book. Then run: just cloud oauth-client${CLOUD_NAME:+ $CLOUD_NAME}"
 fi

@@ -1670,6 +1670,13 @@ just cloud log
 just cloud log --limit 20
 ```
 
+With no `--limit`, the log shows the last 50 lines. Each other option
+goes to `gcloud run services logs read` as you write it, quotes too:
+
+```sh
+just cloud log --log-filter 'jsonPayload.message:"imported the objects"'
+```
+
 Each start shows `the provider knows the OAuth client`. When Google
 refuses the client, the log shows `riff-server stops` and why.
 
@@ -1685,3 +1692,212 @@ just cloud errors 20
 
 `riff server` shows the last error of the instance that runs now. See
 [the facts of the server](how-it-works.md#see-the-facts-of-the-server).
+
+## Rehearse a release on the stage
+
+The stage is a second `riff-server` on Cloud Run, in the project
+`como-riff`. `deploy/stage.env` holds its settings. It has its own
+service `riff-stage`, bucket, accounts, sign-in client and secret. It
+holds no data of the shared riff, and no setting of the stage names a
+resource of the shared riff. It has no domain, no alert and no CI
+deploy.
+
+Rehearse a release that moves the state of the shared riff, before its
+tag. The rehearsal shows the hand-over on a real bucket: the release
+before serves and saves, while the new build takes the lease, reads
+the state and serves. Put the results on the issue of the release.
+
+Only a person runs these steps: each step writes to the cloud or signs
+in. A worker never runs `just cloud`.
+
+```mermaid
+flowchart LR
+    S[set up the stage] --> O[deploy the release before]
+    O --> C[make the state with clients<br/>of the release before]
+    C --> B[keep posts and claims going]
+    B --> N[deploy the new build]
+    N --> K[check the state]
+    K --> D[turn the stage off]
+```
+
+Each recipe of `just cloud` takes the name of the settings first. With
+no name, a recipe uses `deploy/cloud.env`: the shared riff.
+
+### Set up the stage
+
+Do this once. Sign in to gcloud, and make the resources of the stage:
+
+```sh
+gcloud auth login
+just cloud setup stage
+```
+
+Then make the sign-in client of the stage. Do steps 6 and 7 of
+[Make the OAuth client](#make-the-oauth-client), with the name
+`riff-stage`. In step 7, give the name of the settings:
+
+```sh
+just cloud oauth-client stage
+```
+
+It puts the secret in Secret Manager and the ID in
+`deploy/stage.env`. Commit that file.
+
+### Deploy a release on the stage
+
+Give the release tag. The deploy uses the image that CI built for the
+tag, so CI must have deployed that tag before. The stage needs an
+owner, as the shared riff:
+
+```sh
+export RIFF_OWNER=YOUR_EMAIL
+just cloud deploy stage v0.8.0
+just cloud status stage
+```
+
+With no tag, Cloud Build builds the image from your tree:
+
+```sh
+just cloud deploy stage
+```
+
+A riff of a new bucket starts paused. Resume it after the first
+deploy (see the next step).
+
+### Make clients of the release before
+
+Each client has a home of its own: its binaries, its settings, its
+secrets and its Claude Code settings. So the rehearsal never changes
+the `riff` of your machine. Make two homes, one for each person. Use
+two accounts of the organization: `ann` is the owner (`RIFF_OWNER`),
+and `bob` is the second account.
+
+```sh
+for who in ann bob; do
+  cargo install --locked --git https://github.com/como-technologies/riff \
+    --tag v0.8.0 --root ~/stage/$who riff
+  git init -q ~/stage/$who/app
+  git -C ~/stage/$who/app remote add origin https://github.com/acme/app
+done
+git init -q ~/stage/ann/web
+git -C ~/stage/ann/web remote add origin https://github.com/acme/web
+```
+
+Open one terminal for each person. Put the person in place of `WHO`,
+and the `CLOUD_URL` of `deploy/stage.env` in place of `STAGE_URL`.
+The update by itself installs into the home too:
+
+```sh
+export STAGE=~/stage/WHO
+export PATH=$STAGE/bin:$PATH RIFF_HOME=$STAGE CARGO_INSTALL_ROOT=$STAGE
+export CLAUDE_CONFIG_DIR=$STAGE/claude
+export RIFF_SERVER=STAGE_URL
+riff login
+riff update --auto on
+```
+
+In the terminal of `ann`, invite `bob`, and resume the riff:
+
+```sh
+riff invite BOB_EMAIL
+riff resume
+```
+
+### Make the state of a real riff
+
+Each command runs as one session: `RIFF_SESSION` names it. Make a
+lead, a worker with a claim, signed posts, a status request, unread
+messages and a direct thread, in two repositories.
+
+In the terminal of `ann`, in `~/stage/ann/app`:
+
+```sh
+cd ~/stage/ann/app
+RIFF_SESSION=ann-lead riff lead
+sleep infinity | RIFF_WORKER=1 RIFF_SESSION=ann-w1 riff mcp &
+RIFF_SESSION=ann-w1 riff claim issue-1
+RIFF_SESSION=ann-lead riff tell ann-w1 "request: claim issue-2"
+RIFF_SESSION=ann-lead riff post --kind status --to user=ann
+RIFF_SESSION=ann-lead riff post --to user=bob "a message that bob does not read"
+cd ~/stage/ann/web
+RIFF_SESSION=ann-web riff post "a post in a second repository"
+```
+
+In the terminal of `bob`, in `~/stage/bob/app`:
+
+```sh
+cd ~/stage/bob/app
+RIFF_SESSION=bob-1 riff claim issue-3
+RIFF_SESSION=bob-1 riff post --to user=ann,lead=true "a question for the lead of ann"
+```
+
+Keep a copy of the state before the deploy:
+
+```sh
+RIFF_SESSION=ann-lead riff who > ~/stage/who-before.txt
+RIFF_SESSION=ann-lead riff read --all > ~/stage/read-before.txt
+```
+
+### Keep posts and claims going during the deploy
+
+In the terminal of `bob`, post and claim each second. The loop keeps
+each line of output:
+
+```sh
+for i in $(seq 1 300); do
+  RIFF_SESSION=bob-1 riff post "hand-over $i" && echo "posted $i"
+  RIFF_SESSION=bob-1 riff claim "hand-over-$i" && echo "claimed $i"
+  sleep 1
+done 2>&1 | tee ~/stage/hand-over.txt
+```
+
+In a third terminal, in your clone, deploy the new build from the
+commit of the release:
+
+```sh
+git switch --detach COMMIT
+just cloud deploy stage
+just cloud log stage --limit 100
+```
+
+### Check the hand-over
+
+In the terminal of each person, check:
+
+- No `riff login` is necessary: each command works with no new
+  sign-in.
+- `riff who` shows the same sessions, leads, workers and claims as
+  `who-before.txt`.
+- `riff read --all` shows the same messages as `read-before.txt`, and
+  each signed message is still verified.
+- Each post and each claim with `posted` or `claimed` in
+  `hand-over.txt` is in the riff.
+- `riff whoami` shows that the riff is paused.
+- Each client updated itself: `riff server` shows the same build for
+  `riff` and the riff. The output of the update is in `update.log` of
+  the home. Before the tag, no release of the new build exists, so the
+  update by itself can fail: `update.log` then says why. Write it in
+  the results, and install the build of the commit in each home with
+  `cargo install --locked --path crates/riff --root $STAGE`.
+- `riff resume` lets the work go on: a new claim and a new post work.
+
+```sh
+RIFF_SESSION=ann-lead riff who
+RIFF_SESSION=ann-lead riff read --all
+RIFF_SESSION=ann-lead riff whoami
+riff server
+riff resume
+RIFF_SESSION=ann-lead riff post "the work goes on"
+```
+
+Put the results on the issue of the release.
+
+### Turn the stage off
+
+It deletes the service. The state stays in the bucket. To rehearse
+again from an empty state, remove the state too:
+
+```sh
+just cloud down stage
+gcloud storage rm 'gs://como-riff-stage-state/**'
+```

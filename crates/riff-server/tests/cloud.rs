@@ -32,29 +32,59 @@ fn run_with(script: &str, args: &[&str], found: &[&str]) -> String {
 /// A copy of `deploy/` whose `cloud.env` sets `CLOUD_URL` to `url`.
 /// Each other file is a link to the file in `deploy/`.
 fn deploy_with_url(url: &str) -> tempfile::TempDir {
+    deploy_with("cloud.env", "CLOUD_URL", url)
+}
+
+/// A copy of `deploy/` whose settings file `file` sets `key` to
+/// `value`. Each other file is a link to the file in `deploy/`.
+fn deploy_with(file: &str, key: &str, value: &str) -> tempfile::TempDir {
     let copy = tempfile::tempdir().unwrap();
     let dir = copy.path().join("deploy");
     fs::create_dir(&dir).unwrap();
     for entry in fs::read_dir(deploy()).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap();
-        if name != "cloud.env" {
+        if name != file {
             symlink(&path, dir.join(name)).unwrap();
         }
     }
-    let env = fs::read_to_string(deploy().join("cloud.env")).unwrap();
+    let env = fs::read_to_string(deploy().join(file)).unwrap();
+    let start = format!("{key}=");
     let env: Vec<String> = env
         .lines()
         .map(|l| {
-            if l.starts_with("CLOUD_URL=") {
-                format!("CLOUD_URL={url}")
+            if l.starts_with(&start) {
+                format!("{key}={value}")
             } else {
                 l.to_owned()
             }
         })
         .collect();
-    fs::write(dir.join("cloud.env"), env.join("\n") + "\n").unwrap();
+    fs::write(dir.join(file), env.join("\n") + "\n").unwrap();
     copy
+}
+
+/// The settings of the file `file` in `deploy/`: each `KEY=VALUE` line.
+fn settings(file: &str) -> Vec<(String, String)> {
+    fs::read_to_string(deploy().join(file))
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect()
+}
+
+/// Each settings file of a riff in `deploy/`: `cloud.env` and the
+/// others, for example `stage.env`.
+fn settings_files() -> Vec<String> {
+    let mut files: Vec<String> = fs::read_dir(deploy())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".env"))
+        .collect();
+    files.sort();
+    files
 }
 
 /// Runs a script from the directory `scripts`. See [`run`]. The deploy
@@ -282,6 +312,60 @@ fn the_errors_recipe_reads_only_the_lines_with_the_severity_error() {
         recipe.contains("--log-filter 'severity>=ERROR'"),
         "{recipe}"
     );
+}
+
+/// Runs `just cloud RECIPE ARGS` with a fake `gcloud`. Returns each
+/// argument of each `gcloud` call on a line.
+fn just_cloud(recipe: &str, args: &[&str]) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let calls = dir.path().join("args");
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake");
+    let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("just")
+        .arg("--justfile")
+        .arg(deploy().join("cloud.just"))
+        .arg("--working-directory")
+        .arg(deploy())
+        .arg(recipe)
+        .args(args)
+        .env("PATH", path)
+        .env("FAKE_GCLOUD_ARGS", &calls)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    fs::read_to_string(calls).unwrap()
+}
+
+/// Each argument of `just cloud log` and `just cloud errors` reaches
+/// `gcloud` whole, also an argument with spaces and quotes. The log
+/// shows 50 lines when no `--limit` is given (01M3ZGRZ0F3G93Q3ET9GGWKT7E).
+#[test]
+fn the_log_recipes_keep_each_argument_whole() {
+    let filter = r#"jsonPayload.message:"imported the objects""#;
+    let args = just_cloud("log", &["--log-filter", filter]);
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(
+        &args[..5],
+        ["run", "services", "logs", "read", "riff-server"]
+    );
+    assert!(args.contains(&filter), "{args:?}");
+    assert!(args.windows(2).any(|w| w == ["--limit", "50"]), "{args:?}");
+
+    let args = just_cloud("log", &["stage", "--limit", "20"]);
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args[4], "riff-stage", "{args:?}");
+    assert!(args.windows(2).any(|w| w == ["--limit", "20"]), "{args:?}");
+    assert!(!args.contains(&"50"), "{args:?}");
+
+    let args = just_cloud("errors", &["stage", "20"]);
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args[4], "riff-stage", "{args:?}");
+    assert!(args.windows(2).any(|w| w == ["--limit", "20"]), "{args:?}");
+    assert!(args.contains(&"severity>=ERROR"), "{args:?}");
 }
 
 #[test]
@@ -914,5 +998,221 @@ fn the_release_notes_are_the_changelog() {
              gh release view v0.4.0 --repo como-technologies/riff\n```"
         ),
         "{part}"
+    );
+}
+
+/// The settings that name a resource of one riff: its bucket, service,
+/// secret, accounts, URL, domain, alert and sign-in client.
+const RESOURCES: [&str; 10] = [
+    "CLOUD_BUCKET",
+    "CLOUD_SERVICE",
+    "CLOUD_SECRET",
+    "CLOUD_URL",
+    "CLOUD_DOMAIN",
+    "CLOUD_ALERT",
+    "CLOUD_RUN_ACCOUNT",
+    "CLOUD_BUILD_ACCOUNT",
+    "CLOUD_DEPLOY_ACCOUNT",
+    "RIFF_OIDC_CLIENT_ID",
+];
+
+/// 01M3ZE3Z26N1CG090D5D5FZ3NW: no setting of one riff names the bucket,
+/// the service, the secret or another resource of a different riff. So
+/// the stage cannot touch the data of the shared riff.
+#[test]
+fn no_settings_of_one_riff_name_a_resource_of_another() {
+    let files = settings_files();
+    assert!(files.contains(&"cloud.env".to_owned()), "{files:?}");
+    assert!(files.contains(&"stage.env".to_owned()), "{files:?}");
+    for a in &files {
+        for b in files.iter().filter(|b| *b != a) {
+            let theirs = settings(b);
+            for (key, value) in settings(a) {
+                if !RESOURCES.contains(&key.as_str()) || value.is_empty() {
+                    continue;
+                }
+                for (other, text) in &theirs {
+                    assert!(
+                        !text.contains(&value),
+                        "{other}={text} in {b} names {key}={value} of {a}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Each script sets `-u`, so each settings file has each key of the
+/// shared riff, also when its value is empty.
+#[test]
+fn each_settings_file_has_each_key_of_the_shared_riff() {
+    let keys = |file: &str| -> Vec<String> { settings(file).into_iter().map(|(k, _)| k).collect() };
+    let shared = keys("cloud.env");
+    for file in settings_files() {
+        assert_eq!(keys(&file), shared, "{file}");
+    }
+}
+
+/// 01M3ZE3Z580RB5AYAJX6321DFW: the setup of the stage makes only the
+/// resources of the stage. It makes no CI deploy and no alert.
+#[test]
+fn setup_of_the_stage_makes_only_the_resources_of_the_stage() {
+    let calls = run_with("cloud-setup.sh", &["stage"], &[]);
+    line(&calls, "storage buckets create gs://como-riff-stage-state ");
+    line(&calls, "iam service-accounts create riff-stage-server ");
+    line(&calls, "iam service-accounts create riff-stage-build ");
+    let secret = line(
+        &calls,
+        "secrets add-iam-policy-binding riff-stage-oidc-client-secret ",
+    );
+    assert!(secret.contains("riff-stage-server@"), "{secret}");
+    for shared in [
+        "como-riff-state",
+        "riff-oidc-client-secret",
+        "riff-server@",
+        "riff-build@",
+        "riff-deploy",
+        "workload-identity",
+        "monitoring channels",
+        "monitoring policies",
+        "run services describe riff-server ",
+    ] {
+        assert!(!calls.contains(shared), "{shared} in:\n{calls}");
+    }
+    // The stage needs a client of its own.
+    let out = command(&deploy(), "cloud-setup.sh", &["stage"], &SETUP, None);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("just cloud oauth-client stage"), "{stdout}");
+}
+
+/// The name `cloud` is the shared riff, as no name.
+#[test]
+fn the_name_cloud_is_the_shared_riff() {
+    let calls = run_with("cloud-setup.sh", &["cloud"], &SETUP);
+    assert_eq!(calls, run("cloud-setup.sh", &SETUP));
+}
+
+#[test]
+fn a_name_with_no_settings_file_stops_the_script() {
+    for script in ["cloud-setup.sh", "deploy.sh", "oauth-client.sh"] {
+        let out = command(&deploy(), script, &["nosuch"], &[], Some("o@x"));
+        assert!(!out.status.success(), "{script}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("deploy/nosuch.env is not there"),
+            "{stderr}"
+        );
+        assert!(out.log.is_empty(), "{}", out.log);
+    }
+}
+
+/// The stage, with a client ID.
+fn stage() -> tempfile::TempDir {
+    deploy_with(
+        "stage.env",
+        "RIFF_OIDC_CLIENT_ID",
+        "1-a.apps.googleusercontent.com",
+    )
+}
+
+/// 01M3ZE3Z580RB5AYAJX6321DFW: the deploy of the stage builds the image
+/// and runs it on the service, bucket and secret of the stage.
+#[test]
+fn deploy_of_the_stage_uses_only_the_resources_of_the_stage() {
+    let copy = stage();
+    let scripts = copy.path().join("deploy");
+    let calls = run_in(&scripts, "deploy.sh", &["stage"], &[]);
+    let deploy = line(&calls, "run deploy riff-stage --source . ");
+    for flag in [
+        "--service-account riff-stage-server@como-riff.iam.gserviceaccount.com",
+        "--build-service-account projects/como-riff/serviceAccounts/riff-stage-build@",
+        "RIFF_PUBLIC_URL=https://riff-stage-816917641970.us-central1.run.app,",
+        "RIFF_BUCKET=como-riff-stage-state,",
+        "RIFF_OIDC_CLIENT_ID=1-a.apps.googleusercontent.com,",
+        "--set-secrets RIFF_OIDC_CLIENT_SECRET=riff-stage-oidc-client-secret:latest",
+    ] {
+        assert!(deploy.contains(flag), "{flag} is not in: {deploy}");
+    }
+    for shared in ["como-riff-state", "riff-server", "riff-oidc-client-secret"] {
+        assert!(!calls.contains(shared), "{shared} in:\n{calls}");
+    }
+    assert!(!calls.contains("domain-mappings"), "{calls}");
+}
+
+/// 01M3ZE3Z580RB5AYAJX6321DFW: a deploy with a release tag deploys the
+/// image that CI built for that tag, and builds nothing.
+#[test]
+fn deploy_with_a_tag_deploys_the_image_of_the_tag() {
+    let copy = stage();
+    let scripts = copy.path().join("deploy");
+    let calls = run_in(&scripts, "deploy.sh", &["stage", "v0.8.0"], &[]);
+    let deploy = line(&calls, "run deploy riff-stage --image ");
+    let image = "us-central1-docker.pkg.dev/como-riff/riff/riff-server:v0.8.0";
+    assert!(deploy.contains(&format!("--image {image} ")), "{deploy}");
+    assert!(!deploy.contains("--source"), "{deploy}");
+    assert!(
+        deploy.contains("RIFF_BUCKET=como-riff-stage-state,"),
+        "{deploy}"
+    );
+    assert!(!calls.contains("domain-mappings"), "{calls}");
+
+    // The shared riff takes a tag too.
+    let calls = run_with("deploy.sh", &["v0.8.0"], &[]);
+    let deploy = line(&calls, "run deploy riff-server --image ");
+    assert!(deploy.contains(&format!("--image {image} ")), "{deploy}");
+}
+
+#[test]
+fn deploy_refuses_a_tag_that_is_not_a_release_tag() {
+    let copy = stage();
+    let scripts = copy.path().join("deploy");
+    for tag in ["0.8.0", "v0.8", "V0.8.0", "--source"] {
+        let out = command(&scripts, "deploy.sh", &["stage", tag], &[], Some("o@x"));
+        assert!(!out.status.success(), "{tag}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("is not a release tag"), "{tag}: {stderr}");
+        assert!(out.log.is_empty(), "{}", out.log);
+    }
+}
+
+/// The stage has no client ID until `just cloud oauth-client stage`.
+#[test]
+fn deploy_of_the_stage_with_no_client_says_how_to_store_it() {
+    let out = command(&deploy(), "deploy.sh", &["stage"], &[], Some("o@x"));
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("deploy/stage.env has no client ID. Run: just cloud oauth-client stage"),
+        "{stderr}"
+    );
+    assert!(!out.log.contains("run deploy"), "{}", out.log);
+}
+
+/// Each recipe of `just cloud` that acts on one riff takes its name and
+/// reads its settings with `settings.sh`.
+#[test]
+fn the_recipes_take_the_name_of_the_settings() {
+    let text = fs::read_to_string(deploy().join("cloud.just")).unwrap();
+    for (recipe, call) in [
+        ("setup NAME='':", "./cloud-setup.sh {{NAME}}"),
+        ("oauth-client NAME='':", "./oauth-client.sh {{NAME}}"),
+        ("deploy NAME='' TAG='':", "./deploy.sh {{NAME}} {{TAG}}"),
+        ("down NAME='':", ". ./settings.sh"),
+        ("status NAME='':", ". ./settings.sh"),
+        ("log *ARGS:", ". ./settings.sh"),
+        ("errors *ARGS:", ". ./settings.sh"),
+    ] {
+        let body = text
+            .split(&format!("\n{recipe}\n"))
+            .nth(1)
+            .unwrap_or_else(|| panic!("no recipe {recipe}"));
+        let body = body.split("\n\n").next().unwrap();
+        assert!(body.contains(call), "{recipe}: {body}");
+    }
+    // Only the shared riff has the CI variable.
+    let down = text.split("\ndown NAME='':\n").nth(1).unwrap();
+    assert!(
+        down.contains("if [ -z \"$CLOUD_NAME\" ] && [ -n \"$(gh variable get CLOUD_DEPLOY"),
+        "{down}"
     );
 }
