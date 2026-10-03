@@ -723,7 +723,7 @@ enum Workers {
 
 #[derive(Subcommand)]
 enum WorktreesCommand {
-    /// Unlock, remove or save each worktree that no live session owns
+    /// Tidy the worktrees that no live session owns
     ///
     /// For each linked worktree: it unlocks a lock whose process is gone.
     /// It removes a clean worktree whose pull request is merged with its
