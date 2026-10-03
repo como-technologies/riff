@@ -252,11 +252,7 @@ async fn a_status_request_wakes_each_session_and_who_shows_each_answer() {
         assert_eq!(wake.kind, Kind::Status);
         let messages = api.read(me, &thread, false).await.unwrap();
         assert_eq!(messages[0].message.kind, Kind::Status);
-        let blocked = (step == "merge").then(|| "waits for a review".to_owned());
-        let status = Status {
-            step: step.into(),
-            blocked,
-        };
+        let status = Status { step: step.into() };
         api.status(me, &status).await.unwrap();
     }
 
@@ -267,15 +263,13 @@ async fn a_status_request_wakes_each_session_and_who_shows_each_answer() {
     };
     assert_eq!(status_of(&mike).status.step, "write the API");
     assert_eq!(status_of(&mike).age_secs, 0);
-    let brett_status = status_of(&brett).status;
-    assert_eq!(brett_status.blocked.as_deref(), Some("waits for a review"));
+    assert_eq!(status_of(&brett).status.step, "merge");
     // Nobody posted a reply: the thread holds only the request.
     assert_eq!(api.read(&person, &thread, true).await.unwrap().len(), 1);
 
     // riff refuses a status that does not fit on one line.
     let bad = Status {
         step: "two\nlines".into(),
-        blocked: None,
     };
     assert!(api.status(&mike, &bad).await.is_err());
 }

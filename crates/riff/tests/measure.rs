@@ -129,7 +129,6 @@ async fn a_status_and_a_claim_while_8_sessions_post() {
     for n in 0..CALLS {
         let status = Status {
             step: format!("step {n}"),
-            blocked: None,
         };
         let began = Instant::now();
         api.status(&probe, &status).await.unwrap();

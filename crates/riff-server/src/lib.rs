@@ -3786,7 +3786,6 @@ mod tests {
 
         let step = riff_core::wire::Status {
             step: "the tests run".into(),
-            blocked: None,
         };
         let set = SetStatus {
             me: brett(),
@@ -3823,7 +3822,7 @@ mod tests {
         let reply = alive(
             AxumState(service.0.clone()),
             Proof::none(),
-            Json(Alive { me: new.clone() }),
+            Json(Alive { me: new.clone(), activity: None }),
         )
         .await
         .unwrap();
@@ -3910,7 +3909,7 @@ mod tests {
             alive(
                 AxumState(service.0.clone()),
                 Proof::none(),
-                Json(Alive { me: worker.clone() }),
+                Json(Alive { me: worker.clone(), activity: None }),
             )
         };
         // The reply to a keep-alive carries it too.
@@ -4268,7 +4267,7 @@ mod tests {
         let Json(reply) = alive(
             AxumState(service.0.clone()),
             Proof::none(),
-            Json(Alive { me: mike() }),
+            Json(Alive { me: mike(), activity: None }),
         )
         .await
         .unwrap();
@@ -4745,7 +4744,7 @@ mod tests {
                     let refused = alive(
                         AxumState(service.0.clone()),
                         proof(),
-                        Json(Alive { me: mike() }),
+                        Json(Alive { me: mike(), activity: None }),
                     )
                     .await
                     .unwrap_err();
@@ -4794,7 +4793,7 @@ mod tests {
             let refused = alive(
                 AxumState(service.0.clone()),
                 proof,
-                Json(Alive { me: mike() }),
+                Json(Alive { me: mike(), activity: None }),
             )
             .await
             .unwrap_err();
@@ -4882,7 +4881,7 @@ mod tests {
         let refused = alive(
             AxumState(service.0.clone()),
             proof,
-            Json(Alive { me: mike() }),
+            Json(Alive { me: mike(), activity: None }),
         )
         .await
         .unwrap_err();

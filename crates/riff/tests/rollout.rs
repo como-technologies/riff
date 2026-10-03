@@ -773,7 +773,6 @@ async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
             workers: vec![],
         }
         .line(),
-        blocked: None,
     };
     lead.api.status(&host, &status(2)).await.unwrap();
     // The lead looked at the host one time or more, with no wait for a
