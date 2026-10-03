@@ -750,6 +750,43 @@ fn each_setting_of_the_limits_shows_and_sets_its_value() {
     );
 }
 
+/// 01M419XAX31FF9Z1647E881CSH: `riff workers` shows the cap of the
+/// clock and the clock now from the cpufreq files, not the limit of the
+/// hardware, and the score counts the cap.
+#[test]
+fn riff_workers_shows_the_cap_of_the_clock_and_the_clock_now() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let sys = m.root.path().join("sys");
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    for core in 0..cores {
+        let dir = sys.join(format!("cpu{core}/cpufreq"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cpuinfo_max_freq"), "4001000\n").unwrap();
+        std::fs::write(dir.join("scaling_max_freq"), "3000000\n").unwrap();
+        let now = if core % 2 == 0 { "2980000\n" } else { "3000000\n" };
+        std::fs::write(dir.join("scaling_cur_freq"), now).unwrap();
+    }
+    let cpuinfo = m.root.path().join("cpuinfo");
+    std::fs::write(&cpuinfo, "cpu MHz\t\t: 4001.000\n").unwrap();
+
+    let out = m
+        .riff(&["workers"])
+        .env_remove("RIFF_MACHINE")
+        .env(riff::machine::CPU_SYS, &sys)
+        .env(riff::limits::CPUINFO, &cpuinfo)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let list = stdout(&out);
+    // The mean of the cores: half of them run at 2980 MHz.
+    let now = 2980 + 20 * (cores / 2) / cores;
+    assert!(
+        list.contains(&format!("cpu {cores}x3000MHz (now {now}MHz), mem ")),
+        "{list}"
+    );
+    assert!(!list.contains("4001MHz"), "{list}");
+}
+
 /// The book has a how-to for each new setting, and says how to choose
 /// the worker limit from the memory of the machine.
 #[test]

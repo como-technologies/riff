@@ -2906,10 +2906,18 @@
   repository does not count, also a worker of the user of the lead. A
   worker that did not join yet counts.
 - **01M3Q5QE4SQ8VYN2PSF42KB3QJ** Each machine that runs workers tells
-  its CPU cores, its CPU speed, its memory, its available memory and
-  its 1-minute load average. A workers host puts them in its status.
-  `riff workers` shows the numbers and the score of this machine and of
-  each host.
+  its CPU cores, its CPU speed, its clock now, its memory, its
+  available memory and its 1-minute load average. A workers host puts
+  them in its status. `riff workers` shows the numbers and the score of
+  this machine and of each host.
+- **01M419XAX31FF9Z1647E881CSH** The CPU speed of a machine is the cap
+  of its clock: the lowest `scaling_max_freq` of its cores. With no cap,
+  it is `cpuinfo_max_freq`, then the most `cpu MHz` of `/proc/cpuinfo`,
+  then 3000 MHz. The clock now is the mean of `scaling_cur_freq` of the
+  cores. The score counts the cap.
+- **01M419XAZBPV0Y08CAR51KQSZS** The lead reads the numbers of a
+  workers host of the release before, with no clock now. The clock now
+  is then the CPU speed.
 - **01M3Q5QE76BZ27SZ14FFE8HM1G** The score of a machine is
   `min(cores, memory GB / 2) × MHz / 3000`. Its free capacity is the
   score less its workers. The rollout starts a worker on the machine

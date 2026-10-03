@@ -250,7 +250,7 @@ impl View {
 ///     limit: 4,
 ///     workers,
 ///     floor: 4,
-///     machine: Some(Machine { cores, mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 }),
+///     machine: Some(Machine { cores, mhz: 3000, now_mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 }),
 ///     disk: None,
 /// };
 /// let places = [place("thelio", 32, 0), place("pangolin", 8, 0)];
@@ -1497,6 +1497,7 @@ mod tests {
         Some(Machine {
             cores,
             mhz,
+            now_mhz: mhz,
             mem_gb,
             avail_gb: mem_gb,
             load: 0.0,

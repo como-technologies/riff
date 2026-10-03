@@ -3320,7 +3320,7 @@ memory is available. `riff workers start` then says why, and
 `riff workers` shows it:
 
 ```text
-pangolin  limit 4  runs 3  cpu 16x4500MHz, mem 30GB, 3GB available, load 9.20  score 22.5
+pangolin  limit 4  runs 3  cpu 16x4500MHz (now 4400MHz), mem 30GB, 3GB available, load 9.20  score 22.5
 Starts no worker: 3 GB of memory is available, and the floor of this machine is 4 GB.
 ```
 
@@ -3486,15 +3486,22 @@ a free item with a request. The server stops idle workers.
 
 #### Which machine gets a worker
 
-Each machine tells five numbers: its CPU cores, its CPU speed, its
-memory, its available memory and its 1-minute load average. From them
-riff makes a score: the number of workers that the machine runs well.
+Each machine tells six numbers: its CPU cores, its CPU speed, its
+clock now, its memory, its available memory and its 1-minute load
+average. The CPU speed is the cap of the clock: the lowest
+`scaling_max_freq` of the cores. A cap or a power profile lowers it.
+The clock now is the mean of `scaling_cur_freq` of the cores. From
+them riff makes a score: the number of workers that the machine runs well.
 One worker needs one core and 2 GB of memory. A core at 3000 MHz
 counts 1:
 
 ```text
 score = min(cores, memory GB / 2) × MHz / 3000
 ```
+
+The score counts the cap, not the clock now. So a machine with a cap
+of 3000 MHz gets fewer workers than the same machine with no cap.
+`riff workers` shows both, for example `cpu 16x3000MHz (now 2990MHz)`.
 
 The score less the workers that run there is the free capacity. riff
 starts the next worker on the machine with the most free capacity. A
@@ -3548,7 +3555,7 @@ riff workers
 ```
 
 ```text
-thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, 100GB available, load 2.10  score 62.8
+thelio  limit 3  runs 1  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
 PANE  ID        STATE  DETAIL
 %3    2a880834  busy   working on #12  1m ago: tests of issue-12
 ```
@@ -3724,7 +3731,7 @@ riff workers host: pangolin offers 2 workers to the lead of mike in como-technol
 ```
 
 The host is a riff session with the status `workers host: limit 2,
-floor 4GB, cpu 16x4500MHz, mem 32GB, 24GB available, load 0.40, no
+floor 4GB, cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40, no
 workers`. It starts and stops
 workers only when the lead of your user asks, at most its own limit. It
 refuses each other request, and each request that is not verified. One
@@ -3763,9 +3770,9 @@ the lead lists each host after the workers of its own machine, with
 the numbers and the score of the host:
 
 ```text
-thelio  limit 3  runs 0  cpu 32x5883MHz, mem 124GB, 100GB available, load 2.10  score 62.8
+thelio  limit 3  runs 0  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
 
-pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, 24GB available, load 0.40  score 24.0
+pangolin  limit 2  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
 PANE  ID        STATE  DETAIL
 %3    2a880834  idle   ready for work for 1m
 ```
@@ -4130,7 +4137,7 @@ riff workers
 ```
 
 ```text
-thelio  limit 3  runs 1  cpu 32x5883MHz, mem 124GB, 100GB available, load 2.10  score 62.8
+thelio  limit 3  runs 1  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
 PANE  ID        STATE  DETAIL
 %3    2a880834  idle   ready for work for 2m
 ```
