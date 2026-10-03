@@ -101,7 +101,7 @@
 //! - It says how many comments with the mark it did not count, and why
 //!   ([`uncounted`], 01M3ZRQY9F9P7DF187Q0PJDS30).
 //! - Each login and title of the forge goes through
-//!   [`text::forge`](crate::text::forge) (01M3ZRQY6YQ8QAKZPGWH1XD6WW).
+//!   [`text::forge`] (01M3ZRQY6YQ8QAKZPGWH1XD6WW).
 //!
 //! After the merge, `riff pr wait` adds one comment with the total of
 //! the issue ([`Forge::total`], 01M3Y1YP514MPX8DTKMTWDHE8Q). Each later
