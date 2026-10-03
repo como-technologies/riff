@@ -295,6 +295,11 @@
   that main clone, and the file `gitdir` of the entry of the worktree
   in the main clone names the `.git` file of the tree. If not, the
   command writes nothing, and says why.
+- **01M3ZGT8ST7HCK6J7VZJ09XE0M** The `.git` of a linked worktree is
+  the file that the entry of the worktree names, not a symbolic link
+  to it. When `TOP/.git` is a symbolic link, `riff enable` and
+  `riff disable` write nothing, and say why. The check of the `gitdir`
+  file follows no link at the last part of a path.
 - **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
   marketplace to Claude Code with the `claude` command on the PATH.
   `--claude PATH` names another one. It installs the plugin in no

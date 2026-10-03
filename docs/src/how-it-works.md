@@ -155,7 +155,9 @@ git does not track the local settings, so a linked worktree does not
 have them. In a linked worktree, riff reads the settings of the main
 clone too, and `riff enable` writes the local settings of the main
 clone. It asks git for the main clone first, and writes nothing when
-git does not know the worktree.
+git does not know the worktree. It also writes nothing when the `.git`
+of the worktree is a symbolic link: git makes a file there, not a
+link.
 
 ### Turn riff on for the team
 
