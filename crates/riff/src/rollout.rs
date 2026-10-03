@@ -1511,6 +1511,7 @@ mod tests {
             workers: 0,
             floor: 4,
             machine: machine(32, 6000, 128),
+            disk: None,
         }
     }
 
@@ -1522,6 +1523,7 @@ mod tests {
             workers: 0,
             floor: 4,
             machine: machine(16, 4500, 32),
+            disk: None,
         }
     }
 
@@ -1858,6 +1860,25 @@ mod tests {
         assert_eq!(pick(std::slice::from_ref(&low)), None);
         // A floor of 0 turns the floor off.
         assert!(Place { floor: 0, ..low }.room());
+    }
+
+    /// 01M41A11DX1QRP48YPTDNT67W4: under 5% of free disk, the rollout
+    /// starts no worker on the machine. It picks the other one.
+    #[tokio::test(start_paused = true)]
+    async fn the_rollout_starts_no_worker_on_a_machine_with_a_low_disk() {
+        let mut w = world(1);
+        w.places[0].disk = Some(Disk {
+            free_gb: 4,
+            total_gb: 100,
+        });
+        w.places[1].disk = Some(Disk {
+            free_gb: 5,
+            total_gb: 100,
+        });
+        let fake = Fake::new(w);
+        run_for(&fake, 30).await;
+        assert_eq!(fake.hosts(), ["pangolin"]);
+        assert!(!fake.with(|w| w.places[0].room()));
     }
 
     #[tokio::test(start_paused = true)]
