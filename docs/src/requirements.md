@@ -2891,15 +2891,16 @@
 - **01M3WFYZRK5CT22GJW6ZHYT9CC** The fixed share of a worker is the
   physical cores of the machine less 1, divided by the workers, and 1
   or more. The workers are the worker limit, or the workers that run on
-  the machine when they are more. Each worker gets it in `RUST_TEST_THREADS`. With no
-  pool, it also gets it in `CARGO_BUILD_JOBS`. The setting
-  `workers.jobs` replaces the number and turns the pool off. 0, the
-  default, means the number from the machine and the pool.
+  the machine when they are more. Each worker gets it in
+  `RUST_TEST_THREADS`. With no pool, it also gets it in
+  `CARGO_BUILD_JOBS`. The setting `workers.jobs` replaces the number
+  and turns the pool off. 0, the default, means the number from the
+  machine and the pool.
 - **01M3ZGZMJ9RF1C4AHG78GQ2NM4** Each `riff workers run` holds one pool
   of build jobs for its machine: a named pipe in the GNU make 4.4
   jobserver form. It holds the physical cores less 1, less the
-  workers, and 1 or more tokens. The first worker makes it. The pool ends
-  with the last worker. The worker gets `MAKEFLAGS` with
+  workers, and 1 or more tokens. The first worker makes it. The pool
+  ends with the last worker. The worker gets `MAKEFLAGS` with
   `--jobserver-auth=fifo:PATH` and no `CARGO_BUILD_JOBS`.
 - **01M3ZZGRB5NDAA419ZNEWN0811** When riff cannot read the physical
   cores of a machine, it counts half of the logical CPUs, and 1 or
