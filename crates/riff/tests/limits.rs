@@ -209,6 +209,18 @@ async fn start_server() -> Api {
     Api::new(&format!("http://{addr}"))
 }
 
+/// The variables of the pool of an outer worker, and a person's
+/// `CARGO_BUILD_JOBS`.
+fn outer_pool(runner: &str) -> [(&str, &str); 4] {
+    let flags = "-j --jobserver-auth=fifo:/outer/fifo";
+    [
+        ("CARGO_BUILD_JOBS", "64"),
+        ("MAKEFLAGS", flags),
+        ("CARGO_MAKEFLAGS", flags),
+        (runner, "/outer/riff workers test-run"),
+    ]
+}
+
 /// The nice value of this test process.
 fn nice_here() -> u8 {
     let out = Command::new("nice").output().unwrap();
@@ -252,9 +264,10 @@ fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     m.workers(&["limit", "16"]);
     m.wrapper(&claude, &[]);
     assert!(read(&seen).starts_with("[] 1 [-j"), "{}", read(&seen));
-    // The setting wins, with no pool.
+    // The setting wins, with no pool, and no variable of an outer pool
+    // stays (01M41CR2HJRFW6R7YMJTPVEMJ1).
     m.workers(&["jobs", "6"]);
-    m.wrapper(&claude, &[("CARGO_BUILD_JOBS", "64")]);
+    m.wrapper(&claude, &outer_pool(&riff::limits::runner_var()));
     assert!(read(&seen).starts_with("[6] 6 [] []"), "{}", read(&seen));
 }
 
@@ -269,14 +282,16 @@ fn with_no_pool_the_worker_gets_the_fixed_share() {
     // A file where the pool must go.
     std::fs::write(state.join("jobs"), "").unwrap();
     let seen = m.bin().join("seen");
+    let runner = riff::limits::runner_var();
     let claude = m.claude(&format!(
-        "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS [$MAKEFLAGS]\" > '{}'",
+        "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS [$MAKEFLAGS] [$CARGO_MAKEFLAGS] [${runner}]\" > '{}'",
         seen.display()
     ));
     m.workers(&["limit", "4"]);
-    let out = m.wrapper(&claude, &[]);
+    // The wrapper starts in a worker with a pool (01M41CR2HJRFW6R7YMJTPVEMJ1).
+    let out = m.wrapper(&claude, &outer_pool(&runner));
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(read(&seen).trim(), "3 3 []");
+    assert_eq!(read(&seen).trim(), "3 3 [] [] []");
     assert!(
         stderr(&out).contains("riff cannot make the pool of build jobs ("),
         "{out:?}"
