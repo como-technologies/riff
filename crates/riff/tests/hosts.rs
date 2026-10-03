@@ -135,7 +135,11 @@ impl Machine {
         let want = self.lists() + 2 * looks + 1;
         let start = Instant::now();
         while self.lists() < want {
-            assert!(start.elapsed() < WAIT, "the host made no look\n{}", self.log());
+            assert!(
+                start.elapsed() < WAIT,
+                "the host made no look\n{}",
+                self.log()
+            );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
