@@ -2643,6 +2643,10 @@
 - **01M3JPQT13ANVA7DNJDVNJ0S8P** The settings of riff on a machine are
   in `$XDG_CONFIG_HOME/riff/config.toml`, or
   `~/.config/riff/config.toml`. A change keeps each other key.
+- **01M41FMA3FGF3TKTXPBND9NDW1** A change of the settings writes a new
+  file and renames it over the old one. A process that reads the
+  settings at the same time reads the old or the new settings, never a
+  part. A settings file that is a symbolic link stays a link.
 - **01M3JPQT35BMR7XMAMMFSCDC2B** `riff workers limit N` sets the most
   workers on the machine, in the key `workers.limit`. The default is 0.
   With 0, `riff workers start` starts no worker, and names

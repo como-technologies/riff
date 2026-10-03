@@ -175,8 +175,11 @@ async fn a_blocked_status_is_red() {
     let who = output(riff(&server, dir, None, &["who", "--color", "always"])).await;
     let red = style::ERROR;
     assert!(who.contains(&format!("{red}blocked{red:#}")), "{who:?}");
-    let line = "waits for a review (step: merge, 0s ago)";
-    assert!(who.contains(&format!("  {red}{line}{red:#}\n")), "{who:?}");
+    // The age of the status grows on a busy machine (#460).
+    let start = format!("  {red}waits for a review (step: merge, ");
+    let (_, rest) = who.split_once(&start).expect(&who);
+    let (age, _) = rest.split_once(&format!("s ago){red:#}\n")).expect(&who);
+    assert!(age.parse::<u64>().is_ok(), "{who:?}");
 }
 
 /// Each `riff who` command in the `sh` blocks of How It Works is real,
