@@ -511,6 +511,9 @@ git push -q --force-with-lease -u origin HEAD
 - A WIP commit says `WIP` in its subject. STEP is your step in a few
   words, for example `WIP: the tests of the claim`.
 - A WIP commit needs no rebase and no pass of the checks.
+- This is the only WIP block of the skill. The push also works after
+  a rebase: `--force-with-lease` replaces the pushed branch only when
+  it is still the commit that you fetched last.
 - The pull request merges with a squash, so the WIP commits do not
   show on the default branch. Do not squash them yourself.
 - The next session that claims the item goes on from the branch (see
@@ -672,15 +675,8 @@ When a pause wakes you:
 1. Let a command that runs finish, for example a test run. Do not
    start a new step.
 2. Commit each change as a WIP commit on the branch of your worktree,
-   and push that branch. Run this in your worktree, never on the
-   default branch:
-
-   ```sh
-   git add -A
-   git diff --cached --quiet || git commit -m "WIP: the riff is paused"
-   git push -u origin HEAD
-   ```
-
+   and push that branch: run the block of "Push your work as WIP" with
+   the step `the riff is paused`.
 3. Push nothing to the default branch. Between a verify pass and its
    merge, stop before the push. A verify stops with no result.
 4. Keep your claims, and keep the watch running.
@@ -974,18 +970,18 @@ git worktree list | grep issue-12
 Go on from the earlier work. Do not start again.
 
 - A worktree on your machine that no live session uses (see `who`):
-  its files that are not committed are the only copy. First commit
-  them as WIP and push the branch. PATH is the worktree:
+  its files that are not committed are the only copy. In step 5, call
+  `EnterWorktree` with its path, not a new name. Then commit the files
+  and push the branch: run the block of "Push your work as WIP" with
+  the step `the files of an earlier session`. If the push fails, the
+  pushed branch has newer work from another machine. Pull it, then
+  push again. PATH is the worktree, and BRANCH is its branch, for
+  example `worktree-issue-12`. A branch that was never pushed from
+  this machine has no upstream, so name the branch:
 
   ```sh
-  git -C PATH add -A
-  git -C PATH diff --cached --quiet || git -C PATH commit -q -m "WIP: the files of an earlier session"
-  git -C PATH push -q -u origin HEAD
+  git -C PATH pull --rebase origin BRANCH
   ```
-
-  If the push fails, the pushed branch has newer work from another
-  machine: run `git -C PATH pull --rebase`, then push again. Then call
-  `EnterWorktree` with its path in step 5, not a new name.
 - A pushed branch and no worktree, for example
   `origin/worktree-issue-12`: after step 5 of the start routine, in
   your new worktree, run `git reset --hard origin/worktree-issue-12`.

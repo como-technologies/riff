@@ -1195,6 +1195,9 @@ Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 
 - A worktree can hold files that are not committed. They are the only
   copy. The session commits them as WIP and pushes them before it goes
   on.
+- A commit that is not pushed is on no branch of `origin`. After a
+  squash merge, the branch is gone, but `main` holds the work. riff
+  then counts no commit as not pushed.
 - A verify claim gets no such line: a verify worktree holds no work.
 - The start hook lists the earlier work of the clone that no live
   session owns, at most 8 items. So a new session sees it before it

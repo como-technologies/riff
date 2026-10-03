@@ -35,7 +35,10 @@
 //!   shows what the clone knows.
 //! - A worktree is a linked worktree of the clone on this machine. riff
 //!   counts its files that are not committed, and its commits that are
-//!   on no branch of `origin`.
+//!   on no branch of `origin`. A squash merge deletes the branch, so
+//!   those commits are on no branch. When a merge of `HEAD` into the
+//!   default branch of `origin` changes nothing, the work is there, and
+//!   riff counts no commit (01M3ZT825YAA5FW85YXH7JR1K0).
 //! - A branch or a worktree belongs to an item when its name holds the
 //!   item as a whole word ([`is_of`]): `worktree-issue-12` and
 //!   `worktree-issue-12-b` for `issue-12`, not `worktree-issue-123`.
@@ -105,7 +108,8 @@ pub struct Kept {
     pub path: PathBuf,
     /// How many files are not committed.
     pub changed: usize,
-    /// How many commits are on no branch of `origin`.
+    /// How many commits are on no branch of `origin`. It is 0 when the
+    /// default branch of `origin` holds the work of the worktree.
     pub not_pushed: usize,
 }
 
@@ -404,12 +408,36 @@ impl Worktree {
         let ahead = ["rev-list", "--count", "HEAD", "--not", "--remotes=origin"];
         let not_pushed = git(&self.path, &ahead)
             .and_then(|n| n.trim().parse().ok())
+            .filter(|&n| n == 0 || !on_default(&self.path))
             .unwrap_or(0);
         Kept {
             path: self.path,
             changed,
             not_pushed,
         }
+    }
+}
+
+/// True when the default branch of `origin` holds the work of `HEAD` in
+/// `dir`: a merge of `HEAD` into it gives the same tree. So a worktree
+/// whose branch merged with a squash has no commit that is not pushed
+/// (01M3ZT825YAA5FW85YXH7JR1K0).
+fn on_default(dir: &Path) -> bool {
+    let base = git(dir, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .unwrap_or_else(|| "origin/main".to_owned());
+    let tree = git(
+        dir,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{base}^{{tree}}"),
+        ],
+    );
+    let merged = git(dir, &["merge-tree", "--write-tree", &base, "HEAD"]);
+    match (tree, merged) {
+        (Some(tree), Some(merged)) => merged.lines().next() == Some(tree.as_str()),
+        _ => false,
     }
 }
 
@@ -540,7 +568,9 @@ mod tests {
         let path = worktree(&clone, "issue-12");
         run(&path, &["commit", "-q", "--allow-empty", "-m", "WIP: one"]);
         run(&path, &["push", "-q", "-u", "origin", "HEAD"]);
-        run(&path, &["commit", "-q", "--allow-empty", "-m", "two"]);
+        std::fs::write(path.join("c.txt"), "c").unwrap();
+        run(&path, &["add", "c.txt"]);
+        run(&path, &["commit", "-q", "-m", "two"]);
         std::fs::write(path.join("a.txt"), "a").unwrap();
         std::fs::write(path.join("b.txt"), "b").unwrap();
         worktree(&clone, "issue-123");
@@ -562,6 +592,47 @@ mod tests {
             line.contains("(2 files not committed, 1 commit not pushed)"),
             "{line}"
         );
+    }
+
+    /// 01M3ZT825YAA5FW85YXH7JR1K0: a squash merge puts the work on
+    /// `main` and deletes the branch. riff does not say "not pushed".
+    #[test]
+    fn a_worktree_whose_work_is_on_main_has_no_commit_that_is_not_pushed() {
+        let root = tempfile::tempdir().unwrap();
+        let clone = clone(root.path());
+        let path = worktree(&clone, "issue-12");
+        for (step, text) in [("one", "a\n"), ("two", "a\nb\n")] {
+            std::fs::write(path.join("a.txt"), text).unwrap();
+            run(&path, &["add", "a.txt"]);
+            run(&path, &["commit", "-q", "-m", step]);
+        }
+        run(&path, &["push", "-q", "-u", "origin", "HEAD"]);
+        assert_eq!(find(&clone, "issue-12").unwrap().kept[0].not_pushed, 0);
+
+        // The forge merges with a squash and deletes the branch.
+        std::fs::write(clone.join("a.txt"), "a\nb\n").unwrap();
+        run(&clone, &["add", "a.txt"]);
+        run(&clone, &["commit", "-q", "-m", "the squash (#40)"]);
+        run(&clone, &["push", "-q", "origin", "HEAD:main"]);
+        run(
+            &clone,
+            &["push", "-q", "origin", "--delete", "worktree-issue-12"],
+        );
+        run(&clone, &["fetch", "-q", "--prune", "origin"]);
+
+        let earlier = find(&clone, "issue-12").unwrap();
+        assert!(earlier.pushed.is_empty(), "{earlier:?}");
+        assert_eq!(earlier.kept[0].not_pushed, 0, "{earlier:?}");
+        let line = earlier.claim_line();
+        assert!(!line.contains("not pushed"), "{line}");
+        let lines = start_lines(&all(&clone)).unwrap();
+        assert!(!lines.contains("not pushed"), "{lines}");
+
+        // A new commit that is not on main counts again.
+        std::fs::write(path.join("c.txt"), "c").unwrap();
+        run(&path, &["add", "c.txt"]);
+        run(&path, &["commit", "-q", "-m", "three"]);
+        assert_eq!(find(&clone, "issue-12").unwrap().kept[0].not_pushed, 3);
     }
 
     #[test]

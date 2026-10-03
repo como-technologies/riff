@@ -739,7 +739,9 @@ mod tests {
             "git worktree list | grep issue-12",
             "Go on from the earlier work. Do not start again.",
             "its files that are not committed are the only copy",
-            "git -C PATH push -q -u origin HEAD",
+            "run the block of \"Push your work as WIP\" with the step `the files of an earlier session`",
+            "A branch that was never pushed from this machine has no upstream, so name the branch",
+            "git -C PATH pull --rebase origin BRANCH",
             "`git reset --hard origin/worktree-issue-12`",
             "call `EnterWorktree` with its path",
             "Never use the worktree of another live session",
@@ -750,6 +752,27 @@ mod tests {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }
         assert!(!skill.contains("too old"));
+        assert!(
+            !skill.contains("pull --rebase`"),
+            "each pull names the branch"
+        );
+    }
+
+    /// 01M3ZT8296G8DZFRSKYM6V5XTH: the skill has one WIP block, and
+    /// "Pause" and "Pick up dropped work" use it.
+    #[test]
+    fn the_skill_has_one_wip_block() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        assert_eq!(skill.matches("git commit").count(), 1, "one WIP commit");
+        assert_eq!(skill.matches("-m \"WIP").count(), 1, "one WIP commit");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "run the block of \"Push your work as WIP\" with the step `the riff is paused`",
+            "run the block of \"Push your work as WIP\" with the step `the files of an earlier session`",
+            "This is the only WIP block of the skill. The push also works after a rebase",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
     }
 
     /// 01M3WFYEKTWVVZ1FWVNQMGBNN0: a session pushes its work as WIP.

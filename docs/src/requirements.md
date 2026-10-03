@@ -1602,6 +1602,15 @@
   owns the work when it holds the claim of the item, or works in its
   worktree. The fetch of the start hook prunes
   (01M3JN21T9C5GX6VX8N032JYWE).
+- **01M3ZT825YAA5FW85YXH7JR1K0** riff counts no commit of a worktree as
+  not pushed when the default branch of `origin` holds its work: a
+  merge of `HEAD` into that branch changes nothing. This is so after a
+  squash merge deleted the branch of the worktree.
+- **01M3ZT8296G8DZFRSKYM6V5XTH** The skill has one WIP block, in "Push
+  your work as WIP". "Pause" and "Pick up dropped work" use it. Its
+  push works after a rebase. When the push of an earlier worktree
+  fails, the pull names the branch:
+  `git -C PATH pull --rebase origin BRANCH`.
 - **R35** A session has a URI:
   `riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE`.
   It shows who the session is, where it works and what it works on.
