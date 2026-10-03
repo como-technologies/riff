@@ -1783,14 +1783,15 @@ git init -q ~/stage/ann/web
 git -C ~/stage/ann/web remote add origin https://github.com/acme/web
 ```
 
-Open one terminal for each person. Put the person in place of `WHO`.
+Open one terminal for each person. Put the person in place of `WHO`,
+and the `CLOUD_URL` of `deploy/stage.env` in place of `STAGE_URL`.
 The update by itself installs into the home too:
 
 ```sh
 export STAGE=~/stage/WHO
 export PATH=$STAGE/bin:$PATH RIFF_HOME=$STAGE CARGO_INSTALL_ROOT=$STAGE
 export CLAUDE_CONFIG_DIR=$STAGE/claude
-export RIFF_SERVER=https://riff-stage-816917641970.us-central1.run.app
+export RIFF_SERVER=STAGE_URL
 riff login
 riff update --auto on
 ```
