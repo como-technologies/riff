@@ -352,16 +352,29 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
-/// The `sh` block of "A session with work" in the skill.
+/// The `sh` block of "Push your work as WIP" in the skill, with the
+/// step that "A session with work" names (01M3ZT8296G8DZFRSKYM6V5XTH).
 fn wip_steps() -> String {
     let skill = fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
     )
     .unwrap();
-    let part = &skill[skill.find("### A session with work").unwrap()..];
+    let pause = &skill[skill.find("### A session with work").unwrap()..];
+    let pause = pause.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        pause.contains(
+            "run the block of \"Push your work as WIP\" with the step `the riff is paused`"
+        )
+    );
+    let part = &skill[skill.find("### Push your work as WIP").unwrap()..];
     let block = &part[part.find("```sh").unwrap() + "```sh".len()..];
     let block = &block[..block.find("```").unwrap()];
-    block.lines().map(str::trim).collect::<Vec<_>>().join("\n")
+    block
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("STEP", "the riff is paused")
 }
 
 fn run_wip_steps(dir: &Path) {
@@ -439,6 +452,28 @@ async fn a_session_with_work_pushes_a_wip_branch_and_keeps_its_claim() {
     run_wip_steps(&work);
     assert_eq!(
         git(&origin, &["rev-list", "--count", "worktree-issue-12"]),
+        "2"
+    );
+
+    // The default branch moves on. After a rebase, the same block
+    // pushes again (01M3ZT8296G8DZFRSKYM6V5XTH).
+    git(&work, &["switch", "-q", "main"]);
+    fs::write(work.join("c.txt"), "main\n").unwrap();
+    git(&work, &["add", "c.txt"]);
+    git(&work, &["commit", "-q", "-m", "main moves on"]);
+    git(&work, &["push", "-q", "origin", "main"]);
+    git(&work, &["switch", "-q", "worktree-issue-12"]);
+    git(&work, &["fetch", "-q", "origin"]);
+    git(&work, &["rebase", "-q", "origin/main"]);
+    fs::write(work.join("d.txt"), "more\n").unwrap();
+    run_wip_steps(&work);
+    assert_eq!(
+        git(&origin, &["rev-parse", "worktree-issue-12"]),
+        git(&work, &["rev-parse", "HEAD"]),
+        "the push after the rebase replaced the branch"
+    );
+    assert_eq!(
+        git(&origin, &["rev-list", "--count", "main..worktree-issue-12"]),
         "2"
     );
 
