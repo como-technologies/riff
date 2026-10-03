@@ -2997,6 +2997,9 @@
   runs with the tokens that it has.
 - **01M3ZGZMRHXRBP762QPVCV0YX8** When riff cannot make the pool, each
   worker gets the fixed share. `riff workers start` says so one time.
+- **01M41CR2HJRFW6R7YMJTPVEMJ1** With no pool, the wrapper of a worker
+  unsets `MAKEFLAGS`, `CARGO_MAKEFLAGS` and the cargo test runner. So
+  `claude` gets no variable of the pool of another worker.
 - **01M3ZGZMV78G3BNVFGHAZWQQDX** `riff workers jobs` shows the size of
   the pool and the tokens in use, or that no worker runs.
 - **01M3WFYZTX05CGDP2NQF9B356K** `riff workers run` starts its worker

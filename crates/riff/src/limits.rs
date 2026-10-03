@@ -32,7 +32,8 @@
 //!   The wrapper holds the pool of the machine ([`crate::jobserver`]),
 //!   and gives `claude` the variables of [`jobs_env`]: `MAKEFLAGS` that
 //!   names the pool, the test runner, and `RUST_TEST_THREADS`. With no
-//!   pool, it gives the fixed share in [`JOBS_VARS`]. Each build and
+//!   pool, it gives the fixed share in [`JOBS_VARS`], and unsets the
+//!   variables of a pool (01M41CR2HJRFW6R7YMJTPVEMJ1). Each build and
 //!   each test run of the worker reads them. The wrapper stays for each
 //!   next item of the worker, so the variables stay too.
 //! - **Nice** (01M3WFYZTX05CGDP2NQF9B356K). The wrapper starts `claude`
@@ -110,7 +111,9 @@ pub fn runner_var() -> String {
 /// from the pool (01M3ZGZMJ9RF1C4AHG78GQ2NM4), and the test runner of
 /// `riff` takes the test threads from it (01M3ZGZMNH1YM56GYNYBMH7AWM).
 /// With no pool, each build and test run gets the fixed share
-/// (01M3WFYZRK5CT22GJW6ZHYT9CC).
+/// (01M3WFYZRK5CT22GJW6ZHYT9CC), and no `MAKEFLAGS`,
+/// `CARGO_MAKEFLAGS` or test runner of another pool
+/// (01M41CR2HJRFW6R7YMJTPVEMJ1).
 ///
 /// ```
 /// use riff::limits::{jobs_env, runner_var, Limits};
@@ -127,8 +130,11 @@ pub fn runner_var() -> String {
 /// let env = jobs_env(&limits, None, "/bin/riff".as_ref());
 /// assert_eq!(
 ///     env,
-///     [("CARGO_BUILD_JOBS".to_owned(), Some("2".to_owned())),
-///      ("RUST_TEST_THREADS".to_owned(), Some("2".to_owned()))],
+///     [("MAKEFLAGS".to_owned(), None),
+///      ("CARGO_MAKEFLAGS".to_owned(), None),
+///      ("CARGO_BUILD_JOBS".to_owned(), Some("2".to_owned())),
+///      ("RUST_TEST_THREADS".to_owned(), Some("2".to_owned())),
+///      (runner_var(), None)],
 /// );
 /// ```
 pub fn jobs_env(
@@ -138,7 +144,13 @@ pub fn jobs_env(
 ) -> Vec<(String, Option<String>)> {
     let jobs = Some(limits.jobs.to_string());
     let Some(makeflags) = makeflags else {
-        return JOBS_VARS.map(|var| (var.to_owned(), jobs.clone())).into();
+        return vec![
+            ("MAKEFLAGS".into(), None),
+            ("CARGO_MAKEFLAGS".into(), None),
+            ("CARGO_BUILD_JOBS".into(), jobs.clone()),
+            ("RUST_TEST_THREADS".into(), jobs),
+            (runner_var(), None),
+        ];
     };
     vec![
         ("MAKEFLAGS".into(), Some(makeflags.into())),
