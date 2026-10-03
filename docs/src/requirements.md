@@ -1608,7 +1608,9 @@
   squash merge deleted the branch of the worktree.
 - **01M3ZT8296G8DZFRSKYM6V5XTH** The skill has one WIP block, in "Push
   your work as WIP". "Pause" and "Pick up dropped work" use it. Its
-  push works after a rebase. When the push of an earlier worktree
+  push works after a rebase, and fails when it would drop newer work
+  of the pushed branch (`--force-with-lease --force-if-includes`).
+  When the push of an earlier worktree
   fails, the pull names the branch:
   `git -C PATH pull --rebase origin BRANCH`.
 - **R35** A session has a URI:

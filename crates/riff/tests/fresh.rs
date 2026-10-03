@@ -195,9 +195,35 @@ fn find_steps(item: &str) -> String {
 }
 
 /// The steps that commit and push the files of the worktree `path` of
-/// an earlier session (01M3WFYEP1H3VPW8G90KQDE6FW).
+/// an earlier session (01M3WFYEP1H3VPW8G90KQDE6FW): the one WIP block
+/// of the skill, with the step that "Pick up dropped work" names
+/// (01M3ZT8296G8DZFRSKYM6V5XTH).
 fn keep_steps(path: &Path) -> String {
-    dropped_work_block(1, "issue-12").replace("PATH", path.to_str().unwrap())
+    let skill = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
+    )
+    .unwrap();
+    let step = "the files of an earlier session";
+    let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains(&format!(
+        "run the block of \"Push your work as WIP\" with the step `{step}`"
+    )));
+    let part = &skill[skill.find("### Push your work as WIP").unwrap()..];
+    let block = part.split("```sh").nth(1).unwrap();
+    let block = &block[..block.find("```").unwrap()];
+    format!(
+        "set -e\ncd '{}'\n{}",
+        path.display(),
+        block.replace("STEP", step)
+    )
+}
+
+/// The step that pulls newer work of the branch `branch` into the
+/// worktree `path`, when the push fails.
+fn pull_step(path: &Path, branch: &str) -> String {
+    dropped_work_block(1, "issue-12")
+        .replace("PATH", path.to_str().unwrap())
+        .replace("BRANCH", branch)
 }
 
 /// The step that deletes the pushed branch before a new start.
@@ -255,6 +281,28 @@ fn the_skill_finds_the_pushed_branch_of_an_earlier_session() {
         git(&second, &["show", "origin/worktree-issue-12:work.txt"]),
         "not committed\n"
     );
+
+    // Another machine pushed newer work, so the push of the WIP block
+    // fails. The pull names the branch, and then the push works.
+    git(&second, &["switch", "-q", "worktree-issue-12"]);
+    std::fs::write(second.join("other.txt"), "other machine\n").unwrap();
+    git(&second, &["add", "other.txt"]);
+    git(&second, &["commit", "-q", "-m", "WIP: other machine"]);
+    git(&second, &["push", "-q", "origin", "HEAD"]);
+    git(&second, &["switch", "-q", "main"]);
+    std::fs::write(first.join("more.txt"), "more\n").unwrap();
+    git(&first, &["fetch", "-q", "origin"]);
+    run(keep_steps(&first));
+    let pushed = || git(&second, &["ls-remote", "origin", "worktree-issue-12"]);
+    let head = git(&first, &["rev-parse", "HEAD"]).trim().to_owned();
+    assert!(!pushed().starts_with(&head), "the push fails");
+    run(pull_step(&first, "worktree-issue-12"));
+    run(keep_steps(&first));
+    let head = git(&first, &["rev-parse", "HEAD"]).trim().to_owned();
+    assert!(pushed().starts_with(&head), "the push after the pull works");
+    for file in ["other.txt", "more.txt", "work.txt"] {
+        assert!(first.join(file).exists(), "{file}");
+    }
 
     // A new start deletes the old branch, so the next session finds
     // no earlier work.

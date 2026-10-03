@@ -700,7 +700,12 @@ mod tests {
         let end = skill.find("## Keep good git hygiene").unwrap();
         assert!(!skill[start..end].contains("--force"));
         assert!(!skill.contains("branch -D"));
-        assert!(!skill.replace("--force-with-lease", "").contains("--force"));
+        assert!(
+            !skill
+                .replace("--force-with-lease", "")
+                .replace("--force-if-includes", "")
+                .contains("--force")
+        );
     }
 
     /// 01M3K0FZ5M08Z4YPSVKFADCAKC: only a session with no claim verifies.
@@ -786,7 +791,7 @@ mod tests {
             "before each long run: `just ci`, a test loop, a build;",
             "at each change of step, when you set your status.",
             "git commit -q -m \"WIP: STEP\"",
-            "git push -q --force-with-lease -u origin HEAD",
+            "git push -q --force-with-lease --force-if-includes -u origin HEAD",
             "A WIP commit says `WIP` in its subject",
             "The pull request merges with a squash, so the WIP commits do not show on the default branch",
             "Push it as WIP before the long run of the checks",

@@ -246,7 +246,7 @@ are in "Pull requests on GitHub".
    checks (see "Push your work as WIP"). The checks of your repository
    pass.
 2. Push your branch, so that a session on another machine can fetch
-   it: `git push --force-with-lease -u origin HEAD`.
+   it: `git push --force-with-lease --force-if-includes -u origin HEAD`.
 3. Open a pull request for the branch with one command:
    `riff pr open --title "TITLE" --file summary.md`. It links the
    issue of your claim, gives the pull request the wave of the issue,
@@ -505,15 +505,16 @@ Run this in your worktree, never on the default branch:
 ```sh
 git add -A
 git diff --cached --quiet || git commit -q -m "WIP: STEP"
-git push -q --force-with-lease -u origin HEAD
+git push -q --force-with-lease --force-if-includes -u origin HEAD
 ```
 
 - A WIP commit says `WIP` in its subject. STEP is your step in a few
   words, for example `WIP: the tests of the claim`.
 - A WIP commit needs no rebase and no pass of the checks.
 - This is the only WIP block of the skill. The push also works after
-  a rebase: `--force-with-lease` replaces the pushed branch only when
-  it is still the commit that you fetched last.
+  a rebase. It replaces the pushed branch only when your branch holds
+  each commit of it that you fetched. So it never drops the newer work
+  of another machine: then the push fails.
 - The pull request merges with a squash, so the WIP commits do not
   show on the default branch. Do not squash them yourself.
 - The next session that claims the item goes on from the branch (see
