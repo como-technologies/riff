@@ -809,7 +809,9 @@ fn the_book_and_the_skill_say_what_the_lead_gets_for_a_change() {
     let how = &book[book
         .find("### Change a worker setting while the riff runs")
         .unwrap()..];
-    let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+    // This how-to and the next one: "Lower the limit while workers run"
+    // (01M402VFGAJQM1QW8B42NKMJM4).
+    let how = &how[..how.find("\n### Limit the workers of a machine").unwrap()];
     let limit = |old, new| Change::Limit {
         host: "pangolin".into(),
         old,
@@ -825,7 +827,7 @@ fn the_book_and_the_skill_say_what_the_lead_gets_for_a_change() {
         setting_changed(&limit(3, 4), &Effect::Starts),
         setting_changed(&limit(3, 4), &Effect::Nothing),
         setting_changed(&limit(1, 3), &waits),
-        setting_changed(&limit(4, 3), &Effect::Over(4)),
+        setting_changed(&limit(4, 2), &Effect::Over(4)),
         setting_changed(
             &Change::Interval {
                 host: "thelio".into(),

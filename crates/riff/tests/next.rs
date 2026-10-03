@@ -55,8 +55,14 @@ impl Worker {
         }
     }
 
+    /// The calls of the fake `tmux`, but the count of the workers
+    /// before each clear (01M402VFGAJQM1QW8B42NKMJM4).
     fn log(&self) -> String {
-        std::fs::read_to_string(self.fake.path().join("log")).unwrap_or_default()
+        let log = std::fs::read_to_string(self.fake.path().join("log")).unwrap_or_default();
+        log.lines()
+            .filter(|l| !l.starts_with("list-panes"))
+            .map(|l| format!("{l}\n"))
+            .collect()
     }
 
     /// A riff command of the session `id` in the pane `%3`. `worker`

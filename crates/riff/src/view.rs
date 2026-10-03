@@ -736,6 +736,11 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 ///     "pangolin  limit 3  runs 1  cpu 16x4500MHz, mem 32GB, 24GB available, load 1.50  score 24.0"
 /// );
 /// // Why the machine starts no worker (01M3WFZ01PTAYYKG3T5CFA2W4D).
+/// // More workers than the limit (01M402VFQHC5PH39DTFV6AH60F).
+/// assert_eq!(
+///     plain(riff::view::host_heading("pangolin", 2, 4, None, 4)),
+///     "pangolin  limit 2  runs 4: 2 workers end after their item"
+/// );
 /// let low = Machine { avail_gb: 3, ..m };
 /// assert_eq!(
 ///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&low), 4)),
@@ -751,6 +756,9 @@ pub fn host_heading(
     floor: u32,
 ) -> String {
     let mut out = format!("{}  limit {limit}  runs {runs}", styled(BOLD, &safe(host)));
+    if let Some(end) = text::end_after_item(limit, runs) {
+        let _ = write!(out, "{}", styled(WARNING, &format!(": {end}")));
+    }
     if let Some(m) = machine {
         let _ = write!(
             out,

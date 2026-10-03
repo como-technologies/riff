@@ -2660,6 +2660,19 @@
   the machine, and `riff workers stop PANE` ends one. It closes the
   pane, then sends the end call of the session. The session leaves
   `riff who`, and its claims are free at once.
+- **01M402VFGAJQM1QW8B42NKMJM4** When more workers run on a machine
+  than its limit, a worker that ends its item ends in place of its
+  clear (01M3XV0562D3H3P22CJDBPAZBH), as `riff workers stop PANE`
+  does. riff does this only while the workers are more than the limit.
+  One lock file on the machine makes the count and the end one step.
+  A limit of 0 ends each worker after its item. riff never stops a
+  worker that holds a claim.
+- **01M402VFKXEJARG7CM60TDCMKW** When a worker ends over the limit,
+  the lead gets a note: the host, the pane, the limit and the workers
+  that ran.
+- **01M402VFQHC5PH39DTFV6AH60F** When more workers run than the limit,
+  the heading of the machine in `riff workers` says how many end
+  after their item.
 - **01M3JQCCX22R4R4MN7XZPTS391** No command asks for a fresh context.
   `riff workers next` and the file `next-ID` are gone.
 - **01M3JQCCZ5M9VY3RGXWJYJN9Q9** The plugin has a Stop hook,
@@ -2921,7 +2934,8 @@
 - **01M3X30R4PSBP3RQWM02BJ6GK3** The message for a new limit says what
   the change does. When the rollout starts a worker because of a
   higher limit, it says so. When more workers run than a lower limit,
-  it says so, and riff stops none.
+  it says how many run and how many end after their item
+  (01M402VFGAJQM1QW8B42NKMJM4).
 - **01M3X30RA3X08JBJ2JBVCCNEH3** The message for a change of a worker
   setting is a note. It wakes the lead only when free work waits that
   a higher limit lets start and the rollout is off. Then it names the

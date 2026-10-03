@@ -77,8 +77,9 @@
 //!   (01M3YCGKKRDNFC338K1JSK30JK). A workers host can still take the
 //!   work.
 //!
-//! riff never stops a worker here. The server stops idle workers
-//! (#259).
+//! The rollout never stops a worker. The server stops idle workers
+//! (#259). A worker over the limit of its machine ends after its item
+//! ([`crate::next`], 01M402VFGAJQM1QW8B42NKMJM4).
 //!
 //! # A change of the worker settings
 //!
@@ -99,7 +100,7 @@
 //!     C -- yes --> E{"what does the change do?"}
 //!     E -- "a higher limit gives room, and the rollout is on" --> N1["note: the rollout starts 1 worker"]
 //!     E -- "a higher limit gives room, and the rollout is off" --> W["message that wakes the lead:<br/>riff workers start N"]
-//!     E -- "more workers run than the new limit" --> N2["note: riff stops no worker"]
+//!     E -- "more workers run than the new limit" --> N2["note: the workers over the limit end after their item"]
 //!     E -- "nothing" --> N3["note: the change"]
 //! ```
 //!
@@ -421,7 +422,8 @@ pub enum Effect {
     /// workers host.
     Waits { count: usize, remote: bool },
     /// This many workers run on the machine: more than its new limit.
-    /// riff stops none.
+    /// The workers over the limit end after their item
+    /// (01M402VFGAJQM1QW8B42NKMJM4).
     Over(usize),
 }
 
@@ -1768,8 +1770,10 @@ mod tests {
         );
     }
 
-    /// A lower limit stops no worker, and the lead gets a note that says
-    /// so. A change with no free work gives a note with only the change.
+    /// A lower limit stops no worker at once, and the lead gets a note
+    /// that says how many end after their item
+    /// (01M402VFGAJQM1QW8B42NKMJM4). A change with no free work gives a
+    /// note with only the change.
     #[tokio::test(start_paused = true)]
     async fn a_lower_limit_gives_a_note_and_stops_no_worker() {
         let mut w = world(0);
@@ -1788,8 +1792,8 @@ mod tests {
             fake.with(|w| w.told.clone()),
             [
                 (
-                    "workers: limit 4 to 2 on pangolin: 3 workers run there, and riff stops \
-                     none."
+                    "workers: limit 4 to 2 on pangolin: 3 workers run there. 1 worker ends after \
+                     its item. riff stops no worker in the middle of an item."
                         .to_owned(),
                     false
                 ),
