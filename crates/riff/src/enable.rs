@@ -1221,7 +1221,10 @@ mod tests {
         }
         let settings = victim.join(".claude/settings.local.json");
         assert!(!settings.exists(), "riff wrote in the victim");
-        assert!(!worktree.join(".claude").exists(), "riff wrote in the worktree");
+        assert!(
+            !worktree.join(".claude").exists(),
+            "riff wrote in the worktree"
+        );
         let after = (entries(&victim), entries(&victim.join(".claude")));
         assert_eq!(after, before);
         // The worktree that git made still passes.
