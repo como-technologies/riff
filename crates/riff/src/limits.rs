@@ -9,8 +9,8 @@
 //!
 //! | Limit | Who sets it | Default | Setting |
 //! |---|---|---|---|
-//! | Compile jobs and test threads of all workers | `riff workers run` | one pool: physical cores - 1 - worker limit, 1 or more ([`crate::jobserver`]) | `workers.jobs` |
-//! | Test threads of one worker, and its jobs with no pool | `riff workers run` | (physical cores - 1) / worker limit, 1 or more ([`jobs`]) | `workers.jobs` |
+//! | Compile jobs and test threads of all workers | `riff workers run` | one pool: physical cores - 1 - workers, 1 or more ([`crate::jobserver`]) | `workers.jobs` |
+//! | Test threads of one worker, and its jobs with no pool | `riff workers run` | (physical cores - 1) / workers, 1 or more ([`jobs`]) | `workers.jobs` |
 //! | Priority | `riff workers run` | nice 10 | `workers.nice` |
 //! | Memory and CPU share of all workers | `riff workers start` | 3/4 of the memory ([`memory`]), CPU weight [`CPU_WEIGHT`] | `workers.memory` |
 //! | Available memory for a new worker | `riff workers start`, the rollout | 4 GB ([`crate::machine::Machine::low`]) | `workers.floor` |
@@ -48,6 +48,15 @@
 //!   one time ([`scope`]).
 //! - **Floor** (01M3WFZ01PTAYYKG3T5CFA2W4D). riff starts no worker while
 //!   the available memory is less than the floor.
+//!
+//! - **Cores** (01M3WFYZRK5CT22GJW6ZHYT9CC). riff counts the physical
+//!   cores of the machine ([`Cores`]). When it cannot read them, it
+//!   counts half of the logical CPUs, and says so one time
+//!   ([`say_cores`]).
+//! - **Workers.** "Workers" in the table is the worker limit, or the
+//!   workers that run when they are more ([`Limits::of`],
+//!   [`crate::jobserver::workers`]). So 4 workers with a limit of 2 do
+//!   not get twice the cores.
 //!
 //! riff sets the limits when a worker starts. It does not watch the
 //! memory, and it does not change a limit while the workers run.
@@ -98,7 +107,7 @@ pub fn runner_var() -> String {
 /// ```
 /// use riff::limits::{jobs_env, runner_var, Limits};
 ///
-/// let limits = Limits { jobs: 2, tokens: 4, nice: 10 };
+/// let limits = Limits { jobs: 2, tokens: 4, counted: 3, nice: 10 };
 /// let flags = "-j --jobserver-auth=fifo:/run/riff/jobs/fifo";
 /// let env = jobs_env(&limits, Some(flags), "/bin/riff".as_ref());
 /// let get = |var: &str| env.iter().find(|(v, _)| v == var).map(|(_, value)| value.clone());
@@ -152,6 +161,10 @@ pub const CPU_WEIGHT: u16 = 50;
 /// has no systemd.
 pub const SAID: &str = "no-systemd";
 
+/// The file in the local dir that says: riff said that it cannot read
+/// the physical cores of this machine.
+pub const SAID_CORES: &str = "no-physical-cores";
+
 /// The fixed share of one worker: `setting`, or with 0 the `physical`
 /// cores less 1, divided by the worker `limit`, and [`MIN_JOBS`] or
 /// more (01M3WFYZRK5CT22GJW6ZHYT9CC).
@@ -172,17 +185,117 @@ pub fn jobs(physical: u16, limit: u16, setting: u16) -> u16 {
     (physical.saturating_sub(1) / limit.max(1)).max(MIN_JOBS)
 }
 
-/// The physical cores of this machine: the cores of `machine` with no
-/// second thread of a core. On Linux, riff counts the pairs of
-/// `physical id` and `core id` in `/proc/cpuinfo`. When it cannot, or
-/// when [`crate::machine::MACHINE`] gives the numbers, it uses
-/// `machine.cores`.
-pub fn physical(machine: &Machine) -> u16 {
-    if std::env::var_os(crate::machine::MACHINE).is_some() {
-        return machine.cores;
+/// The variable that names the file to read in place of
+/// `/proc/cpuinfo`, for tests.
+pub const CPUINFO: &str = "RIFF_CPUINFO";
+
+/// The physical cores of a machine, and how riff found them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cores {
+    /// The physical cores that riff counts.
+    pub physical: u16,
+    /// The logical CPUs of the machine.
+    pub logical: u16,
+    /// False when riff cannot read the physical cores: then `physical`
+    /// is half of `logical`.
+    pub read: bool,
+}
+
+impl Cores {
+    /// The cores from the text of `/proc/cpuinfo` and the `logical`
+    /// CPUs. When the text has no physical cores, riff uses half of the
+    /// logical CPUs, and 1 or more (01M3WFYZRK5CT22GJW6ZHYT9CC).
+    ///
+    /// ```
+    /// use riff::limits::Cores;
+    ///
+    /// let two_threads = "physical id\t: 0\ncore id\t\t: 0\n\nphysical id\t: 0\ncore id\t\t: 0\n";
+    /// assert_eq!(Cores::from(two_threads, 2), Cores { physical: 1, logical: 2, read: true });
+    /// assert_eq!(Cores::from("processor\t: 0\n", 16), Cores { physical: 8, logical: 16, read: false });
+    /// assert_eq!(Cores::from("", 1).physical, 1, "1 or more");
+    /// ```
+    pub fn from(cpuinfo: &str, logical: u16) -> Cores {
+        match physical_from(cpuinfo) {
+            Some(physical) => Cores {
+                physical,
+                logical,
+                read: true,
+            },
+            None => Cores {
+                physical: (logical / 2).max(1),
+                logical,
+                read: false,
+            },
+        }
     }
-    physical_from(&std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default())
-        .unwrap_or(machine.cores)
+
+    /// The cores of this machine with the logical CPUs of `machine`. On
+    /// Linux, riff counts the pairs of `physical id` and `core id` in
+    /// `/proc/cpuinfo`, or in the file that [`CPUINFO`] names. When
+    /// [`crate::machine::MACHINE`] gives the numbers and [`CPUINFO`] is
+    /// not set, the physical cores are `machine.cores`.
+    pub fn here(machine: &Machine) -> Cores {
+        let file = std::env::var_os(CPUINFO);
+        if file.is_none() && std::env::var_os(crate::machine::MACHINE).is_some() {
+            return Cores {
+                physical: machine.cores,
+                logical: machine.cores,
+                read: true,
+            };
+        }
+        let file = file.unwrap_or_else(|| "/proc/cpuinfo".into());
+        Cores::from(
+            &std::fs::read_to_string(file).unwrap_or_default(),
+            machine.cores,
+        )
+    }
+
+    /// What riff says when it cannot read the physical cores, or `None`.
+    ///
+    /// ```
+    /// use riff::limits::Cores;
+    ///
+    /// assert_eq!(Cores { physical: 8, logical: 16, read: true }.said(), None);
+    /// assert!(Cores { physical: 8, logical: 16, read: false }
+    ///     .said()
+    ///     .is_some_and(|line| line.contains("half of the 16 logical CPUs: 8")));
+    /// ```
+    pub fn said(&self) -> Option<String> {
+        (!self.read).then(|| crate::text::no_physical_cores(self.logical, self.physical))
+    }
+}
+
+/// Says one time that riff cannot read the physical `cores`: the file
+/// [`SAID_CORES`] in `local` holds that (01M3WFYZRK5CT22GJW6ZHYT9CC).
+///
+/// ```
+/// use riff::limits::{say_cores, Cores};
+///
+/// let local = tempfile::tempdir()?;
+/// let guess = Cores { physical: 8, logical: 16, read: false };
+/// assert!(say_cores(&guess, Some(local.path())).is_some());
+/// assert_eq!(say_cores(&guess, Some(local.path())), None, "one time");
+/// let read = Cores { read: true, ..guess };
+/// assert_eq!(say_cores(&read, Some(local.path())), None);
+/// assert!(say_cores(&guess, Some(local.path())).is_some(), "again after a read");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn say_cores(cores: &Cores, local: Option<&Path>) -> Option<String> {
+    let said = local.map(|dir| dir.join(SAID_CORES));
+    let Some(line) = cores.said() else {
+        if let Some(said) = said {
+            let _ = std::fs::remove_file(said);
+        }
+        return None;
+    };
+    let first = said.as_ref().is_none_or(|said| !said.exists());
+    if let Some(said) = said {
+        if let Some(dir) = said.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(said, "");
+    }
+    first.then_some(line)
 }
 
 /// The physical cores in the text of `/proc/cpuinfo`, or `None`.
@@ -261,13 +374,18 @@ pub struct Limits {
     /// ([`crate::jobserver::tokens`]). 0 is no pool: the setting
     /// `workers.jobs` turns it off.
     pub tokens: u16,
+    /// The workers that the numbers count: the limit, or the workers
+    /// that run when they are more.
+    pub counted: u16,
     /// The nice value. 0 is no nice.
     pub nice: u8,
 }
 
 impl Limits {
-    /// The limits from the settings file `path` and the `physical`
-    /// cores of the machine ([`physical`]).
+    /// The limits from the settings file `path`, the `physical` cores of
+    /// the machine ([`Cores`]), and the `workers` that run. When more
+    /// workers run than the limit, riff counts the workers that run
+    /// (01M3WFYZRK5CT22GJW6ZHYT9CC).
     ///
     /// ```
     /// use riff::limits::Limits;
@@ -275,22 +393,28 @@ impl Limits {
     /// let dir = tempfile::tempdir()?;
     /// let path = dir.path().join("config.toml");
     /// riff::settings::set_workers_limit(&path, 3)?;
-    /// assert_eq!(Limits::of(&path, 8)?, Limits { jobs: 2, tokens: 4, nice: 10 });
+    /// assert_eq!(Limits::of(&path, 8, 1)?, Limits { jobs: 2, tokens: 4, counted: 3, nice: 10 });
+    /// assert_eq!(
+    ///     Limits::of(&path, 8, 6)?,
+    ///     Limits { jobs: 1, tokens: 1, counted: 6, nice: 10 },
+    ///     "6 workers run, more than the limit",
+    /// );
     /// riff::settings::set_workers_jobs(&path, 3)?;
     /// riff::settings::set_workers_nice(&path, 0)?;
-    /// assert_eq!(Limits::of(&path, 8)?, Limits { jobs: 3, tokens: 0, nice: 0 });
+    /// assert_eq!(Limits::of(&path, 8, 1)?, Limits { jobs: 3, tokens: 0, counted: 3, nice: 0 });
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn of(path: &Path, physical: u16) -> Result<Limits> {
-        let limit = settings::workers_limit(path)?;
+    pub fn of(path: &Path, physical: u16, workers: u16) -> Result<Limits> {
+        let counted = settings::workers_limit(path)?.max(workers).max(1);
         let setting = settings::workers_jobs(path)?;
         Ok(Limits {
-            jobs: jobs(physical, limit, setting),
+            jobs: jobs(physical, counted, setting),
             tokens: if setting > 0 {
                 0
             } else {
-                crate::jobserver::tokens(physical, limit)
+                crate::jobserver::tokens(physical, counted)
             },
+            counted,
             nice: settings::workers_nice(path)?,
         })
     }

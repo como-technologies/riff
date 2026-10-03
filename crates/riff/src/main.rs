@@ -1558,13 +1558,14 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             if let Some(jobs) = jobs {
                 settings::set_workers_jobs(&path, *jobs)?;
             }
-            let machine = riff::machine::Machine::here();
-            let limits = riff::limits::Limits::of(&path, riff::limits::physical(&machine))?;
-            let pool = riff::local::dir()
-                .and_then(|dir| riff::jobserver::state(&riff::jobserver::dir(&dir)));
+            let cores = riff::limits::Cores::here(&riff::machine::Machine::here());
+            let dir = riff::local::dir().map(|dir| riff::jobserver::dir(&dir));
+            let workers = dir.as_deref().map_or(0, riff::jobserver::workers);
+            let limits = riff::limits::Limits::of(&path, cores.physical, workers)?;
+            let pool = dir.as_deref().and_then(riff::jobserver::state);
             anstream::println!(
                 "{}",
-                view::workers_jobs(settings::workers_jobs(&path)?, &limits, pool, &path)
+                view::workers_jobs(settings::workers_jobs(&path)?, &limits, &cores, pool, &path)
             );
             Ok(())
         }
@@ -1679,9 +1680,14 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         "{}",
         text::workers_started(n, &started.window, &started.main)
     );
-    for line in [&started.limited, &started.no_scope, &started.no_pool]
-        .into_iter()
-        .flatten()
+    for line in [
+        &started.limited,
+        &started.no_scope,
+        &started.no_pool,
+        &started.no_cores,
+    ]
+    .into_iter()
+    .flatten()
     {
         println!("{line}");
     }

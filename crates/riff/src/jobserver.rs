@@ -12,8 +12,10 @@
 //!
 //! A jobserver client has one job with no token. So K builds at once
 //! run at most `tokens + K` jobs. The pool holds
-//! `physical cores - 1 - worker limit` tokens, 1 or more ([`tokens`]).
-//! Then all builds of all workers stay at or below `physical cores - 1`.
+//! `physical cores - 1 - workers` tokens, 1 or more ([`tokens`]). The
+//! workers are the worker limit, or the workers that run when they are
+//! more. Then all builds of all workers stay at or below
+//! `physical cores - 1`.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -32,6 +34,14 @@
 //!   tokens. The others join it. A pipe loses its bytes when no process
 //!   holds it open, so the pool ends with the last worker of the machine.
 //!   Two lock files keep the start and the end in order.
+//! - **Workers that run.** Each `riff workers run` puts a lock file in
+//!   [`WORKERS`] while its worker lives ([`Member`]). The pool keeps the
+//!   number of workers that its size counts. When more workers run, each
+//!   worker after the first ones keeps one token out of the pool, and
+//!   gives it back when it is within the count again ([`share`]). So a
+//!   lower limit, with workers over it, and a higher limit, with
+//!   a pool of the old size, both keep the builds at or below
+//!   `physical cores - 1`.
 //! - **Tests** (01M3ZGZMNH1YM56GYNYBMH7AWM). The test runner of Rust
 //!   does not read tokens. So `riff workers test-run` ([`test_run`])
 //!   takes `RUST_TEST_THREADS` tokens for a test program, runs it, and
@@ -54,7 +64,7 @@
 //! assert_eq!(tokens(8, 3), 4);
 //!
 //! let dir = tempfile::tempdir()?;
-//! let pool = Pool::hold(dir.path(), 4)?;
+//! let pool = Pool::hold(dir.path(), 4, 1)?;
 //! assert!(pool.makeflags().starts_with("-j --jobserver-auth=fifo:"));
 //! assert_eq!(state(dir.path()).map(|s| (s.size, s.free)), Some((4, 4)));
 //! drop(pool);
@@ -90,6 +100,16 @@ const TAKE: &str = "take.lock";
 
 /// The file that holds the size of the pool.
 const SIZE: &str = "size";
+
+/// The file of the workers that the pool counts in [`DIR`].
+const COUNTED: &str = "counted";
+
+/// The directory of the workers that run, in [`DIR`]: one lock file for
+/// each worker ([`Member`]).
+pub const WORKERS: &str = "workers";
+
+/// The time between two checks of the share of a worker ([`share`]).
+pub const SHARE_EVERY: Duration = Duration::from_secs(5);
 
 /// The file in the local dir that says: riff said that this machine
 /// has no pool.
@@ -200,7 +220,11 @@ fn held(dir: &Path) -> bool {
 }
 
 fn size_in(dir: &Path) -> Option<u16> {
-    std::fs::read_to_string(dir.join(SIZE))
+    number_in(dir, SIZE)
+}
+
+fn number_in(dir: &Path, file: &str) -> Option<u16> {
+    std::fs::read_to_string(dir.join(file))
         .ok()?
         .trim()
         .parse()
@@ -212,20 +236,21 @@ fn size_in(dir: &Path) -> Option<u16> {
 pub struct Pool {
     dir: PathBuf,
     size: u16,
+    counted: u16,
     fifo: Option<File>,
     hold: Option<Flock<File>>,
 }
 
 impl Pool {
     /// Holds the pool in `dir`. When no other process holds it, it makes
-    /// a new pipe with `size` tokens. Else it joins the pool, with the
-    /// size of that pool.
-    pub fn hold(dir: &Path, size: u16) -> io::Result<Pool> {
+    /// a new pipe with `size` tokens for `counted` workers. Else it joins
+    /// the pool, with the size and the count of that pool.
+    pub fn hold(dir: &Path, size: u16, counted: u16) -> io::Result<Pool> {
         std::fs::create_dir_all(dir)?;
         let _init = lock(&dir.join(INIT), FlockArg::LockExclusive)?;
         let path = dir.join(FIFO);
         let hold = open_lock(&dir.join(HOLD))?;
-        let (hold, size, new) = match Flock::lock(hold, FlockArg::LockExclusiveNonblock) {
+        let (hold, size, counted, new) = match Flock::lock(hold, FlockArg::LockExclusiveNonblock) {
             Ok(hold) => {
                 match std::fs::remove_file(&path) {
                     Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
@@ -233,11 +258,13 @@ impl Pool {
                 }
                 nix::unistd::mkfifo(&path, Mode::S_IRUSR | Mode::S_IWUSR)?;
                 std::fs::write(dir.join(SIZE), size.to_string())?;
-                (hold, size, true)
+                std::fs::write(dir.join(COUNTED), counted.to_string())?;
+                (hold, size, counted, true)
             }
             Err((file, Errno::EWOULDBLOCK)) => {
                 let hold = Flock::lock(file, FlockArg::LockShared).map_err(|(_, e)| e)?;
-                (hold, size_in(dir).unwrap_or(size), false)
+                let counted = number_in(dir, COUNTED).unwrap_or(counted);
+                (hold, size_in(dir).unwrap_or(size), counted, false)
             }
             Err((_, e)) => return Err(e.into()),
         };
@@ -249,6 +276,7 @@ impl Pool {
         Ok(Pool {
             dir: dir.to_owned(),
             size,
+            counted,
             fifo: Some(fifo),
             hold: Some(hold),
         })
@@ -257,6 +285,11 @@ impl Pool {
     /// The tokens of the pool.
     pub fn size(&self) -> u16 {
         self.size
+    }
+
+    /// The workers that the size of the pool counts.
+    pub fn counted(&self) -> u16 {
+        self.counted
     }
 
     /// The named pipe of the pool.
@@ -287,6 +320,10 @@ pub struct State {
     pub size: u16,
     /// The tokens in the pipe now: the others are in use.
     pub free: u16,
+    /// The workers that the size of the pool counts.
+    pub counted: u16,
+    /// The workers that run now ([`workers`]).
+    pub workers: u16,
 }
 
 /// The state of the pool in `dir`, or `None` when no process holds it
@@ -308,7 +345,138 @@ pub fn state(dir: &Path) -> Option<State> {
     Some(State {
         size,
         free: u16::try_from(free).unwrap_or(u16::MAX),
+        counted: number_in(dir, COUNTED).unwrap_or(1),
+        workers: workers(dir),
     })
+}
+
+/// One worker that runs on the machine: a locked file in [`WORKERS`]
+/// while the worker lives. The name of the file holds the time of the
+/// start, so the workers have an order ([`Member::rank`]).
+#[derive(Debug)]
+pub struct Member {
+    path: PathBuf,
+    _lock: Flock<File>,
+}
+
+impl Member {
+    /// Puts this worker in the workers of the pool in `dir`.
+    pub fn join(dir: &Path) -> io::Result<Member> {
+        let workers = dir.join(WORKERS);
+        std::fs::create_dir_all(&workers)?;
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let name = format!("{since:020}-{}", std::process::id());
+        // Lock first, then show the file: no other process sees it
+        // without its lock.
+        let hidden = workers.join(format!(".{name}"));
+        let lock = lock(&hidden, FlockArg::LockExclusiveNonblock)?;
+        let path = workers.join(name);
+        std::fs::rename(&hidden, &path)?;
+        Ok(Member { path, _lock: lock })
+    }
+
+    /// The place of this worker among the workers that run, by the time
+    /// of the start: 1 for the first.
+    pub fn rank(&self) -> usize {
+        let Some(dir) = self.path.parent().and_then(Path::parent) else {
+            return 1;
+        };
+        members(dir)
+            .iter()
+            .position(|path| *path == self.path)
+            .map_or(1, |at| at + 1)
+    }
+}
+
+impl Drop for Member {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The files of the workers that run in the pool dir `dir`, in the
+/// order of their start. It removes the file of a worker that ended.
+fn members(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir.join(WORKERS)) else {
+        return Vec::new();
+    };
+    let mut live: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let Ok(file) = File::open(path) else {
+                return false;
+            };
+            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+                Ok(_ended) => {
+                    let _ = std::fs::remove_file(path);
+                    false
+                }
+                Err(_) => true,
+            }
+        })
+        .collect();
+    live.sort();
+    live
+}
+
+/// The workers that run on the machine: the [`Member`]s of the pool dir
+/// `dir` (01M3WFYZRK5CT22GJW6ZHYT9CC).
+///
+/// ```
+/// use riff::jobserver::{workers, Member};
+///
+/// let dir = tempfile::tempdir()?;
+/// assert_eq!(workers(dir.path()), 0);
+/// let one = Member::join(dir.path())?;
+/// let two = Member::join(dir.path())?;
+/// assert_eq!((workers(dir.path()), one.rank(), two.rank()), (2, 1, 2));
+/// drop(one);
+/// assert_eq!((workers(dir.path()), two.rank()), (1, 1));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn workers(dir: &Path) -> u16 {
+    u16::try_from(members(dir).len()).unwrap_or(u16::MAX)
+}
+
+/// One check of the share of the worker `member` in the pool of the pipe
+/// `fifo` for `counted` workers (01M3ZGZMJ9RF1C4AHG78GQ2NM4). A worker
+/// past the count keeps one token out of the pool in `kept`, so the
+/// builds of all workers stay at or below the physical cores less 1. A
+/// worker within the count gives its token back. A worker that finds no
+/// free token tries again at the next check.
+///
+/// ```
+/// use riff::jobserver::{share, state, Member, Pool};
+///
+/// let dir = tempfile::tempdir()?;
+/// let pool = Pool::hold(dir.path(), 3, 1)?;
+/// let (one, two) = (Member::join(dir.path())?, Member::join(dir.path())?);
+/// let (mut kept_one, mut kept_two) = (None, None);
+/// share(&pool.fifo(), pool.counted(), &one, &mut kept_one);
+/// share(&pool.fifo(), pool.counted(), &two, &mut kept_two);
+/// assert!(kept_one.is_none() && kept_two.is_some(), "the second worker is past the count");
+/// assert_eq!(state(dir.path()).map(|s| (s.free, s.workers)), Some((2, 2)));
+/// drop(one);
+/// share(&pool.fifo(), pool.counted(), &two, &mut kept_two);
+/// assert!(kept_two.is_none(), "now within the count");
+/// assert_eq!(state(dir.path()).map(|s| s.free), Some(3));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn share(fifo: &Path, counted: u16, member: &Member, kept: &mut Option<Tokens>) {
+    let past = member.rank() > usize::from(counted.max(1));
+    if !past {
+        *kept = None;
+    } else if kept.is_none() {
+        *kept = take(fifo, 1, Duration::ZERO)
+            .ok()
+            .flatten()
+            .filter(|tokens| tokens.count() > 0);
+    }
 }
 
 /// Checks that riff can make a pool in the local dir `local`
@@ -505,18 +673,39 @@ mod tests {
     #[test]
     fn a_second_holder_joins_the_pool_and_the_last_ends_it() {
         let dir = tempfile::tempdir().unwrap();
-        let one = Pool::hold(dir.path(), 3).unwrap();
-        let two = Pool::hold(dir.path(), 9).unwrap();
+        let one = Pool::hold(dir.path(), 3, 1).unwrap();
+        let two = Pool::hold(dir.path(), 9, 1).unwrap();
         assert_eq!(two.size(), 3, "the size of the pool that runs");
-        assert_eq!(state(dir.path()), Some(State { size: 3, free: 3 }));
-        drop(one);
-        assert_eq!(state(dir.path()), Some(State { size: 3, free: 3 }));
-        drop(two);
-        assert_eq!(state(dir.path()), None);
-        let three = Pool::hold(dir.path(), 5).unwrap();
         assert_eq!(
             state(dir.path()),
-            Some(State { size: 5, free: 5 }),
+            Some(State {
+                size: 3,
+                free: 3,
+                counted: 1,
+                workers: 0
+            })
+        );
+        drop(one);
+        assert_eq!(
+            state(dir.path()),
+            Some(State {
+                size: 3,
+                free: 3,
+                counted: 1,
+                workers: 0
+            })
+        );
+        drop(two);
+        assert_eq!(state(dir.path()), None);
+        let three = Pool::hold(dir.path(), 5, 1).unwrap();
+        assert_eq!(
+            state(dir.path()),
+            Some(State {
+                size: 5,
+                free: 5,
+                counted: 1,
+                workers: 0
+            }),
             "a new pool"
         );
         drop(three);
@@ -525,7 +714,7 @@ mod tests {
     #[test]
     fn tokens_go_back_when_they_drop() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = Pool::hold(dir.path(), 4).unwrap();
+        let pool = Pool::hold(dir.path(), 4, 1).unwrap();
         let tokens = take(&pool.fifo(), 3, WAIT).unwrap().unwrap();
         assert_eq!(tokens.count(), 3);
         assert_eq!(state(dir.path()).unwrap().free, 1);

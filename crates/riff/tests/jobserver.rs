@@ -89,7 +89,7 @@ fn two_builds_take_their_jobs_from_one_pool() {
     let runs = root.path().join("runs");
     let counts = root.path().join("counts");
     let wrapper = counter(root.path(), &runs, &counts);
-    let pool = Pool::hold(&root.path().join("jobs"), 2).unwrap();
+    let pool = Pool::hold(&root.path().join("jobs"), 2, 1).unwrap();
 
     let build = |n: usize| {
         Command::new(env!("CARGO"))
@@ -148,7 +148,7 @@ fn wait_for(path: &Path) {
 fn a_test_run_takes_its_threads_from_the_pool_and_gives_them_back() {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join("jobs");
-    let pool = Pool::hold(&dir, 3).unwrap();
+    let pool = Pool::hold(&dir, 3, 1).unwrap();
     // A test program of cargo is in a `deps` directory.
     let program = script(
         &root.path().join("deps/riff-1a2b"),
@@ -199,7 +199,7 @@ fn a_test_run_takes_its_threads_from_the_pool_and_gives_them_back() {
 fn a_program_of_cargo_run_takes_no_token() {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join("jobs");
-    let pool = Pool::hold(&dir, 2).unwrap();
+    let pool = Pool::hold(&dir, 2, 1).unwrap();
     let seen = root.path().join("seen");
     let program = script(
         &root.path().join("debug/riff"),

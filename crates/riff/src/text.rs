@@ -1675,6 +1675,24 @@ pub fn no_jobserver(why: &str) -> String {
     )
 }
 
+/// What riff says when it cannot read the physical cores of the
+/// machine (01M3WFYZRK5CT22GJW6ZHYT9CC): it counts half of the `logical`
+/// CPUs, `physical`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_physical_cores(16, 8),
+///     "riff cannot read the physical cores of this machine, so it counts half of the 16 \
+///      logical CPUs: 8.",
+/// );
+/// ```
+pub fn no_physical_cores(logical: u16, physical: u16) -> String {
+    format!(
+        "riff cannot read the physical cores of this machine, so it counts half of the \
+         {logical} logical CPUs: {physical}."
+    )
+}
+
 /// The note to the lead for a worker whose pane ended with no end call
 /// of its session (01M3WG2460P4GF7GEVBY92Q33W): the pane, the session,
 /// the items that it held, and the cause when riff found it.
@@ -3141,6 +3159,7 @@ pub fn host_runs(me: &SessionUri, first: &str) -> String {
 ///     limited: Some("The limit of this machine is 1.".into()),
 ///     no_scope: None,
 ///     no_pool: None,
+///     no_cores: None,
 /// };
 /// assert_eq!(
 ///     riff::text::host_started("pangolin", &started),
@@ -3159,9 +3178,14 @@ pub fn host_started(host: &str, started: &crate::worker::Started) -> String {
         started.main.display(),
         panes.join(", ")
     );
-    for more in [&started.limited, &started.no_scope, &started.no_pool]
-        .into_iter()
-        .flatten()
+    for more in [
+        &started.limited,
+        &started.no_scope,
+        &started.no_pool,
+        &started.no_cores,
+    ]
+    .into_iter()
+    .flatten()
     {
         line.push(' ');
         line.push_str(more);

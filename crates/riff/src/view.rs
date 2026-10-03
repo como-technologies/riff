@@ -206,35 +206,46 @@ pub fn workers_limit(limit: u16, path: &Path) -> String {
 }
 
 /// `riff workers jobs` (01M3WFYZRK5CT22GJW6ZHYT9CC,
-/// 01M3ZGZMV78G3BNVFGHAZWQQDX): the setting, the pool of the machine
-/// with the tokens in use when it runs, and the test threads of each
-/// worker.
+/// 01M3ZGZMV78G3BNVFGHAZWQQDX): the setting, the physical `cores`, the
+/// pool of the machine with the tokens in use when it runs, and the
+/// test threads of each worker.
 ///
 /// ```
 /// use riff::jobserver::State;
-/// use riff::limits::Limits;
+/// use riff::limits::{Cores, Limits};
 ///
 /// let strip = |s: String| anstream::adapter::strip_str(&s).to_string();
-/// let limits = Limits { jobs: 2, tokens: 4, nice: 10 };
+/// let cores = Cores { physical: 8, logical: 16, read: true };
+/// let limits = Limits { jobs: 2, tokens: 4, counted: 3, nice: 10 };
 /// let path = "/h/c.toml".as_ref();
+/// let pool = State { size: 4, free: 1, counted: 3, workers: 3 };
 /// assert_eq!(
-///     strip(riff::view::workers_jobs(0, &limits, Some(State { size: 4, free: 1 }), path)),
+///     strip(riff::view::workers_jobs(0, &limits, &cores, Some(pool), path)),
 ///     "workers.jobs  0  (/h/c.toml)\n\
-///      All workers take their compile jobs from one pool of 4 tokens: the physical cores \
-///      less 1, less the limit of workers. Each build also has one job of its own. Now 3 \
-///      tokens are in use. Each worker tests with 2 threads, from the same pool. Set it \
-///      with: riff workers jobs N (N turns the pool off; 0: the pool)"
+///      The machine has 8 physical cores. All workers take their compile jobs from one pool \
+///      of 4 tokens: the physical cores less 1, less 3 workers (the limit, or the workers \
+///      that run when they are more). Each build also has one job of its own. Now 3 tokens \
+///      are in use. Each worker tests with 2 threads, from the same pool. Set it with: riff \
+///      workers jobs N (N turns the pool off; 0: the pool)"
 /// );
-/// assert!(strip(riff::view::workers_jobs(0, &limits, None, path))
-///     .contains("one pool of 4 tokens: the physical cores less 1, less the limit of \
-///                workers. Each build also has one job of its own. No worker runs now."));
-/// let fixed = Limits { jobs: 6, tokens: 0, nice: 10 };
-/// assert!(strip(riff::view::workers_jobs(6, &fixed, None, path))
+/// let over = State { workers: 5, ..pool };
+/// assert!(strip(riff::view::workers_jobs(0, &limits, &cores, Some(over), path))
+///     .contains("5 workers run, more than 3: each worker after the first 3 keeps one token \
+///                out of the pool."));
+/// assert!(strip(riff::view::workers_jobs(0, &limits, &cores, None, path))
+///     .contains("Each build also has one job of its own. No worker runs now."));
+/// let guess = Cores { read: false, ..cores };
+/// assert!(strip(riff::view::workers_jobs(0, &limits, &guess, None, path))
+///     .contains("riff cannot read the physical cores of this machine, so it counts half of \
+///                the 16 logical CPUs: 8. All workers"));
+/// let fixed = Limits { jobs: 6, tokens: 0, counted: 3, nice: 10 };
+/// assert!(strip(riff::view::workers_jobs(6, &fixed, &cores, None, path))
 ///     .contains("No pool: each worker builds with 6 jobs and tests with 6 threads. Set it"));
 /// ```
 pub fn workers_jobs(
     value: u16,
     limits: &crate::limits::Limits,
+    cores: &crate::limits::Cores,
     pool: Option<crate::jobserver::State>,
     path: &Path,
 ) -> String {
@@ -243,17 +254,33 @@ pub fn workers_jobs(
         format!("No pool: each worker builds with {jobs} jobs and tests with {jobs} threads.")
     } else {
         let now = match pool {
-            Some(pool) => format!(
-                "Now {} tokens are in use.",
-                pool.size.saturating_sub(pool.free)
-            ),
+            Some(pool) => {
+                let mut now = format!(
+                    "Now {} tokens are in use.",
+                    pool.size.saturating_sub(pool.free)
+                );
+                if pool.workers > pool.counted {
+                    let counted = pool.counted;
+                    now.push_str(&format!(
+                        " {} workers run, more than {counted}: each worker after the first \
+                         {counted} keeps one token out of the pool.",
+                        pool.workers
+                    ));
+                }
+                now
+            }
             None => "No worker runs now.".into(),
         };
+        let cores = cores
+            .said()
+            .unwrap_or_else(|| format!("The machine has {} physical cores.", cores.physical));
         format!(
-            "All workers take their compile jobs from one pool of {} tokens: the physical \
-             cores less 1, less the limit of workers. Each build also has one job of its own. \
-             {now} Each worker tests with {jobs} threads, from the same pool.",
-            pool.map_or(limits.tokens, |pool| pool.size)
+            "{cores} All workers take their compile jobs from one pool of {} tokens: the \
+             physical cores less 1, less {} workers (the limit, or the workers that run when \
+             they are more). Each build also has one job of its own. {now} Each worker tests \
+             with {jobs} threads, from the same pool.",
+            pool.map_or(limits.tokens, |pool| pool.size),
+            pool.map_or(limits.counted, |pool| pool.counted),
         )
     };
     setting(

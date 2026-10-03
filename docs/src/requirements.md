@@ -2889,17 +2889,27 @@
   `just ci`. In a worker, the pool of build jobs shares the cores: do
   not change the variables that riff sets.
 - **01M3WFYZRK5CT22GJW6ZHYT9CC** The fixed share of a worker is the
-  physical cores of the machine less 1, divided by the worker limit,
-  and 1 or more. Each worker gets it in `RUST_TEST_THREADS`. With no
+  physical cores of the machine less 1, divided by the workers, and 1
+  or more. The workers are the worker limit, or the workers that run on
+  the machine when they are more. Each worker gets it in `RUST_TEST_THREADS`. With no
   pool, it also gets it in `CARGO_BUILD_JOBS`. The setting
   `workers.jobs` replaces the number and turns the pool off. 0, the
   default, means the number from the machine and the pool.
 - **01M3ZGZMJ9RF1C4AHG78GQ2NM4** Each `riff workers run` holds one pool
   of build jobs for its machine: a named pipe in the GNU make 4.4
-  jobserver form. It holds the physical cores less 1, less the worker
-  limit, and 1 or more tokens. The first worker makes it. The pool ends
+  jobserver form. It holds the physical cores less 1, less the
+  workers, and 1 or more tokens. The first worker makes it. The pool ends
   with the last worker. The worker gets `MAKEFLAGS` with
   `--jobserver-auth=fifo:PATH` and no `CARGO_BUILD_JOBS`.
+- **01M3ZZGRB5NDAA419ZNEWN0811** When riff cannot read the physical
+  cores of a machine, it counts half of the logical CPUs, and 1 or
+  more. `riff workers start` says so one time. `riff workers jobs` says
+  so each time.
+- **01M3ZZGRFYH0KSYMM71EK3TT6T** The pool keeps the number of workers
+  that its size counts. While more workers run, each worker after that
+  number, in the order of their start, keeps one token out of the pool.
+  It gives the token back when it is within the number again.
+  `riff workers jobs` shows the workers that run over the number.
 - **01M3ZGZMNH1YM56GYNYBMH7AWM** With a pool, each worker gets
   `riff workers test-run` as its cargo test runner in
   `CARGO_TARGET_<TRIPLE>_RUNNER`. For a program in a `deps` directory,

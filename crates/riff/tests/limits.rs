@@ -292,6 +292,91 @@ fn the_wrapper_starts_claude_with_no_variable_of_a_context() {
     assert_eq!(read(&seen).trim(), "pid=none");
 }
 
+/// 01M3ZZGRB5NDAA419ZNEWN0811: on a machine where riff cannot read the
+/// physical cores, riff counts half of the logical CPUs. `riff workers
+/// jobs` says so each time, `riff workers start` one time.
+#[test]
+fn with_no_physical_cores_riff_counts_half_of_the_logical_cpus() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let cpuinfo = m.bin().join("cpuinfo");
+    std::fs::write(&cpuinfo, "processor\t: 0\nprocessor\t: 1\n").unwrap();
+    let cpuinfo = cpuinfo.to_str().unwrap();
+    let said = "riff cannot read the physical cores of this machine, so it counts half of the \
+                16 logical CPUs: 8.";
+    m.workers(&["limit", "2"]);
+    let out = m
+        .riff(&["workers", "jobs"])
+        .env(riff::limits::CPUINFO, cpuinfo)
+        .output()
+        .unwrap();
+    let jobs = stdout(&out);
+    assert!(jobs.contains(said), "{jobs}");
+    assert!(jobs.contains("one pool of 5 tokens"), "8 - 1 - 2: {jobs}");
+    assert!(jobs.contains("tests with 3 threads"), "7 / 2: {jobs}");
+
+    let seen = m.bin().join("seen");
+    let claude = m.claude(&format!(
+        "echo \"$RUST_TEST_THREADS\" > '{}'\ncat '{}/state/jobs/size' >> '{}'",
+        seen.display(),
+        m.root.path().join("home").display(),
+        seen.display()
+    ));
+    let out = m.wrapper(&claude, &[(riff::limits::CPUINFO, cpuinfo)]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(read(&seen), "3\n5");
+
+    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
+    let start = |n: &str| {
+        let out = m
+            .riff(&["workers", "start", n])
+            .env(riff::limits::CPUINFO, cpuinfo)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        stdout(&out)
+    };
+    assert!(start("1").contains(said), "the first start says so");
+    assert!(!start("1").contains("physical"), "one time");
+}
+
+/// 01M3WFYZRK5CT22GJW6ZHYT9CC and 01M3ZZGRFYH0KSYMM71EK3TT6T: when more
+/// workers run than the limit, the numbers count the workers that run,
+/// and `riff workers jobs` shows them.
+#[test]
+fn the_numbers_count_the_workers_over_the_limit() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let dir = m.root.path().join("home/state/jobs");
+    m.workers(&["limit", "2"]);
+    // 3 workers run; the wrapper is the 4th.
+    let running: Vec<_> = (0..3)
+        .map(|_| riff::jobserver::Member::join(&dir).unwrap())
+        .collect();
+    let seen = m.bin().join("seen");
+    let claude = m.claude(&format!(
+        "echo \"$RUST_TEST_THREADS $(cat '{}/size') $(cat '{}/counted')\" > '{}'",
+        dir.display(),
+        dir.display(),
+        seen.display()
+    ));
+    let out = m.wrapper(&claude, &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    // 16 cores and 4 workers, not 2: 15 / 4 threads, 16 - 1 - 4 tokens.
+    assert_eq!(read(&seen), "3 11 4\n");
+    assert_eq!(riff::jobserver::workers(&dir), 3, "the wrapper left");
+
+    // A pool for 2 workers, and 3 that run.
+    let pool = riff::jobserver::Pool::hold(&dir, 13, 2).unwrap();
+    let jobs = m.workers(&["jobs"]);
+    assert!(
+        jobs.contains(
+            "3 workers run, more than 2: each worker after the first 2 keeps one \
+                       token out of the pool."
+        ),
+        "{jobs}"
+    );
+    drop((pool, running));
+}
+
 /// 01M3WFYZTX05CGDP2NQF9B356K: the wrapper starts `claude` with nice 10.
 /// The setting changes the value, and 0 turns it off.
 #[test]
@@ -525,9 +610,10 @@ fn each_setting_of_the_limits_shows_and_sets_its_value() {
     assert_eq!(
         m.workers(&["jobs"]),
         format!(
-            "workers.jobs  0  {file}\nAll workers take their compile jobs from one pool of 11 \
-             tokens: the physical cores less 1, less the limit of workers. Each build also has \
-             one job of its own. No worker runs now. Each worker tests with 3 threads, from \
+            "workers.jobs  0  {file}\nThe machine has 16 physical cores. All workers take \
+             their compile jobs from one pool of 11 tokens: the physical cores less 1, less 4 \
+             workers (the limit, or the workers that run when they are more). Each build also \
+             has one job of its own. No worker runs now. Each worker tests with 3 threads, from \
              the same pool. Set it with: riff workers jobs N (N turns the pool off; 0: the \
              pool)\n"
         )

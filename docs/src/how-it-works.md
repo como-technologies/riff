@@ -3075,7 +3075,7 @@ flowchart TD
 | Limit | Default | Command |
 |---|---|---|
 | The most workers | 0 | `riff workers limit` |
-| The compile jobs and test threads of all workers | one pool: physical cores - 1 - limit, 1 or more | `riff workers jobs` |
+| The compile jobs and test threads of all workers | one pool: physical cores - 1 - workers (the limit, or the workers that run when they are more), 1 or more | `riff workers jobs` |
 | The priority of the workers | nice 10 | `riff workers nice` |
 | The memory of all workers | three quarters of the memory | `riff workers memory` |
 | The available memory that a new worker needs | 4 GB | `riff workers floor` |
@@ -3126,9 +3126,10 @@ flowchart LR
 ```
 
 Each cargo has one job of its own, with no token. So the pool holds
-the physical cores less 1, less the limit of workers. Then all builds
-together run at most the physical cores less 1 jobs. pangolin has 8
-physical cores and a limit of 3:
+the physical cores less 1, less the workers. The workers are the limit
+of workers, or the workers that run when they are more. Then all
+builds together run at most the physical cores less 1 jobs. pangolin
+has 8 physical cores and a limit of 3:
 
 ```text
 tokens = 8 - 1 - 3 = 4
@@ -3140,8 +3141,26 @@ A test program runs its tests as threads, and Rust does not read the
 pool. So riff gives each worker a test runner. It takes
 `RUST_TEST_THREADS` tokens for each test program, and gives them back
 at the end, also when the test is killed. `RUST_TEST_THREADS` is the
-fixed share: the physical cores less 1, divided by the limit of
-workers.
+fixed share: the physical cores less 1, divided by the workers.
+pangolin with a limit of 2 gives each worker 7 / 2 = 3 threads. With a
+limit of 4, each worker gets 1.
+
+riff reads the physical cores in `/proc/cpuinfo`. pangolin has 16
+logical CPUs, but 8 physical cores. On a machine where riff cannot read
+them, riff counts half of the logical CPUs. `riff workers start` says
+so one time, and `riff workers jobs` says so each time.
+
+When you lower the limit, the workers that run go on (see
+[Limit the workers of a machine](#limit-the-workers-of-a-machine)). Then
+more workers run than the pool counts. Each worker after the count
+keeps one token out of the pool, and gives it back when other workers
+end. So 4 workers with a limit of 2 do not get twice the cores:
+
+```text
+pool for 2 workers = 8 - 1 - 2 = 5 tokens
+4 workers run:       2 tokens kept out
+four builds at once: (5 - 2) + 4 = 7 jobs
+```
 
 The first worker makes the pool, and it ends with the last worker. See
 the pool and the tokens in use:
@@ -3152,7 +3171,7 @@ riff workers jobs
 
 ```text
 workers.jobs  0  (/home/mike/.config/riff/config.toml)
-All workers take their compile jobs from one pool of 4 tokens: the physical cores less 1, less the limit of workers. Each build also has one job of its own. Now 3 tokens are in use. Each worker tests with 2 threads, from the same pool. Set it with: riff workers jobs N (N turns the pool off; 0: the pool)
+The machine has 8 physical cores. All workers take their compile jobs from one pool of 4 tokens: the physical cores less 1, less 3 workers (the limit, or the workers that run when they are more). Each build also has one job of its own. Now 3 tokens are in use. Each worker tests with 2 threads, from the same pool. Set it with: riff workers jobs N (N turns the pool off; 0: the pool)
 ```
 
 When riff cannot make the pool, each worker gets the fixed share in
