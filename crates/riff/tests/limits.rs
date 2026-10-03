@@ -151,7 +151,15 @@ impl Machine {
             .env("RIFF_HOST", "pangolin")
             .env("RIFF_MACHINE", PANGOLIN)
             .env("TMUX", "/tmp/tmux-1000/default,1,0")
-            .env("TMUX_PANE", "%0");
+            .env("TMUX_PANE", "%0")
+            // A test that runs in a worker has the pool and the test
+            // runner of that worker: the machine of the test has none.
+            .env_remove("MAKEFLAGS");
+        for (name, _) in std::env::vars() {
+            if name.starts_with("CARGO_TARGET_") && name.ends_with("_RUNNER") {
+                cmd.env_remove(name);
+            }
+        }
         cmd
     }
 
