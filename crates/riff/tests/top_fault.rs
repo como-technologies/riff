@@ -92,7 +92,7 @@ impl Gate {
     /// new connection.
     async fn open(&mut self, mode: Mode) {
         self.close().await;
-        let listener = TcpListener::bind(self.addr).await.unwrap();
+        let listener = bind(self.addr).await;
         self.addr = listener.local_addr().unwrap();
         let (server, links) = (self.server, Arc::clone(&self.links));
         self.accept = Some(tokio::spawn(async move {
@@ -119,6 +119,28 @@ impl Gate {
                 links.lock().unwrap().push(link);
             }
         }));
+    }
+}
+
+/// The bound of a bind of the gate again on its address.
+const BIND_WAIT: Duration = Duration::from_secs(30);
+
+/// A listener on `addr`. A port that the gate opens again can still
+/// hold the sockets of the old connections, so the socket reuses the
+/// address. While another socket holds it, it tries again, at most
+/// [`BIND_WAIT`] (#460).
+async fn bind(addr: SocketAddr) -> TcpListener {
+    let end = Instant::now() + BIND_WAIT;
+    loop {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(true).unwrap();
+        match socket.bind(addr).and_then(|()| socket.listen(1024)) {
+            Ok(listener) => return listener,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && Instant::now() < end => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(e) => panic!("cannot bind the gate on {addr}: {e}"),
+        }
     }
 }
 

@@ -27,6 +27,11 @@ const FAKE_TMUX: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")
 /// key ([`riff::next::CLEAR_WAIT`]).
 const NO_KEYS: Duration = Duration::from_millis(2500);
 
+/// The bound of each wait for a fact, for example the keys of a clear.
+/// It is generous: it only ends a test that hangs. A busy machine can
+/// take more than 20 seconds for the check of the Stop hook (#460).
+const WAIT: Duration = Duration::from_secs(60);
+
 struct Worker {
     fake: tempfile::TempDir,
     run: tempfile::TempDir,
@@ -140,7 +145,7 @@ impl Worker {
     /// Waits until the fake `tmux` has the keys of one clear after its
     /// first `before` lines, and checks them.
     async fn keys(&self, before: usize) {
-        let end = Instant::now() + Duration::from_secs(20);
+        let end = Instant::now() + WAIT;
         while self.log().lines().count() < before + 4 {
             assert!(Instant::now() < end, "no keys: {}", self.log());
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -341,7 +346,7 @@ async fn a_request_that_comes_in_the_wait_is_done_after_the_clear() {
     // The clear: the watch ends with the wake of the request.
     r.w.clear("w1");
     let out = tokio::task::spawn_blocking(move || watch.wait_with_output().unwrap());
-    let out = tokio::time::timeout(Duration::from_secs(20), out)
+    let out = tokio::time::timeout(WAIT, out)
         .await
         .expect("the watch ends after the clear")
         .unwrap();
@@ -368,7 +373,7 @@ async fn riff_who_shows_the_time_since_the_last_clear_of_a_worker() {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-    let end = Instant::now() + Duration::from_secs(20);
+    let end = Instant::now() + WAIT;
     while r.who().contains("offline") {
         assert!(Instant::now() < end, "{}", r.who());
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -446,7 +451,7 @@ async fn a_check_with_a_late_reply_types_nothing_into_a_new_turn() {
     // answer the check.
     gate.open.send(false).unwrap();
     r.w.stop_hook_with("w1", true, Some(&transcript));
-    let end = Instant::now() + Duration::from_secs(20);
+    let end = Instant::now() + WAIT;
     while gate.held.load(Ordering::SeqCst) == 0 {
         assert!(Instant::now() < end, "the check sent no keep-alive");
         tokio::time::sleep(Duration::from_millis(50)).await;

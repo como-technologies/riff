@@ -63,6 +63,23 @@ The Gate on GitHub runs the same command. Tests read the pages of the
 book. So a change of only text that passes `just ci` can still fail a
 test in the Gate.
 
+## Run one test many times
+
+A test that fails only on a busy machine waits for a fixed time
+somewhere. To find it, run that test by its name in a loop while other
+runs keep the machine busy. This example runs one test of
+`crates/riff/tests/hosts.rs` 20 times, and stops at the first fail:
+
+```sh
+for i in $(seq 20); do
+  cargo test -q -p riff --test hosts \
+    a_host_ends_the_session_of_a_killed_worker_and_tells_the_lead || break
+done
+```
+
+A test waits for the fact that it checks, for example a message or a
+line in a log, with a generous time limit.
+
 ## Build riff from your clone
 
 Do [Start a Riff](start-a-riff.md), with one change: in step 1, build

@@ -237,17 +237,27 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
-/// The kept sign-in of `url`, with an expired access token.
+/// The kept sign-in of `url`, from the secret file. The test reads the
+/// file with no keyring thread, so a busy machine cannot stop it at
+/// [`secrets::KEYRING_WAIT`] (#460).
+fn stored(url: &str) -> SignIn {
+    let dir = env().riff_home().join("secrets");
+    let json = secrets::file_get(&dir, &login::secret_name(url))
+        .unwrap()
+        .unwrap();
+    serde_json::from_str(&json).unwrap()
+}
+
+/// The kept sign-in of `url`, with an expired access token. It writes
+/// the secret file with no keyring thread, as [`stored`] reads it.
 fn expire(url: &str) {
-    let kept = login::stored(url).unwrap().unwrap();
-    login::store(
-        url,
-        &SignIn {
-            expires_at: 0,
-            ..kept
-        },
-    )
-    .unwrap();
+    let dir = env().riff_home().join("secrets");
+    let expired = SignIn {
+        expires_at: 0,
+        ..stored(url)
+    };
+    let json = serde_json::to_string(&expired).unwrap();
+    secrets::file_set(&dir, &login::secret_name(url), &json).unwrap();
 }
 
 /// 10 `riff` processes of one machine refresh the sign-in at the same
@@ -471,7 +481,7 @@ async fn a_sign_in_stays_over_a_restart_of_riff_server() {
     let refreshed = members().await.unwrap();
     assert!(refreshed.status.success(), "{}", text(&refreshed.stderr));
     assert!(!text(&refreshed.stderr).contains("riff login"));
-    assert_eq!(login::stored(&url).unwrap().unwrap().user, "ada");
+    assert_eq!(stored(&url).user, "ada");
 }
 
 /// "Get back into the riff" in the book names the real error texts and

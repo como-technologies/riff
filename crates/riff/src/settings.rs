@@ -521,7 +521,9 @@ pub fn ask_update_auto(
 }
 
 /// Sets `key` in the table `table`, and writes the file. It keeps each
-/// other key and each comment.
+/// other key and each comment. It writes a new file and renames it, so
+/// a process that reads the settings at the same time sees the old
+/// file or the new file, never a part (01M41FMA3FGF3TKTXPBND9NDW1).
 fn set(path: &Path, table: &str, key: &str, item: toml_edit::Item) -> Result<()> {
     let mut doc = read(path)?;
     if !doc.contains_key(table) {
@@ -531,11 +533,16 @@ fn set(path: &Path, table: &str, key: &str, item: toml_edit::Item) -> Result<()>
         bail!("{table} in {} is not a table", path.display());
     };
     t[key] = item;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    }
-    std::fs::write(path, doc.to_string())
-        .with_context(|| format!("cannot write {}", path.display()))
+    // A settings file that is a symbolic link stays a link: riff writes
+    // the file that it names.
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    let fail = || format!("cannot write {}", path.display());
+    let mut new = tempfile::NamedTempFile::new_in(dir).with_context(fail)?;
+    std::io::Write::write_all(&mut new, doc.to_string().as_bytes()).with_context(fail)?;
+    new.persist(&path).map_err(|e| e.error).with_context(fail)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -553,6 +560,49 @@ mod tests {
         assert!(text.contains("# mine"), "{text}");
         assert!(text.contains("server = \"x\""), "{text}");
         assert_eq!(workers_limit(&path).unwrap(), 3);
+    }
+
+    /// A process that reads the settings while riff writes them reads
+    /// the old file or the new file, never an empty or a part of a file
+    /// (01M41FMA3FGF3TKTXPBND9NDW1).
+    #[test]
+    fn a_reader_never_sees_a_part_of_a_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        set_workers_limit(&path, 1).unwrap();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (path, done) = (path.clone(), done.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    let limit = workers_limit(&path).unwrap();
+                    assert!((1..=2).contains(&limit), "read the limit {limit}");
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        for i in 0..500 {
+            set_workers_limit(&path, 1 + i % 2).unwrap();
+        }
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(reader.join().unwrap() > 0);
+    }
+
+    /// A settings file that is a symbolic link stays a link, and riff
+    /// writes the file that it names.
+    #[test]
+    fn a_linked_file_stays_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles/riff.toml");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "[workers]\nlimit = 1\n").unwrap();
+        let link = dir.path().join("config.toml");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        set_workers_limit(&link, 3).unwrap();
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(workers_limit(&real).unwrap(), 3);
     }
 
     #[test]

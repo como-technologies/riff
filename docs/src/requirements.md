@@ -791,6 +791,11 @@
   test in process that puts a new riff at its URL keeps its listener.
   A test that needs a URL where nothing listens holds the port with a
   socket that does not listen.
+- **01M41A0M2XWCWTWGF7T9DR03W0** A test waits for the fact that it
+  checks, for example a message, a line in a log or a look of a host.
+  It does not wait for a fixed time. A time limit of a wait only ends
+  a test that hangs, so it is generous. A test passes on a busy
+  machine. Only a check that a thing does not come waits for a time.
 - **01M3MY2KSV73WS8D902YCH2PRX** With `RIFF_HOME=DIR`, `riff` keeps its
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.
@@ -2638,6 +2643,10 @@
 - **01M3JPQT13ANVA7DNJDVNJ0S8P** The settings of riff on a machine are
   in `$XDG_CONFIG_HOME/riff/config.toml`, or
   `~/.config/riff/config.toml`. A change keeps each other key.
+- **01M41FMA3FGF3TKTXPBND9NDW1** A change of the settings writes a new
+  file and renames it over the old one. A process that reads the
+  settings at the same time reads the old or the new settings, never a
+  part. A settings file that is a symbolic link stays a link.
 - **01M3JPQT35BMR7XMAMMFSCDC2B** `riff workers limit N` sets the most
   workers on the machine, in the key `workers.limit`. The default is 0.
   With 0, `riff workers start` starts no worker, and names

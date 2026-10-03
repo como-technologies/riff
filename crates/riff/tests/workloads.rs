@@ -160,6 +160,13 @@ impl Riff {
     }
 }
 
+/// The session ID `name` of this test run. riff finds the processes of
+/// a worker by its session ID on the whole machine, so two runs of the
+/// tests at the same time must not share an ID (#460).
+fn unique(name: &str) -> String {
+    format!("{name}-{}", std::process::id())
+}
+
 /// A `sleep` of the worker `id`: of a context with `context`, else a
 /// stand-in for `claude` or for its MCP server.
 fn sleeper(id: &str, context: bool) -> Child {
@@ -222,7 +229,7 @@ fn stdout(out: &Output) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     let r = Riff::new().await;
-    let id = "wclear1";
+    let id = &unique("wclear1");
     let w = r.uri(&r.main(), id);
     r.api.start(&w, StartReason::Process, true).await.unwrap();
     let thread = w.default_thread().unwrap();
@@ -230,7 +237,7 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     let mut claude = sleeper(id, false);
     let mut mcp = sleeper(id, false);
     let mut ci = sleeper(id, true);
-    let mut other = sleeper("wother1", true);
+    let mut other = sleeper(&unique("wother1"), true);
 
     let out = r.in_worker(id, &["release", "issue-12"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
@@ -255,7 +262,7 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
 #[tokio::test(flavor = "multi_thread")]
 async fn reap_stops_the_orphan_of_an_old_context_and_keeps_the_new_one() {
     let r = Riff::new().await;
-    let id = "wreap1";
+    let id = &unique("wreap1");
     r.pane(id);
     let mut claude = sleeper(id, false);
     let mut old = sleeper(id, true);
@@ -295,7 +302,7 @@ async fn reap_stops_the_orphan_of_an_old_context_and_keeps_the_new_one() {
 #[tokio::test(flavor = "multi_thread")]
 async fn reap_with_no_start_of_the_context_stops_nothing() {
     let r = Riff::new().await;
-    let id = "wreap2";
+    let id = &unique("wreap2");
     r.pane(id);
     let mut child = sleeper(id, true);
     let out = r
@@ -318,12 +325,12 @@ async fn reap_with_no_start_of_the_context_stops_nothing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn workers_stop_leaves_no_process_of_the_worker() {
     let r = Riff::new().await;
-    let id = "wstop1";
+    let id = &unique("wstop1");
     r.pane(id);
     let w = r.uri(&r.main(), id);
     r.api.start(&w, StartReason::Process, true).await.unwrap();
     let mut all = [sleeper(id, false), sleeper(id, false), sleeper(id, true)];
-    let mut other = sleeper("wother2", true);
+    let mut other = sleeper(&unique("wother2"), true);
 
     let out = r
         .riff(&r.main(), &["workers", "stop", "%5"])

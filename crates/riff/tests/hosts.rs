@@ -107,6 +107,43 @@ impl Machine {
             .collect()
     }
 
+    /// Puts `lines` (`PANE SESSION`) as the worker panes of the fake
+    /// `tmux`, in one step: a look never reads a part of the file
+    /// (#460).
+    fn set_workers(&self, lines: &str) {
+        let new = self.fake.path().join("workers.test");
+        std::fs::write(&new, lines).unwrap();
+        std::fs::rename(&new, self.fake.path().join("workers")).unwrap();
+    }
+
+    /// The number of lists of each worker pane in the log of the fake
+    /// `tmux` (`list-panes -a`).
+    fn lists(&self) -> usize {
+        self.log()
+            .lines()
+            .filter(|l| l.starts_with("list-panes -a "))
+            .count()
+    }
+
+    /// Waits until the host made `looks` looks at the worker panes
+    /// ([`riff::reap::Reaper::look`]) after this call, each with its
+    /// reap. A turn of the host lists the panes for its look, reaps, and
+    /// can list them one more time for its status. So `2 * looks` new
+    /// lists hold `looks` looks, and the next list comes after the reap
+    /// of the last look (#460).
+    async fn looks(&self, looks: usize) {
+        let want = self.lists() + 2 * looks + 1;
+        let start = Instant::now();
+        while self.lists() < want {
+            assert!(
+                start.elapsed() < WAIT,
+                "the host made no look\n{}",
+                self.log()
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// `riff workers ARGS` of mike in `dir`, in a tmux pane. `session`
     /// is the agent session, or `None` for a plain terminal.
     fn riff(&self, dir: &Path, args: &[&str], session: Option<&str>) -> Command {
@@ -527,12 +564,11 @@ async fn a_host_ends_the_session_of_a_killed_worker_and_tells_the_lead() {
     let _stream = r.api.watch(&worker).await.unwrap();
     let other = session(&r.main, "mike", "b", &workers[1].1);
     r.api.register_as(&other, true).await.unwrap();
-    // The host looked at the panes one time or more.
-    tokio::time::sleep(riff::reap::EVERY * 2).await;
+    // The host saw both panes.
+    r.b.looks(1).await;
 
     // The kill of the whole pane: only the other pane is left.
-    let left = format!("{} {}\n", workers[1].0, workers[1].1);
-    std::fs::write(r.b.fake.path().join("workers"), left).unwrap();
+    r.b.set_workers(&format!("{} {}\n", workers[1].0, workers[1].1));
 
     let note = format!(
         "worker stopped: pane {pane}, session {id}, on b. The pane ended with no end call, \
@@ -552,7 +588,8 @@ async fn a_host_ends_the_session_of_a_killed_worker_and_tells_the_lead() {
         .await
         .unwrap();
     let read = reads(&r.api, &r.lead, "b: Stopped 1 worker.").await;
-    tokio::time::sleep(riff::reap::EVERY * 2).await;
+    // A lost pane gives its note at the second look after its end.
+    r.b.looks(2).await;
     let inbox = r.api.inbox(&r.lead, None, false).await.unwrap();
     let read = read + &riff::text::inbox(&inbox, &r.lead);
     assert!(!read.contains("worker stopped"), "{read}");
