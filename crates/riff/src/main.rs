@@ -111,7 +111,7 @@ enum Command {
         #[arg(required = true)]
         step: Vec<String>,
     },
-    /// Say that you cannot go on with no decision, and wake your lead
+    /// Say that you cannot go on, and wake your lead
     ///
     /// riff shows you as blocked, and tells the lead of your user the
     /// reason. The block ends at your next work after an answer.
@@ -802,7 +802,7 @@ enum LeadCommand {
         #[arg(long)]
         quiet: Option<u64>,
     },
-    /// Show or set what riff does when a blocked session gets no answer
+    /// Show or set what riff does when a block gets no answer
     ///
     /// riff wakes the lead again after the wake time with no answer.
     /// After the wake time once more, riff top shows "the lead gave no
