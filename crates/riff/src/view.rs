@@ -730,10 +730,10 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
 /// assert_eq!(plain(riff::view::host_heading("pangolin", 3, 1, None, 4)), "pangolin  limit 3  runs 1");
-/// let m = Machine { cores: 16, mhz: 4500, mem_gb: 32, avail_gb: 24, load: 1.5 };
+/// let m = Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 };
 /// assert_eq!(
 ///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&m), 4)),
-///     "pangolin  limit 3  runs 1  cpu 16x4500MHz, mem 32GB, 24GB available, load 1.50  score 24.0"
+///     "pangolin  limit 3  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 1.50  score 24.0"
 /// );
 /// // Why the machine starts no worker (01M3WFZ01PTAYYKG3T5CFA2W4D).
 /// // More workers than the limit (01M402VFQHC5PH39DTFV6AH60F).
@@ -744,7 +744,7 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 /// let low = Machine { avail_gb: 3, ..m };
 /// assert_eq!(
 ///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&low), 4)),
-///     "pangolin  limit 3  runs 1  cpu 16x4500MHz, mem 32GB, 3GB available, load 1.50  score 24.0\n\
+///     "pangolin  limit 3  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 3GB available, load 1.50  score 24.0\n\
 ///      Starts no worker: 3 GB of memory is available, and the floor of this machine is 4 GB."
 /// );
 /// ```

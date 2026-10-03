@@ -196,14 +196,14 @@ pub async fn in_time<T>(
 /// let two = HostStatus {
 ///     limit: 3,
 ///     floor: 4,
-///     machine: Some(Machine { cores: 16, mhz: 4500, mem_gb: 32, avail_gb: 24, load: 1.5 }),
+///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     disk: None,
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()), ("%4".into(), "5e6f7a8b".into())],
 /// };
 /// assert_eq!(
 ///     two.line(),
-///     "workers host: limit 3, floor 4GB, cpu 16x4500MHz, mem 32GB, 24GB available, load 1.50, \
-///      workers: %3 1a2b3c4d, %4 5e6f7a8b",
+///     "workers host: limit 3, floor 4GB, cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, \
+///      load 1.50, workers: %3 1a2b3c4d, %4 5e6f7a8b",
 /// );
 /// assert_eq!(HostStatus::parse(&two.line()), Some(two.clone()));
 /// assert_eq!(HostStatus::parse(&none.line()), Some(none.clone()));
