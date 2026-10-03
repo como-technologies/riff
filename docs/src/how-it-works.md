@@ -3491,9 +3491,9 @@ clock now, its memory, its available memory and its 1-minute load
 average. The CPU speed is the cap of the clock: the lowest
 `scaling_max_freq` of the cores. A cap or a power profile lowers it.
 The clock now is the mean of `scaling_cur_freq` of the cores. From
-them riff makes a score: the number of workers that the machine runs well.
-One worker needs one core and 2 GB of memory. A core at 3000 MHz
-counts 1:
+them riff makes a score: the number of workers that the machine runs
+well. One worker needs one core and 2 GB of memory. A core at
+3000 MHz counts 1:
 
 ```text
 score = min(cores, memory GB / 2) × MHz / 3000
@@ -3731,9 +3731,9 @@ riff workers host: pangolin offers 2 workers to the lead of mike in como-technol
 ```
 
 The host is a riff session with the status `workers host: limit 2,
-floor 4GB, cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40, no
-workers`. It starts and stops
-workers only when the lead of your user asks, at most its own limit. It
+floor 4GB, cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available,
+load 0.40, no workers`. It starts and stops workers only when the
+lead of your user asks, at most its own limit. It
 refuses each other request, and each request that is not verified. One
 host of your user runs on a machine for a repository. A second one
 refuses to start and names the process of the first.
