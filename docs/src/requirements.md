@@ -605,6 +605,14 @@
   report of a claim of the issue writes that comment again. A failure
   of this step does not fail the wait, and a total that riff cannot
   write does not fail a report.
+- **01M3ZRQY9F9P7DF187Q0PJDS30** `riff usage ISSUE` says how many
+  comments with the mark it did not count, and why: an item of another
+  issue, a text that is no name, or no report that it can read. When
+  riff cannot write the total comment of an issue, the text of the
+  release and of `riff pr wait` says that the comment of the claim is
+  on the issue, that the total is not updated, and why. A total comment
+  of another account is not updated: GitHub lets only that account
+  edit it.
 - **01M3Y1YP5GC5W9KVJQP6PXPM3G** The book has the how-to "See the
   tokens of an issue" with `riff usage`. It says that the numbers are
   public on the issue.
@@ -1724,6 +1732,15 @@
   removes each escape sequence and each control character from the
   body and the names. It keeps newlines and tabs. A body cannot change
   the terminal.
+- **01M3ZRQY6YQ8QAKZPGWH1XD6WW** Each text that riff reads from the
+  forge goes through one filter before riff prints it, stores it, or
+  puts it in a message, a status or a comment: the title of an issue,
+  a pull request or a wave, a login, a branch name, a check, a
+  commit, a URL and an error of `gh`. The filter removes each escape
+  sequence and each control character, makes each line break and tab a
+  space, and keeps at most 256 characters. A body of the forge is only
+  read for numbers and trailers, and is never printed. `riff pr open`
+  refuses a wave name that the filter changes.
 - **01M3MEW73CDSJDSKX32XW80WZH** Replaced by 01M3Q63MVZ74WPNBA3QJYQGHFG.
 - **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the
   riff, then a table with a row for each session. The facts are

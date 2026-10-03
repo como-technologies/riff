@@ -579,6 +579,7 @@ pub async fn run(env: impl Env) {
 /// An open milestone.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Milestone {
+    #[serde(deserialize_with = "crate::text::forge_de")]
     pub title: String,
 }
 
@@ -752,10 +753,14 @@ pub const PULL_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheck
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Pull {
     pub number: u64,
-    #[serde(rename = "headRefName")]
+    #[serde(rename = "headRefName", deserialize_with = "crate::text::forge_de")]
     pub branch: String,
     /// The head commit.
-    #[serde(rename = "headRefOid", default)]
+    #[serde(
+        rename = "headRefOid",
+        default,
+        deserialize_with = "crate::text::forge_de"
+    )]
     pub head: String,
     #[serde(rename = "isDraft", default)]
     pub draft: bool,
@@ -767,15 +772,19 @@ pub struct Pull {
 /// a context and a state.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Check {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub context: Option<String>,
     /// The state of a status: `SUCCESS`, `FAILURE`, `ERROR`, `PENDING`
     /// or `EXPECTED`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub state: Option<String>,
     /// The URL of a status. For `riff/verify` it is the comment with
     /// the result.
-    #[serde(rename = "targetUrl", default)]
+    #[serde(
+        rename = "targetUrl",
+        default,
+        deserialize_with = "crate::text::forge_de_opt"
+    )]
     pub url: Option<String>,
 }
 

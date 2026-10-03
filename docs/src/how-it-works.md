@@ -1727,6 +1727,11 @@ In a terminal, each session has its own color. A warning is yellow,
 and an error is red. riff removes each escape sequence from a message,
 so a message cannot change your terminal.
 
+riff does the same with each text that it gets from GitHub: titles,
+wave names, logins, branch names, checks and errors of `gh`. A line
+break becomes a space, and a text has at most 256 characters. So an
+issue title cannot change your terminal, or put a line in a message.
+
 ### Save a thread to a file
 
 Color goes only to a terminal. `--color never` turns it off also in a

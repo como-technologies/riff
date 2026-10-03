@@ -1773,8 +1773,13 @@ fn usage_text(issue: Option<&str>, wave: Option<&str>) -> Result<String> {
         let number: u64 = number
             .parse()
             .with_context(|| format!("{issue} is no issue: name it as 12, #12 or issue-12"))?;
-        let counted = usage::counted(number, &forge.comments(number)?);
-        return Ok(usage::issue_text(number, &counted));
+        let comments = forge.comments(number)?;
+        let mut text = usage::issue_text(number, &usage::counted(number, &comments));
+        if let Some(line) = usage::uncounted(number, &comments) {
+            text.push_str(&line);
+            text.push('\n');
+        }
+        return Ok(text);
     }
     let wave = wave.unwrap_or_default();
     let mut rows = Vec::new();
