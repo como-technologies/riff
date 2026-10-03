@@ -1728,7 +1728,7 @@ and an error is red. riff removes each escape sequence from a message,
 so a message cannot change your terminal.
 
 riff does the same with each text that it gets from GitHub: titles,
-milestones, logins, branch names, checks and errors of `gh`. A line
+wave names, logins, branch names, checks and errors of `gh`. A line
 break becomes a space, and a text has at most 256 characters. So an
 issue title cannot change your terminal, or put a line in a message.
 

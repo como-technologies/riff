@@ -1718,12 +1718,12 @@
 - **01M3ZRQY6YQ8QAKZPGWH1XD6WW** Each text that riff reads from the
   forge goes through one filter before riff prints it, stores it, or
   puts it in a message, a status or a comment: the title of an issue,
-  a pull request or a milestone, a login, a branch name, a check, a
+  a pull request or a wave, a login, a branch name, a check, a
   commit, a URL and an error of `gh`. The filter removes each escape
   sequence and each control character, makes each line break and tab a
   space, and keeps at most 256 characters. A body of the forge is only
   read for numbers and trailers, and is never printed. `riff pr open`
-  refuses a milestone that the filter changes.
+  refuses a wave name that the filter changes.
 - **01M3MEW73CDSJDSKX32XW80WZH** Replaced by 01M3Q63MVZ74WPNBA3QJYQGHFG.
 - **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the
   riff, then a table with a row for each session. The facts are
