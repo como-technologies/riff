@@ -790,6 +790,9 @@ enum HookEvent {
         /// The transcript of the session.
         #[arg(long)]
         transcript: Option<std::path::PathBuf>,
+        /// The prompts that the Stop hook counted in the transcript.
+        #[arg(long)]
+        turns: Option<usize>,
     },
     /// Check whether riff compacts the lead now
     ///
@@ -977,10 +980,11 @@ async fn main() -> Result<()> {
                 session,
                 pane,
                 transcript,
+                turns,
             },
     } = &cli.command
     {
-        if let Err(e) = clear_check(session, pane, transcript.as_deref(), &server).await {
+        if let Err(e) = clear_check(session, pane, transcript.as_deref(), *turns, &server).await {
             eprintln!("riff: cannot clear the context of the worker: {e:#}");
         }
         return Ok(());
@@ -1671,8 +1675,10 @@ fn stop_hook() {
 }
 
 /// Starts `riff hook clear` for the worker `id`, detached, so that the
-/// Stop hook returns at once (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It starts
-/// nothing outside tmux, or when the session left the riff.
+/// Stop hook returns at once (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It counts the
+/// prompts of the `transcript` first and gives the number to the check
+/// (01M3ZS67FTAC1784GEVEDXJ837). It starts nothing outside tmux, or when
+/// the session left the riff.
 fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let in_tmux = std::env::var_os("TMUX").is_some_and(|t| !t.is_empty());
@@ -1686,7 +1692,9 @@ fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<(
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
     cmd.args(["hook", "clear", "--session", id, "--pane", &pane]);
     if let Some(transcript) = transcript {
+        let turns = next::prompts(Some(transcript));
         cmd.arg("--transcript").arg(transcript);
+        cmd.args(["--turns", &turns.to_string()]);
     }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -1702,6 +1710,7 @@ async fn clear_check(
     id: &str,
     pane: &str,
     transcript: Option<&std::path::Path>,
+    turns: Option<usize>,
     server: &str,
 ) -> Result<()> {
     let dir = identity::working_dir()?;
@@ -1709,7 +1718,7 @@ async fn clear_check(
     let api = Api::new(server);
     let me = identity::agent(&here, id, api.base())?;
     let api = api.signed_in(Some(id))?;
-    next::check(&api, &me, pane, &dir, transcript).await?;
+    next::check(&api, &me, pane, &dir, transcript, turns).await?;
     Ok(())
 }
 

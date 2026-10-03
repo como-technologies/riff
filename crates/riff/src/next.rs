@@ -19,12 +19,14 @@
 //!     S-->>W: released: the worker is in MustClear
 //!     Note over W: the steps that are left, for example the worktree
 //!     W->>H: the turn ends: Stop hook
-//!     H->>C: start, detached
+//!     H->>H: count the prompts of the transcript
+//!     H->>C: start, detached, with the count
 //!     H-->>W: return at once
 //!     C->>S: keep-alive
 //!     S-->>C: clear
 //!     C->>C: fast-forward the main clone
-//!     C->>T: later: /clear, then "Join the riff."
+//!     C->>C: count the prompts again: no new turn
+//!     C->>T: /clear, then "Join the riff."
 //!     T->>W: /clear: the start hook gives the start routine
 //!     W->>S: start (clear): MustClear ends
 //!     T->>W: "Join the riff.": the worker claims its next item
@@ -44,14 +46,23 @@
 //!   most [`ASKS`] times. With no ask to clear, it does nothing. With
 //!   the ask, it fast-forwards the main clone
 //!   ([`crate::hygiene::fast_forward`]), tells the lead when it cannot,
-//!   and types the keys into the pane after [`CLEAR_WAIT`].
+//!   and types the keys into the pane with [`keys`].
 //! - The clear comes at the end of the turn, not at the release. So a
 //!   worker does the steps after its release in the same turn.
-//! - The keys never come in a turn that runs. [`check`] counts the
-//!   prompts in the transcript of the agent when it starts
-//!   ([`crate::compact::prompts`]), and again before the keys. A higher
-//!   number shows a new turn: the check stops, and the Stop hook of
-//!   that turn starts a new check (01M3XZCWQED9M9ZB29F730EA58).
+//! - The keys never come in a turn that the agent started after the
+//!   Stop hook (01M3XZCWQED9M9ZB29F730EA58, 01M3ZS67FTAC1784GEVEDXJ837).
+//!   The Stop hook counts the prompts in the transcript of the agent
+//!   ([`crate::compact::prompts`]) before it returns, and gives the
+//!   number to the check. A wake that waits at the end of the turn
+//!   starts the next turn when the hook returns, so the check cannot
+//!   count first. [`keys`] counts again as the last step before
+//!   `/clear`. A higher number shows a new turn: the check types
+//!   nothing, and the Stop hook of that turn starts a new check.
+//! - Two times stay. The first is the time of one `tmux` call after the
+//!   last count: a few milliseconds. The second is the time between
+//!   `/clear` and the start prompt. It does no harm: the context is
+//!   fresh, and the start prompt asks only for the start routine, so no
+//!   answer of the old context is lost.
 //! - A worker has its riff session ID in `RIFF_SESSION`
 //!   (01M3JPQT9BA7JVMZPV68FY4MQ6). So after `/clear` it keeps its ID,
 //!   its lead and its watch (01M3JQCD16CNWN5FCQBRKHXYMP).
@@ -63,24 +74,23 @@
 //!   MustClear.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use riff_core::name::SessionUri;
 use serde::Deserialize;
 
 use crate::api::{Api, LEAD};
 use crate::hygiene;
-use crate::terminal::quote;
+use crate::terminal::{Terminal, Tmux};
 
 /// How many times [`check`] sends its keep-alive, when the call fails.
 pub const ASKS: u32 = 5;
 /// How long [`check`] waits after a failed keep-alive.
 pub const ASK_WAIT: Duration = Duration::from_secs(2);
 
-/// How long the detached process waits before it types `/clear`, so
-/// that the agent tool is ready for input after its turn.
+/// How long [`keys`] waits before it types `/clear`, so that the agent
+/// tool is ready for input after its turn.
 pub const CLEAR_WAIT: Duration = Duration::from_secs(1);
 /// How long it waits after `/clear` before it types the start prompt.
 pub const PROMPT_WAIT: Duration = Duration::from_secs(3);
@@ -173,25 +183,27 @@ pub struct StopInput {
 /// It asks the server with a keep-alive. When the worker must clear its
 /// context, it fast-forwards the main clone of `dir`
 /// (01M3MNP34M5PAZW9VWAYVGNSV2), tells the lead when the main clone
-/// stays as it is (01M3MNP36TZYN3PE00AZJTJSER), and starts the keys of
-/// the clear. It gives true when it started the keys.
+/// stays as it is (01M3MNP36TZYN3PE00AZJTJSER), and types the keys of
+/// the clear with [`keys`]. It gives true when it typed them.
 ///
 /// A keep-alive that fails is sent again after [`ASK_WAIT`], at most
 /// [`ASKS`] times. A session that left the riff makes no call
 /// ([`crate::leave`]), so riff does not clear it.
 ///
-/// The reply can come late, and the fast-forward takes time. When the
-/// `transcript` of the agent shows that a new turn started in that
-/// time, the check types nothing: the Stop hook of the new turn starts
-/// a new check (01M3XZCWQED9M9ZB29F730EA58).
+/// `turns` is the number of prompts that the Stop hook counted in the
+/// `transcript` of the agent ([`prompts`]). With no number, the check
+/// counts when it starts. When a new turn started after that count, the
+/// check types nothing: the Stop hook of the new turn starts a new check
+/// (01M3XZCWQED9M9ZB29F730EA58).
 pub async fn check(
     api: &Api,
     me: &SessionUri,
     pane: &str,
     dir: &Path,
     transcript: Option<&Path>,
+    turns: Option<usize>,
 ) -> Result<bool> {
-    let turns = turns(transcript);
+    let turns = turns.unwrap_or_else(|| prompts(transcript));
     let mut reply = api.alive(me).await;
     for _ in 1..ASKS {
         if reply.is_ok() {
@@ -210,73 +222,111 @@ pub async fn check(
     {
         eprintln!("riff: cannot tell the lead: {e:#}");
     }
-    if self::turns(transcript) != turns {
-        return Ok(false);
-    }
-    spawn(&ClaudeCode, pane)?;
-    Ok(true)
+    let tmux = Tmux::machine();
+    keys(
+        &ClaudeCode,
+        turns,
+        || prompts(transcript),
+        std::thread::sleep,
+        |text| tmux.type_line(pane, text),
+    )
 }
 
-/// The number of turns that started in the `transcript` of the agent
-/// ([`crate::compact::prompts`]). It is 0 with no transcript.
-fn turns(transcript: Option<&Path>) -> usize {
+/// The number of prompts in the `transcript` of the agent
+/// ([`crate::compact::prompts`]): the turns that started. It is 0 with
+/// no transcript.
+///
+/// ```
+/// assert_eq!(riff::next::prompts(None), 0);
+/// ```
+pub fn prompts(transcript: Option<&Path>) -> usize {
     let text = transcript.and_then(|path| std::fs::read_to_string(path).ok());
     text.map_or(0, |text| crate::compact::prompts(&text))
 }
 
-/// The shell script that types the keys of `agent` into `pane` with
-/// `tmux`: it waits, clears the context, waits, and types the start
-/// prompt.
+/// Types the keys of `agent` with `type_line`: it waits [`CLEAR_WAIT`],
+/// types `/clear`, waits [`PROMPT_WAIT`], and types the start prompt.
+/// As the last step before `/clear`, it counts the prompts with `now`.
+/// When the count is not `turns`, a new turn started: it types nothing
+/// and gives false (01M3ZS67FTAC1784GEVEDXJ837).
 ///
 /// ```
-/// use riff::next::{ClaudeCode, script};
-/// assert_eq!(
-///     script(&ClaudeCode, "%3"),
-///     "sleep 1; tmux send-keys -t '%3' -l '/clear'; tmux send-keys -t '%3' Enter; \
-///      sleep 3; tmux send-keys -t '%3' -l 'Join the riff.'; tmux send-keys -t '%3' Enter"
-/// );
+/// use riff::next::{ClaudeCode, keys};
+/// let mut typed = Vec::new();
+/// let done = keys(&ClaudeCode, 1, || 1, |_| {}, |t| Ok(typed.push(t.to_owned()))).unwrap();
+/// assert!(done);
+/// assert_eq!(typed, ["/clear", "Join the riff."]);
+///
+/// // A turn started in the wait: no keys.
+/// let mut typed = Vec::new();
+/// let done = keys(&ClaudeCode, 1, || 2, |_| {}, |t| Ok(typed.push(t.to_owned()))).unwrap();
+/// assert!(!done && typed.is_empty());
 /// ```
-pub fn script(agent: &dyn Agent, pane: &str) -> String {
-    let pane = quote(pane);
-    let keys = |text: &str| {
-        format!(
-            "tmux send-keys -t {pane} -l {}; tmux send-keys -t {pane} Enter",
-            quote(text)
-        )
-    };
-    format!(
-        "sleep {}; {}; sleep {}; {}",
-        CLEAR_WAIT.as_secs(),
-        keys(agent.clear()),
-        PROMPT_WAIT.as_secs(),
-        keys(agent.start_prompt())
-    )
-}
-
-/// Starts [`script`] as a detached process in its own process group, so
-/// that it outlives the check.
-pub fn spawn(agent: &dyn Agent, pane: &str) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    Command::new("sh")
-        .arg("-c")
-        .arg(script(agent, pane))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()
-        .context("cannot start sh")?;
-    Ok(())
+pub fn keys(
+    agent: &dyn Agent,
+    turns: usize,
+    now: impl Fn() -> usize,
+    mut wait: impl FnMut(Duration),
+    mut type_line: impl FnMut(&str) -> Result<()>,
+) -> Result<bool> {
+    wait(CLEAR_WAIT);
+    if now() != turns {
+        return Ok(false);
+    }
+    type_line(agent.clear())?;
+    wait(PROMPT_WAIT);
+    type_line(agent.start_prompt())?;
+    Ok(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// A turn that starts in the wait before `/clear` gets no keys.
     #[test]
-    fn a_pane_with_a_quote_stays_one_word() {
-        let s = script(&ClaudeCode, "%3'x");
-        assert!(s.contains(r"-t '%3'\''x'"), "{s}");
+    fn a_turn_that_starts_in_the_wait_gets_no_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("transcript.jsonl");
+        let prompt = r#"{"type":"user","message":{"content":"Join the riff."}}"#;
+        std::fs::write(&transcript, format!("{prompt}\n")).unwrap();
+        let turns = prompts(Some(&transcript));
+        let mut typed = Vec::new();
+        let done = keys(
+            &ClaudeCode,
+            turns,
+            || prompts(Some(&transcript)),
+            |wait| {
+                if wait == CLEAR_WAIT {
+                    std::fs::write(&transcript, format!("{prompt}\n{prompt}\n")).unwrap();
+                }
+            },
+            |text| {
+                typed.push(text.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!done);
+        assert!(typed.is_empty(), "{typed:?}");
+    }
+
+    /// A failed key stops the keys.
+    #[test]
+    fn a_failed_key_stops_the_keys() {
+        let mut typed = 0;
+        let done = keys(
+            &ClaudeCode,
+            0,
+            || 0,
+            |_| {},
+            |_| {
+                typed += 1;
+                anyhow::bail!("no tmux")
+            },
+        );
+        assert!(done.is_err());
+        assert_eq!(typed, 1);
     }
 
     #[test]

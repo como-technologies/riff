@@ -3547,9 +3547,12 @@ and ends its turn. Then riff types `/clear` into the pane of the
 worker, and then "Join the riff.". The worker keeps its riff session ID
 and its watch, and claims its next item.
 
-riff never types into a turn that runs. When the reply of the server
-comes late and the worker started a new turn, riff types nothing. It
-checks again when that turn ends.
+riff types nothing into a new turn of the worker. When the turn ends,
+riff counts the prompts of the worker. A message that waits can start
+the next turn at once. Just before `/clear`, riff counts again. A
+higher number shows a new turn: riff types nothing, and checks again
+when that turn ends. After `/clear` the context is fresh, so the start
+prompt does no harm when a turn started.
 
 ```mermaid
 sequenceDiagram
@@ -3560,9 +3563,10 @@ sequenceDiagram
     W->>S: release (the last claim)
     S-->>W: released: riff clears your context when your turn ends
     Note over S: the worker is in must clear
-    W->>R: the turn ends (Stop hook)
+    W->>R: the turn ends (Stop hook): count the prompts
     R->>S: must this worker clear its context?
     S-->>R: yes
+    R->>R: count again: no new turn
     R->>T: /clear
     T->>S: start (clear)
     Note over S: the worker is ready
