@@ -317,8 +317,8 @@ pub fn end_session(dir: &Path, users: &[User]) -> bool {
 /// Deletes each file and folder in the temp folder `dir` of a worker
 /// whose context ends, when no process of `users` holds it open or
 /// works in it (01M41VAGSCNESHTZ6216P2E133). It keeps each folder
-/// [`KEEP`]. In a held folder, it looks at each part again. Returns the
-/// deleted paths.
+/// [`KEEP`]. In a held folder, and in a folder that holds a folder
+/// [`KEEP`], it looks at each part again. Returns the deleted paths.
 ///
 /// ```
 /// use riff::temp::{User, end_context};
@@ -355,7 +355,7 @@ fn prune(dir: &Path, users: &[User], gone: &mut Vec<PathBuf>) {
         if is_dir && entry.file_name() == KEEP {
             continue;
         }
-        if held(&path, users) {
+        if held(&path, users) || (is_dir && has_keep(&path, KEEP_DEPTH)) {
             if is_dir {
                 prune(&path, users, gone);
             }
@@ -370,6 +370,24 @@ fn prune(dir: &Path, users: &[User], gone: &mut Vec<PathBuf>) {
             gone.push(path);
         }
     }
+}
+
+/// How deep [`end_context`] looks for a folder [`KEEP`]: Claude Code
+/// has it in `claude-UID/PROJECT/SESSION/tasks`.
+const KEEP_DEPTH: usize = 4;
+
+/// True when `dir` holds a folder [`KEEP`] at most `depth` levels down.
+fn has_keep(dir: &Path, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .any(|e| e.file_name() == KEEP || has_keep(&e.path(), depth - 1))
 }
 
 /// Deletes each folder of `root` that no process of `users` uses and

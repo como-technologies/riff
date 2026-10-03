@@ -3116,6 +3116,7 @@ flowchart TD
 | The priority of the workers | nice 10 | `riff workers nice` |
 | The memory of all workers | three quarters of the memory | `riff workers memory` |
 | The available memory that a new worker needs | 4 GB | `riff workers floor` |
+| The folder of the temp files of the workers | `~/.cache/riff/tmp` | `riff workers tmp` |
 
 riff sets the limits when a worker starts. It does not change them
 while the workers run.
@@ -3709,6 +3710,64 @@ To get space back, remove the worktrees of merged pull requests:
 
 ```sh
 riff worktrees clean
+```
+
+### The temp files of the workers
+
+On some machines, `/tmp` is in memory (a tmpfs). Each file there uses
+memory. A worker builds binaries in its scratch directory, often some
+GB. So each worker gets a temp folder of its own on disk:
+`~/.cache/riff/tmp/SESSION`. `riff workers run` gives `claude` this
+folder in `TMPDIR` and in `CLAUDE_CODE_TMPDIR`. The scratch directory
+of Claude Code and the temp files of the tests go there.
+
+```mermaid
+flowchart TD
+    R["riff workers run"] --> M["make ~/.cache/riff/tmp/SESSION"]
+    M --> C["claude works"]
+    C --> X{"the end of the context"}
+    X -- "the clear" --> P["delete the files of the old context"]
+    P --> C
+    X -- "the worker ends" --> D["delete the folder"]
+    X -- "the pane dies" --> T["the next tidy deletes the folder"]
+```
+
+- When the worker ends, riff deletes its folder.
+- At each clear, riff deletes the files of the old context. It keeps
+  the folders `tasks`: the watch writes there.
+- Each 10 minutes, the tidy deletes the folder of each worker that
+  ended.
+- riff never deletes a folder that a live process uses.
+
+`riff workers` shows the disk use under the line of this machine:
+
+```text
+disk 200GB free of 455GB (43%)
+temp 3.1GB in /home/mike/.cache/riff/tmp
+```
+
+#### Show or change the folder of the temp files
+
+Show the folder and its disk use:
+
+```sh
+riff workers tmp
+```
+
+Put the temp folders in a different folder. The next worker that
+starts uses it:
+
+```sh
+riff workers tmp /data/riff-tmp
+```
+
+#### Put /tmp on disk
+
+The other programs of the machine still use `/tmp`. To put `/tmp` on
+disk on Ubuntu, stop its tmpfs, then restart the machine:
+
+```sh
+sudo systemctl mask tmp.mount
 ```
 
 ### Offer workers from another machine
