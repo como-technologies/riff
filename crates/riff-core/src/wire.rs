@@ -27,6 +27,9 @@
 //! | `/v1/resume` | [`Resume`] | [`RiffReply`] | command |
 //! | `/v1/idle/set` | [`SetIdle`] | [`Idle`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
+//! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
+//! | `/v1/blocked/look` | [`BlockedLook`] | [`BlockedLookReply`] | signal |
+//! | `/v1/items` | [`ItemFacts`] | `null` | signal |
 //! | `/v1/alive` | [`Alive`] | [`AliveReply`] | signal |
 //! | `/v1/who` | [`WhoRequest`] | [`WhoReply`] | query |
 //! | `/v1/threads` | [`Threads`] | [`ThreadsReply`] | query |
@@ -192,6 +195,9 @@ calls! {
     Resume => "/v1/resume", RiffReply;
     SetIdle => "/v1/idle/set", Idle;
     SetStatus => "/v1/status", ();
+    SetBlocked => "/v1/blocked", ();
+    BlockedLook => "/v1/blocked/look", BlockedLookReply;
+    ItemFacts => "/v1/items", ();
     Alive => "/v1/alive", AliveReply;
     WhoRequest => "/v1/who", WhoReply;
     Threads => "/v1/threads", ThreadsReply;
@@ -238,6 +244,51 @@ pub const ALIVE_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Alive {
     pub me: SessionUri,
+    /// The newest fact of the hooks of the session on its machine, when
+    /// it has one (01M41FZNTPXQNCZ1S99HE42PYQ).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<Activity>,
+}
+
+/// The most characters in the text of a tool of an [`Activity`].
+pub const ACTIVITY_CHARS: usize = 80;
+
+/// What the hooks of a session saw last (01M41FZNTPXQNCZ1S99HE42PYQ):
+/// a tool that runs, a turn that runs between two tools, or a turn
+/// that ended. A hook writes it on the machine at each tool call and at
+/// the end of each turn, and makes no call. `riff mcp` sends the newest
+/// one in its keep-alive. A riff tool and `riff watch` give no fact:
+/// they are no work.
+///
+/// ```
+/// use riff_core::wire::Activity;
+///
+/// let tool = Activity { tool: Some("Bash: run just ci".into()), turn: true, secs: 30 };
+/// assert!(tool.works());
+/// let between = Activity { tool: None, turn: true, secs: 2 };
+/// assert!(between.works());
+/// let ended = Activity { tool: None, turn: false, secs: 5 };
+/// assert!(!ended.works());
+/// let json = serde_json::to_string(&ended).unwrap();
+/// assert_eq!(json, r#"{"secs":5}"#);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Activity {
+    /// The tool that runs, with its short text: `Bash: run just ci`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    /// True while a turn runs. False when the turn ended.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn: bool,
+    /// The seconds since the fact.
+    pub secs: u64,
+}
+
+impl Activity {
+    /// True while a turn runs: a sign of work.
+    pub fn works(&self) -> bool {
+        self.turn
+    }
 }
 
 /// The reply to [`Alive`].
@@ -506,6 +557,18 @@ pub struct SessionInfo {
     /// [`SessionInfo::fill_state`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<SessionState>,
+    /// The newest fact of the hooks of the session, with its age now
+    /// (01M41FZNTPXQNCZ1S99HE42PYQ).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<Activity>,
+    /// What each claim of the session waits for, when each one waits
+    /// (01M41FZP9A50CH4A2VX344DW49).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits: Option<Waits>,
+    /// The block of the session, while it holds
+    /// (01M41FZPGEK4TNPSM2051W4VMS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<BlockedInfo>,
 }
 
 impl SessionInfo {
@@ -529,46 +592,62 @@ impl SessionInfo {
         if self.state.is_some() {
             return;
         }
-        let blocked = self
-            .status
-            .as_ref()
-            .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
         self.state = Some(SessionState::of(
             self.live,
             riff == RiffState::Paused,
-            blocked,
+            self.blocked.is_some(),
             self.must_clear,
+            self.waits.is_some(),
             !self.uri.claims().is_empty(),
         ));
     }
 }
 
-/// The state of a session. The server derives it; no session reports it
-/// (01M3QB6CJ1XCQG5B1BVR8AF3B4). The first state that matches wins, in
+/// The state of a session. The server derives it from facts; no
+/// session reports it (01M3QB6CJ1XCQG5B1BVR8AF3B4,
+/// 01M41FZQVEF8S2W9RCM4V87C3D). The first state that matches wins, in
 /// this order:
 ///
 /// 1. `offline`: the session has no open watch stream.
 /// 2. `paused`: the riff is paused, or the repository of the session is
 ///    paused (01M3XAHZBGSSJB3YX23K88W01K).
-/// 3. `blocked`: its current status, not a stale one, is blocked.
+/// 3. `blocked`: the session said that it cannot go on with no
+///    decision, and the block holds (01M41FZPGEK4TNPSM2051W4VMS).
 /// 4. `must_clear`: it is a worker that must clear its context before
 ///    its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS).
-/// 5. `busy`: it holds a claim.
-/// 6. `idle`: each other session.
+/// 5. `waiting`: each claim of the session waits for the machinery: a
+///    verify, a merge, or an item of its `Needs:` line
+///    (01M41FZP9A50CH4A2VX344DW49).
+/// 6. `busy`: it holds a claim.
+/// 7. `idle`: each other session.
+///
+/// ```mermaid
+/// stateDiagram-v2
+///     [*] --> idle
+///     idle --> busy: claim
+///     busy --> waiting: a verify is asked, a merge waits, a need is open
+///     waiting --> busy: the fact ends
+///     busy --> blocked: blocked REASON (wakes the lead)
+///     blocked --> busy: an answer, then a sign of work
+///     busy --> must_clear: the last release of a worker
+///     must_clear --> idle: a clear
+/// ```
 ///
 /// ```
 /// use riff_core::wire::SessionState;
 ///
-/// // live, paused, blocked, must clear, claims
-/// assert_eq!(SessionState::of(false, true, true, true, true), SessionState::Offline);
-/// assert_eq!(SessionState::of(true, true, true, true, true), SessionState::Paused);
-/// assert_eq!(SessionState::of(true, false, true, true, true), SessionState::Blocked);
-/// assert_eq!(SessionState::of(true, false, false, true, false), SessionState::MustClear);
-/// assert_eq!(SessionState::of(true, false, false, false, true), SessionState::Busy);
-/// assert_eq!(SessionState::of(true, false, false, false, false), SessionState::Idle);
+/// // live, paused, blocked, must clear, waiting, claims
+/// let of = SessionState::of;
+/// assert_eq!(of(false, true, true, true, true, true), SessionState::Offline);
+/// assert_eq!(of(true, true, true, true, true, true), SessionState::Paused);
+/// assert_eq!(of(true, false, true, true, true, true), SessionState::Blocked);
+/// assert_eq!(of(true, false, false, true, false, false), SessionState::MustClear);
+/// assert_eq!(of(true, false, false, false, true, true), SessionState::Waiting);
+/// assert_eq!(of(true, false, false, false, false, true), SessionState::Busy);
+/// assert_eq!(of(true, false, false, false, false, false), SessionState::Idle);
 /// assert_eq!(serde_json::to_string(&SessionState::MustClear).unwrap(), r#""must_clear""#);
 /// assert_eq!(SessionState::MustClear.word(), "must clear");
-/// assert_eq!(serde_json::to_string(&SessionState::Busy).unwrap(), r#""busy""#);
+/// assert_eq!(serde_json::to_string(&SessionState::Waiting).unwrap(), r#""waiting""#);
 /// assert_eq!(SessionState::Blocked.word(), "blocked");
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -579,15 +658,23 @@ pub enum SessionState {
     Paused,
     Blocked,
     MustClear,
+    Waiting,
     Busy,
     Idle,
 }
 
 impl SessionState {
     /// The state of a session from its facts: an open watch stream
-    /// (`live`), a paused riff, a current blocked status, a worker that
-    /// must clear its context, and a claim.
-    pub fn of(live: bool, paused: bool, blocked: bool, must_clear: bool, claims: bool) -> Self {
+    /// (`live`), a paused riff, a block that holds, a worker that must
+    /// clear its context, claims that each wait, and a claim.
+    pub fn of(
+        live: bool,
+        paused: bool,
+        blocked: bool,
+        must_clear: bool,
+        waiting: bool,
+        claims: bool,
+    ) -> Self {
         if !live {
             SessionState::Offline
         } else if paused {
@@ -596,6 +683,8 @@ impl SessionState {
             SessionState::Blocked
         } else if must_clear {
             SessionState::MustClear
+        } else if waiting && claims {
+            SessionState::Waiting
         } else if claims {
             SessionState::Busy
         } else {
@@ -610,65 +699,117 @@ impl SessionState {
             SessionState::Paused => "paused",
             SessionState::Blocked => "blocked",
             SessionState::MustClear => "must clear",
+            SessionState::Waiting => "waiting",
             SessionState::Busy => "busy",
             SessionState::Idle => "idle",
         }
     }
 }
 
-/// The most characters in the step or the reason of a [`Status`].
+/// What the claims of a session wait for (01M41FZP9A50CH4A2VX344DW49).
+/// The server makes it from the facts of the items ([`ItemFact`]).
+/// Nobody must decide, so it wakes nobody.
+///
+/// ```
+/// use riff_core::wire::Waits;
+///
+/// assert_eq!(Waits::Verify { pull: 418 }.to_string(), "waits for a verify of PR #418");
+/// assert_eq!(Waits::Merge { pull: 418 }.to_string(), "waits for the merge of PR #418");
+/// assert_eq!(Waits::Needs { issues: vec![12, 15] }.to_string(), "waits for #12, #15");
+/// let json = serde_json::to_string(&Waits::Merge { pull: 418 }).unwrap();
+/// assert_eq!(json, r#"{"for":"merge","pull":418}"#);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "for", rename_all = "snake_case")]
+pub enum Waits {
+    /// The pull request of the item waits for a verify.
+    Verify { pull: u64 },
+    /// The verify passed: the pull request waits for the merge.
+    Merge { pull: u64 },
+    /// Items of the `Needs:` line of the item are open.
+    Needs { issues: Vec<u64> },
+}
+
+impl std::fmt::Display for Waits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Waits::Verify { pull } => write!(f, "waits for a verify of PR #{pull}"),
+            Waits::Merge { pull } => write!(f, "waits for the merge of PR #{pull}"),
+            Waits::Needs { issues } => {
+                let issues: Vec<String> = issues.iter().map(|n| format!("#{n}")).collect();
+                write!(f, "waits for {}", issues.join(", "))
+            }
+        }
+    }
+}
+
+/// A block in the reply to `who` (01M41FZPGEK4TNPSM2051W4VMS).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BlockedInfo {
+    /// Why the session cannot go on.
+    pub reason: String,
+    /// The seconds since the session said it.
+    pub secs: u64,
+    /// True when a message woke the session after the block. The block
+    /// ends at the next sign of work (01M41FZPT31ATXP75QW965P3JB).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub answered: bool,
+    /// True when riff woke the lead a second time
+    /// (01M41FZQ545HQ9Q75CSKX8HF8H).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub woken_again: bool,
+    /// True when the lead gave no answer after the second wake
+    /// (01M41FZQCHWY1YVGAZ60ZHJK21).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unanswered: bool,
+}
+
+/// The most characters in the step of a [`Status`], and in the reason
+/// of a [`SetBlocked`].
 pub const STATUS_CHARS: usize = 200;
 
-/// What a session does now: its current step, and a reason when it is
-/// blocked.
+/// What a session does now, in its own words: its current step. The
+/// words help a person. They make no state: a block is [`SetBlocked`]
+/// (01M41FZPGEK4TNPSM2051W4VMS).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Status {
     pub step: String,
-    /// Why the session cannot go on. `None` when it is not blocked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocked: Option<String>,
 }
 
 impl Status {
     /// Refuses a status that `who` cannot show on one line: an empty
-    /// step, a line break, or more than [`STATUS_CHARS`] characters in
-    /// the step or the reason.
+    /// step, a line break, or more than [`STATUS_CHARS`] characters.
     ///
     /// ```
     /// use riff_core::wire::Status;
     ///
-    /// let status = |step: &str, blocked: Option<&str>| Status {
-    ///     step: step.into(),
-    ///     blocked: blocked.map(Into::into),
-    /// };
-    /// assert!(status("write the tests", None).check().is_ok());
-    /// assert!(status("merge", Some("waits for a review")).check().is_ok());
-    /// assert!(status(" ", None).check().is_err());
-    /// assert!(status("merge", Some("")).check().is_err());
-    /// assert!(status("two\nlines", None).check().is_err());
-    /// assert!(status(&"x".repeat(201), None).check().is_err());
+    /// let status = |step: &str| Status { step: step.into() };
+    /// assert!(status("write the tests").check().is_ok());
+    /// assert!(status(" ").check().is_err());
+    /// assert!(status("two\nlines").check().is_err());
+    /// assert!(status(&"x".repeat(201)).check().is_err());
     /// ```
     pub fn check(&self) -> Result<(), String> {
-        let parts = [
-            ("step", Some(&self.step)),
-            ("reason", self.blocked.as_ref()),
-        ];
-        for (what, text) in parts {
-            let Some(text) = text else { continue };
-            if text.trim().is_empty() {
-                return Err(format!("the {what} of a status is empty"));
-            }
-            if text.chars().any(char::is_control) {
-                return Err(format!("the {what} of a status must be one line"));
-            }
-            if text.chars().count() > STATUS_CHARS {
-                return Err(format!(
-                    "the {what} of a status has more than {STATUS_CHARS} characters"
-                ));
-            }
-        }
-        Ok(())
+        one_line("step", &self.step)
     }
+}
+
+/// Refuses a text that `who` cannot show on one line: empty, with a
+/// line break, or with more than [`STATUS_CHARS`] characters. `what`
+/// names the text in the error.
+fn one_line(what: &str, text: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err(format!("the {what} is empty"));
+    }
+    if text.chars().any(char::is_control) {
+        return Err(format!("the {what} must be one line"));
+    }
+    if text.chars().count() > STATUS_CHARS {
+        return Err(format!(
+            "the {what} has more than {STATUS_CHARS} characters"
+        ));
+    }
+    Ok(())
 }
 
 /// A [`Status`] in the reply to `who`, with its age.
@@ -692,6 +833,148 @@ pub struct StatusInfo {
 pub struct SetStatus {
     pub me: SessionUri,
     pub status: Status,
+}
+
+/// `POST /v1/blocked`: `me` cannot go on with no decision
+/// (01M41FZPGEK4TNPSM2051W4VMS). It is a signal. The `blocked` tool and
+/// `riff blocked` send it with the message that wakes the lead, in one
+/// command: a session does neither alone.
+///
+/// ```
+/// use riff_core::wire::SetBlocked;
+///
+/// let me: riff_core::name::SessionUri = "riff://mike@pangolin/o/r?session=a1".parse()?;
+/// let set = |reason: &str| SetBlocked { me: me.clone(), reason: reason.into() };
+/// assert!(set("which of the two designs?").check().is_ok());
+/// assert_eq!(set(" ").check().unwrap_err(), "the reason is empty");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SetBlocked {
+    pub me: SessionUri,
+    pub reason: String,
+}
+
+impl SetBlocked {
+    /// Refuses a reason that is not one line of at most
+    /// [`STATUS_CHARS`] characters.
+    pub fn check(&self) -> Result<(), String> {
+        one_line("reason", &self.reason)
+    }
+}
+
+/// `POST /v1/blocked/look`: the lead `me` looks at the blocks of the
+/// sessions of its user in its repository. A block with no answer for
+/// `after_secs` wakes the lead again (01M41FZQ545HQ9Q75CSKX8HF8H). A
+/// block with no answer for `after_secs` after that is unanswered
+/// (01M41FZQCHWY1YVGAZ60ZHJK21). The server refuses a caller that is not
+/// the lead.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct BlockedLook {
+    pub me: SessionUri,
+    pub after_secs: u64,
+}
+
+/// The reply to [`BlockedLook`]: each block that this look made
+/// unanswered. The `riff mcp` of the lead shows each one in a desktop
+/// notification (01M41FZQKZKW131Z8822G31T5G).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BlockedLookReply {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unanswered: Vec<Unanswered>,
+}
+
+/// A block with no answer of the lead: the session with its claims, and
+/// the reason. It holds no text of a message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Unanswered {
+    pub session: SessionUri,
+    pub reason: String,
+}
+
+/// `POST /v1/items`: what a client saw of the items of its repository
+/// on the forge (01M41FZP2C4Z4J6WKRXZ5B31EH). The server has no
+/// credential of the forge: `riff pr open`, `riff verify`, `riff pr
+/// wait` and the look of the lead send the facts. It is a signal. With
+/// `all`, the facts replace each fact of the repository: an item with
+/// no fact in the list has none now. Else each fact replaces only the
+/// fact of its item.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ItemFacts {
+    pub me: SessionUri,
+    pub items: Vec<ItemFact>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
+}
+
+/// The facts of one item, for example `issue-12`.
+///
+/// ```
+/// use riff_core::wire::{ItemFact, PullFact, PullState, Waits};
+///
+/// let fact = |state| ItemFact {
+///     item: "issue-12".into(),
+///     pull: Some(PullFact { number: 40, state }),
+///     needs: vec![],
+/// };
+/// assert_eq!(fact(PullState::Asked).waits("issue-12"), Some(Waits::Verify { pull: 40 }));
+/// assert_eq!(fact(PullState::Passed).waits("issue-12"), Some(Waits::Merge { pull: 40 }));
+/// assert_eq!(fact(PullState::Passed).waits("verify-issue-12"), Some(Waits::Merge { pull: 40 }));
+/// assert_eq!(fact(PullState::Asked).waits("verify-issue-12"), None, "the verifier works");
+/// assert_eq!(fact(PullState::Failed).waits("issue-12"), None);
+/// assert_eq!(fact(PullState::Merged).waits("issue-12"), None);
+/// let needs = ItemFact { item: "issue-12".into(), pull: None, needs: vec![9] };
+/// assert_eq!(needs.waits("issue-12"), Some(Waits::Needs { issues: vec![9] }));
+/// assert_eq!(needs.waits("verify-issue-12"), None);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ItemFact {
+    pub item: String,
+    /// The newest pull request of the item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull: Option<PullFact>,
+    /// The open items of its `Needs:` line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<u64>,
+}
+
+impl ItemFact {
+    /// What a session that holds `claim` waits for, by this fact. The
+    /// author waits for the verify and for the merge. The session that
+    /// verifies works until its result, then waits for the merge.
+    pub fn waits(&self, claim: &str) -> Option<Waits> {
+        let verify = claim.starts_with("verify-");
+        match self.pull.as_ref().map(|p| (p.number, p.state)) {
+            Some((pull, PullState::Asked)) if !verify => Some(Waits::Verify { pull }),
+            Some((pull, PullState::Passed)) => Some(Waits::Merge { pull }),
+            _ if !verify && !self.needs.is_empty() => Some(Waits::Needs {
+                issues: self.needs.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// A pull request of an item, and its state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PullFact {
+    pub number: u64,
+    pub state: PullState,
+}
+
+/// The state of a pull request: from the status `riff/verify` of its
+/// head, and from its merge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PullState {
+    /// Open, with no verify result: it waits for a verify.
+    Asked,
+    /// The verify passed: it waits for the merge.
+    Passed,
+    /// The verify failed: the item is free with its work.
+    Failed,
+    /// Merged.
+    Merged,
 }
 
 /// `POST /v1/threads`: lists the threads of `me`, with unread counts.

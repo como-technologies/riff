@@ -220,7 +220,8 @@ use riff_core::wire::{
     ID_TOKEN_TYPE, Idle, IdleQuery, Invite, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply,
     MeReply, Members, MembersReply, PassOwner, Pause, Person, Post, Read, ReadReply, Register,
     Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply,
-    ServerFacts, ServerMetadata, SetAdmin, SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE,
+    ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetStatus, SignInConfig, Start,
+    TOKEN_EXCHANGE, BlockedLook, BlockedLookReply, ItemFacts, Unanswered,
     TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
@@ -1806,6 +1807,9 @@ impl Service {
         // The signals and the queries.
         let mut routes = commands
             .route(SetStatus::PATH, post(status))
+            .route(SetBlocked::PATH, post(blocked))
+            .route(BlockedLook::PATH, post(look_blocks))
+            .route(ItemFacts::PATH, post(item_facts))
             .route(Alive::PATH, post(alive))
             .route(WhoRequest::PATH, post(who))
             .route(Threads::PATH, post(threads))
@@ -2032,7 +2036,8 @@ async fn alive(
     Json(r): Json<Alive>,
 ) -> Reply<AliveReply> {
     let caller = admit(&s, &proof, &r.me)?;
-    Ok(Json(s.engine.signal(&caller, Signal::Alive).await?))
+    let alive = Signal::Alive { activity: r.activity };
+    Ok(Json(s.engine.signal(&caller, alive).await?))
 }
 
 /// Sets the status of a session. It is a signal: it makes no record,
@@ -2049,6 +2054,96 @@ async fn status(
         at_ms: now_ms(),
     };
     s.engine.signal(&caller, status).await?;
+    Ok(Json(()))
+}
+
+/// Sets the block of a session (01M41FZPGEK4TNPSM2051W4VMS). It is a
+/// signal, like a status.
+async fn blocked(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<SetBlocked>,
+) -> Reply<()> {
+    let caller = admit(&s, &proof, &r.me)?;
+    r.check().map_err(bad_request)?;
+    let blocked = Signal::Blocked {
+        reason: r.reason,
+        at_ms: now_ms(),
+    };
+    s.engine.signal(&caller, blocked).await?;
+    Ok(Json(()))
+}
+
+/// The look of the lead at the blocks of the sessions of its user
+/// (01M41FZQ545HQ9Q75CSKX8HF8H). Each block with no answer for
+/// `after_secs` gets a second wake of the lead: a message of the server.
+async fn look_blocks(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<BlockedLook>,
+) -> Reply<BlockedLookReply> {
+    let caller = admit(&s, &proof, &r.me)?;
+    let after = Duration::from_secs(r.after_secs);
+    let (again, unanswered) = s.engine.look_blocks(&caller, after).await?;
+    let mut posts = Vec::new();
+    for (session, reason) in &again {
+        let news = still_blocked(session, reason, r.after_secs);
+        tracing::info!("{news}");
+        let Some(thread) = session.default_thread() else {
+            continue;
+        };
+        let lead = Selector::lead(session.who().user(), &thread.to_string());
+        posts.push(Server::news(Some(thread), vec![lead], &news, Kind::Message));
+    }
+    s.announce_each(posts).await;
+    let unanswered = unanswered
+        .into_iter()
+        .map(|(session, reason)| Unanswered { session, reason })
+        .collect();
+    Ok(Json(BlockedLookReply { unanswered }))
+}
+
+/// The second wake of the lead for a block with no answer
+/// (01M41FZQ545HQ9Q75CSKX8HF8H): the session, its claims and the
+/// reason.
+///
+/// ```
+/// let w1 = "riff://mike@pangolin/o/r?session=1a2b3c4d5e&claim=issue-12".parse()?;
+/// assert_eq!(
+///     riff_server::still_blocked(&w1, "which design?", 600),
+///     "blocked: 1a2b3c4d (issue-12) has no answer after 10 minutes: which design?"
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> String {
+    let id = session.who().session().unwrap_or_default();
+    let short: String = id.chars().take(8).collect();
+    let claims = match session.claims() {
+        [] => String::new(),
+        claims => format!(" ({})", claims.join(", ")),
+    };
+    let minutes = after_secs.div_ceil(60);
+    format!("blocked: {short}{claims} has no answer after {minutes} minutes: {reason}")
+}
+
+/// Keeps the facts of the items of the repository of the caller
+/// (01M41FZP2C4Z4J6WKRXZ5B31EH). It is a signal.
+async fn item_facts(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<ItemFacts>,
+) -> Reply<()> {
+    let caller = admit(&s, &proof, &r.me)?;
+    let thread = r
+        .me
+        .default_thread()
+        .ok_or_else(|| bad_request("the session is in no repository".into()))?;
+    let facts = Signal::Facts {
+        thread,
+        items: r.items,
+        all: r.all,
+    };
+    s.engine.signal(&caller, facts).await?;
     Ok(Json(()))
 }
 

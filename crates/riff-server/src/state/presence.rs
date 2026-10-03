@@ -6,6 +6,12 @@
 //! keeps. A start of the server loses the rest. The worker mark is not
 //! here: it is in the log (01M3X9X9M079WGFPJZHNXH9VEP).
 //!
+//! The presence also holds what the sessions show by facts, not by a
+//! record (01M41FZRF5HEZCDS515CP7DYCV): the newest fact of the hooks of
+//! each session, its block, and the facts of the items that clients saw
+//! on the forge. A start of the server loses them, and the clients send
+//! them again.
+//!
 //! No record is needed to change the presence: a keep-alive, a status
 //! and a read change it. Each such change is a [`Signal`]
 //! (01M3WRD97EZJK3AABXECXEY133). A record changes the presence only in
@@ -16,7 +22,7 @@ use std::time::Instant;
 
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{Change, Record, Scope};
-use riff_core::wire::{AliveReply, Status};
+use riff_core::wire::{Activity, AliveReply, ItemFact, Kind, Status};
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
@@ -61,6 +67,9 @@ pub struct Presence {
     /// The time of the replay. A session that did not call since then
     /// holds its claims and its lead until [`CLAIM_GRACE`] after it.
     pub(super) loaded: Option<Instant>,
+    /// The facts of the items of each repository thread, by item
+    /// (01M41FZP2C4Z4J6WKRXZ5B31EH).
+    pub(super) items: BTreeMap<ThreadName, BTreeMap<String, ItemFact>>,
 }
 
 // ANCHOR: signal
@@ -78,7 +87,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive.set(&mut presence, mike.who(), Instant::now());
+/// Signal::Alive { activity: None }.set(&mut presence, mike.who(), Instant::now());
 /// # let _ = &mut riff;
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -95,7 +104,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive.set(&mut riff, mike.who(), Instant::now());
+/// Signal::Alive { activity: None }.set(&mut riff, mike.who(), Instant::now());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,13 +113,27 @@ pub enum Signal {
     /// back an ask to stop. A person takes the place of each call
     /// (01M3MWW8KYJ3ZV91X22RBSAF33).
     Called { place: Place },
-    /// A keep-alive: a sign of life that is not a call (R204).
-    Alive,
+    /// A keep-alive: a sign of life that is not a call (R204). It
+    /// carries the newest fact of the hooks of the session
+    /// (01M41FZNTPXQNCZ1S99HE42PYQ). A fact of work after an answer
+    /// ends a block (01M41FZPT31ATXP75QW965P3JB).
+    Alive { activity: Option<Activity> },
     /// The place of the session, from a `register`. It makes a session
     /// that the presence does not know.
     Place { place: Place },
     /// The status of the session, set at `at_ms`.
     Status { status: Status, at_ms: u64 },
+    /// The session cannot go on with no decision, since `at_ms`
+    /// (01M41FZPGEK4TNPSM2051W4VMS). A new block replaces the old one.
+    Blocked { reason: String, at_ms: u64 },
+    /// What a client saw of the items of `thread` on the forge
+    /// (01M41FZP2C4Z4J6WKRXZ5B31EH). With `all`, the facts replace each
+    /// fact of the thread.
+    Facts {
+        thread: ThreadName,
+        items: Vec<ItemFact>,
+        all: bool,
+    },
     /// A watch stream opened.
     WatchStarted,
     /// A watch stream closed. It is no sign of life
@@ -144,6 +167,16 @@ impl Signal {
             *cursor = if all { (*cursor).max(seq) } else { seq };
             return AliveReply::default();
         }
+        if let Signal::Facts { thread, items, all } = self {
+            let known = presence.items.entry(thread).or_default();
+            if all {
+                known.clear();
+            }
+            for fact in items {
+                known.insert(fact.item.clone(), fact);
+            }
+            return AliveReply::default();
+        }
         if let Signal::Place { place, .. } = &self
             && !presence.sessions.contains_key(who)
         {
@@ -160,7 +193,12 @@ impl Signal {
                 }
                 session.called(now);
             }
-            Signal::Alive => session.live(now),
+            Signal::Alive { activity } => {
+                session.live(now);
+                if let Some(activity) = activity {
+                    session.worked(activity, now);
+                }
+            }
             Signal::Place { place } => {
                 session.place = place;
                 session.called(now);
@@ -170,6 +208,16 @@ impl Signal {
                     status,
                     set_ms: at_ms,
                     set: now,
+                });
+            }
+            Signal::Blocked { reason, at_ms } => {
+                session.blocked = Some(Block {
+                    reason,
+                    set_ms: at_ms,
+                    set: now,
+                    answered: None,
+                    woken_again: None,
+                    unanswered: false,
                 });
             }
             Signal::WatchStarted => session.watchers += 1,
@@ -188,7 +236,7 @@ impl Signal {
                 session.claims_changed = now;
             }
             Signal::AskedToStop => session.stopping = true,
-            Signal::Read { .. } => {}
+            Signal::Read { .. } | Signal::Facts { .. } => {}
         }
         AliveReply {
             stop: session.stopping,
@@ -265,10 +313,31 @@ impl Presence {
     ///   the repository of the record.
     /// - `session_forgotten`: the session leaves memory, with its read
     ///   cursors, and each cursor of a thread that is gone.
+    /// - `posted`: a message, not a note and not a status request, that
+    ///   wakes a blocked session answers its block
+    ///   (01M41FZPT31ATXP75QW965P3JB).
+    /// - `claimed`, `released` and `session_started` end the block of
+    ///   the session: a change of its claims is work, and a new start
+    ///   is a new context.
     pub(super) fn applied(&mut self, record: &Record, riff: &Riff, at: Option<Instant>) {
         match &record.change {
             Change::Claimed(claimed) => self.claims_changed(claimed.session.who(), at),
             Change::Released(released) => self.claims_changed(released.session.who(), at),
+            Change::Posted(posted) => {
+                if let (Some(at), Kind::Message) = (at, posted.message.kind) {
+                    for who in &posted.woken {
+                        let session = self.sessions.get_mut(who);
+                        if let Some(block) = session.and_then(|s| s.blocked.as_mut()) {
+                            block.answered.get_or_insert(at);
+                        }
+                    }
+                }
+            }
+            Change::SessionStarted(started) => {
+                if let Some(session) = self.sessions.get_mut(started.session.who()) {
+                    session.blocked = None;
+                }
+            }
             Change::PauseSet(set) => match (&set.scope, at) {
                 (Scope::Riff, _) => self.riff_changed = at.or(self.riff_changed),
                 (Scope::Repository(thread), Some(at)) => {
@@ -282,11 +351,9 @@ impl Presence {
                 self.cursors
                     .retain(|(reader, thread), _| reader != who && riff.threads().has(thread));
             }
-            Change::Posted(_)
-            | Change::JoinedThread(_)
+            Change::JoinedThread(_)
             | Change::LeftThread(_)
             | Change::LeadSet(_)
-            | Change::SessionStarted(_)
             | Change::SettingChanged(_)
             | Change::RiffMade(_)
             | Change::PersonJoined(_)
@@ -303,7 +370,55 @@ impl Presence {
     fn claims_changed(&mut self, who: &Who, at: Option<Instant>) {
         if let (Some(session), Some(at)) = (self.sessions.get_mut(who), at) {
             session.claims_changed = at;
+            session.blocked = None;
         }
+    }
+
+    /// The fact of `item` in `thread`, when a client sent one.
+    pub(super) fn item(&self, thread: &ThreadName, item: &str) -> Option<&ItemFact> {
+        self.items.get(thread)?.get(item)
+    }
+
+    /// The look of the lead `lead` at the blocks of the sessions of its
+    /// user in `thread` (01M41FZQ545HQ9Q75CSKX8HF8H,
+    /// 01M41FZQCHWY1YVGAZ60ZHJK21). A block with no answer for `after`
+    /// gets a second wake of the lead: it is in the first list. A block
+    /// with no answer for `after` after the second wake is unanswered:
+    /// it is in the second list, one time. A session that is gone gets
+    /// no look.
+    pub(super) fn look_blocks(
+        &mut self,
+        lead: &Who,
+        thread: &ThreadName,
+        after: std::time::Duration,
+        now: Instant,
+    ) -> (Vec<(Who, String)>, Vec<(Who, String)>) {
+        let (mut again, mut unanswered) = (Vec::new(), Vec::new());
+        for (who, session) in &mut self.sessions {
+            if who.user() != lead.user()
+                || who == lead
+                || session.place.default_thread().as_ref() != Some(thread)
+                || session.gone(now)
+            {
+                continue;
+            }
+            let Some(block) = session.blocked.as_mut().filter(|b| b.answered.is_none()) else {
+                continue;
+            };
+            let since = |t: Instant| now.saturating_duration_since(t) >= after;
+            match block.woken_again {
+                None if since(block.set) => {
+                    block.woken_again = Some(now);
+                    again.push((who.clone(), block.reason.clone()));
+                }
+                Some(woken) if !block.unanswered && since(woken) => {
+                    block.unanswered = true;
+                    unanswered.push((who.clone(), block.reason.clone()));
+                }
+                _ => {}
+            }
+        }
+        (again, unanswered)
     }
 
     /// The last sequence number that `who` read in `thread`.
@@ -371,6 +486,12 @@ pub(super) struct Session {
     /// True after an end call, until the session comes back.
     pub(super) ended: bool,
     pub(super) status: Option<SetStatus>,
+    /// The newest fact of the hooks, and its time
+    /// (01M41FZNTPXQNCZ1S99HE42PYQ).
+    pub(super) work: Option<(Activity, Instant)>,
+    /// The block of the session, while it holds
+    /// (01M41FZPGEK4TNPSM2051W4VMS).
+    pub(super) blocked: Option<Block>,
     /// True when the server asked this idle worker to stop, and it made
     /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     pub(super) stopping: bool,
@@ -387,6 +508,23 @@ pub(super) struct SetStatus {
     pub(super) set_ms: u64,
     /// The time of the set.
     pub(super) set: Instant,
+}
+
+/// A block: the session cannot go on with no decision
+/// (01M41FZPGEK4TNPSM2051W4VMS).
+#[derive(Clone)]
+pub(super) struct Block {
+    pub(super) reason: String,
+    /// Milliseconds since the Unix epoch.
+    pub(super) set_ms: u64,
+    pub(super) set: Instant,
+    /// The first message that woke the session after the block.
+    pub(super) answered: Option<Instant>,
+    /// The second wake of the lead (01M41FZQ545HQ9Q75CSKX8HF8H).
+    pub(super) woken_again: Option<Instant>,
+    /// True when the lead gave no answer after the second wake
+    /// (01M41FZQCHWY1YVGAZ60ZHJK21).
+    pub(super) unanswered: bool,
 }
 
 impl SetStatus {
@@ -407,6 +545,8 @@ impl Session {
             alive: Some(now),
             ended: false,
             status: None,
+            work: None,
+            blocked: None,
             stopping: false,
             claims_changed: now,
         }
@@ -416,6 +556,20 @@ impl Session {
     pub(super) fn live(&mut self, now: Instant) {
         self.alive = Some(now);
         self.ended = false;
+    }
+
+    /// Keeps the newest fact of the hooks, which a keep-alive at `now`
+    /// carries. A fact of work after an answer ends the block
+    /// (01M41FZPT31ATXP75QW965P3JB).
+    fn worked(&mut self, activity: Activity, now: Instant) {
+        let at = now
+            .checked_sub(std::time::Duration::from_secs(activity.secs))
+            .unwrap_or(now);
+        let answered = self.blocked.as_ref().and_then(|b| b.answered);
+        if activity.works() && answered.is_some_and(|answered| at >= answered) {
+            self.blocked = None;
+        }
+        self.work = Some((activity, at));
     }
 
     /// Records a call at `now`: a sign of life that also takes back an

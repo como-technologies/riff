@@ -252,9 +252,10 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::{Change, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    AliveReply, Claim, End, Freed, Idle, Join, Keys, Kind, Lead, LeadReply, Leave, Message, Pause,
-    Post, Register, Release, ReleaseFor, ReleaseReply, Resume, RiffReply, RiffState, SessionInfo,
-    SessionState, SetIdle, Start, StartReason, Status, StatusInfo, Tailed, ThreadInfo, Wake,
+    Activity, AliveReply, BlockedInfo, Claim, End, Freed, Idle, ItemFact, Join, Keys, Kind, Lead,
+    LeadReply, Leave, Message, Pause, Post, Register, Release, ReleaseFor, ReleaseReply, Resume,
+    RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle, Start, StartReason,
+    Status, StatusInfo, Tailed, ThreadInfo, Wake, Waits,
 };
 
 pub mod command;
@@ -1265,7 +1266,7 @@ impl State {
             self.arrive(me, now);
             return AliveReply::default();
         }
-        self.signal(me.who(), Signal::Alive, now)
+        self.signal(me.who(), Signal::Alive { activity: None }, now)
     }
 
     /// Records that `me` ended (R205, R206). The session is gone at once.
@@ -1415,16 +1416,28 @@ impl State {
                         .copied(),
                 ),
         });
-        let blocked = status
+        let blocked = session.blocked.as_ref().map(|b| BlockedInfo {
+            reason: b.reason.clone(),
+            secs: now_ms.saturating_sub(b.set_ms) / 1000,
+            answered: b.answered.is_some(),
+            woken_again: b.woken_again.is_some(),
+            unanswered: b.unanswered,
+        });
+        let waits = repository
             .as_ref()
-            .is_some_and(|s| s.status.blocked.is_some() && !s.stale);
+            .and_then(|thread| self.waits(thread, uri.claims()));
+        let work = session.work.as_ref().map(|(activity, at)| Activity {
+            secs: now.saturating_duration_since(*at).as_secs(),
+            ..activity.clone()
+        });
         let sessions = self.written.sessions();
         let must_clear = sessions.must_clear(who);
         let state = SessionState::of(
             live,
             self.pauses().at(repository.as_ref()).is_some(),
-            blocked,
+            blocked.is_some(),
             must_clear,
+            waits.is_some(),
             !uri.claims().is_empty(),
         );
         SessionInfo {
@@ -1442,7 +1455,157 @@ impl State {
                 .fresh_ms(who)
                 .map(|fresh_ms| now_ms.saturating_sub(fresh_ms) / 1000),
             state: Some(state),
+            work,
+            waits,
+            blocked,
         }
+    }
+
+    /// What `claims` in `thread` wait for, when each claim waits: the
+    /// wait of the first claim (01M41FZP9A50CH4A2VX344DW49). A claim
+    /// `verify-ITEM` has the fact of `ITEM`.
+    fn waits(&self, thread: &ThreadName, claims: &[String]) -> Option<Waits> {
+        let mut each = claims.iter().map(|claim| {
+            let item = claim.strip_prefix("verify-").unwrap_or(claim);
+            self.presence.item(thread, item)?.waits(claim)
+        });
+        let first = each.next()??;
+        each.all(|w| w.is_some()).then_some(first)
+    }
+
+    /// Sets the block of `me` at `now_ms` (01M41FZPGEK4TNPSM2051W4VMS).
+    /// See [`SetBlocked::check`] for the reason that it refuses.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::SessionState;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// state.set_blocked(&mike, "which design?".into(), now, 1_000).unwrap();
+    /// let info = &state.who(now, 61_000, false)[0];
+    /// assert_eq!(info.blocked.as_ref().unwrap().reason, "which design?");
+    /// assert_eq!(info.blocked.as_ref().unwrap().secs, 60);
+    /// assert!(state.set_blocked(&mike, " ".into(), now, 1_000).is_err());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn set_blocked(
+        &mut self,
+        me: &SessionUri,
+        reason: String,
+        now: Instant,
+        at_ms: u64,
+    ) -> Result<(), String> {
+        let set = SetBlocked {
+            me: me.clone(),
+            reason,
+        };
+        set.check()?;
+        let who = self.arrive(me, now);
+        let blocked = Signal::Blocked {
+            reason: set.reason,
+            at_ms,
+        };
+        self.signal(&who, blocked, now);
+        Ok(())
+    }
+
+    /// The look of the lead `lead` at the blocks of the sessions of its
+    /// user in its repository (01M41FZQ545HQ9Q75CSKX8HF8H,
+    /// 01M41FZQCHWY1YVGAZ60ZHJK21). It gives each block that gets a
+    /// second wake of the lead now, and each block that is unanswered
+    /// now, each with the session URI and the reason. It refuses a
+    /// caller that is not the lead.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/o/r?session=l1".parse()?;
+    /// let w1: SessionUri = "riff://mike@pangolin/o/r?session=w1".parse()?;
+    /// let t0 = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, t0);
+    /// state.register(&w1, t0);
+    /// state.set_blocked(&w1, "which design?".into(), t0, 0).unwrap();
+    /// let after = Duration::from_secs(600);
+    /// let at = |secs| t0 + Duration::from_secs(secs);
+    ///
+    /// let look = |state: &mut State, secs| {
+    ///     state.alive(&w1, at(secs));
+    ///     let (again, unanswered) = state.look_blocks(&lead, after, at(secs)).unwrap();
+    ///     (again.len(), unanswered.len())
+    /// };
+    /// assert_eq!(look(&mut state, 599), (0, 0));
+    /// assert_eq!(look(&mut state, 600), (1, 0), "the second wake of the lead");
+    /// assert_eq!(look(&mut state, 900), (0, 0));
+    /// assert_eq!(look(&mut state, 1200), (0, 1), "no answer: unanswered");
+    /// assert_eq!(look(&mut state, 1300), (0, 0), "one time");
+    /// assert!(state.look_blocks(&w1, after, at(1300)).is_err(), "only the lead");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    #[allow(clippy::type_complexity)]
+    pub fn look_blocks(
+        &mut self,
+        lead: &SessionUri,
+        after: Duration,
+        now: Instant,
+    ) -> Result<(Vec<(SessionUri, String)>, Vec<(SessionUri, String)>), String> {
+        let who = lead.who();
+        let uri = self.uri(who, now);
+        let Some(thread) = uri.default_thread().filter(|_| uri.lead()) else {
+            return Err("only the lead looks at the blocks of its sessions".into());
+        };
+        let (again, unanswered) = self.presence.look_blocks(who, &thread, after, now);
+        let uris = |list: Vec<(Who, String)>| {
+            list.into_iter()
+                .map(|(who, reason)| (self.uri(&who, now), reason))
+                .collect()
+        };
+        Ok((uris(again), uris(unanswered)))
+    }
+
+    /// Keeps the facts of the items of `thread` that a client saw on the
+    /// forge (01M41FZP2C4Z4J6WKRXZ5B31EH). With `all`, they replace each
+    /// fact of the thread.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::{ItemFact, PullFact, PullState, SessionState, Waits};
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/o/r?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// state.riff(&mike, Some(riff_core::wire::RiffState::Running), now).unwrap();
+    /// let thread = mike.default_thread().unwrap();
+    /// state.claim(&mike, &thread, "issue-12", now).unwrap();
+    /// let pull = Some(PullFact { number: 40, state: PullState::Asked });
+    /// let fact = ItemFact { item: "issue-12".into(), pull, needs: vec![] };
+    /// state.set_facts(&mike, thread.clone(), vec![fact], false, now);
+    /// let info = &state.who(now, 0, false)[0];
+    /// assert_eq!(info.waits, Some(Waits::Verify { pull: 40 }));
+    /// state.set_facts(&mike, thread, vec![], true, now);
+    /// assert_eq!(state.who(now, 0, false)[0].waits, None);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn set_facts(
+        &mut self,
+        me: &SessionUri,
+        thread: ThreadName,
+        items: Vec<ItemFact>,
+        all: bool,
+        now: Instant,
+    ) {
+        let who = self.arrive(me, now);
+        self.signal(&who, Signal::Facts { thread, items, all }, now);
     }
 
     /// Registers the session `me` with this worker mark
