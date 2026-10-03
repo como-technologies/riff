@@ -392,7 +392,7 @@ impl Presence {
         thread: &ThreadName,
         after: std::time::Duration,
         now: Instant,
-    ) -> (Vec<(Who, String)>, Vec<(Who, String)>) {
+    ) -> (Vec<Found>, Vec<Found>) {
         let (mut again, mut unanswered) = (Vec::new(), Vec::new());
         for (who, session) in &mut self.sessions {
             if who.user() != lead.user()
@@ -509,6 +509,9 @@ pub(super) struct SetStatus {
     /// The time of the set.
     pub(super) set: Instant,
 }
+
+/// A blocked session that a look found, with its reason.
+pub(super) type Found = (Who, String);
 
 /// A block: the session cannot go on with no decision
 /// (01M41FZPGEK4TNPSM2051W4VMS).

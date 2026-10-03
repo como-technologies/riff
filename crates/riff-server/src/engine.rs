@@ -923,12 +923,11 @@ impl Engine {
     /// The look of the lead at the blocks of the sessions of its user
     /// ([`State::look_blocks`]). It is a call of the lead. A caller that
     /// is not the lead gets the code `not_allowed`.
-    #[allow(clippy::type_complexity)]
     pub async fn look_blocks(
         &self,
         caller: &Admitted,
         after: std::time::Duration,
-    ) -> Result<(Vec<(SessionUri, String)>, Vec<(SessionUri, String)>), Failed> {
+    ) -> Result<(Vec<crate::state::Blocked>, Vec<crate::state::Blocked>), Failed> {
         let place = caller.caller.me().place().clone();
         self.signal(caller, Signal::Called { place }).await?;
         let me = caller.caller.me();

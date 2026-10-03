@@ -258,6 +258,10 @@ use riff_core::wire::{
     Status, StatusInfo, Tailed, ThreadInfo, Waits, Wake,
 };
 
+/// A blocked session that the look of the lead found, with its reason
+/// ([`State::look_blocks`]).
+pub type Blocked = (SessionUri, String);
+
 pub mod command;
 pub mod people;
 pub mod presence;
@@ -1563,20 +1567,19 @@ impl State {
     /// assert!(state.look_blocks(&w1, after, at(1300)).is_err(), "only the lead");
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    #[allow(clippy::type_complexity)]
     pub fn look_blocks(
         &mut self,
         lead: &SessionUri,
         after: Duration,
         now: Instant,
-    ) -> Result<(Vec<(SessionUri, String)>, Vec<(SessionUri, String)>), String> {
+    ) -> Result<(Vec<Blocked>, Vec<Blocked>), String> {
         let who = lead.who();
         let uri = self.uri(who, now);
         let Some(thread) = uri.default_thread().filter(|_| uri.lead()) else {
             return Err("only the lead looks at the blocks of its sessions".into());
         };
         let (again, unanswered) = self.presence.look_blocks(who, &thread, after, now);
-        let uris = |list: Vec<(Who, String)>| {
+        let uris = |list: Vec<presence::Found>| {
             list.into_iter()
                 .map(|(who, reason)| (self.uri(&who, now), reason))
                 .collect()

@@ -813,7 +813,6 @@ impl Tools {
     /// (01M3WG2460P4GF7GEVBY92Q33W). So the claims of a killed worker
     /// are free at once, and the rollout starts a worker for the item.
     /// A session outside tmux looks at nothing. See [`crate::reap`].
-
     pub fn reap(&self) -> tokio::task::JoinHandle<()> {
         use crate::reap::{self, Reaper};
         let tools = self.clone();

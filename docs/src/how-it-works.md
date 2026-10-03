@@ -986,6 +986,26 @@ mike  owner  online
   session, the tag `lead` or `worker`, and the state of the session in
   its color. Under it comes one line for each fact of the detail of the
   state. See [The state of a session](#the-state-of-a-session).
+
+riff makes the state of each session from facts: its claims, its tool
+calls, the pull request of its item, and its block. No session types
+its state. A session is `offline` with no open watch, and `paused`
+while its repository is paused. Else it moves between these states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> busy: claim
+    busy --> waiting: a verify is asked, a merge waits, a need is open
+    waiting --> busy: the fact ends
+    busy --> blocked: blocked REASON (wakes the lead)
+    blocked --> busy: an answer, then a sign of work
+    busy --> must_clear: the last release of a worker
+    must_clear --> idle: a clear
+```
+
+The table of each state, its color and its detail is in
+[The state of a session](#the-state-of-a-session).
 - The place is the repository and the worktree of the session, as in
   `riff who`: `riff`, or `riff#issue-7` in the worktree `issue-7`. A
   lead is the lead of the repository on its line. When the
@@ -2321,18 +2341,6 @@ The author of an item waits for the verify, then for the merge. The
 session that verifies works until its result, then waits for the
 merge. A wait wakes nobody: the verify request is the wake. A wait
 ends when its fact ends.
-
-```mermaid
-stateDiagram-v2
-    [*] --> idle
-    idle --> busy: claim
-    busy --> waiting: a verify is asked, a merge waits, a need is open
-    waiting --> busy: the fact ends
-    busy --> blocked: blocked REASON (wakes the lead)
-    blocked --> busy: an answer, then a sign of work
-    busy --> must_clear: the last release of a worker
-    must_clear --> idle: a clear
-```
 
 The lead takes no claims: it conducts the other sessions. So an idle
 lead shows `monitoring work`. The time of `idle` counts from the last
