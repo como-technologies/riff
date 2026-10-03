@@ -311,11 +311,14 @@ async fn a_host_removes_a_merged_worktree_at_its_next_tidy() {
             .trim()
             .is_empty()
     );
-    let out = host.output();
-    assert!(
-        out.contains("removed with its branch worktree-issue-3: its pull request is merged"),
-        "{out}"
-    );
+    // The host prints the lines of a tidy after the tidy.
+    let out = r
+        .until("the line of the removal", || async {
+            let out = host.output();
+            out.contains("removed with its branch worktree-issue-3: its pull request is merged")
+                .then_some(out)
+        })
+        .await;
     assert!(owned.exists(), "the worktree of a live session stays");
     assert!(out.contains("kept: a live session works in it"), "{out}");
 }
