@@ -623,6 +623,56 @@ fn enable_in_a_worktree_asks_git_for_the_main_clone() {
     assert_eq!(riff::enable::entry_at(&local(&main)), Some(true));
 }
 
+/// 01M3ZGT8ST7HCK6J7VZJ09XE0M: a tree whose `.git` is a symbolic link
+/// to the `.git` file of a worktree of another repository gets no
+/// write. `riff enable` and `riff disable` refuse and say why.
+#[test]
+fn enable_refuses_a_tree_whose_dot_git_is_a_symbolic_link() {
+    let machine = Machine::new();
+    let victim = machine.repo("victim");
+    let wt = victim.join(".claude/worktrees/issue-12");
+    for args in [
+        &["commit", "-q", "--allow-empty", "-m", "x"][..],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "issue-12",
+            wt.to_str().unwrap(),
+        ][..],
+    ] {
+        let git = machine
+            .env
+            .command("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&victim)
+            .output()
+            .unwrap();
+        assert!(git.status.success(), "git {args:?}: {git:?}");
+    }
+    let tree = machine.plain("tree");
+    std::os::unix::fs::symlink(wt.join(".git"), tree.join(".git")).unwrap();
+    for command in ["enable", "disable"] {
+        let out = machine.riff(&tree, &[command]).output().unwrap();
+        assert!(!out.status.success(), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("is a symbolic link"), "{stderr}");
+        assert!(stderr.contains(&victim.display().to_string()), "{stderr}");
+    }
+    assert!(!local(&victim).exists(), "riff wrote in the victim");
+    assert!(!wt.join(".claude").exists(), "riff wrote in the worktree");
+
+    // The worktree that git made still passes.
+    let out = machine.run(&wt, &["enable"]);
+    assert!(
+        out.starts_with(&format!("Turned riff on in {}.", local(&victim).display())),
+        "{out}"
+    );
+}
+
 /// 01M3XY2SKQ27K3TE4NV28FHTVV.
 #[test]
 fn enable_global_and_disable_global_change_only_the_user_entry() {

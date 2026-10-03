@@ -654,6 +654,9 @@ pub fn real(file: &Path) -> PathBuf {
 ///   `MAIN/.git/worktrees/NAME` names the `.git` file of the tree. git
 ///   writes that file when it makes the worktree. So a `.git` file that
 ///   names the entry of another worktree of the main clone is refused.
+///   The `.git` of the tree is that file itself: a symbolic link at
+///   `TOP/.git` is refused, and the check does not follow a link at
+///   the last part of a path (01M3ZGT8ST7HCK6J7VZJ09XE0M).
 fn for_write(dir: &Path, place: Place) -> Result<Option<Repo>> {
     let repo = Repo::of(dir);
     if let (
@@ -668,6 +671,23 @@ fn for_write(dir: &Path, place: Place) -> Result<Option<Repo>> {
         let common = crate::identity::common_dir(top);
         let confirmed = common.is_some_and(|common| same(&common, &main.join(".git")));
         let git_file = top.join(".git");
+        if git_file
+            .symlink_metadata()
+            .is_ok_and(|meta| meta.file_type().is_symlink())
+        {
+            anyhow::bail!(
+                "{} is a symbolic link, not the .git file of a worktree of {}, so riff writes \
+                 no settings there. Run the command in the main clone, or use --shared",
+                git_file.display(),
+                main.display()
+            );
+        }
+        // The same file: the directories with each link followed, and
+        // the same last part, with no link followed.
+        let same_file = |a: &Path, b: &Path| {
+            let dir = |p: &Path| Some(p.parent()?.canonicalize().ok()?.join(p.file_name()?));
+            matches!((dir(a), dir(b)), (Some(a), Some(b)) if a == b)
+        };
         // The path in `gitdir` can be relative to the entry.
         let named = std::fs::read_to_string(&git_file)
             .ok()
@@ -676,7 +696,7 @@ fn for_write(dir: &Path, place: Place) -> Result<Option<Repo>> {
                 let back = std::fs::read_to_string(entry.join("gitdir")).ok()?;
                 Some(entry.join(back.trim()))
             });
-        if !confirmed || !named.is_some_and(|named| same(&named, &git_file)) {
+        if !confirmed || !named.is_some_and(|named| same_file(&named, &git_file)) {
             anyhow::bail!(
                 "git does not confirm that {} is a worktree of {}, so riff writes no settings \
                  there. Run the command in the main clone, or use --shared",
@@ -1176,6 +1196,72 @@ mod tests {
         assert!(!victim.join(".claude/settings.local.json").exists());
         // The worktree that git made passes.
         assert!(enable(&worktree, Place::Local, None).unwrap().state.on);
+    }
+
+    /// 01M3ZGT8ST7HCK6J7VZJ09XE0M: a tree whose `.git` is a symbolic
+    /// link to the `.git` file of a worktree of another repository gets
+    /// no write. git and the entry both confirm the link target, so only
+    /// the link check stops it.
+    #[test]
+    fn a_dot_git_that_is_a_symbolic_link_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (victim, worktree) = git_worktree(&dir.path().join("v"));
+        let tree = dir.path().canonicalize().unwrap().join("tree");
+        std::fs::create_dir(&tree).unwrap();
+        std::os::unix::fs::symlink(worktree.join(".git"), tree.join(".git")).unwrap();
+        assert_eq!(Repo::of(&tree).unwrap().main, Some(victim.clone()));
+        // The worktree is in `victim/.claude`, so count its entries.
+        let entries = |at: &Path| std::fs::read_dir(at).unwrap().count();
+        let before = (entries(&victim), entries(&victim.join(".claude")));
+        for change in [enable, disable] {
+            let error = format!("{:#}", change(&tree, Place::Local, None).unwrap_err());
+            assert!(error.contains("is a symbolic link"), "{error}");
+            assert!(error.contains(&victim.display().to_string()), "{error}");
+            assert!(error.contains("--shared"), "{error}");
+        }
+        let settings = victim.join(".claude/settings.local.json");
+        assert!(!settings.exists(), "riff wrote in the victim");
+        assert!(!worktree.join(".claude").exists(), "riff wrote in the worktree");
+        let after = (entries(&victim), entries(&victim.join(".claude")));
+        assert_eq!(after, before);
+        // The worktree that git made still passes.
+        assert!(enable(&worktree, Place::Local, None).unwrap().state.on);
+    }
+
+    /// 01M3YCGKGP3VC93S8FA1G4K3QK: a worktree that git made passes in
+    /// each form: from a subdirectory, after `git worktree move`, and
+    /// through a main clone behind a symbolic link.
+    #[test]
+    fn a_real_worktree_passes_in_each_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let (main, tree) = git_worktree(dir.path());
+        let settings = main.join(".claude/settings.local.json");
+        let on = |at: &Path| {
+            let done = enable(at, Place::Local, None).unwrap();
+            assert_eq!(done.file, settings, "{}", at.display());
+            assert!(done.state.on, "{}", at.display());
+            disable(at, Place::Local, None).unwrap();
+            assert_eq!(entry_at(&settings), None, "{}", at.display());
+        };
+        // A subdirectory.
+        let sub = tree.join("src/deep");
+        std::fs::create_dir_all(&sub).unwrap();
+        on(&sub);
+        // The main clone behind a symbolic link.
+        let link = dir.path().canonicalize().unwrap().join("link");
+        std::os::unix::fs::symlink(&main, &link).unwrap();
+        on(&link.join(".claude/worktrees/issue-12"));
+        // A moved worktree.
+        let moved = dir.path().canonicalize().unwrap().join("moved");
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&main)
+            .args(["worktree", "move"])
+            .args([&tree, &moved])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git worktree move: {out:?}");
+        on(&moved);
     }
 
     /// 01M3YCGKGP3VC93S8FA1G4K3QK: riff writes through a symbolic link,
