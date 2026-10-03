@@ -81,8 +81,12 @@ async fn serve(router: axum::Router) -> String {
 
 /// A real riff-server that names `build` in its replies.
 async fn real(build: Build) -> String {
-    let router = riff_server::router().layer(axum::middleware::map_response(stamp(Some(build))));
-    serve(router).await
+    serve(real_router(build)).await
+}
+
+/// The router of [`real`].
+fn real_router(build: Build) -> axum::Router {
+    riff_server::router().layer(axum::middleware::map_response(stamp(Some(build))))
 }
 
 /// A stream with one message, then no end.
@@ -117,7 +121,12 @@ fn one_message() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 /// `other_line` is true, it names a version that this riff cannot talk
 /// to.
 async fn streams(other_line: Arc<AtomicBool>) -> String {
-    let router = axum::Router::new()
+    serve(streams_router(other_line)).await
+}
+
+/// The router of [`streams`].
+fn streams_router(other_line: Arc<AtomicBool>) -> axum::Router {
+    axum::Router::new()
         .route("/v1/tail", get(|| async { one_message() }))
         .route(
             "/v1/watch",
@@ -130,8 +139,7 @@ async fn streams(other_line: Arc<AtomicBool>) -> String {
                 Build::this()
             };
             stamp(Some(build))(r)
-        }));
-    serve(router).await
+        }))
 }
 
 fn riff_at(binary: &Path, server: &str, dir: &Path, args: &[&str]) -> Command {
@@ -180,6 +188,10 @@ fn read(path: &Path) -> String {
     }
     s
 }
+
+/// The bound of each wait for a fact. It is generous: it only ends a
+/// test that hangs, and a busy machine passes (#460).
+const WAIT: Duration = Duration::from_secs(60);
 
 /// Waits up to `limit` until `test` is true.
 async fn wait_for(limit: Duration, test: impl Fn() -> bool) -> bool {
@@ -356,11 +368,7 @@ async fn tail_and_watch_wait_on_another_line_and_go_on() {
         watch_dir.path(),
     );
     let told = |err: &Path| read(err).contains("do not match");
-    assert!(
-        wait_for(Duration::from_secs(10), || told(&tail_err)
-            && told(&watch_err))
-        .await
-    );
+    assert!(wait_for(WAIT, || told(&tail_err) && told(&watch_err)).await);
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(tail.try_wait().unwrap().is_none(), "the tail stopped");
     assert!(watch.try_wait().unwrap().is_none(), "the watch stopped");
@@ -368,10 +376,7 @@ async fn tail_and_watch_wait_on_another_line_and_go_on() {
     assert_eq!(read(&watch_err).matches("do not match").count(), 1);
 
     other_line.store(false, Ordering::SeqCst);
-    let back = wait_for(Duration::from_secs(15), || {
-        read(&tail_out).contains("back again")
-    })
-    .await;
+    let back = wait_for(WAIT, || read(&tail_out).contains("back again")).await;
     let _ = (tail.kill(), watch.kill(), tail.wait(), watch.wait());
     assert!(
         back,
@@ -393,22 +398,52 @@ fn by_child(cmd: &mut Command) {
 /// disk changes, with the same arguments (01M3MNVTC248YYJJQKFD9H1WY9).
 #[tokio::test(flavor = "multi_thread")]
 async fn tail_and_watch_run_the_new_binary() {
-    let url = streams(Arc::new(AtomicBool::new(false))).await;
-    runs_the_new_binary(&url, &["tail", "como-technologies/riff"]).await;
-    runs_the_new_binary(&url, &["watch", "--once"]).await;
+    let asked = Arc::new(AtomicBool::new(false));
+    let router = streams_router(Arc::new(AtomicBool::new(false)));
+    let url = serve(marked(router, asked.clone())).await;
+    runs_the_new_binary(&url, &asked, &["tail", "como-technologies/riff"]).await;
+    runs_the_new_binary(&url, &asked, &["watch", "--once"]).await;
 }
 
 /// `riff top` runs the new binary the same way
 /// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
 #[tokio::test(flavor = "multi_thread")]
 async fn top_runs_the_new_binary() {
-    let url = real(Build::this()).await;
-    runs_the_new_binary(&url, &["top"]).await;
+    let asked = Arc::new(AtomicBool::new(false));
+    let url = serve(marked(real_router(Build::this()), asked.clone())).await;
+    runs_the_new_binary(&url, &asked, &["top"]).await;
+}
+
+/// Puts a new binary in place of `binary`, as `cargo install` does: a
+/// script that writes its arguments to the file that it returns.
+fn new_binary(binary: &Path, dir: &Path) -> PathBuf {
+    let marker = dir.join("ran");
+    let new = dir.join("new");
+    let script = format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display());
+    by_child(
+        Command::new("sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\" && chmod 755 \"$0\""])
+            .arg(&new)
+            .arg(script),
+    );
+    std::fs::rename(&new, binary).unwrap();
+    marker
+}
+
+/// `router` with a mark: `asked` is true after its first request.
+fn marked(router: axum::Router, asked: Arc<AtomicBool>) -> axum::Router {
+    let mark = move |request: axum::extract::Request, next: axum::middleware::Next| {
+        asked.store(true, Ordering::SeqCst);
+        next.run(request)
+    };
+    router.layer(axum::middleware::from_fn(mark))
 }
 
 /// A riff that runs `args` at `url` runs the new binary on disk, with
 /// the same arguments after the place of the old process.
-async fn runs_the_new_binary(url: &str, args: &[&str]) {
+/// `asked` is the mark of the server ([`marked`]).
+async fn runs_the_new_binary(url: &str, asked: &AtomicBool, args: &[&str]) {
+    asked.store(false, Ordering::SeqCst);
     let dir = tempfile::tempdir().unwrap();
     let binary = dir.path().join("riff");
     by_child(
@@ -417,27 +452,20 @@ async fn runs_the_new_binary(url: &str, args: &[&str]) {
             .arg(&binary),
     );
     let (mut child, _, err) = spawn(riff_at(&binary, url, dir.path(), args), dir.path());
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // The process runs: it asked the server, so it looks at its binary
+    // on disk (#460).
+    let started = wait_for(WAIT, || asked.load(Ordering::SeqCst)).await;
+    assert!(started, "{args:?}: {}", read(&err));
     assert!(
         child.try_wait().unwrap().is_none(),
         "{args:?}: {}",
         read(&err)
     );
 
-    // A new binary in its place, as `cargo install` does.
-    let marker = dir.path().join("ran");
-    let new = dir.path().join("new");
-    let script = format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display());
-    by_child(
-        Command::new("sh")
-            .args(["-c", "printf '%s' \"$1\" > \"$0\" && chmod 755 \"$0\""])
-            .arg(&new)
-            .arg(script),
-    );
-    std::fs::rename(&new, &binary).unwrap();
+    let marker = new_binary(&binary, dir.path());
 
     // The line ends with a newline once the script wrote all of it.
-    let ran = wait_for(Duration::from_secs(10), || read(&marker).ends_with('\n')).await;
+    let ran = wait_for(WAIT, || read(&marker).ends_with('\n')).await;
     let _ = (child.kill(), child.wait());
     assert!(ran, "{args:?}: {}", read(&err));
     // The same arguments, after the place of the old process: the
@@ -532,7 +560,7 @@ async fn a_watch_in_a_removed_worktree_runs_the_new_riff_and_keeps_watching() {
         worktree.display(),
         worktrees.display()
     );
-    let ran = wait_for(Duration::from_secs(10), || read(&err).contains(&moved)).await;
+    let ran = wait_for(WAIT, || read(&err).contains(&moved)).await;
     assert!(ran, "{}", read(&err));
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(
@@ -545,7 +573,7 @@ async fn a_watch_in_a_removed_worktree_runs_the_new_riff_and_keeps_watching() {
     tell.env("RIFF_SESSION", "a1").env("RIFF_HOME", &data);
     let told = run(tell).await;
     assert!(told.status.success(), "{}", text(&told.stderr));
-    let woke = wait_for(Duration::from_secs(10), || !read(&out).is_empty()).await;
+    let woke = wait_for(WAIT, || !read(&out).is_empty()).await;
     let _ = (child.kill(), child.wait());
     assert!(woke, "no wake: {}", read(&err));
     assert!(!read(&err).contains("No such file"), "{}", read(&err));
@@ -645,10 +673,7 @@ async fn tail_and_watch_keep_their_place_over_an_update() {
     std::fs::remove_dir_all(&worktree).unwrap();
     install(&Isolated::shared().riff_path(), &bin.join("riff"));
     let moved = |err: &Path| read(err).contains("The new riff runs in");
-    let both = wait_for(Duration::from_secs(10), || {
-        runs.iter().all(|(_, _, err)| moved(err))
-    })
-    .await;
+    let both = wait_for(WAIT, || runs.iter().all(|(_, _, err)| moved(err))).await;
     assert!(both, "{}\n{}", read(&runs[0].2), read(&runs[1].2));
     ready.store(true, Ordering::SeqCst);
 
@@ -661,7 +686,7 @@ async fn tail_and_watch_keep_their_place_over_an_update() {
         String::from_utf8_lossy(&bytes).replace('\0', " ")
     };
     let want = "--place heron/acme/alpha#issue-12 watch --once";
-    let execed = wait_for(Duration::from_secs(5), || cmdline().contains(want)).await;
+    let execed = wait_for(WAIT, || cmdline().contains(want)).await;
     assert!(execed, "{:?}: {}", cmdline(), read(&runs[1].2));
     let environ = std::fs::read(proc.join("environ")).unwrap();
     let vars = environ
@@ -690,10 +715,7 @@ async fn tail_and_watch_keep_their_place_over_an_update() {
 
     let (tail_out, tail_err) = (&runs[0].1, &runs[0].2);
     let showing = "showing new messages in acme/alpha";
-    let again = wait_for(Duration::from_secs(10), || {
-        read(tail_err).matches(showing).count() == 2
-    })
-    .await;
+    let again = wait_for(WAIT, || read(tail_err).matches(showing).count() == 2).await;
     assert!(again, "{}", read(tail_err));
     assert!(!read(tail_err).contains("acme/beta"), "{}", read(tail_err));
     // The tail connects again within one retry, and shows only new
