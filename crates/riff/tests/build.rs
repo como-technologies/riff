@@ -37,10 +37,12 @@ fn at(version: Semver) -> Build {
     }
 }
 
-/// A server of the line before this riff: this riff is newer, and
-/// cannot talk to it.
+/// A server of the line before this riff, or of 0.8 for the line 1:
+/// this riff is newer, and cannot talk to it.
 fn older() -> Build {
-    at(this().line_before().unwrap())
+    at(this()
+        .line_before()
+        .unwrap_or_else(|| "0.8.0".parse().unwrap()))
 }
 
 /// A server two lines after this riff: it refuses this riff.

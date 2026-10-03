@@ -1,7 +1,23 @@
 # The generated notes of a GitHub release: the changelog of riff
 # (01M3NB3EWE2V9PCTMNTZAKEXMA). They list each pull request merged
-# since the last release, except the release pull requests.
+# since the last release, except the release pull requests. The changes
+# for people come first, then the design pages, then the internal
+# changes (01M40AB1D5KQ4SERC6M709Z3JF).
 changelog:
   exclude:
     labels:
       - release
+  categories:
+    - title: Changes
+      labels:
+        - "*"
+      exclude:
+        labels:
+          - design
+          - internal
+    - title: Design
+      labels:
+        - design
+    - title: Internal
+      labels:
+        - internal

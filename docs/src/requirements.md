@@ -1496,6 +1496,11 @@
   rest: each pull request merged since the last release, except the
   pull requests with the label `release`. The GitHub releases are the
   changelog. The repository has no changelog file.
+- **01M40AB1D5KQ4SERC6M709Z3JF** The generated notes of a release put
+  the pull requests in three groups, in this order: `Changes` (each
+  pull request with neither the label `design` nor `internal`),
+  `Design` (the label `design`) and `Internal` (the label `internal`).
+  `.github/release.yml` sets the groups.
 - **R161** Replaced by 01M3NJAZAQ3AKMAM0EGM7R3S89.
 - **01M3NJAZAQ3AKMAM0EGM7R3S89** CI signs in to Google Cloud with the
   OIDC token of GitHub. No key exists. Only the `main` branch and the
