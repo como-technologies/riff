@@ -101,8 +101,8 @@ jobs:
 
       - name: Read the cloud settings
         run: |
-          grep -E '^[A-Z_]+=' deploy/cloud.env >> "$GITHUB_ENV"
-          . deploy/cloud.env
+          grep -E '^[A-Z_]+=' deploy/cloud/shared.env >> "$GITHUB_ENV"
+          . deploy/cloud/shared.env
           echo "IMAGE=$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$TAG" >> "$GITHUB_ENV"
           deploy/build-id.sh >> "$GITHUB_ENV"
 
@@ -129,10 +129,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The deploy is the riff cloud deploy of a person
+      # (01M4262E0QJHCZXNH7EFG7FXN2), of the riff of the tag.
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
       - name: Deploy
         env:
           RIFF_OWNER: ${{ vars.RIFF_OWNER }}
-        run: deploy/deploy.sh --image "$IMAGE"
+        run: cargo run --locked -q -p riff -- cloud deploy shared "$TAG" --confirm shared
 
   audit:
     # A separate job, so a new advisory cannot hide a code failure (and the

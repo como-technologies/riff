@@ -204,7 +204,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
              -e RIFF_ON=1 '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
-             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false}}' 'Join the riff.'",
+             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}}}}' 'Join the riff.'",
             Isolated::shared().riff_path().display(),
             m.mcp_file().display(),
         )
@@ -236,7 +236,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert!(!log.contains("remote-control"), "{log}");
     assert_eq!(
         log.matches(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}'"#
         )
         .count(),
         3,
@@ -311,7 +311,7 @@ fn a_worker_starts_with_each_plugin_with_a_language_server_off() {
     assert!(out.status.success(), "{out:?}");
     assert!(
         m.log().contains(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
         ),
         "{}",
         m.log()

@@ -400,11 +400,11 @@ The client exists. To make it again, see
    ```
 
 3. Put the OAuth client in `.env` at the root of your clone. The
-   client ID comes from `deploy/cloud.env`, the client secret from
-   Secret Manager. Git ignores `.env`:
+   client ID comes from `deploy/cloud/shared.env`, the client secret
+   from Secret Manager. Git ignores `.env`:
 
    ```sh
-   . deploy/cloud.env
+   . deploy/cloud/shared.env
    secret=$(gcloud secrets versions access latest --secret "$CLOUD_SECRET" --project "$CLOUD_PROJECT")
    printf 'RIFF_OIDC_CLIENT_ID=%s\nRIFF_OIDC_CLIENT_SECRET=%s\n' "$RIFF_OIDC_CLIENT_ID" "$secret" > .env
    chmod 600 .env
@@ -874,10 +874,13 @@ Remove the old state, and start again with an empty bucket. Stop the
 shared server first, so that no server saves the old state again:
 
 ```sh
-just cloud down
+riff cloud delete shared
 gcloud storage rm 'gs://como-riff-state/**'
-just cloud up
+riff cloud deploy shared vX.Y.Z
 ```
+
+Put the release that ran in place of `vX.Y.Z`. `riff cloud list` shows
+it.
 
 The new state has no threads, sessions, claims or members. The deploy
 names the owner again. Each person signs in again with `riff login`,
@@ -1020,7 +1023,7 @@ jq -c 'select(.result == "denied")' server.log
 For the shared server, filter the shared log:
 
 ```sh
-just cloud log --log-filter 'jsonPayload.result="refused"'
+riff cloud log shared --filter 'jsonPayload.result="refused"'
 ```
 
 The log keeps its records for about 30 days.
@@ -1051,7 +1054,7 @@ jq -c 'select(.result == "dropped") | {time, counts}' server.log
 For the shared server:
 
 ```sh
-just cloud log --log-filter 'jsonPayload.result="dropped"'
+riff cloud log shared --filter 'jsonPayload.result="dropped"'
 ```
 
 ### Check the log
@@ -1149,8 +1152,8 @@ stateDiagram-v2
     ended --> live: a server takes the lease
 ```
 
-- After Ctrl-C or `just cloud down`, the lease ends at once. Run the
-  command again.
+- After Ctrl-C or `riff cloud delete shared`, the lease ends at once.
+  Run the command again.
 - After a server that stopped with no shutdown, for example a crash,
   wait 90 seconds. Then run the command again. It waits 10 seconds
   more, before it reads the log.
@@ -1171,7 +1174,7 @@ stateDiagram-v2
 
 On Cloud Run, the server needs CPU that is always on
 (`--no-cpu-throttling`) and exactly one instance. Then it writes the
-time also when it gets no call. `deploy/deploy.sh` sets both.
+time also when it gets no call. `riff cloud deploy` sets both.
 
 #### The cut takes the lease
 
@@ -1250,16 +1253,15 @@ riff-server --dir ~/.local/state/riff-server
 ```
 
 For the shared server, stop the service first, so that no instance
-writes the log. Check out the release that ran, so that
-`just cloud up` deploys the same build:
+writes the log. Then deploy the release that ran, `vX.Y.Z`. `riff cloud
+list` shows it:
 
 ```sh
-just cloud down
+riff cloud delete shared
 riff-server log verify --bucket como-riff-state
 riff-server log cut --after POSITION --bucket como-riff-state
 riff-server log cut --after POSITION --yes --bucket como-riff-state
-git checkout vX.Y.Z
-just cloud up
+riff cloud deploy shared vX.Y.Z
 ```
 
 The bucket keeps each older version of an object for 7 days. So you
@@ -1276,7 +1278,8 @@ Do this once, for the team. The project `como-riff` exists: use these
 steps only to make it again.
 
 The Google Cloud project `como-riff` holds each cloud resource of
-riff. `deploy/cloud.env` holds its settings. The repository is public.
+riff. `deploy/cloud/shared.env` holds its settings. The repository is
+public.
 Put no email address, billing account ID or organization ID in it.
 
 Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install).
@@ -1305,7 +1308,7 @@ gcloud billing projects link como-riff --billing-account BILLING_ACCOUNT_ID
 Then make the resources of riff in the project:
 
 ```sh
-just cloud setup
+riff cloud create shared
 ```
 
 The command checks each resource first, so you can run it again.
@@ -1344,7 +1347,7 @@ email to the owner, at most one each 5 minutes. The repository is
 public, so give your email in `RIFF_OWNER`:
 
 ```sh
-RIFF_OWNER=YOUR_EMAIL just cloud setup
+RIFF_OWNER=YOUR_EMAIL riff cloud create shared
 ```
 
 With no `RIFF_OWNER`, the setup makes no alert, and says so. The alert
@@ -1367,7 +1370,9 @@ Cloud project, with these changes:
   For a personal account, pick **External**, and add each person as a
   test user.
 - Step 7: copy the client ID and the client secret to a safe place.
-  Do not run `just cloud oauth-client`. Commit neither.
+  Commit neither. For a riff on Cloud Run, `riff cloud signin` stores
+  them: see
+  [Host your own riff on Cloud Run](start-a-team-riff.md#host-your-own-riff-on-cloud-run).
 
 Then give both to `riff-server` in the environment:
 
@@ -1405,12 +1410,13 @@ slightly different words.
    download the JSON file. In a terminal, run:
 
    ```sh
-   just cloud oauth-client
+   riff cloud signin shared
    ```
 
-   It asks for the client ID and the client secret. It puts the secret
-   in Secret Manager and the ID in `deploy/cloud.env`.
-8. Commit `deploy/cloud.env`.
+   It shows these steps, then asks for the client ID and the client
+   secret. It puts the secret in Secret Manager and the ID in
+   `deploy/cloud/shared.env`.
+8. Commit `deploy/cloud/shared.env`.
 
 To see who changed the client, and when:
 
@@ -1588,7 +1594,7 @@ flowchart TD
 
    ```sh
    riff server
-   just cloud log --log-filter 'jsonPayload.message:"imported the objects"'
+   riff cloud log shared --filter 'jsonPayload.message:"imported the objects"'
    ```
 
    riff 0.8.0 shows the release of the new server on its `release`
@@ -1657,8 +1663,6 @@ gh run list --workflow CI --event workflow_dispatch
 gh run watch
 ```
 
-`just cloud` alone lists its recipes.
-
 ### Name the owner of the cloud riff
 
 The cloud riff listens on the network, so it needs an owner from its
@@ -1670,8 +1674,7 @@ once, with your verified email:
 gh variable set RIFF_OWNER --body alice@comotechnologies.io
 ```
 
-For `just cloud up` and [Deploy by hand](#deploy-by-hand), export it in
-your shell too:
+For [Deploy by hand](#deploy-by-hand), export it in your shell too:
 
 ```sh
 export RIFF_OWNER=alice@comotechnologies.io
@@ -1681,34 +1684,45 @@ A riff that has an owner keeps it, so a new value names nobody new.
 
 ### Turn the shared server on
 
-It sets `CLOUD_DEPLOY`, and deploys now. While the service runs, it
-costs about 45 USD each month: one instance with 1 vCPU that is always
-on (R29). Turn it off when nobody uses it. For the cost of each host,
-see [#47](https://github.com/como-technologies/riff/issues/47).
+Let CI deploy again, and deploy the last release now. While the
+service runs, it costs about 45 USD each month: one instance with 1
+vCPU that is always on (R29). Turn it off when nobody uses it. For the
+cost of each host, see
+[#47](https://github.com/como-technologies/riff/issues/47).
 
 ```sh
-just cloud up
+gh variable set CLOUD_DEPLOY --body true
+riff cloud deploy shared vX.Y.Z
 ```
+
+`riff cloud deploy shared` asks you to type the name `shared` first:
+other repositories use the shared riff.
 
 ### Turn the shared server off
 
-It removes `CLOUD_DEPLOY`, and deletes the service. gcloud asks you
-first. The state stays in the bucket. `just cloud up` makes the service
-again, at the same URL.
+Stop the deploys of CI, and delete the service. riff asks you to type
+the name first. The state stays in the bucket. A deploy makes the
+service again, at the same URL.
 
 ```sh
-just cloud down
+gh variable delete CLOUD_DEPLOY
+riff cloud delete shared
 ```
 
 ### Deploy by hand
 
-Cloud Build builds the image from `Dockerfile`. Cloud Run then runs one
-instance of the service `riff-server`, with sign-in. It does not change
-`CLOUD_DEPLOY`:
+With a release tag, Cloud Run runs the image that CI built for that
+tag. With no tag, Cloud Build builds the image from `Dockerfile` of
+your tree. Cloud Run runs one instance of the service `riff-server`,
+with sign-in. It does not change `CLOUD_DEPLOY`:
 
 ```sh
-just cloud deploy
+riff cloud deploy shared vX.Y.Z
+riff cloud deploy shared
 ```
+
+With no terminal, give the name in a flag:
+`riff cloud deploy shared vX.Y.Z --confirm shared`.
 
 ### Map the domain
 
@@ -1720,36 +1734,49 @@ serves riff at `riff.comotechnologies.io`. Do this once:
    **Domain** property `comotechnologies.io`, and verify it.
 2. At the DNS host of `comotechnologies.io`, add a CNAME record: name
    `riff`, value `ghs.googlehosted.com`.
-3. In `deploy/cloud.env`, set
+3. In `deploy/cloud/shared.env`, set
    `CLOUD_URL=https://riff.comotechnologies.io`.
-4. Run `just cloud deploy`. It maps the domain to the service once.
+4. Run `riff cloud deploy shared`. It maps the domain to the service
+   once.
    Google then makes the certificate. That can take some hours.
 
 ### Check the shared server
 
-The first command shows if CI deploys, and the state of the service,
-with its URL. The next ones point `riff` at the shared server for this
-shell, and sign in. Put the URL in place of `URL`:
+The first command shows the state of the service, with its URL, its
+release and its revision, and if CI deploys. The next ones point
+`riff` at the shared server for this shell, and sign in. Put the URL
+in place of `URL`:
 
 ```sh
-just cloud status
+riff cloud status shared
 export RIFF_SERVER=URL
 riff login
 riff who
 ```
 
+### See each riff in the cloud
+
+One line for each settings file in `deploy/cloud`: the name, the URL,
+the release that runs, if the service is ready, and if the riff is
+paused. riff shows `paused ?` when this machine has no sign-in to that
+riff:
+
+```sh
+riff cloud list
+```
+
 ### See the shared log
 
 ```sh
-just cloud log
-just cloud log --limit 20
+riff cloud log shared
+riff cloud log shared --limit 20
 ```
 
-With no `--limit`, the log shows the last 50 lines. Each other option
-goes to `gcloud run services logs read` as you write it, quotes too:
+With no `--limit`, the log shows the last 50 lines. `--filter` takes a
+filter of Cloud Logging, quotes too:
 
 ```sh
-just cloud log --log-filter 'jsonPayload.message:"imported the objects"'
+riff cloud log shared --filter 'jsonPayload.message:"imported the objects"'
 ```
 
 Each start shows `the provider knows the OAuth client`. When Google
@@ -1761,8 +1788,8 @@ Each log line has a severity. To see only the lines with the severity
 `ERROR` or more:
 
 ```sh
-just cloud errors
-just cloud errors 20
+riff cloud log shared --errors
+riff cloud log shared --errors --limit 20
 ```
 
 `riff server` shows the last error of the instance that runs now. See
@@ -1771,7 +1798,7 @@ just cloud errors 20
 ## Rehearse a release on the stage
 
 The stage is a second `riff-server` on Cloud Run, in the project
-`como-riff`. `deploy/stage.env` holds its settings. It has its own
+`como-riff`. `deploy/cloud/stage.env` holds its settings. It has its own
 service `riff-stage`, bucket, accounts, sign-in client and secret. It
 holds no data of the shared riff, and no setting of the stage names a
 resource of the shared riff. It has no domain, no alert and no CI
@@ -1783,7 +1810,7 @@ before serves and saves, while the new build takes the lease, reads
 the state and serves. Put the results on the issue of the release.
 
 Only a person runs these steps: each step writes to the cloud or signs
-in. A worker never runs `just cloud`.
+in. A worker never runs `riff cloud`: its settings deny it.
 
 ```mermaid
 flowchart LR
@@ -1795,8 +1822,8 @@ flowchart LR
     K --> D[turn the stage off]
 ```
 
-Each recipe of `just cloud` takes the name of the settings first. With
-no name, a recipe uses `deploy/cloud.env`: the shared riff.
+Each `riff cloud` command takes the name of the riff first: `stage`
+for the stage, `shared` for the shared riff.
 
 ### Set up the stage
 
@@ -1804,19 +1831,19 @@ Do this once. Sign in to gcloud, and make the resources of the stage:
 
 ```sh
 gcloud auth login
-just cloud setup stage
+riff cloud create stage
 ```
 
 Then make the sign-in client of the stage. Do steps 6 and 7 of
 [Make the OAuth client](#make-the-oauth-client), with the name
-`riff-stage`. In step 7, give the name of the settings:
+`riff-stage`. In step 7, give the name of the stage:
 
 ```sh
-just cloud oauth-client stage
+riff cloud signin stage
 ```
 
 It puts the secret in Secret Manager and the ID in
-`deploy/stage.env`. Commit that file.
+`deploy/cloud/stage.env`. Commit that file.
 
 ### Deploy a release on the stage
 
@@ -1826,14 +1853,14 @@ owner, as the shared riff:
 
 ```sh
 export RIFF_OWNER=YOUR_EMAIL
-just cloud deploy stage v0.8.0
-just cloud status stage
+riff cloud deploy stage v0.8.0
+riff cloud status stage
 ```
 
 With no tag, Cloud Build builds the image from your tree:
 
 ```sh
-just cloud deploy stage
+riff cloud deploy stage
 ```
 
 A riff of a new bucket starts paused. Resume it after the first
@@ -1859,7 +1886,8 @@ git -C ~/stage/ann/web remote add origin https://github.com/acme/web
 ```
 
 Open one terminal for each person. Put the person in place of `WHO`,
-and the `CLOUD_URL` of `deploy/stage.env` in place of `STAGE_URL`.
+and the `CLOUD_URL` of `deploy/cloud/stage.env` in place of
+`STAGE_URL`.
 The update by itself installs into the home too:
 
 ```sh
@@ -1931,8 +1959,8 @@ commit of the release:
 
 ```sh
 git switch --detach COMMIT
-just cloud deploy stage
-just cloud log stage --limit 100
+riff cloud deploy stage
+riff cloud log stage --limit 100
 ```
 
 ### Check the hand-over
@@ -1969,10 +1997,16 @@ Put the results on the issue of the release.
 
 ### Turn the stage off
 
-It deletes the service. The state stays in the bucket. To rehearse
-again from an empty state, remove the state too:
+It deletes the service. riff asks you to type the name `stage`
+first. The state stays in the bucket:
 
 ```sh
-just cloud down stage
-gcloud storage rm 'gs://como-riff-stage-state/**'
+riff cloud delete stage
+```
+
+To rehearse again from an empty state, delete the bucket too. The next
+`riff cloud create stage` makes it again:
+
+```sh
+riff cloud delete stage --with-state
 ```

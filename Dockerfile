@@ -6,7 +6,7 @@ RUN apk add --no-cache build-base cmake perl ca-certificates
 WORKDIR /src
 COPY . .
 # The build has no git. It names its commit from the build arguments,
-# or from build-id.env, which `just cloud deploy` writes
+# or from build-id.env, which `riff cloud deploy` writes
 # (01M3JEE7YXQPWS65FBVTASAEBX).
 ARG RIFF_COMMIT=
 ARG RIFF_COMMIT_TIME=
