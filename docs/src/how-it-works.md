@@ -3679,13 +3679,16 @@ riff workers
 
 ```text
 thelio  limit 3  runs 1  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
+monitor on  load5 2.40 of 24.00 (16 cores)  jobs 7  last look 4s ago
 PANE  ID        STATE  DETAIL
 %3    2a880834  busy   working on #12  1m ago: tests of issue-12
 ```
 
 The first line shows the limit, the numbers and the score of this
 machine (see
-[Which machine gets a worker](#which-machine-gets-a-worker)).
+[Which machine gets a worker](#which-machine-gets-a-worker)). The
+next line shows the monitor (see
+[Watch the health of a machine](#watch-the-health-of-a-machine)).
 
 To see the full session ID of each worker, use `--long`:
 

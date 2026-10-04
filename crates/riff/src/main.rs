@@ -710,10 +710,10 @@ enum Workers {
         #[arg(value_enum)]
         state: Option<Switch>,
         /// The seconds between two looks.
-        #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+        #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u16).range(1..))]
         every: Option<u16>,
         /// The limit of the 5-minute load for each physical core.
-        #[arg(long)]
+        #[arg(long, value_name = "N")]
         load: Option<f64>,
         /// Turn the monitor of HOST on or off, through its
         /// `riff workers host`.
