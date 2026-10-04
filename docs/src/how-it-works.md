@@ -955,6 +955,8 @@ Wave 3 (como-technologies/riff)
 ann  admin  offline  seen 1h ago
 mike  owner  online
 ├─ pangolin
+│  │  load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  jobs 2
+│  │  last kill 14:03:12 by systemd-oomd
 │  ├─ 5b1e2a90  riff#issue-7  worker  busy
 │  │    working on #7 Fix the help
 │  │    runs Bash: run just ci for 12m
@@ -1006,6 +1008,19 @@ stateDiagram-v2
 
 The table of each state, its color and its detail is in
 [The state of a session](#the-state-of-a-session).
+
+- A machine that runs workers: under its host comes a line of
+  numbers. `load 13.2 9.8/8` is the load average of 1 and 5 minutes,
+  and the physical cores. `3000MHz now 2990` is the cap of the clock
+  and the clock now. `20GB avail/4` is the available memory and the
+  floor. `workers 3/4` is the workers and the limit. `jobs 2` is the
+  jobs of each worker. A number over its limit is yellow. A second
+  line shows the time and the cause of the last kill that the monitor
+  saw. See
+  [Watch the health of a machine](#watch-the-health-of-a-machine).
+  The numbers of a host come from its `riff workers host`. The
+  numbers of the machine where you run `riff top` come from that
+  machine, when its limit of workers is more than 0.
 - The place is the repository and the worktree of the session, as in
   `riff who`: `riff`, or `riff#issue-7` in the worktree `issue-7`. A
   lead is the lead of the repository on its line. When the
@@ -3665,13 +3680,16 @@ riff workers
 
 ```text
 thelio  limit 3  runs 1  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
+monitor on  load5 2.40 of 24.00 (16 cores)  jobs 7  last look 4s ago
 PANE  ID        STATE  DETAIL
 %3    2a880834  busy   working on #12  1m ago: tests of issue-12
 ```
 
 The first line shows the limit, the numbers and the score of this
 machine (see
-[Which machine gets a worker](#which-machine-gets-a-worker)).
+[Which machine gets a worker](#which-machine-gets-a-worker)). The
+next line shows the monitor (see
+[Watch the health of a machine](#watch-the-health-of-a-machine)).
 
 To see the full session ID of each worker, use `--long`:
 
@@ -3875,6 +3893,91 @@ disk on Ubuntu, stop its tmpfs, then restart the machine:
 ```sh
 sudo systemctl mask tmp.mount
 ```
+
+### Watch the health of a machine
+
+The monitor reads the health of a machine that runs workers. It tells
+the lead when a number crosses its limit. Turn it on, on this machine:
+
+```sh
+riff workers monitor on
+```
+
+A workers host runs it on its machine. The `riff mcp` of the lead runs
+it on the machine of the lead. One monitor runs on a machine at a
+time.
+
+```mermaid
+flowchart TD
+    L["each monitor.every seconds"] --> R["read the load, the available memory<br/>and the kills in the journal"]
+    R --> C{"a limit crossed, good again, or a kill?"}
+    C -- yes --> M["one message to the lead"]
+    C -- no --> N["no message"]
+```
+
+The lead gets one message when the number crosses the limit, and one
+when it is good again. It gets no message while nothing changes. Each
+message names the machine, the number and the limit:
+
+- The 5-minute load goes over 1.5 times the physical cores.
+- The available memory goes under the floor of the machine.
+- `systemd-oomd` or the kernel kills a process: one message for each
+  kill.
+
+```text
+monitor: pangolin: the 5-minute load is 13.20, over the limit 12.00 (1.5 times 8 physical cores). riff changes nothing: you decide.
+```
+
+The monitor only reads and tells. It changes no setting and stops no
+worker. You and the lead decide.
+
+The lead turns the monitor of a workers host on or off. The host
+replies with a note:
+
+```sh
+riff workers monitor on --host thelio
+riff workers monitor off --host thelio
+```
+
+The monitor looks each 15 seconds. To look each 30 seconds:
+
+```sh
+riff workers monitor --every 15
+riff workers monitor --every 30
+```
+
+The load limit is 1.5 for each physical core. To set 2:
+
+```sh
+riff workers monitor --load 1.5
+riff workers monitor --load 2
+```
+
+The memory limit is the floor of the machine, 4 GB by default. 0 turns
+it off. See
+[Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs):
+
+```sh
+riff workers floor 4
+```
+
+To see the settings and the last look of this machine:
+
+```sh
+riff workers monitor
+```
+
+`riff workers` shows a line of the monitor under each machine: on or
+off, the 5-minute load and its limit, the jobs of each worker, and the
+last kill. `riff top` shows the numbers under each host. See
+[See what each session does](#see-what-each-session-does).
+
+```text
+monitor on  load5 9.80 of 12.00 (8 cores)  jobs 2  last kill 14:03:12 systemd-oomd  last look 4s ago
+```
+
+The settings are in `config.toml`: `monitor.on`, `monitor.every` and
+`monitor.load`.
 
 ### Offer workers from another machine
 

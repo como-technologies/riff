@@ -1995,7 +1995,7 @@
   tool. A status is the current step of the session, in its own words.
   It makes no state. A new status replaces the old one.
 - **R183** A status is one line. The step is not empty. The step has
-  at most 200 characters. The reason of a block has the same rules.
+  at most 400 characters. The reason of a block has the same rules.
   `riff-server` refuses a status or a block that breaks a rule, with
   status 400.
 - **R184** `riff-server` keeps the last status of each session, with the
@@ -3236,6 +3236,40 @@
   minute.
 - **01M41VAGY396K07BTPSW9TNBX5** `riff workers` shows the disk use of
   ROOT of this machine under the line of its disk.
+- **01M421QPKWPX00X24F8V6DT8Z3** The monitor of a machine reads its
+  health each `monitor.every` seconds (default 15) while `monitor.on`
+  is true (default false): the 1-minute and 5-minute load average, the
+  available memory, and each kill of `systemd-oomd` or of the kernel.
+  A workers host runs it, and the `riff mcp` of the lead runs it while
+  its session is the lead. `riff workers monitor` shows and sets the
+  settings.
+- **01M421QPP5QFBB0YN25HY2MG1Z** The monitor sends the lead one
+  message when the 5-minute load goes over `monitor.load` (default
+  1.5) times the physical cores, or the available memory goes under
+  `workers.floor`, and one message when the number is good again. It
+  sends one message for each kill. It sends no message while nothing
+  changes. A message names the machine, the number and the limit.
+- **01M421QPRF45DQDA8S4PT1Q12V** The monitor only reads and tells. It
+  changes no setting and stops no worker.
+- **01M421QPTQ8BQ0KMG8F7CRHNMX** `riff workers monitor on --host HOST`
+  and `riff workers monitor off --host HOST` ask the workers host on
+  HOST to set `monitor.on` on its machine. The host replies with a
+  note.
+- **01M421QPX01BB15GJXHFYRETTX** `riff workers` shows for each machine
+  whether the monitor is on, and its last numbers. A workers host
+  tells them in its status: the 5-minute load, its limit, the physical
+  cores, the jobs of each worker and the last kill.
+- **01M421QPZ9E01PQ62PDBH378SJ** `riff top` shows one line under each
+  host that runs workers: the load average of 1 and 5 minutes against
+  the physical cores, the cap of the clock and the clock now, the
+  available memory against the floor, the workers against the limit,
+  and the jobs of each worker. A number over its limit has the warning
+  style. The line fits in 80 columns. A second line shows the time and
+  the cause of the last kill. The numbers of a host come from its
+  status. The numbers of the machine of `riff top` come from that
+  machine, when its limit of workers is more than 0.
+- **01M421QQ1K7EFDV2PVPTSTE5FK** One monitor runs on a machine at a
+  time: it holds the lock `monitor.lock` of the local directory.
 - **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`
   and `riff worktrees clean` for orphan processes and stale worktrees.
   No line of the skill tells a session to run `kill`, `pkill`,

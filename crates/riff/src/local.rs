@@ -378,6 +378,23 @@ pub fn compact_lock(dir: &Path, repo: &str) -> io::Result<Option<Held>> {
     lock(&dir.join(format!("compact-{}.lock", repo.replace('/', "-"))))
 }
 
+/// Takes the lock of the monitor of the machine, so that one monitor
+/// runs at a time (01M421QQ1K7EFDV2PVPTSTE5FK). `None` when another
+/// monitor holds it.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// let held = riff::local::monitor_lock(run.path())?;
+/// assert!(held.is_some());
+/// assert!(riff::local::monitor_lock(run.path())?.is_none());
+/// drop(held);
+/// assert!(riff::local::monitor_lock(run.path())?.is_some());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn monitor_lock(dir: &Path) -> io::Result<Option<Held>> {
+    lock(&dir.join("monitor.lock"))
+}
+
 /// Opens `path` and takes its lock. `None` when another open file holds
 /// the lock.
 fn lock(path: &Path) -> io::Result<Option<Held>> {
