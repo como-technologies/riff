@@ -38,9 +38,15 @@ exit 0
 "#;
 
 /// `gh pr view BRANCH` prints the file `pr-BRANCH.json`, else fails.
+/// `gh pr list --state merged --search SHA` prints the file
+/// `merged-SHA.json`, else `[]`.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 if [ "$1 $2" = "pr view" ] && [ -f "$dir/pr-$3.json" ]; then cat "$dir/pr-$3.json"; exit 0; fi
+if [ "$1 $2 $3 $4 $5" = "pr list --state merged --search" ]; then
+  if [ -f "$dir/merged-$6.json" ]; then cat "$dir/merged-$6.json"; else echo '[]'; fi
+  exit 0
+fi
 echo "no pull requests found for branch \"$3\"" >&2
 exit 1
 "#;
@@ -394,6 +400,10 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     let main = r.main();
 
     let dead = worktree(&r, "issue-1");
+    git(
+        &dead,
+        &["commit", "-q", "--allow-empty", "-m", "not pushed"],
+    );
     lock(&r, &dead, "claude session issue-1 (pid 999999999 start 5)");
     let live = worktree(&r, "issue-2");
     let reason = format!(
@@ -458,7 +468,7 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     assert_eq!(line(&live), "kept: a live process holds its lock");
     assert_eq!(
         line(&merged),
-        "removed with its branch worktree-issue-3: its pull request is merged"
+        "removed with its branch worktree-issue-3: its pull request #40 is merged"
     );
     assert!(
         line(&dirty).starts_with("saved: a WIP commit on worktree-issue-4"),
@@ -485,6 +495,85 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     );
     assert!(pushed.starts_with("WIP: riff worktrees clean"), "{pushed}");
     assert!(owned.join("work.txt").exists());
+}
+
+/// 01M41XFFXEQPEPDVM4HNT69FVP: `riff worktrees clean` removes a clean
+/// worktree with no commit of its own, also with no pull request, and a
+/// detached clean worktree at the head of a merged pull request whose
+/// branch is gone. It keeps a worktree with a commit that is not on
+/// `origin`.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_clean_removes_a_worktree_with_no_work_of_its_own() {
+    let r = Riff::new().await;
+    let main = r.main();
+    git(&main, &["remote", "set-head", "origin", "--auto"]);
+
+    let fresh = worktree(&r, "issue-6");
+    let ahead = worktree(&r, "issue-7");
+    git(&ahead, &["commit", "-q", "--allow-empty", "-m", "the work"]);
+    // A verify worktree at the head of a pull request that the forge
+    // merged with a squash: the branch is gone, so the commit is on no
+    // branch of origin.
+    let verify = main.join(".claude/worktrees/verify-issue-8-a6cf");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &verify.to_string_lossy(),
+        ],
+    );
+    git(
+        &verify,
+        &["commit", "-q", "--allow-empty", "-m", "the head"],
+    );
+    let head = git(&verify, &["rev-parse", "HEAD"]).trim().to_owned();
+    std::fs::write(
+        r.fake.path().join(format!("merged-{head}.json")),
+        format!(r#"[{{"number":454,"headRefOid":"{head}"}}]"#),
+    )
+    .unwrap();
+
+    let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let printed = stdout(&out);
+    let line = |path: &Path| {
+        let start = format!("{}: ", path.display());
+        printed
+            .lines()
+            .find_map(|l| l.strip_prefix(&start).map(str::to_owned))
+            .unwrap_or_else(|| panic!("no line for {}: {printed}", path.display()))
+    };
+    assert_eq!(
+        line(&fresh),
+        "removed with its branch worktree-issue-6: its HEAD is on the default branch of \
+         origin: it has no commit of its own"
+    );
+    assert_eq!(
+        line(&verify),
+        "removed: its commit is the head of the merged pull request #454"
+    );
+    assert!(
+        line(&ahead).starts_with("kept: riff found no pull request"),
+        "{printed}"
+    );
+
+    let list = git(&main, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains("issue-6"), "{list}");
+    assert!(!list.contains("verify-issue-8"), "{list}");
+    assert!(list.contains("issue-7"), "{list}");
+    assert!(
+        git(&main, &["branch", "--list", "worktree-issue-6"])
+            .trim()
+            .is_empty()
+    );
+    assert!(
+        !git(&main, &["branch", "--list", "worktree-issue-7"])
+            .trim()
+            .is_empty()
+    );
 }
 
 /// The book has a how-to with an `sh` block for each new command, and

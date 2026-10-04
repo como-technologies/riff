@@ -315,7 +315,7 @@ async fn a_host_removes_a_merged_worktree_at_its_next_tidy() {
     let out = r
         .until("the line of the removal", || async {
             let out = host.output();
-            out.contains("removed with its branch worktree-issue-3: its pull request is merged")
+            out.contains("removed with its branch worktree-issue-3: its pull request #40 is merged")
                 .then_some(out)
         })
         .await;
