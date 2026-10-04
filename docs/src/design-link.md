@@ -18,7 +18,8 @@ the book, and the details go into the rustdoc.
 - Each call has a time limit. No call waits for ever.
 - One rule for a new try. A fault of the connection gets a new try on
   a new connection. A refusal gets none.
-- No command runs two times because of a new try of the link.
+- Delivery is guaranteed: the link sends a command until it gets a
+  reply, and `riff-server` runs each command one time only.
 - One sign of life for a session: the heartbeat.
 - Each stream has a connection of its own, finds a dead connection in
   45 s, and loses no message after a break.
@@ -26,7 +27,7 @@ the book, and the details go into the rustdoc.
   runs until stopped.
 - Not goals: a new wire, HTTP/3, a connection that lives through a
   change of the address, a queue of calls that waits for the network
-  while no command runs, an ID of each call on the server.
+  while no command runs.
 
 ## The terms
 
@@ -38,6 +39,8 @@ the book, and the details go into the rustdoc.
 | fault | A try that ends with no reply of `riff-server`: no connect, a cut, no reply in time, or a reply of the front end. |
 | refusal | A reply of `riff-server` that says no. A new try gives the same reply. |
 | budget | The time from the first try of a call to its end. Each call has a budget, except the streams. |
+| call ID | A random ID of one call of a command. Each try of the call sends it. |
+| outbox | The commands of a caller on this machine that got no reply in their budget. |
 | heartbeat | The keep-alive that a session sends each `ALIVE_EVERY`. |
 | state | `up`, `down` or `refused`: what the link knows of the server now. |
 
@@ -109,6 +112,8 @@ left)`.
 | `LINE_AFTER` | 1 s | Replaces `WAIT_LINE_AFTER`. |
 | `STATE_WAIT`, `STATUSLINE_WAIT`, `END_WAIT`, `PROBE_WAIT` | as today | They become budgets. |
 | `ALIVE_EVERY`, `WORKER_ALIVE_EVERY` | 60 s, 10 s | They stay. |
+| `CALL_KEEP`, `CALL_KEEP_MOST` | 24 h, 1024 | New, on the server. |
+| `OUTBOX_KEEP` | 23 h | New. Less than `CALL_KEEP`. |
 
 ## 2. One rule for a new try
 
@@ -124,8 +129,8 @@ Each try ends in one of three ways: a reply, a fault or a refusal.
   tries one more time, as today.
 - The wait before a new try grows: 250 ms, then double, up to
   `MOST_WAIT`. Each wait has a random part of up to half of it, so many
-  workers do not try at the same moment after a deploy. `rand` is in
-  the build already.
+  workers do not try at the same moment after a deploy. `getrandom`,
+  which riff uses already, gives the random part.
 - A fault with no HTTP reply (no connect, a cut, no reply in time)
   makes a new HTTP client of the link, which each `Api` of the server
   shares. A 503 or a 429 came on a good connection, so it keeps the
@@ -137,42 +142,114 @@ Each try ends in one of three ways: a reply, a fault or a refusal.
   state. Each other connect error is a fault, and a stream takes each
   connect error as a fault.
 
-### A command that may have reached the server
+### Each command gets to the server one time
 
-A new try of a command can run it two times. So the link sends a
-command again only after a fault where the server surely did not run
-it:
+Delivery is guaranteed (the decision of the user). The link sends a
+command again after each fault, also after a cut and after no reply in
+time, until it gets a reply or a refusal. `riff-server` runs each
+command one time only. So each command carries a call ID, and the
+server keeps the reply of each call ID.
 
-| Fault | The command ran? | New try of a command | New try of a query or a signal |
-|---|---|---|---|
-| No DNS answer, no connect | No | Yes | Yes |
-| A 503 of `riff-server` | No: the engine refuses before `handle`, or the write failed | Yes | Yes |
-| A 503 or 429 of the front end | No: the front end did not send it on | Yes | Yes |
-| A 502 or 504 of the front end | Not known | No | Yes |
-| A cut, or no reply in time | Not known | No | Yes |
+```mermaid
+sequenceDiagram
+    participant C as riff
+    participant S as riff-server
+    C->>S: release issue-12, riff-call 7f3a
+    S->>S: handle, write; the writer keeps the result of 7f3a
+    S--xC: the reply is lost (a cut)
+    C->>S: release issue-12, riff-call 7f3a (new connection)
+    S-->>C: the reply of 7f3a: released, must clear (riff-repeat: 1)
+```
 
-- A command that ends with a fault where the server may have run it
-  gives the error `Unknown`. Its text says that riff does not know if
-  `riff-server` got the command, and names the query that tells it:
-  `riff who` for a claim or a release, `riff read` for a post.
-- A signed post that comes two times, for example because a person
-  sends it again, gets the reply of the first post: its `Posted`, with
-  the `seq` of the first message. It is no refusal. The index of the
-  copy check has the `seq` already.
-- A claim of an item that the caller holds is done already, as today.
+#### The client
+
+- The link makes a call ID for each call of a command: 16 random
+  bytes in base 64. Each try of the call sends the same ID in the
+  header `riff-call`. A query and a signal need no call ID: each of
+  them is safe to send two times. The server reads the header only for
+  a command.
+- When the budget of a command ends with no reply, the link puts the
+  command in the outbox of its caller on this machine: a file in
+  `local::dir()`, with the path, the body, the call ID and the time.
+  The command gives the text of `down`, and says that riff sends the
+  command when `riff-server` is back.
+- Each call of the link of that caller sends the commands of the
+  outbox first, in their order, with their call IDs. The heartbeat
+  sends them too. One process at a time sends the outbox: it holds a
+  lock of `local`. A command leaves the outbox at its reply or its
+  refusal.
+- A call of the same command with the same body, while the outbox has
+  it, takes the call ID of the outbox. So an agent or a person that
+  sends a command again does not make it run two times.
+- A command older than `OUTBOX_KEEP` (23 h) leaves the outbox with one
+  line on stderr that names it: the server keeps a call ID for
+  `CALL_KEEP` (24 h), so a later send can run it two times.
+
+#### The server
+
+- `Authenticated<C>` reads the header `riff-call` into its field
+  `call`. The key of a call is the caller (`Caller::by`) and the call
+  ID.
+- The engine has the table of the calls in `Core`, under its lock. A
+  key is `Pending` or `Kept`.
+- `Engine::check` looks up the key before `handle`:
+  - No key: the engine puts `Pending` in the table and runs `handle`,
+    as today.
+  - `Pending`: the first try waits for the writer. The second try
+    waits for the same entry, then makes its reply as for `Kept`.
+  - `Kept`: the engine runs no `handle`. The try makes its reply with
+    `C::reply` from the kept result, on the written copy of now.
+- The writer keeps the result, not the call: `Entry` gets the key, and
+  `Engine::finish` puts `Kept { done, note, at }` in the table. So a
+  cut, which drops the future of the call, does not lose the result.
+  The note of a command (`Command::Note`) gets the bounds `Clone +
+  Default + Send + 'static`.
+- A refused command removes its key: a refusal is not kept. A second
+  try runs `handle` again. The first try changed nothing, so this is
+  safe.
+- A reply to a kept call has the header `riff-repeat: 1`, for the log
+  line and the tests. The client takes it as each other reply. The
+  reply shows the state of now: a claim that another session took
+  between the two tries says "held by".
+- The table keeps a key for `CALL_KEEP` (24 h), and at most
+  `CALL_KEEP_MOST` (1024) keys for each caller. The oldest key goes
+  first.
+
+#### The log and the checkpoint
+
+- Each record of a command has the call ID in its envelope: the field
+  `call`, with a default, next to `by` and `command`. A record of 1.0.0
+  has no `call`, and a build reads it as `None`. A build of 1.0.0 skips
+  the field: `Record` has no `deny_unknown_fields`. This follows the
+  rules for a change of a record (see
+  [the command engine](design-engine.md)).
+- The checkpoint (`Snapshot`) gets the field `calls`, with a default:
+  the key, the positions of the records and the time of each call of
+  the last `CALL_KEEP`. An old checkpoint has none.
+- At a start, the load makes `Kept` from the checkpoint and from each
+  record after it: the records of a call give its `done`, and its note
+  is `Note::default()`. So a start from a checkpoint and a start from
+  the full log give the same reply to a repeated call.
+- A command that the engine accepted with no record (for example a
+  claim of an item that the caller holds) has no call ID in the log.
+  After a start, a second try runs `handle` again. Such a command
+  changed nothing, so this is safe.
+- A rollback to a build with no call ID loses the table. For
+  `CALL_KEEP` after it, a repeated command can run two times. The
+  procedure of a rollback says so.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Try
-    Try --> Reply: a reply
+    Try --> Reply: a reply, also a kept reply
     Try --> Refusal: a refusal
-    Try --> Wait: a fault that did not run it, budget left
-    Try --> Unknown: a command, a fault that may have run it
-    Try --> Ended: no budget left
-    Wait --> Try
+    Try --> Wait: a fault, budget left
+    Try --> Outbox: a command, no budget left
+    Try --> Ended: a query, no budget left
+    Wait --> Try: the same call ID
+    Outbox --> Try: the next call of the caller, or the heartbeat
     Reply --> [*]
     Refusal --> [*]
-    Unknown --> [*]: "riff does not know: check with riff who"
     Ended --> [*]: the error with the text of the state
 ```
 
@@ -304,7 +381,8 @@ stateDiagram-v2
   one function `text::link_line`.
 - A short command shows the line of `down` one time on stderr after
   `LINE_AFTER`. A call that ends with no budget left gives the text of
-  `down` as its error.
+  `down` as its error. A command then waits in the outbox, and the
+  text says so.
 - At `refused` for another build, a command that runs until stopped
   waits for a new binary and runs it, as today
   (01M3MNVTC248YYJJQKFD9H1WY9). A refused sign-in ends it.
@@ -319,9 +397,9 @@ The crate review gives one part for each piece:
 
 | Piece | Part |
 |---|---|
-| The wait that grows | Written in riff: `busy_waits` of today, with a random part from `rand`. `backon` if the loop grows. |
+| The wait that grows | Written in riff: `busy_waits` of today, with a random part from `getrandom`. `backon` if the loop grows. |
 | The time limits | `reqwest` and `tokio::time::timeout`: no new crate. |
-| A command that may have run | Written in riff: the table of section 2. No crate knows which commands are safe. |
+| The call ID | Written in riff: the header `riff-call` and the table of the calls in the engine. The name follows the `Idempotency-Key` of Stripe and of the IETF draft. `axum-idempotent` keeps the replies outside the log, so it does not fit. |
 | The stream | The reconnect of `follow` of today, with `read_timeout`. The parser of `data:` lines stays. `sse-stream` if a stream needs `id:` or `event:`. |
 | The heartbeat | Written in riff: `tokio::time::interval`. |
 | The state | Written in riff: an enum in a `tokio::sync::watch` channel. |
@@ -337,7 +415,8 @@ the only source.
 |---|---|
 | The time limits and `STREAM_IDLE` | About 80 lines, and a test that holds a stream with no byte. |
 | The module `link`, and `Api` on top of it | About 600 lines, most of them moved from `api.rs`, `host.rs`, `top.rs`, `chat.rs` and `main.rs`. |
-| The table of section 2, `Unknown`, the reply to a copy | About 150 lines. |
+| The call ID on the server: the header, the table of the calls, the writer, the record envelope, the checkpoint | About 400 lines, and the tests of a lost reply, a second try while the first waits, and a start from a checkpoint. |
+| The outbox of the client | About 150 lines. |
 | The read after a break in `tail`, and `Lagged` on the server | About 100 lines. |
 | The state and its text | About 200 lines. |
 | A test server that cuts a reply, holds a stream with no byte, refuses a connect, and replies 502 | About 250 lines of tests. |
@@ -350,16 +429,23 @@ and the decisions of the code in `api.rs`), the rustdoc, and the book.
 | ID | Item | Needs |
 |---|---|---|
 | L1 (#505) | The time limits: `CONNECT_WAIT`, the limit of each try, the HTTP/2 pings, `STREAM_IDLE` on the streams, and the end of a stream at `Lagged` on the server. | none |
-| L2 (#507) | The module `link`: `link::of`, one shared client, the swap after a fault, the budgets, the rule of section 2 with `Unknown`, the reply to a copy of a signed post. Each command uses it. | L1 |
+| L6 (#510) | The call ID on the server: the header `riff-call`, the table of the calls, the result that the writer keeps, `riff-repeat`, the field `call` of the record envelope and of the checkpoint. | none |
+| L2 (#507) | The module `link`: `link::of`, one shared client, the swap after a fault, the budgets, the rule of section 2, the call ID of each command, a new try after each fault. Each command uses it. | L1, L6 |
+| L7 (#511) | The outbox: a command with no reply at the end of its budget waits in the outbox, and the next call or the heartbeat sends it with its call ID. | L2, L5 |
 | L3 (#508) | The state: the text, `text::link_line`, `top` that draws at each change, the line of a short command, the status line, a how-to "When riff-server is not reachable" in the book. | L2 |
 | L4 (#506) | The read after a break in `tail` and `chat`, and the line of lost messages. | L1 |
 | L5 (#509) | `Link::heartbeat` in `mcp`, `watch` and `workers host`. | L2, #424 |
 
 ## Decisions
 
-1. No call ID. The link sends a command again only after a fault where
-   the server surely did not run it (section 2). The log does not
-   change. (link-02-4 to link-02-7, link-03-3, link-03-4.)
+1. Delivery is guaranteed (the decision of the user, 2026-10-03). Each
+   command has a call ID in the header `riff-call`. The writer keeps the
+   result, a second try waits for a pending first try, a kept reply is
+   made with `C::reply` and has `riff-repeat`, and the record envelope
+   and the checkpoint keep the call IDs. A command with no reply at the
+   end of its budget waits in the outbox. (link-01-2, link-01-4,
+   link-01-14, link-01-15, link-02-4 to link-02-8. The user did not
+   take link-03-3 and link-03-4.)
 2. The budget belongs to each call. A tool call of `riff mcp`, a post
    of `chat` and a look of `top` have `SHORT_BUDGET`. Only the streams
    have none. (link-01-1, link-02-10, link-03-1.)
