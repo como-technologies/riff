@@ -3802,7 +3802,7 @@ check refuses it.
 
 ```mermaid
 flowchart TD
-    P["a process of the worker:<br/>RIFF_WORKER=1, RIFF_SESSION=ID"] --> C{"of a context:<br/>CLAUDE_PID set?"}
+    P["a process of the worker:<br/>RIFF_WORKER=1, RIFF_SESSION=ID,<br/>the same RIFF_HOME"] --> C{"of a context:<br/>CLAUDE_PID set?"}
     C -- "no: claude, its MCP servers" --> K[keep]
     C -- yes --> W{"riff watch, or the caller?"}
     W -- yes --> K
@@ -3810,6 +3810,9 @@ flowchart TD
     T -- yes --> S["stop: SIGTERM,<br/>SIGKILL after 3 s"]
     T -- no --> K
 ```
+
+riff stops only a process of its own `RIFF_HOME`. A riff with another
+home, for example a test, has its own workers.
 
 When a process of an old context still runs, stop it. Give no pane
 for each worker of this machine, or the pane of one worker:
