@@ -224,6 +224,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud status NAME",
             "riff cloud log NAME --errors",
             "riff cloud delete NAME",
+            "riff cloud list",
             "riff login",
             "riff enable --shared",
             "riff invite EMAIL",
