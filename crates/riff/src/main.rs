@@ -692,6 +692,34 @@ enum Workers {
         /// use.
         dir: Option<std::path::PathBuf>,
     },
+    /// Show or set the monitor of this machine
+    ///
+    /// The monitor reads the load, the available memory and the kills of
+    /// systemd-oomd and of the kernel each SECONDS. It tells the lead one
+    /// time when the 5-minute load goes over N times the physical cores,
+    /// or the available memory goes under the floor (riff workers floor),
+    /// and one time when the number is good again. It tells each kill. It
+    /// changes nothing. A workers host runs it, and the riff mcp of the
+    /// lead runs it on the machine of the lead. The default is off, each
+    /// 15 seconds, and a load of 1.5. It is in
+    /// $XDG_CONFIG_HOME/riff/config.toml, keys monitor.on, monitor.every
+    /// and monitor.load. With --host, the lead asks the workers host on
+    /// that machine to turn its monitor on or off.
+    Monitor {
+        /// on or off. Leave it out to show the monitor.
+        #[arg(value_enum)]
+        state: Option<Switch>,
+        /// The seconds between two looks.
+        #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u16).range(1..))]
+        every: Option<u16>,
+        /// The limit of the 5-minute load for each physical core.
+        #[arg(long, value_name = "N")]
+        load: Option<f64>,
+        /// Turn the monitor of HOST on or off, through its
+        /// `riff workers host`.
+        #[arg(long, requires = "state", conflicts_with_all = ["every", "load"])]
+        host: Option<String>,
+    },
     /// Show or change the MCP servers of each worker
     ///
     /// These are the MCP servers that each worker of this machine loads.
@@ -1744,6 +1772,41 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             );
             Ok(())
         }
+        Some(Workers::Monitor {
+            state: Some(state),
+            host: Some(host),
+            ..
+        }) => {
+            let on = matches!(state, Switch::On);
+            ask_host(host, riff::host::Request::Monitor(on), server).await
+        }
+        Some(Workers::Monitor {
+            state, every, load, ..
+        }) => {
+            let path = settings::path()?;
+            if let Some(state) = state {
+                settings::set_monitor_on(&path, matches!(state, Switch::On))?;
+            }
+            if let Some(every) = every {
+                settings::set_monitor_every(&path, *every)?;
+            }
+            if let Some(load) = load {
+                settings::set_monitor_load(&path, *load)?;
+            }
+            let machine = riff::machine::Machine::here();
+            let saved = local::dir().and_then(|dir| riff::monitor::Saved::read(&dir));
+            anstream::print!(
+                "{}",
+                view::workers_monitor(
+                    &settings::monitor(&path)?,
+                    riff::limits::Cores::here(&machine).physical,
+                    settings::workers_floor(&path)?,
+                    saved.as_ref(),
+                    &path
+                )
+            );
+            Ok(())
+        }
         Some(Workers::Mcp { command }) => {
             let path = settings::path()?;
             let mut names = settings::workers_mcp(&path)?;
@@ -2082,6 +2145,12 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     {
         anstream::print!("{}", view::temp_line(&root, riff::temp::size(&root)));
     }
+    let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
+    let numbers = riff::monitor::Numbers::here(&settings, &machine, workers)?;
+    let ago = local::dir()
+        .and_then(|dir| riff::monitor::Saved::read(&dir))
+        .map(|s| riff::monitor::now_secs().saturating_sub(s.at));
+    anstream::print!("{}", view::monitor_line(Some(&numbers), ago));
     anstream::print!("{}", view::workers(&panes, &sessions, long));
     let Ok(me) = me else {
         return Ok(());
@@ -2103,6 +2172,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
             )
         );
         anstream::print!("{}", view::disk_line(status.disk.as_ref()));
+        anstream::print!("{}", view::monitor_line(status.monitor.as_ref(), None));
         anstream::print!("{}", view::workers(&panes, &sessions, long));
     }
     Ok(())
@@ -2674,6 +2744,25 @@ async fn top(api: &Api, me: &SessionUri, thread: Option<ThreadName>, once: bool)
 }
 
 /// The loop of [`top`].
+/// The numbers of the machine of `riff top`, when it runs workers: its
+/// limit of workers is more than 0 (01M421QPZ9E01PQ62PDBH378SJ).
+fn machine_here(me: &SessionUri) -> Option<riff::top::Machine> {
+    let limit = settings::workers_limit(&settings::path().ok()?).ok()?;
+    if limit == 0 {
+        return None;
+    }
+    let panes = Tmux::machine().worker_panes().unwrap_or_default();
+    let main = identity::working_dir()
+        .ok()
+        .and_then(|dir| identity::main_worktree(&dir));
+    let status = riff::host::HostStatus::here(main.as_deref(), &panes).ok()?;
+    Some(riff::top::Machine {
+        user: me.who().user().to_owned(),
+        host: me.place().host().to_owned(),
+        status,
+    })
+}
+
 async fn draw_top(
     api: &Api,
     me: &SessionUri,
@@ -2732,6 +2821,7 @@ async fn draw_top(
         let now = chrono::Local::now();
         let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
         let server = riff::api::server_build();
+        let machines = riff::top::machines(&who.sessions, machine_here(me));
         let top = riff::top::Top {
             pauses,
             owner: &who.owner,
@@ -2742,6 +2832,7 @@ async fn draw_top(
             repo: repo.as_deref(),
             width: textwrap::termwidth(),
             fault: fault.as_deref(),
+            machines: &machines,
         };
         if clear {
             // Home and erase: the table draws again in place.

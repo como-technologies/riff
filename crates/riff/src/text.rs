@@ -3655,6 +3655,126 @@ pub fn workers_disk_low(disk: &crate::disk::Disk) -> String {
     )
 }
 
+/// The reply of a workers host to `workers monitor on` or `off`
+/// (01M421QPTQ8BQ0KMG8F7CRHNMX).
+///
+/// ```
+/// use riff::settings::Monitor;
+///
+/// assert_eq!(
+///     riff::text::monitor_set(&Monitor { on: true, every: 15, load: 1.5 }),
+///     "the monitor is on: it looks each 15 seconds."
+/// );
+/// assert_eq!(
+///     riff::text::monitor_set(&Monitor { on: false, every: 15, load: 1.5 }),
+///     "the monitor is off."
+/// );
+/// ```
+pub fn monitor_set(monitor: &crate::settings::Monitor) -> String {
+    if monitor.on {
+        format!(
+            "the monitor is on: it looks each {} seconds.",
+            monitor.every
+        )
+    } else {
+        "the monitor is off.".to_owned()
+    }
+}
+
+/// The line of a monitor that does not look: another monitor holds the
+/// lock of the machine (01M421QQ1K7EFDV2PVPTSTE5FK).
+pub const MONITOR_RUNS: &str =
+    "riff: another monitor runs on this machine. This one looks when it ends.";
+
+/// The local time `HH:MM:SS` of `at`, in seconds since 1970.
+///
+/// ```
+/// let clock = riff::text::clock(1727980000);
+/// assert_eq!(clock.len(), 8);
+/// assert_eq!(&clock[5..], ":40");
+/// ```
+pub fn clock(at: u64) -> String {
+    DateTime::from_timestamp(i64::try_from(at).unwrap_or(i64::MAX), 0).map_or_else(
+        || "--:--:--".to_owned(),
+        |t| {
+            t.with_timezone(&chrono::Local)
+                .format("%H:%M:%S")
+                .to_string()
+        },
+    )
+}
+
+/// The message of the monitor of `host` to the lead for `event`
+/// (01M421QPP5QFBB0YN25HY2MG1Z). It names the machine, the number and
+/// the limit. `load` is `monitor.load`, and `physical` the physical
+/// cores.
+///
+/// ```
+/// use riff::monitor::{Event, Kill};
+/// use riff::text::{clock, monitor_event};
+///
+/// let over = Event::LoadOver { load5: 13.2, limit: 12.0 };
+/// assert_eq!(
+///     monitor_event("pangolin", &over, 1.5, 8),
+///     "monitor: pangolin: the 5-minute load is 13.20, over the limit 12.00 (1.5 times 8 physical \
+///      cores). riff changes nothing: you decide."
+/// );
+/// let good = Event::LoadGood { load5: 9.1, limit: 12.0 };
+/// assert_eq!(
+///     monitor_event("pangolin", &good, 1.5, 8),
+///     "monitor: pangolin: the 5-minute load is good again: 9.10, under the limit 12.00."
+/// );
+/// let under = Event::MemoryUnder { avail_gb: 3, floor: 4 };
+/// assert_eq!(
+///     monitor_event("pangolin", &under, 1.5, 8),
+///     "monitor: pangolin: 3 GB of memory is available, under the floor 4 GB. riff starts no \
+///      worker here. riff changes nothing more: you decide."
+/// );
+/// let good = Event::MemoryGood { avail_gb: 10, floor: 4 };
+/// assert_eq!(
+///     monitor_event("pangolin", &good, 1.5, 8),
+///     "monitor: pangolin: the available memory is good again: 10 GB, over the floor 4 GB."
+/// );
+/// let kill = Kill { at: 1727980000, by: "systemd-oomd".into(), what: "tmux-spawn-f089.scope".into() };
+/// assert_eq!(
+///     monitor_event("pangolin", &Event::Killed(kill), 1.5, 8),
+///     format!("monitor: pangolin: systemd-oomd killed tmux-spawn-f089.scope at {}.", clock(1727980000)),
+/// );
+/// ```
+pub fn monitor_event(
+    host: &str,
+    event: &crate::monitor::Event,
+    load: f64,
+    physical: u16,
+) -> String {
+    use crate::monitor::Event;
+    let host = safe(host);
+    match event {
+        Event::LoadOver { load5, limit } => format!(
+            "monitor: {host}: the 5-minute load is {load5:.2}, over the limit {limit:.2} \
+             ({load} times {physical} physical cores). riff changes nothing: you decide."
+        ),
+        Event::LoadGood { load5, limit } => format!(
+            "monitor: {host}: the 5-minute load is good again: {load5:.2}, under the limit \
+             {limit:.2}."
+        ),
+        Event::MemoryUnder { avail_gb, floor } => format!(
+            "monitor: {host}: {avail_gb} GB of memory is available, under the floor {floor} GB. \
+             riff starts no worker here. riff changes nothing more: you decide."
+        ),
+        Event::MemoryGood { avail_gb, floor } => format!(
+            "monitor: {host}: the available memory is good again: {avail_gb} GB, over the floor \
+             {floor} GB."
+        ),
+        Event::Killed(kill) => format!(
+            "monitor: {host}: {} killed {} at {}.",
+            safe(&kill.by),
+            safe(&kill.what),
+            clock(kill.at)
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

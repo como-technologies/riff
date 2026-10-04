@@ -90,6 +90,7 @@ fn top(sessions: &[SessionInfo]) -> String {
         repo: Some("como-technologies/riff"),
         width: 200,
         fault: None,
+        machines: &[],
     };
     anstream::adapter::strip_str(&top.view()).to_string()
 }

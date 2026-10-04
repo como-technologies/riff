@@ -898,6 +898,38 @@ impl Tools {
         })
     }
 
+    /// Runs the monitor of this machine for as long as the tools run,
+    /// while this session is the lead (01M421QPKWPX00X24F8V6DT8Z3). See
+    /// [`crate::monitor`].
+    pub fn monitor(&self) -> tokio::task::JoinHandle<()> {
+        let tools = self.clone();
+        tokio::spawn(async move {
+            let mut monitor = crate::monitor::Monitor::new();
+            loop {
+                tokio::time::sleep(crate::monitor::Monitor::every()).await;
+                let on = crate::settings::path()
+                    .and_then(|path| crate::settings::monitor(&path))
+                    .is_ok_and(|m| m.on);
+                if !on || tools.left() {
+                    continue;
+                }
+                let me = tools.me();
+                let lead = match tools.api.who(&me, false).await {
+                    Ok(sessions) => sessions
+                        .iter()
+                        .any(|s| s.uri.who() == me.who() && s.uri.lead()),
+                    Err(_) => false,
+                };
+                if !lead {
+                    continue;
+                }
+                if let Err(e) = monitor.look(&tools.api, &me).await {
+                    eprintln!("riff: the monitor cannot look: {e:#}");
+                }
+            }
+        })
+    }
+
     /// Tells the server that the session ended (R205). It waits at most
     /// [`END_WAIT`].
     pub async fn end(&self) {
@@ -950,6 +982,7 @@ pub async fn serve(
     }
     let alive = tools.keep_alive();
     // A worker is never the lead.
+    let monitor = (!worker).then(|| tools.monitor());
     let rollout = (!worker).then(|| tools.rollout());
     let reap = (!worker).then(|| tools.reap());
     let tidy = (!worker).then(|| tools.tidy());
@@ -1013,6 +1046,9 @@ pub async fn serve(
         if let Some(reap) = &reap {
             reap.abort();
         }
+        if let Some(monitor) = &monitor {
+            monitor.abort();
+        }
         if let Some(tidy) = &tidy {
             tidy.abort();
         }
@@ -1031,6 +1067,9 @@ pub async fn serve(
     }
     if let Some(reap) = reap {
         reap.abort();
+    }
+    if let Some(monitor) = monitor {
+        monitor.abort();
     }
     if let Some(tidy) = tidy {
         tidy.abort();

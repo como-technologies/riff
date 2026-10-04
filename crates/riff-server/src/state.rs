@@ -3195,10 +3195,10 @@ mod tests {
     fn a_status_that_does_not_fit_on_one_line_is_refused() {
         let now = Instant::now();
         let mut state = setup(now);
-        for bad in [status(""), status("line\nbreak"), status(&"x".repeat(201))] {
+        for bad in [status(""), status("line\nbreak"), status(&"x".repeat(401))] {
             assert!(state.set_status(&api(), bad, now, T0).is_err());
         }
-        for bad in ["", " ", "line\nbreak", &"x".repeat(201)] {
+        for bad in ["", " ", "line\nbreak", &"x".repeat(401)] {
             assert!(state.set_blocked(&api(), bad.into(), now, T0).is_err());
         }
         assert!(listed(&state).iter().all(|s| s.status.is_none()));

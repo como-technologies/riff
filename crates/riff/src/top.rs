@@ -84,8 +84,9 @@ use riff_core::name::Repo;
 use riff_core::wire::{Person, PersonRole, RiffOwner, RiffReply, SessionInfo, SessionState};
 use serde::Deserialize;
 
+use crate::host::HostStatus;
 use crate::state;
-use crate::style::{BOLD, ERROR, MUTED, session as session_style, styled};
+use crate::style::{BOLD, ERROR, MUTED, WARNING, session as session_style, styled};
 use crate::text::safe;
 use crate::view;
 
@@ -329,6 +330,195 @@ pub struct Top<'a> {
     /// while the table is the one of the last good look
     /// (01M3Z8FXE2DY34ZP75WJE1S8HR).
     pub fault: Option<&'a str>,
+    /// The machines that run workers ([`machines`]): their numbers go
+    /// under the row of their host (01M421QPZ9E01PQ62PDBH378SJ).
+    pub machines: &'a [Machine],
+}
+
+/// The numbers of one machine that runs workers, for `riff top`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Machine {
+    pub user: String,
+    pub host: String,
+    pub status: HostStatus,
+}
+
+/// The machines that run workers: each live workers host in
+/// `sessions`, with the numbers of its status, and `here`, the machine
+/// of `riff top`, when no host tells its numbers
+/// (01M421QPZ9E01PQ62PDBH378SJ).
+///
+/// ```
+/// use riff::host::HostStatus;
+/// use riff::top::{Machine, machines};
+/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+///
+/// let status = HostStatus { limit: 2, floor: 4, machine: None, disk: None, monitor: None, workers: vec![] };
+/// let host = SessionInfo {
+///     uri: "riff://mike@thelio/o/r?session=h1".parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: Some(StatusInfo {
+///         status: Status { step: status.line() },
+///         age_secs: 1,
+///         stale: false,
+///     }),
+///     worker: false,
+///     stopping: false,
+///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
+///     state: None,
+///     work: None,
+///     waits: None,
+///     blocked: None,
+/// };
+/// let here = Machine { user: "mike".into(), host: "pangolin".into(), status: status.clone() };
+/// let found = machines(std::slice::from_ref(&host), Some(here.clone()));
+/// assert_eq!(found.len(), 2);
+/// assert_eq!((found[0].user.as_str(), found[0].host.as_str()), ("mike", "thelio"));
+/// assert_eq!(found[1], here);
+/// // A workers host on the machine of riff top wins over the local numbers.
+/// let there = Machine { host: "thelio".into(), ..here };
+/// assert_eq!(machines(&[host], Some(there)).len(), 1);
+/// ```
+pub fn machines(sessions: &[SessionInfo], here: Option<Machine>) -> Vec<Machine> {
+    let mut found: Vec<Machine> = sessions
+        .iter()
+        .filter(|s| s.live)
+        .filter_map(|s| {
+            let status = HostStatus::parse(&s.status.as_ref()?.status.step)?;
+            Some(Machine {
+                user: s.uri.who().user().to_owned(),
+                host: s.uri.place().host().to_owned(),
+                status,
+            })
+        })
+        .collect();
+    if let Some(here) = here
+        && !found
+            .iter()
+            .any(|m| m.user == here.user && m.host == here.host)
+    {
+        found.push(here);
+    }
+    found
+}
+
+/// The parts of the line of the numbers of a machine in `riff top`
+/// (01M421QPZ9E01PQ62PDBH378SJ): the load average of 1 and 5 minutes
+/// against the physical cores, the cap of the clock and the clock now,
+/// the available memory against the floor, the workers against the
+/// limit, and the jobs of each worker. A number over its limit has the
+/// warning style. A host that tells fewer numbers gets fewer parts.
+///
+/// ```
+/// use riff::host::HostStatus;
+/// use riff::machine::Machine;
+/// use riff::monitor::Numbers;
+/// use riff::top::numbers;
+///
+/// let plain = |parts: Vec<(String, anstyle::Style)>| {
+///     parts.into_iter().map(|(t, _)| t).collect::<Vec<_>>().join("  ")
+/// };
+/// let status = HostStatus {
+///     limit: 4,
+///     floor: 4,
+///     machine: Some(Machine { cores: 16, mhz: 3000, now_mhz: 2990, mem_gb: 31, avail_gb: 20, load: 13.2 }),
+///     disk: None,
+///     monitor: Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs: 2, kill: None }),
+///     workers: vec![("%3".into(), "1a2b3c4d".into()); 3],
+/// };
+/// assert_eq!(
+///     plain(numbers(&status)),
+///     "load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  jobs 2"
+/// );
+/// // Over the limits: the warning style.
+/// let over = HostStatus {
+///     machine: status.machine.map(|m| Machine { avail_gb: 3, ..m }),
+///     monitor: status.monitor.clone().map(|n| Numbers { load5: 12.5, ..n }),
+///     ..status.clone()
+/// };
+/// let warned: Vec<String> = numbers(&over)
+///     .into_iter()
+///     .filter(|(_, style)| *style == riff::style::WARNING)
+///     .map(|(t, _)| t)
+///     .collect();
+/// assert_eq!(warned, ["load 13.2 12.5/8", "3GB avail/4"]);
+/// // The line of a big machine fits in 80 columns under its host.
+/// let big = HostStatus {
+///     limit: 10,
+///     machine: Some(Machine { cores: 64, mhz: 5883, now_mhz: 5800, mem_gb: 256, avail_gb: 200, load: 33.2 }),
+///     monitor: Some(Numbers { on: true, load5: 28.4, limit: 48.0, physical: 32, jobs: 12, kill: None }),
+///     workers: vec![("%3".into(), "1a2b3c4d".into()); 10],
+///     ..status.clone()
+/// };
+/// assert!(6 + plain(numbers(&big)).len() <= 80, "{}", plain(numbers(&big)));
+/// // A host of the release before tells no numbers of the monitor.
+/// let old = HostStatus { monitor: None, ..status };
+/// assert_eq!(plain(numbers(&old)), "load 13.2/16  3000MHz now 2990  20GB avail/4  workers 3/4");
+/// ```
+pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
+    let style = |over: bool| {
+        if over { WARNING } else { anstyle::Style::new() }
+    };
+    let mut parts = Vec::new();
+    let monitor = status.monitor.as_ref();
+    if let Some(m) = &status.machine {
+        let (load, over) = match monitor {
+            Some(n) => (
+                format!("load {:.1} {:.1}/{}", m.load, n.load5, n.physical),
+                n.load5 > n.limit,
+            ),
+            None => (format!("load {:.1}/{}", m.load, m.cores), m.busy()),
+        };
+        parts.push((load, style(over)));
+        parts.push((
+            format!("{}MHz now {}", m.mhz, m.now_mhz),
+            anstyle::Style::new(),
+        ));
+        parts.push((
+            format!("{}GB avail/{}", m.avail_gb, status.floor),
+            style(m.low(status.floor)),
+        ));
+    }
+    let runs = status.workers.len();
+    parts.push((
+        format!("workers {runs}/{}", status.limit),
+        style(runs > usize::from(status.limit)),
+    ));
+    if let Some(n) = monitor {
+        parts.push((format!("jobs {}", n.jobs), anstyle::Style::new()));
+    }
+    parts
+}
+
+/// The line of the last kill on a machine in `riff top`
+/// (01M421QPZ9E01PQ62PDBH378SJ), or `None` with no kill.
+///
+/// ```
+/// use riff::host::HostStatus;
+/// use riff::monitor::{Kill, Numbers};
+///
+/// let kill = Kill { at: 1727980000, by: "systemd-oomd".into(), what: String::new() };
+/// let monitor = Numbers { on: true, load5: 1.0, limit: 12.0, physical: 8, jobs: 2, kill: Some(kill) };
+/// let status = HostStatus { limit: 2, floor: 4, machine: None, disk: None, monitor: Some(monitor), workers: vec![] };
+/// assert_eq!(
+///     riff::top::kill_line(&status).unwrap().0,
+///     format!("last kill {} by systemd-oomd", riff::text::clock(1727980000)),
+/// );
+/// assert_eq!(riff::top::kill_line(&HostStatus { monitor: None, ..status }), None);
+/// ```
+pub fn kill_line(status: &HostStatus) -> Option<(String, anstyle::Style)> {
+    let kill = status.monitor.as_ref()?.kill.as_ref()?;
+    Some((
+        format!(
+            "last kill {} by {}",
+            crate::text::clock(kill.at),
+            safe(&kill.by)
+        ),
+        WARNING,
+    ))
 }
 
 /// One line of the tree: a plain lead-in, then its parts, each with its
@@ -560,6 +750,7 @@ impl Top<'_> {
     ///     repo: Some("o/r"),
     ///     width: 80,
     ///     fault: None,
+    ///     machines: &[],
     /// };
     /// let text = anstream::adapter::strip_str(&top.view()).to_string();
     /// assert!(text.starts_with("riff   running\nowner  mike (m@x.io)\nbuild  "), "{text}");
@@ -651,6 +842,19 @@ impl Top<'_> {
                     vec![(safe(host), anstyle::Style::new())],
                 ));
                 let under = if last_host { "   " } else { "│  " };
+                // The numbers of the machine (01M421QPZ9E01PQ62PDBH378SJ).
+                let machine = self
+                    .machines
+                    .iter()
+                    .find(|m| m.user == user && &m.host == host);
+                if let Some(m) = machine {
+                    let bar = if sessions.is_empty() { "   " } else { "│  " };
+                    let pre = format!("{under}{bar}");
+                    lines.push(Line::new(pre.clone(), numbers(&m.status)));
+                    if let Some(kill) = kill_line(&m.status) {
+                        lines.push(Line::new(pre, vec![kill]));
+                    }
+                }
                 for (i, s) in sessions.iter().enumerate() {
                     let last = i + 1 == sessions.len();
                     let pre = format!("{under}{}", branch(last));
