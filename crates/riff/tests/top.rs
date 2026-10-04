@@ -158,13 +158,19 @@ async fn three_sessions(server: &str, dir: &Path, path: &Path) {
 /// `OWNER/REPO#WORKTREE`, with the claim `item` in the thread of its
 /// repository. It is live until the test ends.
 async fn session_at(server: &str, place: &str, id: &str, item: Option<&str>) {
+    session_of(server, "mike@pangolin", place, id, item).await;
+}
+
+/// A session `id` of `who`, `USER@HOST`, at `place`, as
+/// [`session_at`].
+async fn session_of(server: &str, who: &str, place: &str, id: &str, item: Option<&str>) {
     let (repo, worktree) = place.split_once('#').unwrap_or((place, ""));
     let fragment = if worktree.is_empty() {
         String::new()
     } else {
         format!("#{worktree}")
     };
-    let uri: SessionUri = format!("riff://mike@pangolin/{repo}?session={id}{fragment}")
+    let uri: SessionUri = format!("riff://{who}/{repo}?session={id}{fragment}")
         .parse()
         .unwrap();
     let api = Api::new(server);
@@ -237,6 +243,20 @@ fn session(top: &str, id: &str) -> Vec<String> {
     std::iter::once(&rows[head]).chain(under).cloned().collect()
 }
 
+/// The first word of each row of the tree that is not a detail line:
+/// a person, a host, a repository or a session ID, in the order of the
+/// tree.
+fn heads(top: &str) -> Vec<String> {
+    rows(top)
+        .iter()
+        .filter(|r| r.contains("─ ") || !r.starts_with([' ', '│']))
+        .map(|r| {
+            let rest = r.rsplit("─ ").next().unwrap();
+            rest.split_whitespace().next().unwrap().to_owned()
+        })
+        .collect()
+}
+
 /// The detail lines of the session `id`, with no lead-in.
 fn detail(top: &str, id: &str) -> Vec<String> {
     session(top, id)
@@ -271,14 +291,14 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
     assert_eq!(
         rows,
         [
-            "mike  online",
-            "├─ pangolin",
-            "│  ├─ c3  riff  blocked",
+            "mike  online  3 sessions: 1 busy, 1 idle, 1 blocked, 1 claim",
+            "├─ pangolin  › riff  2 sessions: 1 idle, 1 blocked",
+            "│  ├─ c3  blocked",
             "│  │    waits for a review (Ns ago)",
-            "│  └─ a1  riff  lead  idle",
+            "│  └─ a1  lead  idle",
             "│       monitoring work for Ns",
-            "└─ thelio",
-            "   └─ b2  riff  worker  busy",
+            "└─ thelio  › riff  1 session: 1 busy, 1 claim",
+            "   └─ b2  worker  busy",
             "        working on #12 Show the wave",
             "        Ns ago: tests",
         ],
@@ -476,7 +496,14 @@ fn the_book_shows_real_top_commands() {
             commands.push(line.split(['|', '>']).next().unwrap().trim().to_owned());
         }
     }
-    for want in ["riff top", "riff top --once"] {
+    for want in [
+        "riff top",
+        "riff top --once",
+        "riff top --user brett",
+        "riff top --host pangolin",
+        "riff top --repo como-technologies/strata",
+        "riff top --by repo",
+    ] {
         assert!(commands.iter().any(|c| c == want), "{want}: {commands:?}");
     }
     for command in commands {
@@ -490,11 +517,12 @@ fn the_book_shows_real_top_commands() {
 }
 
 /// The example table of "See what each session does" in How It Works
-/// has the form of the output: the wave line names its repository, and
-/// each session line names its place after the session ID. It shows
-/// two repositories and a worktree (01M3WNHCD659FH3Z5VYYH69WWR).
+/// has the form of the output: a board for each repository, the four
+/// levels of the tree, the short form, the counts, and the worktree on
+/// each session line (01M3WNHCD659FH3Z5VYYH69WWR,
+/// 01M42KHN33M4K13GKTX2WM6CMM, 01M42KHN80V49HDDZF953HXDT0).
 #[test]
-fn the_book_example_names_the_place_of_each_session() {
+fn the_book_example_has_the_four_level_tree() {
     let page = std::fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
     )
@@ -505,29 +533,39 @@ fn the_book_example_names_the_place_of_each_session() {
         .unwrap();
     let example = part.split("```text\n").nth(1).unwrap();
     let example = example.split("```").next().unwrap();
-    assert!(
-        example.contains("\nWave 3 (como-technologies/riff)\n"),
+    for board in [
+        "\nWave 3 (como-technologies/riff)\n",
+        "\nWave 5 (como-technologies/strata)\n",
+    ] {
+        assert!(example.contains(board), "{board}: {example}");
+    }
+    let mut worktrees: Vec<&str> = Vec::new();
+    for line in example.lines() {
+        assert!(line.chars().count() <= 80, "{line}");
+        let Some(rest) = line.split("─ ").nth(1) else {
+            continue;
+        };
+        let words: Vec<&str> = rest.split("  ").collect();
+        // A session line starts with its ID. Each other row has counts.
+        if words[0].len() == 8 {
+            worktrees.extend(words.iter().copied().filter(|w| w.starts_with('#')));
+        } else {
+            assert!(line.contains(" session"), "{line}");
+        }
+    }
+    assert_eq!(
+        worktrees,
+        ["#issue-88", "#issue-7", "#issue-8"],
         "{example}"
     );
-    let mut places = Vec::new();
-    for line in example.lines().filter(|l| l.contains("─ ")) {
-        let words: Vec<&str> = line.split("─ ").nth(1).unwrap().split("  ").collect();
-        // A host line has one word. A session line starts with its ID.
-        if words.len() > 1 {
-            assert_eq!(words[0].len(), 8, "{line}");
-            let repo = words[1].split('#').next().unwrap();
-            assert!(["riff", "strata"].contains(&repo), "{line}");
-            places.push(words[1]);
-        }
-        assert!(line.chars().count() <= 80, "{line}");
+    for row in [
+        "\nbrett  online  › kadomony  › strata  1 session: 1 busy, 1 claim\n",
+        "\n├─ pangolin  › riff  2 sessions: 1 busy, 1 idle, 1 claim\n",
+        "\n   ├─ riff  3 sessions: 1 idle, 1 blocked, 1 claim\n",
+        "\n   └─ strata  1 session: 1 idle\n",
+    ] {
+        assert!(example.contains(row), "{row}: {example}");
     }
-    for want in ["riff", "riff#issue-7", "strata#issue-88"] {
-        assert!(places.contains(&want), "{want}: {places:?}");
-    }
-    assert!(
-        example.contains("  strata#issue-88  lead  "),
-        "a lead line names its repository: {example}"
-    );
 }
 
 /// A pause makes each live session `paused`, with the step it stopped
@@ -614,11 +652,11 @@ async fn a_worker_with_no_claim_shows_must_clear_then_idle_not_its_old_step() {
     );
 }
 
-/// Each session line names the repository and the worktree of its
-/// session, as `riff who` does, and each line fits in 80 columns. A
-/// lead line names the repository of its lead. The wave line names its
-/// repository, and a claim in another repository is not on its board
-/// (01M3WNHCD659FH3Z5VYYH69WWR).
+/// Each session is under the row of its repository, and its line names
+/// its worktree. Each line fits in 80 columns. Each repository has its
+/// own board, and a claim in another repository is not on it
+/// (01M3WNHCD659FH3Z5VYYH69WWR, 01M42KHN33M4K13GKTX2WM6CMM,
+/// 01M42KHN80V49HDDZF953HXDT0).
 #[tokio::test(flavor = "multi_thread")]
 async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     let (server, _) = start_server().await;
@@ -654,23 +692,27 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     assert_eq!(
         heads,
         [
-            "│  ├─ a1  riff  lead  idle",
-            "│  ├─ c3  riff  blocked",
-            "│  ├─ d4  strata  lead  busy",
-            "│  ├─ e5  strata#issue-88  busy",
-            "│  └─ f6  riff#issue-12  idle",
-            "   └─ b2  riff  worker  idle",
+            "│  │  ├─ a1  lead  idle",
+            "│  │  ├─ c3  blocked",
+            "│     ├─ d4  lead  busy",
+            "│     └─ e5  #issue-88  busy",
+            "│  │  └─ f6  #issue-12  idle",
+            "   └─ b2  worker  idle",
         ],
         "{top}"
     );
+    let rows = rows(&top);
+    for row in [
+        "├─ pangolin  5 sessions: 2 busy, 2 idle, 1 blocked, 2 claims",
+        "│  ├─ riff  3 sessions: 2 idle, 1 blocked",
+        "│  └─ strata  2 sessions: 2 busy, 2 claims",
+        "└─ thelio  › riff  1 session: 1 idle",
+    ] {
+        assert!(rows.iter().any(|r| r == row), "{row}: {top}");
+    }
     assert!(
-        top.contains("\n\nWave 3 (como-technologies/riff)\n  free: #12\n\n"),
+        top.contains("\n\nWave 3 (como-technologies/riff)\n  free: #12\n\nWave 3 (como-technologies/strata)\n  claimed: #12\n\n"),
         "the claims of strata are not on the board of riff: {top}"
-    );
-    assert_eq!(
-        detail(&top, "d4"),
-        ["working on #12"],
-        "no title of riff for an issue of strata: {top}"
     );
 
     // `riff who` names the same places.
@@ -685,8 +727,84 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     }
 }
 
+/// `riff top --user`, `--host`, `--repo` and `--by repo` each show only
+/// the matching rows, in the order of the tree, and only the boards of
+/// their repositories (01M42KHNCBMBCT3TFBYWE339H5,
+/// 01M42KHN33M4K13GKTX2WM6CMM).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_flags_of_top_show_only_the_matching_rows() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    script(
+        bin.path(),
+        "gh",
+        r#"case "$*" in
+  *strata*) echo '[{"number": 88, "title": "Strata item", "milestone": {"title": "Wave 5"}}]' ;;
+  *) echo '[{"number": 12, "title": "Show the wave", "milestone": {"title": "Wave 3"}}]' ;;
+esac"#,
+    );
+    three_sessions(&server, dir, bin.path()).await;
+    let strata = "como-technologies/strata";
+    let g7 = format!("{strata}#issue-88");
+    session_of(&server, "brett@kadomony", &g7, "g7", Some("issue-88")).await;
+    session_of(&server, "brett@kadomony", strata, "h8", None).await;
+    session_at(&server, strata, "d4", None).await;
+
+    let top = |flags: &[&str]| {
+        let mut args = vec!["top", "--once"];
+        args.extend(flags);
+        output(riff(&server, dir, Some("a1"), bin.path(), &args))
+    };
+    let riff_board = "\nWave 3 (como-technologies/riff)\n";
+    let strata_board = "\nWave 5 (como-technologies/strata)\n  claimed: #88\n";
+
+    let all = top(&[]).await;
+    assert!(
+        all.contains(riff_board) && all.contains(strata_board),
+        "{all}"
+    );
+
+    let brett = top(&["--user", "brett"]).await;
+    assert_eq!(heads(&brett), ["brett", "g7", "h8"], "{brett}");
+    assert!(
+        rows(&brett)[0].starts_with("brett  online  › kadomony  › strata  2 sessions: "),
+        "{brett}"
+    );
+    assert!(
+        brett.contains(strata_board) && !brett.contains(riff_board),
+        "{brett}"
+    );
+    assert!(!brett.contains("blocked  c3"), "{brett}");
+
+    let pangolin = top(&["--host", "pangolin"]).await;
+    let want = ["mike", "riff", "c3", "a1", "strata", "d4"];
+    assert_eq!(heads(&pangolin), want, "{pangolin}");
+
+    let repo = top(&["--repo", strata]).await;
+    assert_eq!(heads(&repo), ["brett", "g7", "h8", "mike", "d4"], "{repo}");
+    assert!(
+        repo.contains(strata_board) && !repo.contains(riff_board),
+        "{repo}"
+    );
+
+    let both = top(&["--user", "mike", "--repo", strata]).await;
+    assert_eq!(heads(&both), ["mike", "d4"], "{both}");
+
+    let by_repo = top(&["--by", "repo"]).await;
+    let want = [
+        "riff", "pangolin", "c3", "a1", "thelio", "b2", "strata", "brett", "g7", "h8", "mike", "d4",
+    ];
+    assert_eq!(heads(&by_repo), want, "{by_repo}");
+    assert!(
+        rows(&by_repo)[0].starts_with("riff  › mike  online  3 sessions: "),
+        "{by_repo}"
+    );
+}
+
 /// When the repositories of the sessions have more than one owner, each
-/// session line has `OWNER/REPO` (01M3WNHCD659FH3Z5VYYH69WWR).
+/// repository line has `OWNER/REPO` (01M3WNHCD659FH3Z5VYYH69WWR).
 #[tokio::test(flavor = "multi_thread")]
 async fn two_owners_show_the_owner_of_each_repository() {
     let (server, _) = start_server().await;
@@ -698,16 +816,15 @@ async fn two_owners_show_the_owner_of_each_repository() {
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
-    assert_eq!(
-        session(&top, "d4")[0],
-        "│  └─ d4  acme/strata#issue-88  lead  busy",
-        "{top}"
-    );
-    assert_eq!(
-        session(&top, "a1")[0],
-        "│  ├─ a1  como-technologies/riff  lead  idle",
-        "{top}"
-    );
+    let rows = rows(&top);
+    for row in [
+        "│  ├─ acme/strata  1 session: 1 busy, 1 claim",
+        "│  │  └─ d4  #issue-88  lead  busy",
+        "│  └─ como-technologies/riff  2 sessions: 1 idle, 1 blocked",
+        "└─ thelio  › como-technologies/riff  1 session: 1 busy, 1 claim",
+    ] {
+        assert!(rows.iter().any(|r| r == row), "{row}: {top}");
+    }
 }
 
 /// A session with no claim and no status is `idle` in `riff top` and in
