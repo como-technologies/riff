@@ -167,7 +167,10 @@ riff cloud list
 ```
 
 `no service` in `riff cloud list` means that `gcloud` replied that the
-service does not exist.
+service does not exist. When your account has no permission on the
+project, riff stops with the `PERMISSION_DENIED` line of `gcloud`. Sign
+in with an account of the project, or ask the owner of the project for
+the permission.
 
 ## Sign in first
 

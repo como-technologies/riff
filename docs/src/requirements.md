@@ -1602,7 +1602,8 @@
   code that is not 0. An ended sign-in gives
   `gcloud: the sign-in ended: run gcloud auth login`. riff says that a
   resource is missing only when `gcloud` replies that it does not
-  exist.
+  exist. A reply that the account has no permission is an error, also
+  when it says that the resource may not exist.
 
 ## One instance
 

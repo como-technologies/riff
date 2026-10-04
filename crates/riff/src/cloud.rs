@@ -205,6 +205,16 @@ impl Gcloud {
 /// );
 /// assert!(!ended.not_found());
 /// assert_eq!(ended.to_string(), "gcloud: the sign-in ended: run gcloud auth login");
+///
+/// // Cloud Run says "may not exist" when the account has no permission.
+/// let denied = Failed::new(
+///     ["run", "services", "describe", "riff-server"].map(String::from).to_vec(),
+///     "ERROR: (gcloud.run.services.describe) PERMISSION_DENIED: Permission 'run.services.get' \
+///      denied on resource 'namespaces/p/services/riff-server' (or resource may not exist).\n",
+/// );
+/// assert!(denied.denied());
+/// assert!(!denied.not_found());
+/// assert!(denied.to_string().starts_with("gcloud run services describe: PERMISSION_DENIED: "));
 /// ```
 #[derive(Debug)]
 pub struct Failed {
@@ -230,20 +240,22 @@ impl Failed {
             || e.contains("do not currently have an active account")
     }
 
+    /// True when the account of `gcloud` has no permission for the
+    /// call.
+    pub fn denied(&self) -> bool {
+        let e = self.stderr.to_lowercase();
+        e.contains("permission_denied") || e.contains("permission denied")
+    }
+
     /// True when `gcloud` replies that the resource does not exist. An
-    /// ended sign-in is never this.
+    /// ended sign-in and a refused permission are never this, also when
+    /// the reply says that the resource "may not exist".
     pub fn not_found(&self) -> bool {
-        if self.signin_ended() {
+        if self.signin_ended() || self.denied() {
             return false;
         }
         let e = self.stderr.to_lowercase();
-        [
-            "cannot find",
-            "not_found",
-            "not found",
-            "does not exist",
-            "may not exist",
-        ]
+        ["cannot find", "not_found", "not found", "does not exist"]
         .iter()
         .any(|word| e.contains(word))
     }

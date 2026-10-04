@@ -49,6 +49,8 @@ struct Cloud {
     found: Vec<String>,
     /// Each call fails as when the sign-in of `gcloud` ended.
     signin_ended: bool,
+    /// Each call fails as when the account has no permission.
+    denied: bool,
 }
 
 /// The result of one `riff cloud` run.
@@ -103,6 +105,7 @@ impl Cloud {
             top,
             found: Vec::new(),
             signin_ended: false,
+            denied: false,
         }
     }
 
@@ -115,6 +118,13 @@ impl Cloud {
     /// Each call of `gcloud` fails as when its sign-in ended.
     fn signin_ended(mut self) -> Cloud {
         self.signin_ended = true;
+        self
+    }
+
+    /// Each call of `gcloud` fails as when the account has no
+    /// permission.
+    fn denied(mut self) -> Cloud {
+        self.denied = true;
         self
     }
 
@@ -163,6 +173,9 @@ impl Cloud {
         }
         if self.signin_ended {
             cmd.env("FAKE_GCLOUD_SIGNIN_ENDED", "1");
+        }
+        if self.denied {
+            cmd.env("FAKE_GCLOUD_DENIED", "1");
         }
         let mut child = cmd.spawn().unwrap();
         {
@@ -892,13 +905,11 @@ fn list_and_status_show_each_instance() {
 
 /// A failed call of `gcloud` gives its error in one line and a code
 /// that is not 0. It never gives "no service" (01M4382RKERWAPKBRY9W8F2GSA).
-#[test]
-fn an_ended_sign_in_of_gcloud_is_an_error_and_no_service_is_not_said() {
-    let cloud = Cloud::new()
+fn a_failed_gcloud_is_an_error_and_no_service_is_not_said(cloud: Cloud, line: &str) {
+    let cloud = cloud
         .set("shared.env", "CLOUD_URL", "http://127.0.0.1:9")
         .set("stage.env", "CLOUD_URL", "http://127.0.0.1:9")
-        .found(&["run services describe riff-stage "])
-        .signin_ended();
+        .found(&["run services describe riff-stage "]);
     for args in [
         &["list"][..],
         &["status", "stage"],
@@ -910,10 +921,7 @@ fn an_ended_sign_in_of_gcloud_is_an_error_and_no_service_is_not_said() {
         let stderr = ran.stderr();
         let lines: Vec<&str> = stderr.lines().filter(|l| l.contains("gcloud")).collect();
         assert_eq!(lines.len(), 1, "{args:?}: one line names gcloud:\n{stderr}");
-        assert!(
-            lines[0].ends_with("gcloud: the sign-in ended: run gcloud auth login"),
-            "{args:?}: {stderr}"
-        );
+        assert!(lines[0].contains(line), "{args:?}: {stderr}");
         let stdout = ran.stdout();
         assert!(!stdout.contains("no service"), "{args:?}: {stdout}");
         assert!(!stdout.contains(": none"), "{args:?}: {stdout}");
@@ -921,6 +929,24 @@ fn an_ended_sign_in_of_gcloud_is_an_error_and_no_service_is_not_said() {
         assert!(!ran.calls.contains(" delete "), "{args:?}: {}", ran.calls);
         assert!(!ran.calls.contains(" create "), "{args:?}: {}", ran.calls);
     }
+}
+
+#[test]
+fn an_ended_sign_in_of_gcloud_is_an_error_and_no_service_is_not_said() {
+    a_failed_gcloud_is_an_error_and_no_service_is_not_said(
+        Cloud::new().signin_ended(),
+        "gcloud: the sign-in ended: run gcloud auth login",
+    );
+}
+
+/// Cloud Run says "or resource may not exist" when the account has no
+/// permission. riff does not take it as "no service".
+#[test]
+fn a_refused_permission_is_an_error_and_no_service_is_not_said() {
+    a_failed_gcloud_is_an_error_and_no_service_is_not_said(
+        Cloud::new().denied(),
+        ": PERMISSION_DENIED: Permission 'run.services.get' denied",
+    );
 }
 
 /// "no service" comes only from a reply of `gcloud` that the service
