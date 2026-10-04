@@ -134,6 +134,20 @@ pub fn wrapper() -> Option<u32> {
     wrapper_value(std::env::var(WRAPPER).ok().as_deref())
 }
 
+/// Sends SIGTERM to the `riff workers run` wrapper `pid` of this worker.
+/// The wrapper stops `claude` (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+pub fn stop_wrapper(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+}
+
+/// The wrapper of this process when it is a worker: `RIFF_WORKER` is 1
+/// and `RIFF_WORKER_WRAPPER` names the wrapper.
+pub fn wrapper_of_worker() -> Option<u32> {
+    is_worker().then(wrapper).flatten()
+}
+
 /// [`wrapper`] for the value of `RIFF_WORKER_WRAPPER`.
 pub fn wrapper_value(value: Option<&str>) -> Option<u32> {
     value?.parse().ok()

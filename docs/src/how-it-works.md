@@ -4514,14 +4514,39 @@ sequenceDiagram
     M->>W: stop
     W-->>W: claude ends, the pane closes
     M->>S: end: the session leaves riff who
+    opt the worker still runs 60 s after the ask
+        S->>L: note: the worker still runs, and how to stop it
+    end
 ```
 
+The watch of a worker also sends a keep-alive each 10 seconds, and
+stops the wrapper in the same way. So a worker whose `riff mcp` ended,
+for example at a self-update, also stops.
+
 A worker that the lead wakes, or that claims work, before its next
-keep-alive goes on. Your lead gets a note for each worker that the
+keep-alive goes on. Your lead gets one note for each worker that the
 server stops:
 
 ```text
 workers: the server stops the idle worker 2a880834 on pangolin. It made no call for 75 seconds. At most 1 idle worker stays on each host.
+```
+
+A pause or a resume wakes the worker and takes the ask back. The
+server then asks again, but it does not send a second note.
+
+#### Stop a worker that the server cannot stop
+
+When the worker still runs 60 seconds after the ask, your lead gets
+one more note:
+
+```text
+workers: the idle worker 2a880834 on pangolin still runs 65 seconds after the ask to stop. Its riff mcp and its watch did not stop its riff workers run: for example, its riff mcp ended and its watch is of an older riff, or no riff workers run wraps it. Stop it on pangolin: riff workers stop 2a880834
+```
+
+Stop it on that machine with the command of the note:
+
+```sh
+riff workers stop 2a880834
 ```
 
 #### Change the idle workers

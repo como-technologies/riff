@@ -3130,7 +3130,9 @@ async fn draw_top(
 /// connects again when the stream ends (R131). It stops when the session
 /// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2). It sends a keep-alive
 /// each minute while it runs ([`api::keep_alive`],
-/// 01M3WG240PNMQYZ7TX6Z7ZF6M9).
+/// 01M3WG240PNMQYZ7TX6Z7ZF6M9). In a worker it sends one each 10
+/// seconds. When the reply asks the worker to stop, it stops the wrapper
+/// of the worker and ends (01M4385Z5BN03E6HTEB5GQVZ8X).
 ///
 /// With a `limit`, it ends with one line and status 0 when no wake came
 /// in that time (01M3Z64J08GW6N1H42AR2FZQZ4). On a new binary, it runs
@@ -3179,9 +3181,22 @@ async fn watch(
         follow.run(args);
         std::future::pending().await
     };
+    // The watch of a worker acts on the ask to stop too, so a worker
+    // whose riff mcp ended stops (01M4385Z5BN03E6HTEB5GQVZ8X).
+    let alive = async {
+        match riff::worker::wrapper_of_worker() {
+            Some(wrapper) => {
+                let every = riff_core::wire::WORKER_ALIVE_EVERY;
+                api::keep_alive_until_stop(api, me, every).await;
+                println!("riff: {}", text::IDLE_STOP);
+                riff::worker::stop_wrapper(wrapper);
+            }
+            None => api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY).await,
+        }
+    };
     tokio::select! {
         () = print_each(stream, text::wake_line, once) => {}
-        () = api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY) => {}
+        () = alive => {}
         () = left => println!("{}", text::WATCH_LEFT),
         () = update => {}
         () = no_wake => {}

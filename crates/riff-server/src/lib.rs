@@ -1092,17 +1092,26 @@ impl Server {
     }
 
     /// Asks each idle worker past the limit to stop, and posts a note to
-    /// the lead of its user for each (see [`idle`]).
+    /// the lead of its user for the first ask of each. Posts one more
+    /// note for each worker that still runs after the ask (see [`idle`]).
     async fn stop_idle_workers(&self) {
         let settings = self.engine.read(State::idle);
-        let mut posts = Vec::new();
+        let mut notes = Vec::new();
         for stopping in self.engine.stop_idle_workers() {
-            let news = idle::news(&stopping, &settings);
+            if stopping.first {
+                notes.push((stopping.worker.clone(), idle::news(&stopping, &settings)));
+            }
+        }
+        for stuck in self.engine.stuck_workers() {
+            notes.push((stuck.worker.clone(), idle::stuck(&stuck)));
+        }
+        let mut posts = Vec::new();
+        for (worker, news) in notes {
             tracing::info!("{news}");
-            let Some(thread) = stopping.worker.default_thread() else {
+            let Some(thread) = worker.default_thread() else {
                 continue;
             };
-            let lead = Selector::lead(stopping.worker.who().user(), &thread.to_string());
+            let lead = Selector::lead(worker.who().user(), &thread.to_string());
             posts.push(Server::news(Some(thread), vec![lead], &news, Kind::Note));
         }
         self.announce_each(posts).await;

@@ -531,6 +531,116 @@ async fn a_wake_of_the_lead_takes_back_the_ask_to_stop() {
     assert!(!api.alive(&w7).await.unwrap().stop);
 }
 
+/// A worker whose `riff mcp` ended, for example at a self-update, has
+/// only its watch. The watch gets the ask to stop in the reply to its
+/// keep-alive, and stops the wrapper (01M4385Z5BN03E6HTEB5GQVZ8X). So the
+/// worker is gone within one minute.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_watch_of_a_worker_with_no_riff_mcp_stops_its_wrapper() {
+    let api = start_server().await;
+    let lead = lead(&api).await;
+    api.idle(&person(&lead), Some(0), Some(1)).await.unwrap();
+    let w8: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w8"
+        .parse()
+        .unwrap();
+    api.register_as(&w8, true).await.unwrap();
+    let dir = repo();
+    let claude = fake_claude(dir.path(), "exec \"$RIFF_BIN\" watch --once");
+    let child = riff(&api, dir.path(), "w8")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let begin = Instant::now();
+    let (status, output) = tokio::task::spawn_blocking(move || {
+        let mut child = child;
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                return (status, child.wait_with_output().unwrap());
+            }
+            assert!(begin.elapsed() < Duration::from_secs(60), "w8 runs");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    })
+    .await
+    .unwrap();
+    let out = String::from_utf8_lossy(&output.stdout).into_owned();
+    let err = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(status.code(), Some(0), "{out}{err}");
+    assert!(out.contains(riff::text::IDLE_STOP), "{out}{err}");
+    assert!(!err.contains("worker stopped"), "{err}");
+    let read = lead_reads(&api, &lead).await;
+    assert_eq!(
+        read.matches("the server stops the idle worker w8").count(),
+        1,
+        "{read}"
+    );
+}
+
+/// The server asks an idle worker to stop while its repository is
+/// paused. The pause and the resume wake the worker, and each wake
+/// takes the ask back. The server asks again each time, but the lead
+/// gets one note (01M4385Z039RCFSKWFPWZAETTX). After the resume, the
+/// reply to a keep-alive still asks the worker to stop.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pause_and_a_resume_give_one_note_and_the_stop_holds() {
+    use futures::StreamExt;
+    use riff::api::PauseScope;
+    use riff_core::wire::RiffState;
+
+    let api = start_server().await;
+    let lead = lead(&api).await;
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    api.idle(&person(&lead), Some(0), Some(1)).await.unwrap();
+    let w9: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w9"
+        .parse()
+        .unwrap();
+    api.register_as(&w9, true).await.unwrap();
+
+    let stopping = async || {
+        api.who(&lead, false)
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.uri.who() == w9.who() && s.stopping)
+    };
+    let wait_for_the_ask = async || {
+        let begin = Instant::now();
+        while !stopping().await {
+            assert!(begin.elapsed() < Duration::from_secs(30), "no ask to stop");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+
+    let mut watch = Box::pin(api.watch(&w9).await.unwrap());
+    wait_for_the_ask().await;
+    for state in [RiffState::Paused, RiffState::Running] {
+        api.set_pause(&lead, &PauseScope::Here, state)
+            .await
+            .unwrap();
+        let wake = tokio::time::timeout(Duration::from_secs(10), watch.next()).await;
+        assert!(matches!(wake, Ok(Some(Ok(_)))), "no wake at {state:?}");
+        drop(watch);
+        // The worker reads, and starts its watch again.
+        api.inbox(&w9, None, false).await.unwrap();
+        watch = Box::pin(api.watch(&w9).await.unwrap());
+        wait_for_the_ask().await;
+    }
+
+    assert!(api.alive(&w9).await.unwrap().stop, "the stop holds");
+    let read = lead_reads(&api, &lead).await;
+    assert_eq!(
+        read.matches("the server stops the idle worker w9").count(),
+        1,
+        "{read}"
+    );
+    drop(watch);
+}
+
 /// `riff workers idle` shows the settings of idle workers, and sets
 /// them (01M3Q5A0TF9K49V8Z1ZY9NDF74).
 #[tokio::test(flavor = "multi_thread")]

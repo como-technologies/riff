@@ -2212,6 +2212,23 @@ pub async fn keep_alive(api: &Api, me: &SessionUri, every: Duration) {
     }
 }
 
+/// [`keep_alive`] that ends when a reply asks this session to stop: the
+/// server stops an idle worker (01M4385Z5BN03E6HTEB5GQVZ8X).
+pub async fn keep_alive_until_stop(api: &Api, me: &SessionUri, every: Duration) {
+    let mut tick = tokio::time::interval(every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick.tick().await;
+    loop {
+        tick.tick().await;
+        // A hung request must not stop the next keep-alive.
+        if let Ok(Ok(reply)) = tokio::time::timeout(every, api.alive(me)).await
+            && reply.stop
+        {
+            return;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -369,6 +369,21 @@ pub struct Stopping {
     pub host: String,
     /// The time since its last call.
     pub idle: Duration,
+    /// True for the first ask since the last change of its claims. Only
+    /// the first ask gives the lead a note (01M4385Z039RCFSKWFPWZAETTX).
+    pub first: bool,
+}
+
+/// An idle worker that still shows life [`crate::idle::STOP_WAIT`] after
+/// the ask to stop ([`State::stuck_workers`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stuck {
+    /// The worker.
+    pub worker: SessionUri,
+    /// Its host.
+    pub host: String,
+    /// The time since the first ask.
+    pub asked: Duration,
 }
 
 /// What a new message causes: sessions to wake and a line for `tail`.
@@ -1736,10 +1751,16 @@ impl State {
                 if time < after {
                     continue;
                 }
+                let first = self
+                    .presence
+                    .sessions
+                    .get(&who)
+                    .is_none_or(|session| session.asked().is_none());
                 stopping.push(Stopping {
                     worker: self.uri(&who, now),
                     host: host.clone(),
                     idle: time,
+                    first,
                 });
             }
         }
@@ -1778,6 +1799,66 @@ impl State {
             self.signal(stop.worker.who(), Signal::AskedToStop, now);
         }
         stopping
+    }
+
+    /// Each worker that still shows life [`crate::idle::STOP_WAIT`] after
+    /// the first ask to stop, while the ask holds. It gives each worker
+    /// one time for each first ask (01M4385Z2QAMEED30JYE81SMBY).
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let worker = |id: &str| -> SessionUri {
+    ///     format!("riff://mike@pangolin/como-technologies/riff?session={id}").parse().unwrap()
+    /// };
+    /// let (w1, w2) = (worker("w1"), worker("w2"));
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// for (w, at) in [(&w1, 0), (&w2, 10)] {
+    ///     state.worker(w, true, now);
+    ///     state.watch_started(w, now + Duration::from_secs(at));
+    /// }
+    /// let asked = now + Duration::from_secs(80);
+    /// assert_eq!(state.stop_idle_workers(asked).len(), 1, "w1 is asked to stop");
+    ///
+    /// // A worker that stops shows no life after the ask.
+    /// let later = asked + Duration::from_secs(90);
+    /// assert!(state.stuck_workers(later).is_empty());
+    ///
+    /// // A keep-alive after the wait: the worker still runs.
+    /// state.alive(&w1, later);
+    /// let stuck = state.stuck_workers(later);
+    /// assert_eq!(stuck.len(), 1);
+    /// assert_eq!(stuck[0].worker, w1);
+    /// assert_eq!(stuck[0].asked, Duration::from_secs(90));
+    /// assert!(state.stuck_workers(later).is_empty(), "tells one time");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn stuck_workers(&mut self, now: Instant) -> Vec<Stuck> {
+        let mut stuck = Vec::new();
+        for (who, session) in &mut self.presence.sessions {
+            let Some(asked) = session.asked() else {
+                continue;
+            };
+            let late = session
+                .alive
+                .is_some_and(|alive| alive >= asked + crate::idle::STOP_WAIT);
+            if session.stopping && late && !session.told_stuck && !session.gone(now) {
+                session.told_stuck = true;
+                let host = session.place.host().to_owned();
+                stuck.push((who.clone(), host, now.saturating_duration_since(asked)));
+            }
+        }
+        stuck
+            .into_iter()
+            .map(|(who, host, asked)| Stuck {
+                worker: self.uri(&who, now),
+                host,
+                asked,
+            })
+            .collect()
     }
 
     /// Whether a session of `user` is live, and the seconds since the
@@ -4142,6 +4223,50 @@ mod tests {
             stopped(&mut state, later).is_empty(),
             "the server asks once"
         );
+    }
+
+    /// 01M4385Z039RCFSKWFPWZAETTX: a wake takes the ask back, and the
+    /// server asks again, but only the first ask is for the lead. A claim
+    /// and a release start a new idle time: the next ask is a first ask
+    /// again.
+    #[test]
+    fn only_the_first_ask_of_an_idle_time_is_for_the_lead() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        state.register(&lead(api()), now);
+        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
+        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
+        // w2 makes a call one second after `at`, so w1 is the idle
+        // worker past the limit.
+        let w2_calls = |state: &mut State, at: Instant| {
+            let at = at + Duration::from_secs(1);
+            state.watch_ended(w2.who(), at);
+            state.watch_started(&w2, at);
+        };
+        let asks = |state: &mut State, at: Instant| -> Vec<(String, bool)> {
+            let stopping = state.stop_idle_workers(at);
+            let session = |s: &Stopping| s.worker.who().session().unwrap().to_owned();
+            stopping.iter().map(|s| (session(s), s.first)).collect()
+        };
+
+        let mut at = now;
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(asks(&mut state, at), [("w1".into(), true)]);
+        // A pause wakes w1: the end of its watch takes the ask back.
+        state.watch_ended(w1.who(), at);
+        state.watch_started(&w1, at);
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(asks(&mut state, at), [("w1".into(), false)]);
+
+        // w1 claims work and releases it: a new idle time.
+        state.claim(&w1, &repo(), "issue-12", at).unwrap();
+        state.release(&w1, &repo(), "issue-12", at).unwrap();
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(asks(&mut state, at), [("w1".into(), true)]);
     }
 
     /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: an idle worker on each of two hosts:

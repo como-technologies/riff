@@ -2970,6 +2970,22 @@
   to stop, the server posts a note to the repository thread of the
   worker, to the lead of its user: the short session ID, the host, the
   idle time and the setting `per_host`.
+- **01M4385Z039RCFSKWFPWZAETTX** The server posts the note of
+  01M3Q5A0WRQT4SGPSD0CQFF011 only for the first ask after the last
+  change of the claims of the worker. A wake that takes the ask back,
+  for example a pause or a resume, does not give a second note when
+  the server asks again.
+- **01M4385Z2QAMEED30JYE81SMBY** When a worker still shows life 60
+  seconds after the first ask to stop, while the ask holds, the server
+  posts one more note to the lead: the short session ID, the host, the
+  time since the ask, why riff could not stop it, and the command
+  `riff workers stop ID` to stop it. It posts this note one time for
+  each first ask.
+- **01M4385Z5BN03E6HTEB5GQVZ8X** `riff watch` in a worker
+  (`RIFF_WORKER=1` and `RIFF_WORKER_WRAPPER` set) sends its keep-alive
+  each 10 seconds. When the reply asks the worker to stop, it prints
+  one line, sends SIGTERM to the wrapper and ends. So a worker whose
+  `riff mcp` ended also stops.
 - **01M3Q5A0Z5DK0YV1MWTM4AQD5Z** `riff workers stop PANE --host HOST`
   asks the workers host on HOST to stop only the worker in PANE. PANE
   can also be the session ID of the worker, or its first 4 or more
