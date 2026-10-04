@@ -99,7 +99,9 @@ pub struct Riff {
 impl Riff {
     /// The riff of a checkpoint at `position`. Only the load path of a
     /// checkpoint can call it: only [`super::snapshot`] makes a
-    /// `LoadPath`. So no other code makes a riff with no `apply`.
+    /// `LoadPath`. So no other code makes a riff with no `apply`. It
+    /// takes one argument for each part.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn restore(
         _: LoadPath,
         position: u64,
