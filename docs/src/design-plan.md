@@ -27,8 +27,8 @@ the details go into the rustdoc.
 | Term | Meaning |
 |---|---|
 | plan | The current wave of one repository: its open items, the needs of each item, and the done needs. |
-| current wave | The open milestone `Wave N` with the lowest N. A repository with no such milestone has no current wave. |
-| item of the plan | An open issue of the current wave. Its name is `issue-N`. With no current wave: an open issue with no milestone. |
+| current wave | The open wave with the lowest number. A repository with no open wave has no current wave. |
+| item of the plan | An open issue of the current wave. Its name is `issue-N`. With no current wave: an open issue with no wave. |
 | need | An issue that an item names in its `Needs:` line. A need can be in an earlier wave, in a later wave, or in no wave. |
 | done | Merged: the issue is closed, or it has the comment `Merged in #PR (COMMIT)`. |
 | held item | An item that a lead holds, with a reason. No worker can claim it. |
@@ -40,7 +40,7 @@ the details go into the rustdoc.
 
 ```mermaid
 flowchart LR
-    P[person] -->|milestones, Needs: lines, merges| G[(GitHub)]
+    P[person] -->|waves, Needs: lines, merges| G[(GitHub)]
     G -->|"one gh query each minute"| L["the look of the lead<br/>(riff mcp)"]
     L -->|"plan, when it changed;<br/>plan_seen, when it did not"| S[riff-server]
     LD[lead] -->|"hold, free"| S
@@ -61,7 +61,7 @@ flowchart LR
 | The plan is on for the repository | the server | the first `plan`; the command `plan_off` |
 
 - A person plans on GitHub, as today. The skill, the book and the
-  leads keep the milestones and the `Needs:` lines.
+  leads keep the waves and the `Needs:` lines.
 - The server has no credential of the forge (#424). So the server never
   reads GitHub. A client tells it the plan.
 - The plan is opt-in for each repository. `riff plan on` sends the
@@ -71,7 +71,7 @@ flowchart LR
   (for example `como-technologies/strata`) decide for themselves.
 - The look of the lead reads the plan of each repository with a plan
   on. It makes one GraphQL query of `gh` for each look: the
-  milestones, and the open issues of the current wave with their body
+  open waves, and the open issues of the current wave with their body
   and their last comments, and the state of each need. The same query
   gives the item facts of #424. So the look reads the forge one time,
   and the needs come to the server one time: the server makes
@@ -136,6 +136,17 @@ sequenceDiagram
   plan that is not stale but older than the forge can refuse a claim
   for at most one minute: the refusal is safe, and the session picks
   another item.
+
+### The plan on GitHub
+
+- A wave is the milestone `Wave N`. The current wave is the open
+  milestone `Wave N` with the lowest N.
+- The GraphQL query of the look reads the open milestones, and the
+  open issues of the milestone of the current wave.
+- With no milestone `Wave N`, the items of the plan are the open
+  issues with no milestone.
+- The lead moves an item to an open wave with
+  `gh issue edit N --milestone "Wave M"`.
 
 ## 2. When an item is done
 
@@ -346,8 +357,8 @@ The time of the last look is presence, and not in the checkpoint.
   worker starts for it.
 - `waves.md` says what happens to an issue that a person reopens in a
   closed wave, and to an open issue of a wave that a person closes: it
-  is in no current wave until the lead moves it with
-  `gh issue edit N --milestone "Wave M"`.
+  is in no current wave until the lead moves it to an open wave (see
+  "The plan on GitHub").
 
 ## 5. How `riff audit` uses the plan
 
