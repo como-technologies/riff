@@ -1131,7 +1131,11 @@ impl Top<'_> {
         lines.push(Line::new(pre, parts));
         // The numbers of the machine of each host on the line
         // (01M421QPZ9E01PQ62PDBH378SJ).
-        let bar = if end.sessions.is_empty() { "   " } else { "│  " };
+        let bar = if end.sessions.is_empty() {
+            "   "
+        } else {
+            "│  "
+        };
         let more = format!("{under}{bar}");
         for row in chain.iter().filter(|r| r.level == Level::Host) {
             let user = row.sessions.first().map(|s| s.uri.who().user());
@@ -1181,7 +1185,10 @@ impl Top<'_> {
             Level::Host => vec![(safe(&row.key), anstyle::Style::new())],
             Level::Repo => {
                 let name = row.sessions.first().map(|s| self.repo_name(s));
-                vec![(name.unwrap_or_else(|| safe(&row.key)), anstyle::Style::new())]
+                vec![(
+                    name.unwrap_or_else(|| safe(&row.key)),
+                    anstyle::Style::new(),
+                )]
             }
         }
     }
@@ -1231,11 +1238,7 @@ impl Top<'_> {
     /// a claim in `repo` counts: an issue of another repository can
     /// have the same number.
     fn board(&self, repo: &str, items: &[u64]) -> Vec<Line> {
-        let waits = |n: &u64| {
-            self.issues
-                .get(repo)
-                .is_some_and(|i| i.verify.contains(n))
-        };
+        let waits = |n: &u64| self.issues.get(repo).is_some_and(|i| i.verify.contains(n));
         let mut groups: [(&str, Vec<String>); 3] =
             [("free", vec![]), ("claimed", vec![]), ("verify", vec![])];
         for n in items {
@@ -1432,11 +1435,20 @@ mod tests {
     fn riff_of_two() -> Vec<SessionInfo> {
         use SessionState::{Blocked, Busy, Idle};
         vec![
-            info("riff://mike@pangolin/o/riff?session=m1&claim=issue-7#issue-7", Busy),
+            info(
+                "riff://mike@pangolin/o/riff?session=m1&claim=issue-7#issue-7",
+                Busy,
+            ),
             info("riff://mike@pangolin/o/riff?session=m2", Idle),
             info("riff://mike@pangolin/o/strata?session=m3&lead=true", Idle),
-            info("riff://mike@thelio/o/riff?session=m4&claim=issue-8", Blocked),
-            info("riff://brett@kadomony/o/strata?session=b1&claim=issue-88#issue-88", Busy),
+            info(
+                "riff://mike@thelio/o/riff?session=m4&claim=issue-8",
+                Blocked,
+            ),
+            info(
+                "riff://brett@kadomony/o/strata?session=b1&claim=issue-88#issue-88",
+                Busy,
+            ),
             info("riff://brett@kadomony/o/strata?session=b2&lead=true", Idle),
         ]
     }
@@ -1479,19 +1491,28 @@ mod tests {
     #[test]
     fn each_repository_has_its_own_board_and_a_failed_read_shows_none() {
         let wave = |n: u64| {
-            let json = format!(r#"[{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}]"#);
+            let json =
+                format!(r#"[{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}]"#);
             Issues::parse(&json).unwrap()
         };
-        let both = BTreeMap::from([("o/riff".to_owned(), wave(7)), ("o/strata".to_owned(), wave(88))]);
+        let both = BTreeMap::from([
+            ("o/riff".to_owned(), wave(7)),
+            ("o/strata".to_owned(), wave(88)),
+        ]);
         let text = shown(&riff_of_two(), &both, &Show::default());
         assert!(
-            text.contains("\n\nWave 3 (o/riff)\n  claimed: #7\n\nWave 3 (o/strata)\n  claimed: #88\n\n"),
+            text.contains(
+                "\n\nWave 3 (o/riff)\n  claimed: #7\n\nWave 3 (o/strata)\n  claimed: #88\n\n"
+            ),
             "{text}"
         );
         // The read of strata failed.
         let riff = BTreeMap::from([("o/riff".to_owned(), wave(7))]);
         let text = shown(&riff_of_two(), &riff, &Show::default());
-        assert!(text.contains("\n\nWave 3 (o/riff)\n  claimed: #7\n\n"), "{text}");
+        assert!(
+            text.contains("\n\nWave 3 (o/riff)\n  claimed: #7\n\n"),
+            "{text}"
+        );
         assert!(!text.contains("(o/strata)"), "{text}");
         assert!(!text.to_lowercase().contains("error"), "{text}");
         assert!(text.contains("├─ b1  #issue-88  busy"), "{text}");
@@ -1519,9 +1540,13 @@ mod tests {
         assert_eq!(ids(&show(Some("brett"), None, None)), ["b1", "b2"]);
         assert_eq!(ids(&show(None, Some("thelio"), None)), ["m4"]);
         assert_eq!(ids(&show(None, None, Some("o/strata"))), ["m3", "b1", "b2"]);
-        assert_eq!(ids(&show(Some("mike"), Some("pangolin"), Some("o/strata"))), ["m3"]);
-        let repos: Vec<String> =
-            board_repos(&sessions, &show(None, Some("thelio"), None)).into_iter().collect();
+        assert_eq!(
+            ids(&show(Some("mike"), Some("pangolin"), Some("o/strata"))),
+            ["m3"]
+        );
+        let repos: Vec<String> = board_repos(&sessions, &show(None, Some("thelio"), None))
+            .into_iter()
+            .collect();
         assert_eq!(repos, ["o/riff"]);
         // A person with no session shows only with no filter of a host
         // or a repository.

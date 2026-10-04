@@ -533,7 +533,10 @@ fn the_book_example_has_the_four_level_tree() {
         .unwrap();
     let example = part.split("```text\n").nth(1).unwrap();
     let example = example.split("```").next().unwrap();
-    for board in ["\nWave 3 (como-technologies/riff)\n", "\nWave 5 (como-technologies/strata)\n"] {
+    for board in [
+        "\nWave 3 (como-technologies/riff)\n",
+        "\nWave 5 (como-technologies/strata)\n",
+    ] {
         assert!(example.contains(board), "{board}: {example}");
     }
     let mut worktrees: Vec<&str> = Vec::new();
@@ -550,7 +553,11 @@ fn the_book_example_has_the_four_level_tree() {
             assert!(line.contains(" session"), "{line}");
         }
     }
-    assert_eq!(worktrees, ["#issue-88", "#issue-7", "#issue-8"], "{example}");
+    assert_eq!(
+        worktrees,
+        ["#issue-88", "#issue-7", "#issue-8"],
+        "{example}"
+    );
     for row in [
         "\nbrett  online  › kadomony  › strata  1 session: 1 busy, 1 claim\n",
         "\n├─ pangolin  › riff  2 sessions: 1 busy, 1 idle, 1 claim\n",
@@ -754,7 +761,10 @@ esac"#,
     let strata_board = "\nWave 5 (como-technologies/strata)\n  claimed: #88\n";
 
     let all = top(&[]).await;
-    assert!(all.contains(riff_board) && all.contains(strata_board), "{all}");
+    assert!(
+        all.contains(riff_board) && all.contains(strata_board),
+        "{all}"
+    );
 
     let brett = top(&["--user", "brett"]).await;
     assert_eq!(heads(&brett), ["brett", "g7", "h8"], "{brett}");
