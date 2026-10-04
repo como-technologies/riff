@@ -489,6 +489,48 @@ export RIFF_USER=USER
 `riff` then sends no token. A server with `--require-sign-in` refuses
 it.
 
+### When the keyring is locked
+
+The OS keyring can lock, for example after a crash of
+`gnome-keyring-daemon`. Then `riff` stops with this line:
+
+```text
+the OS keyring of pangolin is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too
+```
+
+A workers host says the line one time, and the lead gets a note
+`keyring: the OS keyring of pangolin is locked ...`. The host looks at
+the keyring again each 30 seconds. It does not stop.
+
+```mermaid
+sequenceDiagram
+    participant K as OS keyring
+    participant H as riff workers host
+    participant L as lead
+    H->>K: a look each 30 seconds
+    K-->>H: locked
+    H->>L: one note: the keyring is locked
+    H->>K: a look each 30 seconds
+    K-->>H: locked (no new line, no new note)
+    Note over K: a person unlocks it at the desktop
+    H->>K: a look
+    K-->>H: an answer
+    H->>L: one note: the keyring answers again
+```
+
+1. Unlock the keyring at the desktop of the machine. In GNOME, open
+   "Passwords and Keys", and unlock the "Login" keyring.
+2. Check that `riff` and `gh` can read it:
+
+   ```sh
+   riff whoami
+   gh auth status
+   ```
+
+In 30 seconds the host tells the lead
+`keyring: the OS keyring of pangolin answers again. The host goes on.`
+You do not start the host again.
+
 ### When riff says the riff has no sign-in
 
 A riff can start again with no sign-in, for example after
