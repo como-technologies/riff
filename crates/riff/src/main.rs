@@ -2880,7 +2880,7 @@ async fn draw_top(
         if fetched.is_none_or(|t| t.elapsed() >= riff::top::ISSUES_TTL) {
             // A `gh` that fails keeps the last issues of its repository
             // (01M3ZC09FA9DZPTHK31XECZ566).
-            let repos = riff::top::board_repos(&who.sessions, show);
+            let repos = riff::top::board_repos(&who.sessions, show, repo.as_deref());
             let read = fetch(repos).await?;
             issues = riff::top::Issues::newest_each(std::mem::take(&mut issues), read);
             fetched = Some(Instant::now());

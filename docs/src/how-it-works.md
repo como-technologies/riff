@@ -935,7 +935,8 @@ riff top
 
 The header shows the state of the riff, the owner and the build, as in
 `riff who`. A board comes next for each repository with a live
-session: the current wave with its repository, one line for the `free`
+session, and for the repository where you run `riff top`: the current
+wave with its repository, one line for the `free`
 items, one for the `claimed` items, and one for the items in `verify`.
 An item is in `verify` when a session verifies it, and when no session
 holds it and its pull request waits for a verify or for the merge.

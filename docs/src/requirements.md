@@ -1912,7 +1912,9 @@
   A line with only one line under it, other than a session, takes that
   line after a `›`, so a small riff stays short.
 - **01M42KHN80V49HDDZF953HXDT0** `riff top` shows a board for each
-  repository with a live session, in the order of `OWNER/REPO`. It
+  repository with a live session, and for the repository of the
+  working directory when no `--user` and no `--host` is set and
+  `--repo` matches it, in the order of `OWNER/REPO`. It
   reads the issues and the pull requests of each one with `gh`, each
   minute. A read that fails keeps the last issues of its repository. A
   repository with no `gh` read shows its sessions, no board and no

@@ -11,7 +11,8 @@
 //!
 //! The titles of the issues and the current wave come from one
 //! `gh issue list` of the open issues ([`Issues`]) of each repository
-//! with a live session ([`board_repos`], 01M42KHN80V49HDDZF953HXDT0).
+//! with a live session, and of the working directory ([`board_repos`],
+//! 01M42KHN80V49HDDZF953HXDT0).
 //! riff keeps them for [`ISSUES_TTL`], then reads them again. A
 //! repository with no `gh` read has no titles and no board, and no error
 //! line. When a later read of `gh` fails, riff keeps the last issues of
@@ -391,15 +392,25 @@ impl Show {
 }
 
 /// The repositories that get a board: each repository, `OWNER/REPO`,
-/// of a live session that `show` shows (01M42KHN80V49HDDZF953HXDT0).
-/// `riff top` reads the issues of each one with `gh`.
-pub fn board_repos(sessions: &[SessionInfo], show: &Show) -> BTreeSet<String> {
-    sessions
+/// of a live session that `show` shows, and `here`, the repository of
+/// the working directory, when `show` has no `--user` and no `--host`
+/// and its `--repo` matches (01M42KHN80V49HDDZF953HXDT0). `riff top`
+/// reads the issues of each one with `gh`.
+pub fn board_repos(sessions: &[SessionInfo], show: &Show, here: Option<&str>) -> BTreeSet<String> {
+    let mut repos: BTreeSet<String> = sessions
         .iter()
         .filter(|s| s.live && show.shows(s))
         .filter(|s| matches!(s.uri.place().repo(), Repo::Git { .. }))
         .map(|s| s.uri.place().repo_text())
-        .collect()
+        .collect();
+    if let Some(here) = here
+        && show.user.is_none()
+        && show.host.is_none()
+        && show.repo.as_ref().is_none_or(|r| r == here)
+    {
+        repos.insert(here.to_owned());
+    }
+    repos
 }
 
 /// What `riff top` shows.
@@ -835,8 +846,9 @@ impl Top<'_> {
     ///
     /// - The header: the facts `riff`, `owner` and `build`, as in
     ///   `riff who`.
-    /// - A board for each repository of a live session that has issues
-    ///   ([`board_repos`], 01M42KHN80V49HDDZF953HXDT0): the current wave
+    /// - A board for each repository of a live session, and of
+    ///   [`Top::repo`], that has issues ([`board_repos`],
+    ///   01M42KHN80V49HDDZF953HXDT0): the current wave
     ///   with its repository, then one line for each group of its open
     ///   items: `free`, `claimed`, and `verify` for an item with a
     ///   verify claim, and for an item with no claim whose pull request
@@ -1056,7 +1068,7 @@ impl Top<'_> {
         for s in blocks {
             lines.push(Line::new("", vec![(block_line(s), ERROR)]));
         }
-        for repo in board_repos(self.sessions, self.show) {
+        for repo in board_repos(self.sessions, self.show, self.repo) {
             let Some((wave, items)) = self.issues.get(&repo).and_then(|i| i.wave.as_ref()) else {
                 continue;
             };
@@ -1544,10 +1556,17 @@ mod tests {
             ids(&show(Some("mike"), Some("pangolin"), Some("o/strata"))),
             ["m3"]
         );
-        let repos: Vec<String> = board_repos(&sessions, &show(None, Some("thelio"), None))
-            .into_iter()
-            .collect();
+        let repos: Vec<String> =
+            board_repos(&sessions, &show(None, Some("thelio"), None), Some("o/here"))
+                .into_iter()
+                .collect();
         assert_eq!(repos, ["o/riff"]);
+        // The repository of the working directory gets a board too,
+        // with no `--user` and no `--host`, when `--repo` matches it.
+        let here = |show: &Show| board_repos(&sessions, show, Some("o/here")).contains("o/here");
+        assert!(here(&Show::default()));
+        assert!(!here(&show(None, None, Some("o/riff"))));
+        assert!(!here(&show(Some("mike"), None, None)));
         // A person with no session shows only with no filter of a host
         // or a repository.
         let ann = show(None, None, None);
