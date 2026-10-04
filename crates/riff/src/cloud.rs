@@ -256,8 +256,8 @@ impl Failed {
         }
         let e = self.stderr.to_lowercase();
         ["cannot find", "not_found", "not found", "does not exist"]
-        .iter()
-        .any(|word| e.contains(word))
+            .iter()
+            .any(|word| e.contains(word))
     }
 
     /// The command of the call: the arguments before the first flag.
