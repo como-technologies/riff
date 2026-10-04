@@ -48,7 +48,7 @@
 //!
 //! let text = "# The stage\nCLOUD_PROJECT=p\nRIFF_OIDC_CLIENT_ID=\n";
 //! let s = Settings::parse("stage", text).unwrap_err();
-//! assert!(s.to_string().contains("CLOUD_REGION"));
+//! assert!(s.to_string().contains("have no CLOUD_PROJECT_NUMBER"));
 //! assert_eq!(
 //!     set_line(text, "RIFF_OIDC_CLIENT_ID", "x.apps.googleusercontent.com"),
 //!     "# The stage\nCLOUD_PROJECT=p\nRIFF_OIDC_CLIENT_ID=x.apps.googleusercontent.com\n",
