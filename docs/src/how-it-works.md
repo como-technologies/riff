@@ -436,9 +436,41 @@ is also true when you removed their worktree. You do not run `/mcp`.
 - `riff chat` keeps its lines on the screen, and draws its prompt
   again. Text that you typed but did not send is lost.
 - The riff tools of a session run the new `riff` when no tool call
-  runs. The session keeps its tools and its claims.
+  runs. The session keeps its tools and its claims. First they run the
+  new `riff` once as a check. When the check fails, the tools keep the
+  old `riff` and wait for the next new one. The error is in the MCP
+  log of the session.
 - `riff workers host` runs the new `riff` between two requests of the
   lead. It keeps its session, and its workers go on.
+
+```mermaid
+flowchart LR
+    N["a new riff on disk"] --> F{"a tool call runs?"}
+    F -- yes --> F
+    F -- no --> C{"the new riff passes its check?"}
+    C -- yes --> R["the tools run the new riff"]
+    C -- no --> K["the tools keep the old riff"]
+    K --> N
+```
+
+### When the riff tools of a session are gone
+
+The riff tools of a session can stop while the session goes on, for
+example after a crash. Claude Code does not start them again. Then
+the status line of the session says it:
+
+```text
+riff 2a880834 (no tools: riff mcp stopped, reconnect riff in /mcp)
+```
+
+Each end of `riff watch` says it to the session too. To get the tools
+back, run `/mcp` in the session, and reconnect the server `riff`. Or
+start the session again. Until then, the session can use the riff
+commands in a shell, for example:
+
+```sh
+riff read
+```
 
 ### When riff cannot read its directory
 

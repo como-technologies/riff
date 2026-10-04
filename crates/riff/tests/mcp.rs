@@ -505,6 +505,117 @@ async fn riff_mcp_runs_the_new_binary_and_keeps_the_connection() {
     assert!(child.try_wait().unwrap().is_none(), "{}", log());
 }
 
+/// A new binary that fails its check does not take the place of a
+/// running `riff mcp`: the old process keeps the tools, says the error
+/// once, and runs the next new binary that passes
+/// (01M43F5F9AQ9S39E1JZF8EBJEH).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_riff_that_fails_its_check_leaves_the_tools_in_place() {
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("riff");
+    let riff = Isolated::shared().riff_path();
+    install(&riff, &binary);
+    let broken = dir.path().join("broken");
+    std::fs::write(
+        &broken,
+        "#!/bin/sh\necho 'riff: cannot read the sign-in of this machine' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&broken, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .unwrap();
+    let stderr = dir.path().join("stderr");
+    let mut cmd = tokio::process::Command::from(Isolated::shared().command(&binary));
+    let mut child = cmd
+        .arg("mcp")
+        .current_dir(dir.path())
+        .env("RIFF_HOME", dir.path())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr).unwrap())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let io = (child.stdout.take().unwrap(), child.stdin.take().unwrap());
+    let client = ().serve(io).await.unwrap();
+    let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
+    assert!(!failed && text.contains("session=a1"), "{text}");
+    let old = runs(pid);
+    let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
+
+    install(&broken, &binary);
+    let start = Instant::now();
+    while !log().contains("fails its check") && start.elapsed() < Duration::from_secs(15) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        log().contains("cannot read the sign-in of this machine"),
+        "{}",
+        log()
+    );
+    assert_eq!(runs(pid), old, "{}", log());
+    let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
+    assert!(!failed && text.contains("session=a1"), "{text}");
+    // The error comes once, not at each look at the binary.
+    tokio::time::sleep(riff::binary::POLL * 3).await;
+    assert_eq!(log().matches("fails its check").count(), 1, "{}", log());
+
+    install(&riff, &binary);
+    let new = std::fs::metadata(&binary).unwrap().ino();
+    let start = Instant::now();
+    while runs(pid) != new && start.elapsed() < Duration::from_secs(15) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(runs(pid), new, "{}", log());
+    let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
+    assert!(!failed && text.contains("session=a1"), "{text}");
+    assert!(child.try_wait().unwrap().is_none(), "{}", log());
+}
+
+/// `riff mcp --check` with the client of a session does each step of
+/// the start that can fail, serves nothing and ends. A client that it
+/// cannot read fails it (01M43F5F9AQ9S39E1JZF8EBJEH).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_check_of_riff_mcp_serves_nothing() {
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let check = |client: &str| {
+        let mut cmd = Isolated::shared().riff();
+        cmd.args(["mcp", "--client", client, "--check"])
+            .current_dir(dir.path())
+            .env("RIFF_HOME", dir.path())
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "pangolin")
+            .env("RIFF_SESSION", "a1")
+            .env("RIFF_SERVER", api.base())
+            .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+            .env_remove("CLAUDE_CODE_SESSION_ID")
+            .env_remove("TMUX")
+            .stdin(Stdio::null());
+        cmd
+    };
+    let client = r#"{"protocolVersion":"2025-06-18","capabilities":{},
+        "clientInfo":{"name":"claude-code","version":"2"}}"#;
+    let mut good = check(client);
+    let out = tokio::task::spawn_blocking(move || good.output().unwrap())
+        .await
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+    let mut bad = check("{}");
+    let out = tokio::task::spawn_blocking(move || bad.output().unwrap())
+        .await
+        .unwrap();
+    assert!(!out.status.success(), "{out:?}");
+}
+
 /// `riff mcp` with a file as stdin stops with an error that says so.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_mcp_names_a_file_as_stdin() {

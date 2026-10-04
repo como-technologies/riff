@@ -1016,8 +1016,9 @@ pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Serves the tools on stdin and stdout until the session ends. It
 /// sends keep-alives while it runs, and the end call when its stdin
-/// closes or a signal stops it (R204, R205). On a new binary, it runs
-/// it in place, with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5). With
+/// closes or a signal stops it (R204, R205). On a new binary that
+/// passes its check (01M43F5F9AQ9S39E1JZF8EBJEH), it runs it in place,
+/// with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5). With
 /// `client`, the initialize request of the old process, it skips the
 /// handshake. It sends `registered` when its register ends, also when
 /// the register fails (01M3XM68N5M5DKB86W5079X2G9). A session that left

@@ -31,7 +31,10 @@
 //! the chat its last line, so that it shows each line once, and
 //! `riff mcp` its client, so that the connection to Claude Code stays
 //! (01M3NT6WZTKAFKGDWGCFKC8TB5). The new process keeps stdin, stdout
-//! and stderr.
+//! and stderr. A `riff mcp` that dies takes the tools of its session
+//! with it, so `riff mcp` first runs the new binary once as a check
+//! ([`Binary::new_one_that`], 01M43F5F9AQ9S39E1JZF8EBJEH). It runs it
+//! in its place only when the check passes.
 //!
 //! ```mermaid
 //! sequenceDiagram
