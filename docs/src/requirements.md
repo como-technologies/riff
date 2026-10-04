@@ -1520,9 +1520,9 @@
 - **R143** The Google Cloud project `como-riff` holds each cloud
   resource of riff. It holds nothing else.
 - **R144** `deploy/cloud/shared.env` holds the cloud settings and the
-  OAuth client ID of the shared riff. The repository is public. No file in it holds the account
-  data of a real person: an email address, a billing account ID or an
-  organization ID.
+  OAuth client ID of the shared riff. The repository is public. No file
+  in it holds the account data of a real person: an email address, a
+  billing account ID or an organization ID.
 - **R136** A person makes the project and links its billing account with
   gcloud, by the how-to in the book. `riff cloud create` makes the
   resources of riff in the project. It checks each resource first, so it
@@ -1545,10 +1545,10 @@
   never in the repository or in a downloaded file.
 - **01M3ZE3Z26N1CG090D5D5FZ3NW** The stage is a second riff-server in
   the project, for the rehearsal of a release. `deploy/cloud/stage.env`
-  holds its settings. It has its own service, bucket, accounts, sign-in client
-  and secret, and no alert, domain or CI deploy. No setting of one riff
-  names the bucket, the service, the secret or another resource of a
-  different riff. A test proves it.
+  holds its settings. It has its own service, bucket, accounts, sign-in
+  client and secret, and no alert, domain or CI deploy. No setting of
+  one riff names the bucket, the service, the secret or another
+  resource of a different riff. A test proves it.
 - **01M3ZE3Z580RB5AYAJX6321DFW** `riff cloud` takes the settings of a
   riff by name: `stage` reads `deploy/cloud/stage.env`, and `shared`
   reads `deploy/cloud/shared.env`, the shared riff.

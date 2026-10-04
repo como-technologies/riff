@@ -400,8 +400,8 @@ The client exists. To make it again, see
    ```
 
 3. Put the OAuth client in `.env` at the root of your clone. The
-   client ID comes from `deploy/cloud/shared.env`, the client secret from
-   Secret Manager. Git ignores `.env`:
+   client ID comes from `deploy/cloud/shared.env`, the client secret
+   from Secret Manager. Git ignores `.env`:
 
    ```sh
    . deploy/cloud/shared.env
@@ -1152,8 +1152,8 @@ stateDiagram-v2
     ended --> live: a server takes the lease
 ```
 
-- After Ctrl-C or `riff cloud delete shared`, the lease ends at once. Run the
-  command again.
+- After Ctrl-C or `riff cloud delete shared`, the lease ends at once.
+  Run the command again.
 - After a server that stopped with no shutdown, for example a crash,
   wait 90 seconds. Then run the command again. It waits 10 seconds
   more, before it reads the log.
