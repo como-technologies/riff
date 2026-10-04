@@ -751,7 +751,9 @@ refusal blocks you. When you need a decision from your user:
 
 1. Call `tell` with the session `lead` and the question. Name the
    choices. For a permission refusal, name the action that was
-   refused and why you need it.
+   refused and why you need it. When you cannot go on until the
+   answer comes, call `blocked` with the question in place of `tell`:
+   it also shows you as blocked (see "Status").
 2. Do not stop to ask in your own terminal. Wait for the answer, or
    work on other things.
 3. The lead sends the answer as a direct message. A direct answer from
@@ -951,7 +953,8 @@ message, so each request of the lead comes once.
    - When you start: the item, your branch and your worktree.
    - When you finish: merged, or the verify request is sent and you
      released the item.
-   - When you are blocked: the reason. Set your status to blocked too.
+   - When you are blocked: call `blocked` with the reason. It tells the
+     lead, so do not `tell` it again.
 3. A scope from your own user wins over a request from the lead. Tell
    the lead when your user changes your work.
 
@@ -1055,27 +1058,36 @@ branch.
 
 ## Status
 
-`status` sets your status: your current step, in one short line. Add
-`blocked` with the reason when you cannot go on. `who` shows the
-status of each session with its age.
+riff makes the state of each session from facts. You do not report
+it:
 
-Set your status at these times:
+- `busy`, `idle`, `paused` and `must clear`: from your claims and the
+  pause.
+- The work: your tool calls and your turns. A hook sees them, so `who`
+  shows `runs Bash: run just ci for 12m` with no call of yours.
+- `waiting`: your item waits for a verify, a merge or an item of its
+  `Needs:` line. riff reads it from the pull request of the item. It
+  wakes nobody: the verify request is the wake.
 
-- When you change step, for example from tests to docs.
-- When you are blocked, and again when you can go on.
+`status` sets your words: your current step, in one short line. They
+help a person. `who` shows them after the state, with their age. Set
+your status when you change step, for example from tests to docs. A
+step that you set before the last change of your state is stale: a
+claim, a release, a pause, a resume, or a new start of `riff-server`.
+`who` shows it dim, with `stale`.
 
-riff shows the facts of your state by itself: `paused`, your claims,
-`idle` with its time for a worker with no claim, and the current wave
-for the lead. Do not set your status for them. A step that you set
-before the last change of your state is stale: a claim, a release, a
-pause, a resume, or a new start of `riff-server`. `who` shows it dim,
-with `stale`.
+When you cannot go on with no decision of a person, call `blocked`
+with the reason. One call does both: riff shows you as `blocked`, and
+the message `blocked: REASON` wakes the lead. Do not call `blocked` to
+wait for a verify, a merge or a need: riff shows that wait by itself.
+The block ends at your next work after an answer. When the lead gives
+no answer, riff wakes it again, and then tells your user.
 
 When you are the lead, riff sets your step by itself from each
 `tell`, `post`, `pause`, `resume` and `lead` call that you make, for
 example `told 075ff6a7` or `posted a note: Waves: new item #314`. The
-step shows no text of a direct message, and it keeps your `blocked`
-reason. Set your status for
+step shows no text of a direct message. A step does not end your
+block. Set your status for
 work that riff cannot see, for example `file an issue for Mike` or
 `read the review report`. Your status stays until your next of these
 calls.

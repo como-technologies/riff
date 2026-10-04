@@ -403,7 +403,6 @@ async fn the_lead_starts_workers_on_another_host() {
         r.api.register(&me).await.unwrap();
         let status = Status {
             step: "idle: waits for work".into(),
-            blocked: None,
         };
         r.api.status(&me, &status).await.unwrap();
     }
@@ -667,7 +666,6 @@ async fn the_lead_reads_the_status_line_of_a_host_of_the_release_before() {
     let status = Status {
         step: "workers host: limit 3, cpu 16x4500MHz, mem 32GB, load 1.50, workers: %3 1a2b3c4d"
             .into(),
-        blocked: None,
     };
     api.status(&old, &status).await.unwrap();
     // The open watch keeps the old host live.

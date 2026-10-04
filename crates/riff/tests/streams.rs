@@ -69,7 +69,6 @@ async fn a_watch_has_a_connection_of_its_own() {
     let me: SessionUri = "riff://mike@b/local/riff?session=h1".parse().unwrap();
     let status = Status {
         step: "workers host: limit 1, floor 4GB, no workers".into(),
-        blocked: None,
     };
     loop {
         api.status(&me, &status).await.unwrap();

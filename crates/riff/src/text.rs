@@ -20,8 +20,7 @@ use crate::api::{Checked, Claimed, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
     AdminSet, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted,
-    ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, StatusInfo,
-    ThreadInfo, Wake,
+    ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -2204,6 +2203,9 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     must_clear: false,
 ///     fresh_secs: None,
 ///     state: Some(riff_core::wire::SessionState::Idle),
+///     work: None,
+///     waits: None,
+///     blocked: None,
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
 /// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
@@ -2238,7 +2240,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6".parse()?;
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
-/// let status = Status { step: "write the tests".into(), blocked: None };
+/// let status = Status { step: "write the tests".into() };
 /// let list = [
 ///     SessionInfo {
 ///         uri: me,
@@ -2251,6 +2253,9 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         must_clear: false,
 ///         fresh_secs: None,
 ///         state: Some(SessionState::Busy),
+///         work: None,
+///         waits: None,
+///         blocked: None,
 ///     },
 ///     SessionInfo {
 ///         uri: brett,
@@ -2263,6 +2268,9 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         must_clear: false,
 ///         fresh_secs: None,
 ///         state: Some(SessionState::Idle),
+///         work: None,
+///         waits: None,
+///         blocked: None,
 ///     },
 /// ];
 /// // The owner is a person: the sessions of brett get no tag `owner`.
@@ -2299,12 +2307,12 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 
 /// The line that `riff statusline` prints for the agent session `id`:
 /// `riff`, the short session ID of [`name`], `lead` for the lead, each
-/// claim, and `blocked` when the status is blocked. So a person finds
+/// claim, and `blocked` when the session is blocked. So a person finds
 /// the pane of each session of `riff who`. `info` is the session in
 /// `riff who`, or None when riff cannot find it.
 ///
 /// ```
-/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{BlockedInfo, SessionInfo};
 ///
 /// let id = "2a880834-3707-4672";
 /// let mut info = SessionInfo {
@@ -2319,20 +2327,24 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     must_clear: false,
 ///     fresh_secs: None,
 ///     state: Some(riff_core::wire::SessionState::Idle),
+///     work: None,
+///     waits: None,
+///     blocked: None,
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);
-/// info.status = Some(StatusInfo {
-///     status: Status { step: "merge".into(), blocked: Some("waits".into()) },
-///     age_secs: 5,
-///     stale: false,
+/// info.blocked = Some(BlockedInfo {
+///     reason: "which design?".into(),
+///     secs: 5,
+///     answered: false,
+///     woken_again: false,
+///     unanswered: false,
 /// });
 /// assert_eq!(
 ///     riff::text::statusline(id, Some(&info)),
 ///     "riff 2a880834 lead issue-78 blocked"
 /// );
-/// // A stale block is not the current state.
-/// info.status.as_mut().unwrap().stale = true;
+/// info.blocked = None;
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 lead issue-78");
 /// assert_eq!(riff::text::statusline(id, None), "riff 2a880834 (not in the riff)");
 /// # Ok::<(), riff_core::name::NameError>(())
@@ -2350,11 +2362,7 @@ pub fn statusline(id: &str, info: Option<&SessionInfo>) -> String {
     for claim in info.uri.claims() {
         let _ = write!(out, " {claim}");
     }
-    if info
-        .status
-        .as_ref()
-        .is_some_and(|s| s.status.blocked.is_some() && !s.stale)
-    {
+    if info.blocked.is_some() {
         out.push_str(" blocked");
     }
     out
@@ -2380,60 +2388,42 @@ pub fn update_tag(tag: &crate::auto_update::Tag) -> String {
     }
 }
 
-/// A status with its age. A blocked status starts with `blocked` and
-/// names the step at the end. A stale status says `(stale)` after its
-/// age (01M3Q555KC1RKNEC4ZA9HQYJG2).
-///
-/// ```
-/// use riff_core::wire::{Status, StatusInfo};
-///
-/// let blocked = StatusInfo {
-///     status: Status {
-///         step: "merge".into(),
-///         blocked: Some("waits for a review".into()),
-///     },
-///     age_secs: 90,
-///     stale: false,
-/// };
-/// assert_eq!(
-///     riff::text::status_line(&blocked),
-///     "blocked 1m ago: waits for a review (step: merge)"
-/// );
-/// let old = StatusInfo {
-///     status: Status { step: "tests".into(), blocked: None },
-///     age_secs: 7200,
-///     stale: true,
-/// };
-/// assert_eq!(riff::text::status_line(&old), "status 2h ago (stale): tests");
-/// ```
-pub fn status_line(info: &StatusInfo) -> String {
-    let age = ago(info.age_secs);
-    let stale = if info.stale { " (stale)" } else { "" };
-    let step = &info.status.step;
-    match &info.status.blocked {
-        None => format!("status {age} ago{stale}: {step}"),
-        Some(reason) => format!("blocked {age} ago{stale}: {reason} (step: {step})"),
-    }
-}
-
 /// The answer to `status`.
 ///
 /// ```
 /// use riff_core::wire::Status;
 ///
-/// let step = Status { step: "write the tests".into(), blocked: None };
+/// let step = Status { step: "write the tests".into() };
 /// assert_eq!(riff::text::status_set(&step), "Your status is now: write the tests");
-/// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
-/// assert_eq!(
-///     riff::text::status_set(&blocked),
-///     "Your status is now: blocked at merge: waits for a review"
-/// );
 /// ```
 pub fn status_set(status: &riff_core::wire::Status) -> String {
-    match &status.blocked {
-        None => format!("Your status is now: {}", status.step),
-        Some(reason) => format!("Your status is now: blocked at {}: {reason}", status.step),
-    }
+    format!("Your status is now: {}", status.step)
+}
+
+/// The answer to `blocked` (01M41FZPGEK4TNPSM2051W4VMS). `told` is true
+/// when the lead got the message. A reason that ends in a stop gets no
+/// second stop.
+///
+/// ```
+/// let told = riff::text::blocked_set("which design?", true);
+/// assert_eq!(told, "You are blocked: which design? The lead has the reason.");
+/// let told = riff::text::blocked_set("the build fails", true);
+/// assert_eq!(told, "You are blocked: the build fails. The lead has the reason.");
+/// let alone = riff::text::blocked_set("which design?", false);
+/// assert!(alone.contains("No lead got the message: ask your own user."), "{alone}");
+/// ```
+pub fn blocked_set(reason: &str, told: bool) -> String {
+    let lead = if told {
+        "The lead has the reason."
+    } else {
+        "No lead got the message: ask your own user."
+    };
+    let stop = if reason.ends_with(['.', '?', '!']) {
+        ""
+    } else {
+        "."
+    };
+    format!("You are blocked: {reason}{stop} {lead}")
 }
 
 /// The most characters of the text of a message in an automatic step
@@ -2507,7 +2497,7 @@ pub fn told_step(session: &str) -> String {
 /// // A control character is a space, so the server accepts the step.
 /// let step = posted_step(Kind::Note, "the\u{7}board\u{1b}[0m\tnow");
 /// assert_eq!(step, "posted a note: the board [0m now");
-/// let status = Status { step, blocked: None };
+/// let status = Status { step };
 /// assert!(status.check().is_ok());
 /// ```
 pub fn posted_step(kind: riff_core::wire::Kind, body: &str) -> String {

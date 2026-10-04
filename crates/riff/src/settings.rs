@@ -39,6 +39,8 @@
 //! | `workers.tmp` | `~/.cache/riff/tmp` | The folder of the temp folders of the workers (see [`temp`](crate::temp), 01M41VAGJC69S9R2TD1B1EQ4W4). |
 //! | `lead.compact` | true | riff compacts the lead at the end of a wave (see [`compact`](crate::compact)). |
 //! | `lead.quiet` | 60 | The seconds with no input in the pane of the lead before riff compacts it. |
+//! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
+//! | `lead.notify` | true | riff shows a block with no answer of the lead in a desktop notification on the machine of the lead (01M41FZQKZKW131Z8822G31T5G). |
 //! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
 //! | `connect.scope` | none | The answer to the scope question of `riff connect claude`: `repo`, `global` or `none` (see [`enable`](crate::enable), 01M3XY2SNXQJRSH5QX82AFVM2S). With no key, nobody answered yet. |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
@@ -437,6 +439,68 @@ pub fn set_lead_quiet(path: &Path, secs: u64) -> Result<()> {
 
 /// The default quiet time, in seconds.
 pub const LEAD_QUIET: u64 = 60;
+
+/// The minutes that a block waits for an answer before riff wakes the
+/// lead again: `lead.wake` (01M41FZQ545HQ9Q75CSKX8HF8H). [`LEAD_WAKE`]
+/// when the file or the key is missing. 0 is 1 minute.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::lead_wake(&path)?, 15);
+/// riff::settings::set_lead_wake(&path, 30)?;
+/// assert_eq!(riff::settings::lead_wake(&path)?, 30);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn lead_wake(path: &Path) -> Result<u64> {
+    let doc = read(path)?;
+    let Some(wake) = doc.get("lead").and_then(|l| l.get("wake")) else {
+        return Ok(LEAD_WAKE);
+    };
+    let Some(wake) = wake.as_integer() else {
+        bail!("lead.wake in {} is not a number", path.display());
+    };
+    let wake = u64::try_from(wake)
+        .with_context(|| format!("lead.wake in {} is out of range", path.display()))?;
+    Ok(wake.max(1))
+}
+
+/// Sets `lead.wake`. It keeps each other key.
+pub fn set_lead_wake(path: &Path, minutes: u64) -> Result<()> {
+    let minutes = i64::try_from(minutes).context("the wake time is too long")?;
+    set(path, "lead", "wake", value(minutes))
+}
+
+/// The default of `lead.wake`, in minutes.
+pub const LEAD_WAKE: u64 = 15;
+
+/// True when riff shows a block with no answer of the lead in a desktop
+/// notification on this machine: `lead.notify`
+/// (01M41FZQKZKW131Z8822G31T5G). True when the file or the key is
+/// missing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert!(riff::settings::lead_notify(&path)?);
+/// riff::settings::set_lead_notify(&path, false)?;
+/// assert!(!riff::settings::lead_notify(&path)?);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn lead_notify(path: &Path) -> Result<bool> {
+    let doc = read(path)?;
+    let Some(notify) = doc.get("lead").and_then(|l| l.get("notify")) else {
+        return Ok(true);
+    };
+    notify
+        .as_bool()
+        .with_context(|| format!("lead.notify in {} is not true or false", path.display()))
+}
+
+/// Sets `lead.notify`. It keeps each other key.
+pub fn set_lead_notify(path: &Path, notify: bool) -> Result<()> {
+    set(path, "lead", "notify", value(notify))
+}
 
 /// The default of `watch.limit`, in seconds: 100 minutes
 /// (01M3Z64J08GW6N1H42AR2FZQZ4). Claude Code stops a background task

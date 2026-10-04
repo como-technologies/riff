@@ -1171,7 +1171,7 @@
 - **01M3X9XC99KY4RQY36A7CYWY11** `who` gives `must_clear` and
   `fresh_secs` for each session: the seconds since its last
   `session_started` record with the reason `process` or `clear`. The
-  state `must_clear` comes after `blocked` and before `busy`
+  state `must_clear` comes after `blocked` and before `waiting`
   (01M3QB6CJ1XCQG5B1BVR8AF3B4). `riff who`, `riff top`, `riff workers`
   and the `who` tool show it as `must clear` in yellow, with the detail
   `must clear its context before its next claim`. Each worker that is
@@ -1752,8 +1752,9 @@
   that is not the lead of the person, is advice (R10). A scope from the
   person wins over a request.
 - **R231** A session that does a request of its lead reports back to
-  the lead with `tell lead`: when it starts, when it finishes, and when
-  it is blocked.
+  the lead with `tell lead`: when it starts and when it finishes. When
+  it is blocked, the `blocked` tool tells the lead
+  (01M41FZPGEK4TNPSM2051W4VMS).
 - **R232** A session asks only the lead of its own person for a
   decision. `tell lead` picks the lead of the person of the sender.
 - **01M3JDW9WN7KFGVY6HMCP2XN8B** A session that is not the lead never
@@ -1991,12 +1992,12 @@
   note in the thread of the claim that names the lead, the item and
   the holder.
 - **R182** A session sets its status with `riff status` or the `status`
-  tool. A status is the current step of the session, and a reason when
-  the session is blocked (`--blocked REASON`). A new status replaces the
-  old one.
-- **R183** A status is one line. The step is not empty. The step and
-  the reason each have at most 200 characters. `riff-server` refuses a
-  status that breaks a rule, with status 400.
+  tool. A status is the current step of the session, in its own words.
+  It makes no state. A new status replaces the old one.
+- **R183** A status is one line. The step is not empty. The step has
+  at most 200 characters. The reason of a block has the same rules.
+  `riff-server` refuses a status or a block that breaks a rule, with
+  status 400.
 - **R184** `riff-server` keeps the last status of each session, with the
   time that the session set it. It saves the status with the session.
   `who` shows each status and its age, for example
@@ -2013,28 +2014,27 @@
   riff to its state, are no change. A status is in memory: a start of
   `riff-server` has no status.
 - **01M3Q555KC1RKNEC4ZA9HQYJG2** A stale step is dim and says `stale`.
-  A stale block does not make a session `blocked`, and is not
-  `blocked` in the status line.
 - **01M3QB6CJ1XCQG5B1BVR8AF3B4** `riff-server` derives the state of
   each session and gives it in `who`. No session reports its state.
   When a `who` reply has no state, riff derives it the same way from
   the other facts of the reply.
-  The first state that matches wins: `offline` (no open watch stream),
-  `paused` (the riff or the repository of the session is paused),
-  `blocked` (a current blocked status), `must_clear`
-  (01M3X9XC99KY4RQY36A7CYWY11), `busy` (a claim), `idle` (each other
-  session). `riff top`, `riff
+  The first state that matches wins (01M41FZQVEF8S2W9RCM4V87C3D).
+  `riff top`, `riff
   who`, the MCP `who` tool and `riff workers` show the word of the
   state, then its detail: for `offline`, `seen 2h ago`; for `paused`,
-  the claims and `stopped at:` the step; for `blocked`, the reason and
-  the step, then the claims; for `busy`, `working on #N` or
-  `reviewing #N` (a verify claim) for each claim, then the step; for
+  the claims and `stopped at:` the step; for `blocked`, the reason with
+  its age, `the lead gave no answer` when the lead gave none, then the
+  claims; for `waiting`, the claims, then what they wait for; for
+  `busy`, `working on #N` or
+  `reviewing #N` (a verify claim) for each claim, then the work
+  (01M41FZNTPXQNCZ1S99HE42PYQ), then the step; for
   `idle`, `ready for work for` the time since the last release, then a
   current step. An `idle` lead shows `monitoring work for` and the
   time, not `ready for work for`. `riff top` adds the title of each
   issue. The colors:
-  `blocked` red, `busy` green, `idle` dim, `offline` grey, `paused`
-  yellow. A `blocked` session comes first in `riff top`. A person is
+  `blocked` red, `waiting` cyan, `busy` green, `idle` dim, `offline`
+  grey, `paused` yellow. A `blocked` session comes first in `riff top`
+  (01M41FZR4XRP55M409YBCPTHPH). A person is
   `online` when a session of the person is live, else `offline` with
   `seen` and the time since the last call.
 - **01M3W8AYDFPZNZ898WAJS7JEZA** `riff mcp` sets the step of the lead
@@ -2051,11 +2051,80 @@
 - **01M3WKCYM623M66ATHCH3QGMKP** The automatic step of the lead shows
   no text of a direct message: the step of a `tell` is `told SESSION`.
   In TEXT, each run of white space or control characters is one space.
-  An automatic step keeps the `blocked` reason that the lead set. A
-  call that `riff-server` refuses sets no step.
+  An automatic step does not end a block of the lead
+  (01M41FZPGEK4TNPSM2051W4VMS). A call that `riff-server` refuses sets
+  no step.
 - **01M3Q555NV8ZCQ8PVPBXQ7J82C** The skill, the start hook and the
   `status` tool do not tell a session to set its status for a fact
-  that riff derives: a claim, a release, a pause, or an idle worker.
+  that riff derives: a claim, a release, a pause, an idle worker, its
+  work, or a wait for a verify, a merge or a need.
+- **01M41FZQVEF8S2W9RCM4V87C3D** The first state that matches wins:
+  `offline` (no open watch stream), `paused` (the riff or the
+  repository of the session is paused), `blocked` (a block that
+  holds), `must_clear` (01M3X9XC99KY4RQY36A7CYWY11), `waiting` (each
+  claim of the session waits), `busy` (a claim), `idle` (each other
+  session).
+- **01M41FZRF5HEZCDS515CP7DYCV** The work, the block and the facts of
+  the items are signals in the memory of `riff-server`, not records of
+  the log. A start of `riff-server` loses them, and the clients send
+  them again.
+- **01M41FZNTPXQNCZ1S99HE42PYQ** The plugin has a `PreToolUse` and a
+  `PostToolUse` hook, `riff hook tool` and `riff hook tool --done`.
+  These hooks and the Stop hook write the newest fact of the session to
+  a file on the machine, and make no call: the tool that runs, a turn
+  that runs, or a turn that ended. The text of a tool is its name, and
+  for Bash `Bash: ` and the description, never the command. It is one
+  line of at most 80 characters. A riff tool and `riff watch` give no
+  fact. `riff mcp` puts the newest fact, with its age, into each
+  keep-alive. `who` gives it as `work`, and shows it as `runs TOOL for
+  12m`, `works, 5s ago` or `turn ended 5m ago`.
+- **01M41FZP2C4Z4J6WKRXZ5B31EH** `riff-server` has no credential of the
+  forge. The clients send the facts of the items of their repository:
+  `riff pr open` (a verify is asked), `riff verify` (passed or
+  failed), `riff pr wait` (merged), and the `riff mcp` of the lead each
+  minute, with each open pull request and each open item of each
+  `Needs:` line. A list of the lead replaces each fact of the
+  repository. A fact of one command replaces the fact of its item.
+- **01M41FZP9A50CH4A2VX344DW49** A session is `waiting` when each of its
+  claims waits: the author of an item with an open pull request with
+  no verify result waits for a verify; the author, and the session
+  that verifies, wait for the merge when the verify passed; the author
+  of an item with an open item in its `Needs:` line waits for that
+  item. A wait wakes nobody. It ends when its fact ends.
+- **01M41FZPGEK4TNPSM2051W4VMS** A session that cannot go on with no
+  decision of a person calls the `blocked` tool, or runs `riff blocked
+  REASON`. One command sets the block and sends `blocked: REASON` to
+  the lead of the user, which wakes it. No command does one with no
+  other. With no lead, the block holds, and the reply tells the
+  session to ask its own user. The `status` tool and `riff status`
+  have no reason of a block.
+- **01M41FZPT31ATXP75QW965P3JB** A message, not a note and not a
+  status request, that wakes a blocked session is its answer. The
+  block ends at the next sign of work after the answer: a fact of the
+  hooks with a turn that runs, at or after the answer. A claim, a
+  release and a new start of the session also end its block.
+- **01M41FZQ545HQ9Q75CSKX8HF8H** The `riff mcp` of the lead looks at the
+  blocks of the sessions of its user in its repository each minute,
+  with `lead.wake` minutes of the machine of the lead (default 15,
+  `riff lead blocked --wake MINUTES`). A block with no answer for that
+  time gets a second wake of the lead: a message of the server,
+  `blocked: SESSION (ITEM) has no answer after N minutes: REASON`. Only
+  the lead can look.
+- **01M41FZQCHWY1YVGAZ60ZHJK21** A block with no answer for `lead.wake`
+  minutes after the second wake is unanswered. `who` gives it, and
+  `riff top` shows `the lead gave no answer` under the reason. An
+  answer ends each step.
+- **01M41FZQKZKW131Z8822G31T5G** When a block becomes unanswered, the
+  `riff mcp` of the lead shows one desktop notification with
+  `notify-send`: the short session ID, its claims and the reason, and
+  no text of a message. A machine with no display or no `notify-send`
+  gets none, and nothing fails. `lead.notify` turns it off (`riff lead
+  blocked --notify off`). It is on by default.
+- **01M41FZR4XRP55M409YBCPTHPH** `riff top` has one red line for each
+  blocked session before the board: `blocked`, the short session ID,
+  its claims, the time that it waits, `the lead gave no answer` when
+  the lead gave none, then the reason. A `waiting` session is cyan, not
+  red.
 - **01M3MEEFC9ZQVW2KC9FNJ75MTY** A session leaves the riff with the
   `leave` tool. The plugin command `/riff:leave` tells the session to
   call it. The tool acts on its own session only. When the session
@@ -2189,8 +2258,9 @@
 - **01M3JPK885GPD16FPK7D05R2RC** `tell` takes a session ID, the start
   of a session ID as `read` shows it, a full URI, or `lead`. A start
   that fits more than one session in `who` is an error.
-- **R187** The skill tells a session to set its status when it claims,
-  when it changes step, when it is blocked, and when it releases.
+- **R187** The skill tells a session to set its status when it changes
+  step, and to call `blocked` when it cannot go on with no decision of
+  a person. It says what the words of a status are for.
 - **01M3NB5MY93KV9RKZGGSMZW00D** The people of a riff chat in the
   thread `chat` on the riff server. `riff chat` is a line client in
   the style of IRC. It shows the history and each new line with the

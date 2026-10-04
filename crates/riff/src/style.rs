@@ -39,8 +39,12 @@ pub const GOOD: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green)
 /// A warning. Also `paused` in `riff who`.
 pub const WARNING: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Yellow)));
 
-/// An error. Also a blocked status in `riff who`.
+/// An error. Also a blocked session in `riff who`.
 pub const ERROR: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red)));
+
+/// A wait for the machinery: `waiting` in `riff who`
+/// (01M41FZR4XRP55M409YBCPTHPH). It is not red.
+pub const WAITING: Style = Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan)));
 
 /// The style of a session: bold, with a color from a hash of its
 /// session ID. So a session has the same color in each message of

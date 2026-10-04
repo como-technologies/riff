@@ -157,11 +157,11 @@ async fn a_pipe_gets_no_color_unless_asked() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_blocked_status_is_red() {
+async fn a_blocked_session_is_red() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    let blocked = ["status", "--blocked", "waits for a review", "merge"];
+    let blocked = ["blocked", "waits for a review"];
     output(riff(&server, dir, Some("a1"), &["lead"])).await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     output(riff(&server, dir, Some("a1"), &blocked)).await;
@@ -175,8 +175,8 @@ async fn a_blocked_status_is_red() {
     let who = output(riff(&server, dir, None, &["who", "--color", "always"])).await;
     let red = style::ERROR;
     assert!(who.contains(&format!("{red}blocked{red:#}")), "{who:?}");
-    // The age of the status grows on a busy machine (#460).
-    let start = format!("  {red}waits for a review (step: merge, ");
+    // The age of the block grows on a busy machine (#460).
+    let start = format!("  {red}waits for a review (");
     let (_, rest) = who.split_once(&start).expect(&who);
     let (age, _) = rest.split_once(&format!("s ago){red:#}\n")).expect(&who);
     assert!(age.parse::<u64>().is_ok(), "{who:?}");

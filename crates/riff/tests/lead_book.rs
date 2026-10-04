@@ -165,7 +165,7 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
         "told 075ff6a7",
         "posted a note: Waves: new item #314",
         "The\nstep shows no text of a direct message",
-        "it keeps your `blocked`\nreason",
+        "A step does not end your\nblock",
         "Set your status for\nwork that riff cannot see",
     ] {
         assert!(
@@ -179,7 +179,7 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
         "```sh\nriff who\n```",
         "told 075ff6a7",
         "the step of a `tell` shows\nonly the session",
-        "A `blocked` reason of the lead stays",
+        "A step does not end a block of the\nlead",
         "posted a note: Waves: new item #314",
         "asked for status",
         "paused the riff",

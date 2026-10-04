@@ -920,6 +920,21 @@ impl Engine {
         Ok(self.set(caller.who(), signal))
     }
 
+    /// The look of the lead at the blocks of the sessions of its user
+    /// ([`State::look_blocks`]). It is a call of the lead. A caller that
+    /// is not the lead gets the code `not_allowed`.
+    pub async fn look_blocks(
+        &self,
+        caller: &Admitted,
+        after: std::time::Duration,
+    ) -> Result<(Vec<crate::state::Blocked>, Vec<crate::state::Blocked>), Failed> {
+        let place = caller.caller.me().place().clone();
+        self.signal(caller, Signal::Called { place }).await?;
+        let me = caller.caller.me();
+        let look = self.core().state.look_blocks(me, after, Instant::now());
+        look.map_err(|reason| Refused::new(Code::NotAllowed, reason).into())
+    }
+
     /// The signal of a watch stream that closed. The session of the
     /// stream is known, and the close is no call of it.
     pub fn watch_ended(&self, who: &Who) {

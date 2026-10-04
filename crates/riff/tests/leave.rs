@@ -170,6 +170,7 @@ async fn a_leave_pushes_the_work_frees_the_claims_and_a_join_comes_back() {
         let args = match &*tool.name {
             "post" | "tell" => json!({ "session": "b2", "body": "hi" }),
             "status" => json!({ "step": "x" }),
+            "blocked" => json!({ "reason": "x" }),
             "claim" | "release" => json!({ "item": "issue-13" }),
             "move" => json!({ "path": work.to_str().unwrap() }),
             _ => json!({}),

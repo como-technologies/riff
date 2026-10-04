@@ -272,31 +272,21 @@ async fn who_shows_no_text_of_a_direct_message_of_the_lead() {
     );
 }
 
-/// 01M3WKCYM623M66ATHCH3QGMKP
+/// 01M3WKCYM623M66ATHCH3QGMKP, 01M41FZPGEK4TNPSM2051W4VMS
 #[tokio::test]
-async fn an_automatic_step_keeps_the_blocked_reason_of_the_lead() {
+async fn an_automatic_step_keeps_the_block_of_the_lead() {
     let riff = Riff::start().await;
-    let blocked = serde_json::json!({ "step": "release", "blocked": "waits for Mike" });
-    call(&riff.lead, "status", blocked).await;
+    let blocked = serde_json::json!({ "reason": "waits for Mike" });
+    call(&riff.lead, "blocked", blocked).await;
     let row = riff.row("a1").await;
+    assert!(row.contains("blocked"), "{row}");
     assert!(row.contains("waits for Mike"), "{row}");
-    assert!(row.contains("release"), "{row}");
 
+    // The step is a word of the session: it does not end the block.
     let tell = serde_json::json!({ "session": "b2", "body": "request: claim issue-302" });
     call(&riff.lead, "tell", tell).await;
     let row = riff.row("a1").await;
     assert!(row.contains("waits for Mike"), "{row}");
-    assert!(row.contains("told b2"), "{row}");
-    assert!(!row.contains("release"), "{row}");
-
-    // The lead removes the reason with its next status.
-    let step = serde_json::json!({ "step": "read the review report" });
-    call(&riff.lead, "status", step).await;
-    let note = serde_json::json!({ "body": "the board", "kind": "note" });
-    call(&riff.lead, "post", note).await;
-    let row = riff.row("a1").await;
-    assert!(!row.contains("waits for Mike"), "{row}");
-    assert!(row.ends_with(" ago: posted a note: the board"), "{row}");
 }
 
 /// 01M3WKCYM623M66ATHCH3QGMKP: a control character is a space in the

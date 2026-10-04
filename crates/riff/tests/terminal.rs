@@ -598,7 +598,6 @@ async fn two_workers(api: &Api, m: &Machine, dir: &Path) -> Vec<SessionUri> {
         api.claim(&me, &thread, item).await.unwrap();
         let status = Status {
             step: format!("tests of {item}"),
-            blocked: None,
         };
         api.status(&me, &status).await.unwrap();
         panes.push_str(&format!("{pane} {id}\n"));

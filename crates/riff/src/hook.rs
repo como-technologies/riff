@@ -315,7 +315,7 @@ pub async fn linked(dir: &Path) -> Option<Linked> {
 /// use riff::hook::others_here;
 /// use riff_core::wire::SessionInfo;
 ///
-/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0, must_clear: false, fresh_secs: None, state: Default::default() };
+/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0, must_clear: false, fresh_secs: None, state: Default::default(), work: None, waits: None, blocked: None };
 /// let me: riff_core::name::SessionUri = "riff://mike@pangolin/o/r?session=a1#issue-12".parse()?;
 /// let who = [
 ///     info("riff://mike@pangolin/o/r?session=a1#issue-12", true),

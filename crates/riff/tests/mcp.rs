@@ -110,6 +110,7 @@ async fn the_tools_carry_a_conversation() {
     assert_eq!(
         names,
         [
+            "blocked",
             "claim",
             "join",
             "join_thread",
@@ -318,13 +319,10 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
         ),
         "{read}"
     );
-    let answer = serde_json::json!({ "step": "merge", "blocked": "waits for a review" });
+    let answer = serde_json::json!({ "step": "merge" });
     let (set, is_error) = call(&brett, "status", answer).await;
     assert!(!is_error, "{set}");
-    assert_eq!(
-        set,
-        "Your status is now: blocked at merge: waits for a review"
-    );
+    assert_eq!(set, "Your status is now: merge");
 
     // With a watch, brett is live, so the server gives its state. The
     // riff is paused: paused wins, with the step it stopped at
@@ -340,7 +338,7 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
 
     let (text, is_error) = call(&brett, "status", serde_json::json!({ "step": "" })).await;
     assert!(is_error);
-    assert!(text.contains("the step of a status is empty"), "{text}");
+    assert!(text.contains("the step is empty"), "{text}");
 }
 
 #[tokio::test]

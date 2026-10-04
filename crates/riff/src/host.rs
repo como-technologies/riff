@@ -665,7 +665,6 @@ impl Host {
         status.disk = Disk::here(&self.main);
         let status = Status {
             step: status.line(),
-            blocked: None,
         };
         self.call(self.api.status(&self.me, &status)).await
     }

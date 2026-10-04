@@ -115,7 +115,6 @@ async fn the_lead_gives_two_sessions_two_items_and_each_reports_back() {
         assert!(api.claim(me, &repo(), item).await.unwrap().granted);
         let status = Status {
             step: format!("{item}: started"),
-            blocked: None,
         };
         api.status(me, &status).await.unwrap();
         let report = api
@@ -143,17 +142,11 @@ async fn the_lead_gives_two_sessions_two_items_and_each_reports_back() {
 async fn a_blocked_session_tells_the_lead_and_gets_a_new_item() {
     let Riff { api, lead, b, .. } = riff().await;
     api.claim(&b, &repo(), "issue-7").await.unwrap();
-    let blocked = Status {
-        step: "issue-7".into(),
-        blocked: Some("needs issue-5".into()),
-    };
-    api.status(&b, &blocked).await.unwrap();
-    api.tell(&b, "lead", "blocked on issue-7: needs issue-5")
-        .await
-        .unwrap();
+    // One command: the block, and the message that wakes the lead.
+    assert!(api.blocked(&b, "issue-7 needs issue-5").await.unwrap());
 
     let reports = direct(&api, &lead).await;
-    assert_eq!(reports[0].1, "blocked on issue-7: needs issue-5");
+    assert_eq!(reports[0].1, "blocked: issue-7 needs issue-5");
     api.tell(&lead, id(&b), "request: release issue-7, claim issue-9")
         .await
         .unwrap();

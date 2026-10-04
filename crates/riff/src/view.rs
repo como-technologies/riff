@@ -195,6 +195,29 @@ pub fn lead_compact(on: bool, quiet: u64, path: &Path) -> String {
     )
 }
 
+/// `riff lead blocked` (01M41FZQ545HQ9Q75CSKX8HF8H,
+/// 01M41FZQKZKW131Z8822G31T5G).
+///
+/// ```
+/// let text = riff::view::lead_blocked(15, true, std::path::Path::new("/c.toml"));
+/// let plain = anstream::adapter::strip_str(&text).to_string();
+/// assert!(plain.starts_with("lead.wake  15  (/c.toml)\nlead.notify  true  (/c.toml)\n"), "{plain}");
+/// assert!(plain.contains("riff lead blocked --notify off"), "{plain}");
+/// ```
+pub fn lead_blocked(wake: u64, notify: bool, path: &Path) -> String {
+    let file = styled(DIM, &format!("({})", path.display()));
+    let what = if notify {
+        "and a desktop notification tells you. Turn it off with: riff lead blocked --notify off"
+    } else {
+        "and riff sends no desktop notification. Turn it on with: riff lead blocked --notify on"
+    };
+    format!(
+        "lead.wake  {wake}  {file}\nlead.notify  {notify}  {file}\nA block with no answer for \
+         {wake} minutes wakes the lead again. After {wake} minutes more, riff top shows \"the lead \
+         gave no answer\", {what}"
+    )
+}
+
 /// `riff workers limit` (01M3JPQT35BMR7XMAMMFSCDC2B).
 pub fn workers_limit(limit: u16, path: &Path) -> String {
     setting(
@@ -557,12 +580,18 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
 /// Each text from the server is [`safe`].
 ///
 /// ```
-/// use riff_core::wire::{RiffOwner, RiffState, SessionInfo, SessionState, Status, StatusInfo};
+/// use riff_core::wire::{BlockedInfo, RiffOwner, RiffState, SessionInfo, SessionState};
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf&lead=true&claim=issue-6#issue-6"
 ///     .parse()?;
 /// let brett = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
-/// let blocked = Status { step: "merge".into(), blocked: Some("waits for a review".into()) };
+/// let blocked = BlockedInfo {
+///     reason: "which design?".into(),
+///     secs: 60,
+///     answered: false,
+///     woken_again: false,
+///     unanswered: false,
+/// };
 /// let list = [
 ///     SessionInfo {
 ///         uri: me,
@@ -575,18 +604,24 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
 ///         must_clear: false,
 ///         fresh_secs: None,
 ///         state: Some(SessionState::Busy),
+///         work: None,
+///         waits: None,
+///         blocked: None,
 ///     },
 ///     SessionInfo {
 ///         uri: brett,
 ///         live: true,
 ///         idle_secs: 0,
-///         status: Some(StatusInfo { status: blocked, age_secs: 60, stale: false }),
+///         status: None,
 ///         worker: false,
 ///         stopping: false,
 ///         claims_secs: 0,
 ///         must_clear: false,
 ///         fresh_secs: None,
 ///         state: Some(SessionState::Blocked),
+///         work: None,
+///         waits: None,
+///         blocked: Some(blocked),
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
@@ -602,11 +637,11 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
 /// assert_eq!(lines[5], "mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6");
 /// assert_eq!(
 ///     lines[6],
-///     "brett@heron:riff (77e0)            blocked            waits for a review (step: merge, 1m ago)"
+///     "brett@heron:riff (77e0)            blocked            which design? (1m ago)"
 /// );
 /// let red = riff::style::ERROR;
 /// assert!(text.contains(&format!("{red}blocked{red:#}")));
-/// assert!(text.contains(&format!("{red}waits for a review (step: merge, 1m ago){red:#}")));
+/// assert!(text.contains(&format!("{red}which design? (1m ago){red:#}")));
 ///
 /// // --long shows the URI in place of the name.
 /// let long = riff::view::who(&running, &owner, &list, &list[0].uri, true);
@@ -697,7 +732,7 @@ fn state_cell(s: &SessionInfo) -> String {
 ///     live: true,
 ///     idle_secs: 0,
 ///     status: Some(StatusInfo {
-///         status: Status { step: "tests".into(), blocked: None },
+///         status: Status { step: "tests".into() },
 ///         age_secs: 7200,
 ///         stale: false,
 ///     }),
@@ -707,6 +742,9 @@ fn state_cell(s: &SessionInfo) -> String {
 ///     must_clear: false,
 ///     fresh_secs: None,
 ///     state: Some(SessionState::Busy),
+///     work: None,
+///     waits: None,
+///     blocked: None,
 /// };
 /// let plain = anstream::adapter::strip_str(&riff::view::detail_cell(&s)).to_string();
 /// assert_eq!(plain, "working on #12  2h ago: tests");
@@ -875,6 +913,9 @@ pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
 ///     must_clear: false,
 ///     fresh_secs: None,
 ///     state: Some(SessionState::Busy),
+///     work: None,
+///     waits: None,
+///     blocked: None,
 /// };
 /// let out = riff::view::workers(&panes, &[info.clone()], false);
 /// let plain = anstream::adapter::strip_str(&out).to_string();

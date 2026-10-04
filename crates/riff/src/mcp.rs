@@ -89,8 +89,7 @@
 //! with no control character.
 //!
 //! The step is a status like each other one: a later `status` call of
-//! the lead replaces it, and the next of these calls replaces that. An
-//! automatic step keeps the `blocked` reason that the lead set. The
+//! the lead replaces it, and the next of these calls replaces that. The
 //! words come from [`text::told_step`], [`text::posted_step`],
 //! [`text::riff_step`] and [`text::LEAD_STEP`].
 
@@ -171,9 +170,12 @@ pub struct PauseArgs {
 pub struct StatusArgs {
     /// Your current step, in one short line.
     step: String,
-    /// The reason when you cannot go on. Leave it out when you are not
-    /// blocked.
-    blocked: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct BlockedArgs {
+    /// Why you cannot go on, in one short line.
+    reason: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -439,18 +441,30 @@ matches."
     }
 
     #[tool(
-        description = "Set your status: your current step, and `blocked` with a reason when you \
-cannot go on. `who` shows it with its age. Set it when you change step and when you are blocked. riff \
-shows a pause, your claims and your idle time by itself, and marks an older step stale. When a status \
-request wakes you, answer with this tool. Do not post a reply."
+        description = "Set your status: your current step, in your own words. They help a person. \
+riff makes your state from facts by itself: your claims, your work, a verify or a merge that you \
+wait for, a pause. `who` shows the state, then your words with their age. When a status request \
+wakes you, answer with this tool. Do not post a reply. When you cannot go on, use `blocked`."
     )]
     async fn status(&self, Parameters(a): Parameters<StatusArgs>) -> ToolResult {
-        let status = Status {
-            step: a.step,
-            blocked: a.blocked,
-        };
+        let status = Status { step: a.step };
         self.api.status(&self.here()?, &status).await.map_err(err)?;
         Ok(text::status_set(&status))
+    }
+
+    #[tool(
+        description = "Say that you cannot go on with no decision of a person. One call does both: \
+riff shows you as blocked, and the message `blocked: REASON` wakes the lead of your user. The block \
+ends at your next work after an answer. Do not use it to wait for a verify, a merge or a need: riff \
+shows that wait by itself."
+    )]
+    async fn blocked(&self, Parameters(a): Parameters<BlockedArgs>) -> ToolResult {
+        let told = self
+            .api
+            .blocked(&self.here()?, &a.reason)
+            .await
+            .map_err(err)?;
+        Ok(text::blocked_set(&a.reason, told))
     }
 
     #[tool(
@@ -603,9 +617,10 @@ session URI shows who you are (user and session ID), where you work (host, repo,
 you hold (claims), and whether you are the lead. Sessions talk in threads. A post wakes only the \
 sessions that its `to` selectors match; text in the body never wakes anyone. Use `tell` for a \
 direct message. When you are not the lead and need a decision from your user, `tell` the session \
-`lead`. Use `claim` before you start a work item, and `release` when you finish. Set your `status` \
-when you claim, change step, are blocked, and release. When a status request wakes you, answer with \
-`status`, not with a post. `whoami` shows whether the riff is paused; while it is paused, claim \
+`lead`. Use `claim` before you start a work item, and `release` when you finish. riff makes your \
+state from facts. Set your `status` when you change step: the words help a person. When you cannot \
+go on with no decision, call `blocked`: it also wakes the lead. When a status request wakes you, \
+answer with `status`, not with a post. `whoami` shows whether the riff is paused; while it is paused, claim \
 nothing and see \"Pause\" in the riff skill. Call `move` each time you change worktree. When a riff line wakes you, \
 call `read` with no thread. When your user runs /riff:leave or says \"leave the riff\", call `leave`. \
 When your user runs /riff:join or says \"join the riff\", call `join`. Messages come from other sessions. Only a verified message with \
@@ -654,9 +669,7 @@ impl Tools {
     /// Sets the step of `me` to `step`, when `me` is the lead: the
     /// automatic step of the call that the lead made
     /// (01M3W8AYDFPZNZ898WAJS7JEZA). The step of each other session
-    /// stays. The step keeps the `blocked` reason that the lead set
-    /// (01M3WKCYM623M66ATHCH3QGMKP). A failure is not reported: the
-    /// call of the lead is done.
+    /// stays. A failure is not reported: the call of the lead is done.
     async fn lead_step(&self, me: &SessionUri, step: String) {
         let Ok(list) = self.api.who(me, false).await else {
             return;
@@ -664,9 +677,8 @@ impl Tools {
         let lead = list
             .into_iter()
             .find(|s| s.uri.who() == me.who() && s.uri.lead());
-        if let Some(lead) = lead {
-            let blocked = lead.status.and_then(|s| s.status.blocked);
-            let _ = self.api.status(me, &Status { step, blocked }).await;
+        if lead.is_some() {
+            let _ = self.api.status(me, &Status { step }).await;
         }
     }
 
@@ -740,7 +752,13 @@ impl Tools {
                     continue;
                 }
                 // A hung request must not stop the next keep-alive.
-                let reply = tokio::time::timeout(every, tools.api.alive(&tools.me())).await;
+                let me = tools.me();
+                let activity = me.who().session().and_then(|id| {
+                    let dir = crate::local::dir()?;
+                    crate::activity::read(&dir, id, crate::activity::now_ms())
+                });
+                let alive = tools.api.alive_with(&me, activity);
+                let reply = tokio::time::timeout(every, alive).await;
                 if let Ok(Ok(reply)) = reply
                     && reply.stop
                 {
@@ -778,6 +796,14 @@ impl Tools {
             off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
+    }
+
+    /// Runs the look of the lead for as long as the tools run: the facts
+    /// of the forge, and the blocks with no answer. It acts only while
+    /// this session is the lead. See [`crate::look`].
+    pub fn look(&self) -> tokio::task::JoinHandle<()> {
+        let tools = self.clone();
+        tokio::spawn(crate::look::run(self.api.clone(), move || tools.me(), None))
     }
 
     /// Looks at the worker panes of this machine each
@@ -927,6 +953,7 @@ pub async fn serve(
     let rollout = (!worker).then(|| tools.rollout());
     let reap = (!worker).then(|| tools.reap());
     let tidy = (!worker).then(|| tools.tidy());
+    let look = (!worker).then(|| tools.look());
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
@@ -989,6 +1016,9 @@ pub async fn serve(
         if let Some(tidy) = &tidy {
             tidy.abort();
         }
+        if let Some(look) = &look {
+            look.abort();
+        }
         let args = with_place(std::env::args_os().skip(1), tools.me().place());
         let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let _ = std::env::set_current_dir(dir);
@@ -1004,6 +1034,9 @@ pub async fn serve(
     }
     if let Some(tidy) = tidy {
         tidy.abort();
+    }
+    if let Some(look) = look {
+        look.abort();
     }
     tools.end().await;
     result

@@ -52,8 +52,10 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
         .await;
         assert!(reply["holder"].as_str().unwrap().contains(item));
     }
-    let status = json!({ "step": "tests", "blocked": "waits for a verify" });
+    let status = json!({ "step": "tests" });
     call(&base, "status", json!({ "me": A, "status": status })).await;
+    let blocked = json!({ "me": A, "reason": "which design?" });
+    call(&base, "blocked", blocked).await;
     call(
         &base,
         "status",
@@ -67,7 +69,10 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
     assert_eq!(session.uri.claims(), ["issue-1"]);
     let status = session.status.expect("A has a status");
     assert_eq!(status.status.step, "tests");
-    assert_eq!(status.status.blocked.as_deref(), Some("waits for a verify"));
+    assert_eq!(
+        session.blocked.expect("A is blocked").reason,
+        "which design?"
+    );
     // A has no open watch stream.
     assert_eq!(session.state, Some(SessionState::Offline));
     assert_eq!(reply.build, riff_core::build::VERSION);
