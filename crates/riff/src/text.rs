@@ -3996,8 +3996,8 @@ pub const GCLOUD_SIGNIN_ENDED: &str = "gcloud: the sign-in ended: run gcloud aut
 pub fn gcloud_failed(command: &str, stderr: &str) -> String {
     let lines = || stderr.lines().map(str::trim).filter(|l| !l.is_empty());
     let line = lines()
-        .filter_map(|l| l.strip_prefix("ERROR:"))
-        .last()
+        .rev()
+        .find_map(|l| l.strip_prefix("ERROR:"))
         .map(str::trim)
         .or_else(|| lines().next());
     let Some(line) = line else {
