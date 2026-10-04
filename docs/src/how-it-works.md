@@ -870,7 +870,7 @@ build  v0.7.0  (f45be4d, 2026-09-29)
 SESSION                            STATE    ROLE      DETAIL
 mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6
 mike@thelio:riff#issue-7 (5b1e)    busy     worker    working on #7  4m ago: write the tests
-brett@heron:riff (77e0)            blocked            which of the two designs? (1m ago)
+brett@heron:riff (77e0)            blocked            which of two designs? (1m ago)
 ```
 
 `you` marks your own row. A tag shows the role of a session:
@@ -934,60 +934,82 @@ riff top
 ```
 
 The header shows the state of the riff, the owner and the build, as in
-`riff who`. The board of the current wave comes next: the wave with
-its repository, one line for the `free` items, one for the `claimed`
-items, and one for the items in `verify`. An item is in `verify` when
-a session verifies it, and when no session holds it and its pull
-request waits for a verify or for the merge. Under it, a tree shows each
-person, the hosts of the person, and the sessions on each host:
+`riff who`. A board comes next for each repository with a live
+session: the current wave with its repository, one line for the `free`
+items, one for the `claimed` items, and one for the items in `verify`.
+An item is in `verify` when a session verifies it, and when no session
+holds it and its pull request waits for a verify or for the merge.
+Under the boards, a tree shows each person, the hosts of the person,
+the repositories on each host, and the sessions in each repository:
 
 ```text
 riff   running
 owner  mike (mike@example.com)
-build  v0.7.0  (10df8a4, 2026-09-29)
+build  v1.0.0  (10df8a4, 2026-10-04)
 
-blocked  3a3f8d5d issue-8, 32m, the lead gave no answer: which of the two designs?
+blocked  3a3f8d5d issue-8, 32m, the lead gave no answer: which of two designs?
 
 Wave 3 (como-technologies/riff)
   free: #9
   claimed: #7 #8
 
+Wave 5 (como-technologies/strata)
+  claimed: #88
+
 ann  admin  offline  seen 1h ago
-mike  owner  online
-├─ pangolin
+brett  online  › kadomony  › strata  1 session: 1 busy, 1 claim
+└─ 7a8b9c0d  #issue-88  worker  busy
+     working on #88 Split the store
+mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
+├─ pangolin  › riff  2 sessions: 1 busy, 1 idle, 1 claim
 │  │  load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  jobs 2
 │  │  last kill 14:03:12 by systemd-oomd
-│  ├─ 5b1e2a90  riff#issue-7  worker  busy
+│  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
 │  │    runs Bash: run just ci for 12m
 │  │    20m ago: tests
-│  └─ 9c0d1e2f  riff  worker  idle
+│  └─ 9c0d1e2f  worker  idle
 │       ready for work for 6m
-└─ thelio
-   ├─ 3a3f8d5d  riff#issue-8  blocked
-   │    which of the two designs? (32m ago)
-   │    the lead gave no answer
-   │    working on #8
-   ├─ 4e54d4e5  riff  lead  idle
-   │    monitoring work for 2h
-   │    5m ago: plan the next wave
-   ├─ 6d2b7c1a  strata#issue-88  lead  busy
-   │    working on #88
-   └─ 8f1c2d3e  riff  offline
-        seen 4m ago
+└─ thelio  4 sessions: 2 idle, 1 blocked, 1 claim
+   ├─ riff  3 sessions: 1 idle, 1 blocked, 1 claim
+   │  ├─ 3a3f8d5d  #issue-8  blocked
+   │  │    which of two designs? (32m ago)
+   │  │    the lead gave no answer
+   │  │    working on #8 Show the plan
+   │  ├─ 4e54d4e5  lead  idle
+   │  │    monitoring work for 2h
+   │  │    5m ago: plan the next wave
+   │  └─ 8f1c2d3e  offline
+   │       seen 4m ago
+   └─ strata  1 session: 1 idle
+      └─ 6d2b7c1a  lead  idle
+           monitoring work for 1h
 ```
 
-- A blocked session has a red line before the board: the session, its
+- A blocked session has a red line before the boards: the session, its
   claims, the reason and the time that it waits. When the lead gave no
   answer, the line says so. See [A blocked session](#a-blocked-session).
 - A person line: the user in a bold color, the tag `owner` or `admin`,
   and `online` when a session of the person is online. Else `offline`,
   with the time since the last call. Each member of the riff has a
   line, also when away.
-- A session: the first line has the short session ID, the place of the
-  session, the tag `lead` or `worker`, and the state of the session in
-  its color. Under it comes one line for each fact of the detail of the
-  state. See [The state of a session](#the-state-of-a-session).
+- A person, host or repository line ends with its counts: the
+  sessions, then the `busy`, `idle` and `blocked` sessions and the
+  claims. A count of 0 is not shown.
+- A line with only one line under it takes that line, after a `›`. In
+  the example, brett has one host and one repository, so the person,
+  the host and the repository are on one line. So a small riff stays
+  short.
+- A repository line has the short name of the repository. When the
+  repositories have more than one owner, it has the owner too:
+  `como-technologies/riff`.
+- A session: the first line has the short session ID, the worktree of
+  the session (`#issue-7` in the worktree `issue-7`, nothing in the
+  main worktree), the tag `lead` or `worker`, and the state of the
+  session in its color. Under it comes one line for each fact of the
+  detail of the state. See
+  [The state of a session](#the-state-of-a-session). A lead is the
+  lead of the repository on the line above it.
 
 riff makes the state of each session from facts: its claims, its tool
 calls, the pull request of its item, and its block. No session types
@@ -1021,22 +1043,29 @@ The table of each state, its color and its detail is in
   The numbers of a host come from its `riff workers host`. The
   numbers of the machine where you run `riff top` come from that
   machine, when its limit of workers is more than 0.
-- The place is the repository and the worktree of the session, as in
-  `riff who`: `riff`, or `riff#issue-7` in the worktree `issue-7`. A
-  lead is the lead of the repository on its line. When the
-  repositories have more than one owner, each place has the owner too:
-  `como-technologies/riff`.
-- The board and the titles of the issues are those of one repository:
-  the repository where you run `riff top`. The wave line names it. A
-  session of another repository shows its item with no title.
+- Each board has the issues of its own repository, and a session shows
+  the title of an issue of its own repository. riff reads them with
+  `gh` each minute, for each repository with a live session. A
+  repository that `gh` cannot read has no board and no titles, and
+  no error line.
+
+```mermaid
+flowchart LR
+    T["riff top"] -->|each minute| G["gh: issues and pull requests"]
+    G --> B1["board of como-technologies/riff"]
+    G --> B2["board of como-technologies/strata"]
+    T -->|each 3 seconds| S["riff-server: who"]
+    S --> Tree["person › host › repository › session"]
+```
 
 The tree grows down, not across. No line is wider than your terminal,
 or 80 columns in a pipe. riff cuts a longer line with `…`.
 
 The tags mean the same as in [`riff who`](#see-who-is-in-the-riff).
-People are in the order of user, and hosts in the order of name. On a
-host, a blocked session comes first. The titles and the wave come from
-`gh`. With no `gh`, the tree shows no titles and no board.
+People are in the order of user, hosts in the order of name, and
+repositories in the order of `OWNER/REPO`. In a repository, a blocked
+session comes first. With no `gh`, the tree shows no titles and no
+board.
 
 `riff top` only reads. It posts nothing and wakes no session.
 
@@ -1087,6 +1116,45 @@ riff top --once --color never > sessions.txt
 ```
 
 `--color` works the same as in `riff who`.
+
+### Show the sessions of one person
+
+```sh
+riff top --user brett
+```
+
+The tree shows only the sessions of that user. The boards are those of
+the repositories of these sessions.
+
+### Show the sessions on one host
+
+```sh
+riff top --host pangolin
+```
+
+### Show the sessions in one repository
+
+```sh
+riff top --repo como-technologies/strata
+```
+
+Give the repository as `OWNER/REPO`. You can use `--user`, `--host` and
+`--repo` together. A session shows when it matches each one:
+
+```sh
+riff top --user mike --repo como-technologies/strata
+```
+
+### Put the repositories at the top of the tree
+
+To see what each repository does across people:
+
+```sh
+riff top --by repo
+```
+
+The tree then has the levels repository, person, host, session.
+`--by person` is the default. `--by` works with the other flags.
 
 ## When a session ends
 
@@ -2403,7 +2471,7 @@ the message `blocked: REASON` wakes the lead of its user. A session
 calls the `blocked` tool. From a terminal:
 
 ```sh
-riff blocked "which of the two designs?"
+riff blocked "which of two designs?"
 ```
 
 Do not use it to wait for a verify, a merge or a need: riff shows that

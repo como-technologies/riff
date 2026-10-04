@@ -1868,21 +1868,22 @@
   `admin` or `member`), whether a session of the person is live, and
   the seconds since the last call of a session of the person. A riff
   with no sign-in lists none.
-- **01M3NT4M5D36KTZ5XZMDP6QFQT** `riff top` shows a tree for each
-  person: the person line, each host of the person, and each session on
-  the host, with `├─` and `└─`. The person line has the USER in a bold
-  color, the tag `owner` or `admin`, and the state of the person
+- **01M3NT4M5D36KTZ5XZMDP6QFQT** `riff top` shows a tree with `├─` and
+  `└─` (01M42KHN33M4K13GKTX2WM6CMM). The person line has the USER in a
+  bold color, the tag `owner` or `admin`, and the state of the person
   (01M3QB6CJ1XCQG5B1BVR8AF3B4). Each member of `who` gets a line, also
   when away; with no sign-in, each user of a session. People come by
-  USER and hosts by name. On a host, blocked sessions come first, then
-  by session ID. A person on the command line gets no session line.
+  USER, hosts by name, and repositories by `OWNER/REPO`. In a
+  repository, blocked sessions come first, then by session ID. A
+  person on the command line gets no session line.
 - **01M3NB54P1RBHTA5TKXP8BMY3K** `riff top` shows a live table of the
   sessions of `riff who`, and draws it again in place every 3 seconds
   and after each message of the repository thread, until Ctrl-C.
   `riff top --once` prints one table and exits. The header has the
-  facts of `riff who`: the state, the owner and the build. The board of
-  the current wave follows: the wave, then one line for each group of
-  its open items, `free`, `claimed` and `verify`
+  facts of `riff who`: the state, the owner and the build. A board of
+  the current wave of each repository follows
+  (01M42KHN80V49HDDZF953HXDT0): the wave, then one line for each group
+  of its open items, `free`, `claimed` and `verify`
   (01M3Z9N6X92KT051P10CKKV7EK). The first line of a
   session has the short session ID, the tag of its role, and its state.
   Under it comes one line for each fact of the detail of the state
@@ -1896,14 +1897,33 @@
   `free`. `riff top` reads the open pull requests with `gh pr list`,
   and keeps them as long as the issues.
 - **01M3WNHCD659FH3Z5VYYH69WWR** The first line of a session in
-  `riff top` names the place of the session after the short session
-  ID, in the form of `riff who`: `REPO#WORKTREE`, or `REPO` in the main
-  worktree. The repository is its short name when the repositories of
-  the sessions have one owner, else `OWNER/REPO`. So a lead line names
-  the repository of its lead. The wave line names the repository of its
-  board: `Wave N (OWNER/REPO)`, the repository of the working
-  directory. Only a claim in that repository is on the board, and only
-  a session of that repository shows the title of its item.
+  `riff top` names its worktree after the short session ID:
+  `#WORKTREE`, or nothing in the main worktree. The session is under
+  the line of its repository. A repository line has the short name of
+  the repository when the repositories of the sessions have one owner,
+  else `OWNER/REPO`. The wave line names the repository of its board:
+  `Wave N (OWNER/REPO)`. Only a claim in that repository is on its
+  board, and a session shows the title of an issue of its own
+  repository.
+- **01M42KHN33M4K13GKTX2WM6CMM** The tree of `riff top` has four
+  levels: person, host, repository, session. A person, host or
+  repository line ends with its counts: the sessions, then the busy,
+  idle and blocked sessions and the claims, each that is more than 0.
+  A line with only one line under it, other than a session, takes that
+  line after a `›`, so a small riff stays short.
+- **01M42KHN80V49HDDZF953HXDT0** `riff top` shows a board for each
+  repository with a live session, in the order of `OWNER/REPO`. It
+  reads the issues and the pull requests of each one with `gh`, each
+  minute. A read that fails keeps the last issues of its repository. A
+  repository with no `gh` read shows its sessions, no board and no
+  error line.
+- **01M42KHNCBMBCT3TFBYWE339H5** `riff top --user USER`, `--host HOST`
+  and `--repo OWNER/REPO` show only the sessions that match each flag
+  that is set, and only the boards and the blocked lines of these
+  sessions. A person with no session shows only with no `--host` and
+  no `--repo`. `riff top --by repo` puts the repository at the top of
+  the tree: repository, person, host, session. `--by person` is the
+  default.
 - **01M3QA8EZHX5B8C9CKF8Q3154X** `riff top` grows down, not across. No
   line is wider than the terminal: the real width when riff knows it,
   else 80 columns. riff cuts a wider line with `…`. A session with no
