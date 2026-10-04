@@ -369,6 +369,21 @@ pub struct Stopping {
     pub host: String,
     /// The time since its last call.
     pub idle: Duration,
+    /// True for the first ask since the last change of its claims. Only
+    /// the first ask gives the lead a note (01M4385Z039RCFSKWFPWZAETTX).
+    pub first: bool,
+}
+
+/// An idle worker that still shows life [`crate::idle::STOP_WAIT`] after
+/// the ask to stop ([`State::stuck_workers`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stuck {
+    /// The worker.
+    pub worker: SessionUri,
+    /// Its host.
+    pub host: String,
+    /// The time since the first ask.
+    pub asked: Duration,
 }
 
 /// What a new message causes: sessions to wake and a line for `tail`.
@@ -1736,10 +1751,16 @@ impl State {
                 if time < after {
                     continue;
                 }
+                let first = self
+                    .presence
+                    .sessions
+                    .get(&who)
+                    .is_none_or(|session| session.asked().is_none());
                 stopping.push(Stopping {
                     worker: self.uri(&who, now),
                     host: host.clone(),
                     idle: time,
+                    first,
                 });
             }
         }
@@ -1778,6 +1799,66 @@ impl State {
             self.signal(stop.worker.who(), Signal::AskedToStop, now);
         }
         stopping
+    }
+
+    /// Each worker that still shows life [`crate::idle::STOP_WAIT`] after
+    /// the first ask to stop, while the ask holds. It gives each worker
+    /// one time for each first ask (01M4385Z2QAMEED30JYE81SMBY).
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let worker = |id: &str| -> SessionUri {
+    ///     format!("riff://mike@pangolin/como-technologies/riff?session={id}").parse().unwrap()
+    /// };
+    /// let (w1, w2) = (worker("w1"), worker("w2"));
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// for (w, at) in [(&w1, 0), (&w2, 10)] {
+    ///     state.worker(w, true, now);
+    ///     state.watch_started(w, now + Duration::from_secs(at));
+    /// }
+    /// let asked = now + Duration::from_secs(80);
+    /// assert_eq!(state.stop_idle_workers(asked).len(), 1, "w1 is asked to stop");
+    ///
+    /// // A worker that stops shows no life after the ask.
+    /// let later = asked + Duration::from_secs(90);
+    /// assert!(state.stuck_workers(later).is_empty());
+    ///
+    /// // A keep-alive after the wait: the worker still runs.
+    /// state.alive(&w1, later);
+    /// let stuck = state.stuck_workers(later);
+    /// assert_eq!(stuck.len(), 1);
+    /// assert_eq!(stuck[0].worker, w1);
+    /// assert_eq!(stuck[0].asked, Duration::from_secs(90));
+    /// assert!(state.stuck_workers(later).is_empty(), "tells one time");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn stuck_workers(&mut self, now: Instant) -> Vec<Stuck> {
+        let mut stuck = Vec::new();
+        for (who, session) in &mut self.presence.sessions {
+            let Some(asked) = session.asked() else {
+                continue;
+            };
+            let late = session
+                .alive
+                .is_some_and(|alive| alive >= asked + crate::idle::STOP_WAIT);
+            if session.stopping && late && !session.told_stuck && !session.gone(now) {
+                session.told_stuck = true;
+                let host = session.place.host().to_owned();
+                stuck.push((who.clone(), host, now.saturating_duration_since(asked)));
+            }
+        }
+        stuck
+            .into_iter()
+            .map(|(who, host, asked)| Stuck {
+                worker: self.uri(&who, now),
+                host,
+                asked,
+            })
+            .collect()
     }
 
     /// Whether a session of `user` is live, and the seconds since the

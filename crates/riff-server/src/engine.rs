@@ -164,7 +164,7 @@ use crate::oidc::Identity;
 use crate::state::{
     Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
     CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, MakeRiff,
-    NameOwner, OwnerChange, Refused, Role, Signal, State, Stopping,
+    NameOwner, OwnerChange, Refused, Role, Signal, State, Stopping, Stuck,
 };
 use crate::trace::{Denied, DeniedCode, Limit, Named, Outcome, Traced};
 
@@ -945,6 +945,12 @@ impl Engine {
     /// server for each ([`State::stop_idle_workers`]). Gives each.
     pub fn stop_idle_workers(&self) -> Vec<Stopping> {
         self.core().state.stop_idle_workers(Instant::now())
+    }
+
+    /// Each idle worker that still runs after the ask to stop
+    /// ([`State::stuck_workers`]).
+    pub fn stuck_workers(&self) -> Vec<Stuck> {
+        self.core().state.stuck_workers(Instant::now())
     }
 
     /// A query of a caller: it reads the written copy. The query is a

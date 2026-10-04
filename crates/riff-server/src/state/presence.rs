@@ -235,7 +235,13 @@ impl Signal {
                 session.seen_before_load = None;
                 session.claims_changed = now;
             }
-            Signal::AskedToStop => session.stopping = true,
+            Signal::AskedToStop => {
+                if session.asked().is_none() {
+                    session.asked = Some(now);
+                    session.told_stuck = false;
+                }
+                session.stopping = true;
+            }
             Signal::Read { .. } | Signal::Facts { .. } => {}
         }
         AliveReply {
@@ -535,6 +541,12 @@ pub(super) struct Session {
     /// True when the server asked this idle worker to stop, and it made
     /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     pub(super) stopping: bool,
+    /// The first ask to stop. A change of the claims after it ends it
+    /// ([`Session::asked`], 01M4385Z039RCFSKWFPWZAETTX).
+    pub(super) asked: Option<Instant>,
+    /// True when the server told the lead that this worker still runs
+    /// after the ask ([`Session::asked`]).
+    pub(super) told_stuck: bool,
     /// The last change of the claims of the session, or its arrival
     /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
     pub(super) claims_changed: Instant,
@@ -591,8 +603,18 @@ impl Session {
             work: None,
             blocked: None,
             stopping: false,
+            asked: None,
+            told_stuck: false,
             claims_changed: now,
         }
+    }
+
+    /// The first ask to stop since the last change of the claims. A
+    /// wake takes the ask back, but not this time: the server tells the
+    /// lead one time for each idle time of a worker
+    /// (01M4385Z039RCFSKWFPWZAETTX).
+    pub(super) fn asked(&self) -> Option<Instant> {
+        self.asked.filter(|asked| *asked >= self.claims_changed)
     }
 
     /// Records a sign of life at `now`. A gone session comes back.

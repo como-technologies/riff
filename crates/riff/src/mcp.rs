@@ -777,9 +777,7 @@ impl Tools {
             return;
         };
         eprintln!("riff: {}", crate::text::IDLE_STOP);
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status();
+        crate::worker::stop_wrapper(pid);
     }
 
     /// Runs the rollout of workers for as long as the tools run
