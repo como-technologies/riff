@@ -312,6 +312,18 @@ stateDiagram-v2
 `riff` stays on HTTPS over TCP. No HTTP/3 now: it is not widely
 adopted yet, and the design does not depend on a property of QUIC.
 
+- `reqwest` speaks HTTP/2 to a server that offers it, as Cloud Run
+  does. Then the calls of a process share one connection. The client
+  of the calls sends an HTTP/2 ping each 20 s
+  (`http2_keep_alive_interval`), so it finds a dead connection with no
+  call.
+- The client of the streams keeps no idle connection. So each stream
+  has a connection of its own, also with HTTP/2. Its `read_timeout` is
+  `STREAM_IDLE`: it resets at each read, so it ends only a stream that
+  gives no byte.
+- Each client sets `connect_timeout` to `CONNECT_WAIT`. The client of
+  the calls sets `timeout` to `TRY_WAIT`.
+
 The crate review (`design/reviews/link-00-crates.md`) gives the part
 for each piece of the link:
 
