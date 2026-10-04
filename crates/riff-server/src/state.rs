@@ -4225,6 +4225,50 @@ mod tests {
         );
     }
 
+    /// 01M4385Z039RCFSKWFPWZAETTX: a wake takes the ask back, and the
+    /// server asks again, but only the first ask is for the lead. A claim
+    /// and a release start a new idle time: the next ask is a first ask
+    /// again.
+    #[test]
+    fn only_the_first_ask_of_an_idle_time_is_for_the_lead() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        state.register(&lead(api()), now);
+        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
+        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
+        // w2 makes a call one second after `at`, so w1 is the idle
+        // worker past the limit.
+        let w2_calls = |state: &mut State, at: Instant| {
+            let at = at + Duration::from_secs(1);
+            state.watch_ended(w2.who(), at);
+            state.watch_started(&w2, at);
+        };
+        let asks = |state: &mut State, at: Instant| -> Vec<(String, bool)> {
+            let stopping = state.stop_idle_workers(at);
+            let session = |s: &Stopping| s.worker.who().session().unwrap().to_owned();
+            stopping.iter().map(|s| (session(s), s.first)).collect()
+        };
+
+        let mut at = now;
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(asks(&mut state, at), [("w1".into(), true)]);
+        // A pause wakes w1: the end of its watch takes the ask back.
+        state.watch_ended(w1.who(), at);
+        state.watch_started(&w1, at);
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(asks(&mut state, at), [("w1".into(), false)]);
+
+        // w1 claims work and releases it: a new idle time.
+        state.claim(&w1, &repo(), "issue-12", at).unwrap();
+        state.release(&w1, &repo(), "issue-12", at).unwrap();
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(asks(&mut state, at), [("w1".into(), true)]);
+    }
+
     /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: an idle worker on each of two hosts:
     /// both stay. A worker that is idle for less than the idle time stays.
     #[test]
