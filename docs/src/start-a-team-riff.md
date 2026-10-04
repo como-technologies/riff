@@ -69,6 +69,87 @@ Do these steps on the host.
    caddy reverse-proxy --from riff.example.com --to 127.0.0.1:7878
    ```
 
+## Host your own riff on Cloud Run
+
+In place of a Linux host, `riff cloud` can run the riff on Google
+Cloud Run. It uses the `gcloud` of your machine. Install the
+[gcloud CLI](https://cloud.google.com/sdk/docs/install), and sign in:
+
+```sh
+gcloud auth login
+```
+
+Make a Google Cloud project, and link a billing account to it. See
+[Set up the cloud project](development.md#set-up-the-cloud-project)
+for the commands.
+
+```mermaid
+flowchart LR
+    C["riff cloud create"] --> S["riff cloud signin"]
+    S --> D["riff cloud deploy"]
+    D --> L["riff cloud list<br/>status, log"]
+```
+
+### Make the riff
+
+Do these steps in a clone of riff, so that the deploy can build the
+image. Put a name for the riff in place of `NAME`, for example `team`,
+your project in place of `PROJECT`, and a region in place of
+`REGION`, for example `europe-west1`:
+
+```sh
+git clone https://github.com/como-technologies/riff
+cd riff
+riff cloud create NAME --project PROJECT --region REGION
+```
+
+It writes the settings file `deploy/cloud/NAME.env`. The service, the
+bucket, the accounts and the secret take the name of the riff. Then it
+makes each of them. It checks each one first, so you can run it again.
+To get an email for each error of the riff, give your email:
+
+```sh
+RIFF_OWNER=YOUR_EMAIL riff cloud create NAME
+```
+
+### Store the sign-in client
+
+```sh
+riff cloud signin NAME
+```
+
+It shows the steps to make the sign-in client in the console of
+Google. Then it asks for the client ID and the client secret. The
+secret goes to Secret Manager. The ID goes to the settings file.
+
+### Deploy the riff
+
+The riff needs an owner: your email. With no tag, Cloud Build builds
+the image from your clone:
+
+```sh
+export RIFF_OWNER=YOUR_EMAIL
+riff cloud deploy NAME
+```
+
+The URL of the riff is in `riff cloud list`. Tell each person to use
+it (see [Join a riff](start-a-riff.md)).
+
+### See and stop the riff
+
+```sh
+riff cloud list
+riff cloud status NAME
+riff cloud log NAME --errors
+```
+
+To stop the riff, delete its service. riff asks you to type the name.
+The bucket with the state stays, unless you add `--with-state`:
+
+```sh
+riff cloud delete NAME
+```
+
 ## Sign in first
 
 Sign in before you invite a person. On your machine, use the riff. Put
