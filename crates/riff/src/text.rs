@@ -20,8 +20,9 @@ use riff_core::selector::Selector;
 use crate::api::{Checked, Claimed, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
-    AdminSet, FreeReply, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted,
-    ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, ThreadInfo, Wake,
+    AdminSet, FreeReply, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed,
+    PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState,
+    SessionInfo, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and

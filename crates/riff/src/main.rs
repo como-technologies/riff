@@ -191,7 +191,8 @@ enum Command {
     /// Claim a work item
     ///
     /// Then no other session does the same work. It exits with status 1
-    /// when another session holds it.
+    /// when another session holds it, or when a lead holds it and this
+    /// session is a worker.
     Claim {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
