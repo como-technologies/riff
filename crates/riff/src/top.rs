@@ -359,7 +359,7 @@ pub struct Machine {
 ///     live: true,
 ///     idle_secs: 0,
 ///     status: Some(StatusInfo {
-///         status: Status { step: status.line(), blocked: None },
+///         status: Status { step: status.line() },
 ///         age_secs: 1,
 ///         stale: false,
 ///     }),
@@ -369,6 +369,9 @@ pub struct Machine {
 ///     must_clear: false,
 ///     fresh_secs: None,
 ///     state: None,
+///     work: None,
+///     waits: None,
+///     blocked: None,
 /// };
 /// let here = Machine { user: "mike".into(), host: "pangolin".into(), status: status.clone() };
 /// let found = machines(std::slice::from_ref(&host), Some(here.clone()));
