@@ -992,7 +992,8 @@
   holds one record of each kind, and CI replays it. A test makes a
   checkpoint at each position of the fixture: a load of it gives the
   state of a replay up to that position, and a start from it gives the
-  state of a full replay.
+  state of a full replay. The import of go-live writes only kinds of
+  1.0.0.
 - **01M43GSRSDJMGAH8SR1GD4Z3XF** The fixtures of each release after
   1.0.0 are in a directory of their own, for example
   `crates/riff-server/tests/fixtures/1.1.0/`. Its `kinds.json` lists
@@ -1002,8 +1003,7 @@
 - **01M43GSGVYJW7C09SVRWRAQZDZ** The checkpoint has the part `plans`:
   each hold of each repository thread, with its reason, its caller
   and its time. An empty part is not written, so the log of 1.0.0
-  gives the checkpoint of 1.0.0. The import of go-live writes only kinds of
-  1.0.0.
+  gives the checkpoint of 1.0.0.
 - **01M3WRD8WJ2JF9077PRDX04T9A** Each command of `riff-server` goes
   through `Engine::dispatch`, and each signal goes through
   `Engine::signal`. The engine module owns the state, its lock and the
