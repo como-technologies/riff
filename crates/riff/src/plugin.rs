@@ -1033,6 +1033,23 @@ mod tests {
         }
     }
 
+    /// 01M43DKYYEYW3TQ2CKS36VRZ0V: a session runs one full check at a
+    /// time in a worktree, and waits for the run that it has.
+    #[test]
+    fn the_skill_runs_one_full_check_at_a_time() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = &skill[skill.find("## Build and test").unwrap()..];
+        let part = &part[..part.find("\n## ").unwrap()];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "Run one full check at a time in a worktree.",
+            "look for a run of your own that runs: a run in the background is one task.",
+            "Wait for its end. Do not start a second run.",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
     /// 01M3K0AXRNA0F2920E9QCSDFQZ, 01M3Q5A11RKZW1610SWGSMTE3W: the lead
     /// gives free work to a free worker first, starts a worker when it
     /// has work for it, and ends workers. The server stops idle workers.

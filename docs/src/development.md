@@ -50,6 +50,32 @@ newest `main`, fetch first:
 git fetch origin
 ```
 
+### When a just ci runs already
+
+One `just ci` or `just ci-full` runs at a time in a worktree. Two runs
+share the `target` folder, wait for each other, and double the load. A
+second run stops at once:
+
+```text
+a just ci runs in this worktree already (pid 41230, started 12 min ago); wait for it, or stop it
+```
+
+Wait for the first run to end. To see it:
+
+```sh
+ps -o pid,etime,args -p 41230
+```
+
+To stop it, press Ctrl-C in its terminal, or stop the process:
+
+```sh
+kill 41230
+```
+
+The run keeps its lock in `target/.riff-ci.lock`, and removes it at
+its end. A lock of a process that does not run does not count. Runs in
+two worktrees go on at the same time.
+
 ## Run each check
 
 To run each check for each change, for example before a release:

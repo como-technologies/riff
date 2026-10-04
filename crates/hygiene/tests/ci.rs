@@ -227,11 +227,16 @@ fn recipe(name: &str) -> Vec<String> {
 fn the_text_recipe_of_the_justfile_runs_no_code_check() {
     assert_eq!(recipe("ci-text"), ["book", "reqs", "wrap"]);
     assert_eq!(
-        recipe("ci-full"),
+        recipe("ci-checks"),
         ["fmt-check", "lint", "test", "doc", "book", "reqs", "wrap"]
     );
     assert!(recipe("ci").is_empty(), "ci has no fixed checks");
+    assert!(recipe("ci-full").is_empty(), "ci-full takes the lock first");
     let justfile = std::fs::read_to_string(top().join("justfile")).unwrap();
+    let full = &justfile[justfile.find("\nci-full:").unwrap()..];
+    let full = &full[..full.find("\n\n").unwrap()];
+    assert!(full.contains("ci_lock \"$PWD/target\""), "{full}");
+    assert!(full.ends_with("{{just_executable()}} ci-checks"), "{full}");
     assert!(justfile.contains("recipe=$(cargo run -q -p hygiene -- ci)"));
     assert!(justfile.contains("cargo run -q -p hygiene -- wrap docs/src"));
 }

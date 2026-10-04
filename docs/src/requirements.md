@@ -3592,6 +3592,17 @@
 - **01M3WNN7VQJKN5MJH7JN50VF4D** `just ci-full` runs each check for
   each diff: `fmt-check`, `lint`, `test`, `doc`, `book`, `reqs` and
   `wrap`. The Gate on GitHub runs `just ci-full`.
+- **01M43DKYVAX0TJ2F5YYGYFSZ4G** One `just ci` or `just ci-full` runs
+  at a time in a worktree. A run holds the lock file
+  `target/.riff-ci.lock` with its pid and its start time, and removes
+  it at its end. A second run while the holder lives stops at once
+  with the exit code 1 and one line: `a just ci runs in this worktree
+  already (pid N, started M min ago); wait for it, or stop it`. A lock
+  of a process that does not run does not count. A run that the
+  holder starts takes no lock. The check uses no cargo.
+- **01M43DKYYEYW3TQ2CKS36VRZ0V** The skill tells a session to look for
+  a full check of its own that runs before it starts one, and to wait
+  for its end. A run in the background is one task.
 
 ## Open
 

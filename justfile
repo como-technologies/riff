@@ -10,19 +10,31 @@ init:
     cargo install --locked mdbook mdbook-gruvbox mdbook-mermaid cargo-audit
 
 # hygiene ci prints the recipe, ci-text or ci-full, and one line that says
-# which set runs and why (01M3WNMKB6PAP6J0QXX4A684HH).
+# which set runs and why (01M3WNMKB6PAP6J0QXX4A684HH). ci_lock stops a
+# second run in this worktree at once (01M43DKYVAX0TJ2F5YYGYFSZ4G).
 # Run the checks that the diff from origin/main can break
 ci:
     #!/usr/bin/env bash
     set -euo pipefail
+    . "{{justfile_directory()}}/crates/hygiene/ci-lock.sh"
+    ci_lock "$PWD/target"
     recipe=$(cargo run -q -p hygiene -- ci)
-    exec {{just_executable()}} "$recipe"
+    {{just_executable()}} "$recipe"
 
 # The Gate on GitHub runs this recipe (01M3WNN7VQJKN5MJH7JN50VF4D).
 # crate-audit is not part of the gate: CI runs it as a separate job (and
 # weekly), so a new advisory cannot hide a code failure.
 # Run all CI checks
-ci-full: fmt-check lint test doc book reqs wrap
+ci-full:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . "{{justfile_directory()}}/crates/hygiene/ci-lock.sh"
+    ci_lock "$PWD/target"
+    {{just_executable()}} ci-checks
+
+# ci-full runs these checks with the lock held.
+[private]
+ci-checks: fmt-check lint test doc book reqs wrap
 
 # Run only the checks for text: the book, the requirement IDs, the wrap
 ci-text: book reqs wrap

@@ -602,6 +602,10 @@ session, with its work that is not committed.
 - To run a test many times, for example to find a test that fails only
   sometimes, run that test by its name in a loop, not the full `just ci`
   or the full check of your repository.
+- Run one full check at a time in a worktree. Before you start one,
+  look for a run of your own that runs: a run in the background is one
+  task. Wait for its end. Do not start a second run. Two runs share the
+  build folder, wait for each other, and double the load.
 
 ## Threads
 
