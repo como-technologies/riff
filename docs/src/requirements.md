@@ -3144,6 +3144,28 @@
   each machine under its line. A workers host tells its disk in its
   status, after the numbers of its machine. The lead reads a status
   with no disk as a host that does not tell it.
+- **01M41VAGJC69S9R2TD1B1EQ4W4** `riff workers run` gives `claude` a
+  temp folder of its own on disk: `ROOT/SESSION`, in `TMPDIR` and
+  `CLAUDE_CODE_TMPDIR`. It also puts both in the `env` of the flag
+  settings of `claude`, so that the user settings do not replace them.
+  ROOT is `workers.tmp`, else `~/.cache/riff/tmp`.
+  `riff workers tmp` shows and sets it.
+- **01M41VAGMQPBDPV8XPGEKYRXZZ** A process uses a folder when its
+  working directory or an open file is in it, or when its `TMPDIR` or
+  `CLAUDE_CODE_TMPDIR` is in it. riff never deletes a temp folder that
+  a live process uses.
+- **01M41VAGQ2VA2Q0VSFJNG4H08W** The wrapper deletes the temp folder
+  of its worker when `claude` ended. `riff workers stop` deletes it
+  after it stopped the processes of the worker.
+- **01M41VAGSCNESHTZ6216P2E133** At the clear, after the stop of the
+  old context, riff deletes each file and folder of the temp folder of
+  the worker that no process holds open or works in. It keeps each
+  folder `tasks`.
+- **01M41VAGVR2PPVAYDN0SWK2F02** Each tidy deletes each temp folder in
+  ROOT that no process uses and that did not change in the last
+  minute.
+- **01M41VAGY396K07BTPSW9TNBX5** `riff workers` shows the disk use of
+  ROOT of this machine under the line of its disk.
 - **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`
   and `riff worktrees clean` for orphan processes and stale worktrees.
   No line of the skill tells a session to run `kill`, `pkill`,

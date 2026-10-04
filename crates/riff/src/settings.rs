@@ -15,6 +15,7 @@
 //! nice = 10
 //! memory = 22
 //! floor = 4
+//! tmp = "/data/riff-tmp"
 //!
 //! [update]
 //! auto = true
@@ -35,6 +36,7 @@
 //! | `workers.nice` | 10 | The nice value of each worker (01M3WFYZTX05CGDP2NQF9B356K). |
 //! | `workers.memory` | 0 | The most memory of all workers of the machine, in GB. 0: riff makes the number from the machine (01M3WFYZX6GVFYW6NTTTKF144R). |
 //! | `workers.floor` | 4 | The available memory in GB under which riff starts no new worker (01M3WFZ01PTAYYKG3T5CFA2W4D). |
+//! | `workers.tmp` | `~/.cache/riff/tmp` | The folder of the temp folders of the workers (see [`temp`](crate::temp), 01M41VAGJC69S9R2TD1B1EQ4W4). |
 //! | `lead.compact` | true | riff compacts the lead at the end of a wave (see [`compact`](crate::compact)). |
 //! | `lead.quiet` | 60 | The seconds with no input in the pane of the lead before riff compacts it. |
 //! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
@@ -252,6 +254,41 @@ pub fn workers_floor(path: &Path) -> Result<u32> {
 /// Sets `workers.floor`. It keeps each other key.
 pub fn set_workers_floor(path: &Path, gb: u32) -> Result<()> {
     set(path, "workers", "floor", value(i64::from(gb)))
+}
+
+/// The root of the temp folders of the workers: `workers.tmp`
+/// (01M41VAGJC69S9R2TD1B1EQ4W4). `None` when the file or the key is
+/// missing: then [`crate::temp::root`] takes the default.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::workers_tmp(&path)?, None);
+/// riff::settings::set_workers_tmp(&path, "/data/riff-tmp".as_ref())?;
+/// assert_eq!(riff::settings::workers_tmp(&path)?, Some("/data/riff-tmp".into()));
+/// std::fs::write(&path, "[workers]\ntmp = 3\n")?;
+/// assert!(riff::settings::workers_tmp(&path).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn workers_tmp(path: &Path) -> Result<Option<PathBuf>> {
+    let doc = read(path)?;
+    let Some(item) = doc.get("workers").and_then(|w| w.get("tmp")) else {
+        return Ok(None);
+    };
+    match item.as_str() {
+        Some(dir) if !dir.is_empty() => Ok(Some(PathBuf::from(dir))),
+        _ => bail!("workers.tmp in {} is not a path", path.display()),
+    }
+}
+
+/// Sets `workers.tmp`. It keeps each other key.
+pub fn set_workers_tmp(path: &Path, dir: &Path) -> Result<()> {
+    set(
+        path,
+        "workers",
+        "tmp",
+        value(dir.to_string_lossy().as_ref()),
+    )
 }
 
 /// The number `workers.KEY`, or `default` when the file or the key is

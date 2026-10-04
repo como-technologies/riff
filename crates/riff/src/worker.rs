@@ -59,6 +59,11 @@
 //! The wrapper tells the lead as the person, never as the session of
 //! the worker. So a crashed worker does not come back in `riff who`.
 //!
+//! # Temp folder
+//!
+//! The wrapper gives `claude` a temp folder of its own on disk, and
+//! deletes it when `claude` ended ([`crate::temp`]).
+//!
 //! # Limits
 //!
 //! The wrapper gives `claude` the limits of a worker
@@ -85,7 +90,8 @@ use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
 use crate::{
-    enable, hygiene, identity, jobserver, local, settings, text, worker_lsp, worker_mcp, workload,
+    enable, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, worker_mcp,
+    workload,
 };
 
 /// The variable that marks a worker session.
@@ -217,7 +223,16 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         eprintln!("{}", crate::text::nice_above(here, limit.nice));
     }
     let nice = limits::nice_by(limit.nice, here);
-    let command = limits::command(claude, args, nice, slice.as_deref());
+    // The temp folder of this worker, on disk. Its drop deletes it after
+    // `claude` ends (01M41VAGJC69S9R2TD1B1EQ4W4, 01M41VAGQ2VA2Q0VSFJNG4H08W).
+    let folder = std::env::var(identity::SESSION_VARS[0])
+        .ok()
+        .and_then(|session| temp::Folder::make(&session));
+    let args = match &folder {
+        Some(folder) => temp::with_env(args, folder.path()),
+        None => args.to_vec(),
+    };
+    let command = limits::command(claude, &args, nice, slice.as_deref());
     // The pool lives while this wrapper lives (01M3ZGZMJ9RF1C4AHG78GQ2NM4).
     let pool = hold_pool(dir.as_deref(), &limit);
     // A worker past the count of the pool keeps one token out of it.
@@ -235,6 +250,11 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         // variable of that context. `claude` is of no context
         // (01M3ZV0QSFVCHRSEKYK57B88VA).
         .env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode));
+    if let Some(folder) = &folder {
+        for var in temp::VARS {
+            cmd.env(var, folder.path());
+        }
+    }
     let makeflags = pool.as_ref().map(jobserver::Pool::makeflags);
     for (var, value) in limits::jobs_env(&limit, makeflags.as_deref(), &riff) {
         match value {
@@ -487,6 +507,11 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
         );
         if !stopped.is_empty() {
             println!("{}", text::stopped_after_pane(&worker.pane, &stopped));
+        }
+        // The wrapper deletes the folder when `claude` ended. This is for
+        // a wrapper that died with the pane (01M41VAGQ2VA2Q0VSFJNG4H08W).
+        if let Some(dir) = temp::here(&worker.session) {
+            temp::end_session(&dir, &temp::users());
         }
         let ended = async {
             let me = identity::agent(&here, &worker.session, api.base())?;

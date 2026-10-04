@@ -17,6 +17,7 @@
 //!     participant G as git and gh
 //!     participant S as riff-server
 //!     loop each 10 minutes
+//!         H->>H: delete the temp folder of each worker that ended
 //!         H->>G: riff worktrees clean
 //!         H->>H: measure the disk
 //!         opt under 15% free
@@ -36,6 +37,9 @@
 //!   ([`crate::worktrees::ownerless`]). riff removes only its `target`:
 //!   the next build makes it again. The source and the branch stay
 //!   (01M41A11BB4HAD8595DNSBAZ0D).
+//! - The temp folder of a worker whose pane died with its wrapper goes
+//!   away at the next tidy ([`crate::temp::sweep`],
+//!   01M41VAGVR2PPVAYDN0SWK2F02).
 //! - Under [`crate::disk::LOW_PERCENT`], `riff workers start`, the
 //!   rollout and a workers host start no worker on the machine
 //!   (01M41A11DX1QRP48YPTDNT67W4). The lead gets one note when the
@@ -130,7 +134,16 @@ pub async fn tidy(
     dir: &Path,
     guard: &mut Guard,
 ) -> Result<Vec<String>> {
-    let mut lines = worktrees::clean_here(api, me, dir).await?;
+    let mut lines = Vec::new();
+    // The temp folders of workers that ended (01M41VAGVR2PPVAYDN0SWK2F02).
+    if let Ok(root) = crate::settings::path().and_then(|path| crate::temp::root(&path)) {
+        let swept = tokio::task::spawn_blocking(move || {
+            crate::temp::sweep(&root, &crate::temp::users(), std::time::SystemTime::now())
+        })
+        .await?;
+        lines.extend(swept.iter().map(|dir| text::temp_removed(dir)));
+    }
+    lines.extend(worktrees::clean_here(api, me, dir).await?);
     let main = identity::main_worktree(dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
     let host = me.place().host().to_owned();

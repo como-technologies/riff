@@ -100,6 +100,7 @@ pub mod secrets;
 pub mod settings;
 pub mod state;
 pub mod style;
+pub mod temp;
 pub mod terminal;
 pub mod text;
 pub mod tidy;

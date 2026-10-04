@@ -212,8 +212,118 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(
         std::fs::read_to_string(seen).unwrap(),
-        "--settings\n{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"enabledPlugins\":{\"rust-lsp@m\":false}}\nJoin the riff.\n"
+        format!(
+            "--settings\n{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"enabledPlugins\":{{\"rust-lsp@m\":false}},\"env\":{{\"TMPDIR\":\"{tmp}\",\"CLAUDE_CODE_TMPDIR\":\"{tmp}\"}}}}\nJoin the riff.\n",
+            tmp = dir.path().join("tmp/w1").display()
+        )
     );
+}
+
+/// The worker gets a temp folder of its own on disk, in `TMPDIR` and
+/// `CLAUDE_CODE_TMPDIR` (01M41VAGJC69S9R2TD1B1EQ4W4). The wrapper
+/// deletes it when `claude` ends (01M41VAGQ2VA2Q0VSFJNG4H08W).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_worker_gets_a_temp_folder_and_its_end_deletes_it() {
+    let api = start_server().await;
+    lead(&api).await;
+    let dir = repo();
+    let seen = dir.path().join("seen");
+    let claude = fake_claude(
+        dir.path(),
+        &format!(
+            "echo \"$TMPDIR $CLAUDE_CODE_TMPDIR\" > '{}'\n\
+             mkdir -p \"$CLAUDE_CODE_TMPDIR/claude-1000/p/s1/scratchpad\"\n\
+             echo build > \"$CLAUDE_CODE_TMPDIR/claude-1000/p/s1/scratchpad/riff\"",
+            seen.display()
+        ),
+    );
+    let out = riff(&api, dir.path(), "w1")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let folder = dir.path().join("tmp/w1");
+    assert_eq!(
+        std::fs::read_to_string(seen).unwrap().trim(),
+        format!("{0} {0}", folder.display())
+    );
+    assert!(!folder.exists(), "the end deletes the temp folder");
+    assert!(dir.path().join("tmp").exists());
+}
+
+/// `riff workers stop` closes the pane: the stopped worker has no temp
+/// folder any more (01M41VAGQ2VA2Q0VSFJNG4H08W).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_deletes_the_temp_folder() {
+    let api = start_server().await;
+    lead(&api).await;
+    let dir = repo();
+    let claude = fake_claude(dir.path(), "echo x > \"$TMPDIR/rustc.tmp\"\nexec sleep 30");
+    let mut child = riff(&api, dir.path(), "w4")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .spawn()
+        .unwrap();
+    let file = dir.path().join("tmp/w4/rustc.tmp");
+    let begin = Instant::now();
+    while !file.exists() {
+        assert!(begin.elapsed() < Duration::from_secs(60), "no temp file");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let hup = Command::new("kill")
+        .args(["-HUP", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(hup.success());
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    assert!(!dir.path().join("tmp/w4").exists());
+}
+
+/// A child of `claude` that lives after its end keeps the temp folder
+/// (01M41VAGMQPBDPV8XPGEKYRXZZ). When it ends, the tidy deletes the
+/// folder (01M41VAGVR2PPVAYDN0SWK2F02).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_live_process_keeps_the_temp_folder_until_the_tidy() {
+    let api = start_server().await;
+    lead(&api).await;
+    let dir = repo();
+    let pid = dir.path().join("pid");
+    let claude = fake_claude(
+        dir.path(),
+        &format!(
+            "sleep 60 > /dev/null 2>&1 < /dev/null &\necho $! > '{}'",
+            pid.display()
+        ),
+    );
+    let out = riff(&api, dir.path(), "w5")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let folder = dir.path().join("tmp/w5");
+    let root = dir.path().join("tmp");
+    let later = std::time::SystemTime::now() + Duration::from_secs(120);
+    assert!(folder.exists(), "the live sleep keeps it");
+    assert!(riff::temp::sweep(&root, &riff::temp::users(), later).is_empty());
+
+    let pid = std::fs::read_to_string(pid).unwrap();
+    let killed = Command::new("kill").arg(pid.trim()).status().unwrap();
+    assert!(killed.success());
+    let begin = Instant::now();
+    while riff::temp::users()
+        .iter()
+        .any(|u| u.pid.to_string() == pid.trim())
+    {
+        assert!(begin.elapsed() < Duration::from_secs(60), "the sleep lives");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        riff::temp::sweep(&root, &riff::temp::users(), later),
+        std::slice::from_ref(&folder)
+    );
+    assert!(!folder.exists());
 }
 
 /// A worker with no work keeps its watch, and sets no status. It stays

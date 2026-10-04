@@ -3555,6 +3555,42 @@ pub fn worktrees_saved(lines: &[&str]) -> String {
     )
 }
 
+/// The line for the temp folder of a worker that ended, after a tidy
+/// deleted it (01M41VAGVR2PPVAYDN0SWK2F02).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::temp_removed("/h/.cache/riff/tmp/w1".as_ref()),
+///     "/h/.cache/riff/tmp/w1: deleted the temp folder of a worker that ended"
+/// );
+/// ```
+pub fn temp_removed(dir: &std::path::Path) -> String {
+    format!(
+        "{}: deleted the temp folder of a worker that ended",
+        dir.display()
+    )
+}
+
+/// A disk use in words: MB under 1 GB, else GB with one decimal.
+///
+/// ```
+/// use riff::text::size_words;
+/// assert_eq!(size_words(0), "0MB");
+/// assert_eq!(size_words(5 * 1024 * 1024), "5MB");
+/// assert_eq!(size_words(2_684_354_560), "2.5GB");
+/// ```
+pub fn size_words(bytes: u64) -> String {
+    const MB: u64 = 1024 * 1024;
+    const GB: u64 = 1024 * MB;
+    if bytes < GB {
+        return format!("{}MB", bytes / MB);
+    }
+    // Precision loss is no matter for one decimal.
+    #[allow(clippy::cast_precision_loss)]
+    let gb = bytes as f64 / GB as f64;
+    format!("{gb:.1}GB")
+}
+
 /// The line for a worktree whose `target` riff removed
 /// (01M41A11BB4HAD8595DNSBAZ0D).
 pub const TARGET_REMOVED: &str =
