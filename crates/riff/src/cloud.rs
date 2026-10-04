@@ -185,8 +185,8 @@ pub struct Settings {
     pub project: String,
     pub project_number: String,
     pub region: String,
-    /// The secret of the sign-in client in Secret Manager.
-    pub secret: String,
+    /// The name of the secret of the sign-in client in Secret Manager.
+    pub secret_name: String,
     /// The bucket that holds the state of riff-server.
     pub bucket: String,
     /// The Cloud Run service.
@@ -247,7 +247,7 @@ impl Settings {
             project: get("CLOUD_PROJECT"),
             project_number: get("CLOUD_PROJECT_NUMBER"),
             region: get("CLOUD_REGION"),
-            secret: get("CLOUD_SECRET"),
+            secret_name: get("CLOUD_SECRET"),
             bucket: get("CLOUD_BUCKET"),
             service: get("CLOUD_SERVICE"),
             domain: get("CLOUD_DOMAIN"),
@@ -284,7 +284,7 @@ impl Settings {
             project: project.to_owned(),
             project_number: number.to_owned(),
             region: region.to_owned(),
-            secret: format!("{name}-oidc-client-secret"),
+            secret_name: format!("{name}-oidc-client-secret"),
             bucket: format!("{project}-{name}-state"),
             service: name.to_owned(),
             domain: String::new(),
@@ -321,7 +321,7 @@ impl Settings {
             ("CLOUD_PROJECT", self.project.clone()),
             ("CLOUD_PROJECT_NUMBER", self.project_number.clone()),
             ("CLOUD_REGION", self.region.clone()),
-            ("CLOUD_SECRET", self.secret.clone()),
+            ("CLOUD_SECRET", self.secret_name.clone()),
             ("CLOUD_BUCKET", self.bucket.clone()),
             ("CLOUD_SERVICE", self.service.clone()),
             ("CLOUD_DOMAIN", self.domain.clone()),
@@ -615,16 +615,16 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     gcloud.run(&enable, None)?;
     println!("APIs: on.");
 
-    if gcloud.ok(&with(&["secrets", "describe", &s.secret], &project)) {
-        println!("Secret {}: exists.", s.secret);
+    if gcloud.ok(&with(&["secrets", "describe", &s.secret_name], &project)) {
+        println!("Secret {}: exists.", s.secret_name);
     } else {
-        println!("Secret {}: making it.", s.secret);
+        println!("Secret {}: making it.", s.secret_name);
         gcloud.run(
             &with(
                 &[
                     "secrets",
                     "create",
-                    &s.secret,
+                    &s.secret_name,
                     "--replication-policy",
                     "automatic",
                 ],
@@ -732,7 +732,7 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         &[
             "secrets",
             "add-iam-policy-binding",
-            &s.secret,
+            &s.secret_name,
             "--member",
             &run,
             "--role",
@@ -829,7 +829,7 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
                     "secrets",
                     "versions",
                     "list",
-                    &s.secret,
+                    &s.secret_name,
                     "--filter=state=ENABLED",
                     "--limit",
                     "1",
@@ -1079,10 +1079,16 @@ pub fn signin(gcloud: &Gcloud, s: &Settings, path: &Path, id: &str, secret: &str
     if secret.is_empty() {
         bail!(text::CLOUD_EMPTY_SECRET);
     }
-    let mut add = args(&["secrets", "versions", "add", &s.secret, "--data-file=-"]);
+    let mut add = args(&[
+        "secrets",
+        "versions",
+        "add",
+        &s.secret_name,
+        "--data-file=-",
+    ]);
     add.extend_from_slice(&s.project());
     gcloud.run(&add, Some(secret))?;
-    println!("Secret {}: stored.", s.secret);
+    println!("Secret {}: stored.", s.secret_name);
     let text = std::fs::read_to_string(path)?;
     std::fs::write(path, set_line(&text, "RIFF_OIDC_CLIENT_ID", id))?;
     println!("{}", text::cloud_client_written(path));
@@ -1231,7 +1237,7 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
             s.url, s.client_id, s.bucket
         ),
         "--set-secrets",
-        &format!("RIFF_OIDC_CLIENT_SECRET={}:latest", s.secret),
+        &format!("RIFF_OIDC_CLIENT_SECRET={}:latest", s.secret_name),
     ]));
     gcloud.show(&deploy)?;
 

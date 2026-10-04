@@ -3774,6 +3774,7 @@ pub fn monitor_event(
             clock(kill.at)
         ),
     }
+}
 
 /// The refusal of `riff cloud` in a worker (01M4262DY8NN30SC4REYX2G9DV).
 pub const CLOUD_WORKER: &str = "riff: a worker never runs riff cloud. Ask the lead: a person \

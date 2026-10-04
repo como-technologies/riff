@@ -241,8 +241,8 @@ fn the_server_account_gets_only_its_bucket_and_its_secret() {
     assert!(bucket.contains(&format!(
         "--member {account} --role roles/storage.objectUser"
     )));
-    let secret = ran.line("secrets add-iam-policy-binding riff-oidc-client-secret ");
-    assert!(secret.contains(&format!(
+    let binding = ran.line("secrets add-iam-policy-binding riff-oidc-client-secret ");
+    assert!(binding.contains(&format!(
         "--member {account} --role roles/secretmanager.secretAccessor"
     )));
     let project = ran.line("projects add-iam-policy-binding como-riff ");
@@ -727,8 +727,8 @@ fn create_of_the_stage_makes_only_the_resources_of_the_stage() {
     ran.line("storage buckets create gs://como-riff-stage-state ");
     ran.line("iam service-accounts create riff-stage-server ");
     ran.line("iam service-accounts create riff-stage-build ");
-    let secret = ran.line("secrets add-iam-policy-binding riff-stage-oidc-client-secret ");
-    assert!(secret.contains("riff-stage-server@"), "{secret}");
+    let binding = ran.line("secrets add-iam-policy-binding riff-stage-oidc-client-secret ");
+    assert!(binding.contains("riff-stage-server@"), "{binding}");
     for shared in [
         "como-riff-state",
         "riff-oidc-client-secret",
