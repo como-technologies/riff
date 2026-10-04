@@ -24,10 +24,15 @@
 //!     H-->>W: return at once
 //!     C->>S: keep-alive
 //!     S-->>C: clear
+//!     C->>C: lock clear-ID.lock
 //!     C->>C: fast-forward the main clone
-//!     C->>C: count the prompts again: no new turn
+//!     opt a subagent still runs, and no ask in this context
+//!         C->>T: the prompt: stop the subagents, end the turn
+//!         Note over C: the check ends; the next turn end clears
+//!     end
+//!     C->>C: count again: no new turn, no new context
 //!     C->>C: stop the processes of the old context
-//!     C->>C: count the prompts again: no new turn
+//!     C->>C: count again: no new turn, no new context
 //!     C->>T: /clear, then "Join the riff."
 //!     T->>W: /clear: the start hook gives the start routine
 //!     W->>S: start (clear): MustClear ends
@@ -67,6 +72,21 @@
 //!   count first. [`keys`] counts again as the last step before
 //!   `/clear`. A higher number shows a new turn: the check types
 //!   nothing, and the Stop hook of that turn starts a new check.
+//! - Each turn end starts a check, so two checks of one worker can run
+//!   at one time, and the Stop hooks of the old context count the
+//!   transcript of the old context, which a new context does not change.
+//!   So one check types at a time ([`clear_lock`]), and each ask of
+//!   [`keys`] also looks at the start of the current context in
+//!   `context-ID` ([`newer_context`]). A check of an old context types
+//!   nothing and stops nothing in a new context
+//!   (01M43STEE72Q9TD8ZNFS3273M3). Before this rule, such a check
+//!   cleared a new context that held a claim (#497).
+//! - `/clear` does not stop a subagent of the agent in the background.
+//!   When the transcript shows one that still runs
+//!   ([`Agent::running_subagents`]), the check types the prompt of
+//!   [`Agent::stop_subagents`] in place of `/clear`, one time in a
+//!   context. The check of that turn clears the context
+//!   (01M43STEHMTWKJDP48M1DZQPXE).
 //! - Two times stay. The first is the time of one `tmux` call after the
 //!   last count: a few milliseconds. The second is the time between
 //!   `/clear` and the start prompt. It does no harm: the context is
@@ -321,6 +341,9 @@ pub async fn check(
         Ok(false) => {}
         Err(e) => eprintln!("riff: cannot count the workers of this machine: {e:#}"),
     }
+    // One check of the worker types at a time, so the next check sees
+    // the new context of this one (01M43STEE72Q9TD8ZNFS3273M3).
+    let _typing = clear_lock(session)?;
     let fresh = hygiene::fast_forward(dir);
     if let Some(line) = fresh.line()
         && fresh.tells_the_lead()
@@ -425,6 +448,21 @@ pub fn stop_old_context(agent: &dyn Agent, me: &SessionUri) -> Vec<crate::worklo
     crate::workload::stop(&old, var)
 }
 
+/// Takes the lock file `clear-ID.lock` of the worker `session` in the
+/// local dir, and waits for it: one check of a worker types at a time
+/// (01M43STEE72Q9TD8ZNFS3273M3). The lock ends with the file handle.
+fn clear_lock(session: &str) -> Result<std::fs::File> {
+    let dir = local::dir().context("no HOME: riff has no local dir")?;
+    std::fs::create_dir_all(&dir)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(format!("clear-{session}.lock")))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
 /// True when a new context of the worker `session` started after
 /// `since`, the start of the check: the start in its `context-ID` file
 /// (01M3ZV0TJX2H77RW6ZA3ERZT9H) is later. So the check is of an old
@@ -445,7 +483,9 @@ pub fn newer_context(session: &str, since: Option<u64>) -> bool {
 /// assert!(!newer(Some(9), None));
 /// ```
 pub fn newer(started: Option<u64>, since: Option<u64>) -> bool {
-    started.zip(since).is_some_and(|(started, since)| started > since)
+    started
+        .zip(since)
+        .is_some_and(|(started, since)| started > since)
 }
 
 /// Deletes the files of the old context in the temp folder of the

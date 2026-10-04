@@ -2865,8 +2865,10 @@
   started after the check: the start in `context-ID`
   (01M3ZV0TJX2H77RW6ZA3ERZT9H) is later than the start of the check.
   It looks before it stops the old context, and again as the last step
-  before `/clear`. So a check of an old context never clears the new
-  context, and a new context keeps its claims.
+  before `/clear`. One check of a worker types at a time: it holds the
+  lock file `clear-ID.lock` in the local dir from the reply to its last
+  key. So a check of an old context never clears the new context, and
+  a new context keeps its claims.
 - **01M43STEHMTWKJDP48M1DZQPXE** When the reply asks for the clear and
   subagents of the worker still run in the background, the check
   types a prompt in place of `/clear`: stop each of them, then end the

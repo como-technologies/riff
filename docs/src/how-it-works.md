@@ -4217,6 +4217,12 @@ higher number shows a new turn: riff types nothing, and checks again
 when that turn ends. After `/clear` the context is fresh, so the start
 prompt does no harm when a turn started.
 
+Each turn end starts a check, so two checks of one worker can run at
+one time. Only one check types at a time. A check types nothing and
+stops no process when a new context of the worker started after the
+check. So a check of the old context never clears the new context,
+and the new context keeps its claims.
+
 ```mermaid
 sequenceDiagram
     participant W as worker
@@ -4258,6 +4264,28 @@ mike@thelio:riff (9c0d)  idle        worker  ready for work for 6m  fresh start 
 - The log has a record for each start of a session, with its reason:
   a new process, a resume or a clear. So the log shows each clear of
   each worker, with its time.
+
+#### A worker with subagents that still run
+
+`/clear` does not stop a subagent that runs in the background. So when
+the turn of a worker ends with such a subagent, riff does not type
+`/clear`. It types this prompt one time:
+
+```text
+riff: before the clear of your context, stop each subagent that runs in the background with the TaskStop tool: look 1; look 2. Then end your turn.
+```
+
+When that turn ends, riff clears the context. Processes in the
+background, for example a `just ci`, need no prompt: riff stops them
+just before the clear (see
+[Stop the orphan processes of the workers](#stop-the-orphan-processes-of-the-workers)).
+
+To see the subagents of a worker, go to the tmux window
+`riff-workers` and look at its pane:
+
+```sh
+tmux select-window -t riff-workers
+```
 
 riff never clears the lead: you work in it. It compacts the lead at the
 end of a wave (see

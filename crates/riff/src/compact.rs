@@ -675,7 +675,11 @@ pub fn running_agents(transcript: &str) -> Vec<String> {
     }
     running
         .into_iter()
-        .filter(|(call, agent, _)| !ended.iter().any(|e| e == call || (!agent.is_empty() && e == agent)))
+        .filter(|(call, agent, _)| {
+            !ended
+                .iter()
+                .any(|e| e == call || (!agent.is_empty() && e == agent))
+        })
         .map(|(_, _, about)| about)
         .collect()
 }
