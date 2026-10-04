@@ -2716,6 +2716,14 @@
   one call to the OS keyring. A keyring that does not answer in that
   time is an error that says so. It never blocks the process or its
   Ctrl-C.
+- **01M4385CCATXC0B8HV1XD6EFWG** When the OS keyring is locked or does
+  not answer, the error of `riff` names the host, says to unlock the
+  keyring at the desktop, and says that `gh` stops too.
+- **01M4385CEWGCP31DP5PAMPXZ97** A workers host looks at the OS
+  keyring each 30 seconds. When the keyring locks, the host says one
+  line and posts one note to the lead. While it stays locked, the host
+  says no new line. When the keyring answers again, the host says one
+  line, posts one note to the lead, and goes on with no new start.
 - **R22** `riff-server` follows the MCP authorization spec, revision
   2026-07-28.
 - **R83** `riff-server` has no authorization endpoint for now. Its

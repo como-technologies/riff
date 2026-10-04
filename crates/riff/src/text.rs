@@ -3104,6 +3104,56 @@ offers no workers. Set a limit first, for example: riff workers limit 2";
 pub const HOST_STOPPED: &str =
     "riff workers host stopped. Its workers still run. riff workers stop ends them.";
 
+/// The line of a locked OS keyring on `host`, or of one that does not
+/// answer (01M4385CCATXC0B8HV1XD6EFWG). See [`crate::secrets::Locked`].
+///
+/// ```
+/// assert_eq!(
+///     riff::text::keyring_locked("pangolin"),
+///     "the OS keyring of pangolin is locked or does not answer: unlock it at the desktop. \
+///      gh uses the same keyring, so gh stops too"
+/// );
+/// ```
+pub fn keyring_locked(host: &str) -> String {
+    format!(
+        "the OS keyring of {host} is locked or does not answer: unlock it at the desktop. \
+         gh uses the same keyring, so gh stops too"
+    )
+}
+
+/// The note of a workers host to the lead when its keyring locks
+/// (01M4385CEWGCP31DP5PAMPXZ97).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_keyring_locked("pangolin"),
+///     "keyring: the OS keyring of pangolin is locked or does not answer: unlock it at the \
+///      desktop. gh uses the same keyring, so gh stops too. The workers of pangolin cannot \
+///      get a new token. The host looks again each 30 seconds."
+/// );
+/// ```
+pub fn host_keyring_locked(host: &str) -> String {
+    format!(
+        "keyring: {}. The workers of {host} cannot get a new token. The host looks again \
+         each {} seconds.",
+        keyring_locked(host),
+        crate::secrets::KEYRING_RETRY.as_secs()
+    )
+}
+
+/// The note of a workers host to the lead when its keyring answers
+/// again (01M4385CEWGCP31DP5PAMPXZ97).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_keyring_back("pangolin"),
+///     "keyring: the OS keyring of pangolin answers again. The host goes on."
+/// );
+/// ```
+pub fn host_keyring_back(host: &str) -> String {
+    format!("keyring: the OS keyring of {host} answers again. The host goes on.")
+}
+
 /// The error of a call that got no reply from the server at `base` in
 /// `wait` (01M3WN72M02P3J24ACCHTMNSFY).
 ///

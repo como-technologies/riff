@@ -98,6 +98,16 @@
 //! host posts the note of the change to the lead: its status does not
 //! hold them (01M3X30RJS8YE5TXJBQDC2FT0C).
 //!
+//! # A locked keyring
+//!
+//! Each [`crate::secrets::KEYRING_RETRY`] the host reads the sign-in of
+//! its server from the OS keyring. When the keyring locks, or does not
+//! answer, the host says one line and posts one note to the lead. It
+//! says no new line while the keyring stays locked. When the keyring
+//! answers again, it says one line, posts one note, and goes on with no
+//! new start (01M4385CEWGCP31DP5PAMPXZ97). See
+//! [`crate::secrets::Gate`].
+//!
 //! # A new binary
 //!
 //! When a new `riff` is on disk, the host runs it in its place, as
@@ -131,7 +141,7 @@ use crate::monitor::Numbers;
 use crate::reap::{self, Reaper, Watched};
 use crate::rollout::{Change, Effect};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
-use crate::{identity, local, settings, text, worker};
+use crate::{identity, local, secrets, settings, text, worker};
 
 /// The start of the status of a host.
 pub const MARK: &str = "workers host";
@@ -642,6 +652,8 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     // The monitor of the machine (01M421QPKWPX00X24F8V6DT8Z3).
     let monitor = tokio::spawn(crate::monitor::run(host.api.clone(), host.me.clone()));
     let _monitor = AbortOnDrop(monitor);
+    // The OS keyring (01M4385CEWGCP31DP5PAMPXZ97).
+    let mut keyring = secrets::Gate::default();
     loop {
         let mut changed = true;
         tokio::select! {
@@ -691,7 +703,12 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
             Ok(_) => {}
             Err(e) => eprintln!("riff: cannot read the settings: {e:#}"),
         }
-        if changed && let Err(e) = host.set_status().await {
+        host.look_at_keyring(&mut keyring).await;
+        // A locked keyring says its line one time, not at each status.
+        if changed
+            && let Err(e) = host.set_status().await
+            && !(keyring.locked() && secrets::is_locked(&e))
+        {
             eprintln!("riff: cannot set the status of the host: {e:#}");
         }
     }
@@ -828,6 +845,39 @@ impl Host {
         };
         let note = text::setting_changed(&change, &Effect::Nothing);
         println!("{note}");
+        if let Err(e) = self.note_lead(&note).await {
+            eprintln!("riff: cannot tell the lead: {e:#}");
+        }
+    }
+
+    /// Looks at the OS keyring when the last look is [`secrets::retry`]
+    /// old. At a lock, and when it answers again, it says one line and
+    /// posts one note to the lead (01M4385CEWGCP31DP5PAMPXZ97). The host
+    /// goes on in both cases.
+    async fn look_at_keyring(&self, gate: &mut secrets::Gate) {
+        let now = std::time::Instant::now();
+        if !gate.due(now, secrets::retry()) {
+            return;
+        }
+        // The read of the sign-in needs an unlocked keyring. A read
+        // blocks for at most `KEYRING_WAIT`: keep it off the runtime.
+        let name = crate::login::secret_name(self.api.base());
+        let refused = tokio::task::spawn_blocking(move || secrets::refuses(&name))
+            .await
+            .unwrap_or(false);
+        let host = self.me.place().host();
+        let note = match gate.look(now, refused) {
+            None => return,
+            Some(secrets::Said::Locked) => {
+                eprintln!("riff: {}", text::keyring_locked(host));
+                text::host_keyring_locked(host)
+            }
+            Some(secrets::Said::Back) => {
+                let back = text::host_keyring_back(host);
+                println!("{back}");
+                back
+            }
+        };
         if let Err(e) = self.note_lead(&note).await {
             eprintln!("riff: cannot tell the lead: {e:#}");
         }

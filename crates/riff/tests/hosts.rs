@@ -478,6 +478,63 @@ async fn a_host_tells_the_lead_a_change_of_its_settings() {
     );
 }
 
+/// A host whose keyring refuses posts one note to the lead and says one
+/// line. When the store answers again, the host posts one note and goes
+/// on with no new start (01M4385CEWGCP31DP5PAMPXZ97). A secret file
+/// that riff may not read stands for a locked keyring.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_host_tells_the_lead_when_its_keyring_locks_and_answers_again() {
+    let api = start_server().await;
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    api.register(&lead).await.unwrap();
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let b = Machine::new("b", api.base());
+    b.limit(1);
+    let mut cmd = b.riff(&main, &["host", "--claude", "true"], None);
+    cmd.env(riff::secrets::RETRY_VAR, "1");
+    let mut host = b.host_with(cmd);
+    let host_id = host_session(&api, &lead, "b").await;
+
+    let secrets = b.home.path().join("secrets");
+    std::fs::create_dir_all(&secrets).unwrap();
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let locked = "note: keyring: the OS keyring of b is locked or does not answer: unlock it at \
+                  the desktop. gh uses the same keyring, so gh stops too.";
+    reads(&api, &lead, locked).await;
+    // One more look while the keyring stays locked gives no new line.
+    b.looks(1).await;
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let back = "note: keyring: the OS keyring of b answers again. The host goes on.";
+    reads(&api, &lead, back).await;
+    b.looks(1).await;
+
+    let all = riff::text::inbox(&api.inbox(&lead, None, true).await.unwrap(), &lead);
+    assert_eq!(all.matches("keyring of b is locked").count(), 1, "{all}");
+    assert_eq!(
+        all.matches("keyring of b answers again").count(),
+        1,
+        "{all}"
+    );
+    let output = b.host_output();
+    assert_eq!(
+        output.matches("keyring of b is locked").count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output.matches("keyring of b answers again").count(),
+        1,
+        "{output}"
+    );
+
+    // The same host goes on: it answers a start of the lead.
+    assert!(host.0.try_wait().unwrap().is_none(), "{output}");
+    api.tell(&lead, &host_id, "workers start 1").await.unwrap();
+    reads(&api, &lead, "b: started 1 worker").await;
+}
+
 /// A host refuses a start request that is not from the lead of its
 /// user: from another session of the user, and from the lead of another
 /// user (01M3N7AKDE7DEA6NXS9ZMECRMH). The doc test of `host::judge`
@@ -859,6 +916,26 @@ fn the_book_and_the_skill_say_how_to_use_a_host() {
         skill.contains("on each host, then\n   on your own machine last"),
         "skill"
     );
+}
+
+/// The book has a how-to for a locked keyring, with the line and the
+/// notes of the code (01M4385CEWGCP31DP5PAMPXZ97).
+#[test]
+fn the_book_says_what_to_do_when_the_keyring_is_locked() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let book = std::fs::read_to_string(root.join("../../docs/src/development.md")).unwrap();
+    let how = &book[book.find("### When the keyring is locked").unwrap()..];
+    let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+    let line = riff::text::keyring_locked("pangolin");
+    let back = riff::text::host_keyring_back("pangolin");
+    for text in [
+        line.as_str(),
+        back.as_str(),
+        "```sh\n   riff whoami\n   gh auth status\n   ```",
+        "```mermaid",
+    ] {
+        assert!(how.contains(text), "the how-to has no {text:?}");
+    }
 }
 
 /// `riff workers host` needs tmux and a limit (01M3N7AK8TVYV8S0WR3RP0TN8X).

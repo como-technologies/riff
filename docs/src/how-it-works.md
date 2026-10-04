@@ -4086,9 +4086,12 @@ refuses to start and names the process of the first.
 workers keep running. After `riff update`, the host runs the new
 `riff` by itself (see "When the builds differ"). You do not start it
 again. The host reads no keys, so tmux keys work in its
-pane. When the keyring of the machine does not answer in 10 seconds,
-for example because it is locked, the host stops with an error that
-says so. Unlock the keyring and start the host again.
+pane. When the keyring of the machine does not answer in 10 seconds
+at the start, for example because it is locked, the host stops with
+an error that says so. Unlock the keyring and start the host again.
+When the keyring locks while the host runs, the host goes on and
+tells the lead. See "When the keyring is locked" in
+[Development](development.md#when-the-keyring-is-locked).
 
 ```mermaid
 sequenceDiagram
