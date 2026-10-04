@@ -1020,7 +1020,7 @@ The table of each state, its color and its detail is in
   [Watch the health of a machine](#watch-the-health-of-a-machine).
   The numbers of a host come from its `riff workers host`. The
   numbers of the machine where you run `riff top` come from that
-  machine.
+  machine, when its limit of workers is more than 0.
 - The place is the repository and the worktree of the session, as in
   `riff who`: `riff`, or `riff#issue-7` in the worktree `issue-7`. A
   lead is the lead of the repository on its line. When the

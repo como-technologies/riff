@@ -651,7 +651,9 @@ async fn workers_lists_each_worker() {
         "{out}"
     );
     assert!(
-        lines.next().is_some_and(|l| l.starts_with("monitor off  load5 ")),
+        lines
+            .next()
+            .is_some_and(|l| l.starts_with("monitor off  load5 ")),
         "{out}"
     );
     assert!(!out.contains("PANE"), "{out}");

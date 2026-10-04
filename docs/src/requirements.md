@@ -3266,8 +3266,8 @@
   and the jobs of each worker. A number over its limit has the warning
   style. The line fits in 80 columns. A second line shows the time and
   the cause of the last kill. The numbers of a host come from its
-  status, and the numbers of the machine of `riff top` from that
-  machine.
+  status. The numbers of the machine of `riff top` come from that
+  machine, when its limit of workers is more than 0.
 - **01M421QQ1K7EFDV2PVPTSTE5FK** One monitor runs on a machine at a
   time: it holds the lock `monitor.lock` of the local directory.
 - **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`

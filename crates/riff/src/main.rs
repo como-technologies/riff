@@ -2744,14 +2744,14 @@ async fn top(api: &Api, me: &SessionUri, thread: Option<ThreadName>, once: bool)
 }
 
 /// The loop of [`top`].
-/// The numbers of the machine of `riff top`, when it runs workers: it
-/// has worker panes, or a limit of workers (01M421QPZ9E01PQ62PDBH378SJ).
+/// The numbers of the machine of `riff top`, when it runs workers: its
+/// limit of workers is more than 0 (01M421QPZ9E01PQ62PDBH378SJ).
 fn machine_here(me: &SessionUri) -> Option<riff::top::Machine> {
-    let panes = Tmux::machine().worker_panes().unwrap_or_default();
     let limit = settings::workers_limit(&settings::path().ok()?).ok()?;
-    if panes.is_empty() && limit == 0 {
+    if limit == 0 {
         return None;
     }
+    let panes = Tmux::machine().worker_panes().unwrap_or_default();
     let main = identity::working_dir()
         .ok()
         .and_then(|dir| identity::main_worktree(&dir));

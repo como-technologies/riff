@@ -216,7 +216,7 @@ pub async fn in_time<T>(
 /// let disk = Some(Disk { free_gb: 16, total_gb: 455 });
 /// let with_disk = HostStatus { disk, ..two.clone() };
 /// assert!(with_disk.line().contains(", load 1.50, disk 16GB free of 455GB (3%), workers: %3"));
-/// assert_eq!(HostStatus::parse(&with_disk.line()), Some(with_disk));
+/// assert_eq!(HostStatus::parse(&with_disk.line()), Some(with_disk.clone()));
 /// let only_disk = HostStatus { disk, ..none.clone() };
 /// assert_eq!(only_disk.line(), "workers host: limit 2, floor 4GB, disk 16GB free of 455GB (3%), no workers");
 /// assert_eq!(HostStatus::parse(&only_disk.line()), Some(only_disk.clone()));
