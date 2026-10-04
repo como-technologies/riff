@@ -100,23 +100,25 @@ pub const JOIN: &str = "Join the riff.";
 /// The flag settings of a worker: no Remote Control, also when the
 /// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no recap
 /// (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin of `lsp` off: the
-/// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3).
+/// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). A rule
+/// denies `riff cloud` (01M4262DY8NN30SC4REYX2G9DV).
 ///
 /// ```
 /// use riff::terminal::worker_settings;
 /// assert_eq!(
 ///     worker_settings(&[]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}"#,
 /// );
 /// assert_eq!(
 ///     worker_settings(&["rust-analyzer-lsp@claude-plugins-official".into()]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}}"#,
 /// );
 /// ```
 pub fn worker_settings(lsp: &[String]) -> String {
     let mut settings = serde_json::json!({
         "remoteControlAtStartup": false,
         "awaySummaryEnabled": false,
+        "permissions": {"deny": ["Bash(riff cloud)", "Bash(riff cloud *)"]},
     });
     if !lsp.is_empty() {
         let off: serde_json::Map<String, serde_json::Value> =

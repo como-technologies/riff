@@ -1,0 +1,47 @@
+#!/bin/sh
+# A fake gcloud for tests/cloud.rs. It writes each call to the file
+# $FAKE_GCLOUD_LOG, and each argument of each call on a line of the
+# file $FAKE_GCLOUD_ARGS. A describe call succeeds only when the call
+# starts with a line of the file $FAKE_GCLOUD_FOUND. A list call of the
+# alert prints a name only then. Stdin of `secrets versions add` goes
+# to $FAKE_GCLOUD_LOG.stdin. Each file of the flag --policy-from-file
+# is copied to $FAKE_GCLOUD_LOG.policy.
+echo "$*" >> "${FAKE_GCLOUD_LOG:-/dev/null}"
+if [ -n "${FAKE_GCLOUD_ARGS:-}" ]; then
+    printf '%s\n' "$@" >> "$FAKE_GCLOUD_ARGS"
+fi
+found() {
+    [ -f "${FAKE_GCLOUD_FOUND:-}" ] || return 1
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        case "$*" in "$f"*) return 0 ;; esac
+    done < "$FAKE_GCLOUD_FOUND"
+    return 1
+}
+case "$*" in
+    *"--policy-from-file "*)
+        file=$(printf '%s\n' "$*" | sed 's/.*--policy-from-file \([^ ]*\).*/\1/')
+        cp "$file" "$FAKE_GCLOUD_LOG.policy" ;;
+esac
+case "$*" in
+    "projects describe "*"--format value(projectNumber)"*) echo 123456; exit 0 ;;
+    "billing projects describe"*) echo True; exit 0 ;;
+    "projects describe"*|"secrets describe"*) exit 0 ;;
+    "secrets versions list"*) echo 1; exit 0 ;;
+    "secrets versions add"*) cat > "$FAKE_GCLOUD_LOG.stdin"; exit 0 ;;
+    *" monitoring channels list "*|*" monitoring policies list "*)
+        if found "$@"; then echo projects/como-riff/found/1; fi
+        exit 0 ;;
+    "run services describe "*"--format json"*)
+        if found "$@"; then
+            echo '{"status":{"conditions":[{"type":"Ready","status":"True"}],"latestReadyRevisionName":"rev-1"},"spec":{"template":{"spec":{"containers":[{"image":"us-central1-docker.pkg.dev/como-riff/riff/riff-server:v1.0.0","resources":{"limits":{"memory":"1Gi"}}}]}}}}'
+            exit 0
+        fi
+        exit 1 ;;
+    "run services describe "*"--format value("*)
+        if found "$@"; then echo 512Mi; exit 0; fi
+        exit 1 ;;
+    *" describe "*)
+        if found "$@"; then exit 0; fi
+        exit 1 ;;
+esac

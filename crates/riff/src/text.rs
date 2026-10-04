@@ -5,6 +5,7 @@
 
 use std::fmt::Write;
 use std::os::unix::process::ExitStatusExt;
+use std::path::Path;
 use std::process::ExitStatus;
 
 use chrono::{DateTime, NaiveDate, TimeZone};
@@ -3773,6 +3774,217 @@ pub fn monitor_event(
             clock(kill.at)
         ),
     }
+}
+
+/// The refusal of `riff cloud` in a worker (01M4262DY8NN30SC4REYX2G9DV).
+pub const CLOUD_WORKER: &str = "riff: a worker never runs riff cloud. Ask the lead: a person \
+runs it.";
+
+/// The refusal of a client ID that is not a Google client ID.
+pub const CLOUD_BAD_CLIENT_ID: &str = "A Google client ID ends in .apps.googleusercontent.com.";
+
+/// The refusal of an empty client secret.
+pub const CLOUD_EMPTY_SECRET: &str = "The client secret is empty.";
+
+/// The refusal of a name that cannot name an instance.
+pub fn cloud_bad_name(name: &str) -> String {
+    format!(
+        "{name} is no name of a riff instance. A name starts with a lowercase letter, has only \
+         lowercase letters, digits and dashes, and has 20 characters at most."
+    )
+}
+
+/// The refusal when the settings of an instance are not there.
+pub fn cloud_no_settings(name: &str, path: &Path) -> String {
+    format!(
+        "riff has no cloud settings {name}: {} is not there. Make them with: riff cloud create \
+         {name} --project PROJECT --region REGION",
+        path.display()
+    )
+}
+
+/// The refusal of `riff cloud create` for a new instance with no
+/// project or no region.
+pub fn cloud_create_needs(name: &str) -> String {
+    format!(
+        "A new instance needs its project and its region: riff cloud create {name} --project \
+         PROJECT --region REGION"
+    )
+}
+
+/// The refusal when a flag of `riff cloud create` differs from the
+/// settings that are there.
+pub fn cloud_settings_differ(name: &str, flag: &str, given: &str, have: &str) -> String {
+    format!("The settings {name} have {have}, not {given}. Leave out {flag}, or give another name.")
+}
+
+/// The line after `riff cloud create` reads the settings that are there.
+pub fn cloud_settings_read(path: &Path) -> String {
+    format!("Settings: {}.", path.display())
+}
+
+/// The line after `riff cloud create` writes new settings.
+pub fn cloud_settings_written(path: &Path) -> String {
+    format!(
+        "Settings: written to {}. Keep the file: each riff cloud command reads it.",
+        path.display()
+    )
+}
+
+/// The refusal when the person cannot see the project.
+pub fn cloud_no_project(project: &str) -> String {
+    format!(
+        "You cannot see the project {project}. Sign in with gcloud auth login, or make the \
+         project. See \"Host your own riff\" in the book."
+    )
+}
+
+/// The refusal when the project has no billing account.
+pub fn cloud_no_billing(project: &str) -> String {
+    format!("The project {project} has no billing account. See \"Host your own riff\" in the book.")
+}
+
+/// The line when the settings have an alert and no `RIFF_OWNER` is set.
+pub fn cloud_alert_no_owner(name: &str) -> String {
+    format!(
+        "Alert: not set, because RIFF_OWNER is not set.\n  Run: RIFF_OWNER=YOUR_EMAIL riff cloud \
+         create {name}"
+    )
+}
+
+/// The next step after `riff cloud create`, while the instance has no
+/// sign-in client.
+pub fn cloud_next_signin(name: &str) -> String {
+    format!("Next: make the sign-in client. Run: riff cloud signin {name}")
+}
+
+/// The console steps of `riff cloud signin`.
+pub fn cloud_signin_steps(project: &str) -> String {
+    format!(
+        "Google has no API to make the sign-in client. Make it by hand in the console:\n\
+         \n\
+         1. Open https://console.cloud.google.com/auth/overview?project={project}\n   \
+         and click Get started.\n\
+         2. App information: the app name is riff. The support email is your address.\n\
+         3. Audience: Internal, for the accounts of your organization only. For a\n   \
+         personal account, pick External, and add each person as a test user.\n\
+         4. Contact information: the same address. Agree to the policy, click Create.\n\
+         5. Data access: add nothing. riff asks only for openid and email.\n\
+         6. Click Clients, then Create client. The type is Desktop app. The name is\n   \
+         riff. Click Create.\n\
+         7. Keep the dialog open: it shows the secret only once. Do not download the\n   \
+         JSON file. Copy the client ID and the secret here.\n"
+    )
+}
+
+/// The line after `riff cloud signin` writes the client ID.
+pub fn cloud_client_written(path: &Path) -> String {
+    format!(
+        "Client ID: written to {}. Commit that file when it is in a repository.",
+        path.display()
+    )
+}
+
+/// The refusal of `riff cloud deploy` before `riff cloud signin`.
+pub fn cloud_no_client(name: &str) -> String {
+    format!("The settings {name} have no client ID. Run: riff cloud signin {name}")
+}
+
+/// The refusal of `riff cloud deploy` with no `RIFF_OWNER`.
+pub const CLOUD_NO_OWNER: &str = "RIFF_OWNER is not set: the cloud riff needs an owner. Run: \
+export RIFF_OWNER=YOUR_EMAIL";
+
+/// The refusal of `riff cloud deploy` with a tag that is not a release
+/// tag.
+pub fn cloud_bad_tag(tag: &str) -> String {
+    format!("{tag} is not a release tag. Give vX.Y.Z, for example v1.0.0.")
+}
+
+/// The refusal of `riff cloud deploy` with no tag outside a tree with a
+/// `Dockerfile`.
+pub const CLOUD_NO_TREE: &str = "riff cloud deploy with no tag builds the tree of this \
+directory, and it has no Dockerfile. Run it in a clone of riff, or give a release tag.";
+
+/// The question before a change that cannot be undone.
+pub fn cloud_type_name(name: &str, what: &str) -> String {
+    format!("This {what} the riff {name}. Type the name {name} to go on: ")
+}
+
+/// The refusal with no terminal and no `--confirm`.
+pub fn cloud_confirm_flag(name: &str, what: &str) -> String {
+    format!("This {what} the riff {name}. With no terminal, add: --confirm {name}")
+}
+
+/// The refusal when the person typed another name.
+pub fn cloud_wrong_name(name: &str, typed: &str) -> String {
+    format!("You typed {typed:?}, not {name}. riff changed nothing.")
+}
+
+/// The line after `riff cloud delete` with no `--with-state`.
+pub fn cloud_state_stays(bucket: &str) -> String {
+    format!("Bucket {bucket}: stays, with the state. To delete it too, add --with-state.")
+}
+
+/// The line of `riff cloud list` when no settings are there.
+pub fn cloud_none(dir: &Path) -> String {
+    format!(
+        "No riff instance: {} has no settings. Make one with: riff cloud create NAME --project \
+         PROJECT --region REGION",
+        dir.display()
+    )
+}
+
+/// One row of `riff cloud list`: the name, the URL, the release, ready
+/// and paused. `paused` is `None` when riff cannot tell.
+///
+/// ```
+/// let mut f = riff::cloud::Facts::default();
+/// assert_eq!(riff::text::cloud_row("stage", "https://s", &f, None), "stage  https://s  -  no service  paused ?");
+/// f.exists = true;
+/// f.ready = true;
+/// f.image = "r-docker.pkg.dev/p/riff/riff-server:v1.0.0".into();
+/// assert_eq!(riff::text::cloud_row("stage", "https://s", &f, Some(false)), "stage  https://s  v1.0.0  ready  running");
+/// ```
+pub fn cloud_row(
+    name: &str,
+    url: &str,
+    facts: &crate::cloud::Facts,
+    paused: Option<bool>,
+) -> String {
+    let ready = match (facts.exists, facts.ready) {
+        (false, _) => "no service",
+        (true, true) => "ready",
+        (true, false) => "not ready",
+    };
+    let paused = match paused {
+        Some(true) => "paused",
+        Some(false) => "running",
+        None => "paused ?",
+    };
+    format!("{name}  {url}  {}  {ready}  {paused}", facts.release())
+}
+
+/// The lines of `riff cloud status` after its row.
+pub fn cloud_status(s: &crate::cloud::Settings, facts: &crate::cloud::Facts) -> String {
+    let mut out = format!(
+        "project: {}\nregion: {}\nservice: {}\nbucket: {}\n",
+        s.project, s.region, s.service, s.bucket
+    );
+    if facts.exists {
+        out.push_str(&format!(
+            "revision: {}\nimage: {}\nmemory: {}\n",
+            facts.revision, facts.image, facts.memory
+        ));
+    }
+    out.push_str(&format!(
+        "CI deploys: {}\n",
+        if s.deploy_account.is_empty() {
+            "no (the settings have no deploy account)"
+        } else {
+            "a release tag, when the GitHub variable CLOUD_DEPLOY is true"
+        }
+    ));
+    out
 }
 
 #[cfg(test)]

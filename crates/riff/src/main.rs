@@ -10,8 +10,9 @@ use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    activity, audit, auto_update, binary, dropped, enable, help, hook, identity, lifecycle, local,
-    login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view, worker,
+    activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
+    local, login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view,
+    worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -505,6 +506,16 @@ enum Command {
         #[arg(long, value_name = "TITLE")]
         wave: String,
     },
+    /// Make and run riff-server instances on Cloud Run
+    ///
+    /// It runs the gcloud of this machine. Sign in first with gcloud auth
+    /// login. Each instance has a settings file NAME.env: in deploy/cloud
+    /// of this repository when it has that folder, else in the folder
+    /// cloud beside the riff settings of this machine.
+    Cloud {
+        #[command(subcommand)]
+        command: CloudCommand,
+    },
     /// Start, list and stop the workers of this machine
     ///
     /// Workers are agent sessions in tmux. With no subcommand, it lists
@@ -532,6 +543,91 @@ impl From<ByArg> for riff::top::By {
             ByArg::Repo => Self::Repo,
         }
     }
+}
+
+/// The subcommands of `riff cloud`.
+#[derive(Subcommand)]
+enum CloudCommand {
+    /// Make the resources of an instance
+    ///
+    /// A new instance gets a settings file with its own service, bucket,
+    /// accounts and secret. Then riff makes each resource that is
+    /// missing: it checks each one first, so you can run it again. With
+    /// RIFF_OWNER set and an alert in the settings, it makes an alert
+    /// that sends each error of the service to that email.
+    Create {
+        /// The name of the instance, for example stage.
+        name: String,
+        /// The Google Cloud project. Only for a new instance.
+        #[arg(long)]
+        project: Option<String>,
+        /// The region of the service, for example us-central1. Only for
+        /// a new instance.
+        #[arg(long)]
+        region: Option<String>,
+    },
+    /// Store the sign-in client of an instance
+    ///
+    /// It shows the steps to make the client in the console. Then it
+    /// asks for the client ID and the secret. The secret goes to Secret
+    /// Manager, and the ID to the settings file.
+    Signin {
+        /// The name of the instance.
+        name: String,
+    },
+    /// Deploy riff-server to an instance
+    ///
+    /// With a release tag, it deploys the image of that release from the
+    /// image repository of the project. With no tag, Cloud Build builds
+    /// the tree of this directory. An instance with CLOUD_CONFIRM=true,
+    /// for example the shared riff, asks for its name first.
+    Deploy {
+        /// The name of the instance.
+        name: String,
+        /// The release tag vX.Y.Z.
+        tag: Option<String>,
+        /// The name of the instance again, when there is no terminal to
+        /// type it, for example in CI.
+        #[arg(long, value_name = "NAME")]
+        confirm: Option<String>,
+    },
+    /// List each instance: URL, release, ready, paused
+    List,
+    /// Show the state of one instance
+    Status {
+        /// The name of the instance.
+        name: String,
+    },
+    /// Show the log of the service of an instance
+    Log {
+        /// The name of the instance.
+        name: String,
+        /// Show only the lines with the severity ERROR or more.
+        #[arg(long)]
+        errors: bool,
+        /// The number of lines.
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+        /// A filter of Cloud Logging, for example
+        /// 'jsonPayload.result="refused"'.
+        #[arg(long)]
+        filter: Option<String>,
+    },
+    /// Delete the service of an instance
+    ///
+    /// It asks for the name first. The bucket with the state stays,
+    /// unless you add --with-state. The settings file stays.
+    Delete {
+        /// The name of the instance.
+        name: String,
+        /// Delete the bucket with the state too.
+        #[arg(long)]
+        with_state: bool,
+        /// The name of the instance again, when there is no terminal to
+        /// type it.
+        #[arg(long, value_name = "NAME")]
+        confirm: Option<String>,
+    },
 }
 
 /// On or off.
@@ -1278,6 +1374,9 @@ async fn main() -> Result<()> {
     if let Command::Workers { command, long } = &cli.command {
         return workers(command.as_ref(), *long, &server).await;
     }
+    if let Command::Cloud { command } = &cli.command {
+        return cloud(command).await;
+    }
     if let Command::Pr {
         command: Pr::Wait { number, every },
     } = &cli.command
@@ -1629,6 +1728,7 @@ async fn main() -> Result<()> {
         | Command::Server
         | Command::Update { .. }
         | Command::Workers { .. }
+        | Command::Cloud { .. }
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
@@ -1936,6 +2036,106 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         Err(e) => eprintln!("riff: cannot clean the worktrees: {e:#}"),
     }
     Ok(())
+}
+
+/// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
+/// (01M4262DY8NN30SC4REYX2G9DV).
+async fn cloud(command: &CloudCommand) -> Result<()> {
+    if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
+        anyhow::bail!(text::CLOUD_WORKER);
+    }
+    let gcloud = cloud::Gcloud::default();
+    let here = identity::working_dir()?;
+    let dir = cloud::dir(&here)?;
+    let owner = std::env::var("RIFF_OWNER").ok().filter(|o| !o.is_empty());
+    match command {
+        CloudCommand::Create {
+            name,
+            project,
+            region,
+        } => {
+            let s = cloud::settings_for_create(
+                &gcloud,
+                &dir,
+                name,
+                project.as_deref(),
+                region.as_deref(),
+            )?;
+            cloud::create(&gcloud, &s, owner.as_deref())
+        }
+        CloudCommand::Signin { name } => {
+            let s = cloud::load(&dir, name)?;
+            println!("{}", text::cloud_signin_steps(&s.project));
+            let id = cloud::read_line("Client ID: ")?;
+            let secret = cloud::read_hidden("Client secret (hidden): ")?;
+            cloud::signin(&gcloud, &s, &cloud::file(&dir, name), &id, &secret)
+        }
+        CloudCommand::Deploy { name, tag, confirm } => {
+            let s = cloud::load(&dir, name)?;
+            let source = match tag {
+                Some(tag) if cloud::release_tag(tag) => cloud::Source::Tag(tag.clone()),
+                Some(tag) => anyhow::bail!(text::cloud_bad_tag(tag)),
+                None => {
+                    let top = cloud::top(&here).filter(|t| t.join("Dockerfile").is_file());
+                    cloud::Source::Tree(top.context(text::CLOUD_NO_TREE)?)
+                }
+            };
+            let owner = owner.context(text::CLOUD_NO_OWNER)?;
+            if s.confirm {
+                cloud::confirm(name, confirm.as_deref(), "deploys to")?;
+            }
+            cloud::deploy(&gcloud, &s, &source, &owner)
+        }
+        CloudCommand::List => {
+            let all = cloud::all(&dir)?;
+            if all.is_empty() {
+                println!("{}", text::cloud_none(&dir));
+            }
+            for s in all {
+                let facts = cloud::facts(&gcloud, &s);
+                let paused = riff_paused(&s.url, &here).await;
+                println!("{}", text::cloud_row(&s.name, &s.url, &facts, paused));
+            }
+            Ok(())
+        }
+        CloudCommand::Status { name } => {
+            let s = cloud::load(&dir, name)?;
+            let facts = cloud::facts(&gcloud, &s);
+            let paused = riff_paused(&s.url, &here).await;
+            println!("{}", text::cloud_row(&s.name, &s.url, &facts, paused));
+            print!("{}", text::cloud_status(&s, &facts));
+            Ok(())
+        }
+        CloudCommand::Log {
+            name,
+            errors,
+            limit,
+            filter,
+        } => {
+            let s = cloud::load(&dir, name)?;
+            gcloud.show(&cloud::log_args(&s, *errors, *limit, filter.as_deref()))
+        }
+        CloudCommand::Delete {
+            name,
+            with_state,
+            confirm,
+        } => {
+            let s = cloud::load(&dir, name)?;
+            cloud::confirm(name, confirm.as_deref(), "deletes the service of")?;
+            cloud::delete(&gcloud, &s, *with_state)
+        }
+    }
+}
+
+/// Whether the riff at `url` is paused, as this machine sees it with
+/// its sign-in. `None` when riff cannot tell, for example with no
+/// sign-in to that riff.
+async fn riff_paused(url: &str, here: &std::path::Path) -> Option<bool> {
+    let api = Api::new(url);
+    let place = identity::place(here).ok()?;
+    let me = identity::person(&place, api.base()).ok()?;
+    let state = api.signed_in(None).ok()?.riff(&me).await.ok()?;
+    Some(state == RiffState::Paused)
 }
 
 /// Why this process may not start workers, or `None` when it may
