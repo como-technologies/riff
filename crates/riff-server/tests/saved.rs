@@ -164,3 +164,37 @@ async fn a_gap_in_the_log_stops_the_load() {
     assert!(error.to_string().contains("the log needs 1"), "{error}");
     assert!(error.to_string().contains(&names[1]), "{error}");
 }
+
+/// The session of `who` in the `who` reply that Mike gets, gone
+/// sessions too.
+async fn session_of(base: &str, who: &str) -> Value {
+    let reply = call(base, "who", json!({ "me": MIKE, "all": true })).await;
+    reply["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["uri"].as_str().unwrap().contains(who))
+        .unwrap()
+        .clone()
+}
+
+/// A status stays after a restart: the stop writes a last checkpoint,
+/// and the checkpoint keeps the status. A new start of `riff-server`
+/// makes it stale (01M4263ZZVY8QJ2METTEVR1W26,
+/// 01M4264028A3KVDK10PPERHM0C).
+#[tokio::test]
+async fn a_status_stays_after_a_restart() {
+    let store: Arc<dyn Store> = Arc::new(Memory::default());
+    let (old, base) = common::start_on(store.clone()).await;
+    fill(&base).await;
+    let step = json!({ "step": "write the tests" });
+    call(&base, "status", json!({ "me": BRETT, "status": step })).await;
+    let before = session_of(&base, "brett").await;
+    assert_eq!(before["status"]["step"], "write the tests");
+    old.shutdown().await.unwrap();
+
+    let (_new, base) = common::start_on(store).await;
+    let brett = session_of(&base, "brett").await;
+    assert_eq!(brett["status"]["step"], "write the tests", "{brett}");
+    assert_eq!(brett["status"]["stale"], true, "{brett}");
+}

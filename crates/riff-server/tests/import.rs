@@ -809,3 +809,63 @@ async fn a_riff_of_v0_8_gets_the_build_header_in_each_reply() {
         }
     }
 }
+
+/// The idle time of the session of ann in `who --all`.
+async fn idle_of_ann(base: &str) -> u64 {
+    let me = "riff://ann@heron/acme/app";
+    let who = call(base, "who", json!({ "me": me, "all": true })).await;
+    let ann = who["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["uri"].as_str().unwrap().contains("session=a1"))
+        .unwrap()
+        .clone();
+    ann["idle_secs"].as_u64().unwrap()
+}
+
+/// A session of v0.8.0 last seen 2 days before the import shows 2 days
+/// in `who --all`, also after a restart. The records of the import name
+/// the session at go-live, but they do not make it newer
+/// (01M4263ZXH4K23CSY6C5GJPVQH).
+#[tokio::test]
+async fn the_seen_time_of_an_old_session_stays_after_a_restart() {
+    const TWO_DAYS: u64 = 2 * 24 * 60 * 60;
+    let two_days = TWO_DAYS..TWO_DAYS + 60;
+    let seen = now_ms() - TWO_DAYS * 1000;
+    let store = Memory::default();
+    let sessions = json!({
+        "saved_ms": now_ms(),
+        "sessions": [{"uri": ANN, "seen_ms": seen, "alive_ms": seen}],
+        "cursors": [],
+        "claims": [],
+        "leads": [],
+        "riff": "running",
+    });
+    let sessions = serde_json::to_vec(&sessions).unwrap();
+    store.save("sessions", sessions, None).await.unwrap();
+    let thread = small_thread(&["first"]);
+    store
+        .save("threads/acme%2Fapp", thread, None)
+        .await
+        .unwrap();
+
+    let (first, base) = common::start_on(Arc::new(store.clone())).await;
+    let after_import = idle_of_ann(&base).await;
+    assert!(two_days.contains(&after_import), "{after_import}");
+    first.shutdown().await.unwrap();
+    let (second, base) = common::start_on(Arc::new(store.clone())).await;
+    let after_restart = idle_of_ann(&base).await;
+    assert!(two_days.contains(&after_restart), "{after_restart}");
+
+    // A start from the checkpoint of the import alone gives the same.
+    second.shutdown().await.unwrap();
+    let checkpoints = store.list("checkpoint/").await.unwrap();
+    assert!(checkpoints.len() > 1, "{checkpoints:?}");
+    for name in checkpoints.iter().skip(1) {
+        store.delete(name).await.unwrap();
+    }
+    let (_third, base) = common::start_on(Arc::new(store)).await;
+    let from_import = idle_of_ann(&base).await;
+    assert!(two_days.contains(&from_import), "{from_import}");
+}

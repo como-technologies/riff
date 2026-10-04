@@ -859,12 +859,33 @@ impl Server {
             (came > 0 && due).then(|| state.snapshot(Instant::now(), now_ms()))
         });
         if let Some(snapshot) = snapshot {
-            self.write_checkpoint(settings, snapshot).await;
+            self.write_checkpoint(settings, snapshot, true).await;
         }
     }
 
-    /// Writes the checkpoint of `snapshot`, then prunes.
-    async fn write_checkpoint(&self, settings: &checkpoint::Settings, snapshot: Snapshot) {
+    /// Writes a checkpoint at a stop, also when no record came since the
+    /// last one. So the memory of the presence stays: the last call and
+    /// the status of each session (01M4264028A3KVDK10PPERHM0C). It does
+    /// not prune: a tool of the log can run at once after the stop, and
+    /// it finds the chunks of before. The next checkpoint prunes.
+    async fn last_checkpoint(&self) {
+        if self.checkpoints().blocked.is_some() {
+            return;
+        }
+        let snapshot = self
+            .engine
+            .read(|state| state.snapshot(Instant::now(), now_ms()));
+        let settings = self.config.checkpoint.clone();
+        self.write_checkpoint(&settings, snapshot, false).await;
+    }
+
+    /// Writes the checkpoint of `snapshot`, then prunes when `prune`.
+    async fn write_checkpoint(
+        &self,
+        settings: &checkpoint::Settings,
+        snapshot: Snapshot,
+        prune: bool,
+    ) {
         let position = snapshot.position;
         let checkpoint = checkpoint::Checkpoint::new(&settings.build, now_ms(), snapshot);
         match checkpoint::write(&*self.log, &checkpoint).await {
@@ -885,6 +906,9 @@ impl Server {
                 ));
                 return;
             }
+        }
+        if !prune {
+            return;
         }
         match checkpoint::prune(&*self.log, settings, now_ms()).await {
             Ok(pruned) => {
@@ -951,7 +975,7 @@ impl Server {
                 .engine
                 .read(|state| state.snapshot(Instant::now(), now_ms()));
             let settings = self.config.checkpoint.clone();
-            self.write_checkpoint(&settings, snapshot).await;
+            self.write_checkpoint(&settings, snapshot, true).await;
         }
         tracing::info!(
             records,
@@ -1654,13 +1678,17 @@ impl Service {
         self.0.save_tokens(saved, &mut written).await
     }
 
-    /// Stops taking calls, then saves each unsaved change (R129). The
-    /// gate replies 503 from now on. `main` calls it on SIGTERM. A
-    /// server that holds the lease then ends it, so that a tool of the
-    /// log can run at once (01M3X342ARX5Y7R9ZJDT12R9A1).
+    /// Stops taking calls, then saves each unsaved change (R129), and
+    /// writes a last checkpoint. The gate replies 503 from now on.
+    /// `main` calls it on SIGTERM. A server that holds the lease then
+    /// ends it, so that a tool of the log can run at once
+    /// (01M3X342ARX5Y7R9ZJDT12R9A1).
     pub async fn shutdown(&self) -> Result<(), StoreError> {
         self.0.gate.closing.store(true, Ordering::SeqCst);
         let saved = self.save().await;
+        if saved.is_ok() && self.0.saved.is_some() && self.0.leased() {
+            self.0.last_checkpoint().await;
+        }
         if let Some(store) = &self.0.saved
             && self.0.leased()
             && let Err(error) = store.lease.end().await

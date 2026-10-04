@@ -41,10 +41,13 @@
 //!   instance that held the lease and runs again finds another ID, and
 //!   stops. It ends its lease after the cut, and names a server that
 //!   took the lease during the cut.
-//! - `cut` refuses a position before the oldest kept checkpoint: the
-//!   chunks before that checkpoint are gone, so no start can replay
-//!   them. It refuses also when the first problem is before that
-//!   checkpoint: no cut repairs such a log.
+//! - `cut` refuses a position before the oldest kept checkpoint when
+//!   the chunks before that checkpoint are gone, so no start can replay
+//!   them. When the log still starts at position 1, for example after
+//!   the last checkpoint of a stop (01M4264028A3KVDK10PPERHM0C), it
+//!   cuts, and deletes each checkpoint after the position. It refuses
+//!   also when the first problem is before that checkpoint: no cut
+//!   repairs such a log.
 //! - `cut` deletes the chunks from the end of the log to its start, then
 //!   writes the chunk that holds the position again with only its first
 //!   records, then deletes the checkpoints. So a cut that stops in the
@@ -876,7 +879,8 @@ pub struct Cut {
 /// Names each record and each checkpoint after the position `after`,
 /// and deletes them with [`Mode::Remove`]. See the module docs.
 ///
-/// - It refuses a position before the oldest kept checkpoint.
+/// - It refuses a position before the oldest kept checkpoint, when the
+///   log does not start at position 1.
 /// - With [`Mode::Remove`], it refuses while an instance holds the
 ///   lease, and names the instance (01M3X342K007K3Z9G0CYWFKVMA). Else it
 ///   takes the lease for the time of the cut
@@ -947,7 +951,15 @@ pub async fn cut_with(
 /// The work of [`cut`], with no look at the lease.
 async fn remove(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolError> {
     let checkpoints = checkpoint::names(store).await?;
-    let oldest = checkpoints.first().map(|(position, _, _)| *position);
+    let whole = log::chunks(store)
+        .await?
+        .first()
+        .is_some_and(|(first, _)| *first == 1);
+    // A cut before the oldest checkpoint replays the whole log.
+    let oldest = checkpoints
+        .first()
+        .map(|(position, _, _)| *position)
+        .filter(|&oldest| after >= oldest || !whole);
     if let Some(oldest) = oldest
         && after < oldest
     {
@@ -1557,6 +1569,13 @@ mod tests {
     async fn cut_refuses_a_position_before_the_oldest_kept_checkpoint() {
         let store = store().await;
         checkpoint_at(&store, 4).await;
+        // The log starts at position 1: a cut before the checkpoint
+        // replays the whole log, and deletes the checkpoint.
+        let named = cut(&store, 3, Mode::DryRun).await.unwrap();
+        assert_eq!((named.records.len(), named.checkpoints.len()), (3, 1));
+        // A prune deleted the first chunk: the cut refuses.
+        let (_, first) = log::chunks(&store).await.unwrap().remove(0);
+        store.delete(&first).await.unwrap();
         let error = cut(&store, 3, Mode::Remove).await.unwrap_err();
         assert!(
             error
@@ -1564,7 +1583,7 @@ mod tests {
                 .contains("the oldest kept checkpoint is at position 4"),
             "{error}"
         );
-        assert_eq!(log::replay(&store).await.unwrap().last, 6);
+        assert_eq!(log::replay_after(&store, 4).await.unwrap().last, 6);
         // A cut at the checkpoint is good.
         assert_eq!(cut(&store, 4, Mode::Remove).await.unwrap().records.len(), 2);
     }

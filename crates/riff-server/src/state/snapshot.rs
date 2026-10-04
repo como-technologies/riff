@@ -10,7 +10,7 @@
 //! | `threads::Saved` | `threads` |
 //! | `work::Saved` | `claims`, `leads` |
 //! | `sessions::Saved` | `sessions` |
-//! | `presence::Saved` | `cursors` |
+//! | `presence::Saved` | `cursors`, `statuses` |
 //! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` |
 //!
 //! A group that adds a part to the state adds a field to its own
@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use riff_core::name::{ThreadName, Who};
+use riff_core::name::Who;
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
@@ -72,10 +72,9 @@ impl Snapshot {
         }
     }
 
-    /// The state that the log gives, the read cursors, and the last call
-    /// of each session.
-    #[allow(clippy::type_complexity)]
-    pub(super) fn into_parts(self) -> (Riff, BTreeMap<(Who, ThreadName), u64>, BTreeMap<Who, u64>) {
+    /// The state that the log gives, the part of the presence, and the
+    /// last call of each session.
+    pub(super) fn into_parts(self) -> (Riff, presence::Saved, BTreeMap<Who, u64>) {
         let (sessions, seen) = self.sessions.restore();
         let riff = Riff::restore(
             LoadPath(()),
@@ -86,6 +85,6 @@ impl Snapshot {
             self.the_riff.restore(),
             self.people.restore(),
         );
-        (riff, self.presence.restore(), seen)
+        (riff, self.presence, seen)
     }
 }

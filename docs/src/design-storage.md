@@ -431,7 +431,8 @@ does not call `who` for the whole riff.
   each checkpoint after the position. It writes the chunk that holds
   the position again, with only its first records. It prints the
   records that it removes, and the threads. It refuses to cut before
-  the oldest kept checkpoint, and while a server holds the lease. With
+  the oldest kept checkpoint when the chunks before it are gone, and
+  while a server holds the lease. With
   no `--yes`, it removes nothing.
 - The tools take a token from the metadata server of Cloud Run, or from
   the Google sign-in of the person (`gcloud auth print-access-token`).

@@ -56,7 +56,7 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::{SessionUri, Who};
-use riff_core::record::{Change, Member, Record, Released, SessionStarted};
+use riff_core::record::{By, Change, Member, Record, Released, SessionStarted};
 use riff_core::wire::{End, Freed, Register, Start, StartReason, Started};
 use serde::{Deserialize, Serialize};
 
@@ -109,6 +109,22 @@ fn named(change: &Change) -> Option<&SessionUri> {
         | Change::OwnerDenied(_)
         | Change::SigninsEnded(_) => None,
     }
+}
+
+/// The session that `record` names and the time of the record, when the
+/// session made it by its own call: a sign that it lived then. A record
+/// of the server, of a person or of another session only names it, for
+/// example a record of the import of go-live, or a release by the lead
+/// (01M4263ZXH4K23CSY6C5GJPVQH). A record with no caller counts: its
+/// cause is not known.
+pub(super) fn own_call(record: &Record) -> Option<(&Who, u64)> {
+    let who = named(&record.change)?.who();
+    let own = match &record.by {
+        Some(By::Session(by)) => by == who,
+        Some(_) => false,
+        None => true,
+    };
+    own.then_some((who, record.written_at_ms))
 }
 
 impl Sessions {
@@ -469,5 +485,39 @@ impl Command for End {
 
     fn signal(&self, _caller: &Caller) -> Option<Signal> {
         Some(Signal::Ended)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record at `at_ms` by `by` that names `session`.
+    fn joined(session: &SessionUri, by: Option<By>, at_ms: u64) -> Record {
+        Record {
+            position: at_ms,
+            written_at_ms: at_ms,
+            by,
+            command: None,
+            change: Change::JoinedThread(Member {
+                session: session.clone(),
+                thread: "design".parse().unwrap(),
+            }),
+        }
+    }
+
+    #[test]
+    fn only_a_record_of_the_session_itself_is_its_own_call() {
+        let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+        let lead: SessionUri = "riff://ann@heron/acme/app?session=l1".parse().unwrap();
+        let by_ann = joined(&ann, Some(By::Session(ann.who().clone())), 10);
+        assert_eq!(own_call(&by_ann), Some((ann.who(), 10)));
+        let by_lead = joined(&ann, Some(By::Session(lead.who().clone())), 20);
+        assert_eq!(own_call(&by_lead), None);
+        assert_eq!(own_call(&joined(&ann, Some(By::Server), 30)), None);
+        let by_person = joined(&ann, Some(By::Person("ann".into())), 40);
+        assert_eq!(own_call(&by_person), None);
+        // A record from before the caller field counts.
+        assert_eq!(own_call(&joined(&ann, None, 50)), Some((ann.who(), 50)));
     }
 }

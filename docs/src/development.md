@@ -1128,8 +1128,10 @@ and each later chunk. So a line that it prints never stays, and the
 log reads after the cut. When the position of a removed line stays in
 the log from an earlier chunk, the line says so.
 
-The command refuses a position before the oldest kept checkpoint. The
-chunks before that checkpoint are gone, so no start can replay them.
+The command refuses a position before the oldest kept checkpoint when
+the chunks before that checkpoint are gone, so no start can replay
+them. While the log still starts at position 1, it cuts, and deletes
+each checkpoint after the position.
 
 #### When the cut refuses: a server holds the lease
 
