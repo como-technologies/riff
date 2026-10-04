@@ -244,8 +244,8 @@ impl Failed {
             "does not exist",
             "may not exist",
         ]
-            .iter()
-            .any(|word| e.contains(word))
+        .iter()
+        .any(|word| e.contains(word))
     }
 
     /// The command of the call: the arguments before the first flag.

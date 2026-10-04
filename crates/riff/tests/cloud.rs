@@ -909,11 +909,7 @@ fn an_ended_sign_in_of_gcloud_is_an_error_and_no_service_is_not_said() {
         assert!(!ran.out.status.success(), "{args:?}");
         let stderr = ran.stderr();
         let lines: Vec<&str> = stderr.lines().filter(|l| l.contains("gcloud")).collect();
-        assert_eq!(
-            lines.len(),
-            1,
-            "{args:?}: one line names gcloud:\n{stderr}"
-        );
+        assert_eq!(lines.len(), 1, "{args:?}: one line names gcloud:\n{stderr}");
         assert!(
             lines[0].ends_with("gcloud: the sign-in ended: run gcloud auth login"),
             "{args:?}: {stderr}"
@@ -933,7 +929,10 @@ fn an_ended_sign_in_of_gcloud_is_an_error_and_no_service_is_not_said() {
 fn no_service_comes_only_from_a_reply_that_the_service_does_not_exist() {
     let cloud = Cloud::new().set("shared.env", "CLOUD_URL", "http://127.0.0.1:9");
     let ran = cloud.run(&["status", "shared"]).ok();
-    assert!(ran.stdout().starts_with("shared  http://127.0.0.1:9  -  no service  "));
+    assert!(
+        ran.stdout()
+            .starts_with("shared  http://127.0.0.1:9  -  no service  ")
+    );
     assert!(ran.stderr().is_empty(), "{}", ran.stderr());
 }
 

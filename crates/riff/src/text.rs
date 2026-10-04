@@ -4006,7 +4006,9 @@ pub fn gcloud_failed(command: &str, stderr: &str) -> String {
     let (command, message) = line
         .strip_prefix("(gcloud.")
         .and_then(|rest| rest.split_once(") "))
-        .map_or((command.to_owned(), line), |(c, m)| (c.replace('.', " "), m));
+        .map_or((command.to_owned(), line), |(c, m)| {
+            (c.replace('.', " "), m)
+        });
     format!("gcloud {command}: {message}")
 }
 

@@ -1597,6 +1597,12 @@
 - **01M4262E0QJHCZXNH7EFG7FXN2** The CI deploy job deploys with
   `riff cloud deploy shared TAG --confirm shared`, from the riff of the
   tag.
+- **01M4382RKERWAPKBRY9W8F2GSA** When a `gcloud` call of `riff cloud`
+  fails, riff prints the error of `gcloud` in one line and exits with a
+  code that is not 0. An ended sign-in gives
+  `gcloud: the sign-in ended: run gcloud auth login`. riff says that a
+  resource is missing only when `gcloud` replies that it does not
+  exist.
 
 ## One instance
 
