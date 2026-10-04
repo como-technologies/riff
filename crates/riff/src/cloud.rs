@@ -131,13 +131,33 @@ impl Gcloud {
         }
         let out = child.wait_with_output()?;
         if !out.status.success() {
-            bail!(
-                "gcloud {}: {}",
-                args.join(" "),
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
+            return Err(Failed {
+                args: args.to_vec(),
+                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            }
+            .into());
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// The stdout of `gcloud ARGS`, a describe call, or `None` when
+    /// `gcloud` replies that the resource does not exist. Each other
+    /// failure is an error, for example an ended sign-in
+    /// (01M4382RKERWAPKBRY9W8F2GSA).
+    pub fn find(&self, args: &[String]) -> Result<Option<String>> {
+        match self.run(args, None) {
+            Ok(out) => Ok(Some(out)),
+            Err(e) => match e.downcast_ref::<Failed>() {
+                Some(failed) if failed.not_found() => Ok(None),
+                _ => Err(e),
+            },
+        }
+    }
+
+    /// True when `gcloud ARGS`, a describe call, finds the resource
+    /// ([`Gcloud::find`]).
+    pub fn exists(&self, args: &[String]) -> Result<bool> {
+        Ok(self.find(args)?.is_some())
     }
 
     /// Runs `gcloud ARGS` with the terminal of riff: the person sees its
@@ -153,17 +173,11 @@ impl Gcloud {
         Ok(())
     }
 
-    /// True when `gcloud ARGS` exits with status 0: for a check that a
-    /// resource exists.
-    pub fn ok(&self, args: &[String]) -> bool {
-        self.run(args, None).is_ok()
-    }
-
     /// Runs `gcloud ARGS` up to 6 times, with a wait between two tries.
     /// IAM needs some seconds before it knows a new service account.
     pub fn bind(&self, args: &[String]) -> Result<()> {
         for _ in 0..5 {
-            if self.ok(args) {
+            if self.run(args, None).is_ok() {
                 return Ok(());
             }
             std::thread::sleep(self.wait);
@@ -171,6 +185,103 @@ impl Gcloud {
         self.run(args, None).map(drop)
     }
 }
+
+/// A call of `gcloud` that failed: its arguments and its stderr. It
+/// shows as one line ([`text::gcloud_failed`]).
+///
+/// ```
+/// use riff::cloud::Failed;
+///
+/// let args = ["run", "services", "describe", "riff-stage"].map(String::from).to_vec();
+/// let gone = Failed::new(args.clone(), "ERROR: (gcloud.run.services.describe) Cannot find service [riff-stage].\n");
+/// assert!(gone.not_found());
+/// assert_eq!(gone.to_string(), "gcloud run services describe: Cannot find service [riff-stage].");
+///
+/// let ended = Failed::new(
+///     args,
+///     "ERROR: (gcloud.run.services.describe) There was a problem refreshing your current auth tokens: \
+///      Reauthentication failed. cannot prompt during non-interactive execution.\n\
+///      Please run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n",
+/// );
+/// assert!(!ended.not_found());
+/// assert_eq!(ended.to_string(), "gcloud: the sign-in ended: run gcloud auth login");
+///
+/// // Cloud Run says "may not exist" when the account has no permission.
+/// let denied = Failed::new(
+///     ["run", "services", "describe", "riff-server"].map(String::from).to_vec(),
+///     "ERROR: (gcloud.run.services.describe) PERMISSION_DENIED: Permission 'run.services.get' \
+///      denied on resource 'namespaces/p/services/riff-server' (or resource may not exist).\n",
+/// );
+/// assert!(denied.denied());
+/// assert!(!denied.not_found());
+/// assert!(denied.to_string().starts_with("gcloud run services describe: PERMISSION_DENIED: "));
+/// ```
+#[derive(Debug)]
+pub struct Failed {
+    args: Vec<String>,
+    stderr: String,
+}
+
+impl Failed {
+    /// The failure of `gcloud ARGS` with `stderr`.
+    pub fn new(args: Vec<String>, stderr: &str) -> Self {
+        Self {
+            args,
+            stderr: stderr.to_owned(),
+        }
+    }
+
+    /// True when `gcloud` needs a new sign-in.
+    pub fn signin_ended(&self) -> bool {
+        let e = &self.stderr;
+        e.contains("gcloud auth login")
+            || e.contains("Reauthentication failed")
+            || e.contains("refreshing your current auth tokens")
+            || e.contains("do not currently have an active account")
+    }
+
+    /// True when the account of `gcloud` has no permission for the
+    /// call.
+    pub fn denied(&self) -> bool {
+        let e = self.stderr.to_lowercase();
+        e.contains("permission_denied") || e.contains("permission denied")
+    }
+
+    /// True when `gcloud` replies that the resource does not exist. An
+    /// ended sign-in and a refused permission are never this, also when
+    /// the reply says that the resource "may not exist".
+    pub fn not_found(&self) -> bool {
+        if self.signin_ended() || self.denied() {
+            return false;
+        }
+        let e = self.stderr.to_lowercase();
+        ["cannot find", "not_found", "not found", "does not exist"]
+            .iter()
+            .any(|word| e.contains(word))
+    }
+
+    /// The command of the call: the arguments before the first flag.
+    fn command(&self) -> String {
+        self.args
+            .iter()
+            .take_while(|a| !a.starts_with('-'))
+            .take(4)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.signin_ended() {
+            return f.write_str(text::GCLOUD_SIGNIN_ENDED);
+        }
+        f.write_str(&text::gcloud_failed(&self.command(), &self.stderr))
+    }
+}
+
+impl std::error::Error for Failed {}
 
 /// `ARGS` as owned strings.
 fn args(parts: &[&str]) -> Vec<String> {
@@ -590,7 +701,7 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         a.extend_from_slice(tail);
         a
     };
-    if !gcloud.ok(&args(&["projects", "describe", &s.project])) {
+    if !gcloud.exists(&args(&["projects", "describe", &s.project]))? {
         bail!(text::cloud_no_project(&s.project));
     }
     let billing = gcloud.run(
@@ -615,7 +726,7 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     gcloud.run(&enable, None)?;
     println!("APIs: on.");
 
-    if gcloud.ok(&with(&["secrets", "describe", &s.secret_name], &project)) {
+    if gcloud.exists(&with(&["secrets", "describe", &s.secret_name], &project))? {
         println!("Secret {}: exists.", s.secret_name);
     } else {
         println!("Secret {}: making it.", s.secret_name);
@@ -635,10 +746,10 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     }
 
     let bucket = format!("gs://{}", s.bucket);
-    if gcloud.ok(&with(
+    if gcloud.exists(&with(
         &["storage", "buckets", "describe", &bucket],
         &project,
-    )) {
+    ))? {
         println!("Bucket {}: exists.", s.bucket);
     } else {
         println!("Bucket {}: making it.", s.bucket);
@@ -689,10 +800,10 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
             continue;
         }
         let email = s.account(name);
-        if gcloud.ok(&with(
+        if gcloud.exists(&with(
             &["iam", "service-accounts", "describe", &email],
             &project,
-        )) {
+        ))? {
             println!("Service account {name}: exists.");
         } else {
             println!("Service account {name}: making it.");
@@ -758,10 +869,10 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
 
     let mut place = args(&["--location", &s.region]);
     place.extend_from_slice(&project);
-    if gcloud.ok(&with(
+    if gcloud.exists(&with(
         &["artifacts", "repositories", "describe", &s.repository],
         &place,
-    )) {
+    ))? {
         println!("Image repository {}: exists.", s.repository);
     } else {
         println!("Image repository {}: making it.", s.repository);
@@ -793,7 +904,7 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     // riff-server keeps the state in memory (01M3TJWJEPTSF1S3S5PJD25Z7Y).
     // A service that runs with another limit gets the limit now.
     let service = with(&["run", "services", "describe", &s.service], &s.place());
-    if gcloud.ok(&service) {
+    if gcloud.exists(&service)? {
         let mut memory = service.clone();
         memory.extend(args(&[
             "--format",
@@ -863,7 +974,7 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
         "assertion.repository == '{}' && (assertion.ref == 'refs/heads/main' || assertion.ref.startsWith('refs/tags/v'))",
         s.github_repo
     );
-    if gcloud.ok(&with(
+    if gcloud.exists(&with(
         &[
             "iam",
             "workload-identity-pools",
@@ -873,7 +984,7 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
             "global",
         ],
         &project,
-    )) {
+    ))? {
         println!("Identity pool github: exists.");
     } else {
         println!("Identity pool github: making it.");
@@ -906,7 +1017,7 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
             &pool,
         )
     };
-    if gcloud.ok(&provider("describe")) {
+    if gcloud.exists(&provider("describe"))? {
         println!("Identity provider github: exists. Setting its condition.");
         let mut update = provider("update-oidc");
         update.extend(args(&["--attribute-condition", &condition]));
@@ -1258,7 +1369,7 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
         &s.domain,
     ]);
     describe.extend(s.place());
-    if gcloud.ok(&describe) {
+    if gcloud.exists(&describe)? {
         println!("Domain {}: mapped.", s.domain);
     } else {
         // gcloud shows the DNS records to add.
@@ -1328,13 +1439,16 @@ impl Facts {
     }
 }
 
-/// The facts of the service of `s`.
-pub fn facts(gcloud: &Gcloud, s: &Settings) -> Facts {
+/// The facts of the service of `s`. A service that `gcloud` does not
+/// find has no facts. Each other failure of `gcloud` is an error, so
+/// riff never says "no service" for a failed call
+/// (01M4382RKERWAPKBRY9W8F2GSA).
+pub fn facts(gcloud: &Gcloud, s: &Settings) -> Result<Facts> {
     let mut describe = args(&["run", "services", "describe", &s.service]);
     describe.extend(s.place());
     describe.extend(args(&["--format", "json"]));
-    let Ok(out) = gcloud.run(&describe, None) else {
-        return Facts::default();
+    let Some(out) = gcloud.find(&describe)? else {
+        return Ok(Facts::default());
     };
     let json: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
     let ready = json["status"]["conditions"]
@@ -1343,7 +1457,7 @@ pub fn facts(gcloud: &Gcloud, s: &Settings) -> Facts {
         .flatten()
         .any(|c| c["type"] == "Ready" && c["status"] == "True");
     let container = &json["spec"]["template"]["spec"]["containers"][0];
-    Facts {
+    Ok(Facts {
         exists: true,
         ready,
         image: container["image"].as_str().unwrap_or_default().to_owned(),
@@ -1355,7 +1469,7 @@ pub fn facts(gcloud: &Gcloud, s: &Settings) -> Facts {
             .as_str()
             .unwrap_or_default()
             .to_owned(),
-    }
+    })
 }
 
 /// The `gcloud` arguments that read the log of the service of `s`:
@@ -1390,7 +1504,7 @@ pub fn log_args(s: &Settings, errors: bool, limit: u32, filter: Option<&str>) ->
 pub fn delete(gcloud: &Gcloud, s: &Settings, with_state: bool) -> Result<()> {
     let mut describe = args(&["run", "services", "describe", &s.service]);
     describe.extend(s.place());
-    if gcloud.ok(&describe) {
+    if gcloud.exists(&describe)? {
         let mut delete = args(&["run", "services", "delete", &s.service, "--quiet"]);
         delete.extend(s.place());
         gcloud.run(&delete, None)?;
@@ -1405,7 +1519,7 @@ pub fn delete(gcloud: &Gcloud, s: &Settings, with_state: bool) -> Result<()> {
     }
     let mut describe = args(&["storage", "buckets", "describe", &bucket]);
     describe.extend(s.project());
-    if gcloud.ok(&describe) {
+    if gcloud.exists(&describe)? {
         let mut remove = args(&["storage", "rm", "--recursive", &bucket]);
         remove.extend(s.project());
         gcloud.run(&remove, None)?;

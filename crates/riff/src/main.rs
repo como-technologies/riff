@@ -2101,7 +2101,7 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
                 println!("{}", text::cloud_none(&dir));
             }
             for s in all {
-                let facts = cloud::facts(&gcloud, &s);
+                let facts = cloud::facts(&gcloud, &s)?;
                 let paused = riff_paused(&s.url, &here).await;
                 println!("{}", text::cloud_row(&s.name, &s.url, &facts, paused));
             }
@@ -2109,7 +2109,7 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
         }
         CloudCommand::Status { name } => {
             let s = cloud::load(&dir, name)?;
-            let facts = cloud::facts(&gcloud, &s);
+            let facts = cloud::facts(&gcloud, &s)?;
             let paused = riff_paused(&s.url, &here).await;
             println!("{}", text::cloud_row(&s.name, &s.url, &facts, paused));
             print!("{}", text::cloud_status(&s, &facts));

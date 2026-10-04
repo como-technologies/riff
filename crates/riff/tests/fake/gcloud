@@ -2,7 +2,11 @@
 # A fake gcloud for tests/cloud.rs. It writes each call to the file
 # $FAKE_GCLOUD_LOG, and each argument of each call on a line of the
 # file $FAKE_GCLOUD_ARGS. A describe call succeeds only when the call
-# starts with a line of the file $FAKE_GCLOUD_FOUND. A list call of the
+# starts with a line of the file $FAKE_GCLOUD_FOUND; else it says that
+# the resource does not exist. With $FAKE_GCLOUD_SIGNIN_ENDED set, each
+# call fails as gcloud does when its sign-in ended. With
+# $FAKE_GCLOUD_DENIED set, each call fails as Cloud Run does when the
+# account has no permission: the reply says "may not exist". A list call of the
 # alert prints a name only then. Stdin of `secrets versions add` goes
 # to $FAKE_GCLOUD_LOG.stdin. Each file of the flag --policy-from-file
 # is copied to $FAKE_GCLOUD_LOG.policy.
@@ -10,6 +14,25 @@ echo "$*" >> "${FAKE_GCLOUD_LOG:-/dev/null}"
 if [ -n "${FAKE_GCLOUD_ARGS:-}" ]; then
     printf '%s\n' "$@" >> "$FAKE_GCLOUD_ARGS"
 fi
+if [ -n "${FAKE_GCLOUD_SIGNIN_ENDED:-}" ]; then
+    cat >&2 <<'END'
+ERROR: (gcloud.run.services.describe) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.
+Please run:
+
+  $ gcloud auth login
+
+to obtain new credentials.
+END
+    exit 1
+fi
+if [ -n "${FAKE_GCLOUD_DENIED:-}" ]; then
+    echo "ERROR: (gcloud.run.services.describe) PERMISSION_DENIED: Permission 'run.services.get' denied on resource 'namespaces/como-riff/services/riff-server' (or resource may not exist). This command is authenticated as someone@example.com which is the active account specified by the [core/account] property." >&2
+    exit 1
+fi
+missing() {
+    echo "ERROR: (gcloud.fake) NOT_FOUND: Cannot find [$*]." >&2
+    exit 1
+}
 found() {
     [ -f "${FAKE_GCLOUD_FOUND:-}" ] || return 1
     while IFS= read -r f; do
@@ -37,11 +60,11 @@ case "$*" in
             echo '{"status":{"conditions":[{"type":"Ready","status":"True"}],"latestReadyRevisionName":"rev-1"},"spec":{"template":{"spec":{"containers":[{"image":"us-central1-docker.pkg.dev/como-riff/riff/riff-server:v1.0.0","resources":{"limits":{"memory":"1Gi"}}}]}}}}'
             exit 0
         fi
-        exit 1 ;;
+        missing "$@" ;;
     "run services describe "*"--format value("*)
         if found "$@"; then echo 512Mi; exit 0; fi
-        exit 1 ;;
+        missing "$@" ;;
     *" describe "*)
         if found "$@"; then exit 0; fi
-        exit 1 ;;
+        missing "$@" ;;
 esac

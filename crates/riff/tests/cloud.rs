@@ -47,6 +47,10 @@ struct Cloud {
     top: tempfile::TempDir,
     /// The describe calls that succeed: each line is the start of a call.
     found: Vec<String>,
+    /// Each call fails as when the sign-in of `gcloud` ended.
+    signin_ended: bool,
+    /// Each call fails as when the account has no permission.
+    denied: bool,
 }
 
 /// The result of one `riff cloud` run.
@@ -100,12 +104,27 @@ impl Cloud {
             env: Isolated::new(),
             top,
             found: Vec::new(),
+            signin_ended: false,
+            denied: false,
         }
     }
 
     /// The describe calls that succeed.
     fn found(mut self, found: &[&str]) -> Cloud {
         self.found = found.iter().map(|f| (*f).to_owned()).collect();
+        self
+    }
+
+    /// Each call of `gcloud` fails as when its sign-in ended.
+    fn signin_ended(mut self) -> Cloud {
+        self.signin_ended = true;
+        self
+    }
+
+    /// Each call of `gcloud` fails as when the account has no
+    /// permission.
+    fn denied(mut self) -> Cloud {
+        self.denied = true;
         self
     }
 
@@ -151,6 +170,12 @@ impl Cloud {
             .stderr(std::process::Stdio::piped());
         if let Some(owner) = owner {
             cmd.env("RIFF_OWNER", owner);
+        }
+        if self.signin_ended {
+            cmd.env("FAKE_GCLOUD_SIGNIN_ENDED", "1");
+        }
+        if self.denied {
+            cmd.env("FAKE_GCLOUD_DENIED", "1");
         }
         let mut child = cmd.spawn().unwrap();
         {
@@ -876,6 +901,65 @@ fn list_and_status_show_each_instance() {
     assert!(out.contains("revision: rev-1\n"), "{out}");
     assert!(out.contains("bucket: como-riff-stage-state\n"), "{out}");
     assert!(out.contains("CI deploys: no"), "{out}");
+}
+
+/// A failed call of `gcloud` gives its error in one line and a code
+/// that is not 0. It never gives "no service" (01M4382RKERWAPKBRY9W8F2GSA).
+fn a_failed_gcloud_is_an_error_and_no_service_is_not_said(cloud: Cloud, line: &str) {
+    let cloud = cloud
+        .set("shared.env", "CLOUD_URL", "http://127.0.0.1:9")
+        .set("stage.env", "CLOUD_URL", "http://127.0.0.1:9")
+        .found(&["run services describe riff-stage "]);
+    for args in [
+        &["list"][..],
+        &["status", "stage"],
+        &["delete", "stage", "--with-state", "--confirm", "stage"],
+        &["create", "stage"],
+    ] {
+        let ran = cloud.run(args);
+        assert!(!ran.out.status.success(), "{args:?}");
+        let stderr = ran.stderr();
+        let lines: Vec<&str> = stderr.lines().filter(|l| l.contains("gcloud")).collect();
+        assert_eq!(lines.len(), 1, "{args:?}: one line names gcloud:\n{stderr}");
+        assert!(lines[0].contains(line), "{args:?}: {stderr}");
+        let stdout = ran.stdout();
+        assert!(!stdout.contains("no service"), "{args:?}: {stdout}");
+        assert!(!stdout.contains(": none"), "{args:?}: {stdout}");
+        assert!(!stdout.contains("making it"), "{args:?}: {stdout}");
+        assert!(!ran.calls.contains(" delete "), "{args:?}: {}", ran.calls);
+        assert!(!ran.calls.contains(" create "), "{args:?}: {}", ran.calls);
+    }
+}
+
+#[test]
+fn an_ended_sign_in_of_gcloud_is_an_error_and_no_service_is_not_said() {
+    a_failed_gcloud_is_an_error_and_no_service_is_not_said(
+        Cloud::new().signin_ended(),
+        "gcloud: the sign-in ended: run gcloud auth login",
+    );
+}
+
+/// Cloud Run says "or resource may not exist" when the account has no
+/// permission. riff does not take it as "no service".
+#[test]
+fn a_refused_permission_is_an_error_and_no_service_is_not_said() {
+    a_failed_gcloud_is_an_error_and_no_service_is_not_said(
+        Cloud::new().denied(),
+        ": PERMISSION_DENIED: Permission 'run.services.get' denied",
+    );
+}
+
+/// "no service" comes only from a reply of `gcloud` that the service
+/// does not exist (01M4382RKERWAPKBRY9W8F2GSA).
+#[test]
+fn no_service_comes_only_from_a_reply_that_the_service_does_not_exist() {
+    let cloud = Cloud::new().set("shared.env", "CLOUD_URL", "http://127.0.0.1:9");
+    let ran = cloud.run(&["status", "shared"]).ok();
+    assert!(
+        ran.stdout()
+            .starts_with("shared  http://127.0.0.1:9  -  no service  ")
+    );
+    assert!(ran.stderr().is_empty(), "{}", ran.stderr());
 }
 
 #[test]

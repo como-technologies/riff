@@ -4024,6 +4024,43 @@ pub fn cloud_state_stays(bucket: &str) -> String {
     format!("Bucket {bucket}: stays, with the state. To delete it too, add --with-state.")
 }
 
+/// The error of a `gcloud` call when the sign-in of `gcloud` ended
+/// (01M4382RKERWAPKBRY9W8F2GSA).
+pub const GCLOUD_SIGNIN_ENDED: &str = "gcloud: the sign-in ended: run gcloud auth login";
+
+/// The one-line error of a failed `gcloud COMMAND` with `stderr`: the
+/// last `ERROR:` line of `gcloud`, else the first line
+/// (01M4382RKERWAPKBRY9W8F2GSA).
+///
+/// ```
+/// use riff::text::gcloud_failed;
+///
+/// assert_eq!(
+///     gcloud_failed("run services describe", "WARNING: x\nERROR: (gcloud.run.services.describe) PERMISSION_DENIED: no.\n"),
+///     "gcloud run services describe: PERMISSION_DENIED: no.",
+/// );
+/// assert_eq!(gcloud_failed("storage rm", "boom\nmore\n"), "gcloud storage rm: boom");
+/// assert_eq!(gcloud_failed("storage rm", ""), "gcloud storage rm: failed with no message");
+/// ```
+pub fn gcloud_failed(command: &str, stderr: &str) -> String {
+    let lines = || stderr.lines().map(str::trim).filter(|l| !l.is_empty());
+    let line = lines()
+        .rev()
+        .find_map(|l| l.strip_prefix("ERROR:"))
+        .map(str::trim)
+        .or_else(|| lines().next());
+    let Some(line) = line else {
+        return format!("gcloud {command}: failed with no message");
+    };
+    let (command, message) = line
+        .strip_prefix("(gcloud.")
+        .and_then(|rest| rest.split_once(") "))
+        .map_or((command.to_owned(), line), |(c, m)| {
+            (c.replace('.', " "), m)
+        });
+    format!("gcloud {command}: {message}")
+}
+
 /// The line of `riff cloud list` when no settings are there.
 pub fn cloud_none(dir: &Path) -> String {
     format!(

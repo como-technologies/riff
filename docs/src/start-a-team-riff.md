@@ -150,6 +150,28 @@ The bucket with the state stays, unless you add `--with-state`:
 riff cloud delete NAME
 ```
 
+### Sign in to gcloud again
+
+When the sign-in of `gcloud` ended, each `riff cloud` command stops
+with this line:
+
+```text
+gcloud: the sign-in ended: run gcloud auth login
+```
+
+Sign in again, then run the command again:
+
+```sh
+gcloud auth login
+riff cloud list
+```
+
+`no service` in `riff cloud list` means that `gcloud` replied that the
+service does not exist. When your account has no permission on the
+project, riff stops with the `PERMISSION_DENIED` line of `gcloud`. Sign
+in with an account of the project, or ask the owner of the project for
+the permission.
+
 ## Sign in first
 
 Sign in before you invite a person. On your machine, use the riff. Put
