@@ -845,7 +845,10 @@ async fn the_seen_time_of_an_old_session_stays_after_a_restart() {
     let sessions = serde_json::to_vec(&sessions).unwrap();
     store.save("sessions", sessions, None).await.unwrap();
     let thread = small_thread(&["first"]);
-    store.save("threads/acme%2Fapp", thread, None).await.unwrap();
+    store
+        .save("threads/acme%2Fapp", thread, None)
+        .await
+        .unwrap();
 
     let (first, base) = common::start_on(Arc::new(store.clone())).await;
     let after_import = idle_of_ann(&base).await;

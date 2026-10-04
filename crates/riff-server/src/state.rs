@@ -193,10 +193,11 @@
 //!
 //! [`State::replay`] makes a state from the records of the log, and
 //! [`State::load`] from a checkpoint and the records after it. The
-//! sessions and their statuses are in memory, so a replay has none of
-//! them. The read cursors come from the checkpoint. It makes each
-//! session that a record names, in the place of the last record that
-//! names it. Each such session is
+//! sessions are in memory, so a replay has none of them. The read
+//! cursors, the last call and the status of each session come from the
+//! checkpoint (01M4263ZXH4K23CSY6C5GJPVQH, 01M4263ZZVY8QJ2METTEVR1W26).
+//! It makes each session that a record names, in the place of the last
+//! record that names it. Each such session is
 //! gone until it calls. Its claims and its lead hold for [`CLAIM_GRACE`]
 //! from the replay, unless it comes back (R125).
 //!
