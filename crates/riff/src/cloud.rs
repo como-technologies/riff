@@ -233,7 +233,7 @@ const REQUIRED: [&str; 10] = [
 
 impl Settings {
     /// The settings of the instance `name` from the text of its file.
-    /// It fails when a key of [`REQUIRED`] has no value.
+    /// It fails when a required key has no value.
     pub fn parse(name: &str, text: &str) -> Result<Self> {
         let values = values(text);
         for key in REQUIRED {
