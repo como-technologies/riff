@@ -175,9 +175,23 @@ impl Cloud {
         fs::write(top.join("crates/x"), "x\n").unwrap();
         for args in [
             &["add", "-A"][..],
-            &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "x"],
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "x",
+            ],
         ] {
-            let status = Command::new("git").args(args).current_dir(top).status().unwrap();
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(top)
+                .status()
+                .unwrap();
             assert!(status.success());
         }
         self
@@ -279,7 +293,9 @@ fn the_rules_delete_thread_objects_after_30_days_and_older_versions_after_7() {
 #[test]
 fn the_service_gets_1_gib_of_memory() {
     let cloud = Cloud::new();
-    let ran = cloud.run(&["deploy", "shared", "v1.0.0", "--confirm", "shared"]).ok();
+    let ran = cloud
+        .run(&["deploy", "shared", "v1.0.0", "--confirm", "shared"])
+        .ok();
     let deploy = ran.line("run deploy riff-server ");
     assert!(deploy.contains("--memory 1Gi"), "{deploy}");
 
@@ -308,7 +324,11 @@ fn create_makes_the_alert_for_the_owner() {
     let policy = ran.line("alpha monitoring policies create ");
     assert!(policy.contains("--policy-from-file "), "{policy}");
     assert!(policy.contains("--notification-channels"), "{policy}");
-    assert!(ran.calls.contains("monitoring.googleapis.com"), "{}", ran.calls);
+    assert!(
+        ran.calls.contains("monitoring.googleapis.com"),
+        "{}",
+        ran.calls
+    );
 
     // A create again keeps the channel and the alert.
     let found = [
@@ -316,8 +336,16 @@ fn create_makes_the_alert_for_the_owner() {
         "alpha monitoring policies list ",
     ];
     let ran = Cloud::new().found(&found).run(&["create", "shared"]).ok();
-    assert!(!ran.calls.contains("monitoring channels create"), "{}", ran.calls);
-    assert!(!ran.calls.contains("monitoring policies create"), "{}", ran.calls);
+    assert!(
+        !ran.calls.contains("monitoring channels create"),
+        "{}",
+        ran.calls
+    );
+    assert!(
+        !ran.calls.contains("monitoring policies create"),
+        "{}",
+        ran.calls
+    );
 }
 
 #[test]
@@ -326,7 +354,8 @@ fn create_with_no_owner_makes_no_alert_and_says_how() {
     assert!(!ran.calls.contains("monitoring channels"), "{}", ran.calls);
     assert!(!ran.calls.contains("monitoring policies"), "{}", ran.calls);
     assert!(
-        ran.stdout().contains("RIFF_OWNER=YOUR_EMAIL riff cloud create shared"),
+        ran.stdout()
+            .contains("RIFF_OWNER=YOUR_EMAIL riff cloud create shared"),
         "{}",
         ran.stdout()
     );
@@ -365,7 +394,11 @@ fn only_main_and_the_release_tags_sign_in_as_the_deploy_account() {
         "{provider}"
     );
     assert!(provider.contains(CONDITION), "{provider}");
-    assert!(!ran.calls.contains("providers update-oidc"), "{}", ran.calls);
+    assert!(
+        !ran.calls.contains("providers update-oidc"),
+        "{}",
+        ran.calls
+    );
     let user = ran.line("iam service-accounts add-iam-policy-binding riff-deploy@");
     assert!(
         user.contains(
@@ -373,7 +406,10 @@ fn only_main_and_the_release_tags_sign_in_as_the_deploy_account() {
         ),
         "{user}"
     );
-    assert!(user.contains("--role roles/iam.workloadIdentityUser"), "{user}");
+    assert!(
+        user.contains("--role roles/iam.workloadIdentityUser"),
+        "{user}"
+    );
 }
 
 #[test]
@@ -406,7 +442,14 @@ fn the_deploy_account_pushes_images_and_deploys_the_service() {
 fn create_of_a_new_instance_writes_its_settings_and_makes_its_resources() {
     let cloud = Cloud::new();
     let ran = cloud
-        .run(&["create", "team", "--project", "acme", "--region", "europe-west1"])
+        .run(&[
+            "create",
+            "team",
+            "--project",
+            "acme",
+            "--region",
+            "europe-west1",
+        ])
         .ok();
     ran.line("projects describe acme --format value(projectNumber)");
     let text = cloud.text("team.env");
@@ -425,15 +468,27 @@ fn create_of_a_new_instance_writes_its_settings_and_makes_its_resources() {
     ran.line("iam service-accounts create team-server ");
     assert!(!ran.calls.contains("workload-identity"), "{}", ran.calls);
     assert!(!ran.calls.contains("monitoring channels"), "{}", ran.calls);
-    assert!(ran.stdout().contains("Run: riff cloud signin team"), "{}", ran.stdout());
+    assert!(
+        ran.stdout().contains("Run: riff cloud signin team"),
+        "{}",
+        ran.stdout()
+    );
 
     // Again: the settings stay, and another project is refused.
     let again = cloud.run(&["create", "team"]).ok();
-    assert!(!again.calls.contains("value(projectNumber)"), "{}", again.calls);
+    assert!(
+        !again.calls.contains("value(projectNumber)"),
+        "{}",
+        again.calls
+    );
     assert_eq!(cloud.text("team.env"), text);
     let other = cloud.run(&["create", "team", "--project", "other"]);
     assert!(!other.out.status.success());
-    assert!(other.stderr().contains("have acme, not other"), "{}", other.stderr());
+    assert!(
+        other.stderr().contains("have acme, not other"),
+        "{}",
+        other.stderr()
+    );
     assert!(other.calls.is_empty(), "{}", other.calls);
 }
 
@@ -442,12 +497,20 @@ fn create_of_a_new_instance_needs_its_project_and_region() {
     let cloud = Cloud::new();
     let ran = cloud.run(&["create", "team", "--project", "acme"]);
     assert!(!ran.out.status.success());
-    assert!(ran.stderr().contains("--project PROJECT --region REGION"), "{}", ran.stderr());
+    assert!(
+        ran.stderr().contains("--project PROJECT --region REGION"),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
     for name in ["Team", "v1.0.0", "a-name-that-is-too-long"] {
         let ran = cloud.run(&["create", name, "--project", "acme", "--region", "r"]);
         assert!(!ran.out.status.success(), "{name}");
-        assert!(ran.stderr().contains("is no name of a riff instance"), "{}", ran.stderr());
+        assert!(
+            ran.stderr().contains("is no name of a riff instance"),
+            "{}",
+            ran.stderr()
+        );
     }
 }
 
@@ -482,7 +545,11 @@ fn deploy_with_no_tag_builds_this_tree() {
     // No Dockerfile: no tree to build.
     let ran = Cloud::new().run(&["deploy", "shared", "--confirm", "shared"]);
     assert!(!ran.out.status.success());
-    assert!(ran.stderr().contains("has no Dockerfile"), "{}", ran.stderr());
+    assert!(
+        ran.stderr().contains("has no Dockerfile"),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
 
     let cloud = Cloud::new().tree();
@@ -501,14 +568,22 @@ fn deploy_with_no_tag_builds_this_tree() {
 fn deploy_stops_with_no_owner() {
     let ran = Cloud::new().run_with(&["deploy", "stage", "v1.0.0"], None, "");
     assert!(!ran.out.status.success());
-    assert!(ran.stderr().contains("export RIFF_OWNER=YOUR_EMAIL"), "{}", ran.stderr());
+    assert!(
+        ran.stderr().contains("export RIFF_OWNER=YOUR_EMAIL"),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
 }
 
 #[test]
 fn deploy_maps_the_domain_once_when_the_url_is_the_domain() {
     let cloud = Cloud::new()
-        .set("shared.env", "CLOUD_URL", "https://riff.comotechnologies.io")
+        .set(
+            "shared.env",
+            "CLOUD_URL",
+            "https://riff.comotechnologies.io",
+        )
         .set("shared.env", "CLOUD_CONFIRM", "false")
         .tree();
     let ran = cloud.run(&["deploy", "shared"]).ok();
@@ -520,7 +595,11 @@ fn deploy_maps_the_domain_once_when_the_url_is_the_domain() {
 
     let cloud = cloud.found(&["beta run domain-mappings describe"]);
     let ran = cloud.run(&["deploy", "shared"]).ok();
-    assert!(!ran.calls.contains("domain-mappings create"), "{}", ran.calls);
+    assert!(
+        !ran.calls.contains("domain-mappings create"),
+        "{}",
+        ran.calls
+    );
     // A tag deploys an image, and maps nothing.
     let ran = cloud.run(&["deploy", "shared", "v1.0.0"]).ok();
     assert!(!ran.calls.contains("domain-mappings"), "{}", ran.calls);
@@ -528,11 +607,19 @@ fn deploy_maps_the_domain_once_when_the_url_is_the_domain() {
 
 #[test]
 fn deploy_refuses_a_tag_that_is_not_a_release_tag() {
-    let cloud = Cloud::new().set("stage.env", "RIFF_OIDC_CLIENT_ID", "1-a.apps.googleusercontent.com");
+    let cloud = Cloud::new().set(
+        "stage.env",
+        "RIFF_OIDC_CLIENT_ID",
+        "1-a.apps.googleusercontent.com",
+    );
     for tag in ["0.8.0", "v0.8", "V0.8.0", "v1.0.0-rc1"] {
         let ran = cloud.run(&["deploy", "stage", tag]);
         assert!(!ran.out.status.success(), "{tag}");
-        assert!(ran.stderr().contains("is not a release tag"), "{tag}: {}", ran.stderr());
+        assert!(
+            ran.stderr().contains("is not a release tag"),
+            "{tag}: {}",
+            ran.stderr()
+        );
         assert!(ran.calls.is_empty(), "{}", ran.calls);
     }
 }
@@ -543,7 +630,8 @@ fn deploy_with_no_client_says_how_to_store_it() {
     let ran = Cloud::new().run(&["deploy", "stage", "v1.0.0"]);
     assert!(!ran.out.status.success());
     assert!(
-        ran.stderr().contains("The settings stage have no client ID. Run: riff cloud signin stage"),
+        ran.stderr()
+            .contains("The settings stage have no client ID. Run: riff cloud signin stage"),
         "{}",
         ran.stderr()
     );
@@ -558,14 +646,26 @@ fn deploy_to_the_shared_riff_asks_for_the_name() {
     let cloud = Cloud::new();
     let ran = cloud.run(&["deploy", "shared", "v1.0.0"]);
     assert!(!ran.out.status.success());
-    assert!(ran.stderr().contains("add: --confirm shared"), "{}", ran.stderr());
+    assert!(
+        ran.stderr().contains("add: --confirm shared"),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
     let ran = cloud.run(&["deploy", "shared", "v1.0.0", "--confirm", "stage"]);
     assert!(!ran.out.status.success());
-    assert!(ran.stderr().contains("riff changed nothing"), "{}", ran.stderr());
+    assert!(
+        ran.stderr().contains("riff changed nothing"),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
 
-    let stage = Cloud::new().set("stage.env", "RIFF_OIDC_CLIENT_ID", "1-a.apps.googleusercontent.com");
+    let stage = Cloud::new().set(
+        "stage.env",
+        "RIFF_OIDC_CLIENT_ID",
+        "1-a.apps.googleusercontent.com",
+    );
     stage.run(&["deploy", "stage", "v1.0.0"]).ok();
 }
 
@@ -643,14 +743,22 @@ fn create_of_the_stage_makes_only_the_resources_of_the_stage() {
         assert!(!ran.calls.contains(shared), "{shared} in:\n{}", ran.calls);
     }
     // The stage needs a client of its own.
-    assert!(ran.stdout().contains("riff cloud signin stage"), "{}", ran.stdout());
+    assert!(
+        ran.stdout().contains("riff cloud signin stage"),
+        "{}",
+        ran.stdout()
+    );
 }
 
 /// The deploy of the stage runs on the service, bucket and secret of
 /// the stage only.
 #[test]
 fn deploy_of_the_stage_uses_only_the_resources_of_the_stage() {
-    let cloud = Cloud::new().set("stage.env", "RIFF_OIDC_CLIENT_ID", "1-a.apps.googleusercontent.com");
+    let cloud = Cloud::new().set(
+        "stage.env",
+        "RIFF_OIDC_CLIENT_ID",
+        "1-a.apps.googleusercontent.com",
+    );
     let ran = cloud.run(&["deploy", "stage", "v0.8.0"]).ok();
     let deploy = ran.line("run deploy riff-stage --image ");
     for flag in [
@@ -700,15 +808,26 @@ fn signin_stores_the_secret_and_writes_the_client_id() {
     let ran = cloud
         .run_with(&["signin", "stage"], None, &format!("{id}\nthe-secret\n"))
         .ok();
-    assert!(ran.stdout().contains("console.cloud.google.com/auth/overview?project=como-riff"));
+    assert!(
+        ran.stdout()
+            .contains("console.cloud.google.com/auth/overview?project=como-riff")
+    );
     let add = ran.line("secrets versions add riff-stage-oidc-client-secret --data-file=- ");
     assert!(!add.contains("the-secret"), "{add}");
-    assert!(cloud.text("stage.env").contains(&format!("\nRIFF_OIDC_CLIENT_ID={id}\n")));
+    assert!(
+        cloud
+            .text("stage.env")
+            .contains(&format!("\nRIFF_OIDC_CLIENT_ID={id}\n"))
+    );
     assert!(!cloud.text("stage.env").contains("the-secret"));
 
     let ran = cloud.run_with(&["signin", "stage"], None, "not-an-id\nx\n");
     assert!(!ran.out.status.success());
-    assert!(ran.stderr().contains(".apps.googleusercontent.com"), "{}", ran.stderr());
+    assert!(
+        ran.stderr().contains(".apps.googleusercontent.com"),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
 }
 
@@ -718,11 +837,16 @@ fn log_reads_the_lines_of_the_service() {
     let filter = r#"jsonPayload.message:"imported the objects""#;
     let ran = cloud.run(&["log", "shared", "--filter", filter]).ok();
     let args: Vec<&str> = ran.args.lines().collect();
-    assert_eq!(&args[..5], ["run", "services", "logs", "read", "riff-server"]);
+    assert_eq!(
+        &args[..5],
+        ["run", "services", "logs", "read", "riff-server"]
+    );
     assert!(args.contains(&filter), "{args:?}");
     assert!(args.windows(2).any(|w| w == ["--limit", "50"]), "{args:?}");
 
-    let ran = cloud.run(&["log", "stage", "--errors", "--limit", "20"]).ok();
+    let ran = cloud
+        .run(&["log", "stage", "--errors", "--limit", "20"])
+        .ok();
     let args: Vec<&str> = ran.args.lines().collect();
     assert_eq!(args[4], "riff-stage", "{args:?}");
     assert!(args.windows(2).any(|w| w == ["--limit", "20"]), "{args:?}");
@@ -764,12 +888,22 @@ fn list_with_no_settings_says_how_to_make_one() {
         .current_dir(dir.path())
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("riff cloud create NAME --project PROJECT --region REGION"), "{stdout}");
+    assert!(
+        stdout.contains("riff cloud create NAME --project PROJECT --region REGION"),
+        "{stdout}"
+    );
     // Outside a repository with deploy/cloud, the settings are beside
     // the riff settings of the machine.
-    assert!(stdout.contains(&env.riff_home().join("cloud").display().to_string()), "{stdout}");
+    assert!(
+        stdout.contains(&env.riff_home().join("cloud").display().to_string()),
+        "{stdout}"
+    );
 }
 
 /// `riff cloud delete` asks for the name, deletes the service, and
@@ -782,13 +916,21 @@ fn delete_asks_for_the_name_and_keeps_the_state() {
     ]);
     let ran = cloud.run(&["delete", "stage"]);
     assert!(!ran.out.status.success());
-    assert!(ran.stderr().contains("add: --confirm stage"), "{}", ran.stderr());
+    assert!(
+        ran.stderr().contains("add: --confirm stage"),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
 
     let ran = cloud.run(&["delete", "stage", "--confirm", "stage"]).ok();
     ran.line("run services delete riff-stage --quiet ");
     assert!(!ran.calls.contains("storage rm"), "{}", ran.calls);
-    assert!(ran.stdout().contains("add --with-state"), "{}", ran.stdout());
+    assert!(
+        ran.stdout().contains("add --with-state"),
+        "{}",
+        ran.stdout()
+    );
 
     let ran = cloud
         .run(&["delete", "stage", "--with-state", "--confirm", "stage"])
@@ -809,7 +951,10 @@ fn a_worker_never_runs_riff_cloud() {
         .riff()
         .args(["cloud", "list"])
         .current_dir(cloud.top.path())
-        .env("PATH", format!("{}:{}", fake.display(), std::env::var("PATH").unwrap()))
+        .env(
+            "PATH",
+            format!("{}:{}", fake.display(), std::env::var("PATH").unwrap()),
+        )
         .env("FAKE_GCLOUD_LOG", &log)
         .env("RIFF_WORKER", "1")
         .output()

@@ -635,7 +635,10 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     }
 
     let bucket = format!("gs://{}", s.bucket);
-    if gcloud.ok(&with(&["storage", "buckets", "describe", &bucket], &project)) {
+    if gcloud.ok(&with(
+        &["storage", "buckets", "describe", &bucket],
+        &project,
+    )) {
         println!("Bucket {}: exists.", s.bucket);
     } else {
         println!("Bucket {}: making it.", s.bucket);
@@ -679,17 +682,17 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         ),
         None,
     )?;
-    println!(
-        "Bucket {}: versioning on, lifecycle rules set.",
-        s.bucket
-    );
+    println!("Bucket {}: versioning on, lifecycle rules set.", s.bucket);
 
     for name in [&s.run_account, &s.build_account, &s.deploy_account] {
         if name.is_empty() {
             continue;
         }
         let email = s.account(name);
-        if gcloud.ok(&with(&["iam", "service-accounts", "describe", &email], &project)) {
+        if gcloud.ok(&with(
+            &["iam", "service-accounts", "describe", &email],
+            &project,
+        )) {
             println!("Service account {name}: exists.");
         } else {
             println!("Service account {name}: making it.");
@@ -779,7 +782,10 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     }
 
     if s.deploy_account.is_empty() {
-        println!("CI deploy: none, because {}.env has no deploy account.", s.name);
+        println!(
+            "CI deploy: none, because {}.env has no deploy account.",
+            s.name
+        );
     } else {
         ci_deploy(gcloud, s, &place)?;
     }
@@ -799,7 +805,9 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
             println!("Service {}: setting {} of memory.", s.service, s.memory);
             gcloud.run(
                 &with(
-                    &["run", "services", "update", &s.service, "--memory", &s.memory],
+                    &[
+                        "run", "services", "update", &s.service, "--memory", &s.memory,
+                    ],
                     &s.place(),
                 ),
                 None,
@@ -888,7 +896,13 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
     }
     let provider = |verb: &str| {
         with(
-            &["iam", "workload-identity-pools", "providers", verb, "github"],
+            &[
+                "iam",
+                "workload-identity-pools",
+                "providers",
+                verb,
+                "github",
+            ],
             &pool,
         )
     };
@@ -988,7 +1002,16 @@ fn make_alert(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     };
     let project = s.project();
     let list = |what: &str, name: &str| {
-        let mut a = args(&[what, "monitoring", if what == "beta" { "channels" } else { "policies" }, "list"]);
+        let mut a = args(&[
+            what,
+            "monitoring",
+            if what == "beta" {
+                "channels"
+            } else {
+                "policies"
+            },
+            "list",
+        ]);
         a.extend_from_slice(&project);
         a.extend(args(&[
             "--filter",
@@ -998,7 +1021,10 @@ fn make_alert(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         ]));
         a
     };
-    let mut channel = gcloud.run(&list("beta", &s.alert_channel), None)?.trim().to_owned();
+    let mut channel = gcloud
+        .run(&list("beta", &s.alert_channel), None)?
+        .trim()
+        .to_owned();
     if channel.is_empty() {
         println!("Alert channel {}: making it.", s.alert_channel);
         let mut make = args(&["beta", "monitoring", "channels", "create"]);
@@ -1017,7 +1043,11 @@ fn make_alert(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     } else {
         println!("Alert channel {}: exists.", s.alert_channel);
     }
-    if gcloud.run(&list("alpha", &s.alert), None)?.trim().is_empty() {
+    if gcloud
+        .run(&list("alpha", &s.alert), None)?
+        .trim()
+        .is_empty()
+    {
         println!("Alert {}: making it.", s.alert);
         let policy = temp_file(&alert(s))?;
         let mut make = args(&["alpha", "monitoring", "policies", "create"]);
