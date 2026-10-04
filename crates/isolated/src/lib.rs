@@ -305,10 +305,11 @@ pub fn offenders(root: &Path) -> Vec<String> {
 }
 
 /// The roots that [`outside_git`] tries, in order: the temp dir of the
-/// process, then the temp dirs of the system.
+/// process, then the temp dirs of the system, on disk first. `just test`
+/// tries the same roots.
 pub fn temp_roots() -> Vec<PathBuf> {
     let mut roots = vec![std::env::temp_dir()];
-    roots.extend(["/tmp", "/var/tmp", "/dev/shm"].map(PathBuf::from));
+    roots.extend(["/var/tmp", "/tmp", "/dev/shm"].map(PathBuf::from));
     roots
 }
 
