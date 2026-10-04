@@ -252,8 +252,8 @@ fails, and the worker asks in its own terminal.
 | Part | Why |
 |---|---|
 | The sign-in chains: the first pair, a refresh, the token of a session | They change only `signins.json`. A refresh does not wait for a write. The log holds no token and no hash. When the chains are lost, each person signs in again. |
-| Presence: a keep-alive, the last call, a status, the place of a session, an open or a closed watch stream, the end of a session, the ask to stop an idle worker | It comes each minute from each session. Nothing is lost when it is lost: a start of the server loses each of them. |
-| The read cursors | A `read` moves the cursor of the caller. The checkpoint keeps the cursors. |
+| Presence: a keep-alive, the place of a session, an open or a closed watch stream, the end of a session, the ask to stop an idle worker | It comes each minute from each session. Nothing is lost when it is lost: a start of the server loses each of them. |
+| The read cursors, the last call and the status of each session | A `read` moves the cursor of the caller. A call moves the last call. The checkpoint keeps them, and a shutdown writes a last checkpoint. A record that only names a session, for example a record of the import of go-live, does not make its last call newer. A status from before a start of the server is stale. |
 | The queries | They change nothing. |
 
 - The state has two parts with two types: the riff (the state that the

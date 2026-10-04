@@ -1183,6 +1183,19 @@
   the MustClear mark and the time of the last fresh start of each
   session. A start from a checkpoint gives the life cycle of a full
   replay.
+- **01M4263ZXH4K23CSY6C5GJPVQH** After a start of `riff-server`, a
+  session counts as seen at the later of its last call in the
+  checkpoint and the last record of its own call. A record of the
+  server, of a person or of another session only names the session,
+  and does not make it newer: for example a record of the import of
+  go-live, or a release by the lead. Only when neither is known does
+  the last record that names the session count.
+- **01M4263ZZVY8QJ2METTEVR1W26** The checkpoint holds the status of
+  each session, with the time of its set. A start of `riff-server`
+  gives each session its status again.
+- **01M4264028A3KVDK10PPERHM0C** On a shutdown (R129), `riff-server`
+  writes a last checkpoint after it writes the log, also when no
+  record came after the last checkpoint.
 - **01M3XA875QZ584JBGA37853PWX** The people are state of the log: the
   riff ID, the email of each USER, the members, the admins that the
   owner made, the owner, a riff whose owner is gone, and the request
@@ -1317,7 +1330,7 @@
   stays. It removes a chunk whose header does not read. It deletes the
   chunks from the end of the log to its start, so a cut that stops
   leaves no gap. It refuses a position before the oldest kept
-  checkpoint.
+  checkpoint, when the log does not start at position 1.
 - **01M3X342G8KF2W06PABGXTERMZ** `riff-server log cut` with no `--yes`
   removes nothing. It prints each record and each checkpoint that the
   cut removes, and the command with `--yes`.
@@ -2011,8 +2024,8 @@
   session, or a pause or a resume of the riff or of the repository
   of the session. `who` marks a stale
   status. A claim that the session holds already, and a set of the
-  riff to its state, are no change. A status is in memory: a start of
-  `riff-server` has no status.
+  riff to its state, are no change. A status from before a start of
+  `riff-server` is stale.
 - **01M3Q555KC1RKNEC4ZA9HQYJG2** A stale step is dim and says `stale`.
 - **01M3QB6CJ1XCQG5B1BVR8AF3B4** `riff-server` derives the state of
   each session and gives it in `who`. No session reports its state.
