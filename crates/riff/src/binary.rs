@@ -46,6 +46,7 @@
 //! ```
 
 use std::ffi::OsString;
+use std::future::Future;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -121,12 +122,44 @@ impl Binary {
     /// Waits until a new binary is on disk, and has stayed the same for
     /// one [`POLL`], so that its write is done.
     pub async fn new_one(&self) {
+        self.next(None).await;
+    }
+
+    /// Waits until a new binary is on disk that passes `check`
+    /// (01M43F5F9AQ9S39E1JZF8EBJEH). A binary that fails it stays
+    /// refused: this waits for the next one, and says the error once on
+    /// stderr.
+    pub async fn new_one_that<F, Fut>(&self, check: F)
+    where
+        F: Fn(PathBuf) -> Fut,
+        Fut: Future<Output = Result<(), String>>,
+    {
+        let mut refused = None;
+        loop {
+            let new = self.next(refused).await;
+            match check(self.path.clone()).await {
+                Ok(()) => return,
+                Err(e) => {
+                    eprintln!("{}", crate::text::new_riff_refused(&e));
+                    refused = Some(new);
+                }
+            }
+        }
+    }
+
+    /// The stamp of the next new binary on disk: not the one of the
+    /// start, not `refused`, and the same for one [`POLL`].
+    async fn next(&self, refused: Option<Stamp>) -> Stamp {
         let mut seen = None;
         loop {
             tokio::time::sleep(POLL).await;
             let now = stamp(&self.path);
-            if now.is_some() && now != self.start && now == seen {
-                return;
+            if let Some(new) = now
+                && now != self.start
+                && now != refused
+                && now == seen
+            {
+                return new;
             }
             seen = now;
         }
@@ -300,6 +333,20 @@ impl Follow {
     pub async fn new_one(&self) {
         match &self.binary {
             Some(binary) => binary.new_one().await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// Waits until a new binary is on disk that passes `check` (see
+    /// [`Binary::new_one_that`]). It never returns when the OS does not
+    /// name the binary of this process.
+    pub async fn new_one_that<F, Fut>(&self, check: F)
+    where
+        F: Fn(PathBuf) -> Fut,
+        Fut: Future<Output = Result<(), String>>,
+    {
+        match &self.binary {
+            Some(binary) => binary.new_one_that(check).await,
             None => std::future::pending().await,
         }
     }

@@ -909,6 +909,55 @@ pub fn statusline_mcp_off(id: &str) -> String {
     format!("riff {short} (no tools: the riff server is off, turn it on in /mcp)")
 }
 
+/// The status line of a session whose `riff mcp` ended while the
+/// session goes on (01M43F5KE7G2A2A9PSVRJPPNET).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::statusline_mcp_gone("2a880834-aaaa"),
+///     "riff 2a880834 (no tools: riff mcp stopped, reconnect riff in /mcp)"
+/// );
+/// ```
+pub fn statusline_mcp_gone(id: &str) -> String {
+    let short: String = id.chars().take(ID_CHARS).collect();
+    format!("riff {short} (no tools: riff mcp stopped, reconnect riff in /mcp)")
+}
+
+/// The line of `riff watch` when the `riff mcp` of its session ended
+/// (01M43F5KE7G2A2A9PSVRJPPNET).
+pub const WATCH_MCP_GONE: &str = "riff: the riff tools of this session are gone: its riff mcp \
+stopped. Tell your user to reconnect riff in /mcp, or to start the session again. Until then, use \
+the riff commands in a shell, for example `riff read`.";
+
+/// The line of `riff mcp` when a new binary fails its check
+/// (01M43F5F9AQ9S39E1JZF8EBJEH).
+///
+/// ```
+/// let line = riff::text::new_riff_refused("riff: cannot read the token");
+/// assert!(line.contains("keeps the old riff"), "{line}");
+/// assert!(line.ends_with("riff: cannot read the token"), "{line}");
+/// ```
+pub fn new_riff_refused(error: &str) -> String {
+    format!(
+        "riff: a new riff is on disk, but it fails its check. riff mcp keeps the old riff, and \
+         waits for the next new riff. The error: {error}"
+    )
+}
+
+/// The error of a check of a new binary that took too long.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// assert_eq!(
+///     riff::text::check_too_long(Duration::from_secs(20)),
+///     "the check took more than 20 s"
+/// );
+/// ```
+pub fn check_too_long(limit: std::time::Duration) -> String {
+    format!("the check took more than {} s", limit.as_secs())
+}
+
 /// One line for each rule of `rules`: `allow RULE` or `deny RULE`.
 fn rule_lines(rules: &Rules) -> String {
     let allow = rules.allow.iter().map(|r| format!("\n  allow {r}"));

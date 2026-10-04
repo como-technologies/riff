@@ -297,6 +297,11 @@ enum Command {
         /// update. Only riff gives it (01M3NT6WZTKAFKGDWGCFKC8TB5).
         #[arg(long, hide = true)]
         client: Option<String>,
+        /// Check that this binary can take the session of an old
+        /// riff mcp, and serve nothing. Only riff gives it
+        /// (01M43F5F9AQ9S39E1JZF8EBJEH).
+        #[arg(long, hide = true)]
+        check: bool,
     },
     /// Sign out of the riff on this device
     ///
@@ -1162,7 +1167,7 @@ async fn main() -> Result<()> {
     // again serves a session that runs: it goes on.
     match &cli.command {
         Command::Hook { .. } | Command::Statusline if !enable::State::here().on => return Ok(()),
-        Command::Mcp { client: None } if !enable::State::here().on => {
+        Command::Mcp { client: None, .. } if !enable::State::here().on => {
             return mcp::serve_off().await;
         }
         _ => {}
@@ -1704,8 +1709,12 @@ async fn main() -> Result<()> {
             };
             watch(&api, &me, once, watch_limit(once), until).await
         }
-        Command::Mcp { client } => {
+        Command::Mcp { client, check } => {
             let me = identity::session(&here, api.base())?;
+            if check {
+                mcp::given_client(client.as_deref())?;
+                return Ok(());
+            }
             let _record = record_session(&me);
             let (registered, wait) = tokio::sync::oneshot::channel();
             let tail = async {
@@ -2777,6 +2786,9 @@ async fn statusline(server: &str) -> String {
     if mcp_off_here() {
         return text::statusline_mcp_off(&id);
     }
+    if local::dir().is_some_and(|dir| local::mcp_gone_above(&dir)) {
+        return text::statusline_mcp_gone(&id);
+    }
     let find = async {
         let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
@@ -3200,6 +3212,9 @@ async fn watch(
         () = left => println!("{}", text::WATCH_LEFT),
         () = update => {}
         () = no_wake => {}
+    }
+    if local::dir().is_some_and(|dir| local::mcp_gone_above(&dir)) {
+        println!("{}", text::WATCH_MCP_GONE);
     }
 }
 
