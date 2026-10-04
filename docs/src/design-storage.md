@@ -442,7 +442,7 @@ does not call `who` for the whole riff.
 
 ### Set up
 
-`just cloud setup` does each step. When you run it again, it changes
+`riff cloud create` does each step. When you run it again, it changes
 nothing.
 
 1. A standard bucket in the region of today, with object versioning on.
@@ -505,12 +505,12 @@ goes to the owner.
 
 - Object versioning keeps each older version of an object for 7 days.
 - To go back to a position:
-  1. Stop the server: `just cloud down`.
+  1. Stop the server: `riff cloud delete shared`.
   2. `riff-server log verify`, to find the first bad record.
   3. `riff-server log cut --after POSITION`. A cut loses each change
      after the position: the tool names them. Then the same command
      with `--yes`.
-  4. Start the server: `just cloud up`.
+  4. Start the server: `riff cloud deploy shared vX.Y.Z`.
 
 ### Deploy and rollback
 
