@@ -220,6 +220,9 @@ async fn log_cut_removes_the_chunks_after_a_position_and_names_the_records() {
 #[tokio::test]
 async fn log_cut_refuses_a_cut_before_the_oldest_kept_checkpoint() {
     let dir = store(&[4]).await;
+    // A prune deleted the first chunk.
+    let first = files(dir.path(), "log").remove(0);
+    fs::remove_file(dir.path().join(first)).unwrap();
     let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3", "--yes"]);
     assert!(!ok);
     assert_eq!(stdout, "");
@@ -227,8 +230,22 @@ async fn log_cut_refuses_a_cut_before_the_oldest_kept_checkpoint() {
         stderr.contains("cannot cut after position 3: the oldest kept checkpoint is at position 4"),
         "{stderr}"
     );
-    assert_eq!(files(dir.path(), "log").len(), 3, "the cut removed nothing");
+    assert_eq!(files(dir.path(), "log").len(), 2, "the cut removed nothing");
     assert_eq!(files(dir.path(), "checkpoint").len(), 1);
+}
+
+/// While the log starts at position 1, a cut before the oldest
+/// checkpoint replays the whole log, and deletes the checkpoint: the
+/// case after the last checkpoint of a stop (01M4264028A3KVDK10PPERHM0C).
+#[tokio::test]
+async fn log_cut_before_the_oldest_checkpoint_of_a_whole_log_deletes_it() {
+    let dir = store(&[4]).await;
+    let (ok, stdout, stderr) = tool(dir.path(), &["log", "cut", "--after", "3", "--yes"]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("after position 3."), "{stdout}");
+    assert!(files(dir.path(), "checkpoint").is_empty());
+    let replayed = log::replay(&Dir::new(dir.path())).await.unwrap();
+    assert_eq!(replayed.last, 3);
 }
 
 /// A server starts from the log after a cut: the restore of the book.

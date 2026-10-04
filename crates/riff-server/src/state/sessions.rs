@@ -86,11 +86,6 @@ pub(super) struct Known {
     /// The time of the last `session_started` record with a fresh
     /// context, in milliseconds since the Unix epoch.
     pub(super) fresh_ms: Option<u64>,
-    /// The time of the last record that the session made by its own
-    /// call, in milliseconds since the Unix epoch: a sign that it lived
-    /// then. A record of the server, of a person or of another session
-    /// only names it (01M4263ZXH4K23CSY6C5GJPVQH). A record with no caller counts.
-    pub(super) called_ms: Option<u64>,
 }
 
 /// The session that a change names, if any.
@@ -116,6 +111,22 @@ fn named(change: &Change) -> Option<&SessionUri> {
     }
 }
 
+/// The session that `record` names and the time of the record, when the
+/// session made it by its own call: a sign that it lived then. A record
+/// of the server, of a person or of another session only names it, for
+/// example a record of the import of go-live, or a release by the lead
+/// (01M4263ZXH4K23CSY6C5GJPVQH). A record with no caller counts: its
+/// cause is not known.
+pub(super) fn own_call(record: &Record) -> Option<(&Who, u64)> {
+    let who = named(&record.change)?.who();
+    let own = match &record.by {
+        Some(By::Session(by)) => by == who,
+        Some(_) => false,
+        None => true,
+    };
+    own.then_some((who, record.written_at_ms))
+}
+
 impl Sessions {
     /// Keeps the URI of the session that `record` names, and the time
     /// of the record. The server is not a session.
@@ -125,24 +136,19 @@ impl Sessions {
         {
             let uri = SessionUri::new(uri.who().clone(), uri.place().clone());
             let at_ms = record.written_at_ms;
-            let called = match &record.by {
-                Some(By::Session(by)) => by == uri.who(),
-                Some(_) => false,
-                None => true,
-            };
-            let known = self.known.entry(uri.who().clone()).or_insert(Known {
-                uri: uri.clone(),
-                at_ms,
-                worker: false,
-                must_clear: false,
-                fresh_ms: None,
-                called_ms: None,
-            });
-            known.uri = uri;
-            known.at_ms = at_ms;
-            if called {
-                known.called_ms = Some(at_ms);
-            }
+            self.known
+                .entry(uri.who().clone())
+                .and_modify(|known| {
+                    known.uri = uri.clone();
+                    known.at_ms = at_ms;
+                })
+                .or_insert(Known {
+                    uri,
+                    at_ms,
+                    worker: false,
+                    must_clear: false,
+                    fresh_ms: None,
+                });
         }
     }
 
@@ -218,7 +224,6 @@ impl Sessions {
                     worker: known.worker,
                     must_clear: known.must_clear,
                     fresh_ms: known.fresh_ms,
-                    called_ms: known.called_ms,
                 })
                 .collect(),
         }
@@ -251,9 +256,6 @@ struct SavedSession {
     /// The time of the last fresh start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fresh_ms: Option<u64>,
-    /// The time of the last record that the session made itself.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    called_ms: Option<u64>,
 }
 
 impl Saved {
@@ -272,7 +274,6 @@ impl Saved {
                     worker: s.worker,
                     must_clear: s.must_clear,
                     fresh_ms: s.fresh_ms,
-                    called_ms: s.called_ms,
                 },
             );
         }
@@ -491,10 +492,6 @@ impl Command for End {
 mod tests {
     use super::*;
 
-    fn uri(text: &str) -> SessionUri {
-        text.parse().unwrap()
-    }
-
     /// A record at `at_ms` by `by` that names `session`.
     fn joined(session: &SessionUri, by: Option<By>, at_ms: u64) -> Record {
         Record {
@@ -510,31 +507,17 @@ mod tests {
     }
 
     #[test]
-    fn only_a_record_of_the_session_itself_is_a_call() {
-        let ann = uri("riff://ann@heron/acme/app?session=a1");
-        let lead = uri("riff://ann@heron/acme/app?session=l1");
-        let mut sessions = Sessions::default();
-        sessions.named(&joined(&ann, Some(By::Session(ann.who().clone())), 10));
-        sessions.named(&joined(&ann, Some(By::Server), 20));
-        sessions.named(&joined(&ann, Some(By::Session(lead.who().clone())), 30));
-        sessions.named(&joined(&ann, Some(By::Person("ann".into())), 40));
-        let known = &sessions.known[ann.who()];
-        assert_eq!((known.at_ms, known.called_ms), (40, Some(10)));
-
-        // A record from before the caller field counts: its cause is not
-        // known.
-        sessions.named(&joined(&ann, None, 50));
-        assert_eq!(sessions.known[ann.who()].called_ms, Some(50));
-    }
-
-    #[test]
-    fn a_session_that_only_the_server_names_has_no_call() {
-        let ann = uri("riff://ann@heron/acme/app?session=a1");
-        let mut sessions = Sessions::default();
-        sessions.named(&joined(&ann, Some(By::Server), 20));
-        let known = &sessions.known[ann.who()];
-        assert_eq!((known.at_ms, known.called_ms), (20, None));
-        let (restored, _) = sessions.saved(|_| 0).restore();
-        assert_eq!(restored, sessions, "the checkpoint keeps it");
+    fn only_a_record_of_the_session_itself_is_its_own_call() {
+        let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
+        let lead: SessionUri = "riff://ann@heron/acme/app?session=l1".parse().unwrap();
+        let by_ann = joined(&ann, Some(By::Session(ann.who().clone())), 10);
+        assert_eq!(own_call(&by_ann), Some((ann.who(), 10)));
+        let by_lead = joined(&ann, Some(By::Session(lead.who().clone())), 20);
+        assert_eq!(own_call(&by_lead), None);
+        assert_eq!(own_call(&joined(&ann, Some(By::Server), 30)), None);
+        let by_person = joined(&ann, Some(By::Person("ann".into())), 40);
+        assert_eq!(own_call(&by_person), None);
+        // A record from before the caller field counts.
+        assert_eq!(own_call(&joined(&ann, None, 50)), Some((ann.who(), 50)));
     }
 }

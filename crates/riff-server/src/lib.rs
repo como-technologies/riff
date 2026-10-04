@@ -859,13 +859,15 @@ impl Server {
             (came > 0 && due).then(|| state.snapshot(Instant::now(), now_ms()))
         });
         if let Some(snapshot) = snapshot {
-            self.write_checkpoint(settings, snapshot).await;
+            self.write_checkpoint(settings, snapshot, true).await;
         }
     }
 
     /// Writes a checkpoint at a stop, also when no record came since the
     /// last one. So the memory of the presence stays: the last call and
-    /// the status of each session (01M4264028A3KVDK10PPERHM0C).
+    /// the status of each session (01M4264028A3KVDK10PPERHM0C). It does
+    /// not prune: a tool of the log can run at once after the stop, and
+    /// it finds the chunks of before. The next checkpoint prunes.
     async fn last_checkpoint(&self) {
         if self.checkpoints().blocked.is_some() {
             return;
@@ -874,11 +876,16 @@ impl Server {
             .engine
             .read(|state| state.snapshot(Instant::now(), now_ms()));
         let settings = self.config.checkpoint.clone();
-        self.write_checkpoint(&settings, snapshot).await;
+        self.write_checkpoint(&settings, snapshot, false).await;
     }
 
-    /// Writes the checkpoint of `snapshot`, then prunes.
-    async fn write_checkpoint(&self, settings: &checkpoint::Settings, snapshot: Snapshot) {
+    /// Writes the checkpoint of `snapshot`, then prunes when `prune`.
+    async fn write_checkpoint(
+        &self,
+        settings: &checkpoint::Settings,
+        snapshot: Snapshot,
+        prune: bool,
+    ) {
         let position = snapshot.position;
         let checkpoint = checkpoint::Checkpoint::new(&settings.build, now_ms(), snapshot);
         match checkpoint::write(&*self.log, &checkpoint).await {
@@ -899,6 +906,9 @@ impl Server {
                 ));
                 return;
             }
+        }
+        if !prune {
+            return;
         }
         match checkpoint::prune(&*self.log, settings, now_ms()).await {
             Ok(pruned) => {
@@ -965,7 +975,7 @@ impl Server {
                 .engine
                 .read(|state| state.snapshot(Instant::now(), now_ms()));
             let settings = self.config.checkpoint.clone();
-            self.write_checkpoint(&settings, snapshot).await;
+            self.write_checkpoint(&settings, snapshot, true).await;
         }
         tracing::info!(
             records,

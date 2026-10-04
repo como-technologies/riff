@@ -543,10 +543,12 @@ impl State {
             state.written = riff;
             saved = Some(presence);
             seen = seen_ms;
+            seen.retain(|_, ms| *ms > 0);
         }
         for record in records {
             apply(&mut state.pending, &record);
             state.apply_written(&record, None);
+            seen_own_call(&mut seen, &record);
         }
         state.presence.riff_changed = Some(now);
         state.presence.loaded = Some(now);
@@ -586,38 +588,34 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn catch_up(&mut self, records: impl IntoIterator<Item = Record>) {
-        for record in records {
-            apply(&mut self.pending, &record);
-            self.apply_written(&record, None);
-        }
-        let Some(loaded) = self.presence.loaded else {
-            return;
-        };
-        let seen = self
+        let mut seen: BTreeMap<Who, u64> = self
             .presence
             .sessions
             .iter()
             .filter_map(|(who, session)| Some((who.clone(), session.seen_before_load?)))
             .collect();
+        for record in records {
+            apply(&mut self.pending, &record);
+            self.apply_written(&record, None);
+            seen_own_call(&mut seen, &record);
+        }
+        let Some(loaded) = self.presence.loaded else {
+            return;
+        };
         self.sessions_of_the_log(&seen, loaded);
     }
 
     /// Makes each session that the log names, as it is after a replay at
     /// `loaded`: gone until it calls, in the place of the last record that
-    /// names it. `seen` has the last call of each session that is known
-    /// from before. The session counts as seen at the later of that call
-    /// and the last record that it made itself. A record that only names
-    /// it, for example a record of the import of go-live, counts only
-    /// when nothing else is known (01M4263ZXH4K23CSY6C5GJPVQH). A status
+    /// names it. `seen` has the last call of each session: the call in
+    /// the checkpoint, or a later record that the session made itself
+    /// ([`seen_own_call`]). A record that only names the session, for
+    /// example a record of the import of go-live, counts only when
+    /// `seen` has no call of it (01M4263ZXH4K23CSY6C5GJPVQH). A status
     /// that the presence has stays (01M4263ZZVY8QJ2METTEVR1W26).
     fn sessions_of_the_log(&mut self, seen: &BTreeMap<Who, u64>, loaded: Instant) {
         for (who, known) in &self.written.sessions().known {
-            let called = seen
-                .get(who)
-                .copied()
-                .filter(|&ms| ms > 0)
-                .max(known.called_ms);
-            let at_ms = called.unwrap_or(known.at_ms);
+            let at_ms = seen.get(who).copied().unwrap_or(known.at_ms);
             let old = self.presence.sessions.get(who);
             let session = Session {
                 seen_before_load: Some(at_ms),
@@ -2511,6 +2509,15 @@ impl State {
 /// (01M3WRD9G5GAF65EX8P6D5DMQM).
 fn trusted(me: &SessionUri) -> Caller {
     Caller::of(me).with_role(Role::Admin)
+}
+
+/// Makes the last call of the session in `seen` newer when `record` is a
+/// record of its own call (01M4263ZXH4K23CSY6C5GJPVQH).
+fn seen_own_call(seen: &mut BTreeMap<Who, u64>, record: &Record) {
+    if let Some((who, at_ms)) = sessions::own_call(record) {
+        let last = seen.entry(who.clone()).or_default();
+        *last = (*last).max(at_ms);
+    }
 }
 
 #[cfg(test)]

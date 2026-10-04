@@ -1330,7 +1330,7 @@
   stays. It removes a chunk whose header does not read. It deletes the
   chunks from the end of the log to its start, so a cut that stops
   leaves no gap. It refuses a position before the oldest kept
-  checkpoint.
+  checkpoint, when the log does not start at position 1.
 - **01M3X342G8KF2W06PABGXTERMZ** `riff-server log cut` with no `--yes`
   removes nothing. It prints each record and each checkpoint that the
   cut removes, and the command with `--yes`.
