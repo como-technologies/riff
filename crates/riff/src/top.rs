@@ -858,7 +858,8 @@ impl Top<'_> {
     /// - The tree has four levels: person, host, repository, session.
     ///   With [`By::Repo`] the repository comes first: repository,
     ///   person, host, session. Each person, host and repository line
-    ///   has the counts of its sessions ([`counts`]). A row with one row
+    ///   has the counts of its sessions: the sessions, then the busy,
+    ///   idle and blocked ones and the claims. A row with one row
     ///   under it stays on one line with it, after a `›`: so a small
     ///   riff stays short.
     /// - A person line: the USER in bold color, the role tag `owner` or
