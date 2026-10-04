@@ -9,5 +9,6 @@
 - [Waves](waves.md)
 - [Design: the store of riff-server](design-storage.md)
 - [Design: the command engine of riff-server](design-engine.md)
+- [Design: the client link](design-link.md)
 - [Requirements](requirements.md)
 - [Development](development.md)
