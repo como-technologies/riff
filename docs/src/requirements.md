@@ -3232,6 +3232,11 @@
   never stops `riff watch`, the process that calls it, or a parent of
   one. It sends SIGTERM, then SIGKILL after 3 seconds. It sends no
   signal to a process ID that a new process took.
+- **01M438620PJHSVSPAENBKKJ6C2** A process is of a worker of this
+  riff only when its `RIFF_HOME` is the `RIFF_HOME` of the riff that
+  looks, or both have none (01M3ZV0QSFVCHRSEKYK57B88VA). riff never
+  stops a process of a riff of another home, also with the same
+  session ID.
 - **01M3ZV0TJDQ6JCM7XG0036MSV1** Just before the clear of a worker
   (01M3XV0562D3H3P22CJDBPAZBH), riff stops each process of the old
   context of the worker, for example a `just ci` in the background.

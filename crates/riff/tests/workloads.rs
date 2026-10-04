@@ -138,6 +138,11 @@ impl Riff {
         cmd
     }
 
+    /// A `sleep` of the worker `id` of this riff ([`sleeper_in`]).
+    fn sleeper(&self, id: &str, context: bool) -> Child {
+        sleeper_in(self.run.path(), id, context)
+    }
+
     /// `riff ARGS` as a process of a context of the worker `id`.
     fn in_worker(&self, id: &str, args: &[&str]) -> Command {
         let mut cmd = self.riff(&self.main(), args);
@@ -173,15 +178,16 @@ fn unique(name: &str) -> String {
     format!("{name}-{}", std::process::id())
 }
 
-/// A `sleep` of the worker `id`: of a context with `context`, else a
-/// stand-in for `claude` or for its MCP server.
-fn sleeper(id: &str, context: bool) -> Child {
+/// A `sleep` of the worker `id` in the riff home `home`: of a context
+/// with `context`, else a stand-in for `claude` or for its MCP server.
+fn sleeper_in(home: &Path, id: &str, context: bool) -> Child {
     let mut cmd = Command::new("sleep");
     cmd.arg("300")
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
         .env("RIFF_WORKER", "1")
         .env("RIFF_SESSION", id)
+        .env("RIFF_HOME", home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -240,10 +246,14 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     r.api.start(&w, StartReason::Process, true).await.unwrap();
     let thread = w.default_thread().unwrap();
     r.api.claim(&w, &thread, "issue-12").await.unwrap();
-    let mut claude = sleeper(id, false);
-    let mut mcp = sleeper(id, false);
-    let mut ci = sleeper(id, true);
-    let mut other = sleeper(&unique("wother1"), true);
+    let mut claude = r.sleeper(id, false);
+    let mut mcp = r.sleeper(id, false);
+    let mut ci = r.sleeper(id, true);
+    let mut other = r.sleeper(&unique("wother1"), true);
+    // The same session ID in another riff home, for example a test that
+    // runs at the same time (01M438620PJHSVSPAENBKKJ6C2).
+    let home = tempfile::tempdir().unwrap();
+    let mut twin = sleeper_in(home.path(), id, true);
 
     let out = r.in_worker(id, &["release", "issue-12"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
@@ -255,7 +265,8 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     assert!(lives(&mut claude), "claude stopped");
     assert!(lives(&mut mcp), "the MCP server stopped");
     assert!(lives(&mut other), "a process of another worker stopped");
-    for mut child in [claude, mcp, other] {
+    assert!(lives(&mut twin), "a process of another riff home stopped");
+    for mut child in [claude, mcp, other, twin] {
         child.kill().unwrap();
         child.wait().unwrap();
     }
@@ -270,15 +281,15 @@ async fn reap_stops_the_orphan_of_an_old_context_and_keeps_the_new_one() {
     let r = Riff::new().await;
     let id = &unique("wreap1");
     r.pane(id);
-    let mut claude = sleeper(id, false);
-    let mut old = sleeper(id, true);
+    let mut claude = r.sleeper(id, false);
+    let mut old = r.sleeper(id, true);
     // The start of a process has a resolution of 10 ms.
     std::thread::sleep(Duration::from_millis(100));
     let input = format!(r#"{{"session_id":"{id}","source":"clear"}}"#);
     let out = r.hook(id, "session-start", &input);
     assert!(out.status.success(), "{out:?}");
     std::thread::sleep(Duration::from_millis(100));
-    let mut new = sleeper(id, true);
+    let mut new = r.sleeper(id, true);
 
     let out = r
         .riff(&r.main(), &["workers", "reap", "%5"])
@@ -310,7 +321,7 @@ async fn reap_with_no_start_of_the_context_stops_nothing() {
     let r = Riff::new().await;
     let id = &unique("wreap2");
     r.pane(id);
-    let mut child = sleeper(id, true);
+    let mut child = r.sleeper(id, true);
     let out = r
         .riff(&r.main(), &["workers", "reap", "%5"])
         .output()
@@ -335,8 +346,15 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
     r.pane(id);
     let w = r.uri(&r.main(), id);
     r.api.start(&w, StartReason::Process, true).await.unwrap();
-    let mut all = [sleeper(id, false), sleeper(id, false), sleeper(id, true)];
-    let mut other = sleeper(&unique("wother2"), true);
+    let mut all = [
+        r.sleeper(id, false),
+        r.sleeper(id, false),
+        r.sleeper(id, true),
+    ];
+    let mut other = r.sleeper(&unique("wother2"), true);
+    // The same session ID in another riff home (01M438620PJHSVSPAENBKKJ6C2).
+    let home = tempfile::tempdir().unwrap();
+    let mut twin = sleeper_in(home.path(), id, true);
 
     let out = r
         .riff(&r.main(), &["workers", "stop", "%5"])
@@ -348,8 +366,11 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
         assert!(ends(child), "a process of the worker still runs");
     }
     assert!(lives(&mut other), "a process of another worker stopped");
-    other.kill().unwrap();
-    other.wait().unwrap();
+    assert!(lives(&mut twin), "a process of another riff home stopped");
+    for mut child in [other, twin] {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
 }
 
 /// A worktree of the agent tool in the clone of `r`, on a new branch.

@@ -11,7 +11,7 @@
 //!
 //! | Process | How riff knows it |
 //! |---|---|
-//! | of the worker `ID` | its environment has `RIFF_WORKER=1` and `RIFF_SESSION=ID`. Each child gets the variables of its parent, also after its parent ends. |
+//! | of the worker `ID` | its environment has `RIFF_WORKER=1`, `RIFF_SESSION=ID` and the `RIFF_HOME` of the caller (none when the caller has none). Each child gets the variables of its parent, also after its parent ends. |
 //! | of a context | it has also the variable of the agent tool ([`crate::next::Agent::context_var`]): Claude Code gives it to each command of its Bash tool and to each hook, not to `claude` and not to its MCP servers. |
 //! | the watch | `riff watch`. riff keeps it and its parents: a worker keeps its watch over a clear (01M3JQCD16CNWN5FCQBRKHXYMP). |
 //! | the caller | this process and its parents. riff never stops them. |
@@ -154,15 +154,25 @@ pub fn parse_stat(stat: &str) -> Option<(u32, u64)> {
 
 /// The worker and the context mark of an environment of
 /// `/proc/PID/environ`. `context_var` is the variable of the agent
-/// tool.
+/// tool. A process is of a worker only in the riff home `home`, the
+/// value of `RIFF_HOME` of the caller (01M438620PJHSVSPAENBKKJ6C2): a
+/// riff of another home has its own workers, also with the same
+/// session ID.
 ///
 /// ```
+/// use riff::workload::parse_environ;
 /// let env = b"HOME=/h\0RIFF_WORKER=1\0RIFF_SESSION=w1\0CLAUDE_PID=10\0";
-/// assert_eq!(riff::workload::parse_environ(env, "CLAUDE_PID"), (Some("w1".into()), true));
-/// assert_eq!(riff::workload::parse_environ(b"RIFF_SESSION=w1\0", "CLAUDE_PID"), (None, false));
+/// assert_eq!(parse_environ(env, "CLAUDE_PID", None), (Some("w1".into()), true));
+/// assert_eq!(parse_environ(b"RIFF_SESSION=w1\0", "CLAUDE_PID", None), (None, false));
+/// // Another riff home: not a worker of this riff.
+/// assert_eq!(parse_environ(env, "CLAUDE_PID", Some("/t/riff")), (None, true));
+/// let env = b"RIFF_WORKER=1\0RIFF_SESSION=w1\0RIFF_HOME=/t/riff\0";
+/// assert_eq!(parse_environ(env, "CLAUDE_PID", Some("/t/riff")), (Some("w1".into()), false));
+/// assert_eq!(parse_environ(env, "CLAUDE_PID", None), (None, false));
 /// ```
-pub fn parse_environ(env: &[u8], context_var: &str) -> (Option<String>, bool) {
+pub fn parse_environ(env: &[u8], context_var: &str, home: Option<&str>) -> (Option<String>, bool) {
     let (mut worker, mut session, mut context) = (false, None, false);
+    let mut own_home = None;
     for var in env.split(|b| *b == 0) {
         let var = String::from_utf8_lossy(var);
         let Some((name, value)) = var.split_once('=') else {
@@ -171,11 +181,13 @@ pub fn parse_environ(env: &[u8], context_var: &str) -> (Option<String>, bool) {
         match name {
             crate::worker::WORKER => worker = crate::worker::is_worker_value(Some(value)),
             "RIFF_SESSION" => session = Some(value.to_owned()).filter(|s| !s.is_empty()),
+            crate::home::VAR => own_home = Some(value.to_owned()).filter(|h| !h.is_empty()),
             _ if name == context_var => context = true,
             _ => {}
         }
     }
-    (session.filter(|_| worker), context)
+    let here = own_home.as_deref() == home;
+    (session.filter(|_| worker && here), context)
 }
 
 /// The process `pid`, or `None` when it is gone or is not of this user.
@@ -183,7 +195,9 @@ pub fn read(pid: u32, context_var: &str) -> Option<Proc> {
     let dir = PathBuf::from(format!("/proc/{pid}"));
     let (ppid, start) = parse_stat(&std::fs::read_to_string(dir.join("stat")).ok()?)?;
     let env = std::fs::read(dir.join("environ")).ok()?;
-    let (worker, context) = parse_environ(&env, context_var);
+    let home = std::env::var(crate::home::VAR).ok();
+    let home = home.as_deref().filter(|h| !h.is_empty());
+    let (worker, context) = parse_environ(&env, context_var, home);
     let argv = std::fs::read(dir.join("cmdline")).unwrap_or_default();
     let argv = argv
         .split(|b| *b == 0)

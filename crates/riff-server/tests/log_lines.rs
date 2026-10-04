@@ -169,15 +169,24 @@ fn each_line_of_the_log_of_a_server_is_json_with_a_severity() {
         .stderr(log.reopen().unwrap())
         .spawn()
         .unwrap();
+    // The server can open its port before it writes each start line
+    // (#514), so the test waits for the lines that it checks.
     let start = Instant::now();
-    while std::net::TcpStream::connect(&listen).is_err() {
-        assert!(start.elapsed() < Duration::from_secs(20), "no open port");
+    let log = loop {
+        let text = fs::read_to_string(log.path()).unwrap();
+        let whole = &text[..text.rfind('\n').map_or(0, |end| end + 1)];
+        if whole.lines().count() >= 3
+            && whole.contains("riff-server listens on")
+            && whole.contains("the log is in memory only")
+        {
+            break whole.to_string();
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "{text}");
         std::thread::sleep(Duration::from_millis(20));
-    }
+    };
     let _ = child.kill();
     let _ = child.wait();
 
-    let log = fs::read_to_string(log.path()).unwrap();
     let lines = lines(&log);
     assert!(lines.len() >= 3, "{log}");
     for line in &lines {
