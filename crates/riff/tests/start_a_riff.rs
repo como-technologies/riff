@@ -217,6 +217,13 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
     assert_eq!(
         riff,
         [
+            "riff cloud create NAME --project PROJECT --region REGION",
+            "riff cloud signin NAME",
+            "riff cloud deploy NAME",
+            "riff cloud list",
+            "riff cloud status NAME",
+            "riff cloud log NAME --errors",
+            "riff cloud delete NAME",
             "riff login",
             "riff enable --shared",
             "riff invite EMAIL",
