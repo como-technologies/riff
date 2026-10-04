@@ -27,7 +27,13 @@
 //!
 //! Never write `log.jsonl`, `replayed.json` or `checkpoint.json` again
 //! with a later build.
-//! A later release adds a directory of its own.
+//! A later release adds a directory of its own
+//! (01M43GSRSDJMGAH8SR1GD4Z3XF), with the same names:
+//!
+//! - `fixtures/1.1.0`: the holds. `kinds.json` has only the new kinds
+//!   of the release; the test of the kinds takes the union of the lists
+//!   of each release. `log.jsonl` has each new kind, and ends with holds
+//!   in two repositories, so `replayed.json` has the part `plans`.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -40,17 +46,32 @@ use riff_server::state::{CommandKind, Riff, State, apply};
 use riff_server::store::Memory;
 use serde::Deserialize;
 
+/// The release of the fixtures of the holds.
+const HOLDS: &str = "1.1.0";
+
+/// Each release with a directory of its own and a `kinds.json`.
+const RELEASES: [&str; 2] = ["1.0.0", HOLDS];
+
 fn bytes(name: &str) -> Vec<u8> {
+    bytes_of("1.0.0", name)
+}
+
+fn bytes_of(release: &str, name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/1.0.0")
+        .join("tests/fixtures")
+        .join(release)
         .join(name);
     std::fs::read(path).unwrap()
 }
 
-/// The records of a chunk of the fixtures. Each one is of a kind that
-/// this build knows.
+/// The records of a chunk of the fixtures of 1.0.0. Each one is of a
+/// kind that this build knows.
 fn records(name: &str) -> Vec<Record> {
-    let (_, lines) = log::decode(&bytes(name)).unwrap();
+    records_of("1.0.0", name)
+}
+
+fn records_of(release: &str, name: &str) -> Vec<Record> {
+    let (_, lines) = log::decode(&bytes_of(release, name)).unwrap();
     lines
         .into_iter()
         .map(|line| match line {
@@ -67,8 +88,19 @@ struct Kinds {
     commands: Vec<String>,
 }
 
+/// The union of the lists of each release, in the order of the
+/// releases.
 fn kinds() -> Kinds {
-    serde_json::from_slice(&bytes("kinds.json")).unwrap()
+    let mut all = Kinds {
+        records: Vec::new(),
+        commands: Vec::new(),
+    };
+    for release in RELEASES {
+        let kinds: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
+        all.records.extend(kinds.records);
+        all.commands.extend(kinds.commands);
+    }
+    all
 }
 
 fn set<'a>(names: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
@@ -129,11 +161,21 @@ fn the_list_of_the_release_has_no_riff_state_set() {
     assert!(!Change::KINDS.contains(&"riff_state_set"));
 }
 
+/// The logs of the releases together have a record of each kind. The
+/// log of each release has each kind of its own list.
 #[test]
 fn the_fixture_log_has_a_record_of_each_kind() {
+    let holds = records_of(HOLDS, "log.jsonl");
+    let new: Kinds = serde_json::from_slice(&bytes_of(HOLDS, "kinds.json")).unwrap();
+    let found = set(holds.iter().map(|record| record.change.kind()));
+    let listed = set(new.records.iter().map(String::as_str));
+    assert!(found.is_superset(&listed), "{found:?}");
+    assert!(holds.iter().all(|record| record.other().is_none()));
+
     let records = records("log.jsonl");
     let found = set(records.iter().map(|record| record.change.kind()));
-    assert_eq!(found, set(Change::KINDS.iter().copied()));
+    let all = found.union(&listed).copied().collect::<BTreeSet<_>>();
+    assert_eq!(all, set(Change::KINDS.iter().copied()));
     // No record of the release has a value that reads as `other`.
     assert!(records.iter().all(|record| record.other().is_none()));
     // A record with no cause reads.
@@ -323,4 +365,50 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
     assert!(uri.claims().contains(&"issue-17".to_owned()), "{uri}");
     let from = &messages[messages.len() - 4].from;
     assert!(from.is_other() && !from.lead() && from.who() == ann.who());
+}
+
+/// The log of 1.1.0 with the holds: this build writes its bytes, a
+/// replay gives `replayed.json` with the part `plans`, and a load of
+/// the checkpoint at each position gives the state of a replay
+/// (01M43GSGVYJW7C09SVRWRAQZDZ).
+#[test]
+fn the_log_of_the_holds_gives_its_checkpoint_at_each_position() {
+    let records = records_of(HOLDS, "log.jsonl");
+    assert_eq!(log::encode(&records), bytes_of(HOLDS, "log.jsonl"));
+    let expected = checkpoint::decode(&bytes_of(HOLDS, "replayed.json")).unwrap();
+    assert_eq!(
+        checkpoint::encode(&expected),
+        bytes_of(HOLDS, "replayed.json")
+    );
+
+    let now = Instant::now();
+    let full = State::replay(records.clone(), now, 0);
+    assert_eq!(written(&full, &expected), bytes_of(HOLDS, "replayed.json"));
+    let thread = "acme/app".parse().unwrap();
+    let held = full.plans().hold(&thread, "issue-12").unwrap();
+    assert_eq!(held.reason, "waits for the release of 1.1.0");
+    assert_eq!(held.by, Some(riff_core::record::By::Person("ann".into())));
+    assert!(full.plans().hold(&thread, "issue-13").is_none());
+    let lib = "acme/lib".parse().unwrap();
+    assert_eq!(full.plans().holds(&lib).count(), 1);
+
+    for at in 0..=records.len() {
+        let (before, after) = records.split_at(at);
+        let state = State::replay(before.to_vec(), now, 0);
+        let saved = checkpoint::decode(&written(&state, &expected)).unwrap();
+        let alone = State::load(Some(saved.state.clone()), [], now, 0);
+        assert!(alone.same_log_state(&state), "the checkpoint at {at}");
+        let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
+        assert!(loaded.same_log_state(&full), "a start from {at}");
+    }
+}
+
+/// A riff with no hold writes no part `plans`: the log of 1.0.0 gives
+/// the checkpoint of 1.0.0 (01M43GSGVYJW7C09SVRWRAQZDZ).
+#[test]
+fn a_riff_with_no_hold_writes_no_part_plans() {
+    let replayed = String::from_utf8(bytes("replayed.json")).unwrap();
+    assert!(!replayed.contains("\"plans\""));
+    let held = String::from_utf8(bytes_of(HOLDS, "replayed.json")).unwrap();
+    assert!(held.contains("\"plans\""));
 }

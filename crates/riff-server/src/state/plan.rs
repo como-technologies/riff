@@ -100,9 +100,12 @@ impl Plan {
 /// assert!(state.plans().hold(&thread, "verify-issue-366").is_none());
 ///
 /// let free = Free { me: mike.clone(), thread: thread.clone(), item: "issue-366".into() };
-/// let (_, reply) = state.run(&Caller::of(&mike), &free, now).unwrap();
-/// assert!(reply.freed);
+/// let (made, ()) = state.run(&Caller::of(&mike), &free, now).unwrap();
+/// assert_eq!(made.len(), 1);
 /// assert!(state.plans().hold(&thread, "issue-366").is_none());
+/// // A free of an item with no hold makes no record.
+/// let (made, ()) = state.run(&Caller::of(&mike), &free, now).unwrap();
+/// assert!(made.is_empty());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
