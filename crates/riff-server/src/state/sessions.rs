@@ -56,7 +56,7 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::{SessionUri, Who};
-use riff_core::record::{Change, Member, Record, Released, SessionStarted};
+use riff_core::record::{By, Change, Member, Record, Released, SessionStarted};
 use riff_core::wire::{End, Freed, Register, Start, StartReason, Started};
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +86,11 @@ pub(super) struct Known {
     /// The time of the last `session_started` record with a fresh
     /// context, in milliseconds since the Unix epoch.
     pub(super) fresh_ms: Option<u64>,
+    /// The time of the last record that the session made by its own
+    /// call, in milliseconds since the Unix epoch: a sign that it lived
+    /// then. A record of the server, of a person or of another session
+    /// only names it (01M4263ZXH4K23CSY6C5GJPVQH). A record with no caller counts.
+    pub(super) called_ms: Option<u64>,
 }
 
 /// The session that a change names, if any.
@@ -120,19 +125,24 @@ impl Sessions {
         {
             let uri = SessionUri::new(uri.who().clone(), uri.place().clone());
             let at_ms = record.written_at_ms;
-            self.known
-                .entry(uri.who().clone())
-                .and_modify(|known| {
-                    known.uri = uri.clone();
-                    known.at_ms = at_ms;
-                })
-                .or_insert(Known {
-                    uri,
-                    at_ms,
-                    worker: false,
-                    must_clear: false,
-                    fresh_ms: None,
-                });
+            let called = match &record.by {
+                Some(By::Session(by)) => by == uri.who(),
+                Some(_) => false,
+                None => true,
+            };
+            let known = self.known.entry(uri.who().clone()).or_insert(Known {
+                uri: uri.clone(),
+                at_ms,
+                worker: false,
+                must_clear: false,
+                fresh_ms: None,
+                called_ms: None,
+            });
+            known.uri = uri;
+            known.at_ms = at_ms;
+            if called {
+                known.called_ms = Some(at_ms);
+            }
         }
     }
 
@@ -208,6 +218,7 @@ impl Sessions {
                     worker: known.worker,
                     must_clear: known.must_clear,
                     fresh_ms: known.fresh_ms,
+                    called_ms: known.called_ms,
                 })
                 .collect(),
         }
@@ -240,6 +251,9 @@ struct SavedSession {
     /// The time of the last fresh start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fresh_ms: Option<u64>,
+    /// The time of the last record that the session made itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    called_ms: Option<u64>,
 }
 
 impl Saved {
@@ -258,6 +272,7 @@ impl Saved {
                     worker: s.worker,
                     must_clear: s.must_clear,
                     fresh_ms: s.fresh_ms,
+                    called_ms: s.called_ms,
                 },
             );
         }

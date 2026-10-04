@@ -18,7 +18,7 @@
 //! `Presence::applied` (01M3WNQRCBP0PHSA0H3THDH5NJ).
 
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{Change, Record, Scope};
@@ -431,7 +431,8 @@ impl Presence {
             .unwrap_or(0)
     }
 
-    /// The read cursors, for a checkpoint.
+    /// The read cursors and the status of each session, for a
+    /// checkpoint.
     pub(super) fn saved(&self) -> Saved {
         Saved {
             cursors: self
@@ -443,15 +444,38 @@ impl Presence {
                     seq: *seq,
                 })
                 .collect(),
+            statuses: self
+                .sessions
+                .iter()
+                .filter_map(|(who, session)| {
+                    let set = session.status.as_ref()?;
+                    Some(SavedStatus {
+                        session: who.clone(),
+                        status: set.status.clone(),
+                        set_ms: set.set_ms,
+                    })
+                })
+                .collect(),
         }
     }
 }
 
-/// The part of the checkpoint that the presence gives: the read cursors.
+/// The part of the checkpoint that the presence gives: the read cursors
+/// and the status of each session (01M4263ZZVY8QJ2METTEVR1W26).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Saved {
     #[serde(default)]
     cursors: Vec<SavedCursor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    statuses: Vec<SavedStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SavedStatus {
+    session: Who,
+    status: Status,
+    /// The time of the set, in milliseconds since the Unix epoch.
+    set_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -462,12 +486,26 @@ struct SavedCursor {
 }
 
 impl Saved {
-    /// The read cursors of a checkpoint.
-    pub(super) fn restore(self) -> BTreeMap<(Who, ThreadName), u64> {
-        self.cursors
+    /// Puts the read cursors and the statuses of a checkpoint in
+    /// `presence`, at the load `now`. A status goes only to a session
+    /// that the presence knows. It keeps its age, so it is from before
+    /// the load, and stale.
+    pub(super) fn restore(self, presence: &mut Presence, now: Instant, now_ms: u64) {
+        presence.cursors = self
+            .cursors
             .into_iter()
             .map(|c| ((c.session, c.thread), c.seq))
-            .collect()
+            .collect();
+        for saved in self.statuses {
+            if let Some(session) = presence.sessions.get_mut(&saved.session) {
+                let age = Duration::from_millis(now_ms.saturating_sub(saved.set_ms));
+                session.status = Some(SetStatus {
+                    status: saved.status,
+                    set_ms: saved.set_ms,
+                    set: now.checked_sub(age).unwrap_or(now),
+                });
+            }
+        }
     }
 }
 

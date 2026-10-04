@@ -502,9 +502,9 @@ impl State {
 
     /// Makes a state from a checkpoint and the records of the log after
     /// it, with a writer. With no checkpoint, it is [`State::replay`].
-    /// The read cursors come from the checkpoint. Each session that the
-    /// log names counts as seen at the later of its last record and its
-    /// last call before the checkpoint.
+    /// The read cursors and the status of each session come from the
+    /// checkpoint. Each session that the log names counts as seen as
+    /// `sessions_of_the_log` says.
     ///
     /// ```
     /// use std::time::Instant;
@@ -535,11 +535,12 @@ impl State {
     ) -> State {
         let mut state = State::with_writer(now, now_ms);
         let mut seen = BTreeMap::new();
+        let mut saved = None;
         if let Some(snapshot) = snapshot {
-            let (riff, cursors, seen_ms) = snapshot.into_parts();
+            let (riff, presence, seen_ms) = snapshot.into_parts();
             state.pending = riff.clone();
             state.written = riff;
-            state.presence.cursors = cursors;
+            saved = Some(presence);
             seen = seen_ms;
         }
         for record in records {
@@ -549,6 +550,9 @@ impl State {
         state.presence.riff_changed = Some(now);
         state.presence.loaded = Some(now);
         state.sessions_of_the_log(&seen, now);
+        if let Some(saved) = saved {
+            saved.restore(&mut state.presence, now, now_ms);
+        }
         state
     }
 
@@ -600,10 +604,18 @@ impl State {
     /// Makes each session that the log names, as it is after a replay at
     /// `loaded`: gone until it calls, in the place of the last record that
     /// names it. `seen` has the last call of each session that is known
-    /// from before.
+    /// from before. The session counts as seen at the later of that call
+    /// and the last record that it made itself. A record that only names
+    /// it, for example a record of the import of go-live, counts only
+    /// when nothing else is known (01M4263ZXH4K23CSY6C5GJPVQH).
     fn sessions_of_the_log(&mut self, seen: &BTreeMap<Who, u64>, loaded: Instant) {
         for (who, known) in &self.written.sessions().known {
-            let at_ms = seen.get(who).copied().unwrap_or(0).max(known.at_ms);
+            let called = seen
+                .get(who)
+                .copied()
+                .filter(|&ms| ms > 0)
+                .max(known.called_ms);
+            let at_ms = called.unwrap_or(known.at_ms);
             let session = Session {
                 seen_before_load: Some(at_ms),
                 alive: None,
