@@ -31,8 +31,8 @@ flowchart LR
   server on Cloud Run is off.
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
   `threads`, `join_thread`, `leave_thread`, `post`, `status`,
-  `blocked`, `tell`, `read`, `claim`, `release`, `lead`, `pause`,
-  `resume`, `move`, `leave` and `join`.
+  `blocked`, `tell`, `read`, `claim`, `release`, `hold`, `free`,
+  `lead`, `pause`, `resume`, `move`, `leave` and `join`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 - **The start hook** runs `riff hook session-start` when a session
@@ -2258,6 +2258,61 @@ riff release issue-12
 
 `-t` (`--thread`) names another thread. See
 [Use another thread](#use-another-thread).
+
+## Hold an item
+
+A lead holds an item to keep it from the workers, for example while it
+waits for the word of a person. A hold is not a claim. No worker can
+claim a held item. Each other session can, and its answer has the
+hold as a warning.
+
+```mermaid
+sequenceDiagram
+    participant L as lead
+    participant E as riff-server
+    participant W as worker
+    participant S as session of a person
+    L->>E: hold issue-12 "waits for the word of Mike"
+    W->>E: claim issue-12
+    E-->>W: on_hold: held by the lead since TIME: REASON
+    S->>E: claim issue-12
+    E-->>S: granted, with a warning
+    L->>E: free issue-12
+```
+
+- Only a lead of the repository, the owner or an admin can hold and
+  free an item. A worker cannot.
+- A hold names one item by its exact name. A hold of `issue-12` does
+  not stop `verify-issue-12`.
+- A hold does not end a claim. It stops only the next claim of a
+  worker. Only `free` ends a hold.
+- The lead session uses the `hold` and `free` tools.
+
+### Hold an item by hand
+
+Run it in a terminal in the repository. The reason has 1 to 200
+characters:
+
+```sh
+riff plan hold issue-12 waits for the word of Mike
+```
+
+```text
+issue-12 in como-technologies/riff is on hold now: no worker can claim it. `riff plan free issue-12` frees it.
+```
+
+A hold of a held item replaces its reason. `-t` (`--thread`) names
+another repository thread.
+
+### Free a held item
+
+```sh
+riff plan free issue-12
+```
+
+```text
+issue-12 in como-technologies/riff is free of its hold: a worker can claim it.
+```
 
 ## Pause the riff
 

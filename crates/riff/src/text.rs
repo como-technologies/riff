@@ -20,7 +20,7 @@ use riff_core::selector::Selector;
 use crate::api::{Checked, Claimed, Inbox};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
-    AdminSet, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted,
+    AdminSet, FreeReply, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted,
     ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState, SessionInfo, ThreadInfo, Wake,
 };
 
@@ -294,28 +294,40 @@ pub fn wake_line(wake: &Wake) -> String {
     }
 }
 
-/// The answer to a claim. When another session has the item, it is the
-/// text of the server, which names the holder
-/// (01M3WRD9JBQMNN96TXJH8EAJ3W).
+/// The answer to a claim. When another session has the item, or a lead
+/// holds it, it is the text of the server, which names the holder or
+/// the hold (01M3WRD9JBQMNN96TXJH8EAJ3W, 01M43GSGPJ69TPWPA4935WR8RW). A
+/// claim of a held item that the server grants has the hold as a
+/// warning.
 ///
 /// ```
 /// use riff::api::Claimed;
 ///
 /// let thread = "como-technologies/riff".parse()?;
-/// let mine = Claimed { granted: true, holder: None, held: None };
+/// let mine = Claimed { granted: true, holder: None, held: None, warning: None };
 /// assert_eq!(
 ///     riff::text::claimed(&mine, &thread, "issue-12"),
 ///     "You hold issue-12 in como-technologies/riff."
 /// );
 /// let held = "mike@pangolin:riff#api (a6cf) holds issue-12 in como-technologies/riff.";
-/// let reply = Claimed { granted: false, holder: None, held: Some(held.into()) };
+/// let reply = Claimed { granted: false, holder: None, held: Some(held.into()), warning: None };
 /// assert_eq!(riff::text::claimed(&reply, &thread, "issue-12"), held);
+///
+/// let hold = "issue-12 is held by the lead (the session mike/3511) since 2026-10-04T12:00:00Z: wait";
+/// let warned = Claimed { warning: Some(hold.into()), ..mine };
+/// assert_eq!(
+///     riff::text::claimed(&warned, &thread, "issue-12"),
+///     format!("You hold issue-12 in como-technologies/riff. Warning: {hold}. A worker does not get this claim.")
+/// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn claimed(reply: &Claimed, thread: &ThreadName, item: &str) -> String {
-    match &reply.held {
-        Some(held) => held.clone(),
-        None => format!("You hold {item} in {thread}."),
+    match (&reply.held, &reply.warning) {
+        (Some(held), _) => held.clone(),
+        (None, Some(warning)) => format!(
+            "You hold {item} in {thread}. Warning: {warning}. A worker does not get this claim."
+        ),
+        (None, None) => format!("You hold {item} in {thread}."),
     }
 }
 
@@ -1960,6 +1972,71 @@ pub fn connect_no_sign_in(server: &str, error: &anyhow::Error) -> String {
         "the plugin is installed, but riff cannot check the sign-in at {server}: {error:#}. \
          When the riff runs, run riff connect claude again."
     )
+}
+
+/// The answer to `riff plan hold` and the `hold` tool
+/// (01M43GSGB9ZFHSG0Q83Y50FEGW). A hold does not end a claim: the answer
+/// names the session that holds the item.
+///
+/// ```
+/// use riff_core::wire::HoldReply;
+///
+/// let thread = "como-technologies/riff".parse()?;
+/// let made = HoldReply { changed: true, holder: None };
+/// assert_eq!(
+///     riff::text::held(&made, &thread, "issue-12"),
+///     "issue-12 in como-technologies/riff is on hold now: no worker can claim it. \
+///      `riff plan free issue-12` frees it."
+/// );
+/// let same = HoldReply { changed: false, holder: Some("riff://ann@heron/acme/app?session=a1".parse()?) };
+/// assert_eq!(
+///     riff::text::held(&same, &thread, "issue-12"),
+///     "issue-12 in como-technologies/riff was on hold with this reason already. \
+///      ann@heron:app (a1) holds a claim of it: the hold does not end that claim."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn held(reply: &HoldReply, thread: &ThreadName, item: &str) -> String {
+    let mut text = if reply.changed {
+        format!(
+            "{item} in {thread} is on hold now: no worker can claim it. `riff plan free {item}` \
+             frees it."
+        )
+    } else {
+        format!("{item} in {thread} was on hold with this reason already.")
+    };
+    if let Some(holder) = &reply.holder {
+        text.push_str(&format!(
+            " {} holds a claim of it: the hold does not end that claim.",
+            name(holder)
+        ));
+    }
+    text
+}
+
+/// The answer to `riff plan free` and the `free` tool
+/// (01M43GSGB9ZFHSG0Q83Y50FEGW).
+///
+/// ```
+/// use riff_core::wire::FreeReply;
+///
+/// let thread = "como-technologies/riff".parse()?;
+/// assert_eq!(
+///     riff::text::freed(FreeReply { freed: true }, &thread, "issue-12"),
+///     "issue-12 in como-technologies/riff is free of its hold: a worker can claim it."
+/// );
+/// assert_eq!(
+///     riff::text::freed(FreeReply { freed: false }, &thread, "issue-12"),
+///     "issue-12 in como-technologies/riff was not on hold."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn freed(reply: FreeReply, thread: &ThreadName, item: &str) -> String {
+    if reply.freed {
+        format!("{item} in {thread} is free of its hold: a worker can claim it.")
+    } else {
+        format!("{item} in {thread} was not on hold.")
+    }
 }
 
 /// The answer to a release. For a worker that released its last claim,

@@ -501,6 +501,20 @@ mod tests {
         );
     }
 
+    /// 01M43GSGB9ZFHSG0Q83Y50FEGW: the lead holds an item with `hold`,
+    /// not with a claim, and a held item is no free work.
+    #[test]
+    fn the_skill_holds_an_item_with_hold_not_with_a_claim() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("To keep an item from the workers, call `hold`"),
+            "{flat}"
+        );
+        assert!(flat.contains("Do not claim it for that."));
+        assert!(flat.contains("- A held item is not free work."));
+    }
+
     /// 01M3W62QG36F9RD4SZ1X508T3A: the verifier and the author each
     /// have the rule, and each sends the fault to the lead with `tell`.
     #[test]

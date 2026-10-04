@@ -153,7 +153,7 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Activity, AdminSet, Alive, AliveReply, BlockedLook, Call, Claim, DenyOwner, End, Freed, Idle,
+    Activity, AdminSet, Alive, AliveReply, BlockedLook, Call, Claim, DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle,
     IdleQuery, Invite, Invited, ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave,
     LogQuery, LogReply, MeReply, Members, MembersReply, Message, OwnerAsked, OwnerDenied,
     OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER, Read, Register, Release,
@@ -1409,8 +1409,11 @@ impl Api {
 
     /// Claims a work item. The server refuses a claim of an item that
     /// another session holds with the code `held`, and a text that names
-    /// the holder (01M3WRD9JBQMNN96TXJH8EAJ3W). That refusal is not an
-    /// error here: the answer is not granted, and it has the text.
+    /// the holder (01M3WRD9JBQMNN96TXJH8EAJ3W). It refuses a claim of a
+    /// worker of a held item with the code `on_hold`, and a text that
+    /// names the lead, the time and the reason
+    /// (01M43GSGPJ69TPWPA4935WR8RW). These refusals are not an error
+    /// here: the answer is not granted, and it has the text.
     pub async fn claim(&self, me: &SessionUri, thread: &ThreadName, item: &str) -> Result<Claimed> {
         let claim = Claim {
             me: me.clone(),
@@ -1422,17 +1425,52 @@ impl Api {
                 granted: true,
                 holder: Some(reply.holder),
                 held: None,
+                warning: reply.warning,
             }),
             Err(error) => match error.downcast::<Refusal>() {
-                Ok(refusal) if refusal.code.as_deref() == Some("held") => Ok(Claimed {
-                    granted: false,
-                    holder: None,
-                    held: Some(refusal.text),
-                }),
+                Ok(refusal) if matches!(refusal.code.as_deref(), Some("held" | "on_hold")) => {
+                    Ok(Claimed {
+                        granted: false,
+                        holder: None,
+                        held: Some(refusal.text),
+                        warning: None,
+                    })
+                }
                 Ok(refusal) => Err(refusal.into()),
                 Err(error) => Err(error),
             },
         }
+    }
+
+    /// Holds `item` of the repository thread `thread` with `reason`, so
+    /// that no worker can claim it (01M43GSGB9ZFHSG0Q83Y50FEGW). Only a
+    /// lead of the thread, the owner or an admin can
+    /// (01M43GSGGY0QMB5D5EH92M6ZFP).
+    pub async fn hold(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        item: &str,
+        reason: &str,
+    ) -> Result<HoldReply> {
+        let hold = Hold {
+            me: me.clone(),
+            thread: thread.clone(),
+            item: item.to_owned(),
+            reason: reason.to_owned(),
+        };
+        self.call(&hold).await
+    }
+
+    /// Ends the hold of `item` of the repository thread `thread`
+    /// (01M43GSGB9ZFHSG0Q83Y50FEGW).
+    pub async fn free(&self, me: &SessionUri, thread: &ThreadName, item: &str) -> Result<FreeReply> {
+        let free = Free {
+            me: me.clone(),
+            thread: thread.clone(),
+            item: item.to_owned(),
+        };
+        self.call(&free).await
     }
 
     /// Frees a claim of `me`. The reply says if `me` is a worker that
@@ -2177,8 +2215,12 @@ pub struct Claimed {
     /// The URI of the caller now, when the claim is granted.
     pub holder: Option<SessionUri>,
     /// The text of the server that names the holder, when another
-    /// session holds the item.
+    /// session holds the item, or the hold, when a lead holds it and the
+    /// caller is a worker.
     pub held: Option<String>,
+    /// The hold of the item, when the claim is granted to a session
+    /// that is not a worker (01M43GSGPJ69TPWPA4935WR8RW).
+    pub warning: Option<String>,
 }
 
 /// Sends a keep-alive for `me` each `every`, and never ends

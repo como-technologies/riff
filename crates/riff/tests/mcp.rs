@@ -112,6 +112,8 @@ async fn the_tools_carry_a_conversation() {
         [
             "blocked",
             "claim",
+            "free",
+            "hold",
             "join",
             "join_thread",
             "lead",
