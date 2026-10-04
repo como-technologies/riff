@@ -172,6 +172,19 @@ enum Command {
         /// Print the table once and exit.
         #[arg(long)]
         once: bool,
+        /// Show only the sessions of this user.
+        #[arg(long, value_name = "USER")]
+        user: Option<String>,
+        /// Show only the sessions on this host.
+        #[arg(long, value_name = "HOST")]
+        host: Option<String>,
+        /// Show only the sessions in this repository.
+        #[arg(long, value_name = "OWNER/REPO")]
+        repo: Option<String>,
+        /// The top level of the tree: person (person, host, repository,
+        /// session) or repo (repository, person, host, session).
+        #[arg(long, value_enum, default_value = "person")]
+        by: ByArg,
     },
     /// Claim a work item
     ///
@@ -502,6 +515,22 @@ enum Command {
         #[command(subcommand)]
         command: Option<Workers>,
     },
+}
+
+/// The top level of the tree of `riff top`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ByArg {
+    Person,
+    Repo,
+}
+
+impl From<ByArg> for riff::top::By {
+    fn from(by: ByArg) -> Self {
+        match by {
+            ByArg::Person => Self::Person,
+            ByArg::Repo => Self::Repo,
+        }
+    }
 }
 
 /// On or off.
@@ -1552,7 +1581,21 @@ async fn main() -> Result<()> {
         Command::Tail { thread } => {
             tail(&api, &me, &thread_or_default(thread, &here)?, &here).await;
         }
-        Command::Top { once } => top(&api, &me, here.default_thread(), once).await?,
+        Command::Top {
+            once,
+            user,
+            host,
+            repo,
+            by,
+        } => {
+            let show = riff::top::Show {
+                user,
+                host,
+                repo,
+                by: by.into(),
+            };
+            top(&api, &me, here.default_thread(), &show, once).await?;
+        }
         Command::Watch { once, until, .. } => {
             let me = identity::session(&here, api.base())?;
             let Some(_lock) = lock_watch(&me) else {
@@ -2733,12 +2776,18 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
 /// (01M3NT6WXGCNKW3EQ7MBJDQTR4), and it goes on after a look that
 /// fails: see "A look that fails" in [`riff::top`]
 /// (01M3Z8FXE2DY34ZP75WJE1S8HR).
-async fn top(api: &Api, me: &SessionUri, thread: Option<ThreadName>, once: bool) -> Result<()> {
+async fn top(
+    api: &Api,
+    me: &SessionUri,
+    thread: Option<ThreadName>,
+    show: &riff::top::Show,
+    once: bool,
+) -> Result<()> {
     if once {
-        return draw_top(api, me, thread, once).await;
+        return draw_top(api, me, thread, show, once).await;
     }
     tokio::select! {
-        drawn = draw_top(api, me, thread, once) => drawn,
+        drawn = draw_top(api, me, thread, show, once) => drawn,
         () = binary::follow_update(me.place()) => Ok(()),
     }
 }
@@ -2767,17 +2816,26 @@ async fn draw_top(
     api: &Api,
     me: &SessionUri,
     thread: Option<ThreadName>,
+    show: &riff::top::Show,
     once: bool,
 ) -> Result<()> {
     use std::io::{IsTerminal, Write};
     use std::time::Instant;
-    let fetch = |thread: Option<ThreadName>| {
+    // One read of `gh` for each repository with a live session
+    // (01M42KHN80V49HDDZF953HXDT0).
+    let fetch = |repos: std::collections::BTreeSet<String>| {
         tokio::task::spawn_blocking(move || {
-            thread.and_then(|t| riff::top::Issues::from_gh(&t.to_string()))
+            repos
+                .into_iter()
+                .map(|repo| {
+                    let issues = riff::top::Issues::from_gh(&repo);
+                    (repo, issues)
+                })
+                .collect::<Vec<_>>()
         })
     };
-    let mut issues = fetch(thread.clone()).await?;
-    let mut fetched = Instant::now();
+    let mut issues = std::collections::BTreeMap::new();
+    let mut fetched: Option<Instant> = None;
     let mut messages = thread
         .as_ref()
         .map(|t| Box::pin(follow(|| api.tail(me, t), RETRY)));
@@ -2818,6 +2876,14 @@ async fn draw_top(
         let Some(((pauses, who), at)) = &last else {
             continue;
         };
+        if fetched.is_none_or(|t| t.elapsed() >= riff::top::ISSUES_TTL) {
+            // A `gh` that fails keeps the last issues of its repository
+            // (01M3ZC09FA9DZPTHK31XECZ566).
+            let repos = riff::top::board_repos(&who.sessions, show);
+            let read = fetch(repos).await?;
+            issues = riff::top::Issues::newest_each(std::mem::take(&mut issues), read);
+            fetched = Some(Instant::now());
+        }
         let now = chrono::Local::now();
         let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
         let server = riff::api::server_build();
@@ -2828,8 +2894,9 @@ async fn draw_top(
             server: server.as_ref(),
             sessions: &who.sessions,
             people: &who.people,
-            issues: issues.as_ref(),
+            issues: &issues,
             repo: repo.as_deref(),
+            show,
             width: textwrap::termwidth(),
             fault: fault.as_deref(),
             machines: &machines,
@@ -2854,12 +2921,6 @@ async fn draw_top(
         tokio::select! {
             () = tokio::time::sleep(riff::top::REFRESH) => {}
             () = message => {}
-        }
-        if fetched.elapsed() >= riff::top::ISSUES_TTL {
-            // A `gh` that fails keeps the last issues
-            // (01M3ZC09FA9DZPTHK31XECZ566).
-            issues = riff::top::Issues::newest(issues, fetch(thread.clone()).await?);
-            fetched = Instant::now();
         }
     }
 }
