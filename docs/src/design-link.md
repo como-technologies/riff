@@ -349,11 +349,11 @@ and the decisions of the code in `api.rs`), the rustdoc, and the book.
 
 | ID | Item | Needs |
 |---|---|---|
-| L1 | The time limits: `CONNECT_WAIT`, the limit of each try, the HTTP/2 pings, `STREAM_IDLE` on the streams, and the end of a stream at `Lagged` on the server. | none |
-| L2 | The module `link`: `link::of`, one shared client, the swap after a fault, the budgets, the rule of section 2 with `Unknown`, the reply to a copy of a signed post. Each command uses it. | L1 |
-| L3 | The state: the text, `text::link_line`, `top` that draws at each change, the line of a short command, the status line, a how-to "When riff-server is not reachable" in the book. | L2 |
-| L4 | The read after a break in `tail` and `chat`, and the line of lost messages. | L1 |
-| L5 | `Link::heartbeat` in `mcp`, `watch` and `workers host`. | L2, #424 |
+| L1 (#505) | The time limits: `CONNECT_WAIT`, the limit of each try, the HTTP/2 pings, `STREAM_IDLE` on the streams, and the end of a stream at `Lagged` on the server. | none |
+| L2 (#507) | The module `link`: `link::of`, one shared client, the swap after a fault, the budgets, the rule of section 2 with `Unknown`, the reply to a copy of a signed post. Each command uses it. | L1 |
+| L3 (#508) | The state: the text, `text::link_line`, `top` that draws at each change, the line of a short command, the status line, a how-to "When riff-server is not reachable" in the book. | L2 |
+| L4 (#506) | The read after a break in `tail` and `chat`, and the line of lost messages. | L1 |
+| L5 (#509) | `Link::heartbeat` in `mcp`, `watch` and `workers host`. | L2, #424 |
 
 ## Decisions
 
