@@ -636,7 +636,8 @@ async fn workers_lists_each_worker() {
     let out = stdout(&out);
     // The heading of this machine has its numbers and its score
     // (01M3Q5QE4SQ8VYN2PSF42KB3QJ), the line of its disk follows
-    // (01M41A11GHP78E2VYN14JSE27P), and no table.
+    // (01M41A11GHP78E2VYN14JSE27P), then the line of its monitor
+    // (01M421QPX01BB15GJXHFYRETTX), and no table.
     assert!(out.contains("  runs 0  cpu "), "{out}");
     let mut lines = out.lines();
     assert!(
@@ -649,9 +650,13 @@ async fn workers_lists_each_worker() {
         lines.next().is_some_and(|l| l.starts_with("disk ")),
         "{out}"
     );
+    assert!(
+        lines.next().is_some_and(|l| l.starts_with("monitor off  load5 ")),
+        "{out}"
+    );
     assert!(!out.contains("PANE"), "{out}");
     assert!(out.contains("  score "), "{out}");
-    assert_eq!(out.lines().count(), 2, "{out}");
+    assert_eq!(out.lines().count(), 3, "{out}");
 }
 
 /// `riff workers stop` ends each worker: within 10 seconds, no worker is
