@@ -23,6 +23,30 @@
 //! one line for the person to stderr: the set, and why. The Gate on
 //! GitHub runs `just ci-full` (01M3WNN7VQJKN5MJH7JN50VF4D).
 //!
+//! ## One run at a time in a worktree
+//!
+//! Two runs in one worktree share its `target`. Each waits for the
+//! cargo lock of the other, and the load and the time double. So
+//! `just ci` and `just ci-full` first source `crates/hygiene/ci-lock.sh`
+//! and call `ci_lock` (01M43DKYVAX0TJ2F5YYGYFSZ4G). The check is shell,
+//! not this crate: `cargo run` of a second run waits for the build lock
+//! of the first run, so it cannot stop at once.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     S["just ci"] --> E{"RIFF_CI_LOCK set?<br/>(the holder started this run)"}
+//!     E -- yes --> R["run the checks"]
+//!     E -- no --> C{"create target/.riff-ci.lock<br/>(fails when it exists)"}
+//!     C -- created --> H["hold it: pid, start time;<br/>remove it at the exit"] --> R
+//!     C -- exists --> L{"does its pid run,<br/>with the same start time?"}
+//!     L -- yes --> X["one line, exit 1"]
+//!     L -- no --> D["remove the old lock"] --> C
+//! ```
+//!
+//! The pid and the start time of `ps -o lstart=` name one process, so a
+//! new process with the same pid does not hold the lock. The lock is in
+//! the `target` of the worktree, so runs in two worktrees go on.
+//!
 //! ```
 //! use hygiene::ci::{choose, Checks};
 //!
