@@ -11,7 +11,8 @@ use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
-    local, login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view, worker,
+    local, login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view,
+    worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
