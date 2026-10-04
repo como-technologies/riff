@@ -30,7 +30,10 @@ ci-full:
     set -euo pipefail
     . "{{justfile_directory()}}/crates/hygiene/ci-lock.sh"
     ci_lock "$PWD/target"
-    {{just_executable()}} fmt-check lint test doc book reqs wrap
+    # One call for each check: `test *ARGS` takes each name after it.
+    for check in fmt-check lint test doc book reqs wrap; do
+        {{just_executable()}} "$check"
+    done
 
 # Run only the checks for text: the book, the requirement IDs, the wrap
 ci-text: book reqs wrap
