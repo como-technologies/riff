@@ -785,6 +785,12 @@
 - **01M3WG82ZMQYG1TGHE4ET0BDDW** In a test, git reaches no remote on
   the network: the helper `isolated` sets `GIT_ALLOW_PROTOCOL` to
   `file`.
+- **01M43B48Z8R0SXAWBQP75CPR55** A test that needs a place outside each
+  git repository gets its temp dir from `isolated::outside_git`. The
+  dir is in the first temp root with no repository at it or above it:
+  `TMPDIR`, then `/tmp`, `/var/tmp` and `/dev/shm`. So the test passes,
+  and writes nothing, also when `TMPDIR` is in a repository, for
+  example the home of the person.
 - **01M3W98PMDPZW1CR3KJYMPHVQZ** A test server starts with no old
   sign-in at its URL. The tests of one file share one mock keyring,
   and the OS can give the port of an earlier test to a later test. A
