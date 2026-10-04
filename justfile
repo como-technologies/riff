@@ -132,9 +132,6 @@ dev *ARGS:
     PATH="$tree/target/debug:$PATH" claude --plugin-dir "$tree/crates/riff/claude-plugin/riff" \
         --settings '{"enabledPlugins":{"riff@riff":false}}'
 
-# The shared server on Cloud Run: just cloud RECIPE
-mod cloud 'deploy/cloud.just'
-
 # Set up the GitHub repository for pull requests: auto-merge, squash only, the ruleset on main
 github REPO="como-technologies/riff":
     deploy/github.sh {{REPO}}

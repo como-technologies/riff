@@ -1,7 +1,7 @@
 {
   "displayName": "riff-server-errors",
   "documentation": {
-    "content": "A log line of riff-server has the severity ERROR or more. See the log: just cloud log. See the facts of the server: riff server.",
+    "content": "A log line of riff-server has the severity ERROR or more. See the errors: riff cloud log NAME --errors. See the facts of the server: riff server.",
     "mimeType": "text/markdown"
   },
   "combiner": "OR",
