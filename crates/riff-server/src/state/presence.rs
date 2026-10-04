@@ -371,7 +371,9 @@ impl Presence {
             | Change::OwnerSet(_)
             | Change::OwnerAsked(_)
             | Change::OwnerDenied(_)
-            | Change::SigninsEnded(_) => {}
+            | Change::SigninsEnded(_)
+            | Change::ItemHeld(_)
+            | Change::ItemFreed(_) => {}
         }
     }
 

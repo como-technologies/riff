@@ -12,10 +12,11 @@
 //! | `sessions::Saved` | `sessions` |
 //! | `presence::Saved` | `cursors`, `statuses` |
 //! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` |
+//! | `plan::Saved` | `plans` |
 //!
 //! A group that adds a part to the state adds a field to its own
-//! `Saved`, with a default (01M3T4111PFM0C6KPREWFS9EQQ). This file does
-//! not change.
+//! `Saved`, with a default (01M3T4111PFM0C6KPREWFS9EQQ). A new group
+//! adds its `Saved` here, with a default.
 
 use std::collections::BTreeMap;
 
@@ -23,7 +24,7 @@ use riff_core::name::Who;
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
-use super::{people, presence, sessions, the_riff, threads, work};
+use super::{people, plan, presence, sessions, the_riff, threads, work};
 
 /// The state that a checkpoint keeps: the state that the log gives up to
 /// [`Snapshot::position`], the read cursors, and the last call of each
@@ -45,6 +46,8 @@ pub struct Snapshot {
     presence: presence::Saved,
     #[serde(flatten)]
     people: people::Saved,
+    #[serde(flatten)]
+    plans: plan::Saved,
 }
 
 /// The proof that a call comes from the load of a checkpoint. Only this
@@ -69,6 +72,7 @@ impl Snapshot {
             sessions: riff.sessions().saved(seen),
             presence: presence.saved(),
             people: riff.people().saved(),
+            plans: riff.plans().saved(),
         }
     }
 
@@ -84,6 +88,7 @@ impl Snapshot {
             self.work.restore(),
             self.the_riff.restore(),
             self.people.restore(),
+            self.plans.restore(),
         );
         (riff, self.presence, seen)
     }

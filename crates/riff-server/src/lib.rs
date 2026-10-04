@@ -217,12 +217,12 @@ use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join,
-    Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, PassOwner, Pause,
-    Person, Post, Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume,
-    Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked,
-    SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply,
-    TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
+    ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
+    PassOwner, Pause, Person, Post, Read, ReadReply, Register, Release, ReleaseFor, Remove,
+    ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata,
+    SetAdmin, SetBlocked, SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
+    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -1836,7 +1836,9 @@ impl Service {
             .route(ReleaseFor::PATH, post(command::<ReleaseFor>))
             .route(Lead::PATH, post(command::<Lead>))
             .route(Pause::PATH, post(command::<Pause>))
-            .route(Resume::PATH, post(command::<Resume>));
+            .route(Resume::PATH, post(command::<Resume>))
+            .route(Hold::PATH, post(command::<Hold>))
+            .route(Free::PATH, post(command::<Free>));
         // `set_idle` has a router of its own: in a riff with sign-in,
         // its route always has the token check.
         let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));

@@ -23,6 +23,7 @@ use riff_core::wire::{
 use serde::{Deserialize, Serialize};
 
 use super::command::{Caller, Code, Command, CommandKind, Done, Now, Refused};
+use super::plan::held_text;
 use super::view::View;
 
 /// The claims and the leads.
@@ -244,17 +245,25 @@ impl View<'_> {
 /// for the old holder, then the `claimed` record (01M3X4Z6BKM251H7CS2CEGR205).
 /// A worker that must clear its context is refused first, with the code
 /// `must_clear` (01M3X9XAK1KPZZVM1AJR2H8DSS).
+///
+/// A claim of a held item by a worker is refused with the code
+/// `on_hold`, and the reason names the lead, the time and the reason of
+/// the hold (01M43GSGPJ69TPWPA4935WR8RW). Each other session gets the
+/// claim, with the same text as a warning in the reply. The order of
+/// the checks: `must_clear`, the name of the item, `paused`, the caller
+/// holds the item already, `on_hold`, `held`.
 impl Command for Claim {
     const KIND: CommandKind = CommandKind::Claim;
     type Reply = ClaimReply;
-    type Note = ();
+    /// The warning for a caller that is not a worker.
+    type Note = Option<String>;
 
     fn handle(
         &self,
         caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, ()), Refused> {
+    ) -> Result<(Vec<Change>, Option<String>), Refused> {
         let who = caller.who();
         let Claim { thread, item, .. } = self;
         if view.riff.sessions().must_clear(who) {
@@ -280,8 +289,21 @@ impl Command for Claim {
             thread: thread.clone(),
             item: item.clone(),
         };
+        let holder = view.riff.work().holder(thread, item);
+        if holder == Some(who) {
+            return Ok((Vec::new(), None));
+        }
+        let warning = view.hold(thread, item).map(|hold| held_text(item, hold));
+        if let Some(text) = &warning
+            && caller.worker()
+        {
+            return Err(Refused::new(
+                Code::OnHold,
+                format!("{text}. Pick another item."),
+            ));
+        }
         let mut changes = Vec::new();
-        match view.riff.work().holder(thread, item) {
+        match holder {
             Some(holder) if holder == who => {}
             Some(holder) if view.holds(holder, now.at) => {
                 return Err(Refused::new(
@@ -300,12 +322,20 @@ impl Command for Claim {
             }
             None => changes.push(Change::Claimed(claim(who))),
         }
-        Ok((changes, ()))
+        Ok((changes, warning))
     }
 
-    fn reply(&self, caller: &Caller, view: &View<'_>, _: &Done, (): (), now: Now) -> ClaimReply {
+    fn reply(
+        &self,
+        caller: &Caller,
+        view: &View<'_>,
+        _: &Done,
+        warning: Option<String>,
+        now: Now,
+    ) -> ClaimReply {
         ClaimReply {
             holder: view.uri(caller.who(), now.at),
+            warning,
         }
     }
 }

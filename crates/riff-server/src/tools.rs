@@ -253,6 +253,8 @@ pub fn show(record: &Record) -> String {
         Change::OwnerAsked(a) => format!("owner_asked  {}, due {}", a.email, utc(a.due_ms)),
         Change::OwnerDenied(p) => format!("owner_denied  {}", p.email),
         Change::SigninsEnded(e) => format!("signins_ended  {}", e.user),
+        Change::ItemHeld(h) => format!("item_held  {} in {}: {:?}", h.item, h.thread, h.reason),
+        Change::ItemFreed(f) => format!("item_freed  {} in {}", f.item, f.thread),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -282,6 +284,8 @@ fn thread_of(record: &Record) -> Option<String> {
         }
         Change::Claimed(c) => Some(c.thread.to_string()),
         Change::Released(r) => Some(r.thread.to_string()),
+        Change::ItemHeld(h) => Some(h.thread.to_string()),
+        Change::ItemFreed(f) => Some(f.thread.to_string()),
         Change::PauseSet(s) => match &s.scope {
             Scope::Repository(thread) => Some(thread.to_string()),
             Scope::Riff | Scope::Other => None,

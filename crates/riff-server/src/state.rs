@@ -265,6 +265,7 @@ pub type Blocked = (SessionUri, String);
 
 pub mod command;
 pub mod people;
+pub mod plan;
 pub mod presence;
 pub mod riff;
 pub mod sessions;
@@ -278,6 +279,7 @@ pub use command::{
     Caller, Cause, Class, Code, Command, CommandKind, Done, Now, Refused, Role, permits,
 };
 pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
+pub use plan::Plans;
 pub use presence::{Imported, ImportedSession, Presence, Signal};
 pub use riff::{Riff, apply};
 pub use sessions::Arrive;
@@ -1932,6 +1934,12 @@ impl State {
     /// the pause of each repository (01M3XAHZBGSSJB3YX23K88W01K).
     pub fn pauses(&self) -> &Pauses {
         &self.written.the_riff().pauses
+    }
+
+    /// The plans of the written copy: the holds of each repository
+    /// thread (01M43GSGB9ZFHSG0Q83Y50FEGW).
+    pub fn plans(&self) -> &Plans {
+        self.written.plans()
     }
 
     /// The pauses as a caller at the place of `me` sees them
