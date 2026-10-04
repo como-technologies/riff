@@ -10,5 +10,6 @@
 - [Design: the store of riff-server](design-storage.md)
 - [Design: the command engine of riff-server](design-engine.md)
 - [Design: the client link](design-link.md)
+- [Design: the plan on the server](design-plan.md)
 - [Requirements](requirements.md)
 - [Development](development.md)
