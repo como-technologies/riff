@@ -32,7 +32,10 @@ fn tmpdir_of_cargo(tmp: &Path) -> PathBuf {
     let cargo = bin.join("cargo");
     std::fs::write(
         &cargo,
-        format!("#!/bin/sh\nprintf '%s' \"$TMPDIR\" > '{}'\n", seen.display()),
+        format!(
+            "#!/bin/sh\nprintf '%s' \"$TMPDIR\" > '{}'\n",
+            seen.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
