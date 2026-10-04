@@ -457,11 +457,7 @@ pub fn machines(sessions: &[SessionInfo], here: Option<Machine>) -> Vec<Machine>
 /// ```
 pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
     let style = |over: bool| {
-        if over {
-            WARNING
-        } else {
-            anstyle::Style::new()
-        }
+        if over { WARNING } else { anstyle::Style::new() }
     };
     let mut parts = Vec::new();
     let monitor = status.monitor.as_ref();

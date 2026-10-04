@@ -169,8 +169,10 @@ impl Riff {
             .spawn()
             .unwrap();
         let host = Host(child, out);
-        self.until("the host in riff who", || async { self.host_session().await })
-            .await;
+        self.until("the host in riff who", || async {
+            self.host_session().await
+        })
+        .await;
         host
     }
 
@@ -339,7 +341,10 @@ async fn the_monitor_tells_the_lead_once_at_a_limit_and_once_when_good() {
     let out = r.riff(&["workers"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     let text = stdout(&out);
-    assert!(text.contains("monitor on  load5 5.00 of 12.00 (8 cores)  jobs 3"), "{text}");
+    assert!(
+        text.contains("monitor on  load5 5.00 of 12.00 (8 cores)  jobs 3"),
+        "{text}"
+    );
     assert!(
         text.contains(&format!("last kill {} systemd-oomd", riff::text::clock(at))),
         "{text}"
@@ -375,7 +380,9 @@ async fn one_monitor_runs_on_a_machine() {
     // The monitor of the host does not hold the lock: no look, no
     // message.
     r.until("the line of the other monitor", || async {
-        host.output().contains(riff::text::MONITOR_RUNS).then_some(())
+        host.output()
+            .contains(riff::text::MONITOR_RUNS)
+            .then_some(())
     })
     .await;
     assert!(r.saved().is_none(), "the monitor looked: {:?}", r.saved());
@@ -448,7 +455,10 @@ async fn workers_monitor_shows_and_sets_the_settings() {
     }
     let out = r.riff(&["workers", "monitor", "off"]).output().unwrap();
     assert!(stdout(&out).contains("The monitor is off."), "{out:?}");
-    let out = r.riff(&["workers", "monitor", "--every", "0"]).output().unwrap();
+    let out = r
+        .riff(&["workers", "monitor", "--every", "0"])
+        .output()
+        .unwrap();
     assert!(!out.status.success(), "{out:?}");
     let out = r
         .riff(&["workers", "monitor", "--host", "pangolin"])

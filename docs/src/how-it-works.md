@@ -1016,7 +1016,8 @@ The table of each state, its color and its detail is in
   floor. `workers 3/4` is the workers and the limit. `jobs 2` is the
   jobs of each worker. A number over its limit is yellow. A second
   line shows the time and the cause of the last kill that the monitor
-  saw. See [Watch the health of a machine](#watch-the-health-of-a-machine).
+  saw. See
+  [Watch the health of a machine](#watch-the-health-of-a-machine).
   The numbers of a host come from its `riff workers host`. The
   numbers of the machine where you run `riff top` come from that
   machine.
@@ -3953,7 +3954,8 @@ riff workers monitor --load 2
 ```
 
 The memory limit is the floor of the machine, 4 GB by default. 0 turns
-it off. See [Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs):
+it off. See
+[Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs):
 
 ```sh
 riff workers floor 4

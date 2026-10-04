@@ -159,7 +159,11 @@ pub fn journal(since: u64) -> Option<String> {
     let out = std::process::Command::new("journalctl")
         .args(["-q", "--no-pager", "-o", "short-unix"])
         .arg(format!("--since=@{since}"))
-        .args(["_SYSTEMD_UNIT=systemd-oomd.service", "+", "_TRANSPORT=kernel"])
+        .args([
+            "_SYSTEMD_UNIT=systemd-oomd.service",
+            "+",
+            "_TRANSPORT=kernel",
+        ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()

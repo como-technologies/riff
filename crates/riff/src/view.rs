@@ -922,7 +922,10 @@ pub fn monitor_line(numbers: Option<&crate::monitor::Numbers>, ago: Option<u64>)
         return String::new();
     };
     let state = if n.on { "monitor on" } else { "monitor off" };
-    let load = format!("load5 {:.2} of {:.2} ({} cores)", n.load5, n.limit, n.physical);
+    let load = format!(
+        "load5 {:.2} of {:.2} ({} cores)",
+        n.load5, n.limit, n.physical
+    );
     let load = if n.load5 > n.limit {
         styled(WARNING, &load)
     } else {

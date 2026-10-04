@@ -357,9 +357,10 @@ impl HostStatus {
         let mut monitor = None;
         let without_monitor;
         if let Some(at) = rest.find("monitor ") {
-            let end = at + rest[at..]
-                .find(", no workers")
-                .or_else(|| rest[at..].find(", workers: "))?;
+            let end = at
+                + rest[at..]
+                    .find(", no workers")
+                    .or_else(|| rest[at..].find(", workers: "))?;
             monitor = Some(Numbers::parse(&rest[at..end])?);
             without_monitor = format!("{}{}", &rest[..at], &rest[end + 2..]);
             rest = &without_monitor;

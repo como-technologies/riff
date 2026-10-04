@@ -3696,7 +3696,11 @@ pub const MONITOR_RUNS: &str =
 pub fn clock(at: u64) -> String {
     DateTime::from_timestamp(i64::try_from(at).unwrap_or(i64::MAX), 0).map_or_else(
         || "--:--:--".to_owned(),
-        |t| t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string(),
+        |t| {
+            t.with_timezone(&chrono::Local)
+                .format("%H:%M:%S")
+                .to_string()
+        },
     )
 }
 
