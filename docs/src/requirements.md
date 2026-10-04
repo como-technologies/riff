@@ -1465,10 +1465,7 @@
   `riff-server`, it tells the person to start `riff-server` again. It
   does not restart it. That server is the server of `riff` when it is
   on the same machine, else `http://127.0.0.1:7878`.
-- **01M3K0Q8C9NK4NY6TJWRMJS7ZQ** The shared server of Como turns on,
-  turns off, deploys and shows its state and log with the recipes of
-  `just cloud`, through `gcloud` and `gh`. They are for the
-  maintainers. `riff` has no command for them.
+- **01M3K0Q8C9NK4NY6TJWRMJS7ZQ** Replaced by 01M4262DQ9RNFNJ07CRTSGEAM1.
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
   it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
 - **R134** `riff-server` runs as its own service account. The account
@@ -1535,47 +1532,71 @@
   token itself (R5).
 - **R143** The Google Cloud project `como-riff` holds each cloud
   resource of riff. It holds nothing else.
-- **R144** `deploy/cloud.env` holds the cloud settings and the OAuth
-  client ID. The repository is public. No file in it holds the account
+- **R144** `deploy/cloud/shared.env` holds the cloud settings and the
+  OAuth client ID of the shared riff. The repository is public. No file in it holds the account
   data of a real person: an email address, a billing account ID or an
   organization ID.
 - **R136** A person makes the project and links its billing account with
-  gcloud, by the how-to in the book. `just cloud setup` makes the
+  gcloud, by the how-to in the book. `riff cloud create` makes the
   resources of riff in the project. It checks each resource first, so it
-  can run again. `just cloud deploy` builds the image and deploys it to
-  Cloud Run.
+  can run again. `riff cloud deploy` with no tag builds the image and
+  deploys it to Cloud Run.
 - **01M3TJWJEPTSF1S3S5PJD25Z7Y** The bucket is a standard bucket with
   object versioning. A lifecycle rule deletes each older version of an
   object after 7 days. The service has 1 GiB of memory.
-  `just cloud setup` sets each of them, and each deploy sets the
+  `riff cloud create` sets each of them, and each deploy sets the
   memory.
-- **01M3TJWJ6J3M6JRXJTAETZ5M6F** `just cloud setup` makes an alert in
+- **01M3TJWJ6J3M6JRXJTAETZ5M6F** `riff cloud create` makes an alert in
   the cloud project: a log line of the service with the severity
   `ERROR` or more sends an email to the owner, at most one each 5
   minutes. The email comes from `RIFF_OWNER`. With no `RIFF_OWNER`,
-  the setup makes no alert, and says how to make it. `just cloud errors`
-  shows these log lines.
+  the setup makes no alert, and says how to make it.
+  `riff cloud log NAME --errors` shows these log lines.
 - **R145** A person makes the OAuth client by hand in the console, with
-  the how-to in the book. `just cloud oauth-client` puts the client
-  secret in Secret Manager and the client ID in `deploy/cloud.env`. The
-  secret is never in the repository or in a downloaded file.
+  the how-to in the book. `riff cloud signin` puts the client secret in
+  Secret Manager and the client ID in the settings file. The secret is
+  never in the repository or in a downloaded file.
 - **01M3ZE3Z26N1CG090D5D5FZ3NW** The stage is a second riff-server in
-  the project, for the rehearsal of a release. `deploy/stage.env` holds
-  its settings. It has its own service, bucket, accounts, sign-in client
+  the project, for the rehearsal of a release. `deploy/cloud/stage.env`
+  holds its settings. It has its own service, bucket, accounts, sign-in client
   and secret, and no alert, domain or CI deploy. No setting of one riff
   names the bucket, the service, the secret or another resource of a
   different riff. A test proves it.
-- **01M3ZE3Z580RB5AYAJX6321DFW** `just cloud` takes the settings of a
-  riff by name: `stage` reads `deploy/stage.env`. With no name, it uses
-  `deploy/cloud.env`, the shared riff. `just cloud deploy NAME TAG`
-  deploys the image that CI built for the release tag. Only a recipe
-  for the shared riff changes the GitHub variable `CLOUD_DEPLOY`.
+- **01M3ZE3Z580RB5AYAJX6321DFW** `riff cloud` takes the settings of a
+  riff by name: `stage` reads `deploy/cloud/stage.env`, and `shared`
+  reads `deploy/cloud/shared.env`, the shared riff.
+  `riff cloud deploy NAME TAG` deploys the image that CI built for the
+  release tag. No `riff cloud` command changes the GitHub variable
+  `CLOUD_DEPLOY`.
 - **01M3ZE3Z80274JFTN53DNJ2F2G** A release that moves the state of the
   shared riff is rehearsed on the stage before its tag, by the how-to
   in the book. The results go on its issue.
-- **01M3ZGRZ0F3G93Q3ET9GGWKT7E** `just cloud log` and `just cloud
-  errors` give each argument to `gcloud` whole, with its spaces and
-  quotes. `just cloud log` with no `--limit` shows the last 50 lines.
+- **01M3ZGRZ0F3G93Q3ET9GGWKT7E** `riff cloud log` gives its filter to
+  `gcloud` whole, with its spaces and quotes. With no `--limit`, it
+  shows the last 50 lines.
+- **01M4262DQ9RNFNJ07CRTSGEAM1** `riff cloud` makes and runs
+  riff-server instances on Cloud Run with the `gcloud` of the machine,
+  as `riff pr` runs `gh`: `create`, `signin`, `deploy`, `list`,
+  `status`, `log` and `delete`. The shared riff and the stage take the
+  same code path. The repository has no cloud scripts and no
+  `just cloud`.
+- **01M4262DSKVWP4064FKSMAQACZ** Each instance has one settings file
+  `NAME.env`: in `deploy/cloud` of the repository of the directory when
+  it has that folder, else in `cloud` beside the riff settings of the
+  machine. `riff cloud create NAME --project P --region R` writes the
+  file of a new instance. Its service, bucket, accounts and secret take
+  the name of the instance, so its bucket has its own riff ID.
+- **01M4262DVY8QCSZS61VDQ61SB3** `riff cloud delete` asks for the name
+  of the instance first. `riff cloud deploy` asks for it when the
+  settings have `CLOUD_CONFIRM=true`, as the shared riff has. With no
+  terminal, only `--confirm NAME` gives it. `delete` keeps the bucket
+  unless `--with-state`.
+- **01M4262DY8NN30SC4REYX2G9DV** A worker never runs `riff cloud`. The
+  flag settings of a worker deny it, and `riff cloud` refuses when
+  `RIFF_WORKER` is `1`.
+- **01M4262E0QJHCZXNH7EFG7FXN2** The CI deploy job deploys with
+  `riff cloud deploy shared TAG --confirm shared`, from the riff of the
+  tag.
 
 ## One instance
 

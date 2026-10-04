@@ -213,7 +213,7 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     assert_eq!(
         std::fs::read_to_string(seen).unwrap(),
         format!(
-            "--settings\n{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"enabledPlugins\":{{\"rust-lsp@m\":false}},\"env\":{{\"TMPDIR\":\"{tmp}\",\"CLAUDE_CODE_TMPDIR\":\"{tmp}\"}}}}\nJoin the riff.\n",
+            "--settings\n{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}},\"enabledPlugins\":{{\"rust-lsp@m\":false}},\"env\":{{\"TMPDIR\":\"{tmp}\",\"CLAUDE_CODE_TMPDIR\":\"{tmp}\"}}}}\nJoin the riff.\n",
             tmp = dir.path().join("tmp/w1").display()
         )
     );
