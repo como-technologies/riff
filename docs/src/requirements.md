@@ -3475,6 +3475,20 @@
   It keeps stdin and stdout, so the connection to Claude Code stays.
   The new process answers the next request with no new handshake. No
   person runs `/mcp`.
+- **01M43F5F9AQ9S39E1JZF8EBJEH** Before `riff mcp` runs a new
+  binary in its place, it runs that binary once as a check, with the
+  same arguments and the client of the session. The check does each
+  step of the start that can fail, and serves nothing. Only when the
+  check passes does `riff mcp` run the new binary. When the check
+  fails, the old process keeps the tools of the session, says the
+  error once on stderr, and waits for the next new binary.
+- **01M43F5KH7RE8241T18ZJJH7DV** A `riff mcp` that has no initialize
+  request of its client does not run a new binary. It keeps the tools
+  of the session until the session ends.
+- **01M43F5KE7G2A2A9PSVRJPPNET** When the `riff mcp` of a session
+  ended and the session goes on, the status line of the session and
+  each end of `riff watch` say it in one line, with the fix: reconnect
+  riff in `/mcp`.
 - **01M3NT6WXGCNKW3EQ7MBJDQTR4** When a new `riff` binary is on disk,
   `riff top` and `riff chat` run it in their place, as `riff tail`
   does. The chat does it between two lines. The new chat shows no

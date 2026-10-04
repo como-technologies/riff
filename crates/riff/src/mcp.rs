@@ -654,6 +654,14 @@ pub async fn serve_off() -> Result<()> {
 }
 
 impl Tools {
+    /// The arguments of the new binary after an update: the arguments of
+    /// this process, with the place of the session and `client`
+    /// (01M3NT6WZTKAFKGDWGCFKC8TB5).
+    fn args(&self, client: &str) -> Vec<std::ffi::OsString> {
+        let args = with_place(std::env::args_os().skip(1), self.me().place());
+        with_last(args, CLIENT, client)
+    }
+
     /// Pauses or resumes the repository of the session, or with
     /// `whole` the whole riff (01M3XAHZBGSSJB3YX23K88W01K).
     async fn set_riff(&self, whole: bool, state: RiffState) -> ToolResult {
@@ -943,14 +951,74 @@ impl Tools {
     }
 }
 
+/// The hidden flag of the check of a new binary
+/// (01M43F5F9AQ9S39E1JZF8EBJEH).
+pub const CHECK: &str = "--check";
+
+/// The longest wait for the check of a new binary.
+pub const CHECK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The initialize request of the client that an old `riff mcp` gave in
+/// [`CLIENT`]. `None` with no `json`. The check of a new binary
+/// (01M43F5F9AQ9S39E1JZF8EBJEH) reads it too, so a binary that cannot
+/// read it fails the check.
+///
+/// ```
+/// use riff::mcp::given_client;
+///
+/// assert!(given_client(None)?.is_none());
+/// let json = r#"{"protocolVersion":"2025-06-18","capabilities":{},
+///     "clientInfo":{"name":"claude-code","version":"2"}}"#;
+/// let client = given_client(Some(json))?.expect("a client");
+/// assert_eq!(client.client_info.name, "claude-code");
+/// assert!(given_client(Some("{}")).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn given_client(json: Option<&str>) -> Result<Option<rmcp::model::InitializeRequestParams>> {
+    Ok(json.map(serde_json::from_str).transpose()?)
+}
+
+/// Runs the new binary at `binary` with `args` and [`CHECK`], in `dir`,
+/// for at most [`CHECK_WAIT`] (01M43F5F9AQ9S39E1JZF8EBJEH). It serves
+/// nothing: stdin is empty. The error is the last line of its stderr.
+async fn check(
+    binary: std::path::PathBuf,
+    mut args: Vec<std::ffi::OsString>,
+    dir: PathBuf,
+) -> std::result::Result<(), String> {
+    args.push(CHECK.into());
+    let mut cmd = tokio::process::Command::new(binary);
+    cmd.args(args)
+        .current_dir(&dir)
+        .env("PWD", &dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let out = tokio::time::timeout(CHECK_WAIT, cmd.output())
+        .await
+        .map_err(|_| text::check_too_long(CHECK_WAIT))?
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    Err(err
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map_or_else(|| out.status.to_string(), str::to_owned))
+}
+
 /// The longest wait for the end call. The agent tool stops a slow
 /// process.
 pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Serves the tools on stdin and stdout until the session ends. It
 /// sends keep-alives while it runs, and the end call when its stdin
-/// closes or a signal stops it (R204, R205). On a new binary, it runs
-/// it in place, with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5). With
+/// closes or a signal stops it (R204, R205). On a new binary that
+/// passes its check (01M43F5F9AQ9S39E1JZF8EBJEH), it runs it in place,
+/// with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5). With
 /// `client`, the initialize request of the old process, it skips the
 /// handshake. It sends `registered` when its register ends, also when
 /// the register fails (01M3XM68N5M5DKB86W5079X2G9). A session that left
@@ -989,18 +1057,28 @@ pub async fn serve(
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
     let follow = Follow::this();
-    // An update waits for the end of the handshake.
+    // An update waits for the end of the handshake, and for the client:
+    // with no client, the new process cannot take the connection
+    // (01M43F5KH7RE8241T18ZJJH7DV).
     let ready = tokio::sync::Notify::new();
+    let known = Mutex::new(None::<String>);
     let update = async {
         ready.notified().await;
-        follow.new_one().await;
+        let Some(client) = known.lock().unwrap_or_else(|p| p.into_inner()).clone() else {
+            return std::future::pending().await;
+        };
+        follow
+            .new_one_that(|binary| {
+                let args = tools.args(&client);
+                let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                check(binary, args, dir)
+            })
+            .await;
     };
     let (outside, inside) = tokio::io::duplex(relay::PIPE);
     let relay = relay::run(outside, update);
     tokio::pin!(relay);
-    let given = client
-        .map(serde_json::from_str::<rmcp::model::InitializeRequestParams>)
-        .transpose()?;
+    let given = given_client(client)?;
     let service = async {
         match given {
             Some(client) => Ok(rmcp::service::serve_directly(
@@ -1024,6 +1102,10 @@ pub async fn serve(
         _ = int.recv() => None,
         _ = hup.recv() => None,
     };
+    let peer = service.as_ref().and_then(|s| s.peer().peer_info());
+    if let Some(peer) = peer {
+        *known.lock().unwrap_or_else(|p| p.into_inner()) = Some(serde_json::to_string(&*peer)?);
+    }
     ready.notify_one();
     let ended = match &service {
         Some(_) => tokio::select! {
@@ -1034,8 +1116,9 @@ pub async fn serve(
         },
         None => None,
     };
+    let client = known.lock().unwrap_or_else(|p| p.into_inner()).take();
     if ended == Some(relay::Ended::Update)
-        && let Some(client) = service.as_ref().and_then(|s| s.peer().peer_info())
+        && let Some(client) = client
     {
         alive.abort();
         if let Some(rollout) = &rollout {
@@ -1053,10 +1136,9 @@ pub async fn serve(
         if let Some(look) = &look {
             look.abort();
         }
-        let args = with_place(std::env::args_os().skip(1), tools.me().place());
         let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let _ = std::env::set_current_dir(dir);
-        follow.run(with_last(args, CLIENT, serde_json::to_string(&*client)?));
+        follow.run(tools.args(&client));
         anyhow::bail!("riff mcp cannot run the new riff");
     }
     alive.abort();

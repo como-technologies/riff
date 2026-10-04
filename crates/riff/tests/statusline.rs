@@ -307,3 +307,61 @@ async fn a_server_that_does_not_answer_in_time_gives_no_tag_in_time() {
     );
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+/// Marks the `riff mcp` of this test process as ended: an `mcp-PID`
+/// file with no lock, and the start time of this process
+/// (01M43F5KE7G2A2A9PSVRJPPNET). The `riff` that a test starts finds
+/// this process above it.
+fn mcp_ended(dir: &Path) {
+    let state = dir.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let pid = std::process::id();
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap();
+    let start = riff::local::start_in_stat(&stat).unwrap();
+    std::fs::write(state.join(format!("mcp-{pid}")), ID).unwrap();
+    std::fs::write(state.join(format!("start-{pid}")), start.to_string()).unwrap();
+}
+
+/// `riff watch --once` of the session [`ID`], that ends in 1 second
+/// with no wake. Returns its stdout.
+async fn watch_a_second(server: &str, dir: &Path) -> String {
+    let soon = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 1;
+    let until = soon.to_string();
+    let args = ["watch", "--once", "--until", until.as_str()];
+    riff(server, dir, Some(ID), "", &args).await.0
+}
+
+/// When the `riff mcp` of the session ended, the status line says so
+/// with the fix (01M43F5KE7G2A2A9PSVRJPPNET).
+#[tokio::test]
+async fn the_status_line_says_when_riff_mcp_stopped() {
+    let server = start_server().await;
+    let dir = repo();
+    join(&server, dir.path()).await;
+    assert!(!line(&server, dir.path()).await.contains("no tools"));
+    mcp_ended(dir.path());
+    assert_eq!(
+        line(&server, dir.path()).await,
+        "riff a6cf2205 (no tools: riff mcp stopped, reconnect riff in /mcp)\n"
+    );
+}
+
+/// When the `riff mcp` of the session ended, each end of `riff watch`
+/// says so in one line, with the fix (01M43F5KE7G2A2A9PSVRJPPNET).
+#[tokio::test]
+async fn the_end_of_the_watch_says_when_riff_mcp_stopped() {
+    let server = start_server().await;
+    let dir = repo();
+    join(&server, dir.path()).await;
+    let out = watch_a_second(&server, dir.path()).await;
+    assert!(out.contains("no wake came"), "{out}");
+    assert!(!out.contains(riff::text::WATCH_MCP_GONE), "{out}");
+
+    mcp_ended(dir.path());
+    let out = watch_a_second(&server, dir.path()).await;
+    assert_eq!(out.matches(riff::text::WATCH_MCP_GONE).count(), 1, "{out}");
+}

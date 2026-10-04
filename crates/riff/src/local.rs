@@ -26,6 +26,7 @@
 //! |---|---|---|
 //! | `mcp-PID` | `riff mcp`. PID is its parent: the agent tool. | The session ID. |
 //! | `build-PID` | The same `riff mcp`, next to `mcp-PID`. | The build of that `riff mcp`. |
+//! | `start-PID` | The same `riff mcp`, next to `mcp-PID`. | The start time of the agent process PID, from `/proc`. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
 //! | `left-ID` | The `leave` tool. The `join` tool removes it. It is in [`marks`], not in [`dir`]. | Nothing. The file counts. |
 //! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
@@ -128,7 +129,75 @@ pub fn record(dir: &Path, agent: u32, session: &str) -> io::Result<Option<Held>>
         dir.join(format!("build-{agent}")),
         riff_core::build::VERSION,
     )?;
+    if let Some(start) = started(agent) {
+        std::fs::write(dir.join(format!("start-{agent}")), start.to_string())?;
+    }
     Ok(Some(Held(file)))
+}
+
+/// True when the agent process `agent` had a `riff mcp` that ended,
+/// and still runs (01M43F5KE7G2A2A9PSVRJPPNET): its `mcp-PID` has no
+/// lock, and `start-PID` holds the start time of this same process,
+/// not of an earlier process with the same PID. False when no
+/// `riff mcp` ever ran for it, and on a system with no `/proc`.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// let agent = std::process::id();
+/// assert!(!riff::local::mcp_gone(run.path(), agent));
+/// let mcp = riff::local::record(run.path(), agent, "a6cf")?.expect("free");
+/// assert!(!riff::local::mcp_gone(run.path(), agent));
+/// drop(mcp);
+/// # if std::path::Path::new("/proc/self/stat").exists() {
+/// assert!(riff::local::mcp_gone(run.path(), agent));
+/// // An earlier process with the same PID.
+/// std::fs::write(run.path().join(format!("start-{agent}")), "1")?;
+/// assert!(!riff::local::mcp_gone(run.path(), agent));
+/// # }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn mcp_gone(dir: &Path, agent: u32) -> bool {
+    let Ok(file) = File::open(dir.join(format!("mcp-{agent}"))) else {
+        return false;
+    };
+    if locked(&file) {
+        return false;
+    }
+    let recorded = std::fs::read_to_string(dir.join(format!("start-{agent}")));
+    let recorded = recorded.ok().and_then(|r| r.trim().parse::<u64>().ok());
+    recorded.is_some() && recorded == started(agent)
+}
+
+/// [`mcp_gone`] for the nearest process above this one with an
+/// `mcp-PID` file.
+pub fn mcp_gone_above(dir: &Path) -> bool {
+    ancestors()
+        .find(|pid| dir.join(format!("mcp-{pid}")).exists())
+        .is_some_and(|pid| mcp_gone(dir, pid))
+}
+
+/// The start time of the process `pid`, in clock ticks after the boot.
+/// `None` with no `/proc`.
+fn started(pid: u32) -> Option<u64> {
+    start_in_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// The start time in the text of `/proc/PID/stat`: field 22.
+///
+/// ```
+/// use riff::local::start_in_stat;
+///
+/// let stat = "1234 (a b) S 42 1234 1234 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 98765 1 2";
+/// assert_eq!(start_in_stat(stat), Some(98765));
+/// assert_eq!(start_in_stat("garbage"), None);
+/// ```
+pub fn start_in_stat(stat: &str) -> Option<u64> {
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
 }
 
 /// The build of the live `riff mcp` of the agent process `agent`
