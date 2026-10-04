@@ -488,8 +488,8 @@ struct SavedCursor {
 impl Saved {
     /// Puts the read cursors and the statuses of a checkpoint in
     /// `presence`, at the load `now`. A status goes only to a session
-    /// that the presence knows. It keeps its age, so it is from before
-    /// the load, and stale.
+    /// that the presence knows. It keeps its age, at least 1 ms: it is
+    /// from before the load, so it is stale.
     pub(super) fn restore(self, presence: &mut Presence, now: Instant, now_ms: u64) {
         presence.cursors = self
             .cursors
@@ -498,7 +498,7 @@ impl Saved {
             .collect();
         for saved in self.statuses {
             if let Some(session) = presence.sessions.get_mut(&saved.session) {
-                let age = Duration::from_millis(now_ms.saturating_sub(saved.set_ms));
+                let age = Duration::from_millis(now_ms.saturating_sub(saved.set_ms).max(1));
                 session.status = Some(SetStatus {
                     status: saved.status,
                     set_ms: saved.set_ms,

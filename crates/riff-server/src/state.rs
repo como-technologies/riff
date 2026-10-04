@@ -607,7 +607,8 @@ impl State {
     /// from before. The session counts as seen at the later of that call
     /// and the last record that it made itself. A record that only names
     /// it, for example a record of the import of go-live, counts only
-    /// when nothing else is known (01M4263ZXH4K23CSY6C5GJPVQH).
+    /// when nothing else is known (01M4263ZXH4K23CSY6C5GJPVQH). A status
+    /// that the presence has stays (01M4263ZZVY8QJ2METTEVR1W26).
     fn sessions_of_the_log(&mut self, seen: &BTreeMap<Who, u64>, loaded: Instant) {
         for (who, known) in &self.written.sessions().known {
             let called = seen
@@ -616,9 +617,11 @@ impl State {
                 .filter(|&ms| ms > 0)
                 .max(known.called_ms);
             let at_ms = called.unwrap_or(known.at_ms);
+            let old = self.presence.sessions.get(who);
             let session = Session {
                 seen_before_load: Some(at_ms),
                 alive: None,
+                status: old.and_then(|s| s.status.clone()),
                 ..Session::new(known.uri.place().clone(), loaded)
             };
             self.presence.sessions.insert(who.clone(), session);

@@ -486,3 +486,55 @@ impl Command for End {
         Some(Signal::Ended)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uri(text: &str) -> SessionUri {
+        text.parse().unwrap()
+    }
+
+    /// A record at `at_ms` by `by` that names `session`.
+    fn joined(session: &SessionUri, by: Option<By>, at_ms: u64) -> Record {
+        Record {
+            position: at_ms,
+            written_at_ms: at_ms,
+            by,
+            command: None,
+            change: Change::JoinedThread(Member {
+                session: session.clone(),
+                thread: "design".parse().unwrap(),
+            }),
+        }
+    }
+
+    #[test]
+    fn only_a_record_of_the_session_itself_is_a_call() {
+        let ann = uri("riff://ann@heron/acme/app?session=a1");
+        let lead = uri("riff://ann@heron/acme/app?session=l1");
+        let mut sessions = Sessions::default();
+        sessions.named(&joined(&ann, Some(By::Session(ann.who().clone())), 10));
+        sessions.named(&joined(&ann, Some(By::Server), 20));
+        sessions.named(&joined(&ann, Some(By::Session(lead.who().clone())), 30));
+        sessions.named(&joined(&ann, Some(By::Person("ann".into())), 40));
+        let known = &sessions.known[ann.who()];
+        assert_eq!((known.at_ms, known.called_ms), (40, Some(10)));
+
+        // A record from before the caller field counts: its cause is not
+        // known.
+        sessions.named(&joined(&ann, None, 50));
+        assert_eq!(sessions.known[ann.who()].called_ms, Some(50));
+    }
+
+    #[test]
+    fn a_session_that_only_the_server_names_has_no_call() {
+        let ann = uri("riff://ann@heron/acme/app?session=a1");
+        let mut sessions = Sessions::default();
+        sessions.named(&joined(&ann, Some(By::Server), 20));
+        let known = &sessions.known[ann.who()];
+        assert_eq!((known.at_ms, known.called_ms), (20, None));
+        let (restored, _) = sessions.saved(|_| 0).restore();
+        assert_eq!(restored, sessions, "the checkpoint keeps it");
+    }
+}
