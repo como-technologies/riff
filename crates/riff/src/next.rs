@@ -451,7 +451,7 @@ pub fn stop_old_context(agent: &dyn Agent, me: &SessionUri) -> Vec<crate::worklo
 /// Takes the lock file `clear-ID.lock` of the worker `session` in the
 /// local dir, and waits for it: one check of a worker types at a time
 /// (01M43STEE72Q9TD8ZNFS3273M3). The lock ends with the file handle.
-fn clear_lock(session: &str) -> Result<std::fs::File> {
+pub fn clear_lock(session: &str) -> Result<std::fs::File> {
     let dir = local::dir().context("no HOME: riff has no local dir")?;
     std::fs::create_dir_all(&dir)?;
     let lock = std::fs::OpenOptions::new()
