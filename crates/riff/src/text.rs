@@ -3681,6 +3681,11 @@ pub fn monitor_set(monitor: &crate::settings::Monitor) -> String {
     }
 }
 
+/// The line of a monitor that does not look: another monitor holds the
+/// lock of the machine (01M421QQ1K7EFDV2PVPTSTE5FK).
+pub const MONITOR_RUNS: &str =
+    "riff: another monitor runs on this machine. This one looks when it ends.";
+
 /// The local time `HH:MM:SS` of `at`, in seconds since 1970.
 ///
 /// ```

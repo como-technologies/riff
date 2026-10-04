@@ -470,6 +470,8 @@ pub struct Monitor {
     watch: Watch,
     held: Option<local::Held>,
     since: u64,
+    /// True when another monitor held the lock at the last look.
+    other: bool,
     kill: Option<Kill>,
 }
 
@@ -486,6 +488,7 @@ impl Monitor {
             watch: Watch::default(),
             held: None,
             since: now_secs(),
+            other: false,
             kill: None,
         }
     }
@@ -501,8 +504,8 @@ impl Monitor {
 
     /// One look as `me`, when `monitor.on` is true and no other monitor
     /// runs on the machine. It posts a message to the lead of the user
-    /// of `me` for each event, and saves the look. Returns the texts of
-    /// the events.
+    /// of `me` for each event, and saves the look. Returns the lines to
+    /// print: the texts of the events, or that another monitor runs.
     pub async fn look(&mut self, api: &Api, me: &SessionUri) -> Result<Vec<String>> {
         let path = settings::path()?;
         let monitor = settings::monitor(&path)?;
@@ -518,8 +521,15 @@ impl Monitor {
         if self.held.is_none() {
             self.held = local::monitor_lock(&dir)?;
             if self.held.is_none() {
-                return Ok(Vec::new());
+                // One line for each time that another monitor takes over.
+                let told = std::mem::replace(&mut self.other, true);
+                return Ok(if told {
+                    Vec::new()
+                } else {
+                    vec![text::MONITOR_RUNS.to_owned()]
+                });
             }
+            self.other = false;
             self.since = self.since.max(now_secs());
         }
         let machine = Machine::here();
@@ -676,6 +686,78 @@ mod tests {
             [Event::Killed(kill(1)), Event::Killed(kill(2))]
         );
         assert!(watch.step(&look(1.0, 30), &limits).is_empty());
+    }
+
+    /// 01M421QPX01BB15GJXHFYRETTX: a status with the disk, the numbers
+    /// of the monitor and a kill reads back.
+    #[test]
+    fn a_status_with_a_kill_reads_back() {
+        let status = crate::host::HostStatus {
+            limit: 2,
+            floor: 4,
+            machine: Machine::parse("cpu 8x3000MHz, mem 64GB, 60GB available, load 0.50"),
+            disk: Some(crate::disk::Disk {
+                free_gb: 50,
+                total_gb: 455,
+            }),
+            monitor: Some(Numbers {
+                on: true,
+                load5: 5.0,
+                limit: 12.0,
+                physical: 8,
+                jobs: 3,
+                kill: Some(Kill {
+                    at: 1_727_980_001,
+                    by: "systemd-oomd".into(),
+                    what: String::new(),
+                }),
+            }),
+            workers: vec![],
+        };
+        assert_eq!(
+            crate::host::HostStatus::parse(&status.line()),
+            Some(status.clone()),
+            "{}",
+            status.line()
+        );
+    }
+
+    /// The status of a host with 10 workers and each number fits in a
+    /// status (R183).
+    #[test]
+    fn a_status_of_10_workers_fits() {
+        let status = crate::host::HostStatus {
+            limit: 10,
+            floor: 16,
+            machine: Machine::parse(
+                "cpu 128x5883MHz (now 5800MHz), mem 1024GB, 1000GB available, load 133.20",
+            ),
+            disk: Some(crate::disk::Disk {
+                free_gb: 1000,
+                total_gb: 4000,
+            }),
+            monitor: Some(Numbers {
+                on: true,
+                load5: 110.4,
+                limit: 96.0,
+                physical: 64,
+                jobs: 12,
+                kill: Some(Kill {
+                    at: 1_727_980_001,
+                    by: "systemd-oomd".into(),
+                    what: String::new(),
+                }),
+            }),
+            workers: (10..20)
+                .map(|n| (format!("%{n}"), "1a2b3c4d".to_owned()))
+                .collect(),
+        };
+        let line = status.line();
+        assert!(
+            line.chars().count() <= riff_core::wire::STATUS_CHARS,
+            "{} characters: {line}",
+            line.chars().count()
+        );
     }
 
     #[test]

@@ -1995,7 +1995,7 @@
   tool. A status is the current step of the session, in its own words.
   It makes no state. A new status replaces the old one.
 - **R183** A status is one line. The step is not empty. The step has
-  at most 200 characters. The reason of a block has the same rules.
+  at most 400 characters. The reason of a block has the same rules.
   `riff-server` refuses a status or a block that breaks a rule, with
   status 400.
 - **R184** `riff-server` keeps the last status of each session, with the

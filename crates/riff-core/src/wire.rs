@@ -766,7 +766,7 @@ pub struct BlockedInfo {
 
 /// The most characters in the step of a [`Status`], and in the reason
 /// of a [`SetBlocked`].
-pub const STATUS_CHARS: usize = 200;
+pub const STATUS_CHARS: usize = 400;
 
 /// What a session does now, in its own words: its current step. The
 /// words help a person. They make no state: a block is [`SetBlocked`]
@@ -787,7 +787,7 @@ impl Status {
     /// assert!(status("write the tests").check().is_ok());
     /// assert!(status(" ").check().is_err());
     /// assert!(status("two\nlines").check().is_err());
-    /// assert!(status(&"x".repeat(201)).check().is_err());
+    /// assert!(status(&"x".repeat(401)).check().is_err());
     /// ```
     pub fn check(&self) -> Result<(), String> {
         one_line("step", &self.step)
