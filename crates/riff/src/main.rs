@@ -165,7 +165,8 @@ enum Command {
     },
     /// Show a live table of each session
     ///
-    /// Each row shows the tags, the item and the status of a session. It
+    /// The tree has the levels person, host, repository and session. Each
+    /// row shows the tags, the item and the status of a session. It
     /// draws the table again in place until Ctrl-C. It posts nothing and
     /// wakes no session.
     Top {
