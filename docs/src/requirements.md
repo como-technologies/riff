@@ -2860,6 +2860,19 @@
   the transcript before it returns, and gives the number to
   `riff hook clear`. The check counts again as the last step before
   `/clear`. It does not count before the start prompt.
+- **01M43STEE72Q9TD8ZNFS3273M3** The check of the Stop hook types
+  nothing and stops no process when a new context of the worker
+  started after the check: the start in `context-ID`
+  (01M3ZV0TJX2H77RW6ZA3ERZT9H) is later than the start of the check.
+  It looks before it stops the old context, and again as the last step
+  before `/clear`. So a check of an old context never clears the new
+  context, and a new context keeps its claims.
+- **01M43STEHMTWKJDP48M1DZQPXE** When the reply asks for the clear and
+  subagents of the worker still run in the background, the check
+  types a prompt in place of `/clear`: stop each of them, then end the
+  turn. The check of that turn clears the context. riff types the
+  prompt one time in a context: when the transcript has it already,
+  the check clears the context.
 - **01M3XV05AD98S415V3SWN8ZDXC** The lead clears a worker that stays in
   MustClear with `riff workers stop PANE`: the rollout starts a new
   worker with a fresh context. A person can also type `/clear` in its

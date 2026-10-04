@@ -580,6 +580,120 @@ pub fn prompts(transcript: &str) -> usize {
         .count()
 }
 
+/// True when a prompt of the `transcript` starts with `start`. The
+/// result of a tool is not a prompt, so a file that the agent read
+/// does not count.
+///
+/// ```
+/// use riff::compact::has_prompt;
+/// let prompt = r#"{"type":"user","message":{"content":"riff: stop them."}}"#;
+/// let read = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"riff: stop them."}]}}"#;
+/// assert!(has_prompt(prompt, "riff: stop"));
+/// assert!(!has_prompt(read, "riff: stop"));
+/// ```
+pub fn has_prompt(transcript: &str, start: &str) -> bool {
+    entries(transcript)
+        .filter(|e| e.kind == "user")
+        .filter_map(|e| e.message)
+        .any(|m| m.content.as_str().is_some_and(|t| t.starts_with(start)))
+}
+
+/// The subagents in the background that still run at the end of the
+/// `transcript`, by their description (01M43STEHMTWKJDP48M1DZQPXE). A
+/// subagent runs from the result `Async agent launched` of its `Agent`
+/// call until a task notification names its call or its agent ID, or a
+/// `TaskStop` call names its agent ID.
+///
+/// ```
+/// use riff::compact::running_agents;
+/// let launch = |n: u8| format!(
+///     r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"t{n}","name":"Agent","input":{{"description":"look {n}","run_in_background":true}}}}]}}}}
+/// {{"type":"user","message":{{"content":[{{"tool_use_id":"t{n}","type":"tool_result","content":[{{"type":"text","text":"Async agent launched successfully.\nagentId: a{n} (internal ID)"}}]}}]}}}}"#);
+/// let both = format!("{}\n{}", launch(1), launch(2));
+/// assert_eq!(running_agents(&both), ["look 1", "look 2"]);
+/// let done = r#"{"type":"user","message":{"content":"<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>t1</tool-use-id>\n<status>completed</status>\n</task-notification>"}}"#;
+/// assert_eq!(running_agents(&format!("{both}\n{done}")), ["look 2"]);
+/// let stop = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"s1","name":"TaskStop","input":{"task_id":"a2"}}]}}"#;
+/// assert!(running_agents(&format!("{both}\n{done}\n{stop}")).is_empty());
+/// assert!(running_agents("").is_empty());
+/// ```
+pub fn running_agents(transcript: &str) -> Vec<String> {
+    let mut asked: Vec<(String, String)> = Vec::new();
+    let mut running: Vec<(String, String, String)> = Vec::new();
+    let mut ended: Vec<String> = Vec::new();
+    for entry in entries(transcript) {
+        let Some(message) = entry.message else {
+            continue;
+        };
+        let items = match &message.content {
+            serde_json::Value::Array(items) => items.clone(),
+            text @ serde_json::Value::String(_) => vec![serde_json::json!({"text": text})],
+            _ => continue,
+        };
+        for item in &items {
+            match (entry.kind.as_str(), item["type"].as_str()) {
+                ("assistant", Some("tool_use")) => {
+                    let id = item["id"].as_str().unwrap_or_default().to_owned();
+                    match item["name"].as_str() {
+                        Some("Agent") => {
+                            let about = item["input"]["description"].as_str();
+                            asked.push((id, about.unwrap_or("a subagent").to_owned()));
+                        }
+                        Some("TaskStop") => {
+                            let task = item["input"]["task_id"].as_str();
+                            ended.extend(task.map(str::to_owned));
+                        }
+                        _ => {}
+                    }
+                }
+                ("user", Some("tool_result")) => {
+                    let call = item["tool_use_id"].as_str().unwrap_or_default();
+                    let text = result_text(&item["content"]);
+                    let Some(rest) = text.split_once("Async agent launched").map(|(_, r)| r) else {
+                        continue;
+                    };
+                    let agent = rest
+                        .split_once("agentId: ")
+                        .and_then(|(_, r)| r.split_whitespace().next())
+                        .unwrap_or_default();
+                    if let Some((_, about)) = asked.iter().find(|(id, _)| id == call) {
+                        running.push((call.to_owned(), agent.to_owned(), about.clone()));
+                    }
+                }
+                ("user", _) => {
+                    let text = item["text"].as_str().unwrap_or_default();
+                    for tag in ["task-id", "tool-use-id"] {
+                        let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
+                        for part in text.split(&open).skip(1) {
+                            ended.extend(part.split_once(&close).map(|(id, _)| id.to_owned()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    running
+        .into_iter()
+        .filter(|(call, agent, _)| !ended.iter().any(|e| e == call || (!agent.is_empty() && e == agent)))
+        .map(|(_, _, about)| about)
+        .collect()
+}
+
+/// The text of the content of a tool result: a string, or the text of
+/// each item.
+fn result_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|i| i["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
 /// The text of the last message of the agent in the transcript.
 ///
 /// ```
