@@ -3654,6 +3654,43 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
     )
 }
 
+/// The room for more workers when fewer than `limit` run
+/// (01M493Z063SSTAJS2KNDFBTEBJ).
+///
+/// ```
+/// use riff::text::room_for;
+/// assert_eq!(room_for(3, 2).as_deref(), Some("room for 1 worker, the rollout starts it for free work"));
+/// assert_eq!(room_for(4, 1).as_deref(), Some("room for 3 workers, the rollout starts them for free work"));
+/// assert_eq!(room_for(2, 2), None);
+/// assert_eq!(room_for(2, 3), None);
+/// ```
+pub fn room_for(limit: u16, runs: usize) -> Option<String> {
+    let room = usize::from(limit).checked_sub(runs).filter(|n| *n > 0)?;
+    let them = if room == 1 { "it" } else { "them" };
+    Some(format!(
+        "room for {}, the rollout starts {them} for free work",
+        workers_count(room)
+    ))
+}
+
+/// Why a machine with a loop of deaths starts no worker
+/// (01M493YZZEW1FTDBNA090WT2AG).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::deaths_halt(4),
+///     "4 workers died in the last hour. riff starts workers again when 3 or fewer died in \
+///      the last hour."
+/// );
+/// ```
+pub fn deaths_halt(deaths: usize) -> String {
+    format!(
+        "{deaths} workers died in the last hour. riff starts workers again when {} or fewer \
+         died in the last hour.",
+        crate::deaths::LOOP
+    )
+}
+
 /// How many of `runs` workers end after their item under `limit`
 /// (01M402VFQHC5PH39DTFV6AH60F), or `None` when they are not more than
 /// the limit.

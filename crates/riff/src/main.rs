@@ -2503,7 +2503,14 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     let machine = riff::machine::Machine::here();
     anstream::println!(
         "{}",
-        view::host_heading(&host, limit, panes.len(), Some(&machine), floor)
+        view::host_heading(
+            &host,
+            limit,
+            panes.len(),
+            Some(&machine),
+            floor,
+            riff::deaths::here()
+        )
     );
     let disk = identity::main_worktree(&identity::working_dir()?)
         .and_then(|main| riff::disk::Disk::here(&main));
@@ -2536,7 +2543,8 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
                 status.limit,
                 status.workers.len(),
                 status.machine.as_ref(),
-                status.floor
+                status.floor,
+                status.deaths
             )
         );
         anstream::print!("{}", view::disk_line(status.disk.as_ref()));
