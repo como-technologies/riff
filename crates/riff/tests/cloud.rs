@@ -744,8 +744,9 @@ fn each_settings_file_has_each_key() {
     }
 }
 
-/// The create of the stage makes only the resources of the stage. It
-/// makes no CI deploy and no alert.
+/// The create of the stage makes only the resources of the stage, and
+/// the CI deploy of the stage as its own account
+/// (01M496JT94NQ686GVSY5CCGZK7). It makes no alert.
 #[test]
 fn create_of_the_stage_makes_only_the_resources_of_the_stage() {
     let ran = Cloud::new().run(&["create", "stage"]).ok();
@@ -759,14 +760,18 @@ fn create_of_the_stage_makes_only_the_resources_of_the_stage() {
         "riff-oidc-client-secret",
         "riff-server@",
         "riff-build@",
-        "riff-deploy",
-        "workload-identity",
+        "riff-deploy@",
         "monitoring channels",
         "monitoring policies",
         "run services describe riff-server ",
     ] {
         assert!(!ran.calls.contains(shared), "{shared} in:\n{}", ran.calls);
     }
+    let user = ran.line("iam service-accounts add-iam-policy-binding riff-stage-deploy@");
+    assert!(
+        user.contains("--role roles/iam.workloadIdentityUser"),
+        "{user}"
+    );
     // The stage needs a client of its own.
     assert!(
         ran.stdout().contains("riff cloud signin stage"),
@@ -799,6 +804,50 @@ fn deploy_of_the_stage_uses_only_the_resources_of_the_stage() {
     for shared in ["como-riff-state", "riff-server ", "riff-oidc-client-secret"] {
         assert!(!ran.calls.contains(shared), "{shared} in:\n{}", ran.calls);
     }
+}
+
+/// 01M496JTDB16G52G22CJZRA8J0, 01M496JT648QS9WTE1QVHAJEE5: the stage
+/// takes the image of a commit and scales to zero. The shared riff takes
+/// only a release tag, and keeps one instance.
+#[test]
+fn the_stage_takes_the_image_of_a_commit_and_scales_to_zero() {
+    let commit = "183456a0c4e2b1f3d5a6978877665544332211ff";
+    let cloud = Cloud::new().set(
+        "stage.env",
+        "RIFF_OIDC_CLIENT_ID",
+        "1-a.apps.googleusercontent.com",
+    );
+    let ran = cloud.run(&["deploy", "stage", commit]).ok();
+    let deploy = ran.line("run deploy riff-stage --image ");
+    for flag in [
+        format!("--image us-central1-docker.pkg.dev/como-riff/riff/riff-server:{commit} "),
+        "--min-instances 0 --max-instances 1 ".to_owned(),
+    ] {
+        assert!(deploy.contains(&flag), "{flag} is not in: {deploy}");
+    }
+
+    let ran = cloud.run(&["deploy", "shared", commit, "--confirm", "shared"]);
+    assert!(!ran.out.status.success());
+    assert!(
+        ran.stderr().contains("shared takes only a release tag vX.Y.Z"),
+        "{}",
+        ran.stderr()
+    );
+    assert!(ran.calls.is_empty(), "{}", ran.calls);
+
+    let ran = cloud
+        .run(&["deploy", "shared", "v1.0.0", "--confirm", "shared"])
+        .ok();
+    let deploy = ran.line("run deploy riff-server --image ");
+    assert!(
+        deploy.contains("--min-instances 1 --max-instances 1 "),
+        "{deploy}"
+    );
+
+    // A short commit ID is no tag.
+    let ran = cloud.run(&["deploy", "stage", &commit[..12]]);
+    assert!(!ran.out.status.success());
+    assert!(ran.calls.is_empty(), "{}", ran.calls);
 }
 
 #[test]
@@ -900,7 +949,10 @@ fn list_and_status_show_each_instance() {
     let out = ran.stdout();
     assert!(out.contains("revision: rev-1\n"), "{out}");
     assert!(out.contains("bucket: como-riff-stage-state\n"), "{out}");
-    assert!(out.contains("CI deploys: no"), "{out}");
+    assert!(
+        out.contains("CI deploys: each merge to main, when the GitHub variable STAGE_DEPLOY is true"),
+        "{out}"
+    );
 }
 
 /// A failed call of `gcloud` gives its error in one line and a code

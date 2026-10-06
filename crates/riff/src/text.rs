@@ -4277,8 +4277,10 @@ pub fn cloud_status(s: &crate::cloud::Settings, facts: &crate::cloud::Facts) -> 
         "CI deploys: {}\n",
         if s.deploy_account.is_empty() {
             "no (the settings have no deploy account)"
-        } else {
+        } else if s.confirm {
             "a release tag, when the GitHub variable CLOUD_DEPLOY is true"
+        } else {
+            "each merge to main, when the GitHub variable STAGE_DEPLOY is true"
         }
     ));
     out
