@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use isolated::Isolated;
 use riff::api::Api;
-use riff::look::{self, Notifier};
+use riff::look::{self, Notifier, PullWatch};
 use riff::pr::Gh;
 use riff::top::Top;
 use riff_core::name::{SessionUri, ThreadName};
@@ -164,7 +164,7 @@ async fn the_facts_of_the_forge_make_waiting() {
         &format!("case \"$1\" in pr) echo '{pulls}' ;; *) echo '[]' ;; esac"),
     );
     let gh = Arc::new(Gh::at(gh));
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None)
+    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
         .await
         .unwrap();
     let w1 = info(&api, &lead, &worker).await;
@@ -173,7 +173,7 @@ async fn the_facts_of_the_forge_make_waiting() {
 
     // The merge: the pull request is gone from the open list.
     let gh = Arc::new(Gh::at(script(dir.path(), "gh2", "echo '[]'")));
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None)
+    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
         .await
         .unwrap();
     assert_eq!(
@@ -208,7 +208,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
             {"number":10,"body":"","comments":[{"author":{"login":"m"},"body":"Merged in #517 (7b47efa)"}]},
             {"number":11,"body":"","comments":[{"author":{"login":"m"},"body":"Not merged in #518."}]}]"#,
     );
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None)
+    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
         .await
         .unwrap();
     let w1 = info(&api, &lead, &worker).await;
@@ -222,7 +222,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
             {"number":10,"body":"","comments":[{"body":"Merged in #517 (7b47efa)"}]},
             {"number":11,"body":"","comments":[{"body":"  Merged in #518 (1a2b3c4)"}]}]"#,
     );
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None)
+    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
         .await
         .unwrap();
     let w1 = info(&api, &lead, &worker).await;
@@ -253,7 +253,10 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     );
     let notifier = Notifier { program: notify };
     let wake = Duration::from_secs(1);
-    let look = || look::once(&api, &lead, &gh, wake, Some(&notifier));
+    let look = || async {
+        let mut watch = PullWatch::default();
+        look::once(&api, &lead, &gh, wake, Some(&notifier), &mut watch).await
+    };
     let bodies = |inbox: Vec<riff::api::Inbox>| -> Vec<String> {
         inbox
             .into_iter()

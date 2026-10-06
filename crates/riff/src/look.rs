@@ -41,18 +41,20 @@
 //! `notify-send`, as on GNOME. A machine with no desktop gets none, and
 //! nothing fails.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use riff_core::name::SessionUri;
-use riff_core::wire::{ItemFact, PullFact, PullState, Unanswered};
+use riff_core::name::{SessionUri, Who};
+use riff_core::selector::Selector;
+use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
 
 use crate::api::Api;
 use crate::pr::Gh;
-use crate::rollout::{Issue, Pull, Verify, branch_issue, needs};
+use crate::rollout::{Issue, Pull, Verify, branch_issue, claims, needs};
+use crate::text;
 
 /// The time between two looks.
 pub const LOOK_EVERY: Duration = Duration::from_secs(60);
@@ -131,9 +133,8 @@ pub fn item_facts(issues: &[Issue], pulls: &[Pull]) -> Vec<ItemFact> {
     facts.into_values().collect()
 }
 
-/// Reads the open issues and the open pull requests of `repo` with `gh`,
-/// and makes their facts.
-pub fn forge_facts(gh: &Gh, repo: &str) -> Result<Vec<ItemFact>> {
+/// Reads the open issues and the open pull requests of `repo` with `gh`.
+pub fn read_forge(gh: &Gh, repo: &str) -> Result<(Vec<Issue>, Vec<Pull>)> {
     let pulls = crate::rollout::pulls(gh, repo)?;
     let issues: Vec<Issue> = gh.json(&[
         "issue",
@@ -147,7 +148,7 @@ pub fn forge_facts(gh: &Gh, repo: &str) -> Result<Vec<ItemFact>> {
         "--json",
         "number,body,comments",
     ])?;
-    Ok(item_facts(&issues, &pulls))
+    Ok((issues, pulls))
 }
 
 /// Sends the fact of one item, with no error: `riff pr open`, `riff
@@ -160,6 +161,176 @@ pub async fn tell_fact(api: &Api, me: &SessionUri, issue: u64, number: u64, stat
         needs: Vec::new(),
     };
     let _ = api.item_facts(me, vec![fact], false).await;
+}
+
+/// The longest wait of a pull request for a verify claim before the lead
+/// gets a message (01M49Q316RXNATJP587DWGDNCD).
+pub const VERIFY_WAIT: Duration = Duration::from_secs(30 * 60);
+
+/// A message of the look about a pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullNews {
+    /// The item whose holder gets the message, or `None` for the lead.
+    pub to: Option<String>,
+    pub body: String,
+    /// What the message tells: the pull request, its head, and the
+    /// state.
+    pub told: (u64, String, Stop),
+}
+
+/// Why a pull request stops on its way to the merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Stop {
+    /// Auto-merge is on, and it has a conflict with the default branch.
+    Conflict,
+    /// It waits for a verify, and no session claims the verify.
+    NoVerify,
+}
+
+/// The stops of the pull requests that the look told, so that each
+/// message comes one time for each pull request and state
+/// (01M49Q31FASDM7CG3JEGPYCZB9). The `riff mcp` of the lead keeps it in
+/// memory. A new head of a pull request is a new state.
+#[derive(Debug)]
+pub struct PullWatch {
+    wait: Duration,
+    told: HashSet<(u64, String, Stop)>,
+    /// Since when each pull request, at its head, waits with no verify
+    /// claim.
+    since: HashMap<(u64, String), Instant>,
+}
+
+impl Default for PullWatch {
+    fn default() -> Self {
+        Self::new(VERIFY_WAIT)
+    }
+}
+
+impl PullWatch {
+    /// A watch that tells the lead of a verify that no session claims
+    /// after `wait`.
+    pub fn new(wait: Duration) -> Self {
+        Self {
+            wait,
+            told: HashSet::new(),
+            since: HashMap::new(),
+        }
+    }
+
+    /// The messages for the open pull requests `pulls` at `now`, with the
+    /// claims `claims` of the repository:
+    ///
+    /// - A pull request of an item with auto-merge on and a conflict
+    ///   ([`Pull::conflict`]) goes to the session that holds the item, or
+    ///   to the lead when no session holds it (01M49Q30XMVRFX42YTM1PHX0RZ).
+    /// - A pull request that waits for a verify ([`Verify::Asked`]) with
+    ///   no `verify-` claim for the wait of this watch goes to the lead
+    ///   (01M49Q316RXNATJP587DWGDNCD). A claim starts the wait again.
+    ///
+    /// Each state comes one time, until the head of the pull request
+    /// changes.
+    ///
+    /// ```
+    /// use std::collections::HashSet;
+    /// use std::time::{Duration, Instant};
+    /// use riff::look::PullWatch;
+    /// use riff::rollout::Pull;
+    ///
+    /// let mut watch = PullWatch::new(Duration::from_secs(30 * 60));
+    /// let pull = Pull {
+    ///     number: 40,
+    ///     branch: "worktree-issue-12".into(),
+    ///     head: "1a2b3c4d".into(),
+    ///     mergeable: Some("CONFLICTING".into()),
+    ///     auto_merge: true,
+    ///     ..Pull::default()
+    /// };
+    /// let held: HashSet<String> = ["issue-12".to_owned()].into();
+    /// let start = Instant::now();
+    ///
+    /// // The conflict goes to the holder of the item, one time.
+    /// let news = watch.news(&[pull.clone()], &held, start);
+    /// assert_eq!(news.len(), 1);
+    /// assert_eq!(news[0].to.as_deref(), Some("issue-12"));
+    /// assert!(watch.news(&[pull.clone()], &held, start).is_empty());
+    ///
+    /// // 30 minutes with no verify claim: one message to the lead.
+    /// let later = start + Duration::from_secs(30 * 60);
+    /// let news = watch.news(&[pull.clone()], &held, later);
+    /// assert_eq!(news.len(), 1);
+    /// assert_eq!(news[0].to, None);
+    /// assert!(news[0].body.contains("no session claims verify-issue-12"));
+    /// assert!(watch.news(&[pull.clone()], &held, later).is_empty());
+    ///
+    /// // A new head is a new state: the conflict comes again, to the
+    /// // lead now that no session holds the item.
+    /// let pushed = Pull { head: "5e6f7a8b".into(), ..pull };
+    /// let news = watch.news(&[pushed], &HashSet::new(), later);
+    /// assert_eq!(news.len(), 1);
+    /// assert_eq!(news[0].to, None);
+    /// assert!(news[0].body.contains("No session holds issue-12"));
+    /// ```
+    pub fn news(&mut self, pulls: &[Pull], claims: &HashSet<String>, now: Instant) -> Vec<PullNews> {
+        let heads: HashSet<(u64, &str)> = pulls.iter().map(|p| (p.number, p.head.as_str())).collect();
+        self.told
+            .retain(|(n, head, _)| heads.contains(&(*n, head.as_str())));
+        self.since
+            .retain(|(n, head), _| heads.contains(&(*n, head.as_str())));
+        let mut news = Vec::new();
+        for pull in pulls {
+            let Some(issue) = branch_issue(&pull.branch) else {
+                continue;
+            };
+            let item = format!("issue-{issue}");
+            let (number, head) = (pull.number, pull.head.clone());
+            if pull.conflict() && self.told.insert((number, head.clone(), Stop::Conflict)) {
+                let held = claims.contains(&item);
+                news.push(PullNews {
+                    to: held.then(|| item.clone()),
+                    body: text::pull_conflict(number, &item, &head, held),
+                    told: (number, head.clone(), Stop::Conflict),
+                });
+            }
+            let waits = pull.verify() == Some(Verify::Asked)
+                && !claims.contains(&format!("verify-{item}"));
+            if !waits {
+                self.since.remove(&(number, head));
+                continue;
+            }
+            let since = *self.since.entry((number, head.clone())).or_insert(now);
+            if now.saturating_duration_since(since) >= self.wait
+                && self.told.insert((number, head.clone(), Stop::NoVerify))
+            {
+                news.push(PullNews {
+                    to: None,
+                    body: text::pull_no_verify(number, &item, &head, self.wait.as_secs() / 60),
+                    told: (number, head, Stop::NoVerify),
+                });
+            }
+        }
+        news
+    }
+
+    /// Forgets that `news` was told, for a message that did not go out:
+    /// the next look tells it again.
+    pub fn untell(&mut self, news: &PullNews) {
+        self.told.remove(&news.told);
+    }
+}
+
+/// Posts `news` as a message, as the person of the lead `me`: to the
+/// session that holds its item, or to the lead. The lead does not see its
+/// own posts, so the person posts it.
+async fn tell_news(api: &Api, me: &SessionUri, news: &PullNews) -> Result<()> {
+    let person = SessionUri::new(Who::new(me.who().user(), None)?, me.place().clone());
+    let to: Selector = match (&news.to, me.who().session()) {
+        (Some(item), _) => format!("claim={item},repo={}", me.place().repo_text()).parse()?,
+        (None, Some(session)) => format!("session={session}").parse()?,
+        (None, None) => anyhow::bail!("the lead has no session"),
+    };
+    api.post(&person, me.default_thread().as_ref(), &[to], &news.body, Kind::Message)
+        .await?;
+    Ok(())
 }
 
 /// The desktop notification of a block with no answer
@@ -240,24 +411,40 @@ pub fn notification(block: &Unanswered) -> (String, String) {
 /// One look of the lead `me`: it sends the facts of the forge, when it
 /// can read them, and looks at the blocks with the wake time `wake`. It
 /// shows each block that is unanswered now with `notify`, when it has
-/// one. It gives the blocks that are unanswered now.
+/// one. Then it sends the messages of `watch` for the pull requests that
+/// stop ([`PullWatch::news`]). It gives the blocks that are unanswered
+/// now.
 pub async fn once(
     api: &Api,
     me: &SessionUri,
     gh: &Arc<Gh>,
     wake: Duration,
     notify: Option<&Notifier>,
+    watch: &mut PullWatch,
 ) -> Result<Vec<Unanswered>> {
     let (gh, repo) = (gh.clone(), me.place().repo_text());
-    let facts = tokio::task::spawn_blocking(move || forge_facts(&gh, &repo)).await?;
+    let forge = tokio::task::spawn_blocking(move || read_forge(&gh, &repo)).await?;
     // A forge that does not answer stops no look at the blocks.
-    if let Ok(facts) = facts {
-        api.item_facts(me, facts, true).await?;
-    }
+    let pulls = match forge {
+        Ok((issues, pulls)) => {
+            api.item_facts(me, item_facts(&issues, &pulls), true).await?;
+            Some(pulls)
+        }
+        Err(_) => None,
+    };
     let unanswered = api.look_blocks(me, wake.as_secs()).await?;
     if let Some(notifier) = notify {
         for block in &unanswered {
             notifier.show(block);
+        }
+    }
+    if let Some(pulls) = pulls {
+        let claims = claims(&api.who(me, false).await?);
+        for news in watch.news(&pulls, &claims, Instant::now()) {
+            if let Err(e) = tell_news(api, me, &news).await {
+                watch.untell(&news);
+                return Err(e);
+            }
         }
     }
     Ok(unanswered)
@@ -267,6 +454,7 @@ pub async fn once(
 /// lead. It prints an error once, not again until the error changes.
 pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf>) {
     let (gh, notifier) = (Arc::new(Gh::default()), Notifier::default());
+    let mut watch = PullWatch::default();
     let mut last_error = None;
     loop {
         tokio::time::sleep(LOOK_EVERY).await;
@@ -281,7 +469,7 @@ pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf
             let (wake, notify) = read_settings(settings.as_deref());
             // A machine with no desktop gets no notification.
             let notify = (notify && notifier.here()).then_some(&notifier);
-            once(&api, &me, &gh, wake, notify).await?;
+            once(&api, &me, &gh, wake, notify, &mut watch).await?;
             Ok(())
         };
         match step.await {
