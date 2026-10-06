@@ -92,6 +92,8 @@ impl Riff {
         let fake = tempfile::tempdir().unwrap();
         script(fake.path(), "tmux", FAKE_TMUX);
         script(fake.path(), "gh", FAKE_GH);
+        // A host installs no real sccache (01M4923963S666V9YWTZ46ZZ50).
+        script(fake.path(), "sccache", "#!/bin/sh\necho sccache 0.18.0\n");
         let root = tempfile::tempdir().unwrap();
         let origin = root.path().join("origin.git");
         git(root.path(), &["init", "-q", "--bare", "origin.git"]);

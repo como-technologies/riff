@@ -137,11 +137,11 @@ impl Machine {
 
     /// `cmd ARGS` in the main clone, as a person in a tmux pane.
     fn in_pane(&self, mut cmd: Command, args: &[&str]) -> Command {
-        let path = format!(
-            "{}:{}",
-            self.bin().display(),
-            std::env::var("PATH").unwrap()
-        );
+        // Only a fake `sccache` in the bin counts, not one of the
+        // machine (01M492379BGA3AERT1AM12C650).
+        let real = std::env::var_os("PATH").unwrap();
+        let rest = std::env::split_paths(&real).filter(|d| !d.join("sccache").exists());
+        let path = std::env::join_paths(std::iter::once(self.bin()).chain(rest)).unwrap();
         cmd.args(args)
             .current_dir(self.main())
             .env("PATH", path)
@@ -890,4 +890,89 @@ fn the_skill_says_the_pool_shares_the_cores() {
         let command = format!("`riff workers {setting}`");
         assert!(skill.contains(&command), "the skill has no {command}");
     }
+}
+
+/// A fake `sccache`: it writes each call with its folder and port to
+/// `sccache.log`, and gives a version and numbers.
+const FAKE_SCCACHE: &str = r#"#!/bin/sh
+printf '%s [%s] [%s]\n' "$*" "$SCCACHE_DIR" "$SCCACHE_SERVER_PORT" >> "$(dirname "$0")/sccache.log"
+case "$1" in
+  --version) echo "sccache 0.18.0" ;;
+  --show-stats) echo '{"stats": {"cache_hits": {"counts": {"Rust": 90}}, "cache_misses": {"counts": {"Rust": 10}}}, "cache_size": 1073741824}' ;;
+esac
+exit 0
+"#;
+
+/// 01M492379BGA3AERT1AM12C650: the wrapper gives `claude` the compile
+/// cache of the machine. With no `sccache`, it unsets each variable of
+/// the cache, also one of the person, and says one line.
+#[test]
+fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let seen = m.bin().join("seen");
+    let claude = m.claude(&format!(
+        "echo \"[$RUSTC_WRAPPER] [$SCCACHE_DIR] [$SCCACHE_CACHE_SIZE] [$SCCACHE_SERVER_PORT]\" > '{}'",
+        seen.display()
+    ));
+    let person = [("RUSTC_WRAPPER", "/person/sccache"), ("SCCACHE_DIR", "/person/cache")];
+
+    let out = m.wrapper(&claude, &person);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(read(&seen), "[] [] [] []\n");
+    let said: Vec<_> = stderr(&out)
+        .lines()
+        .filter(|l| l.contains("sccache"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(said, [riff::text::NO_SCCACHE], "one line: {out:?}");
+
+    let sccache = script(&m.bin(), "sccache", FAKE_SCCACHE);
+    m.workers(&["cache", "20G"]);
+    let out = m.wrapper(&claude, &person);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let dir = m.root.path().join("home/sccache");
+    let port = riff::sccache::port(&dir);
+    assert_eq!(
+        read(&seen),
+        format!("[{}] [{}] [20G] [{port}]\n", sccache.display(), dir.display())
+    );
+    assert!(!stderr(&out).contains("sccache"), "{out:?}");
+}
+
+/// 01M49237BM12PVBERD6JXDSX5V, 01M492398HA0AXX0J8BZCKNGTG and
+/// 01M49239AWKEPKEPMZZRRTVRAT: `riff workers cache` shows and sets the
+/// size, `riff workers` shows the size and the hit rate, and `--clear`
+/// stops the server of the cache and deletes its folder.
+#[test]
+fn riff_workers_cache_shows_sets_and_clears_the_cache() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let off = m.workers(&["cache"]);
+    assert!(off.starts_with("workers.cache  40G  ("), "{off}");
+    assert!(off.ends_with("cache off: no sccache. riff update installs it.\n"), "{off}");
+    let listed = m.workers(&[]);
+    assert!(listed.contains("cache off: no sccache."), "{listed}");
+
+    script(&m.bin(), "sccache", FAKE_SCCACHE);
+    let dir = m.root.path().join("home/sccache");
+    let set = m.workers(&["cache", "30G"]);
+    assert!(set.starts_with("workers.cache  30G  ("), "{set}");
+    let line = format!("cache 1.0GB of 30G in {}, hits 90%\n", dir.display());
+    assert!(set.ends_with(&line), "{set}");
+    let listed = m.workers(&[]);
+    assert!(listed.contains(&line), "{listed}");
+    let port = riff::sccache::port(&dir);
+    assert!(
+        read(&m.bin().join("sccache.log"))
+            .contains(&format!("--show-stats --stats-format json [{}] [{port}]", dir.display())),
+        "the stats come from the server of the workers"
+    );
+
+    let bad = m.run(&["workers", "cache", "30GB"]);
+    assert!(!bad.status.success(), "{bad:?}");
+
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    let cleared = m.workers(&["cache", "--clear"]);
+    assert_eq!(cleared, format!("Emptied the compile cache in {}.\n", dir.display()));
+    assert!(!dir.exists());
+    assert!(read(&m.bin().join("sccache.log")).contains("--stop-server ["));
 }
