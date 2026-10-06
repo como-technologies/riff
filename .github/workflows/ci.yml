@@ -69,7 +69,7 @@ jobs:
     # the image of that release and deploys it to Cloud Run, when the
     # repository variable CLOUD_DEPLOY is true (01M3NJAZ6BYH7TWKDYTVEK78PG).
     # It deploys only a release tag vX.Y.Z (01M3MRMAY3P1K151RGAP9K6GSH).
-    # A push to main never deploys (01M3NJAZ8HSE87H0GZ8SNGWN31). On a
+    # A push to main never deploys here (01M3NJAZ8HSE87H0GZ8SNGWN31). On a
     # tag push the gate is skipped, and on a run by hand the Release
     # check is, so the if: names the result of each need and does not
     # skip on a skipped need. The job signs in to Google Cloud with the

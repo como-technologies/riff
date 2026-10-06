@@ -368,11 +368,9 @@ impl Settings {
             memory: get("CLOUD_MEMORY"),
             min_instances: match get("CLOUD_MIN_INSTANCES").as_str() {
                 "" => 1,
-                n => n
-                    .parse()
-                    .ok()
-                    .filter(|n| *n <= 1)
-                    .with_context(|| format!("the cloud settings {name}: CLOUD_MIN_INSTANCES is 0 or 1, not {n}"))?,
+                n => n.parse().ok().filter(|n| *n <= 1).with_context(|| {
+                    format!("the cloud settings {name}: CLOUD_MIN_INSTANCES is 0 or 1, not {n}")
+                })?,
             },
             alert: get("CLOUD_ALERT"),
             alert_channel: get("CLOUD_ALERT_CHANNEL"),

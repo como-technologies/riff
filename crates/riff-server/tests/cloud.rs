@@ -302,7 +302,10 @@ fn each_push_to_main_deploys_the_stage_and_runs_the_smoke_test() {
     for shared in ["shared.env", "cloud deploy shared", "CLOUD_DEPLOY ="] {
         assert!(!job.contains(shared), "{shared} in: {job}");
     }
-    assert!(!job.contains("credentials_json"), "the job must not use a key");
+    assert!(
+        !job.contains("credentials_json"),
+        "the job must not use a key"
+    );
 
     assert!(runs("stage", &stage_push("refs/heads/main", "success")));
     for gate in ["failure", "skipped", "cancelled"] {

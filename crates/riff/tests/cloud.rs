@@ -694,7 +694,7 @@ fn deploy_to_the_shared_riff_asks_for_the_name() {
     stage.run(&["deploy", "stage", "v1.0.0"]).ok();
 }
 
-/// 01M3ZE3Z26N1CG090D5D5FZ3NW: no setting of one riff names the bucket,
+/// 01M496JTN962N0AX378MA1MBPM: no setting of one riff names the bucket,
 /// the service, the secret or another resource of a different riff. So
 /// the stage cannot touch the data of the shared riff.
 #[test]
@@ -829,7 +829,8 @@ fn the_stage_takes_the_image_of_a_commit_and_scales_to_zero() {
     let ran = cloud.run(&["deploy", "shared", commit, "--confirm", "shared"]);
     assert!(!ran.out.status.success());
     assert!(
-        ran.stderr().contains("shared takes only a release tag vX.Y.Z"),
+        ran.stderr()
+            .contains("shared takes only a release tag vX.Y.Z"),
         "{}",
         ran.stderr()
     );
@@ -847,6 +848,20 @@ fn the_stage_takes_the_image_of_a_commit_and_scales_to_zero() {
     // A short commit ID is no tag.
     let ran = cloud.run(&["deploy", "stage", &commit[..12]]);
     assert!(!ran.out.status.success());
+    assert!(ran.calls.is_empty(), "{}", ran.calls);
+}
+
+/// `riff cloud smoke` needs the refresh token of the test account in
+/// its variable, and calls no `gcloud` (01M496JTHN19BZ7YN94993R35X).
+#[test]
+fn the_smoke_test_with_no_token_says_what_it_needs() {
+    let ran = Cloud::new().run(&["smoke", "stage"]);
+    assert!(!ran.out.status.success());
+    assert!(
+        ran.stderr().contains(riff::text::SMOKE_NO_TOKEN),
+        "{}",
+        ran.stderr()
+    );
     assert!(ran.calls.is_empty(), "{}", ran.calls);
 }
 
@@ -950,7 +965,9 @@ fn list_and_status_show_each_instance() {
     assert!(out.contains("revision: rev-1\n"), "{out}");
     assert!(out.contains("bucket: como-riff-stage-state\n"), "{out}");
     assert!(
-        out.contains("CI deploys: each merge to main, when the GitHub variable STAGE_DEPLOY is true"),
+        out.contains(
+            "CI deploys: each merge to main, when the GitHub variable STAGE_DEPLOY is true"
+        ),
         "{out}"
     );
 }
