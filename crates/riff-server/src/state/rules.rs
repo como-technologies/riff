@@ -397,6 +397,7 @@ fn given(changes: &[Change]) -> Given {
         written_at_ms: 0,
         by: None,
         command: None,
+        call: None,
         change: change.clone(),
     });
     Given {

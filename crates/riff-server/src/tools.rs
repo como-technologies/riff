@@ -1048,6 +1048,7 @@ mod tests {
             written_at_ms: 0,
             by: None,
             command: None,
+            call: None,
             change: Change::PauseSet(PauseSet {
                 scope: Scope::Riff,
                 state: RiffState::Running,
@@ -1061,6 +1062,7 @@ mod tests {
             written_at_ms: 0,
             by: None,
             command: None,
+            call: None,
             change: Change::Claimed(Claimed {
                 session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
                 thread: "acme/app".parse().unwrap(),

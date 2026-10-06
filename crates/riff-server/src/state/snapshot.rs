@@ -13,6 +13,7 @@
 //! | `presence::Saved` | `cursors`, `statuses` |
 //! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` |
 //! | `plan::Saved` | `plans` |
+//! | `calls::Saved` | `calls` |
 //!
 //! A group that adds a part to the state adds a field to its own
 //! `Saved`, with a default (01M3T4111PFM0C6KPREWFS9EQQ). A new group
@@ -24,7 +25,7 @@ use riff_core::name::Who;
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
-use super::{people, plan, presence, sessions, the_riff, threads, work};
+use super::{calls, people, plan, presence, sessions, the_riff, threads, work};
 
 /// The state that a checkpoint keeps: the state that the log gives up to
 /// [`Snapshot::position`], the read cursors, and the last call of each
@@ -48,6 +49,8 @@ pub struct Snapshot {
     people: people::Saved,
     #[serde(flatten)]
     plans: plan::Saved,
+    #[serde(flatten)]
+    calls: calls::Saved,
 }
 
 /// The proof that a call comes from the load of a checkpoint. Only this
@@ -56,13 +59,15 @@ pub struct Snapshot {
 pub(super) struct LoadPath(());
 
 impl Snapshot {
-    /// The snapshot of `riff` and the read cursors of `presence`, at
-    /// `position`. `seen` gives the last call of a session, or 0.
+    /// The snapshot of `riff`, the read cursors of `presence` and the
+    /// kept `calls`, at `position`. `seen` gives the last call of a
+    /// session, or 0.
     pub(super) fn new(
         position: u64,
         riff: &Riff,
         presence: &presence::Presence,
         seen: impl Fn(&Who) -> u64,
+        calls: calls::Saved,
     ) -> Snapshot {
         Snapshot {
             position,
@@ -73,12 +78,13 @@ impl Snapshot {
             presence: presence.saved(),
             people: riff.people().saved(),
             plans: riff.plans().saved(),
+            calls,
         }
     }
 
-    /// The state that the log gives, the part of the presence, and the
-    /// last call of each session.
-    pub(super) fn into_parts(self) -> (Riff, presence::Saved, BTreeMap<Who, u64>) {
+    /// The state that the log gives, the part of the presence, the
+    /// last call of each session, and the kept calls.
+    pub(super) fn into_parts(self) -> (Riff, presence::Saved, BTreeMap<Who, u64>, calls::Saved) {
         let (sessions, seen) = self.sessions.restore();
         let riff = Riff::restore(
             LoadPath(()),
@@ -90,6 +96,6 @@ impl Snapshot {
             self.people.restore(),
             self.plans.restore(),
         );
-        (riff, self.presence, seen)
+        (riff, self.presence, seen, self.calls)
     }
 }

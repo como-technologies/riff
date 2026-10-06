@@ -579,7 +579,7 @@ pub struct Admit {
 }
 
 /// The reply to [`Admit`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Admitted {
     /// The USER of the person.
     pub user: String,

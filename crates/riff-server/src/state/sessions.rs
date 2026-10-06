@@ -501,6 +501,7 @@ mod tests {
             written_at_ms: at_ms,
             by,
             command: None,
+            call: None,
             change: Change::JoinedThread(Member {
                 session: session.clone(),
                 thread: "design".parse().unwrap(),

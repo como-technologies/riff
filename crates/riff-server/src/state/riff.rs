@@ -278,6 +278,7 @@ mod tests {
                 written_at_ms: 5,
                 by: None,
                 command: None,
+                call: None,
                 change: change.clone(),
             };
             apply(&mut riff, &record);

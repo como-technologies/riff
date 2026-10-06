@@ -138,6 +138,17 @@ use crate::signed::Content;
 /// is the reason, for a person.
 pub const REFUSED_HEADER: &str = "riff-refused";
 
+/// The HTTP header of the call ID of a command
+/// (01M48VFX22S4811DYBBD7QDW24). Each try of one call sends the same ID.
+/// `riff-server` runs a command with a call ID one time only, and gives
+/// a second try the reply of the first.
+pub const CALL_HEADER: &str = "riff-call";
+
+/// The HTTP header of the reply to a repeated call: `1`. The reply is
+/// the reply of the kept call, on the state of now
+/// (01M48VFX22S4811DYBBD7QDW24).
+pub const REPEAT_HEADER: &str = "riff-repeat";
+
 // ANCHOR: call
 /// A call: one wire type with its path and the type of its reply
 /// (01M3WRD8TBDPA4JNEZY6J4N2EX). The client sends each call with one
@@ -2255,7 +2266,7 @@ pub struct TakeOwner {}
 /// ).unwrap();
 /// assert!(same.already());
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OwnerAsked {
     /// The email of the admin that asked, in lower case.
     pub admin: String,
@@ -2282,7 +2293,7 @@ impl OwnerAsked {
 pub struct DenyOwner {}
 
 /// The reply to [`DenyOwner`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OwnerDenied {
     /// The email of the owner, who stays the owner.
     pub owner: String,

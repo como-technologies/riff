@@ -273,6 +273,9 @@ impl Done {
 pub struct Cause {
     pub by: By,
     pub command: CommandKind,
+    /// The call ID of the command, when its call has one
+    /// (01M48VFFY5CK9MRXJESV2NHY5F).
+    pub call: Option<String>,
 }
 
 impl Cause {
@@ -281,7 +284,13 @@ impl Cause {
         Cause {
             by: caller.by(),
             command: kind,
+            call: None,
         }
+    }
+
+    /// The same cause with the call ID `call`.
+    pub fn with_call(self, call: Option<String>) -> Cause {
+        Cause { call, ..self }
     }
 }
 
@@ -645,7 +654,11 @@ pub trait Command: Send + 'static {
     type Reply: Send;
     /// What `handle` keeps for the reply, for example the selectors of
     /// a post that matched no session.
-    type Note: Send;
+    ///
+    /// The engine keeps the note of a call with a call ID, and a
+    /// repeated call gets a copy of it. After a start, the kept call has
+    /// the default note (01M48VFXHHND8SX4DBXZTFMJGQ).
+    type Note: Clone + Default + Send + 'static;
 
     /// The role that the command of `caller` needs. [`permits`]
     /// compares it with the role of the caller. It reads the caller

@@ -189,6 +189,12 @@ pub struct Record {
     /// as text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The call ID of the command that made the record: the header
+    /// `riff-call` of the call (01M48VFFY5CK9MRXJESV2NHY5F). `None` in a
+    /// record of a command with no call ID, and in a record from before
+    /// this field. A build that does not know the field skips it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<String>,
     pub change: Change,
 }
 
@@ -1003,6 +1009,7 @@ impl Line {
             written_at_ms: raw.written_at_ms,
             by: raw.by,
             command: raw.command,
+            call: None,
             change,
         })))
     }
@@ -1119,6 +1126,7 @@ mod tests {
                 written_at_ms: 4,
                 by: Some(By::Server),
                 command: Some("forget".into()),
+                call: None,
                 change,
             };
             let line = serde_json::to_string(&record).unwrap();

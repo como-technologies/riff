@@ -988,6 +988,7 @@ mod tests {
             written_at_ms: position * 1000,
             by: Some(By::Session(uri(session).who().clone())),
             command: None,
+            call: None,
             change,
         }
     }

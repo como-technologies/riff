@@ -687,6 +687,7 @@ fn a_start_from_a_checkpoint_gives_the_people_of_a_full_replay() {
             written_at_ms: 0,
             by: None,
             command: None,
+            call: None,
             change: change.clone(),
         })
         .collect();

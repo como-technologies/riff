@@ -74,6 +74,7 @@ fn record(second: u64, session: &str, change: Change) -> Record {
         written_at_ms: BASE + second * 1000,
         by: Some(By::Session(uri(session).who().clone())),
         command: None,
+        call: None,
         change,
     }
 }
