@@ -198,39 +198,35 @@ fn sleeper_in(home: &Path, id: &str, context: bool) -> Child {
 }
 
 /// A stand-in for the `sccache` server that a build of a context of the
-/// worker `id` started: the program `sccache` (a link to `sleep`) with
-/// each variable of that build, and the mark of `sccache`
-/// (01M49AB2TBMHGNXM3GE4NDFYYG).
+/// worker `id` started: the program `sccache` with each variable of
+/// that build, and the mark of `sccache` (01M49AB2TBMHGNXM3GE4NDFYYG).
+/// It is `sh` with the name `sccache`, and waits for a line on its
+/// stdin with no child: a link to `sleep` can be a multi-call binary
+/// that knows no program `sccache`.
 fn cache_server(home: &Path, id: &str) -> Child {
-    let bin = home.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let sccache = bin.join("sccache");
-    if !sccache.exists() {
-        let sleep = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-            .map(|dir| dir.join("sleep"))
-            .find(|p| p.is_file())
-            .unwrap();
-        std::os::unix::fs::symlink(sleep, &sccache).unwrap();
-    }
-    marked(Command::new(sccache), home, id)
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new("sh");
+    cmd.arg0("sccache").args(["-c", "read line"]);
+    marked(cmd, home, id, Stdio::piped())
 }
 
 /// A `sleep` of a context of the worker `id` with the mark of
 /// `sccache`: it is not the server, so it stays of the worker.
 fn marked_sleeper(home: &Path, id: &str) -> Child {
-    marked(Command::new("sleep"), home, id)
+    let mut cmd = Command::new("sleep");
+    cmd.arg("300");
+    marked(cmd, home, id, Stdio::null())
 }
 
-fn marked(mut cmd: Command, home: &Path, id: &str) -> Child {
-    cmd.arg("300")
-        .env_clear()
+fn marked(mut cmd: Command, home: &Path, id: &str, stdin: Stdio) -> Child {
+    cmd.env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
         .env("RIFF_WORKER", "1")
         .env("RIFF_SESSION", id)
         .env("RIFF_HOME", home)
         .env(CONTEXT, "1")
         .env(riff::sccache::SERVER_MARK, "1")
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     cmd.spawn().unwrap()
