@@ -294,6 +294,17 @@ pub use work::{MUST_CLEAR, released_for};
 use presence::Session;
 use threads::wake;
 
+/// True when `message` to `to` is a request of the lead of its user:
+/// a message of a lead of the same user, not of `to`, that starts with
+/// `request:` (01M49KT28N4B07P4G80Z74GRAH).
+fn is_request(to: &Who, message: &Message) -> bool {
+    let from = message.from.who();
+    from != to
+        && from.user() == to.user()
+        && message.from.lead()
+        && message.body.trim_start().starts_with("request:")
+}
+
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 
@@ -392,6 +403,9 @@ pub struct Stuck {
     pub host: String,
     /// The time since the first ask.
     pub asked: Duration,
+    /// The first line of each unread request of the lead to the worker
+    /// ([`State::unread_requests`]).
+    pub requests: Vec<String>,
 }
 
 /// What a new message causes: sessions to wake and a line for `tail`.
@@ -1862,7 +1876,8 @@ impl State {
                 && session.watching(now)
                 && !session.stopping
                 && !view.holds_claim(who)
-                && !view.is_lead(who, now);
+                && !view.is_lead(who, now)
+                && self.unread_requests(who).is_empty();
             if free {
                 let key = (
                     who.user().to_owned(),
@@ -1894,6 +1909,59 @@ impl State {
             }
         }
         stopping
+    }
+
+    /// The first line of each unread direct message to `who` from the
+    /// lead of its user that starts with `request:`, oldest first. The
+    /// server does not ask a worker with one to stop
+    /// (01M49KT28N4B07P4G80Z74GRAH).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::selector::Selector;
+    /// use riff_core::wire::Post;
+    /// use riff_server::state::State;
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead".parse()?;
+    /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.register(&w1, now);
+    /// let to = vec![Selector::session("w1")];
+    /// for body in ["request: claim issue-12\nIt is free.", "hi"] {
+    ///     state.post(Post::new(&lead, None, to.clone(), body), now, 0).unwrap();
+    /// }
+    /// assert_eq!(state.unread_requests(w1.who()), ["request: claim issue-12"]);
+    ///
+    /// // A read of the direct thread ends it.
+    /// let dm = state.threads(&w1, now)[0].thread.clone();
+    /// state.read(&w1, &dm, false, now).unwrap();
+    /// assert!(state.unread_requests(w1.who()).is_empty());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn unread_requests(&self, who: &Who) -> Vec<String> {
+        let mut requests: Vec<(u64, u64, String)> = self
+            .written
+            .threads()
+            .by_name
+            .iter()
+            .filter(|(thread, _)| thread.is_direct() && may_read(who, thread))
+            .flat_map(|(thread, t)| {
+                let read = self.presence.cursor(who, thread);
+                t.messages
+                    .iter()
+                    .map(|m| &m.message)
+                    .filter(move |m| m.seq > read && is_request(who, m))
+                    .map(|m| {
+                        let line = m.body.trim().lines().next().unwrap_or_default();
+                        (m.at_ms, m.seq, line.to_owned())
+                    })
+            })
+            .collect();
+        requests.sort();
+        requests.into_iter().map(|(_, _, line)| line).collect()
     }
 
     /// Asks each idle worker past the limit to stop, and gives each
@@ -1986,6 +2054,7 @@ impl State {
                 worker: self.uri(&who, now),
                 host,
                 asked,
+                requests: self.unread_requests(&who),
             })
             .collect()
     }
@@ -4411,6 +4480,85 @@ mod tests {
         w2_calls(&mut state, at);
         at += Duration::from_secs(70);
         assert_eq!(asks(&mut state, at), [("w1".into(), true)]);
+    }
+
+    /// 01M49KT28N4B07P4G80Z74GRAH: the server does not ask an idle
+    /// worker to stop while it has an unread request of its lead. A
+    /// message that is not a request, or a request of a session that is
+    /// not the lead, does not keep it. A read ends the hold.
+    #[test]
+    fn an_idle_worker_with_an_unread_request_of_its_lead_stays() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        let the_lead = lead(api());
+        state.register(&the_lead, now);
+        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
+        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
+        let to_w1 = vec![Selector::session("w1")];
+        let w2_calls = |state: &mut State, at: Instant| {
+            let at = at + Duration::from_secs(1);
+            state.watch_ended(w2.who(), at);
+            state.watch_started(&w2, at);
+        };
+        let post = |state: &mut State, from: &SessionUri, body: &str| {
+            let post = Post::new(from, None, to_w1.clone(), body);
+            state.post(post, now, 0).unwrap().tailed.thread
+        };
+
+        post(&mut state, &the_lead, "hi: a message, no request");
+        post(&mut state, &w2, "request: claim issue-7 (not of the lead)");
+        assert!(state.unread_requests(w1.who()).is_empty());
+        let dm = post(&mut state, &the_lead, "request: claim verify-issue-12");
+        assert_eq!(
+            state.unread_requests(w1.who()),
+            ["request: claim verify-issue-12"]
+        );
+
+        let mut at = now;
+        for _ in 0..3 {
+            w2_calls(&mut state, at);
+            at += Duration::from_secs(300);
+            assert!(stopped(&mut state, at).is_empty(), "w1 has a request");
+        }
+
+        state.read(&w1, &dm, false, at).unwrap();
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(stopped(&mut state, at), ["w1"]);
+    }
+
+    /// 01M49KT3JXZATXMA4WNTR9BJCK: a request of the lead that comes
+    /// after the ask, to a worker that still runs: the note names it.
+    #[test]
+    fn the_note_of_a_worker_that_still_runs_names_each_unread_request() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        let the_lead = lead(api());
+        state.register(&the_lead, now);
+        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
+        let w2 = idle_worker(&mut state, "pangolin", "w2", now + Duration::from_secs(5));
+        let asked = now + Duration::from_secs(70);
+        assert_eq!(stopped(&mut state, asked), ["w1"]);
+
+        for body in ["request: claim issue-12", "request: claim verify-issue-9"] {
+            let post = Post::new(&the_lead, None, vec![Selector::session("w1")], body);
+            state.post(post, asked, 0).unwrap();
+        }
+        let later = asked + crate::idle::STOP_WAIT;
+        state.alive(&w1, later);
+        let stuck = state.stuck_workers(later);
+        assert_eq!(stuck.len(), 1);
+        assert_eq!(stuck[0].worker.who(), w1.who());
+        assert_eq!(
+            stuck[0].requests,
+            ["request: claim issue-12", "request: claim verify-issue-9"]
+        );
+        let news = crate::idle::stuck(&stuck[0]);
+        assert!(news.contains("It did not read 2 requests of the lead"), "{news}");
+        assert!(news.contains("\"request: claim issue-12\""), "{news}");
+        assert_ne!(w2.who(), w1.who());
     }
 
     /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: an idle worker on each of two hosts:

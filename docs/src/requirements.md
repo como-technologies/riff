@@ -3159,6 +3159,13 @@
   time since the ask, why riff could not stop it, and the command
   `riff workers stop ID` to stop it. It posts this note one time for
   each first ask.
+- **01M49KT28N4B07P4G80Z74GRAH** The server does not ask an idle
+  worker to stop while it has an unread direct message from the lead
+  of its user that starts with `request:`.
+- **01M49KT3JXZATXMA4WNTR9BJCK** The note of 01M4385Z2QAMEED30JYE81SMBY
+  names the first line of each unread request of the lead to the
+  worker (01M49KT28N4B07P4G80Z74GRAH), so that the lead can give it
+  to another session.
 - **01M4385Z5BN03E6HTEB5GQVZ8X** `riff watch` in a worker
   (`RIFF_WORKER=1` and `RIFF_WORKER_WRAPPER` set) sends its keep-alive
   each 10 seconds. When the reply asks the worker to stop, it prints
