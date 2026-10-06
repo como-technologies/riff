@@ -25,11 +25,19 @@
 //! drops. A test sets its own variables after the helper, so its
 //! values win.
 //!
-//! A test that needs a place outside each git repository gets its temp
-//! dir from [`outside_git`]. The `TMPDIR` of a worker is under the home
-//! of the person, and a home can be a git repository. A plain temp dir
-//! then is in that repository, and a test of "no repository" finds it,
-//! or writes to it (01M43B48Z8R0SXAWBQP75CPR55).
+//! The `TMPDIR` of a worker is under the home of the person, and a home
+//! can be a git repository. A plain temp dir then is in that repository,
+//! and a test of "no repository" finds it, or writes to it, for example
+//! `riff enable` in a dir of the test. Three guards keep each test out
+//! of it:
+//!
+//! - `.cargo/config.toml` sets `TMPDIR` to `/var/tmp` for each cargo
+//!   run in the repository, also a plain `cargo test`
+//!   (01M49NP2907J4SH4S6MAY09VXE).
+//! - The temp dir of an [`Isolated`] is outside each git repository,
+//!   also when cargo runs from another dir (01M49NP2JW8JFWYY56K7AK3H05).
+//! - A test that needs a place outside each git repository gets its
+//!   temp dir from [`outside_git`] (01M43B48Z8R0SXAWBQP75CPR55).
 //!
 //! [`offenders`] finds each test file that names a binary of riff
 //! without the helper. A test of this crate fails on each one.
@@ -80,9 +88,26 @@ impl Default for Isolated {
 }
 
 impl Isolated {
-    /// Makes a new temp dir with each dir of the environment.
+    /// Makes a new temp dir with each dir of the environment, outside
+    /// each git repository (01M49NP2JW8JFWYY56K7AK3H05).
     pub fn new() -> Isolated {
-        Isolated::in_dir(tempfile::tempdir().expect("a temp dir"))
+        Isolated::in_roots(&temp_roots())
+    }
+
+    /// Makes the environment in the first of `roots` that is a dir
+    /// outside each git repository, as [`outside_git_from`] does.
+    ///
+    /// ```
+    /// let home = tempfile::tempdir()?;
+    /// std::fs::create_dir_all(home.path().join(".git"))?;
+    /// let clean = isolated::outside_git();
+    ///
+    /// let env = isolated::Isolated::in_roots(&[home.path().into(), clean.path().into()]);
+    /// assert!(env.path().starts_with(clean.path()));
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn in_roots(roots: &[PathBuf]) -> Isolated {
+        Isolated::in_dir(outside_git_from(roots))
     }
 
     /// One environment for the whole test process, for a helper that

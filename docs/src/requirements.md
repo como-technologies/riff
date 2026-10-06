@@ -827,11 +827,15 @@
   `TMPDIR`, then `/var/tmp`, `/tmp` and `/dev/shm`. So the test passes,
   and writes nothing, also when `TMPDIR` is in a repository, for
   example the home of the person.
-- **01M43B491Z25KT0XBC7CANFS5G** `just test`, and so `just ci`, runs the
-  tests with a `TMPDIR` outside each git repository. When `TMPDIR` is
-  in a repository, it uses `riff-test-UID` in the first of `/var/tmp`,
-  `/tmp` and `/dev/shm` that is outside each repository. So no test of
-  a worker finds the repository of the home, or writes to it.
+- **01M43B491Z25KT0XBC7CANFS5G** Replaced by 01M49NP2907J4SH4S6MAY09VXE.
+- **01M49NP2907J4SH4S6MAY09VXE** Each cargo run in the riff repository,
+  also a plain `cargo test`, has `TMPDIR` set to `/var/tmp`:
+  `.cargo/config.toml` sets it with `force`. So no test of a worker
+  finds the repository of the home, or writes to it.
+- **01M49NP2JW8JFWYY56K7AK3H05** The temp dir of the test helper
+  `isolated` is outside each git repository, also when cargo runs from
+  a dir outside the riff repository. So no command of a test writes
+  settings in a repository above the dirs of the test.
 - **01M3W98PMDPZW1CR3KJYMPHVQZ** A test server starts with no old
   sign-in at its URL. The tests of one file share one mock keyring,
   and the OS can give the port of an earlier test to a later test. A

@@ -924,8 +924,9 @@ and `riff-server` through the helper crate `isolated`: a temp home of
 its own for each test, and the same `RIFF_SERVER` unless the test
 names its own server. A test fails a test file that runs a binary of
 riff without the helper. Your home can be a git repository, and a
-worker has its `TMPDIR` in your home. So `just test` moves a `TMPDIR`
-that is in a repository to `/var/tmp/riff-test-UID`. A unit test or a
+worker has its `TMPDIR` in your home. So `.cargo/config.toml` sets
+`TMPDIR` to `/var/tmp` for each cargo run in the repository, also a
+plain `cargo test`. A unit test or a
 doc test that needs a dir outside each git repository uses
 `isolated::outside_git()`, not `tempfile::tempdir()`.
 
