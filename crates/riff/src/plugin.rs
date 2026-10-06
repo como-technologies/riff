@@ -1081,7 +1081,7 @@ mod tests {
     #[test]
     fn each_commit_gets_one_full_run_and_the_verify_reviews() {
         let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-        let skill = flat(&text("riff/skills/riff/SKILL.md"));
+        let skill = flat(text("riff/skills/riff/SKILL.md"));
         for word in [
             "### One full run for each commit",
             "It is the only full run of the commit.",

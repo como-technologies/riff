@@ -780,6 +780,7 @@ fn the_book_has_a_how_to_for_each_command() {
         (
             "Report a verify",
             &[
+                "gh pr checks 40",
                 "riff verify pass 40 --file result.md",
                 "riff verify fail 40 --file result.md",
             ],

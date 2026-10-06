@@ -191,7 +191,9 @@ fn workspace() -> tempfile::TempDir {
         "[workspace]\nresolver = \"3\"\nmembers = [\"crates/*\"]\n",
     );
     let package = |name: &str, deps: &str| {
-        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n{deps}")
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n{deps}"
+        )
     };
     write(top, "crates/a/Cargo.toml", &package("a", ""));
     write(top, "crates/a/src/lib.rs", "//! A.\n");
