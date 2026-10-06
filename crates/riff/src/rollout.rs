@@ -153,6 +153,8 @@ pub struct Place {
     /// The available memory in GB under which the machine starts no
     /// worker.
     pub floor: u32,
+    /// The deaths of its workers in the last hour ([`crate::deaths`]).
+    pub deaths: usize,
     /// The numbers of the machine, if it tells them.
     pub machine: Option<Machine>,
     /// The disk of the machine, if it tells it.
@@ -161,20 +163,25 @@ pub struct Place {
 
 impl Place {
     /// True when the machine can take one more worker: fewer workers
-    /// than its limit, not busy, not low on memory, and not low on disk
-    /// (01M41A11DX1QRP48YPTDNT67W4).
+    /// than its limit, not busy, not low on memory, not low on disk
+    /// (01M41A11DX1QRP48YPTDNT67W4), and no loop of deaths
+    /// (01M493YZZEW1FTDBNA090WT2AG).
     ///
     /// ```
     /// use riff::disk::Disk;
     /// use riff::rollout::Place;
     ///
-    /// let place = Place { host: "pangolin".into(), session: None, limit: 2, workers: 0, floor: 4, machine: None, disk: None };
+    /// let place = Place { host: "pangolin".into(), session: None, limit: 2, workers: 0, floor: 4, deaths: 0, machine: None, disk: None };
     /// assert!(place.room());
     /// assert!(Place { disk: Some(Disk { free_gb: 50, total_gb: 455 }), ..place.clone() }.room());
-    /// assert!(!Place { disk: Some(Disk { free_gb: 16, total_gb: 455 }), ..place }.room());
+    /// assert!(!Place { disk: Some(Disk { free_gb: 16, total_gb: 455 }), ..place.clone() }.room());
+    /// // 3 deaths in the last hour leave room; 4 stop the starts.
+    /// assert!(Place { deaths: 3, ..place.clone() }.room());
+    /// assert!(!Place { deaths: 4, ..place }.room());
     /// ```
     pub fn room(&self) -> bool {
         self.workers < usize::from(self.limit)
+            && !crate::deaths::halted(self.deaths)
             && !self.machine.is_some_and(|m| m.busy() || m.low(self.floor))
             && !self.disk.is_some_and(|d| d.low())
     }
@@ -217,6 +224,7 @@ impl View {
     ///     limit: 2,
     ///     workers: 1,
     ///     floor: 4,
+    ///     deaths: 0,
     ///     machine: None,
     ///     disk: None,
     /// };
@@ -250,6 +258,7 @@ impl View {
 ///     limit: 4,
 ///     workers,
 ///     floor: 4,
+///     deaths: 0,
 ///     machine: Some(Machine { cores, mhz: 3000, now_mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 }),
 ///     disk: None,
 /// };
@@ -282,7 +291,7 @@ pub fn pick(places: &[Place]) -> Option<usize> {
 /// ```
 /// use riff::rollout::{Place, View, decide};
 ///
-/// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, floor: 4, machine: None, disk: None };
+/// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, floor: 4, deaths: 0, machine: None, disk: None };
 /// let view = View { running: true, work: 2, idle: 0, places: vec![here] };
 /// assert_eq!(decide(&view), Some(0));
 /// assert_eq!(decide(&View { running: false, ..view.clone() }), None);
@@ -467,6 +476,7 @@ impl Effect {
 ///     limit: 4,
 ///     workers: 3,
 ///     floor: 4,
+///     deaths: 0,
 ///     machine: None,
 ///     disk: None,
 /// };
@@ -1239,6 +1249,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 limit,
                 workers: here.len(),
                 floor: settings::workers_floor(&settings)?,
+                deaths: crate::deaths::here(),
                 machine: Some(Machine::here()),
                 disk: identity::main_worktree(&identity::working_dir()?)
                     .and_then(|main| Disk::here(&main)),
@@ -1255,6 +1266,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 limit: status.limit,
                 workers: status.workers.len(),
                 floor: status.floor,
+                deaths: status.deaths,
                 machine: status.machine,
                 disk: status.disk,
             });
@@ -1332,6 +1344,12 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
 /// lead does not see its own posts, so the person posts it.
 pub async fn note_lead(server: &str, me: &SessionUri, body: &str) -> Result<()> {
     post_lead(server, me, body, Kind::Note).await
+}
+
+/// Posts `body` as a message to the lead `me`, in its repository
+/// thread, as the person. A message wakes the lead.
+pub async fn message_lead(server: &str, me: &SessionUri, body: &str) -> Result<()> {
+    post_lead(server, me, body, Kind::Message).await
 }
 
 /// Posts `body` to the lead `me`, in its repository thread, as the
@@ -1515,6 +1533,7 @@ mod tests {
             limit: 4,
             workers: 0,
             floor: 4,
+            deaths: 0,
             machine: machine(32, 6000, 128),
             disk: None,
         }
@@ -1527,6 +1546,7 @@ mod tests {
             limit: 4,
             workers: 0,
             floor: 4,
+            deaths: 0,
             machine: machine(16, 4500, 32),
             disk: None,
         }

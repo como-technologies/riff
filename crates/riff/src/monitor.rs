@@ -699,6 +699,7 @@ mod tests {
         let status = crate::host::HostStatus {
             limit: 2,
             floor: 4,
+            deaths: 0,
             machine: Machine::parse("cpu 8x3000MHz, mem 64GB, 60GB available, load 0.50"),
             disk: Some(crate::disk::Disk {
                 free_gb: 50,
@@ -733,6 +734,7 @@ mod tests {
         let status = crate::host::HostStatus {
             limit: 10,
             floor: 16,
+            deaths: 0,
             machine: Machine::parse(
                 "cpu 128x5883MHz (now 5800MHz), mem 1024GB, 1000GB available, load 133.20",
             ),

@@ -47,6 +47,10 @@
 //! - The note wakes nobody. The death of a worker is not an event for
 //!   the lead: the rollout starts a worker for the free item, as for
 //!   each free item ([`crate::rollout`]).
+//! - Each such end is a death of the machine ([`crate::deaths`]). The
+//!   death that starts a loop of deaths gives one message that wakes
+//!   the lead ([`Reaped::alarm`]), and the rollout starts no worker on
+//!   the machine (01M493YZZEW1FTDBNA090WT2AG).
 //! - The cause is best effort ([`oom_cause`]). tmux puts each pane in a
 //!   systemd scope of its own. riff keeps the scope of each worker pane
 //!   while the pane lives ([`scope_of`]), and looks for the line of
@@ -275,21 +279,33 @@ pub fn looked_after<'a>(
     })
 }
 
+/// What [`reap`] gives the lead.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reaped {
+    /// One note for each worker that riff ended.
+    pub notes: Vec<String>,
+    /// The message when these deaths start a loop of deaths on the
+    /// machine (01M493Z02KS82B3CVZEVFA3D6E). It wakes the lead.
+    pub alarm: Option<String>,
+}
+
 /// Ends the session of each worker in `lost` that is still live in
 /// `sessions` (`riff who`) and that `me` looks after
 /// ([`looked_after`]), and gives one note for the lead for each
 /// (01M3WG2460P4GF7GEVBY92Q33W). `me` is the caller: the host, or the
 /// lead. An end frees the claims of the session at once (R206).
 /// `journal` reads the journal one time, only when a lost pane has a
-/// scope.
+/// scope. Each such worker is a death of the machine: `record` records
+/// it ([`crate::deaths::record_here`], 01M493YZZEW1FTDBNA090WT2AG).
 pub async fn reap(
     api: &Api,
     me: &SessionUri,
     sessions: &[SessionInfo],
     lost: &[Watched],
     journal: impl Fn() -> Option<String>,
-) -> Vec<String> {
-    let mut notes = Vec::new();
+    record: impl Fn(&str) -> Option<crate::deaths::Recorded>,
+) -> Reaped {
+    let mut reaped = Reaped::default();
     let mut lines: Option<Option<String>> = None;
     for worker in lost {
         let id = worker.pane.session.as_str();
@@ -316,7 +332,12 @@ pub async fn reap(
         if let Err(e) = ended {
             note.push_str(&text::worker_gone_not_ended(&format!("{e:#}")));
         }
-        notes.push(note);
+        reaped.notes.push(note);
+        if let Some(recorded) = record(id)
+            && recorded.starts_loop
+        {
+            reaped.alarm = Some(text::death_loop(host, recorded.count));
+        }
     }
-    notes
+    reaped
 }

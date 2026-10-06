@@ -916,10 +916,25 @@ impl Tools {
                 if !lead {
                     continue;
                 }
-                let notes = reap::reap(&tools.api, &me, &sessions, &lost, reap::journal).await;
-                for note in notes {
-                    if let Err(e) = crate::rollout::note_lead(tools.api.base(), &me, &note).await {
+                let reaped = reap::reap(
+                    &tools.api,
+                    &me,
+                    &sessions,
+                    &lost,
+                    reap::journal,
+                    crate::deaths::record_here,
+                )
+                .await;
+                for note in &reaped.notes {
+                    eprintln!("riff: {note}");
+                    if let Err(e) = crate::rollout::note_lead(tools.api.base(), &me, note).await {
                         eprintln!("riff: cannot post the note of a lost worker: {e:#}");
+                    }
+                }
+                if let Some(alarm) = &reaped.alarm {
+                    eprintln!("riff: {alarm}");
+                    if let Err(e) = crate::rollout::message_lead(tools.api.base(), &me, alarm).await {
+                        eprintln!("riff: cannot tell the lead: {e:#}");
                     }
                 }
             }

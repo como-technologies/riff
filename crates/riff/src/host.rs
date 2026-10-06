@@ -203,11 +203,12 @@ pub async fn in_time<T>(
 /// use riff::machine::Machine;
 /// use riff::monitor::Numbers;
 ///
-/// let none = HostStatus { limit: 2, floor: 4, machine: None, disk: None, monitor: None, workers: vec![] };
+/// let none = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, workers: vec![] };
 /// assert_eq!(none.line(), "workers host: limit 2, floor 4GB, no workers");
 /// let two = HostStatus {
 ///     limit: 3,
 ///     floor: 4,
+///     deaths: 0,
 ///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     disk: None,
 ///     monitor: None,
@@ -256,6 +257,15 @@ pub async fn in_time<T>(
 /// assert_eq!(old.machine.map(|m| m.avail_gb), Some(32));
 /// assert_eq!(old.workers, [("%3".to_owned(), "1a2b3c4d".to_owned())]);
 /// assert!(HostStatus::parse("workers host: limit 2, no workers").is_some());
+///
+/// // The deaths of the last hour come after the floor, when there are
+/// // any (01M493YZZEW1FTDBNA090WT2AG).
+/// let dying = HostStatus { deaths: 4, ..with_disk.clone() };
+/// assert!(dying.line().starts_with("workers host: limit 3, floor 4GB, deaths 4, cpu 16x4500MHz"));
+/// assert_eq!(HostStatus::parse(&dying.line()), Some(dying));
+/// let only_deaths = HostStatus { deaths: 1, ..none.clone() };
+/// assert_eq!(only_deaths.line(), "workers host: limit 2, floor 4GB, deaths 1, no workers");
+/// assert_eq!(HostStatus::parse(&only_deaths.line()), Some(only_deaths));
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostStatus {
@@ -263,6 +273,8 @@ pub struct HostStatus {
     /// The available memory in GB under which the host starts no
     /// worker.
     pub floor: u32,
+    /// The deaths of its workers in the last hour ([`crate::deaths`]).
+    pub deaths: usize,
     /// The numbers of the machine. `None` from a host that does not
     /// tell them.
     pub machine: Option<Machine>,
@@ -283,6 +295,7 @@ impl HostStatus {
         HostStatus {
             limit,
             floor,
+            deaths: 0,
             machine: Some(machine),
             disk: None,
             monitor: None,
@@ -306,6 +319,7 @@ impl HostStatus {
             panes,
         );
         status.disk = main.and_then(Disk::here);
+        status.deaths = crate::deaths::here();
         let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
         status.monitor = Some(Numbers::here(&settings, &machine, workers)?);
         Ok(status)
@@ -320,7 +334,11 @@ impl HostStatus {
             .as_ref()
             .map(|n| format!("{n}, "))
             .unwrap_or_default();
-        let machine = format!("floor {}GB, {machine}{disk}{monitor}", self.floor);
+        let deaths = match self.deaths {
+            0 => String::new(),
+            n => format!("deaths {n}, "),
+        };
+        let machine = format!("floor {}GB, {deaths}{machine}{disk}{monitor}", self.floor);
         if self.workers.is_empty() {
             return format!("{MARK}: limit {}, {machine}no workers", self.limit);
         }
@@ -350,6 +368,12 @@ impl HostStatus {
             }
             None => (crate::settings::WORKERS_FLOOR, rest),
         };
+        let mut deaths = 0;
+        if let Some(after) = rest.strip_prefix("deaths ") {
+            let (count, after) = after.split_once(", ")?;
+            deaths = count.parse().ok()?;
+            rest = after;
+        }
         // The disk comes after the numbers of the machine
         // (01M41A11GHP78E2VYN14JSE27P). A host of the release before
         // tells none.
@@ -387,6 +411,7 @@ impl HostStatus {
             return Some(HostStatus {
                 limit,
                 floor,
+                deaths,
                 machine,
                 disk,
                 monitor,
@@ -404,6 +429,7 @@ impl HostStatus {
         Some(HostStatus {
             limit,
             floor,
+            deaths,
             machine,
             disk,
             monitor,
@@ -827,9 +853,24 @@ impl Host {
                 return;
             }
         };
-        for note in reap::reap(&self.api, &self.me, &sessions, lost, reap::journal).await {
+        let reaped = reap::reap(
+            &self.api,
+            &self.me,
+            &sessions,
+            lost,
+            reap::journal,
+            crate::deaths::record_here,
+        )
+        .await;
+        for note in &reaped.notes {
             println!("{note}");
-            if let Err(e) = self.note_lead(&note).await {
+            if let Err(e) = self.note_lead(note).await {
+                eprintln!("riff: cannot tell the lead: {e:#}");
+            }
+        }
+        if let Some(alarm) = &reaped.alarm {
+            println!("{alarm}");
+            if let Err(e) = self.tell_lead(alarm).await {
                 eprintln!("riff: cannot tell the lead: {e:#}");
             }
         }
@@ -886,13 +927,20 @@ impl Host {
     /// Posts `note` to the lead of the user in the repository, as a
     /// note in the repository thread. It wakes nobody.
     async fn note_lead(&self, note: &str) -> Result<()> {
+        self.post_lead(note, Kind::Note).await
+    }
+
+    /// Posts `body` as a message to the lead: it wakes the lead.
+    async fn tell_lead(&self, body: &str) -> Result<()> {
+        self.post_lead(body, Kind::Message).await
+    }
+
+    async fn post_lead(&self, body: &str, kind: Kind) -> Result<()> {
         let Some(thread) = self.me.default_thread() else {
             bail!("the host is not in a repository");
         };
         let to = [Selector::lead(self.me.who().user(), &thread.to_string())];
-        let post = self
-            .api
-            .post(&self.me, Some(&thread), &to, note, Kind::Note);
+        let post = self.api.post(&self.me, Some(&thread), &to, body, kind);
         self.call(post).await?;
         Ok(())
     }

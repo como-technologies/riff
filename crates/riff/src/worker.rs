@@ -3,19 +3,22 @@
 //! # Design
 //!
 //! Each worker pane of `riff workers start` runs `claude` through
-//! `riff workers run` (01M3JQC8ANFYYEXSHBS2DCZYBX). The wrapper starts
+//! `riff workers run` (01M493YZVZGA7TSRJH6F67VN0H). The wrapper starts
 //! `claude`, and waits. It gives `claude` its own process ID in
 //! [`WRAPPER`]. A worker ends in one of three ways:
 //!
 //! | End | Who acts | The lead gets |
 //! |---|---|---|
-//! | `claude` exits on its own, for example after a crash | the wrapper | a direct message with the pane, the session ID and the exit code |
+//! | `claude` exits on its own, for example after a crash | the wrapper | a note with the pane, the session ID and the exit code |
 //! | `riff workers stop` | the command | nothing: the person or the lead asked for it |
 //! | the server stops an idle worker | `riff mcp` of the worker sends SIGTERM to the wrapper | a note of the server |
 //! | the pane dies with the wrapper, for example a memory kill | `riff workers host`, or `riff mcp` of the lead ([`crate::reap`]) | a note with the pane, the session, the item and the cause |
 //!
-//! The wrapper never starts `claude` again: a crash loop costs tokens.
-//! The lead decides.
+//! The wrapper never starts `claude` again. The rollout starts a new
+//! worker for the free work ([`crate::rollout`]). An exit with a fault
+//! is a death of the worker: the wrapper records it ([`crate::deaths`]).
+//! A loop of deaths stops the starts on the machine, and the lead gets
+//! one message.
 //!
 //! A worker with no work does not end. It keeps its watch and ends its
 //! turn (01M3K0AXMCVRST7HYH4DM8B3AN). riff shows it idle
@@ -40,8 +43,9 @@
 //!     C->>M: start
 //!     alt claude exits
 //!         C-->>W: exit code
-//!         W->>S: tell lead: pane, session, exit code
-//!         S->>L: wake
+//!         W->>W: an exit with a fault: record the death
+//!         W->>S: a note to the lead: pane, session, exit code
+//!         S-->>L: at its next read
 //!     else riff workers stop
 //!         P->>W: SIGHUP, the pane closes
 //!         W->>C: SIGTERM
@@ -299,8 +303,20 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let session = std::env::var(identity::SESSION_VARS[0]).ok();
     let body = crate::text::worker_stopped(pane.as_deref(), session.as_deref(), &status);
     eprintln!("{body}");
-    if let Err(e) = tell_lead(None, server, &body).await {
-        eprintln!("riff: cannot tell the lead: {e:#}");
+    if let Err(e) = note_lead(server, &body).await {
+        eprintln!("riff: cannot post the note to the lead: {e:#}");
+    }
+    // An exit with a fault is a death (01M493YZZEW1FTDBNA090WT2AG).
+    if !status.success()
+        && let Some(session) = &session
+        && crate::deaths::record_here(session).is_some_and(|r| r.starts_loop)
+    {
+        let host = identity::here(None).map_or_else(|_| identity::this_host(), |p| p.host().to_owned());
+        let body = crate::text::death_loop(&host, crate::deaths::here());
+        eprintln!("{body}");
+        if let Err(e) = tell_lead(None, server, &body).await {
+            eprintln!("riff: cannot tell the lead: {e:#}");
+        }
     }
     Ok(status.code().unwrap_or(1))
 }
@@ -316,6 +332,18 @@ async fn stop_child(child: &mut tokio::process::Child) -> Result<i32> {
         child.kill().await?;
     }
     Ok(0)
+}
+
+/// Posts `body` as a note to the lead of the person in the repository
+/// of this directory, as the person. A note wakes nobody.
+async fn note_lead(server: &str, body: &str) -> Result<()> {
+    let place = identity::here(None)?;
+    let me = identity::person(&place, server)?;
+    let api = Api::new(server).signed_in(None)?;
+    let to = riff_core::selector::Selector::lead(me.who().user(), &place.repo_text());
+    api.post(&me, None, &[to], body, riff_core::wire::Kind::Note)
+        .await?;
+    Ok(())
 }
 
 /// Sends `body` to the lead of the person in the repository of
