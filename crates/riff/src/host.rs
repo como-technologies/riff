@@ -56,6 +56,12 @@
 //! (01M3NBV44GKAX6WS391PN6R72W). It reads no input, and its children get
 //! no input from it (01M3NBV46R0VB0JQNQ1ERG16J6).
 //!
+//! At its start the host also installs the pinned `sccache` when the
+//! machine has no `sccache`, or an older one, while it serves. When the
+//! install fails, it posts one note to the lead, and the workers build
+//! with no compile cache (01M4923963S666V9YWTZ46ZZ50). See
+//! [`crate::sccache`].
+//!
 //! # A worker that dies
 //!
 //! A worker can die at each moment: a memory kill, a crash, a closed
@@ -654,9 +660,20 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     let _monitor = AbortOnDrop(monitor);
     // The OS keyring (01M4385CEWGCP31DP5PAMPXZ97).
     let mut keyring = secrets::Gate::default();
+    // The compile cache of the workers: the install runs while the host
+    // serves, and a failed install is one note to the lead
+    // (01M4923963S666V9YWTZ46ZZ50).
+    let mut install = tokio::task::spawn_blocking(|| crate::sccache::ensure(Path::new("cargo")));
+    let mut installing = true;
+    let mut cache_note = None;
     loop {
         let mut changed = true;
         tokio::select! {
+            result = &mut install, if installing => {
+                installing = false;
+                cache_note = host.cache_note(result);
+                changed = false;
+            }
             () = &mut update, if following => {
                 binary.run(with_last(std::env::args_os().skip(1), SESSION_ARG, &id));
                 // Only an error comes back. The host goes on with this binary.
@@ -704,6 +721,11 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
             Err(e) => eprintln!("riff: cannot read the settings: {e:#}"),
         }
         host.look_at_keyring(&mut keyring).await;
+        if let Some(note) = &cache_note
+            && host.note_lead(note).await.is_ok()
+        {
+            cache_note = None;
+        }
         // A locked keyring says its line one time, not at each status.
         if changed
             && let Err(e) = host.set_status().await
@@ -881,6 +903,24 @@ impl Host {
         if let Err(e) = self.note_lead(&note).await {
             eprintln!("riff: cannot tell the lead: {e:#}");
         }
+    }
+
+    /// The note to the lead for the `result` of the install of
+    /// `sccache`, or `None` when the machine has it. It says the note on
+    /// stderr too.
+    fn cache_note(
+        &self,
+        result: std::result::Result<Result<crate::sccache::Install>, tokio::task::JoinError>,
+    ) -> Option<String> {
+        let error = match result {
+            Ok(Ok(_)) => return None,
+            Ok(Err(e)) => format!("{e:#}"),
+            Err(e) => e.to_string(),
+        };
+        let host = self.me.place().host();
+        let note = text::sccache_failed(host, crate::sccache::PINNED, &error);
+        eprintln!("{note}");
+        Some(note)
     }
 
     /// Posts `note` to the lead of the user in the repository, as a

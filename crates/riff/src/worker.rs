@@ -210,7 +210,8 @@ impl Drop for Share {
 /// (01M3WFYZTX05CGDP2NQF9B356K, 01M407J8R79WVYVABVCSHFAMJ9), and a scope
 /// in the slice that [`limits::SLICE_VAR`] names
 /// (01M3WFYZX6GVFYW6NTTTKF144R), when a scope works in the pane
-/// (01M407J8X25H9AT8M789EG5RQZ). When
+/// (01M407J8X25H9AT8M789EG5RQZ), and the compile cache of the machine
+/// (see [`crate::sccache`]). When
 /// `claude` exits on its own, it tells the lead. Returns the exit code
 /// for the wrapper: the code of `claude`, or 0 after a stop.
 pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
@@ -271,6 +272,17 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     }
     let makeflags = pool.as_ref().map(jobserver::Pool::makeflags);
     for (var, value) in limits::jobs_env(&limit, makeflags.as_deref(), &riff) {
+        match value {
+            Some(value) => cmd.env(var, value),
+            None => cmd.env_remove(var),
+        };
+    }
+    // The compile cache of the machine (01M492379BGA3AERT1AM12C650).
+    let cache = crate::sccache::Cache::here(&settings::path()?)?;
+    if cache.is_none() {
+        eprintln!("{}", crate::text::NO_SCCACHE);
+    }
+    for (var, value) in crate::sccache::env(cache.as_ref()) {
         match value {
             Some(value) => cmd.env(var, value),
             None => cmd.env_remove(var),
