@@ -3069,6 +3069,23 @@
 - **01M3WN72ECF0WKR4M7M6ZYAF9J** Each stream of the client (`watch`,
   `tail`) has a connection of its own. That connection is never in the
   pool of the client, so no call uses the connection of an open stream.
+- **01M48RW9E8NS2FPHFHG2S10R7A** Each call of the client has time
+  limits: 5 seconds for a connect (`CONNECT_WAIT`), and 20 seconds for
+  each try (`TRY_WAIT`). The client of the calls sends an HTTP/2 ping
+  each 10 seconds, also with no open call, and drops a connection with
+  no answer in 5 seconds. On Linux, a TCP connection with data that
+  gets no answer for 20 seconds closes. So a call never waits for ever
+  on a dead connection. A try with no reply in its limit fails with the
+  error that the server gave no reply in that time.
+- **01M48RW9HNKPNZ75H9R01BG6V5** A stream of the client has the same
+  limit for a connect, and no total limit. A stream that gives no byte
+  for 45 seconds (`STREAM_IDLE`, three keep-alive comments of the
+  server) ends, and `follow` connects again. So a stream that died
+  with no sign, for example after a sleep of the machine, comes back.
+- **01M48RW9MA30A12E7XWX047CJ0** The server ends a `watch` or `tail`
+  stream when the stream lags behind its buffer of events. It does not
+  drop the events with no sign. The client connects again, and a
+  `watch` gets the newest wake that its session did not read.
 - **01M3Q5QE01DB0FJQJWFKR450KQ** `riff mcp` of the lead runs the
   rollout of workers. Once each interval, while the session is the lead
   and the riff runs, it looks at the free work and the idle workers.
