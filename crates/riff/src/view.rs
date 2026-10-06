@@ -834,6 +834,83 @@ pub fn temp_line(root: &Path, bytes: u64) -> String {
     format!("{}\n", styled(DIM, &line))
 }
 
+/// The line of the compile cache of this machine in `riff workers`,
+/// under its temp line (01M492398HA0AXX0J8BZCKNGTG): the size, the most
+/// size and the hit rate. With no `sccache` it says that the workers
+/// build with no cache.
+///
+/// ```
+/// use riff::sccache::{Cache, Stats};
+///
+/// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
+/// let cache = Cache { bin: "/b/sccache".into(), dir: "/h/.cache/riff/sccache".into(), size: "40G".into() };
+/// let stats = Stats { bytes: 12 << 30, max: Some(40 << 30), hits: 850, misses: 150 };
+/// assert_eq!(
+///     plain(riff::view::cache_line(Some((&cache, Some(&stats))))),
+///     "cache 12.0GB of 40G in /h/.cache/riff/sccache, hits 85%\n"
+/// );
+/// let new = Stats { bytes: 0, max: None, hits: 0, misses: 0 };
+/// assert_eq!(
+///     plain(riff::view::cache_line(Some((&cache, Some(&new))))),
+///     "cache 0MB of 40G in /h/.cache/riff/sccache, no build yet\n"
+/// );
+/// assert_eq!(
+///     plain(riff::view::cache_line(Some((&cache, None)))),
+///     "cache of 40G in /h/.cache/riff/sccache, sccache gives no numbers\n"
+/// );
+/// assert_eq!(
+///     plain(riff::view::cache_line(None)),
+///     "cache off: no sccache. riff update installs it.\n"
+/// );
+/// ```
+pub fn cache_line(cache: Option<(&crate::sccache::Cache, Option<&crate::sccache::Stats>)>) -> String {
+    let line = match cache {
+        None => "cache off: no sccache. riff update installs it.".to_owned(),
+        Some((cache, None)) => format!(
+            "cache of {} in {}, sccache gives no numbers",
+            cache.size,
+            cache.dir.display()
+        ),
+        Some((cache, Some(stats))) => {
+            let rate = stats
+                .rate()
+                .map_or_else(|| "no build yet".to_owned(), |rate| format!("hits {rate}%"));
+            format!(
+                "cache {} of {} in {}, {rate}",
+                text::size_words(stats.bytes),
+                cache.size,
+                cache.dir.display()
+            )
+        }
+    };
+    format!("{}\n", styled(DIM, &line))
+}
+
+/// `riff workers cache` (01M49237BM12PVBERD6JXDSX5V): the most size of
+/// the compile cache of the workers, and the cache now.
+///
+/// ```
+/// let line = "cache 0MB of 40G in /h/sccache, no build yet\n";
+/// let out = riff::view::workers_cache("40G", line, "/h/c.toml".as_ref());
+/// assert_eq!(
+///     anstream::adapter::strip_str(&out).to_string(),
+///     "workers.cache  40G  (/h/c.toml)\n\
+///      The workers of this machine share one compile cache of at most this size. \
+///      Set it with: riff workers cache SIZE. Empty it with: riff workers cache --clear\n\
+///      cache 0MB of 40G in /h/sccache, no build yet\n"
+/// );
+/// ```
+pub fn workers_cache(size: &str, line: &str, path: &Path) -> String {
+    let setting = setting(
+        "workers.cache",
+        size,
+        path,
+        "The workers of this machine share one compile cache of at most this size. \
+         Set it with: riff workers cache SIZE. Empty it with: riff workers cache --clear",
+    );
+    format!("{setting}\n{line}")
+}
+
 /// `riff workers tmp` (01M41VAGJC69S9R2TD1B1EQ4W4): the folder of the
 /// temp folders of the workers, and its disk use.
 ///

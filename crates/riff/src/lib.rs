@@ -101,6 +101,7 @@ pub mod pr;
 pub mod reap;
 pub mod relay;
 pub mod rollout;
+pub mod sccache;
 pub mod secrets;
 pub mod settings;
 pub mod state;

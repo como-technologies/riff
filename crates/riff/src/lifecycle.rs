@@ -409,7 +409,9 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// read, it prints [`text::newest_instead`](crate::text::newest_instead)
 /// and installs the newest release. Then it updates the plugin with the new
 /// `riff connect claude --claude CLAUDE`, which gets no terminal and so
-/// asks nothing, and looks for an old riff with
+/// asks nothing. On a machine with a limit of workers it installs
+/// the pinned `sccache` ([`crate::sccache::ensure`]). Then it looks for
+/// an old riff with
 /// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
 /// words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
@@ -450,6 +452,16 @@ pub async fn update(
             .current_dir(&dir),
         "riff connect claude",
     )?;
+    // The compile cache of the workers of this machine
+    // (01M4923963S666V9YWTZ46ZZ50). A failed install fails no update.
+    let workers = crate::settings::path().and_then(|path| crate::settings::workers_limit(&path));
+    if workers.is_ok_and(|limit| limit > 0)
+        && let Err(e) = crate::sccache::ensure(cargo)
+    {
+        let host = crate::identity::this_host();
+        let pinned = crate::sccache::PINNED;
+        eprintln!("{}", crate::text::sccache_failed(&host, pinned, &format!("{e:#}")));
+    }
     let out = Command::new("riff-server")
         .arg("--version")
         .current_dir(&dir)

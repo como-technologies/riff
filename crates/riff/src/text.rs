@@ -3574,6 +3574,43 @@ pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str, tried: 
     )
 }
 
+/// The line before riff installs `sccache` (01M4923963S666V9YWTZ46ZZ50).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::sccache_installs("0.18.0"),
+///     "riff: installs sccache 0.18.0 for the compile cache of the workers."
+/// );
+/// ```
+pub fn sccache_installs(version: &str) -> String {
+    format!("riff: installs sccache {version} for the compile cache of the workers.")
+}
+
+/// The note to the lead, and the line of `riff update`, when the
+/// install of `sccache` fails (01M4923963S666V9YWTZ46ZZ50).
+///
+/// ```
+/// let failed = riff::text::sccache_failed("pangolin", "0.18.0", "cargo install exit status: 101");
+/// assert_eq!(
+///     failed,
+///     "riff on pangolin cannot install sccache 0.18.0: cargo install exit status: 101. \
+///      The workers there build with no compile cache. \
+///      To try again, run riff update on pangolin."
+/// );
+/// ```
+pub fn sccache_failed(host: &str, version: &str, error: &str) -> String {
+    format!(
+        "riff on {host} cannot install sccache {version}: {error}. \
+         The workers there build with no compile cache. \
+         To try again, run riff update on {host}."
+    )
+}
+
+/// The line of a worker that starts with no `sccache`
+/// (01M492379BGA3AERT1AM12C650).
+pub const NO_SCCACHE: &str = "riff: this machine has no sccache, so the worker builds with \
+     no compile cache. riff update installs it.";
+
 /// The note of `riff pr wait` on stderr when it starts
 /// (01M3NB6FWMGBQ9VTY6RCBPKBHK).
 pub fn pr_waits(number: u64) -> String {

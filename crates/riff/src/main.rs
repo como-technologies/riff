@@ -845,6 +845,23 @@ enum Workers {
         /// use.
         dir: Option<std::path::PathBuf>,
     },
+    /// Show, set or empty the compile cache of the workers
+    ///
+    /// The workers of this machine share one compile cache: riff starts
+    /// each worker with RUSTC_WRAPPER=sccache, so a new worktree reads
+    /// each dependency from the cache. riff update and riff workers host
+    /// install sccache. SIZE is the most size of the cache, for example
+    /// 40G (the default). The next worker that starts gets the new size.
+    /// It is in $XDG_CONFIG_HOME/riff/config.toml, key workers.cache.
+    Cache {
+        /// The new most size: a number with K, M, G or T. Leave it out
+        /// to show the cache.
+        size: Option<String>,
+        /// Stop the sccache server and delete the cache. riff refuses it
+        /// while workers run on this machine.
+        #[arg(long, conflicts_with = "size")]
+        clear: bool,
+    },
     /// Show or set the monitor of this machine
     ///
     /// The monitor reads the load, the available memory and the kills of
@@ -2028,6 +2045,34 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             );
             Ok(())
         }
+        Some(Workers::Cache { size, clear }) => {
+            let path = settings::path()?;
+            if let Some(size) = size {
+                settings::set_workers_cache(&path, size)?;
+            }
+            let cache = riff::sccache::Cache::here(&path)?;
+            if *clear {
+                let Some(cache) = &cache else {
+                    anyhow::bail!("this machine has no sccache, so it has no compile cache to empty");
+                };
+                let workers = Tmux::machine().worker_panes()?.len();
+                if workers > 0 {
+                    anyhow::bail!(
+                        "{workers} workers run on this machine. Stop them first: riff workers stop"
+                    );
+                }
+                cache.clear()?;
+                anstream::println!("Emptied the compile cache in {}.", cache.dir.display());
+                return Ok(());
+            }
+            let stats = cache.as_ref().and_then(riff::sccache::Cache::stats);
+            let line = view::cache_line(cache.as_ref().map(|c| (c, stats.as_ref())));
+            anstream::print!(
+                "{}",
+                view::workers_cache(&settings::workers_cache(&path)?, &line, &path)
+            );
+            Ok(())
+        }
         Some(Workers::Tmp { dir }) => {
             let path = settings::path()?;
             if let Some(dir) = dir {
@@ -2513,6 +2558,13 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     {
         anstream::print!("{}", view::temp_line(&root, riff::temp::size(&root)));
     }
+    // The compile cache of this machine (01M492398HA0AXX0J8BZCKNGTG).
+    let cache = riff::sccache::Cache::here(&settings)?;
+    let stats = cache.as_ref().and_then(riff::sccache::Cache::stats);
+    anstream::print!(
+        "{}",
+        view::cache_line(cache.as_ref().map(|c| (c, stats.as_ref())))
+    );
     let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
     let numbers = riff::monitor::Numbers::here(&settings, &machine, workers)?;
     let ago = local::dir()
