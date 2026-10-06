@@ -937,7 +937,11 @@ fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
 
     let sccache = script(&m.bin(), "sccache", FAKE_SCCACHE);
     m.workers(&["cache", "20G"]);
-    let worker = [("RIFF_WORKER", "1"), ("RIFF_WORKER_WRAPPER", "7"), ("CLAUDE_PID", "8")];
+    let worker = [
+        ("RIFF_WORKER", "1"),
+        ("RIFF_WORKER_WRAPPER", "7"),
+        ("CLAUDE_PID", "8"),
+    ];
     let out = m.wrapper(&claude, &[person.as_slice(), &worker].concat());
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let dir = m.root.path().join("home/sccache");

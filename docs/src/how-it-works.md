@@ -4193,8 +4193,13 @@ flowchart TD
     F -- no --> C["cargo install --locked sccache"]
     F -- yes --> W
     C --> W["riff workers run: RUSTC_WRAPPER=sccache"]
-    W --> B["each build of each worker<br/>reads and writes ~/.cache/riff/sccache"]
+    W --> S["start the sccache server of the machine,<br/>with no variable of a worker"]
+    S --> B["each build of each worker<br/>reads and writes ~/.cache/riff/sccache"]
 ```
+
+The `sccache` server is of the machine, not of a worker. So the clear,
+`riff workers reap` and `riff workers stop` of a worker never stop it.
+When the server ends, a build goes on with no cache.
 
 riff installs `sccache` itself. The start of `riff workers host`
 installs it, and `riff update` installs it on a machine with a limit of
