@@ -74,6 +74,7 @@ pub mod binary;
 pub mod chat;
 pub mod cloud;
 pub mod compact;
+pub mod deaths;
 pub mod device;
 pub mod disk;
 pub mod dropped;

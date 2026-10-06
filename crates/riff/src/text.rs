@@ -1633,8 +1633,8 @@ pub fn workers_stopped(n: usize) -> String {
     )
 }
 
-/// What the wrapper of a worker tells the lead when `claude` exits on
-/// its own (01M3JQC8ANFYYEXSHBS2DCZYBX).
+/// The note of the wrapper of a worker to the lead when `claude` exits
+/// on its own (01M493YZVZGA7TSRJH6F67VN0H).
 ///
 /// ```
 /// use std::os::unix::process::ExitStatusExt;
@@ -1643,8 +1643,8 @@ pub fn workers_stopped(n: usize) -> String {
 /// let status = ExitStatus::from_raw(1 << 8);
 /// assert_eq!(
 ///     riff::text::worker_stopped(Some("%3"), Some("a6cf"), &status),
-///     "worker stopped: pane %3, session a6cf, exit code 1. riff does not start it again. \
-///      Look at the pane, then start a worker again with riff workers start 1."
+///     "worker stopped: pane %3, session a6cf, exit code 1. The wrapper does not start it \
+///      again: the rollout starts a new worker for the free work."
 /// );
 /// assert!(riff::text::worker_stopped(None, None, &status).starts_with(
 ///     "worker stopped: pane unknown, session unknown, exit code 1."
@@ -1655,8 +1655,8 @@ pub fn workers_stopped(n: usize) -> String {
 ///     riff::text::worker_stopped(Some("%3"), Some("a6cf"), &ExitStatus::from_raw(9)),
 ///     "worker stopped: pane %3, session a6cf, signal 9. A kill ended it, for example when \
 ///      the workers took too much memory. Its work that is not committed is in its worktree: \
-///      the next worker of its item goes on from there. riff does not start it again. Look at \
-///      the pane, then start a worker again with riff workers start 1."
+///      the next worker of its item goes on from there. The wrapper does not start it again: \
+///      the rollout starts a new worker for the free work."
 /// );
 /// ```
 pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitStatus) -> String {
@@ -1667,8 +1667,8 @@ pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitSt
         ""
     };
     format!(
-        "worker stopped: pane {}, session {}, {}.{killed} riff does not start it again. Look \
-         at the pane, then start a worker again with riff workers start 1.",
+        "worker stopped: pane {}, session {}, {}.{killed} The wrapper does not start it \
+         again: the rollout starts a new worker for the free work.",
         pane.unwrap_or("unknown"),
         session.unwrap_or("unknown"),
         crate::worker::exit_words(status)
@@ -1830,6 +1830,29 @@ pub fn worker_gone(
         "worker stopped: pane {}, session {}, on {host}. The pane ended with no end call, so \
          riff ended the session. {held} {cause}",
         pane.pane, pane.session
+    )
+}
+
+/// The message to the lead when the deaths of the workers of `host`
+/// start a loop (01M493Z02KS82B3CVZEVFA3D6E): `count` workers died in
+/// the last hour.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::death_loop("pangolin", 4),
+///     "workers: 4 workers died in the last hour on pangolin. A loop of deaths is a fault: \
+///      riff starts no worker on pangolin until 3 or fewer died in the last hour. Tell your \
+///      user. On pangolin, look at the panes, and at the memory kills with journalctl -u \
+///      systemd-oomd --since -1h."
+/// );
+/// ```
+pub fn death_loop(host: &str, count: usize) -> String {
+    format!(
+        "workers: {count} workers died in the last hour on {host}. A loop of deaths is a \
+         fault: riff starts no worker on {host} until {} or fewer died in the last hour. Tell \
+         your user. On {host}, look at the panes, and at the memory kills with journalctl -u \
+         systemd-oomd --since -1h.",
+        crate::deaths::LOOP
     )
 }
 
@@ -3665,6 +3688,43 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
         done.url,
         verdict.state(),
         result.trim_end()
+    )
+}
+
+/// The room for more workers when fewer than `limit` run
+/// (01M493Z063SSTAJS2KNDFBTEBJ).
+///
+/// ```
+/// use riff::text::room_for;
+/// assert_eq!(room_for(3, 2).as_deref(), Some("room for 1 worker, the rollout starts it for free work"));
+/// assert_eq!(room_for(4, 1).as_deref(), Some("room for 3 workers, the rollout starts them for free work"));
+/// assert_eq!(room_for(2, 2), None);
+/// assert_eq!(room_for(2, 3), None);
+/// ```
+pub fn room_for(limit: u16, runs: usize) -> Option<String> {
+    let room = usize::from(limit).checked_sub(runs).filter(|n| *n > 0)?;
+    let them = if room == 1 { "it" } else { "them" };
+    Some(format!(
+        "room for {}, the rollout starts {them} for free work",
+        workers_count(room)
+    ))
+}
+
+/// Why a machine with a loop of deaths starts no worker
+/// (01M493YZZEW1FTDBNA090WT2AG).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::deaths_halt(4),
+///     "4 workers died in the last hour. riff starts workers again when 3 or fewer died in \
+///      the last hour."
+/// );
+/// ```
+pub fn deaths_halt(deaths: usize) -> String {
+    format!(
+        "{deaths} workers died in the last hour. riff starts workers again when {} or fewer \
+         died in the last hour.",
+        crate::deaths::LOOP
     )
 }
 

@@ -956,9 +956,10 @@ enum Workers {
     },
     /// Run CLAUDE as a worker, and wait
     ///
-    /// When CLAUDE exits on its own, it tells the lead the pane, the
-    /// session ID and the exit code. It never starts CLAUDE again. Each
-    /// worker pane runs it.
+    /// When CLAUDE exits on its own, it posts a note to the lead with the
+    /// pane, the session ID and the exit code, and an exit with a fault
+    /// counts as a death. It never starts CLAUDE again. Each worker pane
+    /// runs it.
     #[command(hide = true)]
     Run {
         /// The claude command.
@@ -2578,7 +2579,14 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     let machine = riff::machine::Machine::here();
     anstream::println!(
         "{}",
-        view::host_heading(&host, limit, panes.len(), Some(&machine), floor)
+        view::host_heading(
+            &host,
+            limit,
+            panes.len(),
+            Some(&machine),
+            floor,
+            riff::deaths::here()
+        )
     );
     let disk = identity::main_worktree(&identity::working_dir()?)
         .and_then(|main| riff::disk::Disk::here(&main));
@@ -2618,7 +2626,8 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
                 status.limit,
                 status.workers.len(),
                 status.machine.as_ref(),
-                status.floor
+                status.floor,
+                status.deaths
             )
         );
         anstream::print!("{}", view::disk_line(status.disk.as_ref()));

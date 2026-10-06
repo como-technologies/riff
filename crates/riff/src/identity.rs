@@ -112,7 +112,7 @@ pub fn agent(place: &Place, id: &str, server: &str) -> Result<SessionUri> {
 
 /// The URI of the person at `place`, with no session, also inside an
 /// agent session. The wrapper of a worker uses it
-/// (01M3JQC8ANFYYEXSHBS2DCZYBX).
+/// (01M493YZVZGA7TSRJH6F67VN0H).
 pub fn person(place: &Place, server: &str) -> Result<SessionUri> {
     Ok(SessionUri::new(
         Who::new(&user(server)?, None)?,

@@ -426,6 +426,7 @@ async fn end_over_limit(api: &Api, me: &SessionUri, pane: &str) -> Result<bool> 
     };
     let to = Selector::lead(me.who().user(), &me.place().repo_text());
     let note = crate::text::worker_over_limit(me.place().host(), pane, limit, runs);
+    eprintln!("riff: {note}");
     if let Err(e) = api.post(me, None, &[to], &note, Kind::Note).await {
         eprintln!("riff: cannot post the note to the lead: {e:#}");
     }

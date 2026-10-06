@@ -764,29 +764,44 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 /// The heading of the workers of one machine in `riff workers`
 /// (01M3N7AKFPX3ZGQARSG2V64GBD): the host in bold, its limit, the
 /// workers that run, and the numbers and the score of the machine
-/// when riff knows them (01M3Q5QE4SQ8VYN2PSF42KB3QJ).
+/// when riff knows them (01M3Q5QE4SQ8VYN2PSF42KB3QJ). The limit is the
+/// wanted state, and the workers that run are the running state. The
+/// heading says each difference, and why the machine starts no worker
+/// (01M493Z063SSTAJS2KNDFBTEBJ).
 ///
 /// ```
 /// use riff::machine::Machine;
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
-/// assert_eq!(plain(riff::view::host_heading("pangolin", 3, 1, None, 4)), "pangolin  limit 3  runs 1");
+/// assert_eq!(plain(riff::view::host_heading("pangolin", 1, 1, None, 4, 0)), "pangolin  limit 1  runs 1");
 /// let m = Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 };
 /// assert_eq!(
-///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&m), 4)),
-///     "pangolin  limit 3  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 1.50  score 24.0"
+///     plain(riff::view::host_heading("pangolin", 1, 1, Some(&m), 4, 0)),
+///     "pangolin  limit 1  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 1.50  score 24.0"
 /// );
-/// // Why the machine starts no worker (01M3WFZ01PTAYYKG3T5CFA2W4D).
+/// // Fewer workers than the limit: room for more.
+/// assert_eq!(
+///     plain(riff::view::host_heading("pangolin", 3, 1, None, 4, 0)),
+///     "pangolin  limit 3  runs 1: room for 2 workers, the rollout starts them for free work"
+/// );
 /// // More workers than the limit (01M402VFQHC5PH39DTFV6AH60F).
 /// assert_eq!(
-///     plain(riff::view::host_heading("pangolin", 2, 4, None, 4)),
+///     plain(riff::view::host_heading("pangolin", 2, 4, None, 4, 0)),
 ///     "pangolin  limit 2  runs 4: 2 workers end after their item"
 /// );
+/// // Why the machine starts no worker (01M3WFZ01PTAYYKG3T5CFA2W4D).
 /// let low = Machine { avail_gb: 3, ..m };
 /// assert_eq!(
-///     plain(riff::view::host_heading("pangolin", 3, 1, Some(&low), 4)),
-///     "pangolin  limit 3  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 3GB available, load 1.50  score 24.0\n\
+///     plain(riff::view::host_heading("pangolin", 3, 3, Some(&low), 4, 0)),
+///     "pangolin  limit 3  runs 3  cpu 16x4500MHz (now 4400MHz), mem 32GB, 3GB available, load 1.50  score 24.0\n\
 ///      Starts no worker: 3 GB of memory is available, and the floor of this machine is 4 GB."
+/// );
+/// // A loop of deaths (01M493YZZEW1FTDBNA090WT2AG).
+/// assert_eq!(
+///     plain(riff::view::host_heading("pangolin", 3, 1, None, 4, 4)),
+///     "pangolin  limit 3  runs 1: room for 2 workers, the rollout starts them for free work\n\
+///      Starts no worker: 4 workers died in the last hour. riff starts workers again when 3 or \
+///      fewer died in the last hour."
 /// );
 /// ```
 pub fn host_heading(
@@ -795,11 +810,16 @@ pub fn host_heading(
     runs: usize,
     machine: Option<&crate::machine::Machine>,
     floor: u32,
+    deaths: usize,
 ) -> String {
     let mut out = format!("{}  limit {limit}  runs {runs}", styled(BOLD, &safe(host)));
     if let Some(end) = text::end_after_item(limit, runs) {
         let _ = write!(out, "{}", styled(WARNING, &format!(": {end}")));
     }
+    if let Some(room) = text::room_for(limit, runs) {
+        let _ = write!(out, ": {room}");
+    }
+    let mut why = Vec::new();
     if let Some(m) = machine {
         let _ = write!(
             out,
@@ -807,13 +827,18 @@ pub fn host_heading(
             styled(DIM, &format!("{m}  score {:.1}", m.score()))
         );
         if m.low(floor) {
-            let why = text::low_memory(m.avail_gb, floor);
-            let _ = write!(
-                out,
-                "\n{}",
-                styled(WARNING, &format!("Starts no worker: {why}"))
-            );
+            why.push(text::low_memory(m.avail_gb, floor));
         }
+    }
+    if crate::deaths::halted(deaths) {
+        why.push(text::deaths_halt(deaths));
+    }
+    for why in why {
+        let _ = write!(
+            out,
+            "\n{}",
+            styled(WARNING, &format!("Starts no worker: {why}"))
+        );
     }
     out
 }

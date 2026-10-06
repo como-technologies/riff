@@ -19,6 +19,7 @@ use riff_core::name::{Place, SessionUri, Who};
 use riff_core::wire::{RiffState, Status};
 
 /// `list-panes -a` lists the worker panes from the file `workers`.
+/// `kill-pane -t P` takes the pane `P` out of it.
 const FAKE_TMUX: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
@@ -35,6 +36,9 @@ case "$1" in
       "-p @riff-session") echo "$4 $6" >> "$dir/workers" ;;
       "-w @riff") echo "$4 $6" >> "$dir/windows" ;;
     esac ;;
+  kill-pane)
+    grep -v "^$3 " "$dir/workers" > "$dir/workers.new"
+    mv "$dir/workers.new" "$dir/workers" ;;
 esac
 exit 0
 "#;
@@ -768,6 +772,7 @@ async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
         step: riff::host::HostStatus {
             limit,
             floor: 4,
+            deaths: 0,
             machine: None,
             disk: None,
             monitor: None,
@@ -865,4 +870,309 @@ fn the_book_and_the_skill_say_what_the_lead_gets_for_a_change() {
         skill.contains(&setting_changed(&limit(3, 4), &Effect::Starts)),
         "skill"
     );
+}
+
+/// A workers host of mike on the machine `b`, in the main clone of the
+/// lead: its own fake `tmux`, its own riff home, and the limit `limit`.
+/// The host stops when the value drops.
+struct Host {
+    fake: tempfile::TempDir,
+    home: tempfile::TempDir,
+    process: Child,
+}
+
+impl Drop for Host {
+    fn drop(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
+}
+
+impl Host {
+    /// Starts `riff workers host` on `b`. `deaths` are the sessions of
+    /// workers that died there in the last minutes.
+    async fn start(lead: &Lead, limit: u16, deaths: &[&str]) -> Host {
+        let fake = tempfile::tempdir().unwrap();
+        script(fake.path(), "tmux", FAKE_TMUX);
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("config.toml"),
+            format!("[workers]\nlimit = {limit}\n"),
+        )
+        .unwrap();
+        let state = home.path().join("state");
+        let now = riff::monitor::now_secs();
+        for (n, id) in (0u64..).zip(deaths) {
+            riff::deaths::record(&state, id, now - 60 + n).unwrap();
+        }
+        let path = format!(
+            "{}:{}",
+            fake.path().display(),
+            std::env::var("PATH").unwrap()
+        );
+        let process = Isolated::shared()
+            .riff()
+            .args(["workers", "host", "--claude", "true"])
+            .current_dir(&lead.main)
+            .env("PATH", path)
+            .env("RIFF_HOME", home.path())
+            .env("RIFF_SERVER", lead.api.base())
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "b")
+            .env("TMUX", "/tmp/tmux-1000/default,1,0")
+            .env("TMUX_PANE", "%0")
+            .env(
+                riff::machine::MACHINE,
+                "cpu 8x3000MHz, mem 16GB, 16GB available, load 0.00",
+            )
+            .env_remove("RIFF_SESSION")
+            .env_remove("CLAUDE_CODE_SESSION_ID")
+            .env_remove("RIFF_WORKER")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let host = Host {
+            fake,
+            home,
+            process,
+        };
+        let start = Instant::now();
+        loop {
+            let who = lead.api.who(&lead.me, false).await.unwrap_or_default();
+            let up = who.iter().any(|s| {
+                s.live
+                    && s.uri.place().host() == "b"
+                    && s.status
+                        .as_ref()
+                        .is_some_and(|st| st.status.step.starts_with(riff::host::MARK))
+            });
+            if up {
+                return host;
+            }
+            assert!(start.elapsed() < WAIT, "the host did not start");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// The pane and the session of each worker of `b`.
+    fn workers(&self) -> Vec<(String, String)> {
+        std::fs::read_to_string(self.fake.path().join("workers"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .map(|(p, s)| (p.to_owned(), s.to_owned()))
+            .collect()
+    }
+
+    /// Waits until a worker runs on `b`, and gives the first one.
+    async fn first_worker(&self) -> (String, String) {
+        let start = Instant::now();
+        loop {
+            if let Some(worker) = self.workers().into_iter().next() {
+                return worker;
+            }
+            assert!(start.elapsed() < WAIT, "timed out: no worker on b");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// The worker pane of `b` ends with no end call.
+    fn kill_workers(&self) {
+        std::fs::write(self.fake.path().join("workers"), "").unwrap();
+    }
+
+    /// The deaths of the workers of `b` in the last hour.
+    fn deaths(&self) -> usize {
+        riff::deaths::count_in(&self.home.path().join("state"), riff::monitor::now_secs())
+    }
+}
+
+/// The worker `id` of `b` joins the riff and claims `item`.
+async fn claim_on_b(lead: &Lead, id: &str, item: &str) -> SessionUri {
+    let worker = SessionUri::new(
+        Who::new("mike", Some(id)).unwrap(),
+        identity::place_in(&lead.main, "b").unwrap(),
+    );
+    lead.api.register_as(&worker, true).await.unwrap();
+    let thread = lead.me.default_thread().unwrap();
+    assert!(
+        lead.api
+            .claim(&worker, &thread, item)
+            .await
+            .unwrap()
+            .granted
+    );
+    worker
+}
+
+const ONE_FREE: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#;
+
+/// riff keeps the workers of a host as the person set them
+/// (01M493YZRPS33RR47Q6T9V6WP9). The machine of the lead has the limit
+/// 0, and the host `b` the limit 1. A worker of `b` dies with a claim.
+/// The host ends its session and records the death, the item is free,
+/// and the rollout of the lead starts a replacement on `b`. The lead
+/// gets one note for the death, and no message that wakes it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_of_a_host_dies_and_the_host_starts_a_replacement() {
+    let lead = lead(0).await;
+    lead.issues(ONE_FREE);
+    let b = Host::start(&lead, 1, &[]).await;
+    lead.riff(RiffState::Running).await;
+    let (pane, id) = b.first_worker().await;
+    let worker = claim_on_b(&lead, &id, "issue-1").await;
+    // Its watch stream stays open on the server.
+    let _stream = lead.api.watch(&worker).await.unwrap();
+    let mut read = lead.reads("b: started 1 worker").await;
+    // The host looked at the pane one time or more.
+    tokio::time::sleep(riff::reap::EVERY * 2).await;
+
+    b.kill_workers();
+
+    read += &lead
+        .reads(&format!("worker stopped: pane {pane}, session {id}, on b."))
+        .await;
+    let start = Instant::now();
+    let new = loop {
+        if let Some((_, new)) = b.workers().into_iter().next() {
+            break new;
+        }
+        assert!(start.elapsed() < WAIT, "no replacement on b");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_ne!(new, id);
+    read += &lead.reads(&new).await;
+    assert_eq!(b.deaths(), 1);
+    assert_eq!(read.matches("worker stopped").count(), 1, "{read}");
+    assert!(!read.contains("workers died"), "{read}");
+    assert_eq!(lead.workers(), 0, "the machine of the lead has the limit 0");
+}
+
+/// 3 workers of `b` died in the last hour. The fourth death on `b`
+/// starts a loop of deaths: the lead gets one message that wakes it, and
+/// the rollout starts no replacement on `b`, though the item is free
+/// (01M493YZZEW1FTDBNA090WT2AG, 01M493Z02KS82B3CVZEVFA3D6E).
+#[tokio::test(flavor = "multi_thread")]
+async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
+    let lead = lead(0).await;
+    lead.issues(ONE_FREE);
+    let b = Host::start(&lead, 1, &["d1", "d2", "d3"]).await;
+    lead.riff(RiffState::Running).await;
+    let (_, id) = b.first_worker().await;
+    let worker = claim_on_b(&lead, &id, "issue-1").await;
+    // Its watch stream stays open on the server.
+    let _stream = lead.api.watch(&worker).await.unwrap();
+    tokio::time::sleep(riff::reap::EVERY * 2).await;
+
+    b.kill_workers();
+
+    let alarm = riff::text::death_loop("b", 4);
+    let read = lead.reads(&alarm).await;
+    assert!(
+        !read.contains(&format!("note: {alarm}")),
+        "a message: {read}"
+    );
+    assert_eq!(b.deaths(), 4);
+    // The host tells its deaths in its status.
+    let start = Instant::now();
+    loop {
+        let who = lead.api.who(&lead.me, false).await.unwrap();
+        let deaths = who
+            .iter()
+            .filter(|s| s.uri.place().host() == "b")
+            .find_map(|s| riff::host::HostStatus::parse(&s.status.as_ref()?.status.step))
+            .map(|status| status.deaths);
+        if deaths == Some(4) {
+            break;
+        }
+        assert!(start.elapsed() < WAIT, "the host tells no deaths");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // No machine has room, so a look stops before `gh`. Each look in
+    // this time starts nothing.
+    tokio::time::sleep(QUIET * 2).await;
+    assert!(b.workers().is_empty(), "no replacement on b");
+    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+    let more = riff::text::inbox(&inbox, &lead.me);
+    assert!(!more.contains("workers died"), "one message: {more}");
+}
+
+/// The lead lowers the limit: the worker over it ends after its item.
+/// The lead raises it again: a new worker starts for the free work
+/// (01M493YZRPS33RR47Q6T9V6WP9, 01M402VFGAJQM1QW8B42NKMJM4).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lower_limit_ends_a_worker_after_its_item_and_a_higher_one_starts_one() {
+    let lead = lead(2).await;
+    lead.issues(TWO_FREE);
+    lead.riff(RiffState::Running).await;
+    lead.claim(1, "issue-1").await;
+    lead.claim(2, "issue-2").await;
+    assert_eq!(lead.settled().await, 2);
+
+    lead.set(&["limit", "1"]);
+    lead.reads("workers: limit 2 to 1 on a").await;
+    // The worker 1 ends its item: it releases, and its turn ends.
+    let (pane, worker) = lead.worker(1);
+    let id = worker.who().session().unwrap().to_owned();
+    lead.issues(
+        r#"[{"number":1,"body":"","comments":[{"body":"Merged in #9 (abc)"}],"milestone":{"title":"Wave 1"}},
+{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#,
+    );
+    let thread = lead.me.default_thread().unwrap();
+    lead.api.release(&worker, &thread, "issue-1").await.unwrap();
+    stop_hook(&lead, &pane, &id);
+    lead.reads(&format!("the worker in the pane {pane} ends"))
+        .await;
+    let start = Instant::now();
+    while lead.workers() > 1 {
+        assert!(start.elapsed() < WAIT, "the worker over the limit runs");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(lead.settled().await, 1, "no start at the limit");
+
+    lead.issues(
+        r#"[{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"}},
+{"number":3,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#,
+    );
+    lead.set(&["limit", "2"]);
+    lead.reads("workers: limit 1 to 2 on a: the rollout starts 1 worker.")
+        .await;
+    lead.until_workers(2).await;
+    let (_, new) = lead.worker(2);
+    assert_ne!(new.who(), worker.who());
+}
+
+/// The Stop hook of the worker `id` in `pane` on the machine of the lead.
+fn stop_hook(lead: &Lead, pane: &str, id: &str) {
+    let path = format!(
+        "{}:{}",
+        lead.fake.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut hook = Isolated::shared()
+        .riff()
+        .args(["hook", "stop"])
+        .current_dir(&lead.main)
+        .env("PATH", path)
+        .env("RIFF_HOME", lead.home.path())
+        .env("RIFF_SERVER", lead.api.base())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "a")
+        .env("RIFF_SESSION", id)
+        .env("RIFF_WORKER", "1")
+        .env("TMUX", "/tmp/tmux-1000/default,1,0")
+        .env("TMUX_PANE", pane)
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = format!(r#"{{"session_id":"{id}","hook_event_name":"Stop"}}"#);
+    std::io::Write::write_all(hook.stdin.as_mut().unwrap(), input.as_bytes()).unwrap();
+    let out = hook.wait_with_output().unwrap();
+    assert!(out.status.success(), "{out:?}");
 }

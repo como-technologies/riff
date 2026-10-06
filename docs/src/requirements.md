@@ -3051,12 +3051,8 @@
   limit, run `riff workers start N` for the difference, with no word of
   the user. This applies only while the rollout is off
   (01M3Q5QE9H42FQKEDC5G9GKCWD).
-- **01M3JQC8ANFYYEXSHBS2DCZYBX** Each worker pane runs `claude` through
-  `riff workers run`. When `claude` exits on its own, the wrapper sends
-  the lead of the person in the repository a direct message, as the
-  person: the pane, the session ID and the exit code. It never starts
-  `claude` again. On SIGTERM or SIGHUP, it stops `claude` and sends no
-  message.
+- **01M3JQC8ANFYYEXSHBS2DCZYBX** Replaced by
+  01M493YZVZGA7TSRJH6F67VN0H.
 - **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
   start context of such a session says that it is a worker.
 - **01M3K0AXMCVRST7HYH4DM8B3AN** A worker with no claim, and no free
@@ -3370,6 +3366,46 @@
   the pane and then sends the end call, gives no note. riff ends only
   a session of its user in its repository, and posts no note for
   another one.
+- **01M493YZRPS33RR47Q6T9V6WP9** riff keeps the workers of each machine
+  as the person set them. The worker settings of a machine are the
+  wanted state: `workers.limit`, `workers.jobs`, `workers.nice`,
+  `workers.floor` and `workers.mcp`. The rollout of the lead starts a
+  worker for free work while a machine has room
+  (01M3Q5QE01DB0FJQJWFKR450KQ). A worker over the limit ends after its
+  item (01M402VFGAJQM1QW8B42NKMJM4). A worker that dies frees its
+  claims, and the rollout starts a new worker for the free work
+  (01M3WG2460P4GF7GEVBY92Q33W). Each such action is one line on the
+  output of the process that acts and one note to the lead. The lead
+  starts and stops no worker by hand for this.
+- **01M493YZVZGA7TSRJH6F67VN0H** Each worker pane runs `claude` through
+  `riff workers run`. When `claude` exits on its own, the wrapper posts
+  a note to the lead of the person in the repository, as the person:
+  the pane, the session ID and the exit code. It never starts `claude`
+  again: the rollout starts a new worker for the free work. On SIGTERM
+  or SIGHUP, it stops `claude` and posts no note.
+- **01M493YZZEW1FTDBNA090WT2AG** A machine records each death of its
+  workers, one time for each session, in the file `worker-deaths` of
+  its local riff dir: an exit of `claude` on its own with an exit code
+  that is not 0 or with a signal, and a pane that ends with no end
+  call. When more than 3 workers of a machine died in the last hour,
+  the rollout starts no worker on that machine. It starts workers there
+  again when 3 or fewer died in the last hour. A workers host tells its
+  deaths of the last hour in its status, after its floor, as
+  `deaths N`, when N is more than 0.
+- **01M493Z02KS82B3CVZEVFA3D6E** The death that makes more than 3
+  deaths in the last hour on a machine sends one message to the lead,
+  which wakes it: the count, the host, that riff starts no worker
+  there, and where to look for the cause. A later death in the same
+  loop sends no message.
+- **01M493Z063SSTAJS2KNDFBTEBJ** `riff workers` shows for each machine
+  the wanted state and the running state: the limit and the workers
+  that run. After them it says each difference: room for more workers,
+  workers that end after their item, and why the machine starts no
+  worker: low memory, or more than 3 deaths in the last hour.
+- **01M493Z6WAKE05A3RGPQR223ZE** The skill tells the lead: a note
+  `worker stopped` needs no step, because riff starts a new worker for
+  the free work. The message of a loop of deaths goes to the user of
+  the lead.
 - **01M3ZV0QSFVCHRSEKYK57B88VA** riff stops the processes of a worker
   itself, in code. The agent never names a process ID. A process is of
   the worker `ID` when its environment has `RIFF_WORKER=1` and
