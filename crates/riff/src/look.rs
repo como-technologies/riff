@@ -49,36 +49,38 @@ use std::time::Duration;
 use anyhow::Result;
 use riff_core::name::SessionUri;
 use riff_core::wire::{ItemFact, PullFact, PullState, Unanswered};
-use serde::Deserialize;
 
 use crate::api::Api;
 use crate::pr::Gh;
-use crate::rollout::{Pull, Verify, branch_issue, needs};
+use crate::rollout::{Issue, Pull, Verify, branch_issue, needs};
 
 /// The time between two looks.
 pub const LOOK_EVERY: Duration = Duration::from_secs(60);
 
-/// An open issue, as `gh issue list --json number,body` gives it.
-#[derive(Debug, Clone, Deserialize)]
-pub struct OpenIssue {
-    pub number: u64,
-    #[serde(default)]
-    pub body: String,
-}
-
 /// The facts of the open items: the state of the pull request of each
 /// item, and the open items of its `Needs:` line
-/// (01M41FZP2C4Z4J6WKRXZ5B31EH).
+/// (01M41FZP2C4Z4J6WKRXZ5B31EH). A need is met when its issue is closed,
+/// or when the issue has a comment `Merged in #` (01M49HAW3NXNXNX02ETDZD3YCN).
 ///
 /// ```
-/// use riff::look::{OpenIssue, item_facts};
-/// use riff::rollout::{Check, Pull};
+/// use riff::look::item_facts;
+/// use riff::rollout::{Check, Comment, Issue, Pull};
 /// use riff_core::wire::{PullFact, PullState};
 ///
-/// let issue = |number, body: &str| OpenIssue { number, body: body.into() };
+/// let issue = |number, body: &str, comments: &[&str]| Issue {
+///     number,
+///     body: body.into(),
+///     comments: comments.iter().map(|c| Comment { body: c.to_string() }).collect(),
+///     milestone: None,
+/// };
 /// let pull = |number, branch: &str, checks| Pull { number, branch: branch.into(), checks, ..Pull::default() };
 /// let facts = item_facts(
-///     &[issue(12, ""), issue(13, "Needs: #12, #9"), issue(14, "")],
+///     &[
+///         issue(12, "", &[]),
+///         issue(13, "Needs: #12, #9, #11", &[]),
+///         issue(14, "", &[]),
+///         issue(11, "", &["Merged in #50 (abc)"]),
+///     ],
 ///     &[
 ///         pull(40, "worktree-issue-12", vec![]),
 ///         pull(41, "worktree-issue-14", vec![Check::verify("SUCCESS")]),
@@ -88,11 +90,16 @@ pub struct OpenIssue {
 /// assert_eq!(facts.len(), 3);
 /// assert_eq!(facts[0].item, "issue-12");
 /// assert_eq!(facts[0].pull, Some(PullFact { number: 40, state: PullState::Asked }));
+/// // #9 is closed, and #11 is merged: only #12 is open.
 /// assert_eq!((facts[1].item.as_str(), facts[1].needs.as_slice()), ("issue-13", &[12][..]));
 /// assert_eq!(facts[2].pull, Some(PullFact { number: 41, state: PullState::Passed }));
 /// ```
-pub fn item_facts(issues: &[OpenIssue], pulls: &[Pull]) -> Vec<ItemFact> {
-    let open: HashSet<u64> = issues.iter().map(|i| i.number).collect();
+pub fn item_facts(issues: &[Issue], pulls: &[Pull]) -> Vec<ItemFact> {
+    let open: HashSet<u64> = issues
+        .iter()
+        .filter(|i| !i.merged())
+        .map(|i| i.number)
+        .collect();
     let mut facts: BTreeMap<u64, ItemFact> = BTreeMap::new();
     let fact = |n: u64| ItemFact {
         item: format!("issue-{n}"),
@@ -128,7 +135,7 @@ pub fn item_facts(issues: &[OpenIssue], pulls: &[Pull]) -> Vec<ItemFact> {
 /// and makes their facts.
 pub fn forge_facts(gh: &Gh, repo: &str) -> Result<Vec<ItemFact>> {
     let pulls = crate::rollout::pulls(gh, repo)?;
-    let issues: Vec<OpenIssue> = gh.json(&[
+    let issues: Vec<Issue> = gh.json(&[
         "issue",
         "list",
         "--repo",
@@ -138,7 +145,7 @@ pub fn forge_facts(gh: &Gh, repo: &str) -> Result<Vec<ItemFact>> {
         "--limit",
         "1000",
         "--json",
-        "number,body",
+        "number,body,comments",
     ])?;
     Ok(item_facts(&issues, &pulls))
 }
