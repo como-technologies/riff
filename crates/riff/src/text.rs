@@ -4127,7 +4127,37 @@ export RIFF_OWNER=YOUR_EMAIL";
 /// The refusal of `riff cloud deploy` with a tag that is not a release
 /// tag.
 pub fn cloud_bad_tag(tag: &str) -> String {
-    format!("{tag} is not a release tag. Give vX.Y.Z, for example v1.0.0.")
+    format!(
+        "{tag} is not a release tag or the ID of a commit. Give vX.Y.Z, for example v1.0.0, \
+         or the full ID of a commit of main."
+    )
+}
+
+/// The refusal of `riff cloud deploy` of a commit to an instance that
+/// asks for its name, for example the shared riff
+/// (01M496JTDB16G52G22CJZRA8J0).
+///
+/// ```
+/// assert!(riff::text::cloud_commit_needs_stage("shared").contains("only a release tag"));
+/// ```
+pub fn cloud_commit_needs_stage(name: &str) -> String {
+    format!(
+        "{name} takes only a release tag vX.Y.Z. The image of a commit goes only to an \
+         instance with CLOUD_CONFIRM=false, for example the stage."
+    )
+}
+
+/// The refusal of `riff cloud smoke` with no refresh token.
+pub const SMOKE_NO_TOKEN: &str = "riff cloud smoke needs the refresh token of the test \
+account in RIFF_SMOKE_TOKEN.";
+
+/// The last line of a smoke test that passed.
+///
+/// ```
+/// assert_eq!(riff::text::smoke_passed("stage"), "The smoke test of stage passed.");
+/// ```
+pub fn smoke_passed(name: &str) -> String {
+    format!("The smoke test of {name} passed.")
 }
 
 /// The refusal of `riff cloud deploy` with no tag outside a tree with a

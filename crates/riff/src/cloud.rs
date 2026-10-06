@@ -306,6 +306,9 @@ pub struct Settings {
     pub domain: String,
     /// The memory of the service, for example `1Gi`.
     pub memory: String,
+    /// The least number of instances: 1, or 0 for a riff that scales
+    /// to zero between calls (01M496JT648QS9WTE1QVHAJEE5).
+    pub min_instances: u32,
     /// The alert on each error in the log, or empty for no alert.
     pub alert: String,
     /// The channel that sends the alert to the owner.
@@ -363,6 +366,14 @@ impl Settings {
             service: get("CLOUD_SERVICE"),
             domain: get("CLOUD_DOMAIN"),
             memory: get("CLOUD_MEMORY"),
+            min_instances: match get("CLOUD_MIN_INSTANCES").as_str() {
+                "" => 1,
+                n => n
+                    .parse()
+                    .ok()
+                    .filter(|n| *n <= 1)
+                    .with_context(|| format!("the cloud settings {name}: CLOUD_MIN_INSTANCES is 0 or 1, not {n}"))?,
+            },
             alert: get("CLOUD_ALERT"),
             alert_channel: get("CLOUD_ALERT_CHANNEL"),
             url: get("CLOUD_URL"),
@@ -400,6 +411,7 @@ impl Settings {
             service: name.to_owned(),
             domain: String::new(),
             memory: "1Gi".into(),
+            min_instances: 1,
             alert: String::new(),
             alert_channel: String::new(),
             url: format!("https://{name}-{number}.{region}.run.app"),
@@ -437,6 +449,7 @@ impl Settings {
             ("CLOUD_SERVICE", self.service.clone()),
             ("CLOUD_DOMAIN", self.domain.clone()),
             ("CLOUD_MEMORY", self.memory.clone()),
+            ("CLOUD_MIN_INSTANCES", self.min_instances.to_string()),
             ("CLOUD_ALERT", self.alert.clone()),
             ("CLOUD_ALERT_CHANNEL", self.alert_channel.clone()),
             ("CLOUD_URL", self.url.clone()),
@@ -1262,6 +1275,20 @@ pub fn release_tag(tag: &str) -> bool {
             .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// True when `tag` is the full ID of a commit: 40 hex digits in lower
+/// case. CI tags the image of each merge to main with it
+/// (01M496JTDB16G52G22CJZRA8J0).
+///
+/// ```
+/// use riff::cloud::commit_tag;
+/// assert!(commit_tag("183456a0c4e2b1f3d5a6978877665544332211ff"));
+/// assert!(!commit_tag("183456a") && !commit_tag("v1.0.0"));
+/// assert!(!commit_tag("183456A0C4E2B1F3D5A6978877665544332211FF"));
+/// ```
+pub fn commit_tag(tag: &str) -> bool {
+    tag.len() == 40 && tag.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+}
+
 /// The build of the tree at `top`: the last commit that changed the
 /// code, and its UTC time, as `RIFF_COMMIT` and `RIFF_COMMIT_TIME`
 /// lines. Cloud Build gets the source with no git, so the image reads
@@ -1331,7 +1358,7 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
         "--port",
         "8080",
         "--min-instances",
-        "1",
+        &s.min_instances.to_string(),
         "--max-instances",
         "1",
         "--no-cpu-throttling",

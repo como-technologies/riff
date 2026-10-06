@@ -259,6 +259,39 @@ pub async fn login(api: &Api, open: impl FnOnce(&str)) -> Result<SignIn> {
         .await
         .context("no sign-in came back from the browser")??;
     let id_token = redeem(&http, &discovery, &config, &code, &redirect, &verifier).await?;
+    sign_in_with(api, &config, id_token).await
+}
+
+/// Signs in at the server of `api` with a refresh token of the
+/// provider, with no browser: the smoke test of a riff in the cloud
+/// signs in as a test account this way (01M496JTHN19BZ7YN94993R35X).
+/// The provider gives an ID token for it. Keeps the sign-in and returns
+/// it.
+pub async fn login_with_refresh_token(api: &Api, refresh_token: &str) -> Result<SignIn> {
+    let config = api.sign_in_config().await?;
+    let http = reqwest::Client::new();
+    let discovery: Discovery = http
+        .get(Discovery::url(&config.issuer))
+        .send()
+        .await
+        .context("cannot reach the sign-in provider")?
+        .error_for_status()?
+        .json()
+        .await?;
+    let mut form = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", &config.client_id),
+    ];
+    if let Some(secret) = &config.client_secret {
+        form.push(("client_secret", secret));
+    }
+    let id_token = provider_id_token(&http, &discovery, &form, "refresh token").await?;
+    sign_in_with(api, &config, id_token).await
+}
+
+/// Swaps the ID token of the provider for a riff sign-in, and keeps it.
+async fn sign_in_with(api: &Api, config: &SignInConfig, id_token: String) -> Result<SignIn> {
     let pair = api
         .token(
             &TokenRequest {
@@ -275,7 +308,7 @@ pub async fn login(api: &Api, open: impl FnOnce(&str)) -> Result<SignIn> {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
-        riff_id: Some(config.riff_id),
+        riff_id: Some(config.riff_id.clone()),
     };
     store(api.base(), &sign_in)?;
     Ok(sign_in)
@@ -557,16 +590,27 @@ async fn redeem(
     if let Some(secret) = &config.client_secret {
         form.push(("client_secret", secret));
     }
+    provider_id_token(http, discovery, &form, "code").await
+}
+
+/// Sends `form` to the token endpoint of the provider, and returns the
+/// ID token of the reply. `what` names the grant in the error.
+async fn provider_id_token(
+    http: &reqwest::Client,
+    discovery: &Discovery,
+    form: &[(&str, &str)],
+    what: &str,
+) -> Result<String> {
     let response = http
         .post(&discovery.token_endpoint)
-        .form(&form)
+        .form(form)
         .send()
         .await
         .context("cannot reach the sign-in provider")?;
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        bail!("the sign-in provider refused the code ({status}): {text}");
+        bail!("the sign-in provider refused the {what} ({status}): {text}");
     }
     let tokens: ProviderTokens = response.json().await?;
     Ok(tokens.id_token)

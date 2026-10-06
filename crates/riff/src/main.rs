@@ -605,18 +605,32 @@ enum CloudCommand {
     /// Deploy riff-server to an instance
     ///
     /// With a release tag, it deploys the image of that release from the
-    /// image repository of the project. With no tag, Cloud Build builds
-    /// the tree of this directory. An instance with CLOUD_CONFIRM=true,
-    /// for example the shared riff, asks for its name first.
+    /// image repository of the project. With the full ID of a commit, it
+    /// deploys the image that CI built for a merge to main; only an
+    /// instance with CLOUD_CONFIRM=false takes it. With no tag, Cloud
+    /// Build builds the tree of this directory. An instance with
+    /// CLOUD_CONFIRM=true, for example the shared riff, asks for its name
+    /// first.
     Deploy {
         /// The name of the instance.
         name: String,
-        /// The release tag vX.Y.Z.
+        /// The release tag vX.Y.Z, or the full ID of a commit of main.
         tag: Option<String>,
         /// The name of the instance again, when there is no terminal to
         /// type it, for example in CI.
         #[arg(long, value_name = "NAME")]
         confirm: Option<String>,
+    },
+    /// Run the smoke test against an instance
+    ///
+    /// It signs in as the test account, posts a message, reads it back,
+    /// and checks that the server runs the build of this riff. The
+    /// refresh token of the test account comes from RIFF_SMOKE_TOKEN.
+    /// Set RIFF_HOME to a new directory, so that the sign-in stays out of
+    /// the keyring.
+    Smoke {
+        /// The name of the instance.
+        name: String,
     },
     /// List each instance: URL, release, ready, paused
     List,
@@ -2198,6 +2212,10 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
             let s = cloud::load(&dir, name)?;
             let source = match tag {
                 Some(tag) if cloud::release_tag(tag) => cloud::Source::Tag(tag.clone()),
+                Some(tag) if cloud::commit_tag(tag) && s.confirm => {
+                    anyhow::bail!(text::cloud_commit_needs_stage(name))
+                }
+                Some(tag) if cloud::commit_tag(tag) => cloud::Source::Tag(tag.clone()),
                 Some(tag) => anyhow::bail!(text::cloud_bad_tag(tag)),
                 None => {
                     let top = cloud::top(&here).filter(|t| t.join("Dockerfile").is_file());
@@ -2209,6 +2227,16 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
                 cloud::confirm(name, confirm.as_deref(), "deploys to")?;
             }
             cloud::deploy(&gcloud, &s, &source, &owner)
+        }
+        CloudCommand::Smoke { name } => {
+            let s = cloud::load(&dir, name)?;
+            let token = std::env::var(riff::smoke::TOKEN_VAR)
+                .ok()
+                .filter(|t| !t.is_empty())
+                .context(text::SMOKE_NO_TOKEN)?;
+            riff::smoke::run(&Api::new(&s.url), &token, |line| println!("{line}")).await?;
+            println!("{}", text::smoke_passed(name));
+            Ok(())
         }
         CloudCommand::List => {
             let all = cloud::all(&dir)?;

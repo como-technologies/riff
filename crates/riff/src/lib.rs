@@ -103,6 +103,7 @@ pub mod relay;
 pub mod rollout;
 pub mod secrets;
 pub mod settings;
+pub mod smoke;
 pub mod state;
 pub mod style;
 pub mod temp;
