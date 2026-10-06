@@ -356,7 +356,8 @@ impl Presence {
     /// - `posted`: a message, not a note and not a status request, that
     ///   wakes a blocked session answers its block
     ///   (01M41FZPT31ATXP75QW965P3JB). The block is then not unanswered
-    ///   (01M41FZQCHWY1YVGAZ60ZHJK21).
+    ///   (01M41FZQCHWY1YVGAZ60ZHJK21). A lead waits for its person: a
+    ///   message does not answer it (01M48VDSB4CHQS9P6XVDJ6FMKS).
     /// - `claimed`, `released` and `session_started` end the block of
     ///   the session: a change of its claims is work, and a new start
     ///   is a new context.
@@ -366,7 +367,11 @@ impl Presence {
             Change::Released(released) => self.claims_changed(released.session.who(), at),
             Change::Posted(posted) => {
                 if let (Some(at), Kind::Message) = (at, posted.message.kind) {
+                    let leads = &riff.work().leads;
                     for who in &posted.woken {
+                        if leads.values().any(|lead| lead == who) {
+                            continue;
+                        }
                         let session = self.sessions.get_mut(who);
                         if let Some(block) = session.and_then(|s| s.blocked.as_mut()) {
                             block.answered.get_or_insert(at);

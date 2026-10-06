@@ -861,6 +861,115 @@ async fn a_session_with_no_status_is_idle() {
     assert!(secs(b2).ends_with(ready), "{who}");
 }
 
+/// A lead that calls only the command line has a row in `riff top`,
+/// with its status (01M48VDGQ5KETKPM4G6TKTC2MB).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lead_on_the_command_line_has_a_row() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    for args in [
+        &["lead"][..],
+        &["resume", "--riff"],
+        &["status", "plan the wave"],
+    ] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+
+    let top = output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await;
+    assert!(
+        session(&top, "a1")[0].ends_with("─ a1  lead  idle"),
+        "{top}"
+    );
+    assert_eq!(
+        detail(&top, "a1"),
+        ["monitoring work for Ns", "Ns ago: plan the wave"],
+        "{top}"
+    );
+}
+
+/// `riff top` shows the state of a lead from its facts
+/// (01M48VDS8RKJS9HG3KSEYGBFGV): `busy` in a turn, `waiting` for its
+/// person, `idle` when nothing goes on. It shows a long step with its
+/// age (01M48VDGTD40P8RBZMS0XB5M9N).
+#[tokio::test(flavor = "multi_thread")]
+async fn top_shows_the_state_of_a_lead_and_its_long_step() {
+    use riff_core::wire::Activity;
+
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    for args in [&["lead"][..], &["resume", "--riff"]] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+    let a1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
+        .parse()
+        .unwrap();
+    live_at(&server, a1.clone()).await;
+    let api = Api::new(&server);
+    let top = || async { output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await };
+    let state = |top: &str| {
+        session(top, "a1")[0]
+            .rsplit("  ")
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+
+    let tool = Activity {
+        tool: Some("Bash: deploy the stage".into()),
+        turn: true,
+        secs: 0,
+    };
+    api.alive_with(&a1, Some(tool), None).await.unwrap();
+    let step = ["step", "start", "live window"];
+    output(riff(&server, dir, Some("a1"), bin.path(), &step)).await;
+    let busy = top().await;
+    assert_eq!(state(&busy), "busy", "{busy}");
+    assert_eq!(
+        detail(&busy, "a1"),
+        ["runs Bash: deploy the stage for Ns", "live window for Ns"],
+        "{busy}"
+    );
+
+    let wait = ["blocked", "run riff owner --take"];
+    output(riff(&server, dir, Some("a1"), bin.path(), &wait)).await;
+    let waiting = top().await;
+    assert_eq!(state(&waiting), "waiting", "{waiting}");
+    assert_eq!(
+        detail(&waiting, "a1"),
+        [
+            "waiting for mike: run riff owner --take (Ns ago)",
+            "live window for Ns"
+        ],
+        "{waiting}"
+    );
+    assert!(
+        !waiting.contains("blocked"),
+        "a lead that waits is not red: {waiting}"
+    );
+
+    let ended = Activity {
+        tool: None,
+        turn: false,
+        secs: 0,
+    };
+    api.alive_with(&a1, Some(ended), Some(0)).await.unwrap();
+    output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["step", "done"],
+    ))
+    .await;
+    let idle = top().await;
+    assert_eq!(state(&idle), "idle", "{idle}");
+    assert_eq!(detail(&idle, "a1"), ["monitoring work for Ns"], "{idle}");
+}
+
 /// With 12 sessions, long titles and long statuses, `riff top --once`
 /// in a pipe fits in 80 columns: riff cuts each wider line with `…`
 /// (01M3QA8EZHX5B8C9CKF8Q3154X).

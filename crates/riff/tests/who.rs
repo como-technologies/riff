@@ -137,7 +137,7 @@ async fn a_pipe_gets_no_color_unless_asked() {
 
     let auto = output(riff(&server, dir, None, &["who"])).await;
     assert!(
-        auto.contains("\nmike@pangolin:riff (a1)  offline  lead  seen 0s ago\n"),
+        auto.contains("\nmike@pangolin:riff (a1)  paused   lead\n"),
         "{auto}"
     );
     assert!(!auto.contains('\x1b'), "{auto:?}");
@@ -164,13 +164,11 @@ async fn a_blocked_session_is_red() {
     let blocked = ["blocked", "waits for a review"];
     output(riff(&server, dir, Some("a1"), &["lead"])).await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
-    output(riff(&server, dir, Some("a1"), &blocked)).await;
-    // A watch makes a1 live, so its state is blocked.
-    let a1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
-        .parse()
-        .unwrap();
+    output(riff(&server, dir, Some("b2"), &blocked)).await;
+    // A watch makes b2 live, so its state is blocked.
     let api = riff::api::Api::new(&server);
-    let _watch = api.watch(&a1).await.unwrap();
+    let b2 = uri("b2");
+    let _watch = api.watch(&b2).await.unwrap();
 
     let who = output(riff(&server, dir, None, &["who", "--color", "always"])).await;
     let red = style::ERROR;
@@ -180,6 +178,171 @@ async fn a_blocked_session_is_red() {
     let (_, rest) = who.split_once(&start).expect(&who);
     let (age, _) = rest.split_once(&format!("s ago){red:#}\n")).expect(&who);
     assert!(age.parse::<u64>().is_ok(), "{who:?}");
+}
+
+/// The line of the session `id` in `riff who`, with each run of spaces
+/// as one space and each age in seconds as `Ns`.
+async fn row(server: &str, dir: &Path, id: &str) -> String {
+    let who = output(riff(server, dir, None, &["who", "--color", "never"])).await;
+    let line = who
+        .lines()
+        .find(|l| l.contains(&format!("({id})")))
+        .unwrap_or_else(|| panic!("{id}: {who}"));
+    let words: Vec<String> = line
+        .split_whitespace()
+        .map(|w| {
+            let n = w.trim_start_matches('(');
+            match n.strip_suffix('s') {
+                Some(n) if n.parse::<u64>().is_ok() => format!("{}Ns", &w[..w.len() - n.len() - 1]),
+                _ => w.to_owned(),
+            }
+        })
+        .collect();
+    words.join(" ")
+}
+
+/// A lead that calls only the command line has no watch. It shows with
+/// its status, not `offline` (01M48VDGQ5KETKPM4G6TKTC2MB).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lead_on_the_command_line_shows_with_its_status() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    output(riff(&server, dir, Some("a1"), &["lead"])).await;
+    output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
+    output(riff(&server, dir, Some("a1"), &["status", "plan the wave"])).await;
+    output(riff(&server, dir, Some("b2"), &["status", "tests"])).await;
+
+    assert_eq!(
+        row(&server, dir, "a1").await,
+        "mike@pangolin:riff (a1) idle lead monitoring work for Ns Ns ago: plan the wave"
+    );
+    // A session that is not the lead needs a watch.
+    assert_eq!(
+        row(&server, dir, "b2").await,
+        "mike@pangolin:riff (b2) offline seen Ns ago"
+    );
+}
+
+/// The state of a lead comes from its facts, not from its claims
+/// (01M48VDS8RKJS9HG3KSEYGBFGV): `busy` in a turn, `waiting` for its
+/// person, `idle` when nothing goes on. A message does not end the
+/// wait, the next prompt of the person does (01M48VDSB4CHQS9P6XVDJ6FMKS,
+/// 01M48VDWPDYRPEAXHR1MYDN1M7).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_state_of_a_lead_comes_from_its_facts() {
+    use riff_core::wire::Activity;
+
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let api = riff::api::Api::new(&server);
+    let a1 = uri("a1");
+    output(riff(&server, dir, Some("a1"), &["lead"])).await;
+    output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
+    let _watch = api.watch(&a1).await.unwrap();
+    assert_eq!(
+        row(&server, dir, "a1").await,
+        "mike@pangolin:riff (a1) idle lead monitoring work for Ns"
+    );
+
+    // In a turn: busy, with the work.
+    let tool = Activity {
+        tool: Some("Bash: deploy the stage".into()),
+        turn: true,
+        secs: 0,
+    };
+    api.alive_with(&a1, Some(tool.clone()), None).await.unwrap();
+    assert_eq!(
+        row(&server, dir, "a1").await,
+        "mike@pangolin:riff (a1) busy lead runs Bash: deploy the stage for Ns"
+    );
+
+    // It waits for its person: waiting, with the person and the reason.
+    let wait = ["blocked", "run riff owner --take"];
+    let said = output(riff(&server, dir, Some("a1"), &wait)).await;
+    assert!(said.starts_with("You wait for your person"), "{said}");
+    let waiting =
+        "mike@pangolin:riff (a1) waiting lead waiting for mike: run riff owner --take (Ns ago)";
+    assert_eq!(row(&server, dir, "a1").await, waiting);
+
+    // A message of a worker and more work do not end the wait.
+    output(riff(&server, dir, Some("b2"), &["tell", "lead", "done"])).await;
+    api.alive_with(&a1, Some(tool), None).await.unwrap();
+    assert_eq!(row(&server, dir, "a1").await, waiting);
+
+    // The next prompt of the person ends it. The turn ended: idle.
+    let ended = Activity {
+        tool: None,
+        turn: false,
+        secs: 0,
+    };
+    api.alive_with(&a1, Some(ended), Some(0)).await.unwrap();
+    assert_eq!(
+        row(&server, dir, "a1").await,
+        "mike@pangolin:riff (a1) idle lead monitoring work for Ns"
+    );
+}
+
+/// A long step shows with its age until it is done. A failed step shows
+/// its reason and wakes the lead (01M48VDGTD40P8RBZMS0XB5M9N,
+/// 01M48VDS663X064YS5ZGCCZSTB).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_long_step_shows_and_a_failed_step_wakes_the_lead() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let api = riff::api::Api::new(&server);
+    output(riff(&server, dir, Some("a1"), &["lead"])).await;
+    output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
+    let (a1, b2) = (uri("a1"), uri("b2"));
+    let _watch = api.watch(&b2).await.unwrap();
+    let mut wakes = Box::pin(api.watch(&a1).await.unwrap());
+
+    let said = output(riff(
+        &server,
+        dir,
+        Some("b2"),
+        &["step", "start", "live window"],
+    ))
+    .await;
+    assert!(said.starts_with("Your step is now: live window."), "{said}");
+    assert_eq!(
+        row(&server, dir, "b2").await,
+        "mike@pangolin:riff (b2) idle ready for work for Ns live window for Ns"
+    );
+
+    let fail = ["step", "fail", "the stage gave 502"];
+    let said = output(riff(&server, dir, Some("b2"), &fail)).await;
+    assert_eq!(
+        said.trim(),
+        "Your step failed: the stage gave 502. The lead has the reason."
+    );
+    assert_eq!(
+        row(&server, dir, "b2").await,
+        "mike@pangolin:riff (b2) idle ready for work for Ns live window failed Ns ago: the stage gave 502"
+    );
+    let wake = tokio::time::timeout(
+        Duration::from_secs(30),
+        futures::StreamExt::next(&mut wakes),
+    );
+    let wake = wake.await.unwrap().unwrap().unwrap();
+    assert_eq!(
+        wake.from.who().session(),
+        Some("b2"),
+        "the failed step wakes the lead"
+    );
+    let read = output(riff(&server, dir, Some("a1"), &["read"])).await;
+    assert!(
+        read.contains("step failed: live window: the stage gave 502"),
+        "{read}"
+    );
+
+    output(riff(&server, dir, Some("b2"), &["step", "done"])).await;
+    assert_eq!(
+        row(&server, dir, "b2").await,
+        "mike@pangolin:riff (b2) idle ready for work for Ns"
+    );
 }
 
 /// Each `riff who` command in the `sh` blocks of How It Works is real,
