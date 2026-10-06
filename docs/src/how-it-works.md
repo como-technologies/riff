@@ -1719,6 +1719,41 @@ again. After the merge, it adds the total of the tokens to the issue:
 see
 [See the tokens of an issue](development.md#see-the-tokens-of-an-issue).
 
+### When a pull request stops
+
+A pull request can stop with no sign. The `riff mcp` of the lead looks
+at the open pull requests each minute, and sends a message in two
+cases:
+
+```mermaid
+flowchart TD
+    L["the look of the lead, each minute"] --> C{"auto-merge on, and a conflict?"}
+    C -- yes --> H{"a session holds the item?"}
+    H -- yes --> M1["message to that session"]
+    H -- no --> M2["message to the lead"]
+    L --> V{"waits for a verify, and no verify- claim?"}
+    V -- "for 30 minutes" --> M3["message to the lead"]
+```
+
+- A conflict with the default branch: the message names the pull
+  request and the commit. The session that holds the item rebases it
+  and pushes. When no session holds it, the lead gives it to a free
+  session.
+- A verify that no session claims for 30 minutes: the lead gives the
+  verify to a free session, or starts a worker.
+
+Each message comes one time for each pull request, head commit and
+state. A new push that has a conflict again gives a new message. To fix
+a conflict, rebase in the worktree of the item, and push:
+
+```sh
+git fetch -q origin
+git rebase origin/main
+git push --force-with-lease --force-if-includes
+```
+
+Then send a new verify request for the new commit.
+
 ### Report a verify
 
 The Gate on GitHub is the one full test run of each commit. A verifier

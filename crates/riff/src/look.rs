@@ -40,6 +40,29 @@
 //! desktop: a display (`DISPLAY` or `WAYLAND_DISPLAY`) and
 //! `notify-send`, as on GNOME. A machine with no desktop gets none, and
 //! nothing fails.
+//!
+//! # A pull request that stops
+//!
+//! A pull request can stop on its way to the merge with no sign: a
+//! conflict with the default branch, or a verify request that no session
+//! takes. The same look sees the open pull requests, and the claims of
+//! `who` ([`PullWatch`]):
+//!
+//! ```mermaid
+//! flowchart TD
+//!     L["each look"] --> C{"auto-merge on, and CONFLICTING?"}
+//!     C -- yes --> H{"a session holds the item?"}
+//!     H -- yes --> M1["message to that session: rebase and push"]
+//!     H -- no --> M2["message to the lead"]
+//!     L --> V{"waits for a verify, with no verify- claim?"}
+//!     V -- "yes, for 30 minutes" --> M3["message to the lead"]
+//!     V -- "no: a claim or a result" --> R["the wait starts again"]
+//! ```
+//!
+//! Each message comes one time for each pull request, head commit and
+//! state (01M49Q31FASDM7CG3JEGPYCZB9). The `riff mcp` of the lead keeps
+//! what it told in memory. So after a new start of it, a state can come
+//! one more time, and the wait of 30 minutes starts again.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
