@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 use nix::sys::resource::{UsageWho, getrusage};
 
 /// The wall-clock limit of each check. A span longer than this is a
-/// hang, also under load.
+/// hang, also under load (01M49HCWH5HR0GPKHXKYZTXPW3).
 pub const HANG: Duration = Duration::from_secs(60);
 
 /// The CPU pressure from which a span is slow under load: a task of the

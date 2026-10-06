@@ -847,6 +847,16 @@
   It does not wait for a fixed time. A time limit of a wait only ends
   a test that hangs, so it is generous. A test passes on a busy
   machine. Only a check that a thing does not come waits for a time.
+- **01M49HCWEHTKSVQ6176G7C6H2S** A timed check in a test fails only
+  when the logic is slow. It uses a `Span` of the crate `isolated`. A
+  check of the speed of a step also passes when the CPU time of the
+  step is under its limit. When a check is over its limit and the CPU
+  pressure of the span (`/proc/pressure/cpu`, the `some` line) is 10 %
+  or more, the test prints `slow under load` and the check passes.
+- **01M49HCWH5HR0GPKHXKYZTXPW3** A wall-clock limit in a test only finds
+  a hang: each check of a `Span` fails after 60 s. Each test that
+  checks a time with a limit under 60 s uses a `Span` or
+  `isolated::in_time`.
 - **01M3MY2KSV73WS8D902YCH2PRX** With `RIFF_HOME=DIR`, `riff` keeps its
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.
