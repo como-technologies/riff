@@ -7,8 +7,10 @@ The book in `docs/src/` holds the requirements and the big picture.
 
 - Mantra: **GEN;SET**, Good Enough for Now; Safe Enough to Try. Decide,
   record the requirement, move on.
-- `just ci` passes before each push. Zero warnings. For a diff of only
-  text it runs only the text checks. `just ci-full` runs each check.
+- `just check` passes before each push: the fast checks and the tests
+  of the crates that you touched. Zero warnings. The Gate on GitHub is
+  the one full run of each commit. A verifier does not run `just ci`:
+  it reads the Gate and reviews.
 - Design docs live in the code as rustdoc, with doc tests. The book
   stays for people: what riff is, how to join, the big picture.
 - Each change has unit tests, integration tests and doc tests.

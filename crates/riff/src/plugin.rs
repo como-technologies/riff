@@ -1074,6 +1074,39 @@ mod tests {
         }
     }
 
+    /// 01M49HAZ5BZYGAR9PGC089RM3F: the forge runs the one full check of
+    /// each commit. The author runs the fast checks, and the verifier
+    /// reads the result of the forge and reviews. The notes for agents
+    /// and the book say the same.
+    #[test]
+    fn each_commit_gets_one_full_run_and_the_verify_reviews() {
+        let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let skill = flat(&text("riff/skills/riff/SKILL.md"));
+        for word in [
+            "### One full run for each commit",
+            "It is the only full run of the commit.",
+            "In the riff repository: `just check`.",
+            "The verifier does not run the full check.",
+            "Do not run the full check: the forge runs it",
+            "Do not run the full check of the repository: the forge ran it.",
+            "`riff verify pass` refuses while the `Gate` of the head commit has no success.",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+        let top = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let notes = flat(&std::fs::read_to_string(top.join("CLAUDE.md")).unwrap());
+        assert!(
+            notes.contains("`just check` passes before each push")
+                && notes.contains("A verifier does not run `just ci`"),
+            "{notes}"
+        );
+        let book = flat(&std::fs::read_to_string(top.join("docs/src/development.md")).unwrap());
+        assert!(
+            book.contains("Each pushed commit gets one full test run: the Gate on GitHub."),
+            "development.md"
+        );
+    }
+
     /// 01M3K0AXRNA0F2920E9QCSDFQZ, 01M3Q5A11RKZW1610SWGSMTE3W: the lead
     /// gives free work to a free worker first, starts a worker when it
     /// has work for it, and ends workers. The server stops idle workers.

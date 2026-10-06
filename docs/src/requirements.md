@@ -591,6 +591,13 @@
   pull request. The tested commit is `HEAD` of the directory, or
   `--commit SHA`. When it is not the head of the pull request, it
   makes no comment, no status and no post, and exits with status 1.
+- **01M49HAZ7P3JMWNCG1SWCMAXQP** `riff verify pass N` reads the check
+  runs `Gate` of the head commit of pull request N with `gh`. When the
+  commit has no run of the Gate, or a run is not completed, or a run
+  has a conclusion that is not `success`, it makes no comment, no
+  status and no post. It exits with status 1 and one line that names
+  the commit, the state of the Gate and `gh pr checks N`.
+  `riff verify fail N` needs no Gate.
 - **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
@@ -3869,6 +3876,22 @@
 - **01M43DKYYEYW3TQ2CKS36VRZ0V** The skill tells a session to look for
   a full check of its own that runs before it starts one, and to wait
   for its end. A run in the background is one task.
+- **01M49HAZ5BZYGAR9PGC089RM3F** Each pushed commit gets one full test
+  run: the Gate on GitHub. The forge merges only on a Gate pass. An
+  author runs `just check` before a push, not `just ci`. A verifier
+  does not run `just ci`. It reads the Gate of the commit, and does
+  the work that a test run cannot do: a review of the code and of its
+  fit with the design, a check of each `Done when:` criterion by its
+  test, the book, the rustdoc and the requirements.
+- **01M49HAZA5K08XW2JQ11TG87JP** `just check` runs `fmt-check`,
+  `lint`, `doc`, `book`, `reqs` and `wrap`, then the tests of each
+  crate of the diff and of each crate that depends on one of them.
+  The diff is the diff of 01M3WNMKB6PAP6J0QXX4A684HH. A text file
+  needs no test. A file that is not text and is in no crate needs the
+  tests of each crate, and so does a tree that git cannot compare.
+  `hygiene crates` prints the arguments of `cargo test`, and one line
+  that names the tests and the reason. `just check` holds the lock of
+  01M43DKYVAX0TJ2F5YYGYFSZ4G.
 
 ## Open
 

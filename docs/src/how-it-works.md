@@ -1720,6 +1720,18 @@ see
 
 ### Report a verify
 
+The Gate on GitHub is the one full test run of each commit. A verifier
+does not run `just ci` again. First see that the Gate of the head
+commit passed:
+
+```sh
+gh pr checks 40
+```
+
+Then review what a test run cannot check: the code and its fit with
+the design, each `Done when:` criterion by its test, the book, the
+rustdoc and the requirements.
+
 Write the result to a file: each criterion, and what you did to check
 it. For a fail, give the steps to see each failure. Then report a
 pass:
@@ -1739,6 +1751,16 @@ there. Or name it with `--commit 1a2b3c4`. A verify counts only for
 its commit. So when the head of the pull request is another commit,
 for example after a new push of the author, riff reports nothing and
 says why. Test the new head, or tell the author.
+
+A pass needs a success of the Gate of the head commit. While the Gate
+runs, failed, or did not run, `riff verify pass` reports nothing and
+prints one line:
+
+```text
+riff verify pass: the Gate of commit 1a2b3c4 runs still. A pass needs a Gate success: see gh pr checks 40. Nothing is reported.
+```
+
+Wait for the Gate, then report again. A fail needs no Gate.
 
 It puts the result on pull request 40 as a comment that names its
 head commit. It sets the status `riff/verify` of that commit:
