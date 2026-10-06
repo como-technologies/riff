@@ -49,10 +49,10 @@
 //! use riff::sccache::{env, Cache};
 //!
 //! let cache = Cache { bin: "/c/bin/sccache".into(), dir: "/h/sccache".into(), size: "40G".into() };
-//! let env = env(Some(&cache));
-//! assert_eq!(env[0], ("RUSTC_WRAPPER".to_owned(), Some("/c/bin/sccache".to_owned())));
-//! assert_eq!(env[1], ("SCCACHE_DIR".to_owned(), Some("/h/sccache".to_owned())));
-//! assert_eq!(env[2], ("SCCACHE_CACHE_SIZE".to_owned(), Some("40G".to_owned())));
+//! let vars = env(Some(&cache));
+//! assert_eq!(vars[0], ("RUSTC_WRAPPER".to_owned(), Some("/c/bin/sccache".to_owned())));
+//! assert_eq!(vars[1], ("SCCACHE_DIR".to_owned(), Some("/h/sccache".to_owned())));
+//! assert_eq!(vars[2], ("SCCACHE_CACHE_SIZE".to_owned(), Some("40G".to_owned())));
 //! assert_eq!(env(None).iter().filter(|(_, value)| value.is_some()).count(), 0);
 //! ```
 
