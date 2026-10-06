@@ -2473,9 +2473,9 @@ fn count_usage(id: &str, transcript: Option<&std::path::Path>, ends: bool) {
 }
 
 /// The text of `riff usage` ([`usage`]): of `issue`, of each issue of
-/// `wave`, or of the sessions of this machine.
-/// The text of `riff usage`. With `total`, it first writes the total
-/// comment of the issue again (01M49HF0ADEQ83XTJCQT0PK3RS).
+/// `wave`, or of the sessions of this machine. With `total`, it first
+/// writes the total comment of the issue again
+/// (01M49HF0ADEQ83XTJCQT0PK3RS).
 fn usage_text(issue: Option<&str>, wave: Option<&str>, total: bool) -> Result<String> {
     if issue.is_none() && wave.is_none() {
         let dir = local::marks().context("this machine has no directory for the marks of riff")?;
