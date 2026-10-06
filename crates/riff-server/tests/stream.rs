@@ -64,7 +64,7 @@ async fn first_bytes(path: &str) -> String {
         assert_eq!(reply.status(), 200);
         reply.chunk().await.unwrap().unwrap()
     };
-    let chunk = tokio::time::timeout(AT_ONCE, connect)
+    let chunk = isolated::in_time(AT_ONCE, connect)
         .await
         .expect("the stream sends no byte when it opens");
     String::from_utf8_lossy(&chunk).into_owned()

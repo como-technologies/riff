@@ -130,10 +130,14 @@ impl Worker {
     /// The Stop hook of the session `id`, with the transcript of its
     /// agent in the input.
     fn stop_hook_with(&self, id: &str, worker: bool, transcript: Option<&Path>) {
-        let start = Instant::now();
+        let span = isolated::Span::start();
         self.end_turn(id, worker, transcript);
-        let took = start.elapsed();
-        assert!(took < Duration::from_secs(1), "{took:?}");
+        assert!(
+            span.fast(Duration::from_secs(1)),
+            "{:?}, CPU {:?}",
+            span.wall(),
+            span.cpu()
+        );
     }
 
     /// The Stop hook of the session `id`, with no limit on its time: a

@@ -7,7 +7,7 @@
 //! whose program does not exist ends at once, so a later call on it
 //! fails, and the window of the workers closes with its last pane.
 
-use isolated::Isolated;
+use isolated::{Isolated, Span};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -482,7 +482,7 @@ async fn a_host_tells_the_lead_a_change_of_its_settings() {
     assert!(read.contains("mike@b:riff"), "{read}");
 
     r.b.limit(2);
-    let start = Instant::now();
+    let span = Span::start();
     until("the new limit in the status of the host", || async {
         let who = r.api.who(&r.lead, false).await.ok()?;
         who.iter()
@@ -492,11 +492,7 @@ async fn a_host_tells_the_lead_a_change_of_its_settings() {
     })
     .await;
     // The host does not wait for its refresh.
-    assert!(
-        start.elapsed() < riff::host::REFRESH / 2,
-        "{:?}",
-        start.elapsed()
-    );
+    assert!(span.within(riff::host::REFRESH / 2), "{:?}", span.wall());
 }
 
 /// A host whose keyring refuses posts one note to the lead and says one

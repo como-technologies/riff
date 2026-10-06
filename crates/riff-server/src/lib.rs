@@ -2832,7 +2832,7 @@ mod tests {
         for n in 2..=7 {
             tx.send(n).unwrap();
         }
-        let next = tokio::time::timeout(Duration::from_secs(5), events.next());
+        let next = isolated::in_time(Duration::from_secs(5), events.next());
         assert_eq!(next.await.unwrap(), None, "the stream ends at the lag");
     }
 

@@ -2593,7 +2593,7 @@ mod tests {
         };
         // A wait of a minute would stop the test: no connect waits.
         let items = follow(connect, Duration::from_secs(60)).take(2);
-        let items = tokio::time::timeout(Duration::from_secs(5), items.collect::<Vec<_>>());
+        let items = isolated::in_time(Duration::from_secs(5), items.collect::<Vec<_>>());
         let items: Vec<u32> = items
             .await
             .unwrap()

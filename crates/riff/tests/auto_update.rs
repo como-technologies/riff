@@ -11,7 +11,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::http::HeaderValue;
 use axum::response::Response;
@@ -176,8 +176,8 @@ fn text(out: &[u8]) -> String {
 
 /// Waits until `test` is true, for at most `limit`.
 async fn wait_for(limit: Duration, mut test: impl AsyncFnMut() -> bool) -> bool {
-    let end = Instant::now() + limit;
-    while Instant::now() < end {
+    let span = isolated::Span::start();
+    while span.within(limit) {
         if test().await {
             return true;
         }

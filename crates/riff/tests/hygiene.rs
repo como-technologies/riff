@@ -7,7 +7,7 @@ use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::api::Api;
 use riff::identity;
@@ -206,9 +206,9 @@ async fn riff_in(dir: &Path) -> (Api, SessionUri) {
 
 /// Waits until `done` is true, for at most 20 seconds.
 async fn wait_for(what: &str, done: impl AsyncFn() -> bool) {
-    let end = Instant::now() + Duration::from_secs(20);
+    let span = isolated::Span::start();
     while !done().await {
-        assert!(Instant::now() < end, "timed out: {what}");
+        assert!(span.within(Duration::from_secs(20)), "timed out: {what}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }

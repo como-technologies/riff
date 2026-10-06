@@ -9,10 +9,10 @@
 use std::io::{Read, Write};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures::StreamExt;
-use isolated::Isolated;
+use isolated::{Isolated, Span, in_time};
 use riff::api::Api;
 use riff_core::name::SessionUri;
 use riff_core::wire::Kind;
@@ -66,7 +66,7 @@ impl Client {
             .spawn()
             .unwrap();
         let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
-        let hint = tokio::time::timeout(WAIT, stderr.next_line())
+        let hint = in_time(WAIT, stderr.next_line())
             .await
             .expect("riff chat is ready in time")
             .unwrap()
@@ -96,18 +96,21 @@ impl Client {
 
     /// The next line of stdout that contains `text`, within `wait`.
     async fn shows_within(&mut self, text: &str, wait: Duration) -> String {
-        let deadline = Instant::now() + wait;
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            let line = tokio::time::timeout(left, self.stdout.next_line())
-                .await
-                .unwrap_or_else(|_| panic!("no line with {text:?} in time"))
-                .unwrap()
-                .expect("riff chat runs");
-            if line.contains(text) {
-                return line;
+        in_time(wait, async {
+            loop {
+                let line = self
+                    .stdout
+                    .next_line()
+                    .await
+                    .unwrap()
+                    .expect("riff chat runs");
+                if line.contains(text) {
+                    return line;
+                }
             }
-        }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no line with {text:?} in time"))
     }
 }
 
@@ -149,7 +152,7 @@ async fn a_line_of_one_person_shows_at_the_other() {
     assert!(is_line(&line, "mike@thelio", "hello brett"), "{line:?}");
 
     mike.say("/quit").await;
-    let status = tokio::time::timeout(WAIT, mike.child.wait()).await;
+    let status = in_time(WAIT, mike.child.wait()).await;
     assert!(status.unwrap().unwrap().success());
 }
 
@@ -167,7 +170,7 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
 
     // @lead wakes the lead of the sender.
     mike.say("@lead is #12 done?").await;
-    let wake = tokio::time::timeout(WAIT, mike_wakes.next())
+    let wake = in_time(WAIT, mike_wakes.next())
         .await
         .expect("the lead of mike wakes")
         .unwrap()
@@ -177,7 +180,7 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
 
     // @USER wakes the lead of USER.
     brett.say("@mike: can I take #14?").await;
-    let wake = tokio::time::timeout(WAIT, mike_wakes.next())
+    let wake = in_time(WAIT, mike_wakes.next())
         .await
         .expect("the lead of mike wakes")
         .unwrap()
@@ -340,18 +343,21 @@ fn the_book_shows_how_to_chat() {
 impl Client {
     /// The next line of stderr that contains `text`.
     async fn warns(&mut self, text: &str) -> String {
-        let deadline = Instant::now() + WAIT;
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            let line = tokio::time::timeout(left, self.stderr.next_line())
-                .await
-                .unwrap_or_else(|_| panic!("no stderr line with {text:?} in time"))
-                .unwrap()
-                .expect("riff chat runs");
-            if line.contains(text) {
-                return line;
+        in_time(WAIT, async {
+            loop {
+                let line = self
+                    .stderr
+                    .next_line()
+                    .await
+                    .unwrap()
+                    .expect("riff chat runs");
+                if line.contains(text) {
+                    return line;
+                }
             }
-        }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no stderr line with {text:?} in time"))
     }
 }
 
@@ -381,7 +387,7 @@ fn tail(api: &Api, user: &str, dir: &std::path::Path) -> (Child, Lines<BufReader
 async fn connected(api: &Api, tailed: &mut Lines<BufReader<ChildStdout>>) {
     const PROBE: &str = "is the tail there";
     let (lead, chat) = (lead_of("mike"), riff::chat::thread());
-    let deadline = Instant::now() + WAIT;
+    let span = Span::start();
     loop {
         api.post(&lead, Some(&chat), &[], PROBE, Kind::Message)
             .await
@@ -392,7 +398,7 @@ async fn connected(api: &Api, tailed: &mut Lines<BufReader<ChildStdout>>) {
                     return;
                 }
             }
-            Err(_) => assert!(Instant::now() < deadline, "riff tail connects in time"),
+            Err(_) => assert!(span.within(WAIT), "riff tail connects in time"),
         }
     }
 }
@@ -412,19 +418,17 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
         assert!(is_shown(&line, "* brett@heron waves"), "{line:?}");
         assert!(!line.contains('\x1b'), "{line:?}");
     }
-    let deadline = Instant::now() + WAIT;
-    loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        let line = tokio::time::timeout(left, tailed.next_line())
-            .await
-            .expect("riff tail shows the action in time")
-            .unwrap()
-            .expect("riff tail runs");
-        if line.contains("waves") {
-            assert_eq!(line.trim(), "* brett@heron waves");
-            break;
+    let line = in_time(WAIT, async {
+        loop {
+            let line = tailed.next_line().await.unwrap().expect("riff tail runs");
+            if line.contains("waves") {
+                return line;
+            }
         }
-    }
+    })
+    .await
+    .expect("riff tail shows the action in time");
+    assert_eq!(line.trim(), "* brett@heron waves");
 
     // The read tool of a session shows it as plain text.
     let thread = riff::chat::thread();
@@ -456,7 +460,7 @@ async fn me_with_at_lead_wakes_the_lead_of_the_sender() {
     let mut brett = Client::start(&api, "brett", "heron", &[]).await;
 
     brett.say("/me asks @lead to look").await;
-    let wake = tokio::time::timeout(WAIT, wakes.next())
+    let wake = in_time(WAIT, wakes.next())
         .await
         .expect("the lead of brett wakes")
         .unwrap()
@@ -576,13 +580,13 @@ impl Tty {
     /// The rows of the screen, with no empty rows at the end, once
     /// `test` holds for them.
     async fn shows(&self, test: impl Fn(&[String]) -> bool) -> Vec<String> {
-        let deadline = Instant::now() + WAIT;
+        let span = Span::start();
         loop {
             let rows = self.rows();
             if test(&rows) {
                 return rows;
             }
-            assert!(Instant::now() < deadline, "the screen in time: {rows:#?}");
+            assert!(span.within(WAIT), "the screen in time: {rows:#?}");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
@@ -817,7 +821,7 @@ async fn a_cut_stream_shows_no_error_and_loses_no_line() {
 
     // stderr has one short line for the gap, and no error.
     mike.say("/quit").await;
-    let status = tokio::time::timeout(WAIT, mike.child.wait()).await;
+    let status = in_time(WAIT, mike.child.wait()).await;
     assert!(status.unwrap().unwrap().success());
     let mut warned = Vec::new();
     while let Ok(Some(line)) = mike.stderr.next_line().await {
@@ -849,7 +853,7 @@ async fn a_cut_stream_shows_no_error_in_tail() {
         .unwrap();
     let mut out = BufReader::new(child.stdout.take().unwrap()).lines();
     let mut err = BufReader::new(child.stderr.take().unwrap()).lines();
-    let started = tokio::time::timeout(WAIT, err.next_line()).await.unwrap();
+    let started = in_time(WAIT, err.next_line()).await.unwrap();
     assert!(
         started
             .unwrap()
@@ -862,18 +866,16 @@ async fn a_cut_stream_shows_no_error_in_tail() {
         api.post(&lead, Some(&chat), &[], body, Kind::Message)
             .await
             .unwrap();
-        let deadline = Instant::now() + WAIT;
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            let line = tokio::time::timeout(left, out.next_line())
-                .await
-                .unwrap_or_else(|_| panic!("riff tail shows {body:?} in time"))
-                .unwrap()
-                .unwrap();
-            if line.contains(body) {
-                break;
+        in_time(WAIT, async {
+            loop {
+                let line = out.next_line().await.unwrap().unwrap();
+                if line.contains(body) {
+                    break;
+                }
             }
-        }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("riff tail shows {body:?} in time"));
         proxy.cut(true);
     }
     child.kill().await.unwrap();
@@ -948,7 +950,7 @@ async fn a_front_end_error_with_no_build_is_no_version_error() {
     mike.shows_within("after the outage", 2 * WAIT).await;
 
     mike.say("/quit").await;
-    let status = tokio::time::timeout(WAIT, mike.child.wait()).await;
+    let status = in_time(WAIT, mike.child.wait()).await;
     assert!(status.unwrap().unwrap().success());
     let mut warned = Vec::new();
     while let Ok(Some(line)) = mike.stderr.next_line().await {

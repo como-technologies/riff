@@ -9,7 +9,7 @@ use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::api::Api;
 use riff::identity;
@@ -191,7 +191,7 @@ impl Machine {
             format!("kill-pane -t %{n}"),
             format!("send-keys -t %{n} -l Join the riff."),
         );
-        let end = Instant::now() + Duration::from_secs(20);
+        let span = isolated::Span::start();
         loop {
             let log = self.log();
             if log.lines().any(|l| l == kill) {
@@ -200,7 +200,10 @@ impl Machine {
             if log.lines().any(|l| l == keys) {
                 return false;
             }
-            assert!(Instant::now() < end, "no end and no clear of %{n}: {log}");
+            assert!(
+                span.within(Duration::from_secs(20)),
+                "no end and no clear of %{n}: {log}"
+            );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }

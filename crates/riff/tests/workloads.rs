@@ -12,7 +12,7 @@ use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::api::Api;
 use riff::identity;
@@ -310,8 +310,8 @@ fn in_scope(child: &Child) {
 
 /// Waits until `child` ends, at most 20 seconds. True when it ended.
 fn ends(child: &mut Child) -> bool {
-    let end = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < end {
+    let span = isolated::Span::start();
+    while span.within(Duration::from_secs(20)) {
         if child.try_wait().unwrap().is_some() {
             return true;
         }

@@ -1093,7 +1093,7 @@ async fn riff_mcp_serves_no_tool_where_riff_is_off() {
     assert!(tools.is_empty(), "{tools:?}");
     // It ends when the agent tool closes the stream, with no end call.
     client.cancel().await.unwrap();
-    let ended = tokio::time::timeout(Duration::from_secs(20), child.wait()).await;
+    let ended = isolated::in_time(Duration::from_secs(20), child.wait()).await;
     assert!(ended.is_ok(), "riff mcp did not end");
     let made = calls.lock().unwrap().clone();
     assert!(

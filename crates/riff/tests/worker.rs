@@ -3,7 +3,7 @@
 //! 01M3K0AXMCVRST7HYH4DM8B3AN, 01M3K0AXRNA0F2920E9QCSDFQZ). A fake
 //! `claude` runs in place of Claude Code.
 
-use isolated::Isolated;
+use isolated::{Isolated, Span, in_time};
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -446,9 +446,9 @@ async fn a_hangup_stops_the_worker_with_no_message() {
         .status()
         .unwrap();
     assert!(hup.success());
-    let begin = Instant::now();
+    let span = Span::start();
     let status = child.wait().unwrap();
-    assert!(begin.elapsed() < Duration::from_secs(10));
+    assert!(span.within(Duration::from_secs(10)));
     assert_eq!(status.code(), Some(0));
     assert_eq!(lead_reads(&api, &lead).await, "No unread messages.");
 }
@@ -480,7 +480,7 @@ async fn the_server_stops_an_idle_worker_through_its_wrapper() {
     let w6: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w6"
         .parse()
         .unwrap();
-    let begin = Instant::now();
+    let span = Span::start();
     while !api
         .who(&lead, false)
         .await
@@ -488,7 +488,7 @@ async fn the_server_stops_an_idle_worker_through_its_wrapper() {
         .iter()
         .any(|s| s.uri.who() == w6.who() && s.worker)
     {
-        assert!(begin.elapsed() < Duration::from_secs(30), "no worker w6");
+        assert!(span.within(Duration::from_secs(30)), "no worker w6");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let _watch = api.watch(&w6).await.unwrap();
@@ -509,7 +509,7 @@ async fn the_server_stops_an_idle_worker_through_its_wrapper() {
     assert_eq!(status.0.code(), Some(0), "{err}");
     assert!(err.contains(riff::text::IDLE_STOP), "{err}");
 
-    let begin = Instant::now();
+    let span = Span::start();
     while api
         .who(&lead, false)
         .await
@@ -517,7 +517,7 @@ async fn the_server_stops_an_idle_worker_through_its_wrapper() {
         .iter()
         .any(|s| s.uri.who() == w6.who())
     {
-        assert!(begin.elapsed() < Duration::from_secs(10), "w6 in who");
+        assert!(span.within(Duration::from_secs(10)), "w6 in who");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let read = lead_reads(&api, &lead).await;
@@ -551,22 +551,22 @@ async fn a_wake_of_the_lead_takes_back_the_ask_to_stop() {
             .iter()
             .any(|s| s.uri.who() == w7.who() && s.stopping)
     };
-    let begin = Instant::now();
+    let span = Span::start();
     while !stopping().await {
-        assert!(begin.elapsed() < Duration::from_secs(30), "no ask to stop");
+        assert!(span.within(Duration::from_secs(30)), "no ask to stop");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     api.tell(&lead, "w7", "request: claim issue-12")
         .await
         .unwrap();
-    let wake = tokio::time::timeout(Duration::from_secs(10), watch.next()).await;
+    let wake = in_time(Duration::from_secs(10), watch.next()).await;
     assert!(matches!(wake, Ok(Some(Ok(_)))), "no wake");
     drop(watch);
 
-    let begin = Instant::now();
+    let span = Span::start();
     while stopping().await {
-        assert!(begin.elapsed() < Duration::from_secs(10), "the ask stays");
+        assert!(span.within(Duration::from_secs(10)), "the ask stays");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(!api.alive(&w7).await.unwrap().stop);
@@ -650,9 +650,9 @@ async fn a_pause_and_a_resume_give_one_note_and_the_stop_holds() {
             .any(|s| s.uri.who() == w9.who() && s.stopping)
     };
     let wait_for_the_ask = async || {
-        let begin = Instant::now();
+        let span = Span::start();
         while !stopping().await {
-            assert!(begin.elapsed() < Duration::from_secs(30), "no ask to stop");
+            assert!(span.within(Duration::from_secs(30)), "no ask to stop");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     };
@@ -663,7 +663,7 @@ async fn a_pause_and_a_resume_give_one_note_and_the_stop_holds() {
         api.set_pause(&lead, &PauseScope::Here, state)
             .await
             .unwrap();
-        let wake = tokio::time::timeout(Duration::from_secs(10), watch.next()).await;
+        let wake = in_time(Duration::from_secs(10), watch.next()).await;
         assert!(matches!(wake, Ok(Some(Ok(_)))), "no wake at {state:?}");
         drop(watch);
         // The worker reads, and starts its watch again.

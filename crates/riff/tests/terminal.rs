@@ -8,7 +8,7 @@ use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::api::Api;
 use riff::identity;
@@ -698,7 +698,7 @@ async fn workers_stop_ends_each_worker() {
         "{log}"
     );
 
-    let start = Instant::now();
+    let span = isolated::Span::start();
     loop {
         let who = api.who(&person, false).await.unwrap();
         let gone = workers
@@ -707,7 +707,7 @@ async fn workers_stop_ends_each_worker() {
         if gone {
             break;
         }
-        assert!(start.elapsed() < Duration::from_secs(10), "{who:?}");
+        assert!(span.within(Duration::from_secs(10)), "{who:?}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let thread = "como-technologies/riff".parse().unwrap();
@@ -877,13 +877,9 @@ async fn riff_mcp_adds_the_tail_pane_when_a_query_comes_before_its_register() {
     );
 
     let mut mcp = mcp_in_tmux(&api, fake.path(), run.path(), &main);
-    let start = Instant::now();
+    let span = isolated::Span::start();
     while !log(fake.path()).contains("@riff tail") {
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "{}",
-            log(fake.path())
-        );
+        assert!(span.within(Duration::from_secs(10)), "{}", log(fake.path()));
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let log = log(fake.path());
@@ -899,13 +895,9 @@ async fn riff_mcp_of_the_lead_adds_the_tail_pane_in_tmux() {
     let run = tempfile::tempdir().unwrap();
     let (main, _) = repository(run.path());
     let mut mcp = mcp_in_tmux(&api, fake.path(), run.path(), &main);
-    let start = Instant::now();
+    let span = isolated::Span::start();
     while !log(fake.path()).contains("@riff tail") {
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "{}",
-            log(fake.path())
-        );
+        assert!(span.within(Duration::from_secs(10)), "{}", log(fake.path()));
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let log = log(fake.path());

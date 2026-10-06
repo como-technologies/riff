@@ -130,13 +130,13 @@ const BIND_WAIT: Duration = Duration::from_secs(30);
 /// address. While another socket holds it, it tries again, at most
 /// [`BIND_WAIT`] (#460).
 async fn bind(addr: SocketAddr) -> TcpListener {
-    let end = Instant::now() + BIND_WAIT;
+    let span = isolated::Span::start();
     loop {
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
         socket.set_reuseaddr(true).unwrap();
         match socket.bind(addr).and_then(|()| socket.listen(1024)) {
             Ok(listener) => return listener,
-            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && Instant::now() < end => {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && span.within(BIND_WAIT) => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             Err(e) => panic!("cannot bind the gate on {addr}: {e}"),
@@ -256,7 +256,7 @@ impl Live {
         what: &str,
         found: impl Fn(&str) -> bool,
     ) -> (usize, String) {
-        let end = Instant::now() + Duration::from_secs(40);
+        let span = isolated::Span::start();
         loop {
             let views = self.views();
             if let Some(hit) = views.iter().enumerate().skip(from).find(|(_, v)| found(v)) {
@@ -264,7 +264,7 @@ impl Live {
             }
             let ended = self.child.try_wait().unwrap();
             assert!(
-                ended.is_none() && Instant::now() < end,
+                ended.is_none() && span.within(Duration::from_secs(40)),
                 "no table with {what}; riff top ended: {ended:?}\nstdout:\n{}\nstderr:\n{}",
                 views.join("--\n"),
                 self.stderr.lock().unwrap()
@@ -276,12 +276,12 @@ impl Live {
     /// Waits until `riff top` ends by itself, and gives true when its
     /// status is 0. It fails after 40 seconds.
     async fn ended(&mut self) -> bool {
-        let end = Instant::now() + Duration::from_secs(40);
+        let span = isolated::Span::start();
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
                 return status.success();
             }
-            assert!(Instant::now() < end, "riff top did not end");
+            assert!(span.within(Duration::from_secs(40)), "riff top did not end");
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }

@@ -65,7 +65,7 @@ fn riff(server: &str, dir: &Path, session: &str, args: &[&str]) -> Command {
 /// The output of `cmd`. The command must end in [`WAIT`].
 async fn run(mut cmd: Command) -> Output {
     let out = tokio::task::spawn_blocking(move || cmd.output().unwrap());
-    tokio::time::timeout(WAIT, out)
+    isolated::in_time(WAIT, out)
         .await
         .expect("the command did not end")
         .unwrap()
@@ -82,7 +82,7 @@ async fn stdout(cmd: Command) -> String {
 /// with status 0.
 async fn end(child: Child) -> String {
     let out = tokio::task::spawn_blocking(move || child.wait_with_output().unwrap());
-    let out = tokio::time::timeout(WAIT, out)
+    let out = isolated::in_time(WAIT, out)
         .await
         .expect("the watch did not end")
         .unwrap();

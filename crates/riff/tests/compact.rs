@@ -5,7 +5,7 @@
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::api::Api;
 use riff::identity;
@@ -250,7 +250,7 @@ async fn a_session_that_is_not_the_lead_asks_for_nothing() {
 async fn the_stop_hook_of_the_lead_starts_the_check() {
     let (api, lead) = riff_with_a_lead().await;
     let me = lead.uri("l1");
-    let start = Instant::now();
+    let span = isolated::Span::start();
     let mut hook = lead
         .riff(&["hook", "stop"])
         .stdin(Stdio::piped())
@@ -266,20 +266,16 @@ async fn the_stop_hook_of_the_lead_starts_the_check() {
     std::io::Write::write_all(hook.stdin.as_mut().unwrap(), input.to_string().as_bytes()).unwrap();
     let out = hook.wait_with_output().unwrap();
     assert!(out.status.success(), "{out:?}");
-    assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        start.elapsed()
-    );
+    assert!(span.within(Duration::from_secs(2)), "{:?}", span.wall());
 
-    let end = Instant::now() + Duration::from_secs(10);
+    let span = isolated::Span::start();
     loop {
         let asked = unread(&api, &me).await;
         if !asked.is_empty() {
             assert!(asked[0].contains("handoff: Wave 13"), "{asked:?}");
             break;
         }
-        assert!(Instant::now() < end, "no ask came");
+        assert!(span.within(Duration::from_secs(10)), "no ask came");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }

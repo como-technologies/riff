@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn top() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -89,13 +89,16 @@ fn a_second_run_in_a_worktree_with_a_live_lock_stops_at_once() {
          wait for it, or stop it"
     );
     for recipe in ["ci", "ci-full", "check"] {
-        let at = Instant::now();
+        let span = isolated::Span::start();
         let out = just(dir.path(), recipe);
-        let took = at.elapsed();
         let stderr = text(&out.stderr);
         assert_eq!(out.status.code(), Some(1), "{recipe}: {stderr}");
         assert_eq!(stderr.lines().next(), Some(line.as_str()), "{recipe}");
-        assert!(took < Duration::from_secs(10), "{recipe} took {took:?}");
+        assert!(
+            span.within(Duration::from_secs(10)),
+            "{recipe} took {:?}",
+            span.wall()
+        );
         assert_eq!(std::fs::read_to_string(&lock).unwrap(), held, "{recipe}");
     }
     first.kill().unwrap();

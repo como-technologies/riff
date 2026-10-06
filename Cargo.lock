@@ -1204,6 +1204,7 @@ dependencies = [
 name = "hygiene"
 version = "1.2.0"
 dependencies = [
+ "isolated",
  "serde",
  "serde_json",
  "tempfile",

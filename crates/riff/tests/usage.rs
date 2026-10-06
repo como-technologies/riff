@@ -11,7 +11,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use isolated::Isolated;
 use riff::api::Api;
@@ -272,9 +272,9 @@ impl Machine {
 
 /// Waits until `done` is true, for at most 20 seconds.
 async fn wait_for(what: &str, done: impl Fn() -> bool) {
-    let end = Instant::now() + Duration::from_secs(20);
+    let span = isolated::Span::start();
     while !done() {
-        assert!(Instant::now() < end, "timed out: {what}");
+        assert!(span.within(Duration::from_secs(20)), "timed out: {what}");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }

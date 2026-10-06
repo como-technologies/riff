@@ -7,7 +7,7 @@ use std::fs;
 use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures::future::{BoxFuture, FutureExt};
 use isolated::Isolated;
@@ -138,7 +138,7 @@ async fn a_good_start_applies_the_chunks_written_between_the_load_and_the_lease(
 
     store.armed.store(true, Ordering::SeqCst);
     let new = tokio::spawn(common::start_on(store.clone()));
-    timeout(Duration::from_secs(5), store.reached.notified())
+    isolated::in_time(Duration::from_secs(5), store.reached.notified())
         .await
         .expect("the new instance takes the lease after its load");
 
@@ -155,8 +155,11 @@ async fn a_good_start_applies_the_chunks_written_between_the_load_and_the_lease(
     assert!(store.list("log/").await.unwrap().len() > chunks);
 
     store.go.notify_one();
-    let (_new, new_base) = timeout(Duration::from_secs(5), new).await.unwrap().unwrap();
-    timeout(Duration::from_secs(5), old.stopped())
+    let (_new, new_base) = isolated::in_time(Duration::from_secs(5), new)
+        .await
+        .unwrap()
+        .unwrap();
+    isolated::in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
     let uris = sessions(&new_base).await;
@@ -217,9 +220,9 @@ async fn the_port_opens_only_after_the_load() {
 
     // The lease is there: the load is done. The port is still closed.
     let lease = dir.path().join(LEASE);
-    let start = Instant::now();
+    let span = isolated::Span::start();
     while !lease.exists() {
-        assert!(start.elapsed() < Duration::from_secs(10), "no lease");
+        assert!(span.within(Duration::from_secs(10)), "no lease");
         assert!(!open(&listen).await, "the port is open before the lease");
         sleep(Duration::from_millis(20)).await;
     }
@@ -227,7 +230,7 @@ async fn the_port_opens_only_after_the_load() {
 
     // After the wait, the port opens, and the server serves.
     while !open(&listen).await {
-        assert!(start.elapsed() < Duration::from_secs(40), "no open port");
+        assert!(span.within(Duration::from_secs(40)), "no open port");
         sleep(Duration::from_millis(100)).await;
     }
     call(
@@ -263,13 +266,13 @@ async fn a_riff_server_that_cannot_load_exits_with_no_lease_and_no_open_port() {
     let mut child = server(dir.path(), &listen, &log);
 
     // It exits long before the end of a lease wait.
-    let start = Instant::now();
+    let span = isolated::Span::start();
     let status = loop {
         assert!(!open(&listen).await, "the port is open");
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
-        if start.elapsed() > Duration::from_secs(10) {
+        if !span.within(Duration::from_secs(10)) {
             let _ = child.kill();
             panic!("riff-server did not exit");
         }

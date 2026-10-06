@@ -7,7 +7,7 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use isolated::Isolated;
+use isolated::{Isolated, Span};
 use riff_server::log::chunk_name;
 use riff_server::trace::{BODY_TIME, DENIED_INTERVAL, DENIED_KEPT, DENIED_MAX};
 use serde_json::Value;
@@ -36,9 +36,9 @@ fn server(listen: &str, log: &NamedTempFile) -> Child {
         .stderr(log.reopen().unwrap())
         .spawn()
         .unwrap();
-    let start = Instant::now();
+    let span = Span::start();
     while TcpStream::connect(listen).is_err() {
-        assert!(start.elapsed() < Duration::from_secs(20), "no open port");
+        assert!(span.within(Duration::from_secs(20)), "no open port");
         std::thread::sleep(Duration::from_millis(20));
     }
     child
@@ -82,17 +82,17 @@ fn a_refused_call_with_a_slow_body_ends_at_the_time_limit() {
     let log = NamedTempFile::new().unwrap();
     let server = server(&listen, &log);
 
-    let start = Instant::now();
+    let span = Span::start();
     let part = r#"{"me":"riff://mike@pangolin/como-technologies/riff?session=a"#;
     let reply = refused_call(&listen, "content-length: 1000", part);
-    let took = start.elapsed();
+    let took = span.wall();
     assert!(reply.starts_with("HTTP/1.1 409"), "{reply}");
     assert!(
         reply.to_lowercase().contains("\r\nconnection: close\r\n"),
         "{reply}"
     );
     assert!(took >= BODY_TIME, "{took:?}");
-    assert!(took < BODY_TIME + Duration::from_secs(20), "{took:?}");
+    assert!(span.within(BODY_TIME + Duration::from_secs(20)), "{took:?}");
 
     let lines = stop(server, &log);
     assert_eq!(lines.len(), 1, "{lines:?}");
@@ -171,7 +171,7 @@ fn each_line_of_the_log_of_a_server_is_json_with_a_severity() {
         .unwrap();
     // The server can open its port before it writes each start line
     // (#514), so the test waits for the lines that it checks.
-    let start = Instant::now();
+    let span = Span::start();
     let log = loop {
         let text = fs::read_to_string(log.path()).unwrap();
         let whole = &text[..text.rfind('\n').map_or(0, |end| end + 1)];
@@ -181,7 +181,7 @@ fn each_line_of_the_log_of_a_server_is_json_with_a_severity() {
         {
             break whole.to_string();
         }
-        assert!(start.elapsed() < Duration::from_secs(20), "{text}");
+        assert!(span.within(Duration::from_secs(20)), "{text}");
         std::thread::sleep(Duration::from_millis(20));
     };
     let _ = child.kill();

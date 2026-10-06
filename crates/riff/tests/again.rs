@@ -158,10 +158,19 @@ async fn first_lines(mut cmd: Command, n: usize) -> Vec<String> {
                 }
             }
         });
-        let lines: Result<Vec<String>, _> = (0..n).map(|_| rx.recv_timeout(WAIT)).collect();
+        let span = isolated::Span::start();
+        let mut lines = Vec::new();
+        while lines.len() < n && span.within(WAIT) {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(line) => lines.push(line),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
         child.kill().unwrap();
         child.wait().unwrap();
-        lines.expect("the command stopped too soon")
+        assert_eq!(lines.len(), n, "the command stopped too soon: {lines:?}");
+        lines
     })
     .await
     .unwrap()
@@ -186,7 +195,7 @@ async fn watch_once_exits_after_the_first_wake() {
     let dir = tempfile::tempdir().unwrap();
     let mut cmd = riff(&server, dir.path(), &["watch", "--once"]);
 
-    let out = tokio::time::timeout(
+    let out = isolated::in_time(
         WAIT,
         tokio::task::spawn_blocking(move || cmd.output().unwrap()),
     )

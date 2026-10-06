@@ -119,7 +119,7 @@ async fn a_message_from_a_signed_in_client_is_verified() {
     assert!(out.contains("] mike@pangolin (verified): me too"), "{out}");
 
     // The tail stream carries the keys too.
-    let first = tokio::time::timeout(Duration::from_secs(5), tail.boxed().next())
+    let first = isolated::in_time(Duration::from_secs(5), tail.boxed().next())
         .await
         .unwrap()
         .unwrap()
@@ -231,7 +231,7 @@ async fn a_call_does_not_wait_on_the_token_of_a_watch_that_its_task_does_not_pol
         _ = wakes.next() => panic!("a wake before the watch has a token"),
         () = std::future::ready(()) => {}
     }
-    let who = tokio::time::timeout(Duration::from_secs(5), client.who(&me, false))
+    let who = isolated::in_time(Duration::from_secs(5), client.who(&me, false))
         .await
         .expect("the call waits on the token of the watch");
     assert!(who.is_ok(), "{who:?}");

@@ -84,7 +84,7 @@ async fn on_a_riff_with_no_sign_in_the_answer_of_the_lead_is_verified() {
     );
 
     // `riff tail` shows the same mark.
-    let first = tokio::time::timeout(Duration::from_secs(5), tail.boxed().next())
+    let first = isolated::in_time(Duration::from_secs(5), tail.boxed().next())
         .await
         .unwrap()
         .unwrap()
@@ -107,7 +107,7 @@ async fn on_a_riff_with_sign_in_an_answer_with_no_signature_is_not_verified() {
     );
     assert!(!out.contains("(a1) lead=true"), "{out}");
 
-    let first = tokio::time::timeout(Duration::from_secs(5), tail.boxed().next())
+    let first = isolated::in_time(Duration::from_secs(5), tail.boxed().next())
         .await
         .unwrap()
         .unwrap()

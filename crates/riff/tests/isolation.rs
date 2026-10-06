@@ -277,9 +277,9 @@ fn a_call_of_another_process_does_not_count() {
             .spawn()
             .unwrap(),
     );
-    let started = Instant::now();
+    let span = isolated::Span::start();
     while machine::calls("") == Some(before) {
-        assert!(started.elapsed() < Duration::from_secs(30), "no noise");
+        assert!(span.within(Duration::from_secs(30)), "no noise");
         std::thread::sleep(Duration::from_millis(20));
     }
     let during = machine::calls("").unwrap();

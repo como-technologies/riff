@@ -163,7 +163,7 @@ pub const BUSY_LIMIT: Duration = Duration::from_secs(30);
 /// 500 ms of [`LEASE`] (R139). Only the 503 of the gate has the header
 /// `retry-after`, so a 503 of the token endpoint comes back at once.
 pub async fn refresh(base: &str, key: &Key, form: &str) -> reqwest::Response {
-    let started = std::time::Instant::now();
+    let span = isolated::Span::start();
     loop {
         let reply = post(&format!("{base}/v1/token"), key, None)
             .header("content-type", "application/x-www-form-urlencoded")
@@ -172,7 +172,7 @@ pub async fn refresh(base: &str, key: &Key, form: &str) -> reqwest::Response {
             .await
             .unwrap();
         let gate = reply.status() == 503 && reply.headers().contains_key("retry-after");
-        if !gate || started.elapsed() > BUSY_LIMIT {
+        if !gate || !span.within(BUSY_LIMIT) {
             return reply;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;

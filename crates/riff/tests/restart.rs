@@ -68,13 +68,9 @@ async fn a_process_that_got_no_reply_fails_at_once() {
     // Nothing listens on port 9.
     let api = Api::new("http://127.0.0.1:9").waits_to(|line| panic!("no wait line: {line}"));
     let me: SessionUri = ME.parse().unwrap();
-    let start = Instant::now();
+    let span = isolated::Span::start();
     let error = api.register(&me).await.unwrap_err();
-    assert!(
-        start.elapsed() < Duration::from_secs(2),
-        "{:?}",
-        start.elapsed()
-    );
+    assert!(span.within(Duration::from_secs(2)), "{:?}", span.wall());
     assert!(
         format!("{error:#}").contains("cannot reach riff-server at http://127.0.0.1:9"),
         "{error:#}"
