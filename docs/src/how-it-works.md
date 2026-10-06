@@ -3516,6 +3516,7 @@ flowchart TD
 | The memory of all workers | three quarters of the memory | `riff workers memory` |
 | The available memory that a new worker needs | 4 GB | `riff workers floor` |
 | The folder of the temp files of the workers | `~/.cache/riff/tmp` | `riff workers tmp` |
+| The most size of the compile cache of the workers | `40G` | `riff workers cache` |
 
 riff sets the limits when a worker starts. It does not change them
 while the workers run.
@@ -4175,6 +4176,64 @@ disk on Ubuntu, stop its tmpfs, then restart the machine:
 
 ```sh
 sudo systemctl mask tmp.mount
+```
+
+### Share the compile cache of a host
+
+Each item gets a new worktree. With no cache, each worker builds each
+dependency again in its own `target` folder. So the workers of a
+machine share one compile cache: `sccache`. A new worktree reads the
+dependencies from the cache. The cache is on the machine only.
+
+```mermaid
+flowchart TD
+    I["riff workers host, riff update"] --> F{"sccache of the pinned version?"}
+    F -- no --> C["cargo install --locked sccache"]
+    F -- yes --> W
+    C --> W["riff workers run: RUSTC_WRAPPER=sccache"]
+    W --> B["each build of each worker<br/>reads and writes ~/.cache/riff/sccache"]
+```
+
+riff installs `sccache` itself. The start of `riff workers host`
+installs it, and `riff update` installs it on a machine with a limit of
+workers. When the install fails, the lead gets one note, and the
+workers build with no cache. To try the install again, run:
+
+```sh
+riff update
+```
+
+`riff workers` shows the cache under the temp line: its size, its most
+size and its hit rate:
+
+```text
+temp 3.1GB in /home/mike/.cache/riff/tmp
+cache 12.0GB of 40G in /home/mike/.cache/riff/sccache, hits 85%
+```
+
+#### Show or change the size of the cache
+
+Show the most size and the cache now:
+
+```sh
+riff workers cache
+```
+
+Set the most size. The next worker that starts uses it. The default
+is `40G`:
+
+```sh
+riff workers cache 60G
+```
+
+#### Empty the cache
+
+Stop the workers of the machine first. Then stop the `sccache` server
+and delete the cache:
+
+```sh
+riff workers stop
+riff workers cache --clear
 ```
 
 ### Watch the health of a machine
