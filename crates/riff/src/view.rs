@@ -747,6 +747,7 @@ fn state_cell(s: &SessionInfo) -> String {
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
+///     step: None,
 /// };
 /// let plain = anstream::adapter::strip_str(&riff::view::detail_cell(&s)).to_string();
 /// assert_eq!(plain, "working on #12  2h ago: tests");

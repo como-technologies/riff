@@ -479,6 +479,7 @@ pub struct Machine {
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
+///     step: None,
 /// };
 /// let here = Machine { user: "mike".into(), host: "pangolin".into(), status: status.clone() };
 /// let found = machines(std::slice::from_ref(&host), Some(here.clone()));
@@ -917,6 +918,7 @@ impl Top<'_> {
     ///         woken_again: true,
     ///         unanswered: true,
     ///     }),
+    ///     step: None,
     /// };
     /// let sessions = [
     ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "plan", None, false, SessionState::Idle),
