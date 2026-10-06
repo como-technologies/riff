@@ -1403,7 +1403,8 @@ sequenceDiagram
 
 - A session that holds a claim pushes its work first, as a WIP commit
   on its branch. On the default branch it refuses, and stays in the
-  riff.
+  riff. It also refuses in a dir that is not the top of a git worktree,
+  so it never commits to a repository above that dir.
 - A session that left makes no call to `riff-server`. Its riff tools
   refuse, except `join`. The hooks add no riff context. The status line
   shows `(left)`. The watch, the hooks and each `riff` command of the
@@ -4715,7 +4716,8 @@ flowchart TD
 When the main clone is on another branch, has local changes, or has
 commits that `origin` does not have, riff changes nothing and says
 why. The clear of a worker tells the lead. With no `origin`, riff says
-nothing.
+nothing. A worker in a dir that is not the top of a git worktree moves
+no clone: riff never acts on a repository above that dir.
 
 Each worker also fetches before it makes a worktree, pushes its work
 as WIP before each long run (see

@@ -306,10 +306,7 @@ async fn a_leave_in_a_dir_below_the_top_of_a_repository_commits_nothing() {
     assert!(text.contains("not the top of a git worktree"), "{text}");
     assert_eq!(git(&work, &["rev-parse", "HEAD"]), before);
     let remote = root.path().join("remote.git");
-    assert_eq!(
-        git(&remote, &["branch", "--list", "worktree-issue-12"]),
-        ""
-    );
+    assert_eq!(git(&remote, &["branch", "--list", "worktree-issue-12"]), "");
     let (who, _) = call(&m, "who", json!({})).await;
     assert!(who.contains("claim=issue-12"), "{who}");
 }
