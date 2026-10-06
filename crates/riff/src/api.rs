@@ -118,6 +118,36 @@
 //! - [`follow`] opens a stream again each time it ends (R131). `riff
 //!   watch` and `riff tail` use it.
 //!
+//! # Time limits
+//!
+//! A dead connection gives no sign: a sleep of the laptop, a new
+//! address. So each call and each stream has time limits
+//! (01M48RW9E8NS2FPHFHG2S10R7A, 01M48RW9HNKPNZ75H9R01BG6V5). [`Limits`]
+//! holds them. A test gives limits in milliseconds with
+//! [`Api::with_limits`].
+//!
+//! | Limit | Value | Of |
+//! |---|---|---|
+//! | [`CONNECT_WAIT`] | 5 s | each connect, of a call or a stream |
+//! | [`TRY_WAIT`] | 20 s | each try of a call, to the end of its reply |
+//! | [`STREAM_IDLE`] | 45 s | a stream with no byte: it ends, and [`follow`] connects again |
+//!
+//! The client of the calls also sends an HTTP/2 ping each
+//! [`PING_EVERY`], also with no open call, and drops a connection with no
+//! answer in [`PING_WAIT`]. On Linux, a TCP connection with data that
+//! gets no answer for [`TRY_WAIT`] closes. A stream has no total limit.
+//! The server sends a comment each 15 s, so a live stream never meets
+//! [`STREAM_IDLE`].
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C[a call] -- "connect: CONNECT_WAIT" --> S[riff-server]
+//!     C -- "each try: TRY_WAIT" --> S
+//!     W[a stream] -- "connect: CONNECT_WAIT" --> S
+//!     S -- "a comment each 15 s" --> W
+//!     W -- "no byte for STREAM_IDLE" --> F[follow connects again]
+//! ```
+//!
 //! # Streams
 //!
 //! A call uses a connection from the pool of the client. A stream
@@ -415,6 +445,60 @@ where
     )
 }
 
+/// The limit of each connect, of a call or a stream
+/// (01M48RW9E8NS2FPHFHG2S10R7A).
+pub const CONNECT_WAIT: Duration = Duration::from_secs(5);
+
+/// The limit of each try of a call, from the send to the end of the
+/// reply (01M48RW9E8NS2FPHFHG2S10R7A).
+pub const TRY_WAIT: Duration = Duration::from_secs(20);
+
+/// A stream that gives no byte for this time ends, and [`follow`]
+/// connects again (01M48RW9HNKPNZ75H9R01BG6V5). It is three keep-alive
+/// comments of the server.
+pub const STREAM_IDLE: Duration = Duration::from_secs(45);
+
+/// The client of the calls sends an HTTP/2 ping at this interval.
+pub const PING_EVERY: Duration = Duration::from_secs(10);
+
+/// The client of the calls drops a connection when a ping gets no
+/// answer in this time.
+pub const PING_WAIT: Duration = Duration::from_secs(5);
+
+/// The time limits of a client. See "Time limits" in the module doc.
+/// [`Limits::default`] has the constants. A test gives limits in
+/// milliseconds.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::api::{Limits, CONNECT_WAIT, STREAM_IDLE, TRY_WAIT};
+///
+/// let limits = Limits::default();
+/// assert_eq!(limits.connect, CONNECT_WAIT);
+/// assert_eq!(limits.try_wait, TRY_WAIT);
+/// assert_eq!(limits.stream_idle, STREAM_IDLE);
+/// assert_eq!(STREAM_IDLE, Duration::from_secs(45));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// The limit of each connect.
+    pub connect: Duration,
+    /// The limit of each try of a call.
+    pub try_wait: Duration,
+    /// The longest time with no byte on a stream.
+    pub stream_idle: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            connect: CONNECT_WAIT,
+            try_wait: TRY_WAIT,
+            stream_idle: STREAM_IDLE,
+        }
+    }
+}
+
 /// The line of [`Reconnect`] while a connect fails.
 pub const RECONNECTING: &str = "(reconnecting…)";
 
@@ -530,6 +614,10 @@ pub struct Api {
     /// The client of the streams. It has no pool: see "Streams" in the
     /// module doc.
     streams: reqwest::Client,
+    limits: Limits,
+    /// The limit of each try of a request: [`Limits::try_wait`] for a
+    /// call, `None` for a stream.
+    try_wait: Option<Duration>,
     base: String,
     auth: Option<Arc<Auth>>,
     /// Where the client shows [`WAITING`]. `None` is stderr.
@@ -565,21 +653,40 @@ struct Held {
     expires_at: u64,
 }
 
-/// The HTTP client of the streams. No idle connection is kept, so the
-/// client has no pool. `Client::new` stops the process on the same
-/// error.
-fn stream_client() -> reqwest::Client {
+/// The HTTP client of the calls (01M48RW9E8NS2FPHFHG2S10R7A).
+/// `Client::new` stops the process on the same error.
+fn call_client(limits: &Limits) -> reqwest::Client {
+    let builder = reqwest::Client::builder()
+        .connect_timeout(limits.connect)
+        .http2_keep_alive_interval(PING_EVERY)
+        .http2_keep_alive_timeout(PING_WAIT)
+        .http2_keep_alive_while_idle(true);
+    #[cfg(target_os = "linux")]
+    let builder = builder.tcp_user_timeout(limits.try_wait);
+    builder.build().expect("the HTTP client of the calls")
+}
+
+/// The HTTP client of the streams. `pool_max_idle_per_host(0)` keeps no
+/// idle connection, so the client has no pool, also for HTTP/2. The read
+/// limit resets at each read, so a stream has no total limit
+/// (01M48RW9HNKPNZ75H9R01BG6V5).
+fn stream_client(limits: &Limits) -> reqwest::Client {
     reqwest::Client::builder()
         .pool_max_idle_per_host(0)
+        .connect_timeout(limits.connect)
+        .read_timeout(limits.stream_idle)
         .build()
         .expect("the HTTP client of the streams")
 }
 
 impl Api {
     pub fn new(base: &str) -> Self {
+        let limits = Limits::default();
         Self {
-            http: reqwest::Client::new(),
-            streams: stream_client(),
+            http: call_client(&limits),
+            streams: stream_client(&limits),
+            limits,
+            try_wait: Some(limits.try_wait),
             base: base.trim_end_matches('/').to_owned(),
             auth: None,
             waits: None,
@@ -598,10 +705,35 @@ impl Api {
     /// ```
     pub fn reconnected(&self) -> Api {
         Api {
-            http: reqwest::Client::new(),
-            streams: stream_client(),
+            http: call_client(&self.limits),
+            streams: stream_client(&self.limits),
             ..self.clone()
         }
+    }
+
+    /// The same caller with the time limits `limits`, on new
+    /// connections. See "Time limits" in the module doc.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use riff::api::{Api, Limits};
+    ///
+    /// let fast = Limits { try_wait: Duration::from_millis(200), ..Limits::default() };
+    /// let api = Api::new("http://127.0.0.1:7878").with_limits(fast);
+    /// assert_eq!(api.limits(), fast);
+    /// ```
+    pub fn with_limits(&self, limits: Limits) -> Api {
+        Api {
+            limits,
+            try_wait: Some(limits.try_wait),
+            ..self.clone()
+        }
+        .reconnected()
+    }
+
+    /// The time limits of this client.
+    pub fn limits(&self) -> Limits {
+        self.limits
     }
 
     /// The same client for the session `session`, with the mark of its
@@ -804,6 +936,7 @@ impl Api {
     fn for_stream(&self) -> Api {
         Api {
             http: self.streams.clone(),
+            try_wait: None,
             ..self.clone()
         }
     }
@@ -960,6 +1093,10 @@ impl Api {
             }
             // A box: a request may need a token, and a token is a request.
             let (request, token) = Box::pin(self.request(method.clone(), path)).await?;
+            let request = match self.try_wait {
+                Some(limit) => request.timeout(limit),
+                None => request,
+            };
             let response = match body(request).send().await {
                 Ok(response) => response,
                 // The server of this process starts again: its port is

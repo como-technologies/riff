@@ -2658,13 +2658,10 @@ async fn watch(
         who: q.uri.who().clone(),
     };
     let missed = s.engine.read(|state| state.missed(q.uri.who()));
-    let live = BroadcastStream::new(rx).filter_map(move |event| {
+    let live = until_lagged(rx).filter_map(move |(to, wake)| {
         let _alive = &guard;
-        let wake = match event {
-            Ok((to, wake)) if to == guard.who && may_read(&to, &wake.thread) => Some(wake),
-            _ => None,
-        };
-        std::future::ready(wake)
+        let mine = to == guard.who && may_read(&to, &wake.thread);
+        std::future::ready(mine.then_some(wake))
     });
     let stream = futures::stream::iter(missed)
         .chain(live)
@@ -2705,15 +2702,47 @@ async fn tail_thread(
     if !may_read(q.uri.who(), &q.thread) {
         return Err(not_found(format!("no thread named {}", q.thread)));
     }
-    let stream = BroadcastStream::new(s.engine.tail()).filter_map(move |event| {
-        let event = match event {
-            Ok(tailed) if tailed.thread == q.thread => Event::default().json_data(tailed).ok(),
-            _ => None,
-        };
+    let stream = until_lagged(s.engine.tail()).filter_map(move |tailed| {
+        let event = (tailed.thread == q.thread)
+            .then(|| Event::default().json_data(tailed).ok())
+            .flatten();
         std::future::ready(event.map(Ok))
     });
     let stream = stream.take_until(s.stopping());
     Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
+}
+
+/// The events of `rx` until it lags behind its buffer
+/// (01M48RW9MA30A12E7XWX047CJ0). A lagged receiver lost events, so the
+/// stream ends there, and does not drop them with no sign. The client
+/// connects again. `watch` and `tail` use it.
+///
+/// ```
+/// use futures::StreamExt;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// let (tx, rx) = tokio::sync::broadcast::channel(2);
+/// for n in 1..=3 {
+///     tx.send(n).unwrap();
+/// }
+/// // The receiver lost event 1: the stream ends with no event.
+/// let events: Vec<u32> = riff_server::until_lagged(rx).collect().await;
+/// assert!(events.is_empty());
+/// # }
+/// ```
+pub fn until_lagged<T>(rx: tokio::sync::broadcast::Receiver<T>) -> impl Stream<Item = T>
+where
+    T: Clone + Send + 'static,
+{
+    BroadcastStream::new(rx)
+        .take_while(|event| {
+            if let Err(lag) = event {
+                tracing::info!("an event stream lags ({lag}): it ends, and the client connects again");
+            }
+            std::future::ready(event.is_ok())
+        })
+        .filter_map(|event| std::future::ready(event.ok()))
 }
 
 /// Puts the comment `: ready` first in an event stream, so that the
@@ -2772,6 +2801,31 @@ fn not_found(message: String) -> (StatusCode, String) {
 mod tests {
     use super::*;
     use crate::engine::Routed;
+
+    #[tokio::test]
+    async fn a_lagged_stream_ends_on_the_server() {
+        let (tx, rx) = tokio::sync::broadcast::channel(4);
+        let mut events = Box::pin(until_lagged(rx));
+        tx.send(1).unwrap();
+        assert_eq!(events.next().await, Some(1));
+        // Six more events in a buffer of four: the receiver lags.
+        for n in 2..=7 {
+            tx.send(n).unwrap();
+        }
+        let next = tokio::time::timeout(Duration::from_secs(5), events.next());
+        assert_eq!(next.await.unwrap(), None, "the stream ends at the lag");
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_keeps_up_gives_each_event() {
+        let (tx, rx) = tokio::sync::broadcast::channel(4);
+        let events = until_lagged(rx);
+        for n in 1..=3 {
+            tx.send(n).unwrap();
+        }
+        drop(tx);
+        assert_eq!(events.collect::<Vec<u32>>().await, [1, 2, 3]);
+    }
     use crate::logline::testing::Capture;
     use crate::store::Memory;
     use futures::future::BoxFuture;
