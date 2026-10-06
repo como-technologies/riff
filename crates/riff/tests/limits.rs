@@ -898,6 +898,9 @@ const FAKE_SCCACHE: &str = r#"#!/bin/sh
 printf '%s [%s] [%s]\n' "$*" "$SCCACHE_DIR" "$SCCACHE_SERVER_PORT" >> "$(dirname "$0")/sccache.log"
 case "$1" in
   --version) echo "sccache 0.18.0" ;;
+  --start-server) printf 'server [%s] [%s] [%s] [%s] [%s]\n' "$RIFF_WORKER" "$RIFF_SESSION" \
+    "$RIFF_WORKER_WRAPPER" "$CLAUDE_PID" "$(ps -o pgid= -p $$ | tr -d ' ')" >> "$(dirname "$0")/sccache.log"
+    echo $$ >> "$(dirname "$0")/sccache.log" ;;
   --show-stats) echo '{"stats": {"cache_hits": {"counts": {"Rust": 90}}, "cache_misses": {"counts": {"Rust": 10}}}, "cache_size": 1073741824}' ;;
 esac
 exit 0
@@ -906,12 +909,15 @@ exit 0
 /// 01M492379BGA3AERT1AM12C650: the wrapper gives `claude` the compile
 /// cache of the machine. With no `sccache`, it unsets each variable of
 /// the cache, also one of the person, and says one line.
+/// 01M49AB2QYGJ73Y19KGAY1WDW7: before `claude`, it starts the server of
+/// the cache with no variable of a worker, in its own process group.
 #[test]
 fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
     let m = Machine::new(isolated::DEAD_SERVER);
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
-        "echo \"[$RUSTC_WRAPPER] [$SCCACHE_DIR] [$SCCACHE_CACHE_SIZE] [$SCCACHE_SERVER_PORT]\" > '{}'",
+        "echo \"[$RUSTC_WRAPPER] [$SCCACHE_DIR] [$SCCACHE_CACHE_SIZE] [$SCCACHE_SERVER_PORT] \
+         [$SCCACHE_IGNORE_SERVER_IO_ERROR]\" > '{}'",
         seen.display()
     ));
     let person = [
@@ -921,7 +927,7 @@ fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
 
     let out = m.wrapper(&claude, &person);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(read(&seen), "[] [] [] []\n");
+    assert_eq!(read(&seen), "[] [] [] [] []\n");
     let said: Vec<_> = stderr(&out)
         .lines()
         .filter(|l| l.contains("sccache"))
@@ -931,19 +937,29 @@ fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
 
     let sccache = script(&m.bin(), "sccache", FAKE_SCCACHE);
     m.workers(&["cache", "20G"]);
-    let out = m.wrapper(&claude, &person);
+    let worker = [
+        ("RIFF_WORKER", "1"),
+        ("RIFF_WORKER_WRAPPER", "7"),
+        ("CLAUDE_PID", "8"),
+    ];
+    let out = m.wrapper(&claude, &[person.as_slice(), &worker].concat());
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let dir = m.root.path().join("home/sccache");
     let port = riff::sccache::port(&dir);
     assert_eq!(
         read(&seen),
         format!(
-            "[{}] [{}] [20G] [{port}]\n",
+            "[{}] [{}] [20G] [{port}] [1]\n",
             sccache.display(),
             dir.display()
         )
     );
     assert!(!stderr(&out).contains("sccache"), "{out:?}");
+    let log = read(&m.bin().join("sccache.log"));
+    let mut lines = log.lines().skip_while(|l| !l.starts_with("server "));
+    let server = lines.next().expect("the wrapper starts the server");
+    let pid = lines.next().unwrap();
+    assert_eq!(server, format!("server [] [] [] [] [{pid}]"), "{log}");
 }
 
 /// 01M49237BM12PVBERD6JXDSX5V, 01M492398HA0AXX0J8BZCKNGTG and

@@ -12,6 +12,7 @@
 //! | Process | How riff knows it |
 //! |---|---|
 //! | of the worker `ID` | its environment has `RIFF_WORKER=1`, `RIFF_SESSION=ID` and the `RIFF_HOME` of the caller (none when the caller has none). Each child gets the variables of its parent, also after its parent ends. |
+//! | the server of the compile cache | [`crate::sccache::SERVER_MARK`]`=1`, and `/proc/PID/exe` is the binary of [`crate::sccache::find`] ([`is_cache_server`]). It is of the machine, never of a worker (01M49AB2TBMHGNXM3GE4NDFYYG). |
 //! | of a context | it has also the variable of the agent tool ([`crate::next::Agent::context_var`]): Claude Code gives it to each command of its Bash tool and to each hook, not to `claude` and not to its MCP servers. |
 //! | the watch | `riff watch`. riff keeps it and its parents: a worker keeps its watch over a clear (01M3JQCD16CNWN5FCQBRKHXYMP). |
 //! | the caller | this process and its parents. riff never stops them. |
@@ -190,20 +191,71 @@ pub fn parse_environ(env: &[u8], context_var: &str, home: Option<&str>) -> (Opti
     (session.filter(|_| worker && here), context)
 }
 
+/// One file, by each path or link to it: its device and its inode.
+pub type FileId = (u64, u64);
+
+/// The [`FileId`] of `path`, after each link. For `/proc/PID/exe` it is
+/// the binary that the process runs, whatever name it gave itself.
+pub fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.dev(), meta.ino()))
+}
+
+/// The [`FileId`] of the `sccache` of this machine
+/// ([`crate::sccache::find`]), or `None` when it has none.
+pub fn cache_binary() -> Option<FileId> {
+    file_id(&crate::sccache::find()?)
+}
+
+/// True for the `sccache` server of the machine: a process with
+/// `SCCACHE_START_SERVER=1` whose binary `exe` (`/proc/PID/exe`) is
+/// the binary `cache` of [`cache_binary`] (01M49AB2TBMHGNXM3GE4NDFYYG).
+/// A process picks its own `argv[0]`, so riff never looks at the name.
+/// A compile that the server runs has no mark, and another binary with
+/// the mark is not the server.
+///
+/// ```
+/// use riff::workload::is_cache_server;
+/// let env = b"RIFF_WORKER=1\0RIFF_SESSION=w1\0SCCACHE_START_SERVER=1\0";
+/// let (sccache, sleep) = (Some((1, 10)), Some((1, 11)));
+/// assert!(is_cache_server(env, sccache, sccache));
+/// // `exec -a sccache sleep 30`: the name is sccache, the binary is not.
+/// assert!(!is_cache_server(env, sleep, sccache));
+/// assert!(!is_cache_server(b"SCCACHE_START_SERVER=0\0", sccache, sccache));
+/// assert!(!is_cache_server(b"RIFF_WORKER=1\0", sccache, sccache));
+/// // A machine with no sccache has no server.
+/// assert!(!is_cache_server(env, None, None));
+/// ```
+pub fn is_cache_server(env: &[u8], exe: Option<FileId>, cache: Option<FileId>) -> bool {
+    let mark = format!("{}=1", crate::sccache::SERVER_MARK);
+    exe.is_some() && exe == cache && env.split(|b| *b == 0).any(|var| var == mark.as_bytes())
+}
+
 /// The process `pid`, or `None` when it is gone or is not of this user.
 pub fn read(pid: u32, context_var: &str) -> Option<Proc> {
+    read_with(pid, context_var, cache_binary())
+}
+
+/// [`read`], with the binary `cache` of [`cache_binary`].
+fn read_with(pid: u32, context_var: &str, cache: Option<FileId>) -> Option<Proc> {
     let dir = PathBuf::from(format!("/proc/{pid}"));
     let (ppid, start) = parse_stat(&std::fs::read_to_string(dir.join("stat")).ok()?)?;
     let env = std::fs::read(dir.join("environ")).ok()?;
     let home = std::env::var(crate::home::VAR).ok();
     let home = home.as_deref().filter(|h| !h.is_empty());
-    let (worker, context) = parse_environ(&env, context_var, home);
     let argv = std::fs::read(dir.join("cmdline")).unwrap_or_default();
-    let argv = argv
+    let argv: Vec<String> = argv
         .split(|b| *b == 0)
         .filter(|a| !a.is_empty())
         .map(|a| String::from_utf8_lossy(a).into_owned())
         .collect();
+    let exe = cache.and_then(|_| file_id(&dir.join("exe")));
+    let (worker, context) = if is_cache_server(&env, exe, cache) {
+        (None, false)
+    } else {
+        parse_environ(&env, context_var, home)
+    };
     Some(Proc {
         pid,
         ppid,
@@ -219,8 +271,9 @@ pub fn all(context_var: &str) -> Vec<Proc> {
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
+    let cache = cache_binary();
     dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
-        .filter_map(|pid| read(pid, context_var))
+        .filter_map(|pid| read_with(pid, context_var, cache))
         .collect()
 }
 

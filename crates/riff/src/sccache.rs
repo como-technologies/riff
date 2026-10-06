@@ -17,6 +17,20 @@
 //! | `SCCACHE_DIR` | `$RIFF_HOME/sccache`, else `$XDG_CACHE_HOME/riff/sccache`, else `~/.cache/riff/sccache` ([`dir_from`], 01M49237BM12PVBERD6JXDSX5V) |
 //! | `SCCACHE_CACHE_SIZE` | `workers.cache`, default [`SIZE`] |
 //! | `SCCACHE_SERVER_PORT` | a port from the folder ([`port`], 01M49237DWTBSEM6CVFH2BYC4V) |
+//! | `SCCACHE_IGNORE_SERVER_IO_ERROR` | `1`: when the server ends, a compile goes on with no cache |
+//!
+//! The server of the cache is of the machine, not of a worker
+//! (01M49AB2QYGJ73Y19KGAY1WDW7, 01M49AB2TBMHGNXM3GE4NDFYYG).
+//! `riff workers run` starts it before `claude`, with no variable of a
+//! worker and in its own process group ([`Cache::start_server`]). So
+//! the clear, the reap and the stop of the worker that built first do
+//! not see it. A server that a build starts again, for example after
+//! its idle time, has [`SERVER_MARK`]`=1` in its environment and runs
+//! the binary of [`find`]. [`crate::workload::is_cache_server`] never
+//! counts such a process as a process of a worker. It looks at the
+//! binary in `/proc/PID/exe`, not at the name in `argv[0]`: a process
+//! picks its own name. Another binary with the mark stays of its
+//! worker.
 //!
 //! The cache is on the machine only: no cloud store, no network. The
 //! port comes from the folder, so the workers of a machine share one
@@ -53,6 +67,7 @@
 //! assert_eq!(vars[0], ("RUSTC_WRAPPER".to_owned(), Some("/c/bin/sccache".to_owned())));
 //! assert_eq!(vars[1], ("SCCACHE_DIR".to_owned(), Some("/h/sccache".to_owned())));
 //! assert_eq!(vars[2], ("SCCACHE_CACHE_SIZE".to_owned(), Some("40G".to_owned())));
+//! assert_eq!(vars[4], ("SCCACHE_IGNORE_SERVER_IO_ERROR".to_owned(), Some("1".to_owned())));
 //! assert_eq!(env(None).iter().filter(|(_, value)| value.is_some()).count(), 0);
 //! ```
 
@@ -69,12 +84,17 @@ pub const PINNED: &str = "0.18.0";
 pub const SIZE: &str = "40G";
 
 /// The variables that riff gives a worker for the cache.
-pub const VARS: [&str; 4] = [
+pub const VARS: [&str; 5] = [
     "RUSTC_WRAPPER",
     "SCCACHE_DIR",
     "SCCACHE_CACHE_SIZE",
     "SCCACHE_SERVER_PORT",
+    "SCCACHE_IGNORE_SERVER_IO_ERROR",
 ];
+
+/// The variable that `sccache` gives the server that it starts
+/// (01M49AB2TBMHGNXM3GE4NDFYYG).
+pub const SERVER_MARK: &str = "SCCACHE_START_SERVER";
 
 /// The cache of this machine: the `sccache` binary, its folder and its
 /// most size.
@@ -113,6 +133,24 @@ impl Cache {
             }
         }
         cmd
+    }
+
+    /// Starts the server of the cache when it does not run, with no
+    /// variable of a worker in `worker_vars`, and in its own process
+    /// group (01M49AB2QYGJ73Y19KGAY1WDW7). A server that runs makes the
+    /// start fail: no matter.
+    pub fn start_server(&self, worker_vars: &[&str]) {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = self.command(&["--start-server"]);
+        for var in worker_vars {
+            cmd.env_remove(var);
+        }
+        let _ = cmd
+            .process_group(0)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     /// The numbers of the server of the cache, or `None` when `sccache`
@@ -158,6 +196,7 @@ pub fn env(cache: Option<&Cache>) -> Vec<(String, Option<String>)> {
             cache.dir.display().to_string(),
             cache.size.clone(),
             port(&cache.dir).to_string(),
+            "1".to_owned(),
         ]
     });
     VARS.iter()

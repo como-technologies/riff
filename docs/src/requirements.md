@@ -3534,9 +3534,19 @@
 - **01M492379BGA3AERT1AM12C650** The workers of a machine share one
   compile cache. `riff workers run` gives `claude` the variables
   `RUSTC_WRAPPER` (the `sccache` of the machine), `SCCACHE_DIR`,
-  `SCCACHE_CACHE_SIZE` and `SCCACHE_SERVER_PORT`. With no `sccache`, it
-  unsets the four variables and says one line. The cache is on the
+  `SCCACHE_CACHE_SIZE`, `SCCACHE_SERVER_PORT` and
+  `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. With no `sccache`, it unsets the
+  five variables and says one line. The cache is on the
   machine only: no cloud store, no network.
+- **01M49AB2QYGJ73Y19KGAY1WDW7** `riff workers run` starts the
+  `sccache` server of the machine before it starts `claude`, with no
+  variable of a worker and in its own process group.
+- **01M49AB2TBMHGNXM3GE4NDFYYG** A process with
+  `SCCACHE_START_SERVER=1` whose binary (`/proc/PID/exe`, by device and
+  inode) is the `sccache` of the machine is the `sccache` server of the
+  machine. riff never trusts the name in `argv[0]`. No clear, reap or
+  stop of a worker stops the server. Each other process with the
+  variable stays a process of its worker.
 - **01M49237BM12PVBERD6JXDSX5V** The folder of the cache is
   `$RIFF_HOME/sccache`, else `~/.cache/riff/sccache`. Its most size is
   `workers.cache`, default `40G`. `riff workers cache` shows and sets
