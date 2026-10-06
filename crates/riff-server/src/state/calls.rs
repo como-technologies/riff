@@ -350,7 +350,10 @@ mod tests {
     fn the_limit_of_one_caller_drops_no_key_of_another_caller() {
         let mut calls = Calls::default();
         let ann = ann();
-        calls.keep(Key::new(&By::Server, "old"), Kept::new(Done::default(), None, 0));
+        calls.keep(
+            Key::new(&By::Server, "old"),
+            Kept::new(Done::default(), None, 0),
+        );
         for n in 0..=CALL_KEEP_MOST as u64 {
             let key = Key::new(&ann, &format!("c{n}"));
             calls.keep(key, Kept::new(Done::default(), None, n + 1));
@@ -376,7 +379,11 @@ mod tests {
         let json = serde_json::to_string(&saved).unwrap();
         let restored = serde_json::from_str::<Saved>(&json).unwrap().restore();
         assert!(restored.get(&Key::new(&ann, "c1"), day + 1).is_some());
-        assert!(restored.get(&Key::new(&By::Server, "c2"), day + 1).is_some());
+        assert!(
+            restored
+                .get(&Key::new(&By::Server, "c2"), day + 1)
+                .is_some()
+        );
         assert!(restored.get(&Key::new(&ann, "old"), day + 1).is_none());
         // An empty part writes nothing: a checkpoint of 1.0.0 has none.
         assert_eq!(serde_json::to_string(&Saved::default()).unwrap(), "{}");

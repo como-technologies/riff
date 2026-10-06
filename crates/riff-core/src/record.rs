@@ -13,6 +13,12 @@
 //! change. A record from before this rule has no cause: it reads, and
 //! its cause is not known.
 //!
+//! The envelope also has the call ID of the command: the field `call`
+//! (01M48VFFY5CK9MRXJESV2NHY5F). It came after release 1.0.0. A record
+//! of a command with no call ID, and each record of 1.0.0, has none. A
+//! build of 1.0.0 skips the field. `riff-server` uses it to give a
+//! repeated call the reply of the first try, also after a start.
+//!
 //! A record names a session by its URI with no lead mark and no claims:
 //! the who and the place at the time of the change
 //! (01M3T411QW1SQV12RJVATEJ8YD). So a replay knows
@@ -30,8 +36,9 @@
 //!   used again (01M3XM2C3MND6YB24SGZ565353). The file `kinds.json`
 //!   in the directory of each release under
 //!   `crates/riff-server/tests/fixtures/` lists the new kinds of the
-//!   release (01M43GSRSDJMGAH8SR1GD4Z3XF). A test fails when a name of
-//!   a list is gone from the code.
+//!   release (01M43GSRSDJMGAH8SR1GD4Z3XF). The file of 1.0.0 also
+//!   lists each field of the envelope. A test fails when a name of a
+//!   list is gone from the code.
 //! - The enum [`Change`] and the list [`Change::KINDS`] come from one
 //!   macro. So a variant cannot be missing from the list. The order of
 //!   the list is not a part of the format.

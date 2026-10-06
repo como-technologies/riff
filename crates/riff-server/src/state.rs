@@ -276,7 +276,7 @@ pub mod threads;
 pub mod view;
 pub mod work;
 
-pub use calls::{CALL_KEEP, CALL_KEEP_MOST, Calls, Key, Kept};
+pub use calls::{CALL_KEEP, CALL_KEEP_MOST, Calls, Kept, Key};
 pub use command::{
     Caller, Cause, Class, Code, Command, CommandKind, Done, Now, Refused, Role, permits,
 };
@@ -716,7 +716,13 @@ impl State {
         let sessions = &self.presence.sessions;
         let seen = |who: &Who| sessions.get(who).map_or(0, |s| s.seen_ms(now, now_ms));
         let calls = self.calls.saved(now_ms);
-        Snapshot::new(self.written_position(), &self.written, &self.presence, seen, calls)
+        Snapshot::new(
+            self.written_position(),
+            &self.written,
+            &self.presence,
+            seen,
+            calls,
+        )
     }
 
     /// The kept result of the call `key`, when it is younger than
@@ -729,7 +735,13 @@ impl State {
     /// `now`: its records and its note. The engine calls it with the
     /// write of the records, under the same lock. So a checkpoint has
     /// the records of a call only with its key.
-    pub fn keep(&mut self, key: Key, done: Done, note: Box<dyn std::any::Any + Send>, now: Instant) {
+    pub fn keep(
+        &mut self,
+        key: Key,
+        done: Done,
+        note: Box<dyn std::any::Any + Send>,
+        now: Instant,
+    ) {
         let at_ms = self.ms(now);
         self.calls.keep(key, Kept::new(done, Some(note), at_ms));
     }

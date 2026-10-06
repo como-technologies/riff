@@ -224,8 +224,9 @@ sequenceDiagram
   rules for a change of a record (see
   [the command engine](design-engine.md)).
 - The checkpoint (`Snapshot`) gets the field `calls`, with a default:
-  the key, the positions of the records and the time of each call of
-  the last `CALL_KEEP`. An old checkpoint has none.
+  the records of each call of the last `CALL_KEEP`. Each record names
+  its caller and its call ID, so the records give the key and the time
+  of each call. An old checkpoint has none.
 - At a start, the load makes `Kept` from the checkpoint and from each
   record after it: the records of a call give its `done`, and its note
   is `Note::default()`. So a start from a checkpoint and a start from

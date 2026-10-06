@@ -65,7 +65,10 @@ impl Writer {
 
     /// Sends a call, and lets it go into the queue: the try waits for
     /// the writer.
-    async fn send<C>(&self, call: Authenticated<C>) -> tokio::task::JoinHandle<Result<Replied<C::Reply>, Failed>>
+    async fn send<C>(
+        &self,
+        call: Authenticated<C>,
+    ) -> tokio::task::JoinHandle<Result<Replied<C::Reply>, Failed>>
     where
         C: Command,
         C::Reply: 'static,
@@ -162,9 +165,19 @@ async fn a_second_try_after_a_cut_gets_the_reply_of_the_first_and_writes_nothing
 
     let second = w.run(w.call(release(&worker), "c1")).await.unwrap();
     let must_clear = ReleaseReply { must_clear: true };
-    assert_eq!(second, Replied { reply: must_clear, repeat: true });
+    assert_eq!(
+        second,
+        Replied {
+            reply: must_clear,
+            repeat: true
+        }
+    );
     assert_eq!(w.count("released"), 1);
-    let released = w.log.iter().find(|r| r.change.kind() == "released").unwrap();
+    let released = w
+        .log
+        .iter()
+        .find(|r| r.change.kind() == "released")
+        .unwrap();
     assert_eq!(released.call.as_deref(), Some("c1"));
 
     // The same release with no call ID runs `handle`: the item is free.
@@ -278,7 +291,10 @@ async fn a_start_from_a_checkpoint_and_from_the_full_log_give_the_same_repeat() 
     let from_early = State::load(Some(early), log[before..].to_vec(), now, ms);
 
     let must_clear = ReleaseReply { must_clear: true };
-    let expected = Replied { reply: must_clear, repeat: true };
+    let expected = Replied {
+        reply: must_clear,
+        repeat: true,
+    };
     for state in [full, from_checkpoint, from_early] {
         assert_eq!(repeat_release(state).await, expected);
     }

@@ -79,6 +79,29 @@
 //! only waits, and makes the reply. A call that the client drops loses
 //! only its reply.
 //!
+//! # A repeated call
+//!
+//! A command can carry a call ID: the header `riff-call`
+//! ([`Authenticated::with_call`], 01M48VFX22S4811DYBBD7QDW24). The
+//! engine runs each call one time only:
+//!
+//! - `check` looks up the key of the call first: its caller and its
+//!   call ID ([`Key`]). A kept call gets its reply from the kept result,
+//!   on the written copy of now, and runs no `handle`. A call whose
+//!   first try waits for the writer waits for that entry
+//!   (01M48VFX8K93F8XRWDB2BDP240). With no key, the command runs as each
+//!   command.
+//! - The entry of the command has the key, and each of its records has
+//!   the call ID. [`Engine::finish`] keeps the records and the note in
+//!   the state, under the lock of the write. So a cut, which drops the
+//!   future of the call, does not lose the result. A refused command
+//!   keeps no key (01M48VFXBGBW3PTC2JNHYNSE0W).
+//! - [`Engine::run`] says whether a reply is the reply of a kept call.
+//!   The handler then sets the header `riff-repeat: 1`.
+//!
+//! [`crate::state::calls`] has the table, its limits and its part of a
+//! checkpoint.
+//!
 //! # The trace of a command
 //!
 //! Each command leaves one trace (01M3X4Z62RJREQ5H8F18Y85T6V): its records, or one log

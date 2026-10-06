@@ -1747,6 +1747,10 @@ The job refuses an input that is not a release tag:
 gh workflow run CI --ref main -f tag=v0.2.0
 ```
 
+A rollback to a release with no call ID loses the calls that the
+server keeps. For 24 hours after it, a command that `riff` sends again
+can run two times: for example, a post can show two times.
+
 See the deploys by hand, and watch the last one:
 
 ```sh
