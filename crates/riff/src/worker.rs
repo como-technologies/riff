@@ -286,6 +286,12 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     if cache.is_none() {
         eprintln!("{}", crate::text::NO_SCCACHE);
     }
+    if let Some(cache) = &cache {
+        let context = crate::next::Agent::context_var(&crate::next::ClaudeCode);
+        let mut vars = vec![WORKER, WRAPPER, context];
+        vars.extend(identity::SESSION_VARS);
+        cache.start_server(&vars);
+    }
     for (var, value) in crate::sccache::env(cache.as_ref()) {
         match value {
             Some(value) => cmd.env(var, value),

@@ -197,6 +197,25 @@ fn sleeper_in(home: &Path, id: &str, context: bool) -> Child {
     cmd.spawn().unwrap()
 }
 
+/// A stand-in for the `sccache` server that a build of a context of the
+/// worker `id` started: it has each variable of that build, and the
+/// mark of `sccache` (01M49AB2TBMHGNXM3GE4NDFYYG).
+fn cache_server(home: &Path, id: &str) -> Child {
+    let mut cmd = Command::new("sleep");
+    cmd.arg("300")
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .env("RIFF_WORKER", "1")
+        .env("RIFF_SESSION", id)
+        .env("RIFF_HOME", home)
+        .env(CONTEXT, "1")
+        .env(riff::sccache::SERVER_MARK, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.spawn().unwrap()
+}
+
 /// Waits until `child` ends, at most 20 seconds. True when it ended.
 fn ends(child: &mut Child) -> bool {
     let end = Instant::now() + Duration::from_secs(20);
@@ -237,7 +256,9 @@ fn stdout(out: &Output) -> String {
 
 /// The clear of a worker stops its old context: a long child of a
 /// command of the context is gone after `riff hook clear`, and
-/// `claude` and its MCP server stay (01M3ZV0TJDQ6JCM7XG0036MSV1).
+/// `claude`, its MCP server and the `sccache` server that a build of
+/// the context started stay (01M3ZV0TJDQ6JCM7XG0036MSV1,
+/// 01M49AB2TBMHGNXM3GE4NDFYYG).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     let r = Riff::new().await;
@@ -254,6 +275,7 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     // runs at the same time (01M438620PJHSVSPAENBKKJ6C2).
     let home = tempfile::tempdir().unwrap();
     let mut twin = sleeper_in(home.path(), id, true);
+    let mut cache = cache_server(r.run.path(), id);
 
     let out = r.in_worker(id, &["release", "issue-12"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
@@ -266,7 +288,8 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     assert!(lives(&mut mcp), "the MCP server stopped");
     assert!(lives(&mut other), "a process of another worker stopped");
     assert!(lives(&mut twin), "a process of another riff home stopped");
-    for mut child in [claude, mcp, other, twin] {
+    assert!(lives(&mut cache), "the sccache server stopped");
+    for mut child in [claude, mcp, other, twin, cache] {
         child.kill().unwrap();
         child.wait().unwrap();
     }
@@ -355,6 +378,7 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
     // The same session ID in another riff home (01M438620PJHSVSPAENBKKJ6C2).
     let home = tempfile::tempdir().unwrap();
     let mut twin = sleeper_in(home.path(), id, true);
+    let mut cache = cache_server(r.run.path(), id);
 
     let out = r
         .riff(&r.main(), &["workers", "stop", "%5"])
@@ -367,7 +391,8 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
     }
     assert!(lives(&mut other), "a process of another worker stopped");
     assert!(lives(&mut twin), "a process of another riff home stopped");
-    for mut child in [other, twin] {
+    assert!(lives(&mut cache), "the sccache server stopped");
+    for mut child in [other, twin, cache] {
         child.kill().unwrap();
         child.wait().unwrap();
     }
