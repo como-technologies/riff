@@ -272,15 +272,16 @@ async fn who_shows_no_text_of_a_direct_message_of_the_lead() {
     );
 }
 
-/// 01M3WKCYM623M66ATHCH3QGMKP, 01M41FZPGEK4TNPSM2051W4VMS
+/// 01M3WKCYM623M66ATHCH3QGMKP, 01M41FZPGEK4TNPSM2051W4VMS. A lead with a
+/// block waits for its person (01M48VDSB4CHQS9P6XVDJ6FMKS).
 #[tokio::test]
 async fn an_automatic_step_keeps_the_block_of_the_lead() {
     let riff = Riff::start().await;
     let blocked = serde_json::json!({ "reason": "waits for Mike" });
     call(&riff.lead, "blocked", blocked).await;
     let row = riff.row("a1").await;
-    assert!(row.contains("blocked"), "{row}");
-    assert!(row.contains("waits for Mike"), "{row}");
+    assert!(row.contains("  waiting  "), "{row}");
+    assert!(row.contains("waiting for mike: waits for Mike"), "{row}");
 
     // The step is a word of the session: it does not end the block.
     let tell = serde_json::json!({ "session": "b2", "body": "request: claim issue-302" });
