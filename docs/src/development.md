@@ -1968,7 +1968,8 @@ The smoke test signs in as a test account: a Google account that only
 the stage admits. Invite it on the stage, as the owner of the stage:
 
 ```sh
-riff invite --server https://riff-stage-816917641970.us-central1.run.app TEST_EMAIL
+. deploy/cloud/stage.env
+riff invite --server "$CLOUD_URL" TEST_EMAIL
 ```
 
 Get a refresh token of the test account for the sign-in client of the
@@ -1976,7 +1977,6 @@ stage. Open this URL in a browser, sign in as the test account, and
 copy the `code` from the address bar of the page that does not load:
 
 ```sh
-. deploy/cloud/stage.env
 echo "https://accounts.google.com/o/oauth2/v2/auth?client_id=$RIFF_OIDC_CLIENT_ID&redirect_uri=http://127.0.0.1:9&response_type=code&scope=openid%20email&access_type=offline&prompt=consent"
 ```
 
