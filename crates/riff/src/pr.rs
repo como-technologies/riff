@@ -68,6 +68,14 @@ use serde::de::DeserializeOwned;
 
 use crate::text;
 
+/// The status code in the first line of a reply that `gh api --include`
+/// printed, for example `502` of `HTTP/2.0 502 Bad Gateway`.
+pub fn http_status(reply: &str) -> Option<&str> {
+    let line = reply.lines().next()?;
+    let code = line.strip_prefix("HTTP/")?.split_whitespace().nth(1)?;
+    (code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit())).then_some(code)
+}
+
 /// The context of the verify status of a commit.
 pub const VERIFY_CONTEXT: &str = "riff/verify";
 
@@ -98,6 +106,32 @@ impl Gh {
         let (ok, stdout, stderr) = self.output(args, input)?;
         if !ok {
             bail!("gh {}: {}", args.join(" "), text::forge(stderr.trim()));
+        }
+        Ok(stdout)
+    }
+
+    /// Sends `body` with `gh api -X METHOD PATH`, and returns the reply
+    /// with its headers. The body goes in a file, not on stdin: a body
+    /// on stdin can get lost (#566, 01M49HF057R08DGW6X5A8EHR42). It
+    /// fails with the stderr of `gh`, and with the HTTP status of the
+    /// reply when `gh` got one.
+    ///
+    /// ```
+    /// assert_eq!(riff::pr::http_status("HTTP/2.0 502 Bad Gateway\r\nServer: x\r\n"), Some("502"));
+    /// assert_eq!(riff::pr::http_status(""), None);
+    /// ```
+    pub fn send(&self, method: &str, path: &str, body: &serde_json::Value) -> Result<String> {
+        let mut file = tempfile::NamedTempFile::new().context("cannot make a file for the body")?;
+        serde_json::to_writer(&mut file, body)?;
+        let file_path = file.path().to_string_lossy().into_owned();
+        let args = ["api", "-X", method, path, "--include", "--input", &file_path];
+        let (ok, stdout, stderr) = self.output(&args, None)?;
+        if !ok {
+            let status = http_status(&stdout).map(|s| format!("HTTP {s}: ")).unwrap_or_default();
+            bail!(
+                "gh api -X {method} {path}: {status}{}",
+                text::forge(stderr.trim())
+            );
         }
         Ok(stdout)
     }

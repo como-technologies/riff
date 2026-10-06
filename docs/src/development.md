@@ -363,6 +363,18 @@ sequenceDiagram
   edit it. For each other account, the release and `riff pr wait` say
   that the comment of the claim is on the issue, and that the total is
   not updated.
+- When GitHub refuses the total comment, riff tries one more time. The
+  line names the HTTP status of the reply, when there is one.
+
+### Write the total of an issue again
+
+When an issue has no total comment, for example after a failed
+`riff pr wait`, write it again. Run the command in a clone of the
+repository of the issue:
+
+```sh
+riff usage 12 --total
+```
 
 ## Check that a wave followed the rules
 
@@ -1964,9 +1976,13 @@ owner (the reviewer ID is the GitHub user ID):
 ```sh
 gh api -X PUT repos/como-technologies/riff/environments/stage
 gh api user --jq .id
+echo '{"reviewers":[{"type":"User","id":USER_ID}]}' > reviewers.json
 gh api -X PUT repos/como-technologies/riff/environments/production \
-  --input - <<<'{"reviewers":[{"type":"User","id":USER_ID}]}'
+  --input reviewers.json
 ```
+
+Give `gh api` its body in a file, not on stdin: `--input -` can lose
+the body (#566).
 
 The smoke test signs in as a test account: a Google account that only
 the stage admits. Invite it on the stage, as the owner of the stage:

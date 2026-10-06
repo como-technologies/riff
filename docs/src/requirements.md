@@ -666,6 +666,15 @@
 - **01M3Y1YP5GC5W9KVJQP6PXPM3G** The book has the how-to "See the
   tokens of an issue" with `riff usage`. It says that the numbers are
   public on the issue.
+- **01M49HF057R08DGW6X5A8EHR42** riff gives `gh api` the body of a
+  write in a file, never on stdin. When the write fails, the error
+  names the HTTP status of the reply, when `gh` got one.
+- **01M49HF07WQC3M5HGAQNHR8WA0** When riff cannot write the total
+  comment of an issue, it reads the comments again and tries one more
+  time.
+- **01M49HF0ADEQ83XTJCQT0PK3RS** `riff usage ISSUE --total` writes the
+  total comment of the issue again, then shows the tokens of the
+  issue. The book has the how-to "Write the total of an issue again".
 
 ## Pause
 
