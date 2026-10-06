@@ -477,7 +477,8 @@ wakes you, answer with this tool. Do not post a reply. When you cannot go on, us
         description = "Say that you cannot go on with no decision of a person. One call does both: \
 riff shows you as blocked, and the message `blocked: REASON` wakes the lead of your user. The block \
 ends at your next work after an answer. Do not use it to wait for a verify, a merge or a need: riff \
-shows that wait by itself."
+shows that wait by itself. When you are the lead, it sends no message: riff shows you as waiting for \
+your user, and the next prompt of your user ends it."
     )]
     async fn blocked(&self, Parameters(a): Parameters<BlockedArgs>) -> ToolResult {
         let told = self
@@ -810,11 +811,19 @@ impl Tools {
                 }
                 // A hung request must not stop the next keep-alive.
                 let me = tools.me();
-                let activity = me.who().session().and_then(|id| {
-                    let dir = crate::local::dir()?;
-                    crate::activity::read(&dir, id, crate::activity::now_ms())
-                });
-                let alive = tools.api.alive_with(&me, activity);
+                let (activity, prompt_secs) = me
+                    .who()
+                    .session()
+                    .zip(crate::local::dir())
+                    .map(|(id, dir)| {
+                        let now_ms = crate::activity::now_ms();
+                        (
+                            crate::activity::read(&dir, id, now_ms),
+                            crate::activity::prompt_secs(&dir, id, now_ms),
+                        )
+                    })
+                    .unwrap_or_default();
+                let alive = tools.api.alive_with(&me, activity, prompt_secs);
                 let reply = tokio::time::timeout(every, alive).await;
                 if let Ok(Ok(reply)) = reply
                     && reply.stop

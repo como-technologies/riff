@@ -31,6 +31,12 @@
 //! | `PreToolUse` | a tool runs: `Bash: run just ci` |
 //! | `PostToolUse` | a turn runs, between two tools |
 //! | `Stop` | the turn ended |
+//! | `UserPromptSubmit` | the person gave a prompt: its time, in a file of its own |
+//!
+//! The prompt hook (`riff hook prompt`) keeps the time of the last
+//! prompt in its own file, so the next tool fact does not hide it. The
+//! keep-alive carries its age. A prompt after a block ends the block:
+//! the person answered (01M48VDWPDYRPEAXHR1MYDN1M7).
 //!
 //! A riff tool and `riff watch` give no fact: they are no work. So a
 //! session that a message wakes, and that only reads, does not show
@@ -183,6 +189,56 @@ pub fn read(dir: &Path, session: &str, now_ms: u64) -> Option<Activity> {
         turn: saved.fact.turn,
         secs: now_ms.saturating_sub(saved.at_ms) / 1000,
     })
+}
+
+/// The file of the time of the last prompt of `session` in `dir`.
+fn prompt_path(dir: &Path, session: &str) -> PathBuf {
+    dir.join(format!("prompt-{session}"))
+}
+
+/// Writes `at_ms` as the time of the last prompt of the person in
+/// `session` (01M48VDWPDYRPEAXHR1MYDN1M7).
+///
+/// ```
+/// use riff::activity::{prompt_secs, prompted};
+///
+/// let dir = tempfile::tempdir()?;
+/// assert_eq!(prompt_secs(dir.path(), "a1", 31_000), None);
+/// prompted(dir.path(), "a1", 1_000)?;
+/// assert_eq!(prompt_secs(dir.path(), "a1", 31_000), Some(30));
+/// assert_eq!(prompt_secs(dir.path(), "b2", 31_000), None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn prompted(dir: &Path, session: &str, at_ms: u64) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let path = prompt_path(dir, session);
+    let new = path.with_extension("new");
+    std::fs::write(&new, at_ms.to_string())?;
+    std::fs::rename(new, path)
+}
+
+/// The seconds since the last prompt of the person in `session`, at
+/// `now_ms`. `None` when the prompt hook wrote none.
+pub fn prompt_secs(dir: &Path, session: &str, now_ms: u64) -> Option<u64> {
+    let text = std::fs::read_to_string(prompt_path(dir, session)).ok()?;
+    let at_ms: u64 = text.trim().parse().ok()?;
+    Some(now_ms.saturating_sub(at_ms) / 1000)
+}
+
+/// The prompt hook: reads the input on stdin, and writes the time of
+/// the prompt for the session of this agent process. It never fails
+/// the hook.
+pub fn run_prompt(input: &str) {
+    let Some(dir) = crate::local::dir() else {
+        return;
+    };
+    let given = serde_json::from_str::<serde_json::Value>(input)
+        .ok()
+        .and_then(|v| v.get("session_id")?.as_str().map(str::to_owned));
+    let Some(id) = crate::identity::agent_session(given) else {
+        return;
+    };
+    let _ = prompted(&dir, &id, now_ms());
 }
 
 /// The hook `hook`: reads the input on stdin, and writes the fact of the

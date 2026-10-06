@@ -58,7 +58,7 @@ pub const GROUPS: &[Group] = &[
         heading: "Work in the riff",
         commands: &[
             "who", "whoami", "top", "read", "tail", "chat", "post", "tell", "status", "blocked",
-            "claim", "release",
+            "step", "claim", "release",
         ],
     },
     Group {

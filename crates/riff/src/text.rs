@@ -17,12 +17,12 @@ use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 
-use crate::api::{Checked, Claimed, Inbox};
+use crate::api::{Checked, Claimed, Inbox, Told};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_core::wire::{
     AdminSet, FreeReply, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed,
     PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState,
-    SessionInfo, ThreadInfo, Wake,
+    SessionInfo, StepChange, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -2334,6 +2334,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
+///     step: None,
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
 /// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
@@ -2384,6 +2385,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         work: None,
 ///         waits: None,
 ///         blocked: None,
+///         step: None,
 ///     },
 ///     SessionInfo {
 ///         uri: brett,
@@ -2399,6 +2401,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         work: None,
 ///         waits: None,
 ///         blocked: None,
+///         step: None,
 ///     },
 /// ];
 /// // The owner is a person: the sessions of brett get no tag `owner`.
@@ -2458,6 +2461,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
+///     step: None,
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);
@@ -2528,30 +2532,79 @@ pub fn status_set(status: &riff_core::wire::Status) -> String {
     format!("Your status is now: {}", status.step)
 }
 
-/// The answer to `blocked` (01M41FZPGEK4TNPSM2051W4VMS). `told` is true
-/// when the lead got the message. A reason that ends in a stop gets no
+/// The answer to `blocked` (01M41FZPGEK4TNPSM2051W4VMS). `told` says
+/// who got the message. A lead waits for its own person
+/// (01M48VDSB4CHQS9P6XVDJ6FMKS). A reason that ends in a stop gets no
 /// second stop.
 ///
 /// ```
-/// let told = riff::text::blocked_set("which design?", true);
+/// use riff::api::Told;
+///
+/// let told = riff::text::blocked_set("which design?", Told::Lead);
 /// assert_eq!(told, "You are blocked: which design? The lead has the reason.");
-/// let told = riff::text::blocked_set("the build fails", true);
+/// let told = riff::text::blocked_set("the build fails", Told::Lead);
 /// assert_eq!(told, "You are blocked: the build fails. The lead has the reason.");
-/// let alone = riff::text::blocked_set("which design?", false);
+/// let alone = riff::text::blocked_set("which design?", Told::Nobody);
 /// assert!(alone.contains("No lead got the message: ask your own user."), "{alone}");
+/// let lead = riff::text::blocked_set("run riff owner --take", Told::You);
+/// assert_eq!(
+///     lead,
+///     "You wait for your person: run riff owner --take. Ask your user. The next prompt ends the wait."
+/// );
 /// ```
-pub fn blocked_set(reason: &str, told: bool) -> String {
-    let lead = if told {
-        "The lead has the reason."
-    } else {
-        "No lead got the message: ask your own user."
-    };
+pub fn blocked_set(reason: &str, told: Told) -> String {
     let stop = if reason.ends_with(['.', '?', '!']) {
         ""
     } else {
         "."
     };
-    format!("You are blocked: {reason}{stop} {lead}")
+    match told {
+        Told::Lead => format!("You are blocked: {reason}{stop} The lead has the reason."),
+        Told::Nobody => {
+            format!("You are blocked: {reason}{stop} No lead got the message: ask your own user.")
+        }
+        Told::You => format!(
+            "You wait for your person: {reason}{stop} Ask your user. The next prompt ends the wait."
+        ),
+    }
+}
+
+/// The answer to `riff step` (01M48VDGTD40P8RBZMS0XB5M9N). `told` says
+/// who got the message of a failed step (01M48VDS663X064YS5ZGCCZSTB).
+///
+/// ```
+/// use riff::api::Told;
+/// use riff_core::wire::StepChange;
+///
+/// let start = StepChange::Start { name: "live window".into() };
+/// assert_eq!(
+///     riff::text::step_set(&start, Told::Nobody),
+///     "Your step is now: live window. Run riff step done or riff step fail REASON at its end."
+/// );
+/// assert_eq!(riff::text::step_set(&StepChange::Done, Told::Nobody), "Your step is done.");
+/// let fail = StepChange::Fail { reason: "the stage gave 502".into() };
+/// assert_eq!(
+///     riff::text::step_set(&fail, Told::Lead),
+///     "Your step failed: the stage gave 502. The lead has the reason."
+/// );
+/// assert!(riff::text::step_set(&fail, Told::Nobody).ends_with("ask your own user."));
+/// assert!(riff::text::step_set(&fail, Told::You).ends_with("Tell your user."));
+/// ```
+pub fn step_set(change: &StepChange, told: Told) -> String {
+    match change {
+        StepChange::Start { name } => format!(
+            "Your step is now: {name}. Run riff step done or riff step fail REASON at its end."
+        ),
+        StepChange::Done => "Your step is done.".to_owned(),
+        StepChange::Fail { reason } => {
+            let then = match told {
+                Told::Lead => "The lead has the reason.",
+                Told::Nobody => "No lead got the message: ask your own user.",
+                Told::You => "Tell your user.",
+            };
+            format!("Your step failed: {reason}. {then}")
+        }
+    }
 }
 
 /// The most characters of the text of a message in an automatic step

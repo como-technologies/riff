@@ -1094,6 +1094,15 @@ wait for a verify, a merge or a need: riff shows that wait by itself.
 The block ends at your next work after an answer. When the lead gives
 no answer, riff wakes it again, and then tells your user.
 
+When you are the lead and wait for your user, call `blocked` too.
+riff shows you as `waiting` for your user, and sends no message. The
+next prompt of your user ends the wait. As the lead, riff shows you as
+`busy` while your turn runs, and `idle` after it.
+
+For a long step that runs outside a tool call, for example a live
+window, run `riff step start NAME`. At its end, run `riff step done`,
+or `riff step fail REASON`: a failed step wakes the lead.
+
 When you are the lead, riff sets your step by itself from each
 `tell`, `post`, `pause`, `resume` and `lead` call that you make, for
 example `told 075ff6a7` or `posted a note: Waves: new item #314`. The

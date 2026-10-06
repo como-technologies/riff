@@ -18,7 +18,7 @@ use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Freed, Kind, PullState, RiffReply, RiffState, SessionInfo, StartReason, Status,
+    Freed, Kind, PullState, RiffReply, RiffState, SessionInfo, StartReason, Status, StepChange,
 };
 
 /// The time between two tries to connect a stream.
@@ -115,11 +115,23 @@ enum Command {
     /// Say that you cannot go on, and wake your lead
     ///
     /// riff shows you as blocked, and tells the lead of your user the
-    /// reason. The block ends at your next work after an answer.
+    /// reason. The block ends at your next work after an answer, or at
+    /// the next prompt of your user. The lead itself shows as waiting
+    /// for its user, and tells nobody.
     Blocked {
         /// Why you cannot go on, in one short line.
         #[arg(required = true)]
         reason: Vec<String>,
+    },
+    /// Show a long step in riff who and riff top
+    ///
+    /// A long step runs longer than one tool call, for example a live
+    /// window of two hours. riff who and riff top show it with its age
+    /// until it is done. A failed step shows its reason, and wakes the
+    /// lead of your user.
+    Step {
+        #[command(subcommand)]
+        change: StepCommand,
     },
     /// Send a direct message to one session
     ///
@@ -1050,6 +1062,24 @@ enum WorkersMcp {
 }
 
 #[derive(Subcommand)]
+enum StepCommand {
+    /// Start a long step. It replaces your old step
+    Start {
+        /// The name of the step, in one short line.
+        #[arg(required = true)]
+        name: Vec<String>,
+    },
+    /// The step ended well. riff shows it no more
+    Done,
+    /// The step failed. riff shows the reason, and wakes your lead
+    Fail {
+        /// Why the step failed, in one short line.
+        #[arg(required = true)]
+        reason: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum HookEvent {
     /// Run the SessionStart hook
     ///
@@ -1078,6 +1108,12 @@ enum HookEvent {
         #[arg(long)]
         done: bool,
     },
+    /// Run the UserPromptSubmit hook
+    ///
+    /// It reads the hook input on stdin, and writes the time of the
+    /// prompt of the person on this machine. A prompt after a block ends
+    /// the block. It makes no call. It always exits with status 0.
+    Prompt,
     /// Check whether riff clears the context of a worker now
     ///
     /// The Stop hook starts it, detached, in each worker in tmux.
@@ -1288,6 +1324,15 @@ async fn main() -> Result<()> {
             activity::Hook::Pre
         };
         activity::run(hook, &stdin, None);
+        return Ok(());
+    }
+    if let Command::Hook {
+        event: HookEvent::Prompt,
+    } = cli.command
+    {
+        let mut stdin = String::new();
+        let _ = std::io::stdin().read_to_string(&mut stdin);
+        activity::run_prompt(&stdin);
         return Ok(());
     }
     if let Command::Hook {
@@ -1604,6 +1649,19 @@ async fn main() -> Result<()> {
             let reason = reason.join(" ");
             let told = api.blocked(&me, &reason).await?;
             println!("{}", text::blocked_set(&reason, told));
+        }
+        Command::Step { change } => {
+            let change = match change {
+                StepCommand::Start { name } => StepChange::Start {
+                    name: name.join(" "),
+                },
+                StepCommand::Done => StepChange::Done,
+                StepCommand::Fail { reason } => StepChange::Fail {
+                    reason: reason.join(" "),
+                },
+            };
+            let told = api.step(&me, change.clone()).await?;
+            println!("{}", text::step_set(&change, told));
         }
         Command::Tell { session, body } => {
             let posted = api.tell(&me, &session, &body.join(" ")).await?;

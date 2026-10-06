@@ -30,6 +30,13 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "riff hook prompt" }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

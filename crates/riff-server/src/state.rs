@@ -253,10 +253,10 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::{Change, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Activity, AliveReply, BlockedInfo, Claim, End, Freed, Idle, ItemFact, Join, Keys, Kind, Lead,
-    LeadReply, Leave, Message, Pause, Post, Register, Release, ReleaseFor, ReleaseReply, Resume,
-    RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle, Start, StartReason,
-    Status, StatusInfo, Tailed, ThreadInfo, Waits, Wake,
+    Activity, AliveReply, BlockedInfo, Claim, End, Facts, Freed, Idle, ItemFact, Join, Keys, Kind,
+    Lead, LeadReply, Leave, Message, Pause, Post, Register, Release, ReleaseFor, ReleaseReply,
+    Resume, RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle, SetStep, Start,
+    StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo, Waits, Wake,
 };
 
 /// A blocked session that the look of the lead found, with its reason
@@ -1301,7 +1301,11 @@ impl State {
             self.arrive(me, now);
             return AliveReply::default();
         }
-        self.signal(me.who(), Signal::Alive { activity: None }, now)
+        let alive = Signal::Alive {
+            activity: None,
+            prompt_secs: None,
+        };
+        self.signal(me.who(), alive, now)
     }
 
     /// A keep-alive of `me` at `now` with the newest fact of its hooks
@@ -1313,6 +1317,7 @@ impl State {
         }
         let alive = Signal::Alive {
             activity: Some(activity),
+            prompt_secs: None,
         };
         self.signal(me.who(), alive, now)
     }
@@ -1450,7 +1455,9 @@ impl State {
     /// The session `who` as `who` and `me` show it.
     fn info(&self, who: &Who, session: &Session, now: Instant, now_ms: u64) -> SessionInfo {
         let uri = self.uri(who, now);
-        let live = session.watching(now);
+        // A lead that calls only the command line has no watch
+        // (01M48VDGQ5KETKPM4G6TKTC2MB).
+        let live = session.watching(now) || (uri.lead() && !session.gone(now));
         let repository = session.place.default_thread();
         let status = session.status.as_ref().map(|s| StatusInfo {
             status: s.status.clone(),
@@ -1480,14 +1487,21 @@ impl State {
         });
         let sessions = self.written.sessions();
         let must_clear = sessions.must_clear(who);
-        let state = SessionState::of(
+        let step = session.step.as_ref().map(|s| StepInfo {
+            name: s.name.clone(),
+            secs: now_ms.saturating_sub(s.set_ms) / 1000,
+            failed: s.failed.clone(),
+        });
+        let state = SessionState::of(&Facts {
             live,
-            self.pauses().at(repository.as_ref()).is_some(),
-            blocked.is_some(),
+            paused: self.pauses().at(repository.as_ref()).is_some(),
+            blocked: blocked.is_some(),
             must_clear,
-            waits.is_some(),
-            !uri.claims().is_empty(),
-        );
+            waiting: waits.is_some(),
+            claims: !uri.claims().is_empty(),
+            lead: uri.lead(),
+            turn: work.as_ref().is_some_and(Activity::works),
+        });
         SessionInfo {
             uri,
             live,
@@ -1506,6 +1520,7 @@ impl State {
             work,
             waits,
             blocked,
+            step,
         }
     }
 
@@ -1559,6 +1574,62 @@ impl State {
             at_ms,
         };
         self.signal(&who, blocked, now);
+        Ok(())
+    }
+
+    /// Changes the long step of `me` at `now_ms`
+    /// (01M48VDGTD40P8RBZMS0XB5M9N). See [`SetStep::check`] for the
+    /// reason that it refuses.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::StepChange;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// let start = StepChange::Start { name: "live window".into() };
+    /// state.set_step(&mike, start, now, 1_000).unwrap();
+    /// let step = state.who(now, 61_000, false)[0].step.clone().unwrap();
+    /// assert_eq!((step.name.as_str(), step.secs, step.failed), ("live window", 60, None));
+    ///
+    /// let fail = StepChange::Fail { reason: "the stage gave 502".into() };
+    /// state.set_step(&mike, fail, now, 121_000).unwrap();
+    /// let step = state.who(now, 181_000, false)[0].step.clone().unwrap();
+    /// assert_eq!(step.name, "live window");
+    /// assert_eq!((step.secs, step.failed.as_deref()), (60, Some("the stage gave 502")));
+    ///
+    /// state.set_step(&mike, StepChange::Done, now, 200_000).unwrap();
+    /// assert!(state.who(now, 200_000, false)[0].step.is_none());
+    /// assert!(state.set_step(&mike, StepChange::Fail { reason: "".into() }, now, 0).is_err());
+    ///
+    /// // A step is a sign of life.
+    /// let later = now + Duration::from_secs(170);
+    /// state.set_step(&mike, StepChange::Done, later, 0).unwrap();
+    /// assert_eq!(state.who(now + Duration::from_secs(300), 0, false).len(), 1);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn set_step(
+        &mut self,
+        me: &SessionUri,
+        change: StepChange,
+        now: Instant,
+        at_ms: u64,
+    ) -> Result<(), String> {
+        let set = SetStep {
+            me: me.clone(),
+            change,
+        };
+        set.check()?;
+        let who = self.arrive(me, now);
+        let step = Signal::Step {
+            change: set.change,
+            at_ms,
+        };
+        self.signal(&who, step, now);
         Ok(())
     }
 
@@ -3057,10 +3128,18 @@ mod tests {
     fn who_shows_live_sessions() {
         let now = Instant::now();
         let mut state = setup(now);
-        state.watch_started(&tests(), now);
-        let live: Vec<_> = listed(&state).into_iter().filter(|s| s.live).collect();
-        assert_eq!(live.len(), 1);
-        assert_eq!(live[0].uri, lead(tests()));
+        // A lead is live with no watch (01M48VDGQ5KETKPM4G6TKTC2MB).
+        let live = |state: &State| -> Vec<SessionUri> {
+            listed(state)
+                .into_iter()
+                .filter(|s| s.live)
+                .map(|s| s.uri)
+                .collect()
+        };
+        assert_eq!(live(&state), [lead(tests()), lead(api())]);
+        // Each other session needs a watch.
+        state.watch_started(&docs(), now);
+        assert_eq!(live(&state), [lead(tests()), lead(api()), docs()]);
     }
 
     #[test]
@@ -3183,17 +3262,18 @@ mod tests {
     fn a_session_that_waits_for_its_user_stays_with_its_claims() {
         let now = Instant::now();
         let mut state = setup(now);
-        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        // docs is not a lead, so it is live only with a watch.
+        state.claim(&docs(), &repo(), "issue-12", now).unwrap();
         for m in 1..=60 {
-            state.alive(&api(), now + MINUTE * m);
+            state.alive(&docs(), now + MINUTE * m);
         }
         let hour = now + MINUTE * 60;
         let info = state.who(hour, T0 + ms(MINUTE * 60), false);
-        let mike = info.iter().find(|s| s.uri.who() == api().who()).unwrap();
+        let mike = info.iter().find(|s| s.uri.who() == docs().who()).unwrap();
         assert_eq!(mike.idle_secs, 3600);
         assert!(!mike.live);
         assert_eq!(mike.uri.claims(), ["issue-12"]);
-        assert!(!state.claim(&docs(), &repo(), "issue-12", hour).unwrap().0);
+        assert!(!state.claim(&tests(), &repo(), "issue-12", hour).unwrap().0);
     }
 
     #[test]

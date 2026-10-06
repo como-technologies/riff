@@ -316,6 +316,20 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     assert!(fake.lock().unwrap().objects.contains_key(&chunk_name(1)));
 
     let (_new, base) = common::start_on(Arc::new(store(&url))).await;
+    // After a load, a session is gone until it calls
+    // (01M4263ZXH4K23CSY6C5GJPVQH), so the lead brett is not live
+    // (01M48VDGQ5KETKPM4G6TKTC2MB). Mike called who.
+    let gone_until_it_calls = |who: &[(serde_json::Value, serde_json::Value)]| -> Vec<_> {
+        who.iter()
+            .map(|(uri, _)| (uri.clone(), json!(uri.as_str().unwrap().contains("mike"))))
+            .collect()
+    };
+    assert_eq!(
+        uris(call(&base, "who", all.clone()).await),
+        gone_until_it_calls(&who)
+    );
+    // A call of brett makes it live again: the same as before the load.
+    call(&base, "who", json!({ "me": brett })).await;
     assert_eq!(uris(call(&base, "who", all).await), who);
     let state = call(&base, "riff", json!({ "me": mike })).await;
     assert_eq!(state["state"], "running", "the riff state stays");

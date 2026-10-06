@@ -30,6 +30,7 @@
 //! | `/v1/plan/free` | [`Free`] | [`FreeReply`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
+//! | `/v1/step` | [`SetStep`] | `null` | signal |
 //! | `/v1/blocked/look` | [`BlockedLook`] | [`BlockedLookReply`] | signal |
 //! | `/v1/items` | [`ItemFacts`] | `null` | signal |
 //! | `/v1/alive` | [`Alive`] | [`AliveReply`] | signal |
@@ -200,6 +201,7 @@ calls! {
     Free => "/v1/plan/free", FreeReply;
     SetStatus => "/v1/status", ();
     SetBlocked => "/v1/blocked", ();
+    SetStep => "/v1/step", ();
     BlockedLook => "/v1/blocked/look", BlockedLookReply;
     ItemFacts => "/v1/items", ();
     Alive => "/v1/alive", AliveReply;
@@ -252,6 +254,10 @@ pub struct Alive {
     /// it has one (01M41FZNTPXQNCZ1S99HE42PYQ).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity: Option<Activity>,
+    /// The seconds since the last prompt of the person in the session,
+    /// when the prompt hook saw one (01M48VDWPDYRPEAXHR1MYDN1M7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_secs: Option<u64>,
 }
 
 /// The most characters in the text of a tool of an [`Activity`].
@@ -524,7 +530,9 @@ impl RiffOwner {
 pub struct SessionInfo {
     /// The URI now: the place and the claims are current.
     pub uri: SessionUri,
-    /// True while the session has an open watch stream.
+    /// True while the session has an open watch stream. A lead is live
+    /// while it is not gone, also with no watch
+    /// (01M48VDGQ5KETKPM4G6TKTC2MB).
     pub live: bool,
     /// The seconds since the last call of the session. 0 while it is
     /// live.
@@ -573,6 +581,10 @@ pub struct SessionInfo {
     /// (01M41FZPGEK4TNPSM2051W4VMS).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked: Option<BlockedInfo>,
+    /// The long step of the session, until it is done
+    /// (01M48VDGTD40P8RBZMS0XB5M9N).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<StepInfo>,
 }
 
 impl SessionInfo {
@@ -596,14 +608,16 @@ impl SessionInfo {
         if self.state.is_some() {
             return;
         }
-        self.state = Some(SessionState::of(
-            self.live,
-            riff == RiffState::Paused,
-            self.blocked.is_some(),
-            self.must_clear,
-            self.waits.is_some(),
-            !self.uri.claims().is_empty(),
-        ));
+        self.state = Some(SessionState::of(&Facts {
+            live: self.live,
+            paused: riff == RiffState::Paused,
+            blocked: self.blocked.is_some(),
+            must_clear: self.must_clear,
+            waiting: self.waits.is_some(),
+            claims: !self.uri.claims().is_empty(),
+            lead: self.uri.lead(),
+            turn: self.work.as_ref().is_some_and(Activity::works),
+        }));
     }
 }
 
@@ -612,17 +626,21 @@ impl SessionInfo {
 /// 01M41FZQVEF8S2W9RCM4V87C3D). The first state that matches wins, in
 /// this order:
 ///
-/// 1. `offline`: the session has no open watch stream.
+/// 1. `offline`: the session has no open watch stream. A lead is not
+///    offline while it is not gone, also with no watch
+///    (01M48VDGQ5KETKPM4G6TKTC2MB).
 /// 2. `paused`: the riff is paused, or the repository of the session is
 ///    paused (01M3XAHZBGSSJB3YX23K88W01K).
 /// 3. `blocked`: the session said that it cannot go on with no
-///    decision, and the block holds (01M41FZPGEK4TNPSM2051W4VMS).
+///    decision, and the block holds (01M41FZPGEK4TNPSM2051W4VMS). A
+///    lead with a block is `waiting` for its person
+///    (01M48VDS8RKJS9HG3KSEYGBFGV).
 /// 4. `must_clear`: it is a worker that must clear its context before
 ///    its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS).
 /// 5. `waiting`: each claim of the session waits for the machinery: a
 ///    verify, a merge, or an item of its `Needs:` line
-///    (01M41FZP9A50CH4A2VX344DW49).
-/// 6. `busy`: it holds a claim.
+///    (01M41FZP9A50CH4A2VX344DW49). Or a lead waits for its person.
+/// 6. `busy`: it holds a claim. Or it is the lead, and a turn runs.
 /// 7. `idle`: each other session.
 ///
 /// ```mermaid
@@ -638,17 +656,31 @@ impl SessionInfo {
 /// ```
 ///
 /// ```
-/// use riff_core::wire::SessionState;
+/// use riff_core::wire::{Facts, SessionState};
 ///
-/// // live, paused, blocked, must clear, waiting, claims
-/// let of = SessionState::of;
-/// assert_eq!(of(false, true, true, true, true, true), SessionState::Offline);
-/// assert_eq!(of(true, true, true, true, true, true), SessionState::Paused);
-/// assert_eq!(of(true, false, true, true, true, true), SessionState::Blocked);
-/// assert_eq!(of(true, false, false, true, false, false), SessionState::MustClear);
-/// assert_eq!(of(true, false, false, false, true, true), SessionState::Waiting);
-/// assert_eq!(of(true, false, false, false, false, true), SessionState::Busy);
-/// assert_eq!(of(true, false, false, false, false, false), SessionState::Idle);
+/// let all = Facts {
+///     live: true, paused: true, blocked: true, must_clear: true,
+///     waiting: true, claims: true, lead: false, turn: false,
+/// };
+/// let of = |f: Facts| SessionState::of(&f);
+/// assert_eq!(of(Facts { live: false, ..all }), SessionState::Offline);
+/// assert_eq!(of(all), SessionState::Paused);
+/// let running = Facts { paused: false, ..all };
+/// assert_eq!(of(running), SessionState::Blocked);
+/// let free = Facts { blocked: false, ..running };
+/// assert_eq!(of(free), SessionState::MustClear);
+/// let cleared = Facts { must_clear: false, ..free };
+/// assert_eq!(of(cleared), SessionState::Waiting);
+/// assert_eq!(of(Facts { waiting: false, ..cleared }), SessionState::Busy);
+/// let none = Facts { waiting: false, claims: false, ..cleared };
+/// assert_eq!(of(none), SessionState::Idle);
+///
+/// // A lead: busy in a turn, waiting for its person, idle else.
+/// let lead = Facts { lead: true, ..none };
+/// assert_eq!(of(lead), SessionState::Idle);
+/// assert_eq!(of(Facts { turn: true, ..lead }), SessionState::Busy);
+/// assert_eq!(of(Facts { blocked: true, turn: true, ..lead }), SessionState::Waiting);
+///
 /// assert_eq!(serde_json::to_string(&SessionState::MustClear).unwrap(), r#""must_clear""#);
 /// assert_eq!(SessionState::MustClear.word(), "must clear");
 /// assert_eq!(serde_json::to_string(&SessionState::Waiting).unwrap(), r#""waiting""#);
@@ -667,29 +699,43 @@ pub enum SessionState {
     Idle,
 }
 
+/// The facts that make the state of a session ([`SessionState::of`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Facts {
+    /// An open watch stream, or a lead that is not gone.
+    pub live: bool,
+    /// The riff or the repository of the session is paused.
+    pub paused: bool,
+    /// A block that holds.
+    pub blocked: bool,
+    /// A worker that must clear its context.
+    pub must_clear: bool,
+    /// Each claim waits.
+    pub waiting: bool,
+    /// The session holds a claim.
+    pub claims: bool,
+    /// The session is the lead of its user.
+    pub lead: bool,
+    /// The hooks saw a turn that runs.
+    pub turn: bool,
+}
+
 impl SessionState {
-    /// The state of a session from its facts: an open watch stream
-    /// (`live`), a paused riff, a block that holds, a worker that must
-    /// clear its context, claims that each wait, and a claim.
-    pub fn of(
-        live: bool,
-        paused: bool,
-        blocked: bool,
-        must_clear: bool,
-        waiting: bool,
-        claims: bool,
-    ) -> Self {
-        if !live {
+    /// The state of a session from its facts. A lead has no claims, so
+    /// its state comes from its turn and its block
+    /// (01M48VDS8RKJS9HG3KSEYGBFGV).
+    pub fn of(f: &Facts) -> Self {
+        if !f.live {
             SessionState::Offline
-        } else if paused {
+        } else if f.paused {
             SessionState::Paused
-        } else if blocked {
+        } else if f.blocked && !f.lead {
             SessionState::Blocked
-        } else if must_clear {
+        } else if f.must_clear {
             SessionState::MustClear
-        } else if waiting && claims {
+        } else if (f.waiting && f.claims) || (f.blocked && f.lead) {
             SessionState::Waiting
-        } else if claims {
+        } else if f.claims || (f.lead && f.turn) {
             SessionState::Busy
         } else {
             SessionState::Idle
@@ -865,6 +911,79 @@ impl SetBlocked {
     pub fn check(&self) -> Result<(), String> {
         one_line("reason", &self.reason)
     }
+}
+
+/// A change of the long step of a session (01M48VDGTD40P8RBZMS0XB5M9N):
+/// a step that runs longer than a tool call, for example a live window
+/// of two hours.
+///
+/// ```
+/// use riff_core::wire::StepChange;
+///
+/// let start = StepChange::Start { name: "live window".into() };
+/// assert_eq!(serde_json::to_string(&start).unwrap(), r#"{"start":{"name":"live window"}}"#);
+/// assert_eq!(serde_json::to_string(&StepChange::Done).unwrap(), r#""done""#);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StepChange {
+    /// A new step starts. It replaces the old step.
+    Start { name: String },
+    /// The step ended well. No step shows.
+    Done,
+    /// The step failed, for `reason`. It shows until the next change.
+    Fail { reason: String },
+}
+
+/// `POST /v1/step`: a change of the long step of `me`
+/// (01M48VDGTD40P8RBZMS0XB5M9N). It is a signal, and a sign of life.
+/// `riff step fail` also wakes the lead (01M48VDS663X064YS5ZGCCZSTB).
+///
+/// ```
+/// use riff_core::wire::{SetStep, StepChange};
+///
+/// let me: riff_core::name::SessionUri = "riff://mike@pangolin/o/r?session=a1".parse()?;
+/// let set = |change| SetStep { me: me.clone(), change };
+/// assert!(set(StepChange::Start { name: "live window".into() }).check().is_ok());
+/// assert!(set(StepChange::Done).check().is_ok());
+/// assert_eq!(
+///     set(StepChange::Fail { reason: " ".into() }).check().unwrap_err(),
+///     "the reason is empty"
+/// );
+/// assert_eq!(
+///     set(StepChange::Start { name: "a\nb".into() }).check().unwrap_err(),
+///     "the name must be one line"
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SetStep {
+    pub me: SessionUri,
+    pub change: StepChange,
+}
+
+impl SetStep {
+    /// Refuses a name or a reason that is not one line of at most
+    /// [`STATUS_CHARS`] characters.
+    pub fn check(&self) -> Result<(), String> {
+        match &self.change {
+            StepChange::Start { name } => one_line("name", name),
+            StepChange::Done => Ok(()),
+            StepChange::Fail { reason } => one_line("reason", reason),
+        }
+    }
+}
+
+/// A long step in the reply to `who` (01M48VDGTD40P8RBZMS0XB5M9N).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StepInfo {
+    /// The name of the step.
+    pub name: String,
+    /// The seconds since the step started, or since it failed.
+    pub secs: u64,
+    /// The reason, when the step failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
 }
 
 /// `POST /v1/blocked/look`: the lead `me` looks at the blocks of the

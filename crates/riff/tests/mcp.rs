@@ -135,8 +135,9 @@ async fn the_tools_carry_a_conversation() {
 
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
     assert!(who.contains(BRETT_LEAD), "{who}");
-    assert!(who.contains("(b2) offline lead  "), "{who}");
-    assert!(who.contains(&format!("{BRETT_LEAD}\n  seen ")), "{who}");
+    // A lead with no watch is not offline (01M48VDGQ5KETKPM4G6TKTC2MB).
+    assert!(who.contains("(b2) paused lead  "), "{who}");
+    assert!(!who.contains("offline"), "{who}");
     // The who tool keeps plain text for agents (01M3Q63MVZ74WPNBA3QJYQGHFG).
     assert!(!who.contains('\x1b'), "{who:?}");
     let (all, _) = call(&mike, "who", serde_json::json!({ "all": true })).await;
