@@ -1051,6 +1051,7 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
+///     step: None,
 /// };
 /// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
 /// let strata = worker("riff://brett@kadomony/o/strata?session=w1");
@@ -1930,6 +1931,7 @@ mod tests {
             work: None,
             waits: None,
             blocked: None,
+            step: None,
         }
     }
 

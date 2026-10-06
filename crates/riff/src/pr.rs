@@ -549,6 +549,7 @@ pub struct Reported {
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
+///     step: None,
 /// };
 /// let to = |sessions: &[SessionInfo]| -> Vec<String> {
 ///     let me = "riff://mike@pangolin/o/r?session=v1&claim=verify-issue-12".parse().unwrap();

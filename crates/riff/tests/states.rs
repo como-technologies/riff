@@ -115,7 +115,7 @@ async fn the_hooks_and_the_keep_alive_show_the_work() {
     let state = dir.path().join("state");
     let activity = riff::activity::read(&state, "w1", riff::activity::now_ms()).unwrap();
     assert_eq!(activity.tool.as_deref(), Some("Bash: Run just ci"));
-    api.alive_with(&worker, Some(activity)).await.unwrap();
+    api.alive_with(&worker, Some(activity), None).await.unwrap();
     let _watch = api.watch(&worker).await.unwrap();
     let w1 = info(&api, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Busy));
@@ -215,7 +215,10 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     };
 
     // One command: the block, and the first wake of the lead.
-    assert!(api.blocked(&worker, "which design?").await.unwrap());
+    assert_eq!(
+        api.blocked(&worker, "which design?").await.unwrap(),
+        riff::api::Told::Lead
+    );
     let first = bodies(api.inbox(&lead, None, false).await.unwrap());
     assert_eq!(first, ["blocked: which design?"]);
     assert_eq!(
@@ -269,7 +272,7 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
         turn: true,
         secs: 0,
     };
-    api.alive_with(&worker, Some(work)).await.unwrap();
+    api.alive_with(&worker, Some(work), None).await.unwrap();
     let w1 = info(&api, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Busy));
     assert!(!top(&[w1]).contains("the lead gave no answer"));

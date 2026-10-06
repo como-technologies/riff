@@ -1414,6 +1414,7 @@ mod tests {
             work: None,
             waits: None,
             blocked: None,
+            step: None,
         }
     }
 

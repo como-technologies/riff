@@ -810,11 +810,19 @@ impl Tools {
                 }
                 // A hung request must not stop the next keep-alive.
                 let me = tools.me();
-                let activity = me.who().session().and_then(|id| {
-                    let dir = crate::local::dir()?;
-                    crate::activity::read(&dir, id, crate::activity::now_ms())
-                });
-                let alive = tools.api.alive_with(&me, activity);
+                let (activity, prompt_secs) = me
+                    .who()
+                    .session()
+                    .zip(crate::local::dir())
+                    .map(|(id, dir)| {
+                        let now_ms = crate::activity::now_ms();
+                        (
+                            crate::activity::read(&dir, id, now_ms),
+                            crate::activity::prompt_secs(&dir, id, now_ms),
+                        )
+                    })
+                    .unwrap_or_default();
+                let alive = tools.api.alive_with(&me, activity, prompt_secs);
                 let reply = tokio::time::timeout(every, alive).await;
                 if let Ok(Ok(reply)) = reply
                     && reply.stop

@@ -189,8 +189,9 @@ use riff_core::wire::{
     Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER,
     Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked,
     RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle,
-    SetStatus, SignInConfig, Start, StartReason, Status, Tailed, TakeOwner, ThreadInfo, Threads,
-    TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
+    SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner,
+    ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply,
+    WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -266,6 +267,17 @@ pub fn server_url(value: &str) -> Result<String, String> {
 /// The word that [`Api::tell`] takes in place of a session: the lead of
 /// your user in your repository (R179).
 pub const LEAD: &str = "lead";
+
+/// Who got the message of a block or of a failed step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Told {
+    /// The lead of the user.
+    Lead,
+    /// Nobody: the user has no lead.
+    Nobody,
+    /// The session is the lead: its own person reads its terminal.
+    You,
+}
 
 /// How long the client tries a request again while the server replies
 /// 503 (R132).
@@ -1176,37 +1188,86 @@ impl Api {
 
     /// A keep-alive: the session still runs (R204).
     pub async fn alive(&self, me: &SessionUri) -> Result<AliveReply> {
-        self.alive_with(me, None).await
+        self.alive_with(me, None, None).await
     }
 
     /// A keep-alive with the newest fact of the hooks of the session
-    /// (01M41FZNTPXQNCZ1S99HE42PYQ).
+    /// (01M41FZNTPXQNCZ1S99HE42PYQ), and the seconds since the last
+    /// prompt of its person (01M48VDWPDYRPEAXHR1MYDN1M7).
     pub async fn alive_with(
         &self,
         me: &SessionUri,
         activity: Option<Activity>,
+        prompt_secs: Option<u64>,
     ) -> Result<AliveReply> {
         let alive = Alive {
             me: me.clone(),
             activity,
+            prompt_secs,
         };
         self.call(&alive).await
     }
 
     /// Says that `me` cannot go on with no decision, in one command
     /// (01M41FZPGEK4TNPSM2051W4VMS): it tells the lead of its user
-    /// `blocked: REASON`, and sets the block. It gives true when the lead
-    /// got the message. With no lead, the block holds, and the session
-    /// asks its own user.
-    pub async fn blocked(&self, me: &SessionUri, reason: &str) -> Result<bool> {
+    /// `blocked: REASON`, and sets the block. With no lead, the block
+    /// holds, and the session asks its own user. The lead itself tells
+    /// nobody: it waits for its own person (01M48VDSB4CHQS9P6XVDJ6FMKS).
+    pub async fn blocked(&self, me: &SessionUri, reason: &str) -> Result<Told> {
         let set = SetBlocked {
             me: me.clone(),
             reason: reason.to_owned(),
         };
         set.check().map_err(anyhow::Error::msg)?;
-        let told = self.tell(me, LEAD, &format!("blocked: {reason}")).await;
+        let lead = self
+            .me(me)
+            .await
+            .is_ok_and(|r| r.session.is_some_and(|s| s.uri.lead()));
+        let told = if lead {
+            Told::You
+        } else if self
+            .tell(me, LEAD, &format!("blocked: {reason}"))
+            .await
+            .is_ok()
+        {
+            Told::Lead
+        } else {
+            Told::Nobody
+        };
         self.call(&set).await?;
-        Ok(told.is_ok())
+        Ok(told)
+    }
+
+    /// Changes the long step of `me` (01M48VDGTD40P8RBZMS0XB5M9N). A
+    /// failed step also tells the lead of its user `step failed: NAME:
+    /// REASON` (01M48VDS663X064YS5ZGCCZSTB), unless `me` is the lead.
+    /// It gives who got the message.
+    pub async fn step(&self, me: &SessionUri, change: StepChange) -> Result<Told> {
+        let set = SetStep {
+            me: me.clone(),
+            change,
+        };
+        set.check().map_err(anyhow::Error::msg)?;
+        let StepChange::Fail { reason } = &set.change else {
+            self.call(&set).await?;
+            return Ok(Told::Nobody);
+        };
+        let session = self.me(me).await.ok().and_then(|r| r.session);
+        let told = if session.as_ref().is_some_and(|s| s.uri.lead()) {
+            Told::You
+        } else {
+            let name = session
+                .and_then(|s| s.step)
+                .map_or_else(|| "a step".to_owned(), |s| s.name);
+            let body = format!("step failed: {name}: {reason}");
+            if self.tell(me, LEAD, &body).await.is_ok() {
+                Told::Lead
+            } else {
+                Told::Nobody
+            }
+        };
+        self.call(&set).await?;
+        Ok(told)
     }
 
     /// The look of the lead `me` at the blocks of the sessions of its

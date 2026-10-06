@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{Change, Record, Scope};
-use riff_core::wire::{Activity, AliveReply, ItemFact, Kind, Status};
+use riff_core::wire::{Activity, AliveReply, ItemFact, Kind, Status, StepChange};
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
@@ -87,7 +87,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None }.set(&mut presence, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None }.set(&mut presence, mike.who(), Instant::now());
 /// # let _ = &mut riff;
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -104,7 +104,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None }.set(&mut riff, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None }.set(&mut riff, mike.who(), Instant::now());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,8 +116,13 @@ pub enum Signal {
     /// A keep-alive: a sign of life that is not a call (R204). It
     /// carries the newest fact of the hooks of the session
     /// (01M41FZNTPXQNCZ1S99HE42PYQ). A fact of work after an answer
-    /// ends a block (01M41FZPT31ATXP75QW965P3JB).
-    Alive { activity: Option<Activity> },
+    /// ends a block (01M41FZPT31ATXP75QW965P3JB). A prompt of the
+    /// person after the block, `prompt_secs` ago, ends it too
+    /// (01M48VDWPDYRPEAXHR1MYDN1M7).
+    Alive {
+        activity: Option<Activity>,
+        prompt_secs: Option<u64>,
+    },
     /// The place of the session, from a `register`. It makes a session
     /// that the presence does not know.
     Place { place: Place },
@@ -126,6 +131,9 @@ pub enum Signal {
     /// The session cannot go on with no decision, since `at_ms`
     /// (01M41FZPGEK4TNPSM2051W4VMS). A new block replaces the old one.
     Blocked { reason: String, at_ms: u64 },
+    /// A change of the long step of the session at `at_ms`
+    /// (01M48VDGTD40P8RBZMS0XB5M9N). It is a sign of life.
+    Step { change: StepChange, at_ms: u64 },
     /// What a client saw of the items of `thread` on the forge
     /// (01M41FZP2C4Z4J6WKRXZ5B31EH). With `all`, the facts replace each
     /// fact of the thread.
@@ -193,8 +201,14 @@ impl Signal {
                 }
                 session.called(now);
             }
-            Signal::Alive { activity } => {
+            Signal::Alive {
+                activity,
+                prompt_secs,
+            } => {
                 session.live(now);
+                if let Some(secs) = prompt_secs {
+                    session.prompted(secs, now);
+                }
                 if let Some(activity) = activity {
                     session.worked(activity, now);
                 }
@@ -204,6 +218,7 @@ impl Signal {
                 session.called(now);
             }
             Signal::Status { status, at_ms } => {
+                session.live(now);
                 session.status = Some(SetStatus {
                     status,
                     set_ms: at_ms,
@@ -219,6 +234,25 @@ impl Signal {
                     woken_again: None,
                     unanswered: false,
                 });
+            }
+            Signal::Step { change, at_ms } => {
+                session.live(now);
+                session.step = match change {
+                    StepChange::Start { name } => Some(LongStep {
+                        name,
+                        set_ms: at_ms,
+                        failed: None,
+                    }),
+                    StepChange::Done => None,
+                    StepChange::Fail { reason } => Some(LongStep {
+                        name: session
+                            .step
+                            .take()
+                            .map_or_else(|| "a step".into(), |s| s.name),
+                        set_ms: at_ms,
+                        failed: Some(reason),
+                    }),
+                };
             }
             Signal::WatchStarted => session.watchers += 1,
             Signal::WatchEnded => {
@@ -540,6 +574,9 @@ pub(super) struct Session {
     /// The block of the session, while it holds
     /// (01M41FZPGEK4TNPSM2051W4VMS).
     pub(super) blocked: Option<Block>,
+    /// The long step of the session, until it is done
+    /// (01M48VDGTD40P8RBZMS0XB5M9N).
+    pub(super) step: Option<LongStep>,
     /// True when the server asked this idle worker to stop, and it made
     /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     pub(super) stopping: bool,
@@ -562,6 +599,17 @@ pub(super) struct SetStatus {
     pub(super) set_ms: u64,
     /// The time of the set.
     pub(super) set: Instant,
+}
+
+/// A long step of a session (01M48VDGTD40P8RBZMS0XB5M9N).
+#[derive(Clone)]
+pub(super) struct LongStep {
+    pub(super) name: String,
+    /// The start of the step, or its failure, in milliseconds since the
+    /// Unix epoch.
+    pub(super) set_ms: u64,
+    /// The reason, when the step failed.
+    pub(super) failed: Option<String>,
 }
 
 /// A blocked session that a look found, with its reason.
@@ -604,6 +652,7 @@ impl Session {
             status: None,
             work: None,
             blocked: None,
+            step: None,
             stopping: false,
             asked: None,
             told_stuck: false,
@@ -637,6 +686,17 @@ impl Session {
             self.blocked = None;
         }
         self.work = Some((activity, at));
+    }
+
+    /// Ends the block when the person gave a prompt at or after it,
+    /// `secs` before `now` (01M48VDWPDYRPEAXHR1MYDN1M7).
+    fn prompted(&mut self, secs: u64, now: Instant) {
+        let at = now
+            .checked_sub(std::time::Duration::from_secs(secs))
+            .unwrap_or(now);
+        if self.blocked.as_ref().is_some_and(|b| at >= b.set) {
+            self.blocked = None;
+        }
     }
 
     /// Records a call at `now`: a sign of life that also takes back an

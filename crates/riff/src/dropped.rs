@@ -315,7 +315,7 @@ pub fn all(dir: &Path) -> Vec<Earlier> {
 /// use riff::dropped::{Earlier, Kept, without_owner};
 /// use riff_core::wire::SessionInfo;
 ///
-/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0, must_clear: false, fresh_secs: None, state: Default::default(), work: None, waits: None, blocked: None };
+/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0, must_clear: false, fresh_secs: None, state: Default::default(), work: None, waits: None, blocked: None, step: None };
 /// let work = |item: &str| Earlier {
 ///     item: item.into(),
 ///     pushed: vec![],

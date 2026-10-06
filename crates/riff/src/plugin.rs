@@ -43,7 +43,7 @@
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
-//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). |
+//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. |
 //! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
 //! ```
@@ -446,6 +446,16 @@ mod tests {
             assert_eq!(hook[0]["matcher"], "*", "each tool runs the hook");
             assert_eq!(hook[0]["hooks"][0]["command"], command);
         }
+    }
+
+    /// 01M48VDWPDYRPEAXHR1MYDN1M7.
+    #[test]
+    fn the_prompt_hook_is_riff_hook_prompt() {
+        let hooks = json("riff/hooks/hooks.json");
+        let prompt = &hooks["hooks"]["UserPromptSubmit"];
+        assert_eq!(prompt.as_array().unwrap().len(), 1);
+        assert_eq!(prompt[0]["hooks"][0]["type"], "command");
+        assert_eq!(prompt[0]["hooks"][0]["command"], "riff hook prompt");
     }
 
     /// 01M3MEEFC9ZQVW2KC9FNJ75MTY, 01M3MEEFKX14QCQM0F9ZYW93PP.

@@ -533,7 +533,7 @@ fn git(dir: &Path, args: &[&str]) -> std::result::Result<String, String> {
 /// use riff::worktrees::{Tree, owned_by};
 /// use riff_core::wire::SessionInfo;
 ///
-/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0, must_clear: false, fresh_secs: None, state: Default::default(), work: None, waits: None, blocked: None };
+/// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, stopping: false, claims_secs: 0, must_clear: false, fresh_secs: None, state: Default::default(), work: None, waits: None, blocked: None, step: None };
 /// let who = [
 ///     info("riff://mike@pangolin/o/r?session=a1#issue-12", true),
 ///     info("riff://mike@pangolin/o/r?session=b2#issue-13", false),

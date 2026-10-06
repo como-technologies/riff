@@ -143,7 +143,10 @@ async fn a_blocked_session_tells_the_lead_and_gets_a_new_item() {
     let Riff { api, lead, b, .. } = riff().await;
     api.claim(&b, &repo(), "issue-7").await.unwrap();
     // One command: the block, and the message that wakes the lead.
-    assert!(api.blocked(&b, "issue-7 needs issue-5").await.unwrap());
+    assert_eq!(
+        api.blocked(&b, "issue-7 needs issue-5").await.unwrap(),
+        riff::api::Told::Lead
+    );
 
     let reports = direct(&api, &lead).await;
     assert_eq!(reports[0].1, "blocked: issue-7 needs issue-5");

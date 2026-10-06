@@ -13,9 +13,13 @@
 //! | `paused` | yellow | the claims, and the step it stopped at |
 //! | `blocked` | red | the reason with its age, `the lead gave no answer` when it gave none (01M41FZQCHWY1YVGAZ60ZHJK21), then the claims |
 //! | `must clear` | yellow | `must clear its context before its next claim` (01M3X9XC99KY4RQY36A7CYWY11) |
-//! | `waiting` | cyan | the claims, then what they wait for: `waits for a verify of PR #418` (01M41FZP9A50CH4A2VX344DW49) |
-//! | `busy` | green | `working on #N`, or `reviewing #N` for a verify claim, then the work, then the step |
+//! | `waiting` | cyan | the claims, then what they wait for: `waits for a verify of PR #418` (01M41FZP9A50CH4A2VX344DW49). A lead: `waiting for mike: REASON` (01M48VDSB4CHQS9P6XVDJ6FMKS) |
+//! | `busy` | green | `working on #N`, or `reviewing #N` for a verify claim, then the work, then the step. A lead in a turn: the work, then the step |
 //! | `idle` | dim | `ready for work` with the time, then a current step. The lead: `monitoring work` |
+//!
+//! A long step (`riff step start NAME`) comes after the detail of each
+//! state but `offline`: `live window for 12m`, or in red `live window
+//! failed 3m ago: REASON` (01M48VDGTD40P8RBZMS0XB5M9N).
 //!
 //! The work is the newest fact of the hooks (01M41FZNTPXQNCZ1S99HE42PYQ):
 //! `runs Bash: run just ci for 12m`, `works for 2m`, or
@@ -31,22 +35,23 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     S[session in who] --> L{open watch?}
+//!     S[session in who] --> L{open watch, or a lead that is not gone?}
 //!     L -- no --> Off[offline]
 //!     L -- yes --> P{riff paused?}
 //!     P -- yes --> Pa[paused]
 //!     P -- no --> B{a block that holds?}
-//!     B -- yes --> Bl[blocked]
+//!     B -- yes, not the lead --> Bl[blocked]
+//!     B -- yes, the lead --> Wa
 //!     B -- no --> M{worker that must clear?}
 //!     M -- yes --> Mc[must clear]
 //!     M -- no --> W{each claim waits?}
 //!     W -- yes --> Wa[waiting]
-//!     W -- no --> C{holds a claim?}
+//!     W -- no --> C{holds a claim, or a lead in a turn?}
 //!     C -- yes --> Bu[busy]
 //!     C -- no --> I[idle]
 //! ```
 
-use riff_core::wire::{Activity, RiffState, SessionInfo, SessionState, StatusInfo};
+use riff_core::wire::{Activity, RiffState, SessionInfo, SessionState, StatusInfo, StepInfo};
 
 use crate::style::{DIM, ERROR, GOOD, MUTED, WAITING, WARNING};
 use crate::text::{ago, safe};
@@ -115,7 +120,9 @@ pub fn work(activity: &Activity) -> String {
 ///
 /// ```
 /// use riff::state::detail;
-/// use riff_core::wire::{Activity, BlockedInfo, SessionInfo, SessionState, Status, StatusInfo, Waits};
+/// use riff_core::wire::{
+///     Activity, BlockedInfo, SessionInfo, SessionState, Status, StatusInfo, StepInfo, Waits,
+/// };
 ///
 /// let plain = |s: &SessionInfo| -> Vec<String> {
 ///     detail(s, &|n| (n == 12).then(|| "Show the wave".to_owned()))
@@ -142,6 +149,7 @@ pub fn work(activity: &Activity) -> String {
 ///     work: Some(Activity { tool: Some("Bash: run just ci".into()), turn: true, secs: 720 }),
 ///     waits: None,
 ///     blocked: None,
+///     step: None,
 /// };
 /// assert_eq!(
 ///     plain(&s),
@@ -210,6 +218,26 @@ pub fn work(activity: &Activity) -> String {
 /// s.state = Some(SessionState::Idle);
 /// s.worker = false;
 /// assert_eq!(plain(&s), ["ready for work for 5m", "2m ago: plan the wave"]);
+///
+/// // A lead that waits for its person, with a long step
+/// // (01M48VDSB4CHQS9P6XVDJ6FMKS, 01M48VDGTD40P8RBZMS0XB5M9N).
+/// s.uri = "riff://mike@thelio/o/r?session=l1&lead=true".parse()?;
+/// (s.status, s.must_clear, s.fresh_secs) = (None, false, None);
+/// s.blocked = Some(BlockedInfo {
+///     reason: "run riff owner --take".into(),
+///     secs: 60,
+///     answered: false,
+///     woken_again: false,
+///     unanswered: false,
+/// });
+/// s.step = Some(StepInfo { name: "live window".into(), secs: 720, failed: None });
+/// s.state = Some(SessionState::Waiting);
+/// assert_eq!(
+///     plain(&s),
+///     ["waiting for mike: run riff owner --take (1m ago)", "live window for 12m"]
+/// );
+/// s.state = Some(SessionState::Offline);
+/// assert_eq!(plain(&s), ["seen 2h ago"]);
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn detail(
@@ -258,6 +286,12 @@ pub fn detail(
         SessionState::Waiting => {
             lines.extend(claims());
             lines.extend(s.waits.as_ref().map(|w| (w.to_string(), WAITING)));
+            if let (true, Some(block)) = (s.uri.lead(), &s.blocked) {
+                let user = safe(s.uri.who().user());
+                let reason = safe(&block.reason);
+                let what = format!("waiting for {user}: {reason} ({} ago)", ago(block.secs));
+                lines.push((what, WAITING));
+            }
             lines.extend(s.status.as_ref().map(step));
         }
         SessionState::Busy => {
@@ -275,10 +309,39 @@ pub fn detail(
             lines.extend(current(s).map(step));
         }
     }
+    if let (true, Some(long)) = (of(s) != SessionState::Offline, &s.step) {
+        lines.push(long_step(long));
+    }
     if let (true, Some(secs)) = (s.worker && of(s) != SessionState::Offline, s.fresh_secs) {
         lines.push((format!("fresh start {} ago", ago(secs)), DIM));
     }
     lines
+}
+
+/// A long step (01M48VDGTD40P8RBZMS0XB5M9N): `NAME for 12m`, or in red
+/// `NAME failed 3m ago: REASON`.
+///
+/// ```
+/// use riff_core::wire::StepInfo;
+///
+/// let mut step = StepInfo { name: "live window".into(), secs: 720, failed: None };
+/// assert_eq!(riff::state::long_step(&step).0, "live window for 12m");
+/// step.failed = Some("the stage gave 502".into());
+/// step.secs = 180;
+/// assert_eq!(riff::state::long_step(&step).0, "live window failed 3m ago: the stage gave 502");
+/// ```
+pub fn long_step(step: &StepInfo) -> (String, anstyle::Style) {
+    let name = safe(&step.name);
+    match &step.failed {
+        None => (
+            format!("{name} for {}", ago(step.secs)),
+            anstyle::Style::new(),
+        ),
+        Some(reason) => (
+            format!("{name} failed {} ago: {}", ago(step.secs), safe(reason)),
+            ERROR,
+        ),
+    }
 }
 
 /// A claim as what the session does: `working on #N TITLE`, or

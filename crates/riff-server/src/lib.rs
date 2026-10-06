@@ -221,8 +221,9 @@ use riff_core::wire::{
     ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
     PassOwner, Pause, Person, Post, Read, ReadReply, Register, Release, ReleaseFor, Remove,
     ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata,
-    SetAdmin, SetBlocked, SetIdle, SetStatus, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    SetAdmin, SetBlocked, SetIdle, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE,
+    TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply,
+    WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -1847,6 +1848,7 @@ impl Service {
         let mut routes = commands
             .route(SetStatus::PATH, post(status))
             .route(SetBlocked::PATH, post(blocked))
+            .route(SetStep::PATH, post(step))
             .route(BlockedLook::PATH, post(look_blocks))
             .route(ItemFacts::PATH, post(item_facts))
             .route(Alive::PATH, post(alive))
@@ -2077,6 +2079,7 @@ async fn alive(
     let caller = admit(&s, &proof, &r.me)?;
     let alive = Signal::Alive {
         activity: r.activity,
+        prompt_secs: r.prompt_secs,
     };
     Ok(Json(s.engine.signal(&caller, alive).await?))
 }
@@ -2112,6 +2115,19 @@ async fn blocked(
         at_ms: now_ms(),
     };
     s.engine.signal(&caller, blocked).await?;
+    Ok(Json(()))
+}
+
+/// Changes the long step of a session (01M48VDGTD40P8RBZMS0XB5M9N). It
+/// is a signal, like a status, and a sign of life.
+async fn step(AxumState(s): AxumState<Shared>, proof: Proof, Json(r): Json<SetStep>) -> Reply<()> {
+    let caller = admit(&s, &proof, &r.me)?;
+    r.check().map_err(bad_request)?;
+    let step = Signal::Step {
+        change: r.change,
+        at_ms: now_ms(),
+    };
+    s.engine.signal(&caller, step).await?;
     Ok(Json(()))
 }
 
@@ -3924,6 +3940,7 @@ mod tests {
             Json(Alive {
                 me: new.clone(),
                 activity: None,
+                prompt_secs: None,
             }),
         )
         .await
@@ -4014,6 +4031,7 @@ mod tests {
                 Json(Alive {
                     me: worker.clone(),
                     activity: None,
+                    prompt_secs: None,
                 }),
             )
         };
@@ -4375,6 +4393,7 @@ mod tests {
             Json(Alive {
                 me: mike(),
                 activity: None,
+                prompt_secs: None,
             }),
         )
         .await
@@ -4855,6 +4874,7 @@ mod tests {
                         Json(Alive {
                             me: mike(),
                             activity: None,
+                            prompt_secs: None,
                         }),
                     )
                     .await
@@ -4907,6 +4927,7 @@ mod tests {
                 Json(Alive {
                     me: mike(),
                     activity: None,
+                    prompt_secs: None,
                 }),
             )
             .await
@@ -4998,6 +5019,7 @@ mod tests {
             Json(Alive {
                 me: mike(),
                 activity: None,
+                prompt_secs: None,
             }),
         )
         .await
