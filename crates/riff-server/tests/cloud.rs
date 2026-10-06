@@ -349,6 +349,23 @@ fn book_part(heading: &str) -> String {
     part[..part[4..].find("\n### ").unwrap()].to_owned()
 }
 
+/// The part "Approve the deploy of a release" says that only a job in
+/// the environment of an instance signs in as its deploy account, and
+/// how to set it (01M49M8W30M2084QN4HX1FJFKS).
+#[test]
+fn the_book_lets_only_an_approved_job_deploy() {
+    let part = book_part("### Approve the deploy of a release\n");
+    for text in [
+        "#### Let only an approved job deploy",
+        "CLOUD_GITHUB_ENVIRONMENT",
+        "```sh\nriff cloud create shared\nriff cloud create stage\n```",
+        "repo:como-technologies/riff:environment:production",
+        "gcloud iam service-accounts get-iam-policy riff-deploy@",
+    ] {
+        assert!(part.contains(text), "{text} is not in the part");
+    }
+}
+
 /// The book says that the release tag deploys, and that each machine
 /// updates after it (01M3NJAZ8HSE87H0GZ8SNGWN31).
 #[test]
