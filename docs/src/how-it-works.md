@@ -3967,8 +3967,8 @@ The first line shows the limit, the workers that run, each
 difference between them, and the numbers and the score of this
 machine (see
 [Which machine gets a worker](#which-machine-gets-a-worker) and
-[Set the workers that a host keeps](#set-the-workers-that-a-host-keeps)). The
-next line shows the monitor (see
+[Set the workers that a host keeps](#set-the-workers-that-a-host-keeps)).
+The next line shows the monitor (see
 [Watch the health of a machine](#watch-the-health-of-a-machine)).
 
 To see the full session ID of each worker, use `--long`:

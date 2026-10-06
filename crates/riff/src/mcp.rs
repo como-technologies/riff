@@ -933,7 +933,8 @@ impl Tools {
                 }
                 if let Some(alarm) = &reaped.alarm {
                     eprintln!("riff: {alarm}");
-                    if let Err(e) = crate::rollout::message_lead(tools.api.base(), &me, alarm).await {
+                    if let Err(e) = crate::rollout::message_lead(tools.api.base(), &me, alarm).await
+                    {
                         eprintln!("riff: cannot tell the lead: {e:#}");
                     }
                 }

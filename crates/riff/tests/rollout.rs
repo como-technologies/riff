@@ -997,7 +997,13 @@ async fn claim_on_b(lead: &Lead, id: &str, item: &str) -> SessionUri {
     );
     lead.api.register_as(&worker, true).await.unwrap();
     let thread = lead.me.default_thread().unwrap();
-    assert!(lead.api.claim(&worker, &thread, item).await.unwrap().granted);
+    assert!(
+        lead.api
+            .claim(&worker, &thread, item)
+            .await
+            .unwrap()
+            .granted
+    );
     worker
 }
 
@@ -1064,7 +1070,10 @@ async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
 
     let alarm = riff::text::death_loop("b", 4);
     let read = lead.reads(&alarm).await;
-    assert!(!read.contains(&format!("note: {alarm}")), "a message: {read}");
+    assert!(
+        !read.contains(&format!("note: {alarm}")),
+        "a message: {read}"
+    );
     assert_eq!(b.deaths(), 4);
     // The host tells its deaths in its status.
     let start = Instant::now();

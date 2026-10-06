@@ -311,7 +311,8 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         && let Some(session) = &session
         && crate::deaths::record_here(session).is_some_and(|r| r.starts_loop)
     {
-        let host = identity::here(None).map_or_else(|_| identity::this_host(), |p| p.host().to_owned());
+        let host =
+            identity::here(None).map_or_else(|_| identity::this_host(), |p| p.host().to_owned());
         let body = crate::text::death_loop(&host, crate::deaths::here());
         eprintln!("{body}");
         if let Err(e) = tell_lead(None, server, &body).await {
