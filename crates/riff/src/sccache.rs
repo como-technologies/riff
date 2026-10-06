@@ -25,9 +25,12 @@
 //! worker and in its own process group ([`Cache::start_server`]). So
 //! the clear, the reap and the stop of the worker that built first do
 //! not see it. A server that a build starts again, for example after
-//! its idle time, has [`SERVER_MARK`]`=1` in its environment, and
-//! [`crate::workload::is_cache_server`] never counts it as a process
-//! of a worker. Another program with the mark stays of its worker.
+//! its idle time, has [`SERVER_MARK`]`=1` in its environment and runs
+//! the binary of [`find`]. [`crate::workload::is_cache_server`] never
+//! counts such a process as a process of a worker. It looks at the
+//! binary in `/proc/PID/exe`, not at the name in `argv[0]`: a process
+//! picks its own name. Another binary with the mark stays of its
+//! worker.
 //!
 //! The cache is on the machine only: no cloud store, no network. The
 //! port comes from the folder, so the workers of a machine share one
