@@ -10,7 +10,7 @@
 //! | `threads::Saved` | `threads` |
 //! | `work::Saved` | `claims`, `leads` |
 //! | `sessions::Saved` | `sessions` |
-//! | `presence::Saved` | `cursors`, `statuses` |
+//! | `presence::Saved` | `cursors`, `statuses` (the status and the long step of each session) |
 //! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` |
 //! | `plan::Saved` | `plans` |
 //! | `calls::Saved` | `calls` |

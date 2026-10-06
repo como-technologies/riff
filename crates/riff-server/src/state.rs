@@ -653,7 +653,8 @@ impl State {
     /// ([`seen_own_call`]). A record that only names the session, for
     /// example a record of the import of go-live, counts only when
     /// `seen` has no call of it (01M4263ZXH4K23CSY6C5GJPVQH). A status
-    /// that the presence has stays (01M4263ZZVY8QJ2METTEVR1W26).
+    /// and a long step that the presence has stay
+    /// (01M4263ZZVY8QJ2METTEVR1W26, 01M49NP8F3A9CTJWZ74MCNZG0M).
     fn sessions_of_the_log(&mut self, seen: &BTreeMap<Who, u64>, loaded: Instant) {
         for (who, known) in &self.written.sessions().known {
             let at_ms = seen.get(who).copied().unwrap_or(known.at_ms);
@@ -662,6 +663,7 @@ impl State {
                 seen_before_load: Some(at_ms),
                 alive: None,
                 status: old.and_then(|s| s.status.clone()),
+                step: old.and_then(|s| s.step.clone()),
                 ..Session::new(known.uri.place().clone(), loaded)
             };
             self.presence.sessions.insert(who.clone(), session);
