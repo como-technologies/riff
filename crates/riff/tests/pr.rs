@@ -234,7 +234,8 @@ async fn pr_wait_fails_for_a_failed_required_check() {
 
 const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"headRefOid":"1a2b3c4d","body":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}' ;;
 *'pr comment 40 --body-file -'*) echo 'https://github.com/como-technologies/riff/pull/40#issuecomment-7' ;;
-*'/statuses/'*) echo '{}' ;;"#;
+*'/statuses/'*) echo '{}' ;;
+*'/check-runs?check_name=Gate'*) echo '{"total_count":1,"check_runs":[{"name":"Gate","status":"completed","conclusion":"success"}]}' ;;"#;
 
 /// `riff verify VERDICT` makes one comment, one status on the head
 /// commit and one post to the holder of the issue.
@@ -455,6 +456,70 @@ async fn verify_refuses_when_the_head_is_not_the_tested_commit() {
     assert!(!log.contains("/statuses/"), "{log}");
     let inbox = machine.ok("author", &["read"]).await;
     assert!(!inbox.contains("verify result:"), "{inbox}");
+}
+
+/// A pass needs a success of the Gate of the head commit
+/// (01M49HAZ7P3JMWNCG1SWCMAXQP): the Gate is the one full test run, and
+/// the verifier does not run it again. While the Gate runs, failed or
+/// did not run, `riff verify pass` makes no comment, no status and no
+/// post. A fail needs no Gate.
+#[tokio::test]
+async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
+    let gate = |runs: &str| {
+        VERIFY.replace(
+            r#"[{"name":"Gate","status":"completed","conclusion":"success"}]"#,
+            runs,
+        )
+    };
+    let cases = [
+        (
+            gate(r#"[{"name":"Gate","status":"in_progress","conclusion":null}]"#),
+            "the Gate of commit 1a2b3c4 runs still.",
+        ),
+        (
+            gate(r#"[{"name":"Gate","status":"completed","conclusion":"failure"}]"#),
+            "the Gate of commit 1a2b3c4 ended with failure.",
+        ),
+        (gate("[]"), "the Gate of commit 1a2b3c4 did not run."),
+    ];
+    for (fake, line) in cases {
+        let machine = Machine::new(&fake).await;
+        machine.claim("author", "issue-12").await;
+        let result = machine.write("result.md", "1. The wave shows.\n");
+        let pass = [
+            "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        let out = machine.run("verifier", &pass).await;
+        assert_eq!(out.status.code(), Some(1), "{line}");
+        let stderr = text(&out.stderr);
+        assert!(
+            stderr.contains(&format!(
+                "riff verify pass: {line} A pass needs a Gate success: see gh pr checks 40. \
+                 Nothing is reported."
+            )),
+            "{stderr}"
+        );
+        assert_eq!(stderr.trim().lines().count(), 1, "one line: {stderr}");
+        let calls = log(machine.bin.path());
+        assert!(
+            calls.contains(
+                "gh api repos/como-technologies/riff/commits/1a2b3c4d/check-runs?check_name=Gate"
+            ),
+            "{calls}"
+        );
+        assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("/statuses/"), "{calls}");
+        let inbox = machine.ok("author", &["read"]).await;
+        assert!(!inbox.contains("verify result:"), "{inbox}");
+
+        // A fail needs no Gate.
+        let fail = [
+            "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        machine.ok("verifier", &fail).await;
+        let calls = log(machine.bin.path());
+        assert!(calls.contains("-f state=failure"), "{calls}");
+    }
 }
 
 /// With no --commit, the tested commit is HEAD of the verifier.
@@ -715,6 +780,7 @@ fn the_book_has_a_how_to_for_each_command() {
         (
             "Report a verify",
             &[
+                "gh pr checks 40",
                 "riff verify pass 40 --file result.md",
                 "riff verify fail 40 --file result.md",
             ],

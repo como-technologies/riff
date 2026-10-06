@@ -505,7 +505,8 @@ enum Command {
     ///
     /// It uses the gh of this machine. It comments the result on the pull
     /// request, sets the status riff/verify of its head commit, and posts
-    /// the result to the session that holds its issue.
+    /// the result to the session that holds its issue. A pass needs a
+    /// success of the check Gate of the head commit.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,

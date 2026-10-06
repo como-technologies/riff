@@ -178,6 +178,95 @@ fn no_diff_and_no_base_get_each_check() {
     assert_eq!(ci(plain.path()).0, "ci-full");
 }
 
+/// A git repository whose workspace has the crates `a` and `b`, where
+/// `b` depends on `a`. Its one commit is also `origin/main`.
+fn workspace() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let top = dir.path();
+    git(top, &["init", "-q", "-b", "work"]);
+    write(top, ".gitignore", "target/\n");
+    write(
+        top,
+        "Cargo.toml",
+        "[workspace]\nresolver = \"3\"\nmembers = [\"crates/*\"]\n",
+    );
+    let package = |name: &str, deps: &str| {
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n{deps}"
+        )
+    };
+    write(top, "crates/a/Cargo.toml", &package("a", ""));
+    write(top, "crates/a/src/lib.rs", "//! A.\n");
+    write(
+        top,
+        "crates/b/Cargo.toml",
+        &package("b", "a = { path = \"../a\" }\n"),
+    );
+    write(top, "crates/b/src/lib.rs", "//! B.\n");
+    write(top, "docs/src/how-it-works.md", "# How\n\nText.\n");
+    commit(top, "first");
+    git(top, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    dir
+}
+
+/// The arguments of `cargo test` that `hygiene crates` prints in `dir`,
+/// and its line for the person.
+fn crates(dir: &Path) -> (String, String) {
+    let out = hygiene(dir, &["crates"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    (
+        text(&out.stdout).trim().to_owned(),
+        text(&out.stderr).trim().to_owned(),
+    )
+}
+
+/// `just check` tests the crates of the diff and their dependents
+/// (01M49HAZA5K08XW2JQ11TG87JP).
+#[test]
+fn crates_names_the_changed_crates_and_their_dependents() {
+    let dir = workspace();
+    write(dir.path(), "crates/a/src/lib.rs", "//! A, new.\n");
+    let (args, line) = crates(dir.path());
+    assert_eq!(args, "-p a -p b");
+    assert_eq!(
+        line,
+        "just check runs the tests of a, b: a differs from origin/main, and each crate \
+         that depends on a changed crate runs too"
+    );
+
+    let dir = workspace();
+    write(dir.path(), "crates/b/src/lib.rs", "//! B, new.\n");
+    commit(dir.path(), "b");
+    assert_eq!(crates(dir.path()).0, "-p b");
+
+    let dir = workspace();
+    write(dir.path(), "docs/src/how-it-works.md", "# How\n\nNew.\n");
+    let (args, line) = crates(dir.path());
+    assert_eq!(args, "--workspace");
+    assert_eq!(
+        line,
+        "just check runs the tests of each crate: docs/src/how-it-works.md is in no crate, \
+         and a test can read it"
+    );
+
+    let dir = workspace();
+    write(dir.path(), "justfile", "default:\n");
+    let (args, line) = crates(dir.path());
+    assert_eq!(args, "--workspace");
+    assert_eq!(
+        line,
+        "just check runs the tests of each crate: justfile is in no crate, and a test can read it"
+    );
+
+    let dir = workspace();
+    let (args, line) = crates(dir.path());
+    assert_eq!(args, "");
+    assert_eq!(
+        line,
+        "just check runs no test: no crate differs from origin/main"
+    );
+}
+
 #[test]
 fn wrap_fails_on_a_long_line_of_a_page() {
     let dir = tempfile::tempdir().unwrap();

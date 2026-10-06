@@ -4,11 +4,11 @@ Install [Rust](https://rustup.rs) and [just](https://just.systems).
 Then:
 
 ```sh
-just init   # once: installs the book and audit tools
-just ci     # the checks that your change can break
+just init    # once: installs the book and audit tools
+just check   # before a push: the fast checks and the tests you touched
 ```
 
-The Gate on GitHub runs each check on each pull request. CI publishes
+The Gate on GitHub runs each check on each pushed commit. CI publishes
 this book to GitHub Pages.
 
 The design docs are in the code. Read them in the
@@ -16,7 +16,44 @@ The design docs are in the code. Read them in the
 
 ## Run the checks before a push
 
-Run this command before each push:
+Each pushed commit gets one full test run: the Gate on GitHub. The
+forge merges only on a Gate pass. So you need no full test run of your
+own. Run this command before each push:
+
+```sh
+just check
+```
+
+It runs the fast checks: `fmt-check`, `lint`, `doc`, `book`, `reqs`
+and `wrap`. Then it runs the tests of each crate that your change
+touches, and of each crate that depends on one of them. It prints one
+line that says which tests it runs, and why:
+
+```text
+just check runs the tests of riff, riff-core, riff-server: riff-core differs from origin/main, and each crate that depends on a changed crate runs too
+```
+
+```mermaid
+flowchart TD
+    D["just check: the files that differ<br/>from origin/main"] --> F["the fast checks"]
+    F --> T{"each file"}
+    T -- "in crates/NAME/" --> C["the tests of NAME and of<br/>each crate that depends on it"]
+    T -- "another file, for example<br/>Cargo.lock or a page of the book" --> W["the tests of each crate"]
+```
+
+To see only the crates, with no check:
+
+```sh
+cargo run -q -p hygiene -- crates
+```
+
+After the push, see the Gate of your pull request:
+
+```sh
+gh pr checks 40
+```
+
+## Run the checks that your change can break
 
 ```sh
 just ci
@@ -52,7 +89,8 @@ git fetch origin
 
 ### When a just ci runs already
 
-One `just ci` or `just ci-full` runs at a time in a worktree. Two runs
+One `just ci`, `just ci-full` or `just check` runs at a time in a
+worktree. Two runs
 share the `target` folder, wait for each other, and double the load. A
 second run stops at once:
 

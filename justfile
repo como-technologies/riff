@@ -36,6 +36,23 @@ ci-full:
 [private]
 ci-checks: fmt-check lint test doc book reqs wrap
 
+# The Gate is the one full run of each commit (01M49HAZ5BZYGAR9PGC089RM3F).
+# hygiene crates prints the cargo test arguments for the crates of the
+# diff and their dependents, and one line that says why
+# (01M49HAZA5K08XW2JQ11TG87JP).
+# Before a push: the fast checks, and the tests of the crates that the diff touches
+check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . "{{justfile_directory()}}/crates/hygiene/ci-lock.sh"
+    ci_lock "$PWD/target"
+    {{just_executable()}} fmt-check lint doc book reqs wrap
+    crates=$(cargo run -q -p hygiene -- crates)
+    if [ -n "$crates" ]; then
+        # shellcheck disable=SC2086 # each word is one argument of cargo test
+        {{just_executable()}} cargo-test $crates
+    fi
+
 # Run only the checks for text: the book, the requirement IDs, the wrap
 ci-text: book reqs wrap
 
@@ -76,9 +93,14 @@ build:
 
 # 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
 # Run all tests, with a RIFF_SERVER where nothing listens and a D-Bus that fails each call
+test *ARGS:
+    {{just_executable()}} cargo-test --workspace {{ARGS}}
+
 # 01M43B491Z25KT0XBC7CANFS5G: a TMPDIR in a git repository (the home of a
 # worker) moves to the first temp root outside each repository.
-test *ARGS:
+# cargo test ARGS for test and check, in the environment of the tests
+[private]
+cargo-test *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
     in_git() {
@@ -100,7 +122,7 @@ test *ARGS:
             fi
         done
     fi
-    env TMPDIR="$tmp" RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test --workspace {{ARGS}}
+    env TMPDIR="$tmp" RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:

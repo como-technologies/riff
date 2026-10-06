@@ -32,6 +32,10 @@ case "$1 $2" in
     printf '%s' '[{"title":"Wave 4: CloBADud"}]' ;;
 'issue list') printf '%s' '[{"number":7,"title":"Release v1.2.3","milestone":{"title":"Wave 4: NBADew"}}]' ;;
 'issue view') printf '%s' '{"number":7,"state":"OPEN","milestone":{"title":"Wave 4: NBADew"}}' ;;
+'api repos/acme/app/commits/ended/check-runs?check_name=Gate')
+    printf '%s' '{"check_runs":[{"status":"completed","conclusion":"failBADure"}]}' ;;
+'api repos/acme/app/commits/'*'/check-runs?check_name=Gate')
+    printf '%s' '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
 'pr list') printf '%s' '[{"number":39,"title":"Old","headRefName":"worktree-issue-6BAD","headRefOid":"0","isDraft":false,"statusCheckRollup":[]},{"number":40,"title":"Release v1.2.3","headRefName":"worktree-issue-7","headRefOid":"abc1234BADdef","isDraft":false,"statusCheckRollup":[{"context":"riff/verify","state":"FAILURE","targetUrl":"https://e.test/cBAD"}],"milestone":{"title":"Wave 4: NBADew"}}]' ;;
 'pr view') printf '%s' '{"state":"MERGED","mergeCommit":{"oid":"9f8eBAD7d6c"},"headRefOid":"abc1234BADdef","body":"Closes #7\n\nIssue: #7\nMilestone: Wave 4\n"}' ;;
 'pr checks') printf '%s' '[{"name":"GateBAD","bucket":"pass"}]' ;;
@@ -101,6 +105,11 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     // `riff pr wait`: the merge commit.
     let merged = riff::pr::wait(&gh, 40, std::time::Duration::ZERO).unwrap();
     assert_eq!(merged, "9f8e  7d6c");
+
+    // `riff verify pass`: the conclusion of the Gate goes into the
+    // line of a refusal.
+    let gate = riff::pr::gate_of(&gh, "acme/app", "ended").unwrap();
+    assert_eq!(gate, riff::pr::Gate::Ended("fail  ure".into()));
 
     // `riff verify`: the commit and the URL go into the result.
     let reported = riff::pr::report(&gh, "acme/app", 40, "abc1234", Verdict::Pass, "ok").unwrap();

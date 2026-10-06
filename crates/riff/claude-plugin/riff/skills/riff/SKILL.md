@@ -241,12 +241,27 @@ author opens a pull request with auto-merge on. The forge merges it
 when the checks of the repository and the verify pass. The `gh` steps
 are in "Pull requests on GitHub".
 
+### One full run for each commit
+
+The forge runs the full check of the repository on each pushed
+commit: on GitHub, the check `Gate`. It is the only full run of the
+commit. A second full run of the same commit finds nothing new.
+
+- The author runs only the fast checks and the tests of the code that
+  it changed, before the push. In the riff repository: `just check`.
+- The verifier does not run the full check. It reads the result of the
+  forge for the commit, and does the work that a test run cannot do.
+- `riff verify pass` reports nothing while the full check of the
+  commit has no success.
+
 ### Ask for a verify
 
 1. Commit your work. Rebase it on a fresh default branch (see "Keep
    good git hygiene"). Push it as WIP before the long run of the
-   checks (see "Push your work as WIP"). The checks of your repository
-   pass.
+   checks (see "Push your work as WIP"). The fast checks of your
+   repository and the tests of the code that you changed pass. Do not
+   run the full check: the forge runs it (see "One full run for each
+   commit").
 2. Push your branch, so that a session on another machine can fetch
    it: `git push --force-with-lease --force-if-includes -u origin HEAD`.
 3. Open a pull request for the branch with one command:
@@ -335,7 +350,12 @@ claim, or starts a worker for it.
    example `verify-issue-12-a6cf`. Call `move` with the absolute path
    of the new worktree. Then run `git fetch origin BRANCH` and
    `git checkout --detach COMMIT` there. Do not `cd`.
-5. Test each criterion. Do not change the code.
+5. Do not run the full check of the repository: the forge ran it. See
+   that it passed for the commit (on GitHub: `gh pr checks 40`). Then
+   check each criterion: review the code and its fit with the design,
+   read the test of each criterion, and run that test by its name when
+   you must. Read the book, the rustdoc and the requirements. Do not
+   change the code.
 6. Write the result to a file:
    - Pass: each criterion, with what you did to check it.
    - Fail: each criterion that failed, with the steps to see the
@@ -391,6 +411,8 @@ one forge.
 - GitHub merges a pull request with a squash when the checks `Gate`
   and `Hygiene` pass and its head commit has the status `riff/verify`
   success. A new commit needs a new verify.
+- The check `Gate` is the full run of each commit. `riff verify pass`
+  refuses while the `Gate` of the head commit has no success.
 - The body of a pull request has one line `Closes #N` (the last pull
   request of the issue) or `Refs #N` (each other one, and one with a
   check after the release left). It ends with the trailers `Issue: #N`

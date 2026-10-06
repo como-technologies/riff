@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again each `--every` seconds. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `api …/commits/COMMIT/check-runs` (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -36,6 +36,12 @@
 //! reports nothing when the head of the pull request is not the commit
 //! that the verifier tested, `HEAD` of its worktree or `--commit`
 //! ([`same_commit`]).
+//!
+//! The job `Gate` of GitHub is the one full test run of each commit
+//! (01M49HAZ5BZYGAR9PGC089RM3F). The verifier does not run the tests
+//! again: it reviews. So `riff verify pass` reports nothing while the
+//! [`GATE`] of the head commit has no success ([`gate_state`],
+//! 01M49HAZ7P3JMWNCG1SWCMAXQP). A fail needs no Gate.
 //!
 //! The author of a pull request releases its item at the verify
 //! request. So the issue can have no holder. Then the result wakes the
@@ -663,11 +669,88 @@ pub fn same_commit(head: &str, tested: &str) -> Result<()> {
     )
 }
 
+/// The name of the check run of the full test run of a commit: the job
+/// `Gate` of `.github/workflows/ci.yml` (01M49HAZ5BZYGAR9PGC089RM3F).
+pub const GATE: &str = "Gate";
+
+/// A check run, as `gh api repos/R/commits/C/check-runs` gives it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CheckRun {
+    /// `queued`, `in_progress` or `completed`.
+    #[serde(deserialize_with = "crate::text::forge_de")]
+    pub status: String,
+    /// `success`, `failure`, `cancelled` and so on, when it is completed.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub conclusion: Option<String>,
+}
+
+/// The check runs of one commit.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CheckRuns {
+    /// Each run.
+    pub check_runs: Vec<CheckRun>,
+}
+
+/// The state of the [`GATE`] of a commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Gate {
+    /// Each run of the Gate is completed with `success`.
+    Passed,
+    /// The commit has no run of the Gate.
+    Missing,
+    /// A run of the Gate is not completed.
+    Running,
+    /// A run of the Gate is completed with this conclusion, not `success`.
+    Ended(String),
+}
+
+/// The state of the Gate from its check runs. A pass needs one run or
+/// more, each completed with `success`.
+///
+/// ```
+/// use riff::pr::{CheckRun, Gate, gate_state};
+///
+/// let run = |status: &str, conclusion: Option<&str>| CheckRun {
+///     status: status.into(),
+///     conclusion: conclusion.map(Into::into),
+/// };
+/// assert_eq!(gate_state(&[run("completed", Some("success"))]), Gate::Passed);
+/// assert_eq!(gate_state(&[]), Gate::Missing);
+/// assert_eq!(gate_state(&[run("in_progress", None)]), Gate::Running);
+/// assert_eq!(
+///     gate_state(&[run("completed", Some("success")), run("completed", Some("failure"))]),
+///     Gate::Ended("failure".into())
+/// );
+/// ```
+pub fn gate_state(runs: &[CheckRun]) -> Gate {
+    if runs.is_empty() {
+        return Gate::Missing;
+    }
+    for run in runs {
+        match (run.status.as_str(), run.conclusion.as_deref()) {
+            ("completed", Some("success")) => {}
+            ("completed", conclusion) => {
+                return Gate::Ended(conclusion.unwrap_or("none").to_owned());
+            }
+            _ => return Gate::Running,
+        }
+    }
+    Gate::Passed
+}
+
+/// The state of the [`GATE`] of `commit` in `repo`.
+pub fn gate_of(gh: &Gh, repo: &str, commit: &str) -> Result<Gate> {
+    let path = format!("repos/{repo}/commits/{commit}/check-runs?check_name={GATE}");
+    let runs: CheckRuns = gh.json(&["api", &path])?;
+    Ok(gate_state(&runs.check_runs))
+}
+
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
 /// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is
-/// not the commit `tested` ([`same_commit`]). The caller posts it to the
-/// holder of the issue.
+/// not the commit `tested` ([`same_commit`]), and no pass while the
+/// [`GATE`] of the head has no success (01M49HAZ7P3JMWNCG1SWCMAXQP). The
+/// caller posts it to the holder of the issue.
 pub fn report(
     gh: &Gh,
     repo: &str,
@@ -683,6 +766,12 @@ pub fn report(
         bail!("pull request #{number} has no trailer `Issue: #N`");
     };
     let commit = head.head_ref_oid;
+    if verdict == Verdict::Pass {
+        let gate = gate_of(gh, repo, &commit)?;
+        if gate != Gate::Passed {
+            bail!("{}", text::gate_not_passed(number, &commit, &gate));
+        }
+    }
     let text = comment(verdict, issue, &commit, result);
     let url = text::forge(
         gh.run(&["pr", "comment", &n, "--body-file", "-"], Some(&text))?

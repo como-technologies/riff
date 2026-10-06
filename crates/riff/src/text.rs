@@ -102,6 +102,36 @@ pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
     )
 }
 
+/// The line of a `riff verify pass` that the [`Gate`](crate::pr::GATE)
+/// of the head commit stops (01M49HAZ7P3JMWNCG1SWCMAXQP).
+///
+/// ```
+/// use riff::pr::Gate;
+/// assert_eq!(
+///     riff::text::gate_not_passed(40, "1a2b3c4d5e6f", &Gate::Running),
+///     "riff verify pass: the Gate of commit 1a2b3c4 runs still. A pass needs a Gate success: \
+///      see gh pr checks 40. Nothing is reported."
+/// );
+/// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &Gate::Ended("failure".into()))
+///     .contains("the Gate of commit 1a2b3c4 ended with failure."));
+/// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &Gate::Missing)
+///     .contains("the Gate of commit 1a2b3c4 did not run."));
+/// ```
+pub fn gate_not_passed(number: u64, commit: &str, gate: &crate::pr::Gate) -> String {
+    use crate::pr::Gate;
+    let short = commit.get(..7).unwrap_or(commit);
+    let state = match gate {
+        Gate::Passed => "passed".to_owned(),
+        Gate::Missing => "did not run".to_owned(),
+        Gate::Running => "runs still".to_owned(),
+        Gate::Ended(conclusion) => format!("ended with {conclusion}"),
+    };
+    format!(
+        "riff verify pass: the Gate of commit {short} {state}. A pass needs a Gate success: see \
+         gh pr checks {number}. Nothing is reported."
+    )
+}
+
 /// The one line of a `riff watch --once` that ends with no wake, before
 /// the harness stops its task (01M3Z64J08GW6N1H42AR2FZQZ4). It never
 /// says "Do not start the watch again now".
