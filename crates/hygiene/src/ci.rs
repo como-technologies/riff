@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn a_crate_with_no_dependent_runs_only_its_own_tests() {
-        let changed = paths(&["crates/riff/src/pr.rs", "docs/src/development.md"]);
+        let changed = paths(&["crates/riff/src/pr.rs", "crates/riff/tests/pr.rs"]);
         let choice = tests("origin/main", Some(&changed), &members());
         assert_eq!(choice.tests, Tests::Crates(vec!["riff".into()]));
         assert_eq!(
