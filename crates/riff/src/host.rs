@@ -40,6 +40,50 @@
 //! `riff workers` of the lead lists each live host of its user with its
 //! workers (01M3N7AKFPX3ZGQARSG2V64GBD).
 //!
+//! # The workers that a host keeps
+//!
+//! The person sets the wanted state of the workers of each machine with
+//! the worker settings there: the limit, the jobs, the nice value, the
+//! floor and the MCP servers (01M493YZRPS33RR47Q6T9V6WP9). riff makes
+//! the running state match it in a loop. No step of the lead is in the
+//! loop:
+//!
+//! - The rollout of the lead looks each interval ([`crate::rollout`]).
+//!   It starts a worker for free work on the machine with the most free
+//!   capacity, while a machine has room ([`crate::rollout::Place::room`]).
+//!   For a host, it sends [`Request::Start`].
+//! - The host looks at its worker panes each [`reap::EVERY`]. A worker
+//!   that died frees its claims ([`crate::reap`]). The free item is free
+//!   work for the next look of the rollout.
+//! - A worker that ends its item while more workers run than the limit
+//!   ends ([`crate::next`]). A higher limit gives room at the next look.
+//! - Each death counts ([`crate::deaths`]). More than
+//!   [`crate::deaths::LOOP`] in the last hour stop the starts on the
+//!   machine, and the lead gets one message. The host tells its deaths
+//!   in its status ([`HostStatus`]).
+//!
+//! Each action is one line on the output of the process that acts and
+//! one note to the lead: the start, the end after the item, the death.
+//! `riff workers` shows the wanted and the running state of each
+//! machine, and each difference ([`crate::view::host_heading`],
+//! 01M493Z063SSTAJS2KNDFBTEBJ).
+//!
+//! ```mermaid
+//! flowchart TD
+//!     T["each look of the rollout"] --> R{"a machine with room?<br/>runs below the limit, memory, disk,<br/>3 or fewer deaths in the last hour"}
+//!     R -- no --> T
+//!     R -- yes --> W{"free work, and no idle worker?"}
+//!     W -- no --> T
+//!     W -- yes --> S["start 1 worker on the machine<br/>with the most free capacity:<br/>a note to the lead"]
+//!     S --> T
+//!     D["a worker dies"] --> E["the host ends its session:<br/>its item is free, a note to the lead"]
+//!     E --> C["record the death"]
+//!     C -- "the fourth in one hour" --> M["one message to the lead"]
+//!     C --> T
+//!     L["a worker ends its item<br/>over the limit"] --> X["it ends: a note to the lead"]
+//!     X --> T
+//! ```
+//!
 //! # Start and stop
 //!
 //! The host takes Ctrl-C, SIGTERM and SIGHUP first, before any other

@@ -63,9 +63,10 @@ pub const WINDOW: Duration = Duration::from_secs(60 * 60);
 /// use riff::deaths::Deaths;
 ///
 /// let deaths = Deaths::parse("100 w1\n200 w2\n200 w2\nbad line\n");
-/// // w1 died more than 1 hour before the time 3800.
 /// assert_eq!(deaths.count(3700), 2);
-/// assert_eq!(deaths.count(3801), 1);
+/// // w1 died more than 1 hour before the time 3800.
+/// assert_eq!(deaths.count(3800), 1);
+/// assert_eq!(deaths.count(3801), 0);
 /// assert_eq!(deaths.to_string(), "100 w1\n200 w2\n");
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

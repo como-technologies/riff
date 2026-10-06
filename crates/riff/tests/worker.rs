@@ -1,5 +1,5 @@
 //! How a worker ends, how it waits with no work, and what its lead sees
-//! (01M3JQC8ANFYYEXSHBS2DCZYBX, 01M3JQC8ETHRAWSJPHMKA062SQ,
+//! (01M493YZVZGA7TSRJH6F67VN0H, 01M3JQC8ETHRAWSJPHMKA062SQ,
 //! 01M3K0AXMCVRST7HYH4DM8B3AN, 01M3K0AXRNA0F2920E9QCSDFQZ). A fake
 //! `claude` runs in place of Claude Code.
 

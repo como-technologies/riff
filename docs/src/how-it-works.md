@@ -3957,15 +3957,17 @@ riff workers
 ```
 
 ```text
-thelio  limit 3  runs 1  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
+thelio  limit 3  runs 1: room for 2 workers, the rollout starts them for free work  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
 monitor on  load5 2.40 of 24.00 (16 cores)  jobs 7  last look 4s ago
 PANE  ID        STATE  DETAIL
 %3    2a880834  busy   working on #12  1m ago: tests of issue-12
 ```
 
-The first line shows the limit, the numbers and the score of this
+The first line shows the limit, the workers that run, each
+difference between them, and the numbers and the score of this
 machine (see
-[Which machine gets a worker](#which-machine-gets-a-worker)). The
+[Which machine gets a worker](#which-machine-gets-a-worker) and
+[Set the workers that a host keeps](#set-the-workers-that-a-host-keeps)). The
 next line shows the monitor (see
 [Watch the health of a machine](#watch-the-health-of-a-machine)).
 
@@ -4326,11 +4328,65 @@ the lead lists each host after the workers of its own machine, with
 the numbers and the score of the host:
 
 ```text
-thelio  limit 3  runs 0  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
+thelio  limit 3  runs 0: room for 3 workers, the rollout starts them for free work  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
 
-pangolin  limit 2  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
+pangolin  limit 2  runs 1: room for 1 worker, the rollout starts it for free work  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
 PANE  ID        STATE  DETAIL
 %3    2a880834  idle   ready for work for 1m
+```
+
+### Set the workers that a host keeps
+
+You say how many workers each machine keeps, and riff does the rest.
+The worker settings of a machine are the wanted state: the limit, the
+jobs, the nice value, the memory floor and the MCP servers. Set them
+on that machine:
+
+```sh
+riff workers limit 3
+riff workers jobs 4
+riff workers floor 4
+```
+
+riff makes the running workers match the limit. Your lead starts and
+stops no worker by hand for it:
+
+- While a machine has room and the wave has free work, the rollout
+  starts a worker there (see
+  [riff starts workers by itself](#riff-starts-workers-by-itself)).
+- When more workers run than a lower limit, a worker ends after its
+  item (see
+  [Lower the limit while workers run](#lower-the-limit-while-workers-run)).
+- When a worker dies, its claims are free, and the rollout starts a
+  new worker for the free work (see
+  [A worker that dies](#a-worker-that-dies)).
+- When more than 3 workers of a machine died in the last hour, riff
+  starts no worker there. A loop of deaths is a fault, not a reason to
+  start more (see [A loop of deaths](#a-loop-of-deaths)).
+
+```mermaid
+flowchart TD
+    P["you: riff workers limit 3"] --> W["the wanted state of the machine"]
+    W --> R{"the rollout of the lead looks"}
+    R -- "fewer workers than the limit, and free work" --> S["start a worker: a note to the lead"]
+    R -- "more workers than the limit" --> E["a worker ends after its item: a note to the lead"]
+    R -- "more than 3 deaths in the last hour" --> N["start no worker there"]
+    D["a worker dies"] --> F["its item is free: a note to the lead"]
+    F --> R
+```
+
+To see the wanted and the running state of each machine, and each
+difference, list the workers:
+
+```sh
+riff workers
+```
+
+```text
+thelio  limit 3  runs 1: room for 2 workers, the rollout starts them for free work  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
+
+pangolin  limit 2  runs 3: 1 worker ends after its item  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
+Starts no worker: 4 workers died in the last hour. riff starts workers again when 3 or fewer died in the last hour.
 ```
 
 ### When the server gives a workers host no reply
@@ -4620,13 +4676,15 @@ riff workers start 1
 ### How a worker ends
 
 Each worker pane runs `claude` through `riff workers run`. The wrapper
-waits for `claude`, and never starts it again: a crash loop costs
-tokens. Your lead decides.
+waits for `claude`, and never starts it again. The rollout starts a
+new worker for the free work. A loop of deaths stops it (see
+[A loop of deaths](#a-loop-of-deaths)).
 
 ```mermaid
 flowchart TD
     W[a worker] --> Q{what happens?}
-    Q -- "claude exits on its own, for example a crash" --> C["the wrapper tells the lead:<br/>pane, session ID, exit code"]
+    Q -- "claude exits on its own, for example a crash" --> C["the wrapper posts a note to the lead:<br/>pane, session ID, exit code"]
+    C --> R
     Q -- "no claim and no free item" --> I["it waits idle:<br/>riff shows idle,<br/>its watch runs"]
     I -- "a request of the lead" --> N[it claims the item]
     I -- "idle too long, and another idle worker on its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
@@ -4636,11 +4694,12 @@ flowchart TD
     D --> R[riff starts a new worker for the free item]
 ```
 
-When `claude` exits on its own, your lead gets a direct message:
+When `claude` exits on its own, your lead gets a note. It does not
+wake the lead:
 
 ```text
 worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, exit code 1.
-riff does not start it again. Look at the pane, then start a worker again with riff workers start 1.
+The wrapper does not start it again: the rollout starts a new worker for the free work.
 ```
 
 When a kill ends `claude`, for example when the workers took too much
@@ -4650,7 +4709,7 @@ memory, the message names the signal and says where the work is:
 worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, signal 9.
 A kill ended it, for example when the workers took too much memory.
 Its work that is not committed is in its worktree: the next worker of its item goes on from there.
-riff does not start it again. Look at the pane, then start a worker again with riff workers start 1.
+The wrapper does not start it again: the rollout starts a new worker for the free work.
 ```
 
 A worker never ends itself. The server stops idle workers (see
@@ -4708,6 +4767,29 @@ nobody looks at the panes. There the server frees the claims 5 minutes
 after the last sign of life of the worker, or your lead frees a
 claim. See
 [Free the claim of another session](#free-the-claim-of-another-session).
+
+### A loop of deaths
+
+A fault of a machine can kill each new worker too, for example too
+little memory. Then each new start costs tokens and gives nothing. So
+riff counts the deaths of the workers of each machine: an exit of
+`claude` with a fault, and a pane that ends with no end call. When
+more than 3 workers of a machine died in the last hour, riff starts no
+worker there. Your lead gets one message, and it wakes:
+
+```text
+workers: 4 workers died in the last hour on pangolin. A loop of deaths is a fault: riff starts no worker on pangolin until 3 or fewer died in the last hour. Tell your user. On pangolin, look at the panes, and at the memory kills with journalctl -u systemd-oomd --since -1h.
+```
+
+Find the cause on that machine. See what killed the workers:
+
+```sh
+journalctl -u systemd-oomd --since -1h
+```
+
+`riff workers` shows the machine with the line `Starts no worker: 4
+workers died in the last hour.` riff starts workers there again by
+itself when the old deaths are more than one hour old.
 
 ### A worker with no work waits idle
 

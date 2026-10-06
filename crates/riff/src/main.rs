@@ -925,9 +925,10 @@ enum Workers {
     },
     /// Run CLAUDE as a worker, and wait
     ///
-    /// When CLAUDE exits on its own, it tells the lead the pane, the
-    /// session ID and the exit code. It never starts CLAUDE again. Each
-    /// worker pane runs it.
+    /// When CLAUDE exits on its own, it posts a note to the lead with the
+    /// pane, the session ID and the exit code, and an exit with a fault
+    /// counts as a death. It never starts CLAUDE again. Each worker pane
+    /// runs it.
     #[command(hide = true)]
     Run {
         /// The claude command.

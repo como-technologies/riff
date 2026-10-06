@@ -197,7 +197,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert_eq!(ids.len(), 3, "{log}");
     assert!(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2]);
     let dir = main.display();
-    // Each pane runs claude through the wrapper (01M3JQC8ANFYYEXSHBS2DCZYBX).
+    // Each pane runs claude through the wrapper (01M493YZVZGA7TSRJH6F67VN0H).
     // `RIFF_ON=1` of the test environment turned riff on for the
     // command, so each worker gets it (01M3XY2SWEK0N8MC3MY4TMYTD3).
     let env = |id: &str| {

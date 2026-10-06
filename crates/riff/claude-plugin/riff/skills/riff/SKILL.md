@@ -904,13 +904,12 @@ a scope, or a new item joins the current wave.
 A worker never starts workers, and a session that is not the lead
 cannot: `riff workers start` refuses.
 
-When the `claude` of a worker exits on its own, you get a direct
-message `worker stopped`. riff does not start it again. Tell your
-user, and start a new worker only on their word. When the message
-names a signal, a kill ended the worker, for example when the workers
-took too much memory. Its work that is not committed is in its
-worktree. The next worker of the item goes on from there (see "Pick up
-dropped work").
+When the `claude` of a worker exits on its own, you get a note
+`worker stopped`. The note needs no step: riff starts a new worker for
+the free work. When the note names a signal, a kill ended the worker,
+for example when the workers took too much memory. Its work that is
+not committed is in its worktree. The next worker of the item goes on
+from there (see "Pick up dropped work").
 
 A worker can die at each moment: a memory kill, a crash, a closed
 pane. Then riff ends its session, so its claims are free at once, and
@@ -918,8 +917,9 @@ riff starts a new worker for the free item. You get a note
 `worker stopped: ... The pane ended with no end call`, with the pane,
 the session, the item and the cause. The note does not wake you: do
 nothing for it. The new worker goes on from the pushed branch (see
-"Pick up dropped work"). When the same item kills its worker again and
-again, tell your user.
+"Pick up dropped work"). When more than 3 workers of a machine die in
+one hour, riff starts no worker there, and you get one message
+`workers: N workers died in the last hour`. Tell your user.
 
 When a session of your user holds an item and is gone or does not
 answer, free the claim for it: call `release` with the item and

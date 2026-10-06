@@ -590,6 +590,7 @@ pub async fn run(env: impl Env) {
                 && let Some(i) = decide(view)
             {
                 env.start(&view.places[i]).await?;
+                eprintln!("riff: the rollout started a worker on {}", view.places[i].host);
             }
             Ok(())
         };
