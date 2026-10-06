@@ -964,20 +964,28 @@ pub fn pull_conflict(number: u64, item: &str, head: &str, held: bool) -> String 
 }
 
 /// The message to the lead for a pull request that waits for a verify
-/// with no verify claim for `minutes` minutes (01M49Q316RXNATJP587DWGDNCD).
+/// with no verify claim for `wait` (01M49Q316RXNATJP587DWGDNCD). The
+/// minutes round up.
 ///
 /// ```
+/// use std::time::Duration;
+///
 /// assert_eq!(
-///     riff::text::pull_no_verify(40, "issue-12", "1a2b3c4d5e", 30),
+///     riff::text::pull_no_verify(40, "issue-12", "1a2b3c4d5e", Duration::from_secs(1800)),
 ///     "Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4 for 30 minutes, and \
 ///      no session claims verify-issue-12. Give the verify to a free session."
 /// );
+/// assert!(riff::text::pull_no_verify(40, "issue-12", "1a2b", Duration::from_secs(1)).contains(" for 1 minute,"));
 /// ```
-pub fn pull_no_verify(number: u64, item: &str, head: &str, minutes: u64) -> String {
+pub fn pull_no_verify(number: u64, item: &str, head: &str, wait: std::time::Duration) -> String {
     let commit: String = head.chars().take(7).collect();
+    let minutes = match wait.as_secs().div_ceil(60) {
+        1 => "1 minute".to_owned(),
+        n => format!("{n} minutes"),
+    };
     format!(
-        "Pull request #{number} of {item} waits for a verify of commit {commit} for {minutes} \
-         minutes, and no session claims verify-{item}. Give the verify to a free session."
+        "Pull request #{number} of {item} waits for a verify of commit {commit} for {minutes}, \
+         and no session claims verify-{item}. Give the verify to a free session."
     )
 }
 

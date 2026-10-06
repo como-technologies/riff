@@ -303,7 +303,7 @@ impl PullWatch {
             {
                 news.push(PullNews {
                     to: None,
-                    body: text::pull_no_verify(number, &item, &head, self.wait.as_secs() / 60),
+                    body: text::pull_no_verify(number, &item, &head, self.wait),
                     told: (number, head, Stop::NoVerify),
                 });
             }
