@@ -131,6 +131,14 @@ impl Worker {
     /// agent in the input.
     fn stop_hook_with(&self, id: &str, worker: bool, transcript: Option<&Path>) {
         let start = Instant::now();
+        self.end_turn(id, worker, transcript);
+        let took = start.elapsed();
+        assert!(took < Duration::from_secs(1), "{took:?}");
+    }
+
+    /// The Stop hook of the session `id`, with no limit on its time: a
+    /// test of the clear under load (#497).
+    fn end_turn(&self, id: &str, worker: bool, transcript: Option<&Path>) {
         let input = serde_json::json!({
             "session_id": id,
             "hook_event_name": "Stop",
@@ -139,8 +147,6 @@ impl Worker {
         .to_string();
         let out = self.hook(id, worker, "stop", &input);
         assert!(out.status.success(), "{out:?}");
-        let took = start.elapsed();
-        assert!(took < Duration::from_secs(1), "{took:?}");
     }
 
     /// What `/clear` does in the pane of the worker `id`: the start hook
@@ -553,8 +559,8 @@ async fn a_check_of_an_old_context_never_clears_the_new_context() {
     // Two turns of the old context end. The server answers both checks
     // only when both asked: each reply asks for the clear.
     gate.open.send(false).unwrap();
-    r.w.stop_hook_with("w1", true, Some(&old));
-    r.w.stop_hook_with("w1", true, Some(&old));
+    r.w.end_turn("w1", true, Some(&old));
+    r.w.end_turn("w1", true, Some(&old));
     let end = Instant::now() + WAIT;
     while gate.held.load(Ordering::SeqCst) < 2 {
         assert!(Instant::now() < end, "the checks sent no keep-alive");
@@ -575,7 +581,7 @@ async fn a_check_of_an_old_context_never_clears_the_new_context() {
     assert!(claim.status.success(), "{claim:?}");
     let new = r.w.run.path().join("new.jsonl");
     std::fs::write(&new, format!("{PROMPT}\n{}\n", launch("look"))).unwrap();
-    r.w.stop_hook_with("w1", true, Some(&new));
+    r.w.end_turn("w1", true, Some(&new));
     r.w.no_keys(4).await;
     let holds = r.who();
     assert!(!holds.contains("must clear"), "{holds}");
@@ -596,7 +602,7 @@ async fn a_worker_with_a_running_subagent_stops_it_before_the_clear() {
     let transcript = r.w.run.path().join("transcript.jsonl");
     std::fs::write(&transcript, format!("{PROMPT}\n{}\n", launch("look"))).unwrap();
     r.release();
-    r.w.stop_hook_with("w1", true, Some(&transcript));
+    r.w.end_turn("w1", true, Some(&transcript));
     let end = Instant::now() + WAIT;
     while r.w.log().lines().count() < 2 {
         assert!(Instant::now() < end, "no prompt: {}", r.w.log());
@@ -618,7 +624,7 @@ async fn a_worker_with_a_running_subagent_stops_it_before_the_clear() {
     let line = serde_json::json!({"type": "user", "message": {"content": ask}});
     let text = std::fs::read_to_string(&transcript).unwrap();
     std::fs::write(&transcript, format!("{text}{line}\n")).unwrap();
-    r.w.stop_hook_with("w1", true, Some(&transcript));
+    r.w.end_turn("w1", true, Some(&transcript));
     r.w.keys(2).await;
 }
 
