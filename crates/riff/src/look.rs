@@ -293,8 +293,14 @@ impl PullWatch {
     /// assert_eq!(news[0].to, None);
     /// assert!(news[0].body.contains("No session holds issue-12"));
     /// ```
-    pub fn news(&mut self, pulls: &[Pull], claims: &HashSet<String>, now: Instant) -> Vec<PullNews> {
-        let heads: HashSet<(u64, &str)> = pulls.iter().map(|p| (p.number, p.head.as_str())).collect();
+    pub fn news(
+        &mut self,
+        pulls: &[Pull],
+        claims: &HashSet<String>,
+        now: Instant,
+    ) -> Vec<PullNews> {
+        let heads: HashSet<(u64, &str)> =
+            pulls.iter().map(|p| (p.number, p.head.as_str())).collect();
         self.told
             .retain(|(n, head, _)| heads.contains(&(*n, head.as_str())));
         self.since
@@ -314,8 +320,8 @@ impl PullWatch {
                     told: (number, head.clone(), Stop::Conflict),
                 });
             }
-            let waits = pull.verify() == Some(Verify::Asked)
-                && !claims.contains(&format!("verify-{item}"));
+            let waits =
+                pull.verify() == Some(Verify::Asked) && !claims.contains(&format!("verify-{item}"));
             if !waits {
                 self.since.remove(&(number, head));
                 continue;
@@ -351,8 +357,14 @@ async fn tell_news(api: &Api, me: &SessionUri, news: &PullNews) -> Result<()> {
         (None, Some(session)) => format!("session={session}").parse()?,
         (None, None) => anyhow::bail!("the lead has no session"),
     };
-    api.post(&person, me.default_thread().as_ref(), &[to], &news.body, Kind::Message)
-        .await?;
+    api.post(
+        &person,
+        me.default_thread().as_ref(),
+        &[to],
+        &news.body,
+        Kind::Message,
+    )
+    .await?;
     Ok(())
 }
 
@@ -450,7 +462,8 @@ pub async fn once(
     // A forge that does not answer stops no look at the blocks.
     let pulls = match forge {
         Ok((issues, pulls)) => {
-            api.item_facts(me, item_facts(&issues, &pulls), true).await?;
+            api.item_facts(me, item_facts(&issues, &pulls), true)
+                .await?;
             Some(pulls)
         }
         Err(_) => None,

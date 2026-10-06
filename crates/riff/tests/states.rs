@@ -164,18 +164,32 @@ async fn the_facts_of_the_forge_make_waiting() {
         &format!("case \"$1\" in pr) echo '{pulls}' ;; *) echo '[]' ;; esac"),
     );
     let gh = Arc::new(Gh::at(gh));
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
-        .await
-        .unwrap();
+    look::once(
+        &api,
+        &lead,
+        &gh,
+        Duration::from_secs(600),
+        None,
+        &mut PullWatch::default(),
+    )
+    .await
+    .unwrap();
     let w1 = info(&api, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Waiting));
     assert_eq!(w1.waits, Some(Waits::Verify { pull: 418 }));
 
     // The merge: the pull request is gone from the open list.
     let gh = Arc::new(Gh::at(script(dir.path(), "gh2", "echo '[]'")));
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
-        .await
-        .unwrap();
+    look::once(
+        &api,
+        &lead,
+        &gh,
+        Duration::from_secs(600),
+        None,
+        &mut PullWatch::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         info(&api, &lead, &worker).await.state,
         Some(SessionState::Busy)
@@ -208,9 +222,16 @@ async fn a_need_with_a_merged_in_comment_is_met() {
             {"number":10,"body":"","comments":[{"author":{"login":"m"},"body":"Merged in #517 (7b47efa)"}]},
             {"number":11,"body":"","comments":[{"author":{"login":"m"},"body":"Not merged in #518."}]}]"#,
     );
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
-        .await
-        .unwrap();
+    look::once(
+        &api,
+        &lead,
+        &gh,
+        Duration::from_secs(600),
+        None,
+        &mut PullWatch::default(),
+    )
+    .await
+    .unwrap();
     let w1 = info(&api, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Waiting));
     assert_eq!(w1.waits, Some(Waits::Needs { issues: vec![11] }));
@@ -222,9 +243,16 @@ async fn a_need_with_a_merged_in_comment_is_met() {
             {"number":10,"body":"","comments":[{"body":"Merged in #517 (7b47efa)"}]},
             {"number":11,"body":"","comments":[{"body":"  Merged in #518 (1a2b3c4)"}]}]"#,
     );
-    look::once(&api, &lead, &gh, Duration::from_secs(600), None, &mut PullWatch::default())
-        .await
-        .unwrap();
+    look::once(
+        &api,
+        &lead,
+        &gh,
+        Duration::from_secs(600),
+        None,
+        &mut PullWatch::default(),
+    )
+    .await
+    .unwrap();
     let w1 = info(&api, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Busy));
     assert_eq!(w1.waits, None);
@@ -286,9 +314,21 @@ async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
         format!(
             "[{},{},{},{}]",
             pull(40, 12, head40, "CONFLICTING", r#"{"mergeMethod":"SQUASH"}"#),
-            pull(41, 13, "5e6f7a8b9c", "CONFLICTING", r#"{"mergeMethod":"SQUASH"}"#),
+            pull(
+                41,
+                13,
+                "5e6f7a8b9c",
+                "CONFLICTING",
+                r#"{"mergeMethod":"SQUASH"}"#
+            ),
             pull(42, 14, "0a0b0c0d0e", "CONFLICTING", "null"),
-            pull(43, 15, "1f1e1d1c1b", "MERGEABLE", r#"{"mergeMethod":"SQUASH"}"#),
+            pull(
+                43,
+                15,
+                "1f1e1d1c1b",
+                "MERGEABLE",
+                r#"{"mergeMethod":"SQUASH"}"#
+            ),
         )
     };
     let gh = forge(dir.path(), "gh", &pulls("1a2b3c4d5e"));
@@ -308,7 +348,10 @@ async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
     );
     // The holder reads its message.
     let mine = unread(&api, &worker).await;
-    assert!(mine.iter().any(|m| m.contains("#40 of issue-12")), "{mine:?}");
+    assert!(
+        mine.iter().any(|m| m.contains("#40 of issue-12")),
+        "{mine:?}"
+    );
 
     // The same state again: no message.
     look_at(&api, &lead, &gh, &mut watch).await;
@@ -333,7 +376,9 @@ async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
 async fn a_pull_request_with_no_verify_claim_tells_the_lead_once() {
     let server = start_server().await;
     let (api, lead, worker) = riff(&server).await;
-    api.claim(&worker, &repo(), "verify-issue-13").await.unwrap();
+    api.claim(&worker, &repo(), "verify-issue-13")
+        .await
+        .unwrap();
     api.inbox(&lead, None, false).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let gh = forge(
@@ -352,8 +397,10 @@ async fn a_pull_request_with_no_verify_claim_tells_the_lead_once() {
     look_at(&api, &lead, &gh, &mut watch).await;
     assert_eq!(
         unread(&api, &lead).await,
-        ["session=l1: Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4 for 1 \
-          minute, and no session claims verify-issue-12. Give the verify to a free session."]
+        [
+            "session=l1: Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4 for 1 \
+          minute, and no session claims verify-issue-12. Give the verify to a free session."
+        ]
     );
     look_at(&api, &lead, &gh, &mut watch).await;
     assert!(unread(&api, &lead).await.is_empty(), "one time");
