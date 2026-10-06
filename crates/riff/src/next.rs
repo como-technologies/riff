@@ -24,10 +24,15 @@
 //!     H-->>W: return at once
 //!     C->>S: keep-alive
 //!     S-->>C: clear
+//!     C->>C: lock clear-ID.lock
 //!     C->>C: fast-forward the main clone
-//!     C->>C: count the prompts again: no new turn
+//!     opt a subagent still runs, and no ask in this context
+//!         C->>T: the prompt: stop the subagents, end the turn
+//!         Note over C: the check ends; the next turn end clears
+//!     end
+//!     C->>C: count again: no new turn, no new context
 //!     C->>C: stop the processes of the old context
-//!     C->>C: count the prompts again: no new turn
+//!     C->>C: count again: no new turn, no new context
 //!     C->>T: /clear, then "Join the riff."
 //!     T->>W: /clear: the start hook gives the start routine
 //!     W->>S: start (clear): MustClear ends
@@ -67,6 +72,21 @@
 //!   count first. [`keys`] counts again as the last step before
 //!   `/clear`. A higher number shows a new turn: the check types
 //!   nothing, and the Stop hook of that turn starts a new check.
+//! - Each turn end starts a check, so two checks of one worker can run
+//!   at one time, and the Stop hooks of the old context count the
+//!   transcript of the old context, which a new context does not change.
+//!   So one check types at a time ([`clear_lock`]), and each ask of
+//!   [`keys`] also looks at the start of the current context in
+//!   `context-ID` ([`newer_context`]). A check of an old context types
+//!   nothing and stops nothing in a new context
+//!   (01M43STEE72Q9TD8ZNFS3273M3). Before this rule, such a check
+//!   cleared a new context that held a claim (#497).
+//! - `/clear` does not stop a subagent of the agent in the background.
+//!   When the transcript shows one that still runs
+//!   ([`Agent::running_subagents`]), the check types the prompt of
+//!   [`Agent::stop_subagents`] in place of `/clear`, one time in a
+//!   context. The check of that turn clears the context
+//!   (01M43STEHMTWKJDP48M1DZQPXE).
 //! - Two times stay. The first is the time of one `tmux` call after the
 //!   last count: a few milliseconds. The second is the time between
 //!   `/clear` and the start prompt. It does no harm: the context is
@@ -152,6 +172,15 @@ pub trait Agent {
     /// context, and not to itself or to its MCP servers
     /// ([`crate::workload`], 01M3ZV0QSFVCHRSEKYK57B88VA).
     fn context_var(&self) -> &str;
+    /// The subagents that still run in the background at the end of the
+    /// `transcript`, by their description (01M43STEHMTWKJDP48M1DZQPXE).
+    fn running_subagents(&self, transcript: &str) -> Vec<String>;
+    /// The prompt that asks the agent to stop the subagents `about`
+    /// and end its turn (01M43STEHMTWKJDP48M1DZQPXE).
+    fn stop_subagents(&self, about: &[String]) -> String;
+    /// True when the `transcript` has the prompt of
+    /// [`Agent::stop_subagents`] already.
+    fn asked_to_stop(&self, transcript: &str) -> bool;
 }
 
 /// Claude Code: `/clear` keeps the riff session (R168), and the start
@@ -181,6 +210,35 @@ impl Agent for ClaudeCode {
     /// ```
     fn context_var(&self) -> &str {
         "CLAUDE_PID"
+    }
+
+    /// See [`crate::compact::running_agents`].
+    fn running_subagents(&self, transcript: &str) -> Vec<String> {
+        crate::compact::running_agents(transcript)
+    }
+
+    /// ```
+    /// use riff::next::{Agent, ClaudeCode};
+    /// let prompt = ClaudeCode.stop_subagents(&["look 1".into(), "look 2".into()]);
+    /// assert_eq!(
+    ///     prompt,
+    ///     "riff: before the clear of your context, stop each subagent that runs in the \
+    ///      background with the TaskStop tool: look 1; look 2. Then end your turn."
+    /// );
+    /// let line = serde_json::json!({"type": "user", "message": {"content": prompt}});
+    /// assert!(ClaudeCode.asked_to_stop(&line.to_string()));
+    /// assert!(!ClaudeCode.asked_to_stop(""));
+    /// ```
+    fn stop_subagents(&self, about: &[String]) -> String {
+        format!(
+            "{STOP_SUBAGENTS} stop each subagent that runs in the background with the TaskStop \
+             tool: {}. Then end your turn.",
+            about.join("; ")
+        )
+    }
+
+    fn asked_to_stop(&self, transcript: &str) -> bool {
+        crate::compact::has_prompt(transcript, STOP_SUBAGENTS)
     }
 
     /// The input box of Claude Code is the prompt mark `❯` (or `>`)
@@ -221,6 +279,9 @@ impl Agent for ClaudeCode {
     }
 }
 
+/// The start of the prompt of [`ClaudeCode::stop_subagents`].
+const STOP_SUBAGENTS: &str = "riff: before the clear of your context,";
+
 /// The part of the Stop hook input that riff uses.
 #[derive(Debug, Default, Deserialize)]
 pub struct StopInput {
@@ -246,7 +307,12 @@ pub struct StopInput {
 /// `transcript` of the agent ([`prompts`]). With no number, the check
 /// counts when it starts. When a new turn started after that count, the
 /// check types nothing: the Stop hook of the new turn starts a new check
-/// (01M3XZCWQED9M9ZB29F730EA58).
+/// (01M3XZCWQED9M9ZB29F730EA58). When a new context started after the
+/// check, the check types nothing and stops nothing
+/// (01M43STEE72Q9TD8ZNFS3273M3, [`newer_context`]). When subagents of
+/// the worker still run, it types the prompt of
+/// [`Agent::stop_subagents`] in place of `/clear`, one time in a context
+/// (01M43STEHMTWKJDP48M1DZQPXE).
 pub async fn check(
     api: &Api,
     me: &SessionUri,
@@ -256,6 +322,9 @@ pub async fn check(
     turns: Option<usize>,
 ) -> Result<bool> {
     let turns = turns.unwrap_or_else(|| prompts(transcript));
+    let since = crate::workload::own_start();
+    let session = me.who().session().unwrap_or_default();
+    let same = || prompts(transcript) == turns && !newer_context(session, since);
     let mut reply = api.alive(me).await;
     for _ in 1..ASKS {
         if reply.is_ok() {
@@ -272,6 +341,9 @@ pub async fn check(
         Ok(false) => {}
         Err(e) => eprintln!("riff: cannot count the workers of this machine: {e:#}"),
     }
+    // One check of the worker types at a time, so the next check sees
+    // the new context of this one (01M43STEE72Q9TD8ZNFS3273M3).
+    let _typing = clear_lock(session)?;
     let fresh = hygiene::fast_forward(dir);
     if let Some(line) = fresh.line()
         && fresh.tells_the_lead()
@@ -280,11 +352,20 @@ pub async fn check(
         eprintln!("riff: cannot tell the lead: {e:#}");
     }
     let tmux = Tmux::machine();
+    let text = transcript.and_then(|path| std::fs::read_to_string(path).ok());
+    let running = text.as_deref().map(|t| ClaudeCode.running_subagents(t));
+    let running = running.unwrap_or_default();
+    if !running.is_empty() && !text.as_deref().is_some_and(|t| ClaudeCode.asked_to_stop(t)) {
+        std::thread::sleep(CLEAR_WAIT);
+        if same() {
+            tmux.type_line(pane, &ClaudeCode.stop_subagents(&running))?;
+        }
+        return Ok(false);
+    }
     let mut stopped = Vec::new();
     let typed = keys(
         &ClaudeCode,
-        turns,
-        || prompts(transcript),
+        same,
         std::thread::sleep,
         || {
             stopped = stop_old_context(&ClaudeCode, me);
@@ -367,6 +448,46 @@ pub fn stop_old_context(agent: &dyn Agent, me: &SessionUri) -> Vec<crate::worklo
     crate::workload::stop(&old, var)
 }
 
+/// Takes the lock file `clear-ID.lock` of the worker `session` in the
+/// local dir, and waits for it: one check of a worker types at a time
+/// (01M43STEE72Q9TD8ZNFS3273M3). The lock ends with the file handle.
+pub fn clear_lock(session: &str) -> Result<std::fs::File> {
+    let dir = local::dir().context("no HOME: riff has no local dir")?;
+    std::fs::create_dir_all(&dir)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(format!("clear-{session}.lock")))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+/// True when a new context of the worker `session` started after
+/// `since`, the start of the check: the start in its `context-ID` file
+/// (01M3ZV0TJX2H77RW6ZA3ERZT9H) is later. So the check is of an old
+/// context (01M43STEE72Q9TD8ZNFS3273M3). False with no start.
+pub fn newer_context(session: &str, since: Option<u64>) -> bool {
+    let started = local::dir().and_then(|dir| crate::workload::context_start(&dir, session));
+    newer(started, since)
+}
+
+/// True when the context `started` after the check `since`.
+///
+/// ```
+/// use riff::next::newer;
+/// assert!(newer(Some(9), Some(5)));
+/// assert!(!newer(Some(5), Some(5)));
+/// assert!(!newer(Some(3), Some(5)));
+/// assert!(!newer(None, Some(5)));
+/// assert!(!newer(Some(9), None));
+/// ```
+pub fn newer(started: Option<u64>, since: Option<u64>) -> bool {
+    started
+        .zip(since)
+        .is_some_and(|(started, since)| started > since)
+}
+
 /// Deletes the files of the old context in the temp folder of the
 /// worker `me`, after [`stop_old_context`] (01M41VAGSCNESHTZ6216P2E133).
 /// See [`crate::temp::end_context`].
@@ -390,40 +511,39 @@ pub fn prompts(transcript: Option<&Path>) -> usize {
 
 /// Types the keys of `agent` with `type_line`: it waits [`CLEAR_WAIT`],
 /// types `/clear`, waits [`PROMPT_WAIT`], and types the start prompt.
-/// It counts the prompts with `now` after the wait, and again as the
-/// last step before `/clear`. When a count is not `turns`, a new turn
-/// started: it types nothing and gives false
-/// (01M3ZS67FTAC1784GEVEDXJ837). Between the two counts it calls
-/// `stop`, which stops the old context (01M3ZV0TJDQ6JCM7XG0036MSV1).
-/// So riff stops no process of a turn that started before the wait
-/// ended.
+/// It asks `same` after the wait, and again as the last step before
+/// `/clear`: true while no new turn started (01M3ZS67FTAC1784GEVEDXJ837)
+/// and no new context started (01M43STEE72Q9TD8ZNFS3273M3). When it
+/// gives false, `keys` types nothing and gives false. Between the two
+/// asks it calls `stop`, which stops the old context
+/// (01M3ZV0TJDQ6JCM7XG0036MSV1). So riff stops no process of a turn or
+/// a context that started before the wait ended.
 ///
 /// ```
 /// use riff::next::{ClaudeCode, keys};
 /// let (mut typed, mut stops) = (Vec::new(), 0);
-/// let done = keys(&ClaudeCode, 1, || 1, |_| {}, || stops += 1, |t| Ok(typed.push(t.to_owned()))).unwrap();
+/// let done = keys(&ClaudeCode, || true, |_| {}, || stops += 1, |t| Ok(typed.push(t.to_owned()))).unwrap();
 /// assert!(done);
 /// assert_eq!((typed, stops), (vec!["/clear".to_owned(), "Join the riff.".to_owned()], 1));
 ///
-/// // A turn started in the wait: no stop and no keys.
+/// // A turn or a context started in the wait: no stop and no keys.
 /// let (mut typed, mut stops) = (Vec::new(), 0);
-/// let done = keys(&ClaudeCode, 1, || 2, |_| {}, || stops += 1, |t| Ok(typed.push(t.to_owned()))).unwrap();
+/// let done = keys(&ClaudeCode, || false, |_| {}, || stops += 1, |t| Ok(typed.push(t.to_owned()))).unwrap();
 /// assert!(!done && typed.is_empty() && stops == 0);
 /// ```
 pub fn keys(
     agent: &dyn Agent,
-    turns: usize,
-    now: impl Fn() -> usize,
+    same: impl Fn() -> bool,
     mut wait: impl FnMut(Duration),
     stop: impl FnOnce(),
     mut type_line: impl FnMut(&str) -> Result<()>,
 ) -> Result<bool> {
     wait(CLEAR_WAIT);
-    if now() != turns {
+    if !same() {
         return Ok(false);
     }
     stop();
-    if now() != turns {
+    if !same() {
         return Ok(false);
     }
     type_line(agent.clear())?;
@@ -447,8 +567,7 @@ mod tests {
         let mut typed = Vec::new();
         let done = keys(
             &ClaudeCode,
-            turns,
-            || prompts(Some(&transcript)),
+            || prompts(Some(&transcript)) == turns,
             |wait| {
                 if wait == CLEAR_WAIT {
                     std::fs::write(&transcript, format!("{prompt}\n{prompt}\n")).unwrap();
@@ -471,8 +590,7 @@ mod tests {
         let mut typed = 0;
         let done = keys(
             &ClaudeCode,
-            0,
-            || 0,
+            || true,
             |_| {},
             || {},
             |_| {
@@ -492,8 +610,7 @@ mod tests {
         let mut typed = Vec::new();
         let done = keys(
             &ClaudeCode,
-            1,
-            || count.get(),
+            || count.get() == 1,
             |_| {},
             || count.set(2),
             |text| {

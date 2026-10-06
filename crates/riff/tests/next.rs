@@ -21,7 +21,16 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::store::Memory;
 
-const FAKE_TMUX: &str = "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/log\"\n";
+/// A fake `tmux` that writes each call to a log. When the file `clears`
+/// next to it names a `riff`, the key `/clear` runs the start hook of
+/// the worker `w1` with that `riff`, as `/clear` in a real pane does.
+const FAKE_TMUX: &str = r#"#!/bin/sh
+d="$(dirname "$0")"
+printf '%s\n' "$*" >> "$d/log"
+if [ "$*" = "send-keys -t %3 -l /clear" ] && [ -e "$d/clears" ]; then
+  printf '{"session_id":"w1","source":"clear"}' | "$(cat "$d/clears")" hook session-start >/dev/null 2>&1
+fi
+"#;
 
 /// Longer than the check of the Stop hook and the wait before its first
 /// key ([`riff::next::CLEAR_WAIT`]).
@@ -122,6 +131,14 @@ impl Worker {
     /// agent in the input.
     fn stop_hook_with(&self, id: &str, worker: bool, transcript: Option<&Path>) {
         let start = Instant::now();
+        self.end_turn(id, worker, transcript);
+        let took = start.elapsed();
+        assert!(took < Duration::from_secs(1), "{took:?}");
+    }
+
+    /// The Stop hook of the session `id`, with no limit on its time: a
+    /// test of the clear under load (#497).
+    fn end_turn(&self, id: &str, worker: bool, transcript: Option<&Path>) {
         let input = serde_json::json!({
             "session_id": id,
             "hook_event_name": "Stop",
@@ -130,8 +147,6 @@ impl Worker {
         .to_string();
         let out = self.hook(id, worker, "stop", &input);
         assert!(out.status.success(), "{out:?}");
-        let took = start.elapsed();
-        assert!(took < Duration::from_secs(1), "{took:?}");
     }
 
     /// What `/clear` does in the pane of the worker `id`: the start hook
@@ -521,4 +536,108 @@ async fn a_session_that_is_no_worker_is_never_cleared() {
     // that the session is no worker, and does not ask for a clear.
     r.w.stop_hook("l1", true);
     r.w.no_keys(0).await;
+}
+
+/// Two checks of the old context of a worker both get the ask to clear.
+/// The first types `/clear` and the start prompt, and the pane starts
+/// the new context. The second types nothing: a new context started
+/// after it (01M43STEE72Q9TD8ZNFS3273M3). The new context shows no
+/// MustClear. It claims an item, starts a subagent in the background
+/// and ends its turn: riff does not clear it, and it keeps its claim.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_check_of_an_old_context_never_clears_the_new_context() {
+    let mut r = Riff::with_a_worker().await;
+    let riff = Isolated::shared().riff();
+    let clears = r.w.fake.path().join("clears");
+    std::fs::write(clears, riff.get_program().as_encoded_bytes()).unwrap();
+    let gate = Gate::before(&r.w.server).await;
+    r.w.server = gate.url.clone();
+    let old = r.w.run.path().join("old.jsonl");
+    std::fs::write(&old, format!("{PROMPT}\n")).unwrap();
+    r.release();
+
+    // Two turns of the old context end. The server answers both checks
+    // only when both asked: each reply asks for the clear.
+    gate.open.send(false).unwrap();
+    r.w.end_turn("w1", true, Some(&old));
+    r.w.end_turn("w1", true, Some(&old));
+    let end = Instant::now() + WAIT;
+    while gate.held.load(Ordering::SeqCst) < 2 {
+        assert!(Instant::now() < end, "the checks sent no keep-alive");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    gate.open.send(true).unwrap();
+
+    // One clear, and the start prompt follows it.
+    r.w.keys(0).await;
+    r.w.no_keys(4).await;
+    let fresh = r.who();
+    assert!(!fresh.contains("must clear"), "{fresh}");
+
+    // The new context claims an item, starts a subagent and ends its
+    // turn.
+    let claim = r.w.riff("w1", true, &["claim", "issue-13"]).output();
+    let claim = claim.unwrap();
+    assert!(claim.status.success(), "{claim:?}");
+    let new = r.w.run.path().join("new.jsonl");
+    std::fs::write(&new, format!("{PROMPT}\n{}\n", launch("look"))).unwrap();
+    r.w.end_turn("w1", true, Some(&new));
+    r.w.no_keys(4).await;
+    let holds = r.who();
+    assert!(!holds.contains("must clear"), "{holds}");
+    let changes = r.changes().await;
+    let released = changes
+        .iter()
+        .any(|c| matches!(c, Change::Released(released) if released.item == "issue-13"));
+    assert!(!released, "{changes:?}");
+}
+
+/// A worker releases its last claim while a subagent of it runs in the
+/// background, and its turn ends. riff asks it to stop the subagent in
+/// place of the clear, one time (01M43STEHMTWKJDP48M1DZQPXE). When that
+/// turn ends, riff clears the context.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_with_a_running_subagent_stops_it_before_the_clear() {
+    let r = Riff::with_a_worker().await;
+    let transcript = r.w.run.path().join("transcript.jsonl");
+    std::fs::write(&transcript, format!("{PROMPT}\n{}\n", launch("look"))).unwrap();
+    r.release();
+    r.w.end_turn("w1", true, Some(&transcript));
+    let end = Instant::now() + WAIT;
+    while r.w.log().lines().count() < 2 {
+        assert!(Instant::now() < end, "no prompt: {}", r.w.log());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let ask = "riff: before the clear of your context, stop each subagent that runs in the \
+               background with the TaskStop tool: look. Then end your turn.";
+    assert_eq!(
+        r.w.log().lines().collect::<Vec<_>>(),
+        [
+            format!("send-keys -t %3 -l {ask}").as_str(),
+            "send-keys -t %3 Enter"
+        ]
+    );
+    r.w.no_keys(2).await;
+
+    // The prompt is the next turn. The subagent still runs when it
+    // ends: riff asked one time, so it clears the context.
+    let line = serde_json::json!({"type": "user", "message": {"content": ask}});
+    let text = std::fs::read_to_string(&transcript).unwrap();
+    std::fs::write(&transcript, format!("{text}{line}\n")).unwrap();
+    r.w.end_turn("w1", true, Some(&transcript));
+    r.w.keys(2).await;
+}
+
+/// The lines of a transcript in which the agent starts the subagent
+/// `about` in the background.
+fn launch(about: &str) -> String {
+    let call = serde_json::json!({"type": "assistant", "message": {"content": [{
+        "type": "tool_use", "id": "t1", "name": "Agent",
+        "input": {"description": about, "run_in_background": true},
+    }]}});
+    let result = serde_json::json!({"type": "user", "message": {"content": [{
+        "type": "tool_result", "tool_use_id": "t1",
+        "content": [{"type": "text", "text": "Async agent launched successfully.\nagentId: a1"}],
+    }]}});
+    format!("{call}\n{result}")
 }
