@@ -198,10 +198,30 @@ fn sleeper_in(home: &Path, id: &str, context: bool) -> Child {
 }
 
 /// A stand-in for the `sccache` server that a build of a context of the
-/// worker `id` started: it has each variable of that build, and the
-/// mark of `sccache` (01M49AB2TBMHGNXM3GE4NDFYYG).
+/// worker `id` started: the program `sccache` (a link to `sleep`) with
+/// each variable of that build, and the mark of `sccache`
+/// (01M49AB2TBMHGNXM3GE4NDFYYG).
 fn cache_server(home: &Path, id: &str) -> Child {
-    let mut cmd = Command::new("sleep");
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let sccache = bin.join("sccache");
+    if !sccache.exists() {
+        let sleep = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|dir| dir.join("sleep"))
+            .find(|p| p.is_file())
+            .unwrap();
+        std::os::unix::fs::symlink(sleep, &sccache).unwrap();
+    }
+    marked(Command::new(sccache), home, id)
+}
+
+/// A `sleep` of a context of the worker `id` with the mark of
+/// `sccache`: it is not the server, so it stays of the worker.
+fn marked_sleeper(home: &Path, id: &str) -> Child {
+    marked(Command::new("sleep"), home, id)
+}
+
+fn marked(mut cmd: Command, home: &Path, id: &str) -> Child {
     cmd.arg("300")
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
@@ -257,7 +277,8 @@ fn stdout(out: &Output) -> String {
 /// The clear of a worker stops its old context: a long child of a
 /// command of the context is gone after `riff hook clear`, and
 /// `claude`, its MCP server and the `sccache` server that a build of
-/// the context started stay (01M3ZV0TJDQ6JCM7XG0036MSV1,
+/// the context started stay. A command of the context with the mark of
+/// `sccache` stops (01M3ZV0TJDQ6JCM7XG0036MSV1,
 /// 01M49AB2TBMHGNXM3GE4NDFYYG).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
@@ -276,6 +297,7 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     let home = tempfile::tempdir().unwrap();
     let mut twin = sleeper_in(home.path(), id, true);
     let mut cache = cache_server(r.run.path(), id);
+    let mut hidden = marked_sleeper(r.run.path(), id);
 
     let out = r.in_worker(id, &["release", "issue-12"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
@@ -284,6 +306,7 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     assert!(out.status.success(), "{out:?}");
 
     assert!(ends(&mut ci), "the old context still runs");
+    assert!(ends(&mut hidden), "a command with the mark still runs");
     assert!(lives(&mut claude), "claude stopped");
     assert!(lives(&mut mcp), "the MCP server stopped");
     assert!(lives(&mut other), "a process of another worker stopped");
@@ -360,8 +383,9 @@ async fn reap_with_no_start_of_the_context_stops_nothing() {
 }
 
 /// `riff workers stop PANE` leaves no process of the worker: `claude`,
-/// its MCP server and each process of a context
-/// (01M3ZV0TMNQDK9WC3BR1NPGAC2).
+/// its MCP server and each process of a context, also one with the mark
+/// of `sccache` that is not `sccache` (01M3ZV0TMNQDK9WC3BR1NPGAC2,
+/// 01M49AB2TBMHGNXM3GE4NDFYYG).
 #[tokio::test(flavor = "multi_thread")]
 async fn workers_stop_leaves_no_process_of_the_worker() {
     let r = Riff::new().await;
@@ -373,6 +397,7 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
         r.sleeper(id, false),
         r.sleeper(id, false),
         r.sleeper(id, true),
+        marked_sleeper(r.run.path(), id),
     ];
     let mut other = r.sleeper(&unique("wother2"), true);
     // The same session ID in another riff home (01M438620PJHSVSPAENBKKJ6C2).
@@ -385,7 +410,7 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    assert!(stdout(&out).contains("also stopped 3 processes"), "{out:?}");
+    assert!(stdout(&out).contains("also stopped 4 processes"), "{out:?}");
     for child in &mut all {
         assert!(ends(child), "a process of the worker still runs");
     }

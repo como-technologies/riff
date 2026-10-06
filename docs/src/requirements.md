@@ -3513,9 +3513,10 @@
 - **01M49AB2QYGJ73Y19KGAY1WDW7** `riff workers run` starts the
   `sccache` server of the machine before it starts `claude`, with no
   variable of a worker and in its own process group.
-- **01M49AB2TBMHGNXM3GE4NDFYYG** A process with the variable
-  `SCCACHE_START_SERVER` is the `sccache` server of the machine. No
-  clear, reap or stop of a worker stops it.
+- **01M49AB2TBMHGNXM3GE4NDFYYG** A process of the program `sccache`
+  with `SCCACHE_START_SERVER=1` is the `sccache` server of the
+  machine. No clear, reap or stop of a worker stops it. Each other
+  process with the variable stays a process of its worker.
 - **01M49237BM12PVBERD6JXDSX5V** The folder of the cache is
   `$RIFF_HOME/sccache`, else `~/.cache/riff/sccache`. Its most size is
   `workers.cache`, default `40G`. `riff workers cache` shows and sets

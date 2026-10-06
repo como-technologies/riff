@@ -12,7 +12,7 @@
 //! | Process | How riff knows it |
 //! |---|---|
 //! | of the worker `ID` | its environment has `RIFF_WORKER=1`, `RIFF_SESSION=ID` and the `RIFF_HOME` of the caller (none when the caller has none). Each child gets the variables of its parent, also after its parent ends. |
-//! | the server of the compile cache | its environment has [`crate::sccache::SERVER_MARK`]. It is of the machine, never of a worker (01M49AB2TBMHGNXM3GE4NDFYYG). |
+//! | the server of the compile cache | the program `sccache` with [`crate::sccache::SERVER_MARK`]`=1` ([`is_cache_server`]). It is of the machine, never of a worker (01M49AB2TBMHGNXM3GE4NDFYYG). |
 //! | of a context | it has also the variable of the agent tool ([`crate::next::Agent::context_var`]): Claude Code gives it to each command of its Bash tool and to each hook, not to `claude` and not to its MCP servers. |
 //! | the watch | `riff watch`. riff keeps it and its parents: a worker keeps its watch over a clear (01M3JQCD16CNWN5FCQBRKHXYMP). |
 //! | the caller | this process and its parents. riff never stops them. |
@@ -170,13 +170,9 @@ pub fn parse_stat(stat: &str) -> Option<(u32, u64)> {
 /// let env = b"RIFF_WORKER=1\0RIFF_SESSION=w1\0RIFF_HOME=/t/riff\0";
 /// assert_eq!(parse_environ(env, "CLAUDE_PID", Some("/t/riff")), (Some("w1".into()), false));
 /// assert_eq!(parse_environ(env, "CLAUDE_PID", None), (None, false));
-/// // The server of the compile cache that a build of w1 started.
-/// let env = b"RIFF_WORKER=1\0RIFF_SESSION=w1\0CLAUDE_PID=10\0SCCACHE_START_SERVER=1\0";
-/// assert_eq!(parse_environ(env, "CLAUDE_PID", None), (None, false));
 /// ```
 pub fn parse_environ(env: &[u8], context_var: &str, home: Option<&str>) -> (Option<String>, bool) {
     let (mut worker, mut session, mut context) = (false, None, false);
-    let mut cache = false;
     let mut own_home = None;
     for var in env.split(|b| *b == 0) {
         let var = String::from_utf8_lossy(var);
@@ -187,16 +183,34 @@ pub fn parse_environ(env: &[u8], context_var: &str, home: Option<&str>) -> (Opti
             crate::worker::WORKER => worker = crate::worker::is_worker_value(Some(value)),
             "RIFF_SESSION" => session = Some(value.to_owned()).filter(|s| !s.is_empty()),
             crate::home::VAR => own_home = Some(value.to_owned()).filter(|h| !h.is_empty()),
-            crate::sccache::SERVER_MARK => cache = true,
             _ if name == context_var => context = true,
             _ => {}
         }
     }
-    if cache {
-        return (None, false);
-    }
     let here = own_home.as_deref() == home;
     (session.filter(|_| worker && here), context)
+}
+
+/// True for the `sccache` server of the machine: the program `sccache`
+/// with `SCCACHE_START_SERVER=1` (01M49AB2TBMHGNXM3GE4NDFYYG). A
+/// compile that the server runs has no mark, and another program with
+/// the mark is not the server.
+///
+/// ```
+/// use riff::workload::is_cache_server;
+/// let argv = |a: &[&str]| a.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+/// let env = b"RIFF_WORKER=1\0RIFF_SESSION=w1\0SCCACHE_START_SERVER=1\0";
+/// assert!(is_cache_server(env, &argv(&["/home/m/.cargo/bin/sccache"])));
+/// assert!(!is_cache_server(env, &argv(&["just", "ci"])));
+/// assert!(!is_cache_server(b"SCCACHE_START_SERVER=0\0", &argv(&["sccache"])));
+/// assert!(!is_cache_server(b"RIFF_WORKER=1\0", &argv(&["sccache"])));
+/// ```
+pub fn is_cache_server(env: &[u8], argv: &[String]) -> bool {
+    let sccache = argv
+        .first()
+        .is_some_and(|a| Path::new(a).file_name().is_some_and(|n| n == "sccache"));
+    let mark = format!("{}=1", crate::sccache::SERVER_MARK);
+    sccache && env.split(|b| *b == 0).any(|var| var == mark.as_bytes())
 }
 
 /// The process `pid`, or `None` when it is gone or is not of this user.
@@ -206,13 +220,17 @@ pub fn read(pid: u32, context_var: &str) -> Option<Proc> {
     let env = std::fs::read(dir.join("environ")).ok()?;
     let home = std::env::var(crate::home::VAR).ok();
     let home = home.as_deref().filter(|h| !h.is_empty());
-    let (worker, context) = parse_environ(&env, context_var, home);
     let argv = std::fs::read(dir.join("cmdline")).unwrap_or_default();
-    let argv = argv
+    let argv: Vec<String> = argv
         .split(|b| *b == 0)
         .filter(|a| !a.is_empty())
         .map(|a| String::from_utf8_lossy(a).into_owned())
         .collect();
+    let (worker, context) = if is_cache_server(&env, &argv) {
+        (None, false)
+    } else {
+        parse_environ(&env, context_var, home)
+    };
     Some(Proc {
         pid,
         ppid,
