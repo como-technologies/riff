@@ -21,7 +21,8 @@ use riff::api::Api;
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::record::{
-    By, Change, Claimed, Member, PauseSet, Posted, Record, Released, Scope, SessionStarted,
+    By, Change, Claimed, Envelope, Member, PauseSet, Posted, Record, Released, Scope,
+    SessionStarted,
 };
 use riff_core::wire::{Message, RiffState, StartReason};
 use riff_server::Service;
@@ -70,11 +71,13 @@ fn thread() -> ThreadName {
 /// its position when it writes it.
 fn record(second: u64, session: &str, change: Change) -> Record {
     Record {
-        position: 0,
-        written_at_ms: BASE + second * 1000,
-        by: Some(By::Session(uri(session).who().clone())),
-        command: None,
-        call: None,
+        envelope: Envelope {
+            position: 0,
+            written_at_ms: BASE + second * 1000,
+            by: Some(By::Session(uri(session).who().clone())),
+            command: None,
+            call: None,
+        },
         change,
     }
 }
@@ -167,7 +170,7 @@ fn good() -> Vec<Record> {
 fn with(records: Vec<Record>) -> Vec<Record> {
     let mut all = good();
     all.extend(records);
-    all.sort_by_key(|r| r.written_at_ms);
+    all.sort_by_key(|r| r.envelope.written_at_ms);
     all
 }
 
@@ -205,7 +208,10 @@ async fn serve(
     let records: Vec<Record> = records
         .into_iter()
         .zip(1..)
-        .map(|(r, position)| Record { position, ..r })
+        .map(|(mut r, position)| {
+            r.envelope.position = position;
+            r
+        })
         .collect();
     riff_server::log::write(&store, &records, &Default::default(), || true)
         .await
@@ -459,7 +465,9 @@ async fn rule_1_fails_a_release_before_the_merge() {
     // w1 is no worker, and it asks for no verify before its release.
     let records = good()
         .into_iter()
-        .filter(|r| r.written_at_ms != BASE + 11_000 && r.written_at_ms != BASE + 15_000)
+        .filter(|r| {
+            r.envelope.written_at_ms != BASE + 11_000 && r.envelope.written_at_ms != BASE + 15_000
+        })
         .collect();
     let (ok, text) = Machine::new().audit(records).await;
     assert!(!ok, "{text}");
@@ -490,7 +498,7 @@ async fn rule_2_fails_a_verifier_that_is_the_author() {
 async fn rule_3_fails_a_claim_with_no_clear() {
     let records = good()
         .into_iter()
-        .filter(|r| r.written_at_ms != BASE + 31_000)
+        .filter(|r| r.envelope.written_at_ms != BASE + 31_000)
         .collect();
     let (ok, text) = Machine::new().audit(records).await;
     assert!(!ok, "{text}");

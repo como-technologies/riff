@@ -106,7 +106,10 @@ impl Key {
     /// The key of the command that made `record`. `None` for a record
     /// with no caller or with no call ID.
     pub fn of(record: &Record) -> Option<Key> {
-        Some(Key::new(record.by.as_ref()?, record.call.as_deref()?))
+        Some(Key::new(
+            record.envelope.by.as_ref()?,
+            record.envelope.call.as_deref()?,
+        ))
     }
 
     /// The call ID.
@@ -234,8 +237,12 @@ impl Calls {
             return;
         };
         let follows = self.kept.get(&key).is_some_and(|kept| {
-            let last = kept.done.made.last().map_or(0, |last| last.position);
-            last + 1 == record.position
+            let last = kept
+                .done
+                .made
+                .last()
+                .map_or(0, |last| last.envelope.position);
+            last + 1 == record.envelope.position
         });
         if follows {
             if let Some(kept) = self.kept.get_mut(&key) {
@@ -243,7 +250,7 @@ impl Calls {
             }
         } else {
             let done = Done::of(vec![record.clone()]);
-            self.keep(key, Kept::new(done, None, record.written_at_ms));
+            self.keep(key, Kept::new(done, None, record.envelope.written_at_ms));
         }
     }
 
@@ -263,7 +270,7 @@ impl Calls {
             .filter(|kept| now_ms.saturating_sub(kept.at_ms) < keep_ms())
             .flat_map(|kept| kept.done.made.iter().cloned())
             .collect();
-        calls.sort_by_key(|record| record.position);
+        calls.sort_by_key(|record| record.envelope.position);
         Saved { calls }
     }
 }
@@ -298,14 +305,17 @@ mod tests {
     use riff_core::record::{Change, Email};
 
     use super::*;
+    use riff_core::record::Envelope;
 
     fn record(position: u64, by: &By, call: Option<&str>, at_ms: u64) -> Record {
         Record {
-            position,
-            written_at_ms: at_ms,
-            by: Some(by.clone()),
-            command: Some("invite".into()),
-            call: call.map(str::to_owned),
+            envelope: Envelope {
+                position,
+                written_at_ms: at_ms,
+                by: Some(by.clone()),
+                command: Some("invite".into()),
+                call: call.map(str::to_owned),
+            },
             change: Change::MemberInvited(Email {
                 email: format!("p{position}@acme.io"),
             }),
@@ -317,7 +327,7 @@ mod tests {
     }
 
     fn positions(kept: &Kept) -> Vec<u64> {
-        kept.done.made.iter().map(|r| r.position).collect()
+        kept.done.made.iter().map(|r| r.envelope.position).collect()
     }
 
     #[test]
@@ -373,7 +383,7 @@ mod tests {
         calls.record(&record(2, &ann, Some("c1"), day));
         calls.record(&record(3, &By::Server, Some("c2"), day));
         let saved = calls.saved(day + 1);
-        let saved_at: Vec<u64> = saved.calls.iter().map(|r| r.position).collect();
+        let saved_at: Vec<u64> = saved.calls.iter().map(|r| r.envelope.position).collect();
         assert_eq!(saved_at, [2, 3]);
 
         let json = serde_json::to_string(&saved).unwrap();

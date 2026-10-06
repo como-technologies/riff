@@ -1286,12 +1286,12 @@ impl Engine {
                 Change::MemberRemoved(removed) => {
                     let users = self.read(|state| state.users_of(&removed.email));
                     for user in users {
-                        ended += self.0.sign_ins.end(&user, record.position);
+                        ended += self.0.sign_ins.end(&user, record.envelope.position);
                     }
                     continue;
                 }
                 Change::SigninsEnded(signins) => {
-                    ended += self.0.sign_ins.end(&signins.user, record.position);
+                    ended += self.0.sign_ins.end(&signins.user, record.envelope.position);
                     continue;
                 }
                 _ => continue,

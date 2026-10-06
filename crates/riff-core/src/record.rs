@@ -8,6 +8,10 @@
 //! cause, and one [`Change`]. The change names say what happened, in the
 //! past tense. These Rust types are the schema of the log.
 //!
+//! The fields next to the change are the [`Envelope`]: one type that
+//! [`Record`] and the tolerant reader [`Line::parse`] share. So a new
+//! field of the envelope gets to the writer, the reader and each start.
+//!
 //! The cause is in the envelope: the caller ([`By`]) and the kind of
 //! the command (01M3X4Z60G1FXQTDC5XDJ05BAX). So the log alone shows who made each
 //! change. A record from before this rule has no cause: it reads, and
@@ -113,14 +117,16 @@
 //!
 //! ```
 //! use riff_core::name::Who;
-//! use riff_core::record::{By, Change, Claimed, Line, Record};
+//! use riff_core::record::{By, Change, Claimed, Envelope, Line, Record};
 //!
 //! let record = Record {
-//!     position: 1234,
-//!     written_at_ms: 1_790_000_000_000,
-//!     by: Some(By::Session(Who::new("ann", Some("s1"))?)),
-//!     command: Some("claim".into()),
-//!     call: None,
+//!     envelope: Envelope {
+//!         position: 1234,
+//!         written_at_ms: 1_790_000_000_000,
+//!         by: Some(By::Session(Who::new("ann", Some("s1"))?)),
+//!         command: Some("claim".into()),
+//!         call: None,
+//!     },
 //!     change: Change::Claimed(Claimed {
 //!         session: "riff://ann@heron/acme/app?session=s1".parse()?,
 //!         thread: "acme/app".parse()?,
@@ -179,9 +185,18 @@ macro_rules! changes {
 }
 
 // ANCHOR: record
-/// One line of the log.
+/// One line of the log: its envelope and its change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
+    #[serde(flatten)]
+    pub envelope: Envelope,
+    pub change: Change,
+}
+
+/// The fields of a record next to its change. See the design of the
+/// module.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Envelope {
     /// The place of the record in the one log of the riff: 1, 2, 3, and
     /// so on.
     pub position: u64,
@@ -203,7 +218,6 @@ pub struct Record {
     /// this field. A build that does not know the field skips it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call: Option<String>,
-    pub change: Change,
 }
 
 changes! {
@@ -462,7 +476,7 @@ impl Record {
     /// assert_eq!(read(&post.replace("session=s1", "session=s1&wave=17")).other(), Some("from"));
     /// ```
     pub fn other(&self) -> Option<&'static str> {
-        if self.by == Some(By::Other) {
+        if self.envelope.by == Some(By::Other) {
             return Some("by");
         }
         if self.change.session().is_some_and(SessionUri::is_other) {
@@ -494,7 +508,7 @@ impl Record {
     /// that repository. Each other record is not.
     ///
     /// ```
-    /// use riff_core::record::{Change, Claimed, Line, PauseSet, Record, Scope};
+    /// use riff_core::record::{Change, Claimed, Envelope, Line, PauseSet, Record, Scope};
     /// use riff_core::wire::RiffState;
     ///
     /// let repo = "acme/app".parse()?;
@@ -553,13 +567,12 @@ impl Record {
     /// This record for an audit: a post has only its mark
     /// ([`Posted::for_audit`]). Each other record stays as it is.
     pub fn for_audit(self) -> Record {
-        match self.change {
-            Change::Posted(posted) => Record {
-                change: Change::Posted(Box::new(posted.for_audit())),
-                ..self
-            },
-            _ => self,
-        }
+        let Record { envelope, change } = self;
+        let change = match change {
+            Change::Posted(posted) => Change::Posted(Box::new(posted.for_audit())),
+            change => change,
+        };
+        Record { envelope, change }
     }
 }
 
@@ -994,40 +1007,113 @@ impl Line {
     pub fn parse(line: &str) -> Result<Line, String> {
         #[derive(Deserialize)]
         struct Raw {
-            position: u64,
-            written_at_ms: u64,
-            #[serde(default)]
-            by: Option<By>,
-            #[serde(default)]
-            command: Option<String>,
-            #[serde(default)]
-            call: Option<String>,
+            #[serde(flatten)]
+            envelope: Envelope,
             change: serde_json::Map<String, serde_json::Value>,
         }
-        let raw: Raw = serde_json::from_str(line).map_err(|e| e.to_string())?;
-        let [kind] = raw.change.keys().collect::<Vec<_>>()[..] else {
+        let Raw { envelope, change } = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let position = envelope.position;
+        let [kind] = change.keys().collect::<Vec<_>>()[..] else {
             return Err(format!(
-                "the change of the record at position {} needs one kind",
-                raw.position
+                "the change of the record at position {position} needs one kind"
             ));
         };
         if !Change::KINDS.contains(&kind.as_str()) {
             return Ok(Line::Unknown {
-                position: raw.position,
+                position,
                 kind: kind.clone(),
             });
         }
-        let change = serde_json::from_value(serde_json::Value::Object(raw.change))
-            .map_err(|e| format!("the record at position {}: {e}", raw.position))?;
-        Ok(Line::Record(Box::new(Record {
-            position: raw.position,
-            written_at_ms: raw.written_at_ms,
-            by: raw.by,
-            command: raw.command,
-            call: raw.call,
-            change,
-        })))
+        let change = serde_json::from_value(serde_json::Value::Object(change))
+            .map_err(|e| format!("the record at position {position}: {e}"))?;
+        Ok(Line::Record(Box::new(Record { envelope, change })))
     }
+}
+
+/// One change of each kind, for the tests of each crate: a new kind
+/// goes here, and each round trip covers it.
+#[cfg(any(test, feature = "test-support"))]
+pub fn one_of_each() -> Vec<Change> {
+    let uri = || -> SessionUri { "riff://ann@heron/acme/app?session=s1".parse().unwrap() };
+    let thread = || -> ThreadName { "acme/app".parse().unwrap() };
+    let member = Member {
+        session: uri(),
+        thread: thread(),
+    };
+    let claim = Claimed {
+        session: uri(),
+        thread: thread(),
+        item: "issue-7".into(),
+    };
+    let email = Email {
+        email: "ann@acme.io".into(),
+    };
+    vec![
+        Change::Posted(Box::new(Posted {
+            thread: thread(),
+            message: Message {
+                seq: 1,
+                from: uri(),
+                to: vec![],
+                body: "hi".into(),
+                at_ms: 5,
+                kind: crate::wire::Kind::Message,
+                sig: Some("h..s".into()),
+                payload: Some("cA".into()),
+            },
+            woken: BTreeSet::from([uri().who().clone()]),
+        })),
+        Change::JoinedThread(member.clone()),
+        Change::LeftThread(member.clone()),
+        Change::Claimed(claim.clone()),
+        Change::Released(Released {
+            must_clear: true,
+            ..Released::of(claim)
+        }),
+        Change::LeadSet(member),
+        Change::SettingChanged(SettingChanged {
+            idle: Idle::default(),
+        }),
+        Change::SessionForgotten(Forgotten { session: uri() }),
+        Change::SessionStarted(SessionStarted {
+            session: uri(),
+            reason: StartReason::Process,
+            worker: true,
+        }),
+        Change::PauseSet(PauseSet {
+            scope: Scope::Repository(thread()),
+            state: RiffState::Paused,
+        }),
+        Change::RiffMade(RiffMade {
+            riff_id: "r1".into(),
+        }),
+        Change::PersonJoined(PersonJoined {
+            user: "ann".into(),
+            email: email.email.clone(),
+        }),
+        Change::MemberInvited(email.clone()),
+        Change::MemberRemoved(email.clone()),
+        Change::AdminSet(AdminSet {
+            email: email.email.clone(),
+            admin: true,
+        }),
+        Change::OwnerSet(OwnerSet { email: None }),
+        Change::OwnerAsked(OwnerAsked {
+            email: email.email.clone(),
+            due_ms: 9,
+        }),
+        Change::OwnerDenied(email),
+        Change::SigninsEnded(SigninsEnded { user: "ann".into() }),
+        Change::ItemHeld(ItemHeld {
+            thread: thread(),
+            item: "issue-7".into(),
+            reason: "waits for ann".into(),
+        }),
+        Change::ItemFreed(ItemFreed {
+            thread: thread(),
+            item: "issue-7".into(),
+        }),
+    ]
 }
 
 #[cfg(test)]
@@ -1043,87 +1129,6 @@ mod tests {
         "acme/app".parse().unwrap()
     }
 
-    fn one_of_each() -> Vec<Change> {
-        let member = Member {
-            session: uri(),
-            thread: thread(),
-        };
-        let claim = Claimed {
-            session: uri(),
-            thread: thread(),
-            item: "issue-7".into(),
-        };
-        let email = Email {
-            email: "ann@acme.io".into(),
-        };
-        vec![
-            Change::Posted(Box::new(Posted {
-                thread: thread(),
-                message: Message {
-                    seq: 1,
-                    from: uri(),
-                    to: vec![],
-                    body: "hi".into(),
-                    at_ms: 5,
-                    kind: Kind::Message,
-                    sig: Some("h..s".into()),
-                    payload: Some("cA".into()),
-                },
-                woken: BTreeSet::from([uri().who().clone()]),
-            })),
-            Change::JoinedThread(member.clone()),
-            Change::LeftThread(member.clone()),
-            Change::Claimed(claim.clone()),
-            Change::Released(Released {
-                must_clear: true,
-                ..Released::of(claim)
-            }),
-            Change::LeadSet(member),
-            Change::SettingChanged(SettingChanged {
-                idle: Idle::default(),
-            }),
-            Change::SessionForgotten(Forgotten { session: uri() }),
-            Change::SessionStarted(SessionStarted {
-                session: uri(),
-                reason: StartReason::Process,
-                worker: true,
-            }),
-            Change::PauseSet(PauseSet {
-                scope: Scope::Repository(thread()),
-                state: RiffState::Paused,
-            }),
-            Change::RiffMade(RiffMade {
-                riff_id: "r1".into(),
-            }),
-            Change::PersonJoined(PersonJoined {
-                user: "ann".into(),
-                email: email.email.clone(),
-            }),
-            Change::MemberInvited(email.clone()),
-            Change::MemberRemoved(email.clone()),
-            Change::AdminSet(AdminSet {
-                email: email.email.clone(),
-                admin: true,
-            }),
-            Change::OwnerSet(OwnerSet { email: None }),
-            Change::OwnerAsked(OwnerAsked {
-                email: email.email.clone(),
-                due_ms: 9,
-            }),
-            Change::OwnerDenied(email),
-            Change::SigninsEnded(SigninsEnded { user: "ann".into() }),
-            Change::ItemHeld(ItemHeld {
-                thread: thread(),
-                item: "issue-7".into(),
-                reason: "waits for ann".into(),
-            }),
-            Change::ItemFreed(ItemFreed {
-                thread: thread(),
-                item: "issue-7".into(),
-            }),
-        ]
-    }
-
     #[test]
     fn each_kind_reads_back_and_has_its_name() {
         let changes = one_of_each();
@@ -1137,11 +1142,13 @@ mod tests {
         for change in changes {
             let kind = change.kind();
             let record = Record {
-                position: 3,
-                written_at_ms: 4,
-                by: Some(By::Server),
-                command: Some("forget".into()),
-                call: None,
+                envelope: Envelope {
+                    position: 3,
+                    written_at_ms: 4,
+                    by: Some(By::Server),
+                    command: Some("forget".into()),
+                    call: None,
+                },
                 change,
             };
             let line = serde_json::to_string(&record).unwrap();
@@ -1205,10 +1212,10 @@ mod tests {
         let Line::Record(record) = Line::parse(line).unwrap() else {
             panic!("a known kind");
         };
-        assert_eq!(record.by, Some(By::Other));
+        assert_eq!(record.envelope.by, Some(By::Other));
         assert_eq!(record.other(), Some("by"));
         // The kind of a command is text: a kind of a later build reads.
-        assert_eq!(record.command.as_deref(), Some("sweep"));
+        assert_eq!(record.envelope.command.as_deref(), Some("sweep"));
     }
 
     #[test]
@@ -1532,7 +1539,10 @@ mod tests {
         let Line::Record(record) = Line::parse(line).unwrap() else {
             panic!("a known kind");
         };
-        assert_eq!((&record.by, &record.command), (&None, &None));
+        assert_eq!(
+            (&record.envelope.by, &record.envelope.command),
+            (&None, &None)
+        );
         assert_eq!(serde_json::to_string(&record).unwrap(), line);
     }
 

@@ -75,7 +75,7 @@ use super::work::Work;
 /// A record changes the riff, through [`apply`]:
 ///
 /// ```
-/// use riff_core::record::{Change, PauseSet, Record, Scope};
+/// use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::state::{Riff, apply};
 ///
@@ -165,7 +165,7 @@ impl Riff {
 /// it does with each kind.
 ///
 /// ```
-/// use riff_core::record::{Change, Claimed, Record, Released};
+/// use riff_core::record::{Change, Claimed, Envelope, Record, Released};
 /// use riff_server::state::{Riff, apply};
 ///
 /// let claimed = Claimed {
@@ -186,7 +186,7 @@ impl Riff {
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn apply(riff: &mut Riff, record: &Record) {
-    riff.position = record.position;
+    riff.position = record.envelope.position;
     riff.sessions.named(record);
     let taken = match &record.change {
         Change::Posted(posted) => riff.threads.posted(posted),
@@ -205,7 +205,9 @@ pub fn apply(riff: &mut Riff, record: &Record) {
             riff.sessions.released(released);
             riff.work.released(released)
         }
-        Change::SessionStarted(started) => riff.sessions.started(started, record.written_at_ms),
+        Change::SessionStarted(started) => riff
+            .sessions
+            .started(started, record.envelope.written_at_ms),
         Change::LeadSet(member) => riff.work.lead_set(member),
         Change::PauseSet(set) => riff.the_riff.pause_set(&set.scope, set.state, record),
         Change::SettingChanged(changed) => riff.the_riff.setting_changed(changed),
@@ -223,18 +225,18 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::RiffMade(made) => riff.people.made(made),
         Change::PersonJoined(joined) => riff.people.joined(joined),
         Change::MemberInvited(invited) => riff.people.invited(invited),
-        Change::MemberRemoved(removed) => riff.people.removed(removed, record.position),
+        Change::MemberRemoved(removed) => riff.people.removed(removed, record.envelope.position),
         Change::AdminSet(set) => riff.people.admin_set(set),
         Change::OwnerSet(set) => riff.people.owner_set(set),
         Change::OwnerAsked(asked) => riff.people.owner_asked(asked),
         Change::OwnerDenied(denied) => riff.people.owner_denied(denied),
-        Change::SigninsEnded(ended) => riff.people.signins_ended(ended, record.position),
+        Change::SigninsEnded(ended) => riff.people.signins_ended(ended, record.envelope.position),
         Change::ItemHeld(held) => riff.plans.held(held, record),
         Change::ItemFreed(freed) => riff.plans.freed(freed),
     };
     if let Err(what) = taken {
         tracing::warn!(
-            position = record.position,
+            position = record.envelope.position,
             "a record changes nothing: {what}"
         );
     }
@@ -247,6 +249,7 @@ mod tests {
     use riff_core::wire::StartReason;
 
     use super::*;
+    use riff_core::record::Envelope;
 
     fn ann() -> SessionUri {
         "riff://ann@heron/acme/app?session=a1".parse().unwrap()
@@ -274,11 +277,13 @@ mod tests {
         let mut riff = Riff::default();
         for (n, change) in changes.iter().enumerate() {
             let record = Record {
-                position: u64::try_from(n).unwrap() + 1,
-                written_at_ms: 5,
-                by: None,
-                command: None,
-                call: None,
+                envelope: Envelope {
+                    position: u64::try_from(n).unwrap() + 1,
+                    written_at_ms: 5,
+                    by: None,
+                    command: None,
+                    call: None,
+                },
                 change: change.clone(),
             };
             apply(&mut riff, &record);

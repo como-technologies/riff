@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use isolated::Isolated;
 use riff_core::name::Who;
-use riff_core::record::{By, Change, Claimed, PauseSet, Record, Scope};
+use riff_core::record::{By, Change, Claimed, Envelope, PauseSet, Record, Scope};
 use riff_core::wire::RiffState;
 use riff_server::checkpoint::{self, Checkpoint};
 use riff_server::log::{self, chunk_name};
@@ -23,11 +23,13 @@ use riff_server::store::{Dir, LEASE};
 /// A record from before the cause.
 fn running(position: u64) -> Record {
     Record {
-        position,
-        written_at_ms: 1_790_000_000_000,
-        by: None,
-        command: None,
-        call: None,
+        envelope: Envelope {
+            position,
+            written_at_ms: 1_790_000_000_000,
+            by: None,
+            command: None,
+            call: None,
+        },
         change: Change::PauseSet(PauseSet {
             scope: Scope::Riff,
             state: RiffState::Running,
@@ -38,11 +40,13 @@ fn running(position: u64) -> Record {
 /// A record with its cause: a claim of the session.
 fn claimed(position: u64) -> Record {
     Record {
-        position,
-        written_at_ms: 1_790_000_000_000,
-        by: Some(By::Session(Who::new("ann", Some("s1")).unwrap())),
-        command: Some("claim".into()),
-        call: None,
+        envelope: Envelope {
+            position,
+            written_at_ms: 1_790_000_000_000,
+            by: Some(By::Session(Who::new("ann", Some("s1")).unwrap())),
+            command: Some("claim".into()),
+            call: None,
+        },
         change: Change::Claimed(Claimed {
             session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
             thread: "acme/app".parse().unwrap(),
@@ -261,7 +265,11 @@ async fn a_server_loads_the_log_after_a_cut() {
     assert_eq!(found.checkpoint.unwrap().state.position, 2);
     let replayed = log::replay_after(&store, 2).await.unwrap();
     assert_eq!(replayed.last, 4);
-    let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
+    let positions: Vec<u64> = replayed
+        .records
+        .iter()
+        .map(|r| r.envelope.position)
+        .collect();
     assert_eq!(positions, [3, 4]);
 }
 

@@ -1507,7 +1507,7 @@ impl Service {
                         // The calls of the chunk fail: the server stopped.
                         // Each command of the chunk gets the line `failed`.
                         s.engine.fail(chunk);
-                        let first = records.first().map_or(0, |record| record.position);
+                        let first = records.first().map_or(0, |record| record.envelope.position);
                         let chunk = log::chunk_name(first);
                         s.error(format!(
                             "the write of the chunk {chunk} failed for good: {error}"
@@ -4242,8 +4242,8 @@ mod tests {
             ]
         );
         for record in &chunks[0] {
-            assert_eq!(record.by, Some(riff_core::record::By::Server));
-            assert_eq!(record.command.as_deref(), Some("import"));
+            assert_eq!(record.envelope.by, Some(riff_core::record::By::Server));
+            assert_eq!(record.envelope.command.as_deref(), Some("import"));
         }
         assert_eq!(checkpoints(&store).await.len(), 1);
         // The old objects stay.
@@ -4318,23 +4318,23 @@ mod tests {
         let chunks = records(&store).await;
         let mut last = 0;
         for record in chunks.iter().flatten() {
-            assert_eq!(record.position, last + 1);
+            assert_eq!(record.envelope.position, last + 1);
             assert!(
-                record.by.is_some() && record.command.is_some(),
+                record.envelope.by.is_some() && record.envelope.command.is_some(),
                 "{record:?}"
             );
-            last = record.position;
+            last = record.envelope.position;
         }
         // The first record of the log is of the server.
         let made = &chunks[0][0];
-        assert_eq!(made.by, Some(By::Server));
-        assert_eq!(made.command.as_deref(), Some("make_riff"));
+        assert_eq!(made.envelope.by, Some(By::Server));
+        assert_eq!(made.envelope.command.as_deref(), Some("make_riff"));
         // The first call of a session registers it: a command of its own.
         let all: Vec<_> = chunks.iter().flatten().collect();
         let mut registered: Vec<_> = all
             .iter()
-            .filter(|record| record.by == Some(By::Session(mike2().who().clone())))
-            .map(|record| record.command.as_deref().unwrap())
+            .filter(|record| record.envelope.by == Some(By::Session(mike2().who().clone())))
+            .map(|record| record.envelope.command.as_deref().unwrap())
             .collect();
         registered.dedup();
         assert_eq!(registered, ["register", "claim"]);
@@ -4345,24 +4345,24 @@ mod tests {
         let chunk = chunks.last().unwrap();
         let of_release: Vec<_> = chunk
             .iter()
-            .filter(|record| record.command.as_deref() == Some("release_for"))
+            .filter(|record| record.envelope.command.as_deref() == Some("release_for"))
             .collect();
         assert_eq!(of_release.len(), 2, "{chunk:?}");
         let (released, note) = (of_release[0], of_release[1]);
-        assert_eq!(note.position, released.position + 1);
+        assert_eq!(note.envelope.position, released.envelope.position + 1);
         assert!(matches!(released.change, Change::Released(_)));
         let Change::Posted(posted) = &note.change else {
             panic!("a note: {note:?}");
         };
         assert_eq!(posted.message.from, owner::server_uri());
         for record in [released, note] {
-            assert_eq!(record.by, Some(By::Session(mike().who().clone())));
+            assert_eq!(record.envelope.by, Some(By::Session(mike().who().clone())));
         }
         // The post that came after it is in the same chunk, after it.
         let after: Vec<_> = chunk
             .iter()
-            .filter(|record| record.position > note.position)
-            .map(|record| record.command.as_deref().unwrap())
+            .filter(|record| record.envelope.position > note.envelope.position)
+            .map(|record| record.envelope.command.as_deref().unwrap())
             .collect();
         assert_eq!(after, ["post"]);
     }

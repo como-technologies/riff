@@ -250,7 +250,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use riff_core::name::{SessionUri, ThreadName, Who};
-use riff_core::record::{Change, Posted, Record};
+use riff_core::record::{Change, Envelope, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AliveReply, BlockedInfo, Claim, End, Facts, Freed, Idle, ItemFact, Join, Keys, Kind,
@@ -863,7 +863,7 @@ impl State {
         let mut wakes = Vec::new();
         if self.writer {
             for record in records {
-                let at = self.made.remove(&record.position);
+                let at = self.made.remove(&record.envelope.position);
                 wakes.extend(self.apply_written(record, at));
             }
         }
@@ -1114,16 +1114,18 @@ impl State {
         let mut records = Vec::with_capacity(changes.len());
         for change in changes {
             let record = Record {
-                position: self.position() + 1,
-                written_at_ms: self.ms(now),
-                by: Some(cause.by.clone()),
-                command: Some(cause.command.as_str().to_owned()),
-                call: cause.call.clone(),
+                envelope: Envelope {
+                    position: self.position() + 1,
+                    written_at_ms: self.ms(now),
+                    by: Some(cause.by.clone()),
+                    command: Some(cause.command.as_str().to_owned()),
+                    call: cause.call.clone(),
+                },
                 change: change.clone(),
             };
             apply(&mut self.pending, &record);
             if self.writer {
-                self.made.insert(record.position, now);
+                self.made.insert(record.envelope.position, now);
             } else {
                 // The sync form sends no wake.
                 let _ = self.apply_written(&record, Some(now));
@@ -4011,7 +4013,7 @@ mod tests {
         assert!(!state.claim(&tests(), &repo(), "issue-6", now).unwrap().0);
         let chunk = state.take_queue();
         assert_eq!(chunk.len(), 3, "the claim, and the arrival of brett");
-        assert!(chunk.iter().all(|r| r.written_at_ms == T0));
+        assert!(chunk.iter().all(|r| r.envelope.written_at_ms == T0));
         state.written(&chunk);
         assert_eq!(state.uri(api().who(), now).claims(), ["issue-6"]);
         assert_eq!(state.written_position(), state.position());

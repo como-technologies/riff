@@ -125,8 +125,9 @@ async fn a_removal_after_a_cut_ends_each_sign_in_of_the_person() {
         .iter()
         .find(|r| matches!(&r.change, Change::PersonJoined(p) if p.user == "bob"))
         .unwrap()
+        .envelope
         .position;
-    assert!(log.records.last().unwrap().position > joined + 1);
+    assert!(log.records.last().unwrap().envelope.position > joined + 1);
 
     // A cut of the log after that record: the two invites go.
     tokio::time::sleep(Duration::from_secs(1)).await;

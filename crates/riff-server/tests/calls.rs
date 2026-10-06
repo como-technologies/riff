@@ -7,7 +7,7 @@ mod common;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use riff_core::name::SessionUri;
-use riff_core::record::Record;
+use riff_core::record::{By, Envelope, Record, one_of_each};
 use riff_core::wire::{
     CALL_HEADER, Claim, Post, REPEAT_HEADER, Read, ReadReply, Register, Release, ReleaseReply,
     Resume,
@@ -178,7 +178,7 @@ async fn a_second_try_after_a_cut_gets_the_reply_of_the_first_and_writes_nothing
         .iter()
         .find(|r| r.change.kind() == "released")
         .unwrap();
-    assert_eq!(released.call.as_deref(), Some("c1"));
+    assert_eq!(released.envelope.call.as_deref(), Some("c1"));
 
     // The same release with no call ID runs `handle`: the item is free.
     let no_id = w.engine.authenticate(None, release(&worker)).unwrap();
@@ -291,7 +291,7 @@ async fn a_start_from_a_checkpoint_and_from_the_full_log_give_the_same_repeat() 
     // A checkpoint before the release, and the records after it, from
     // the store.
     let early = State::replay(log[..before].to_vec(), now, ms).snapshot(now, ms);
-    let last = log[before - 1].position;
+    let last = log[before - 1].envelope.position;
     let after = replay_after(&w.store, last).await.unwrap().records;
     assert_eq!(after, log[before..]);
     let from_early = State::load(Some(early), after, now, ms);
@@ -313,6 +313,33 @@ async fn a_start_from_a_checkpoint_and_from_the_full_log_give_the_same_repeat() 
         panic!("a release of a free item is refused");
     };
     assert_eq!(refused.code, Code::NotHolder);
+}
+
+/// Each kind of record, with a call ID, written to the store and read
+/// back as a start reads it, is the same record.
+#[tokio::test]
+async fn each_kind_of_record_with_a_call_id_reads_back_from_the_store() {
+    let records: Vec<Record> = one_of_each()
+        .into_iter()
+        .zip(1..)
+        .map(|(change, position)| Record {
+            envelope: Envelope {
+                position,
+                written_at_ms: 1_790_000_000_000 + position,
+                by: Some(By::Server),
+                command: Some(change.kind().to_owned()),
+                call: Some(format!("call-{position}")),
+            },
+            change,
+        })
+        .collect();
+    let store = Memory::default();
+    write(&store, &records, &Timing::default(), || true)
+        .await
+        .unwrap();
+    let replayed = replay_after(&store, 0).await.unwrap();
+    assert_eq!(replayed.records, records);
+    assert_eq!(replayed.skipped, None);
 }
 
 /// Over HTTP: the header `riff-call` gives the call ID, and the reply to

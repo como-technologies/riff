@@ -46,16 +46,18 @@
 //! ```
 //! use riff::audit::{Forge, Issue, Pull, Verdict, Wave, audit};
 //! use riff_core::name::Who;
-//! use riff_core::record::{By, Change, Claimed, Record, Released};
+//! use riff_core::record::{By, Change, Claimed, Envelope, Record, Released};
 //!
 //! let ann = "riff://ann@heron/acme/app?session=s1".parse()?;
 //! let bob = "riff://bob@heron/acme/app?session=s2".parse()?;
 //! let record = |position, session: &riff_core::name::SessionUri, change| Record {
-//!     position,
-//!     written_at_ms: position * 1000,
-//!     by: Some(By::Session(session.who().clone())),
-//!     command: None,
-//!     call: None,
+//!     envelope: Envelope {
+//!         position,
+//!         written_at_ms: position * 1000,
+//!         by: Some(By::Session(session.who().clone())),
+//!         command: None,
+//!         call: None,
+//!     },
 //!     change,
 //! };
 //! let claim = |session: &riff_core::name::SessionUri, item: &str| Claimed {
@@ -336,7 +338,7 @@ struct Item {
 pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Result<Report> {
     let (wave, from_ms) = span(title, &forge.waves)?;
     let end_ms = wave.closed_ms.unwrap_or(now_ms);
-    let in_span = |record: &Record| (from_ms..=end_ms).contains(&record.written_at_ms);
+    let in_span = |record: &Record| (from_ms..=end_ms).contains(&record.envelope.written_at_ms);
 
     let mut rules: Vec<Rule> = [
         "the wave has no item",
@@ -383,7 +385,7 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
     let mut items: BTreeMap<u64, Item> = BTreeMap::new();
     let mut state = Replay::default();
     for record in records {
-        let at = record.written_at_ms;
+        let at = record.envelope.written_at_ms;
         let checked = in_span(record);
         match &record.change {
             Change::Claimed(c) => {
@@ -396,21 +398,21 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
                         .entry(n)
                         .or_default()
                         .claims
-                        .push((record.position, who.clone()));
+                        .push((record.envelope.position, who.clone()));
                 }
                 if let Some(n) = verify_item(&c.item) {
                     items
                         .entry(n)
                         .or_default()
                         .verifies
-                        .push((record.position, who.clone()));
+                        .push((record.envelope.position, who.clone()));
                 }
                 state.holders.insert(c.item.clone(), who.clone());
                 state.requested.remove(who);
             }
             Change::Released(r) => {
                 let who = r.session.who();
-                let by_holder = match &record.by {
+                let by_holder = match &record.envelope.by {
                     Some(By::Session(by)) => by == who,
                     None => true,
                     Some(_) => false,
@@ -419,19 +421,21 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
                     && by_holder
                 {
                     let item = items.entry(n).or_default();
-                    item.releases.push(record.position);
+                    item.releases.push(record.envelope.position);
                     let merged = merged_of(n).is_some_and(|merged| merged <= at);
                     let worker_asked = state.workers.get(who).copied().unwrap_or(false)
                         && state.requested.contains(who);
                     if !(merged || state.results.contains(&n) || worker_asked) {
-                        item.early.push(record.position);
+                        item.early.push(record.envelope.position);
                     }
                 }
                 if state.holders.get(&r.item) == Some(who) {
                     state.holders.remove(&r.item);
                 }
                 if r.must_clear {
-                    state.must_clear.insert(who.clone(), record.position);
+                    state
+                        .must_clear
+                        .insert(who.clone(), record.envelope.position);
                 }
             }
             Change::SessionStarted(s) => {
@@ -561,8 +565,8 @@ fn check_claim(
     item: &str,
     authors: &BTreeMap<u64, BTreeSet<Who>>,
 ) {
-    let at = record.written_at_ms;
-    let position = record.position;
+    let at = record.envelope.written_at_ms;
+    let position = record.envelope.position;
     let claim = format!("{item} at record {position} by {}", name(who));
 
     // Rule 2: the verifier.
@@ -680,7 +684,11 @@ fn wave_and_needs(n: u64, at: u64, forge: &Forge) -> (Verdict, Option<String>) {
 /// Rule 7 at a post with the mark `request` in the span.
 fn check_request(rule: &mut Rule, state: &Replay, record: &Record, posted: &Posted) {
     let from = posted.message.from.who();
-    let request = format!("request at record {} from {}", record.position, name(from));
+    let request = format!(
+        "request at record {} from {}",
+        record.envelope.position,
+        name(from)
+    );
     let mut why = Vec::new();
     match state.leads.get(from.user()) {
         Some(lead) if lead == from => {}
@@ -971,6 +979,7 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riff_core::record::Envelope;
     use riff_core::record::{Claimed, Member, PauseSet, Released, SessionStarted};
     use riff_core::wire::Message;
 
@@ -985,11 +994,13 @@ mod tests {
     /// A record at `position`, at `position` seconds, by `session`.
     fn record(position: u64, session: &str, change: Change) -> Record {
         Record {
-            position,
-            written_at_ms: position * 1000,
-            by: Some(By::Session(uri(session).who().clone())),
-            command: None,
-            call: None,
+            envelope: Envelope {
+                position,
+                written_at_ms: position * 1000,
+                by: Some(By::Session(uri(session).who().clone())),
+                command: None,
+                call: None,
+            },
             change,
         }
     }
@@ -1178,7 +1189,7 @@ mod tests {
     fn rule_1_fails_a_release_before_the_merge() {
         let mut records = good();
         // w1 is no worker now, and asks for no verify.
-        records.retain(|r| r.position != 11 && r.position != 15);
+        records.retain(|r| r.envelope.position != 11 && r.envelope.position != 15);
         assert_eq!(
             fails(&records, 1),
             ["issue-7: release at record 16 before the merge and before a verify result."]
@@ -1188,7 +1199,7 @@ mod tests {
     #[test]
     fn rule_1_fails_an_item_with_no_verify_by_another_session() {
         let mut records = good();
-        records.retain(|r| r.position != 17 && r.position != 18);
+        records.retain(|r| r.envelope.position != 17 && r.envelope.position != 18);
         assert_eq!(
             fails(&records, 1),
             ["issue-7: no verify claim by a session that is not the author."]
@@ -1226,7 +1237,7 @@ mod tests {
     #[test]
     fn rule_3_fails_a_claim_with_no_clear() {
         let mut records = good();
-        records.retain(|r| r.position != 31);
+        records.retain(|r| r.envelope.position != 31);
         assert_eq!(
             fails(&records, 3),
             ["issue-8 at record 32 by ann/w1: no clear after its last release at record 16."]
@@ -1244,7 +1255,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(i, mut r)| {
-                r.position = i as u64 + 100;
+                r.envelope.position = i as u64 + 100;
                 r
             })
             .collect();
@@ -1260,7 +1271,7 @@ mod tests {
         records.push(claim(38, "w3", "issue-9"));
         // issue-8 before the merge of its need 7 at 30 s.
         records.push(claim(20, "w4", "issue-8"));
-        records.sort_by_key(|r| r.position);
+        records.sort_by_key(|r| r.envelope.position);
         assert_eq!(
             fails(&records, 5),
             [

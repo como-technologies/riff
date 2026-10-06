@@ -393,11 +393,13 @@ struct Given {
 fn given(changes: &[Change]) -> Given {
     let now = Instant::now();
     let records = changes.iter().enumerate().map(|(n, change)| Record {
-        position: u64::try_from(n).unwrap() + 1,
-        written_at_ms: 0,
-        by: None,
-        command: None,
-        call: None,
+        envelope: Envelope {
+            position: u64::try_from(n).unwrap() + 1,
+            written_at_ms: 0,
+            by: None,
+            command: None,
+            call: None,
+        },
         change: change.clone(),
     });
     Given {
@@ -783,10 +785,10 @@ fn a_claim_that_takes_an_item_gives_the_old_holder_a_released_record_in_one_chun
         kinds,
         [&released(&bob(), "issue-7"), &claimed(&ann(), "issue-7")]
     );
-    assert_eq!(made[1].position, made[0].position + 1);
+    assert_eq!(made[1].envelope.position, made[0].envelope.position + 1);
     for record in &made {
-        assert_eq!(record.by, Some(By::Session(ann().who().clone())));
-        assert_eq!(record.command.as_deref(), Some("claim"));
+        assert_eq!(record.envelope.by, Some(By::Session(ann().who().clone())));
+        assert_eq!(record.envelope.command.as_deref(), Some("claim"));
     }
     // The item has one holder, and the old holder has no claim.
     state.written(&made);

@@ -804,9 +804,11 @@ other. The fixtures of CI hold one record of each kind:
 `crates/riff-server/tests/fixtures/1.0.0/`.
 
 The envelope of each record: `position`, `written_at_ms`, `by`,
-`command`, `call`, `change`. `call` came after 1.0.0: the call ID of
-the command, when its call has one (see
-[A repeated call](#a-repeated-call)). A build of 1.0.0 skips it.
+`command` and `call`, next to its `change`. `call` came after 1.0.0:
+the call ID of the command, when its call has one (see
+[A repeated call](#a-repeated-call)). A build of 1.0.0 skips it. The
+envelope is one Rust type, `Envelope`. The record and the reader of a
+log line share it, so a new field gets to each path.
 
 | Kind | Fields | Made by |
 |---|---|---|

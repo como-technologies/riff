@@ -42,7 +42,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use riff_core::record::{By, Change, Line, Record};
+use riff_core::record::{By, Change, Envelope, Line, Record};
 use riff_server::checkpoint::{self, Checkpoint};
 use riff_server::log;
 use riff_server::state::{CommandKind, Riff, State, apply};
@@ -186,9 +186,9 @@ fn the_fixture_log_has_a_record_of_each_kind() {
     // No record of the release has a value that reads as `other`.
     assert!(records.iter().all(|record| record.other().is_none()));
     // A record with no cause reads.
-    assert!(records.iter().any(|record| record.by.is_none()));
+    assert!(records.iter().any(|record| record.envelope.by.is_none()));
     // The first records come from the command `import` of go-live.
-    let import = records[0].command.as_deref();
+    let import = records[0].envelope.command.as_deref();
     assert_eq!(import, Some(CommandKind::Import.as_str()));
     // A kind of command that the build does not know reads as text.
     let later = serde_json::to_string(&records[0])
@@ -197,7 +197,7 @@ fn the_fixture_log_has_a_record_of_each_kind() {
     let Line::Record(later) = Line::parse(&later).unwrap() else {
         panic!("a known kind of record");
     };
-    let merge = later.command.as_deref();
+    let merge = later.envelope.command.as_deref();
     assert_eq!(merge, Some("merge"));
     assert!(
         CommandKind::ALL
@@ -335,7 +335,10 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
     let moved: Vec<Record> = later
         .into_iter()
         .zip(first..)
-        .map(|(record, position)| Record { position, ..record })
+        .map(|(mut record, position)| {
+            record.envelope.position = position;
+            record
+        })
         .collect();
     log::write(&store, &moved, &timing, || true).await.unwrap();
 
@@ -425,11 +428,16 @@ fn a_riff_with_no_hold_writes_no_part_plans() {
 /// renamed (01M3T4111PFM0C6KPREWFS9EQQ).
 #[test]
 fn the_list_has_each_field_of_the_envelope() {
+    let Record { envelope, change } = records("log.jsonl")[0].clone();
     let record = Record {
-        by: Some(By::Server),
-        command: Some("import".into()),
-        call: Some("c1".into()),
-        ..records("log.jsonl")[0].clone()
+        envelope: Envelope {
+            position: envelope.position,
+            written_at_ms: envelope.written_at_ms,
+            by: Some(By::Server),
+            command: Some("import".into()),
+            call: Some("c1".into()),
+        },
+        change,
     };
     let json = serde_json::to_value(&record).unwrap();
     let code = set(json.as_object().unwrap().keys().map(String::as_str));
@@ -456,18 +464,19 @@ struct Record100 {
 #[test]
 fn a_record_with_a_call_id_loads_in_a_build_of_the_release() {
     let records = records("log.jsonl");
-    assert!(records.iter().all(|record| record.call.is_none()));
+    assert!(records.iter().all(|record| record.envelope.call.is_none()));
     for record in records {
-        let with_call = Record {
-            call: Some("c1".into()),
-            ..record.clone()
-        };
+        let mut with_call = record.clone();
+        with_call.envelope.call = Some("c1".into());
         let line = serde_json::to_string(&with_call).unwrap();
         assert!(line.contains(r#""call":"c1""#), "{line}");
         let old: Record100 = serde_json::from_str(&line).unwrap();
-        assert_eq!(old.position, record.position);
-        assert_eq!(old.written_at_ms, record.written_at_ms);
-        assert_eq!((old.by, old.command), (record.by, record.command));
+        assert_eq!(old.position, record.envelope.position);
+        assert_eq!(old.written_at_ms, record.envelope.written_at_ms);
+        assert_eq!(
+            (old.by, old.command),
+            (record.envelope.by, record.envelope.command)
+        );
         assert_eq!(old.change, record.change);
     }
 }
