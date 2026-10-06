@@ -127,7 +127,7 @@ impl Fresh {
 /// (01M3MNP36TZYN3PE00AZJTJSER).
 ///
 /// ```
-/// let dir = tempfile::tempdir()?;
+/// let dir = isolated::outside_git();
 /// assert_eq!(riff::hygiene::fast_forward(dir.path()), riff::hygiene::Fresh::NoRemote);
 /// # Ok::<(), std::io::Error>(())
 /// ```

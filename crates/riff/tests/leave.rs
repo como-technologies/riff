@@ -283,7 +283,7 @@ async fn a_leave_on_the_default_branch_keeps_the_claims() {
 
 #[tokio::test]
 async fn a_leave_with_no_claim_pushes_nothing() {
-    let not_git = tempfile::tempdir().unwrap();
+    let not_git = isolated::outside_git();
     let run = tempfile::tempdir().unwrap();
     let api = start_server().await;
     let mike: SessionUri = MIKE.parse().unwrap();
@@ -334,7 +334,7 @@ async fn a_leave_holds_for_new_tools() {
 /// refuses, and the session stays (01M3XQVK05FAT3PR43W8RNEYHY).
 #[tokio::test]
 async fn a_leave_that_riff_cannot_keep_is_refused() {
-    let not_git = tempfile::tempdir().unwrap();
+    let not_git = isolated::outside_git();
     let api = start_server().await;
     let mike: SessionUri = MIKE.parse().unwrap();
     let tools = Tools::new(api.clone(), mike.clone()).in_dir(not_git.path().to_owned());

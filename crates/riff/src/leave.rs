@@ -59,7 +59,7 @@ pub const WIP_MESSAGE: &str = "WIP: the session left the riff";
 /// push fails.
 ///
 /// ```
-/// let dir = tempfile::tempdir()?;
+/// let dir = isolated::outside_git();
 /// assert!(riff::leave::wip(dir.path()).is_err());
 /// # Ok::<(), std::io::Error>(())
 /// ```
