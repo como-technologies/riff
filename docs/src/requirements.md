@@ -2283,6 +2283,9 @@
   that verifies, wait for the merge when the verify passed; the author
   of an item with an open item in its `Needs:` line waits for that
   item. A wait wakes nobody. It ends when its fact ends.
+- **01M49HAW3NXNXNX02ETDZD3YCN** For a wait, an item of a `Needs:` line
+  is open only when its issue is open and has no comment that starts
+  with `Merged in #`.
 - **01M41FZPGEK4TNPSM2051W4VMS** A session that cannot go on with no
   decision of a person calls the `blocked` tool, or runs `riff blocked
   REASON`. One command sets the block and sends `blocked: REASON` to

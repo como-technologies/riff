@@ -182,6 +182,54 @@ async fn the_facts_of_the_forge_make_waiting() {
     );
 }
 
+/// A need is met when its issue is closed, or when the issue has a
+/// comment `Merged in #`. Only an open need with no such comment makes
+/// `waiting` (01M41FZP9A50CH4A2VX344DW49, 01M49HAW3NXNXNX02ETDZD3YCN).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_need_with_a_merged_in_comment_is_met() {
+    let server = start_server().await;
+    let (api, lead, worker) = riff(&server).await;
+    api.claim(&worker, &repo(), "issue-12").await.unwrap();
+    let _watch = api.watch(&worker).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    // #12 needs #9 (closed: not in the open list), #10 (open, merged)
+    // and #11 (open, with no comment).
+    let look = |name: &str, issues: &str| {
+        let gh = script(
+            dir.path(),
+            name,
+            &format!("case \"$1\" in issue) echo '{issues}' ;; *) echo '[]' ;; esac"),
+        );
+        Arc::new(Gh::at(gh))
+    };
+    let gh = look(
+        "gh",
+        r#"[{"number":12,"body":"Needs: #9, #10, #11","comments":[]},
+            {"number":10,"body":"","comments":[{"author":{"login":"m"},"body":"Merged in #517 (7b47efa)"}]},
+            {"number":11,"body":"","comments":[{"author":{"login":"m"},"body":"Not merged in #518."}]}]"#,
+    );
+    look::once(&api, &lead, &gh, Duration::from_secs(600), None)
+        .await
+        .unwrap();
+    let w1 = info(&api, &lead, &worker).await;
+    assert_eq!(w1.state, Some(SessionState::Waiting));
+    assert_eq!(w1.waits, Some(Waits::Needs { issues: vec![11] }));
+
+    // #11 gets its comment: each need is met.
+    let gh = look(
+        "gh2",
+        r#"[{"number":12,"body":"Needs: #9, #10, #11","comments":[]},
+            {"number":10,"body":"","comments":[{"body":"Merged in #517 (7b47efa)"}]},
+            {"number":11,"body":"","comments":[{"body":"  Merged in #518 (1a2b3c4)"}]}]"#,
+    );
+    look::once(&api, &lead, &gh, Duration::from_secs(600), None)
+        .await
+        .unwrap();
+    let w1 = info(&api, &lead, &worker).await;
+    assert_eq!(w1.state, Some(SessionState::Busy));
+    assert_eq!(w1.waits, None);
+}
+
 /// A block wakes the lead, then wakes it again, then `riff top` shows
 /// "the lead gave no answer" and one desktop notification tells the
 /// person. An answer ends the line at once, and the next work ends the
