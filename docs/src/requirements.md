@@ -3070,6 +3070,10 @@
   worker change nothing. `riff workers start` says why, and the clear
   of a worker tells the lead why. A failed step never stops the command
   or the clear.
+- **01M49JW9Y8SNT3J242SF646DF4** The fast-forward of the main clone and
+  the WIP push of the `leave` tool act only on a dir that is the top of
+  a git worktree. For a dir in a repository above it, the fast-forward
+  changes nothing and says nothing, and the `leave` tool refuses.
 - **01M3MNP39172Y463WGQAW125KW** The skill tells a session: fetch before
   it makes a worktree, and put the new worktree on the fresh
   `origin` default branch before any change. Rebase on a fresh

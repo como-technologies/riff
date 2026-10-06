@@ -34,7 +34,8 @@ use std::process::{Command, Stdio};
 /// What [`fast_forward`] did to the main clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fresh {
-    /// The clone has no `origin/HEAD`, so riff did nothing.
+    /// The dir is not the top of a git worktree, or the clone has no
+    /// `origin/HEAD`, so riff did nothing.
     NoRemote,
     /// The default branch was at `origin` already.
     Current {
@@ -124,14 +125,25 @@ impl Fresh {
 /// `origin` (01M3MNP34M5PAZW9VWAYVGNSV2). It changes nothing when the
 /// main clone is not on the default branch, has local changes to
 /// tracked files, or has commits that `origin` does not have
-/// (01M3MNP36TZYN3PE00AZJTJSER).
+/// (01M3MNP36TZYN3PE00AZJTJSER). It changes nothing in a repository
+/// above `dir`: `dir` must be the top of a git worktree
+/// (01M49JW9Y8SNT3J242SF646DF4).
 ///
 /// ```
+/// use riff::hygiene::{Fresh, fast_forward};
+///
 /// let dir = isolated::outside_git();
-/// assert_eq!(riff::hygiene::fast_forward(dir.path()), riff::hygiene::Fresh::NoRemote);
+/// assert_eq!(fast_forward(dir.path()), Fresh::NoRemote);
+/// std::process::Command::new("git").arg("init").arg("-q").arg(dir.path()).status()?;
+/// let sub = dir.path().join("sub");
+/// std::fs::create_dir(&sub)?;
+/// assert_eq!(fast_forward(&sub), Fresh::NoRemote);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn fast_forward(dir: &Path) -> Fresh {
+    if !crate::identity::is_top(dir) {
+        return Fresh::NoRemote;
+    }
     let Some(main) = crate::identity::main_worktree(dir) else {
         return Fresh::NoRemote;
     };
