@@ -73,8 +73,10 @@ async fn me_gives_the_state_claims_and_status_of_the_caller_only() {
         session.blocked.expect("A is blocked").reason,
         "which design?"
     );
-    // A has no open watch stream.
-    assert_eq!(session.state, Some(SessionState::Offline));
+    // A is the lead of its user: it is live with no watch, and its
+    // block shows as a wait for its person (01M48VDGQ5KETKPM4G6TKTC2MB,
+    // 01M48VDSB4CHQS9P6XVDJ6FMKS).
+    assert_eq!(session.state, Some(SessionState::Waiting));
     assert_eq!(reply.build, riff_core::build::VERSION);
 
     // The reply holds no other session.

@@ -56,7 +56,9 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
     let (mike_lead, brett_lead) = (mike.clone().with_lead(true), brett.clone().with_lead(true));
     let who = api.who(&mike, false).await.unwrap();
     assert!(who.iter().any(|s| s.uri == brett_lead && s.live));
-    assert!(who.iter().any(|s| s.uri == mike_lead && !s.live));
+    // A lead with no watch is live while it is not gone
+    // (01M48VDGQ5KETKPM4G6TKTC2MB).
+    assert!(who.iter().any(|s| s.uri == mike_lead && s.live));
     // A call of who counts as a call: a new session is listed.
     let docs = uri("riff://mike@pangolin/como-technologies/riff?session=c3#docs");
     let who = api.who(&docs, false).await.unwrap();

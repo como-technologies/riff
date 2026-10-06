@@ -3128,10 +3128,18 @@ mod tests {
     fn who_shows_live_sessions() {
         let now = Instant::now();
         let mut state = setup(now);
-        state.watch_started(&tests(), now);
-        let live: Vec<_> = listed(&state).into_iter().filter(|s| s.live).collect();
-        assert_eq!(live.len(), 1);
-        assert_eq!(live[0].uri, lead(tests()));
+        // A lead is live with no watch (01M48VDGQ5KETKPM4G6TKTC2MB).
+        let live = |state: &State| -> Vec<SessionUri> {
+            listed(state)
+                .into_iter()
+                .filter(|s| s.live)
+                .map(|s| s.uri)
+                .collect()
+        };
+        assert_eq!(live(&state), [lead(tests()), lead(api())]);
+        // Each other session needs a watch.
+        state.watch_started(&docs(), now);
+        assert_eq!(live(&state), [lead(tests()), lead(api()), docs()]);
     }
 
     #[test]
@@ -3254,17 +3262,18 @@ mod tests {
     fn a_session_that_waits_for_its_user_stays_with_its_claims() {
         let now = Instant::now();
         let mut state = setup(now);
-        state.claim(&api(), &repo(), "issue-12", now).unwrap();
+        // docs is not a lead, so it is live only with a watch.
+        state.claim(&docs(), &repo(), "issue-12", now).unwrap();
         for m in 1..=60 {
-            state.alive(&api(), now + MINUTE * m);
+            state.alive(&docs(), now + MINUTE * m);
         }
         let hour = now + MINUTE * 60;
         let info = state.who(hour, T0 + ms(MINUTE * 60), false);
-        let mike = info.iter().find(|s| s.uri.who() == api().who()).unwrap();
+        let mike = info.iter().find(|s| s.uri.who() == docs().who()).unwrap();
         assert_eq!(mike.idle_secs, 3600);
         assert!(!mike.live);
         assert_eq!(mike.uri.claims(), ["issue-12"]);
-        assert!(!state.claim(&docs(), &repo(), "issue-12", hour).unwrap().0);
+        assert!(!state.claim(&tests(), &repo(), "issue-12", hour).unwrap().0);
     }
 
     #[test]
