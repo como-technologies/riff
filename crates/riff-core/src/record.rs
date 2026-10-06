@@ -1090,6 +1090,15 @@ mod tests {
             }),
             Change::OwnerDenied(email),
             Change::SigninsEnded(SigninsEnded { user: "ann".into() }),
+            Change::ItemHeld(ItemHeld {
+                thread: thread(),
+                item: "issue-7".into(),
+                reason: "waits for ann".into(),
+            }),
+            Change::ItemFreed(ItemFreed {
+                thread: thread(),
+                item: "issue-7".into(),
+            }),
         ]
     }
 
