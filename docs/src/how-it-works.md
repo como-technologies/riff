@@ -2650,7 +2650,8 @@ mike@pangolin:riff (9c0d)  idle  ready for work for 5m  live window failed 1m ag
 
 A new `riff step start` replaces the old step. A failed step shows
 until the next `riff step` command. A new start of `riff-server`
-forgets the step.
+keeps the step: the checkpoint saves it with the status. Its age
+goes on from its first start.
 
 ### A blocked session
 

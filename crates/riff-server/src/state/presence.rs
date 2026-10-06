@@ -1001,7 +1001,10 @@ mod tests {
         let ann_after = &after.sessions[ann().who()];
         assert_eq!(ann_after.step, Some(step("live window", 900, None)));
         let status = ann_after.status.as_ref().unwrap();
-        assert_eq!((status.status.step.as_str(), status.set_ms), ("tests", 1_000));
+        assert_eq!(
+            (status.status.step.as_str(), status.set_ms),
+            ("tests", 1_000)
+        );
         let bob_after = &after.sessions[bob().who()];
         let failed = step("deploy", 2_000, Some("the stage gave 502"));
         assert_eq!(bob_after.step, Some(failed));
