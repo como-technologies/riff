@@ -97,9 +97,10 @@ fn starts(dir: &Path) -> usize {
         .count()
 }
 
-/// `claude` exits with status 1. The lead gets a direct message with
-/// the pane, the session ID and the exit code. The wrapper does not
-/// start `claude` again.
+/// `claude` exits with status 1. The lead gets a note with the pane,
+/// the session ID and the exit code (01M493YZVZGA7TSRJH6F67VN0H). The
+/// wrapper does not start `claude` again. The exit is a death of the
+/// machine (01M493YZZEW1FTDBNA090WT2AG).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_worker_that_exits_tells_the_lead() {
     let api = start_server().await;
@@ -116,17 +117,57 @@ async fn a_worker_that_exits_tells_the_lead() {
     assert_eq!(starts(dir.path()), 1);
 
     let read = lead_reads(&api, &lead).await;
-    assert!(read.contains("direct with mike@pangolin"), "{read}");
     assert!(
-        read.contains("worker stopped: pane %5, session w1, exit code 1."),
+        read.contains("note: worker stopped: pane %5, session w1, exit code 1."),
         "{read}"
     );
+    assert!(!read.contains("workers died"), "{read}");
+    let now = riff::monitor::now_secs();
+    assert_eq!(riff::deaths::count_in(&dir.path().join("state"), now), 1);
     // The crashed worker does not come back in `riff who`.
     let who = api.who(&lead, false).await.unwrap();
     assert!(
         who.iter().all(|s| s.uri.who().session() != Some("w1")),
         "{who:?}"
     );
+}
+
+/// 3 workers of the machine died in the last hour. The fourth exit with
+/// a fault starts a loop of deaths: the lead gets one message that wakes
+/// it (01M493Z02KS82B3CVZEVFA3D6E). An exit with the code 0 is no death.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_fourth_death_in_an_hour_tells_the_lead_one_time() {
+    let api = start_server().await;
+    let lead = lead(&api).await;
+    let dir = repo();
+    let state = dir.path().join("state");
+    let now = riff::monitor::now_secs();
+    for id in ["d1", "d2", "d3"] {
+        riff::deaths::record(&state, id, now - 60).unwrap();
+    }
+    let ok = fake_claude(dir.path(), "exit 0");
+    let out = riff(&api, dir.path(), "w0")
+        .args(["workers", "run"])
+        .arg(&ok)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(riff::deaths::count_in(&state, now), 3);
+
+    let claude = fake_claude(dir.path(), "exit 1");
+    for id in ["w1", "w2"] {
+        let out = riff(&api, dir.path(), id)
+            .args(["workers", "run"])
+            .arg(&claude)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+    }
+    let read = lead_reads(&api, &lead).await;
+    let alarm = riff::text::death_loop("pangolin", 4);
+    assert_eq!(read.matches(&alarm).count(), 1, "{read}");
+    assert!(read.contains("direct with mike@pangolin"), "{read}");
+    assert!(!read.contains(&format!("note: {alarm}")), "{read}");
 }
 
 /// mike has sessions and a person command on host `b`. A worker on host

@@ -1081,9 +1081,9 @@ async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
         assert!(start.elapsed() < WAIT, "the host tells no deaths");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    // The rollout looks and starts nothing.
-    lead.looked().await;
-    lead.looked().await;
+    // No machine has room, so a look stops before `gh`. Each look in
+    // this time starts nothing.
+    tokio::time::sleep(QUIET * 2).await;
     assert!(b.workers().is_empty(), "no replacement on b");
     let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
     let more = riff::text::inbox(&inbox, &lead.me);
