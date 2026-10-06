@@ -14,7 +14,7 @@ use riff_core::wire::{
 };
 use riff_server::checkpoint;
 use riff_server::engine::{Authenticated, Engine, Failed, Open, Replied, Routed};
-use riff_server::log::{Timing, write};
+use riff_server::log::{Timing, replay_after, write};
 use riff_server::state::{CALL_KEEP, Code, Command, State};
 use riff_server::store::Memory;
 
@@ -276,7 +276,9 @@ async fn a_start_from_a_checkpoint_and_from_the_full_log_give_the_same_repeat() 
     w.run(w.call(release(&worker), "c1")).await.unwrap();
     let post = Post::new(&worker, worker.default_thread(), Vec::new(), "bye");
     w.run(w.call(post, "p1")).await.unwrap();
-    let log = w.log.clone();
+    // The log as a start reads it: from the store, through `Line::parse`.
+    let log = replay_after(&w.store, 0).await.unwrap().records;
+    assert_eq!(log, w.log);
     let (now, ms) = (Instant::now(), now_ms());
 
     // The full log.
@@ -286,9 +288,13 @@ async fn a_start_from_a_checkpoint_and_from_the_full_log_give_the_same_repeat() 
     let encoded = checkpoint::encode(&checkpoint::Checkpoint::new("1.1.0", ms, snapshot));
     let decoded = checkpoint::decode(&encoded).unwrap();
     let from_checkpoint = State::load(Some(decoded.state), [], now, ms);
-    // A checkpoint before the release, and the records after it.
+    // A checkpoint before the release, and the records after it, from
+    // the store.
     let early = State::replay(log[..before].to_vec(), now, ms).snapshot(now, ms);
-    let from_early = State::load(Some(early), log[before..].to_vec(), now, ms);
+    let last = log[before - 1].position;
+    let after = replay_after(&w.store, last).await.unwrap().records;
+    assert_eq!(after, log[before..]);
+    let from_early = State::load(Some(early), after, now, ms);
 
     let must_clear = ReleaseReply { must_clear: true };
     let expected = Replied {

@@ -174,10 +174,11 @@ pub fn encode(records: &[Record]) -> Vec<u8> {
 ///     position: 7,
 ///     written_at_ms: 0,
 ///     by: None,
-///     command: None,
-///     call: None,
+///     command: Some("pause".into()),
+///     call: Some("c1".into()),
 ///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Paused }),
 /// };
+/// // The line keeps the call ID.
 /// let (header, lines) = decode(&encode(&[record.clone()])).unwrap();
 /// assert_eq!((header.format, header.first), (1, 7));
 /// assert_eq!(lines, [Line::Record(Box::new(record))]);

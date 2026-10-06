@@ -973,10 +973,15 @@ pub enum Line {
 impl Line {
     /// Reads one line of the log. A record of a kind that this build does
     /// not know is [`Line::Unknown`]. A line that does not read is an
-    /// error.
+    /// error. The record keeps its call ID, so a start from the log keeps
+    /// each call.
     ///
     /// ```
     /// use riff_core::record::Line;
+    ///
+    /// let called = r#"{"position":3,"written_at_ms":1,"call":"c1","change":{"member_invited":{"email":"a@acme.io"}}}"#;
+    /// let Line::Record(record) = Line::parse(called).unwrap() else { panic!("a known kind") };
+    /// assert_eq!(record.call.as_deref(), Some("c1"));
     ///
     /// let later = r#"{"position":9,"written_at_ms":1,"change":{"reacted":{"emoji":"+1"}}}"#;
     /// assert_eq!(
@@ -995,6 +1000,8 @@ impl Line {
             by: Option<By>,
             #[serde(default)]
             command: Option<String>,
+            #[serde(default)]
+            call: Option<String>,
             change: serde_json::Map<String, serde_json::Value>,
         }
         let raw: Raw = serde_json::from_str(line).map_err(|e| e.to_string())?;
@@ -1017,7 +1024,7 @@ impl Line {
             written_at_ms: raw.written_at_ms,
             by: raw.by,
             command: raw.command,
-            call: None,
+            call: raw.call,
             change,
         })))
     }
