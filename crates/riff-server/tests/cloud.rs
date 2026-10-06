@@ -264,6 +264,26 @@ fn a_release_deploy_waits_in_production_and_the_stage_in_stage() {
     assert!(!ci_job("gate").contains("environment:"));
 }
 
+/// 01M49M8W30M2084QN4HX1FJFKS: the job that signs in as the deploy
+/// account of an instance runs in the GitHub environment of its
+/// settings file, so `riff cloud create` binds the account to it.
+#[test]
+fn each_deploy_job_runs_in_the_github_environment_of_its_settings() {
+    for (job, file) in [("deploy", "shared.env"), ("stage", "stage.env")] {
+        let text = fs::read_to_string(deploy().join("cloud").join(file)).unwrap();
+        let environment = text
+            .lines()
+            .find_map(|l| l.strip_prefix("CLOUD_GITHUB_ENVIRONMENT="))
+            .unwrap_or_else(|| panic!("{file} has no CLOUD_GITHUB_ENVIRONMENT"));
+        assert!(!environment.is_empty(), "{file}");
+        let line = format!("\n    environment: {environment}\n");
+        assert!(
+            ci_job(job).contains(&line),
+            "the job {job} is not in {environment}"
+        );
+    }
+}
+
 /// The context of a push of `git_ref` for the stage job, with the result
 /// of the gate.
 fn stage_push(git_ref: &'static str, gate: &'static str) -> Ctx {

@@ -9,7 +9,8 @@
 # account has no permission: the reply says "may not exist". A list call of the
 # alert prints a name only then. Stdin of `secrets versions add` goes
 # to $FAKE_GCLOUD_LOG.stdin. Each file of the flag --policy-from-file
-# is copied to $FAKE_GCLOUD_LOG.policy.
+# is copied to $FAKE_GCLOUD_LOG.policy. A get-iam-policy call prints
+# the file $FAKE_GCLOUD_IAM, or nothing.
 echo "$*" >> "${FAKE_GCLOUD_LOG:-/dev/null}"
 if [ -n "${FAKE_GCLOUD_ARGS:-}" ]; then
     printf '%s\n' "$@" >> "$FAKE_GCLOUD_ARGS"
@@ -51,6 +52,9 @@ case "$*" in
     "billing projects describe"*) echo True; exit 0 ;;
     "projects describe"*|"secrets describe"*) exit 0 ;;
     "secrets versions list"*) echo 1; exit 0 ;;
+    *" get-iam-policy "*)
+        if [ -f "${FAKE_GCLOUD_IAM:-}" ]; then cat "$FAKE_GCLOUD_IAM"; fi
+        exit 0 ;;
     "secrets versions add"*) cat > "$FAKE_GCLOUD_LOG.stdin"; exit 0 ;;
     *" monitoring channels list "*|*" monitoring policies list "*)
         if found "$@"; then echo projects/como-riff/found/1; fi
