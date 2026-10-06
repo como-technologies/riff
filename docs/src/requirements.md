@@ -2167,11 +2167,41 @@
   that riff derives: a claim, a release, a pause, an idle worker, its
   work, or a wait for a verify, a merge or a need.
 - **01M41FZQVEF8S2W9RCM4V87C3D** The first state that matches wins:
-  `offline` (no open watch stream), `paused` (the riff or the
-  repository of the session is paused), `blocked` (a block that
-  holds), `must_clear` (01M3X9XC99KY4RQY36A7CYWY11), `waiting` (each
-  claim of the session waits), `busy` (a claim), `idle` (each other
-  session).
+  `offline` (no open watch stream, and not a lead that is not gone),
+  `paused` (the riff or the repository of the session is paused),
+  `blocked` (a block that holds, not a lead), `must_clear`
+  (01M3X9XC99KY4RQY36A7CYWY11), `waiting` (each claim of the session
+  waits, or a lead with a block), `busy` (a claim, or a lead in a
+  turn), `idle` (each other session).
+- **01M48VDGQ5KETKPM4G6TKTC2MB** A lead is live while it is not gone,
+  also with no open watch stream. So a lead that calls only the
+  command line shows in `riff who` and `riff top` with its state and
+  its status, not as `offline`. A `riff status` call and a `riff step`
+  call are signs of life.
+- **01M48VDGTD40P8RBZMS0XB5M9N** A session shows a long step with
+  `riff step start NAME`, `riff step done` and `riff step fail
+  REASON`. A new start replaces the old step. `riff who` and `riff
+  top` show the step after the detail of each state but `offline`:
+  `NAME for 12m`, or in red `NAME failed 3m ago: REASON`. A failed
+  step shows until the next change. Done removes it. The step is a
+  signal in the memory of `riff-server`.
+- **01M48VDS663X064YS5ZGCCZSTB** `riff step fail` sends `step failed:
+  NAME: REASON` to the lead of the user, which wakes it. A lead sends
+  no message to itself.
+- **01M48VDS8RKJS9HG3KSEYGBFGV** The state of a lead comes from its
+  facts, not from its claims: `busy` while the hooks see a turn that
+  runs, with its work; `waiting` while its block holds; `idle` when
+  its turn ended and nothing waits.
+- **01M48VDSB4CHQS9P6XVDJ6FMKS** A lead that waits for its person
+  calls `blocked`. It sends no message, and shows `waiting for USER:
+  REASON` with its age. A message that wakes the lead is no answer to
+  its block. The lead is never red and never in the blocked lines of
+  `riff top`.
+- **01M48VDWPDYRPEAXHR1MYDN1M7** The plugin has a `UserPromptSubmit`
+  hook, `riff hook prompt`. It writes the time of the last prompt of
+  the person to a file on the machine, and makes no call. `riff mcp`
+  puts its age into each keep-alive. A prompt at or after a block ends
+  the block, for each session.
 - **01M41FZRF5HEZCDS515CP7DYCV** The work, the block and the facts of
   the items are signals in the memory of `riff-server`, not records of
   the log. A start of `riff-server` loses them, and the clients send

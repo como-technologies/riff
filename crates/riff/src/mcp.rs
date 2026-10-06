@@ -477,7 +477,8 @@ wakes you, answer with this tool. Do not post a reply. When you cannot go on, us
         description = "Say that you cannot go on with no decision of a person. One call does both: \
 riff shows you as blocked, and the message `blocked: REASON` wakes the lead of your user. The block \
 ends at your next work after an answer. Do not use it to wait for a verify, a merge or a need: riff \
-shows that wait by itself."
+shows that wait by itself. When you are the lead, it sends no message: riff shows you as waiting for \
+your user, and the next prompt of your user ends it."
     )]
     async fn blocked(&self, Parameters(a): Parameters<BlockedArgs>) -> ToolResult {
         let told = self

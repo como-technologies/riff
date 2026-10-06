@@ -2449,8 +2449,9 @@ flowchart LR
     S --> W["the state in riff who, riff top, riff workers"]
 ```
 
-- The hooks see each tool call and the end of each turn. A hook writes
-  the newest fact to a file on the machine, and makes no call. The
+- The hooks see each tool call, each prompt of the person and the end
+  of each turn. A hook writes the newest fact to a file on the
+  machine, and makes no call. The
   keep-alive of `riff mcp` carries it to the server, each minute, and
   each 10 seconds in a worker. A riff tool and `riff watch` are no
   work. The text of a Bash call is its description, never its command.
@@ -2497,12 +2498,12 @@ matches wins:
 
 | State | Color | When | Detail |
 |---|---|---|---|
-| `offline` | grey | the session has no open watch | `seen 2h ago` |
+| `offline` | grey | the session has no open watch. A lead is not offline while it calls | `seen 2h ago` |
 | `paused` | yellow | the riff or the repository of the session is paused | the claims, and `stopped at:` the step |
-| `blocked` | red | the session said `blocked`, and the block holds | the reason with its age, `the lead gave no answer` when the lead gave none, then the claims |
+| `blocked` | red | the session said `blocked`, and the block holds. Not the lead | the reason with its age, `the lead gave no answer` when the lead gave none, then the claims |
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
-| `waiting` | cyan | each claim waits for a verify, a merge, or an item of its `Needs:` line | the claims, then `waits for a verify of PR #418`, `waits for the merge of PR #418` or `waits for #12` |
-| `busy` | green | the session holds a claim | `working on #7`, or `reviewing #7` for a verify claim, then the work, then the step |
+| `waiting` | cyan | each claim waits for a verify, a merge, or an item of its `Needs:` line. Or the lead waits for its person | the claims, then `waits for a verify of PR #418`, `waits for the merge of PR #418` or `waits for #12`. The lead: `waiting for mike: REASON` |
+| `busy` | green | the session holds a claim. Or the lead is in a turn | `working on #7`, or `reviewing #7` for a verify claim, then the work, then the step |
 | `idle` | dim | each other session | `ready for work for 6m`, or `monitoring work for 6m` for the lead, then a current step |
 
 The work is the newest fact of the hooks: `runs Bash: run just ci for
@@ -2513,9 +2514,11 @@ session that verifies works until its result, then waits for the
 merge. A wait wakes nobody: the verify request is the wake. A wait
 ends when its fact ends.
 
-The lead takes no claims: it conducts the other sessions. So an idle
-lead shows `monitoring work`. The time of `idle` counts from the last
-release of the session. For `must clear`, see
+The lead takes no claims: it conducts the other sessions. So its
+state comes from its facts. See
+[The state of the lead](#the-state-of-the-lead). An idle lead shows
+`monitoring work`. The time of `idle` counts from the last release of
+the session. For `must clear`, see
 [A worker that must clear its context](#a-worker-that-must-clear-its-context).
 
 A step goes stale when the state of the session changes after the step
@@ -2551,6 +2554,81 @@ set a status from a terminal:
 riff status write the tests
 ```
 
+### The state of the lead
+
+The lead has no claims. riff makes its state from what it does:
+
+| State | When | Detail |
+|---|---|---|
+| `busy` | the hooks see a turn that runs | the work, for example `runs Bash: deploy the stage for 2m` |
+| `waiting` | the lead said `blocked` and waits for its person | `waiting for mike: run riff owner --take (3m ago)` |
+| `idle` | the turn ended, and nothing waits | `monitoring work for 6m` |
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> busy: a prompt or a wake starts a turn
+    busy --> idle: the turn ends
+    busy --> waiting: blocked REASON
+    waiting --> busy: the next prompt of the person
+```
+
+A lead that calls only the command line, with no `riff watch` open,
+still shows in `riff who` and `riff top` while it calls. Each `riff`
+call, `riff status` too, is a sign of life. After 3 minutes with no
+call, the lead is gone.
+
+### Say that the lead waits for you
+
+When the lead needs you, for example to run a command as the owner, it
+says so. riff shows it as `waiting`, with your name and the reason:
+
+```sh
+riff blocked run riff owner --take
+```
+
+```text
+You wait for your person: run riff owner --take. Ask your user. The next prompt ends the wait.
+```
+
+The lead sends no message: you read its terminal. A message of
+another session does not end the wait. Your next prompt in the lead
+ends it. The `blocked` tool does the same.
+
+### Show a long step
+
+A step that runs longer than one tool call, for example a live window
+of two hours, gets a row in `riff who` and `riff top`. Start it:
+
+```sh
+riff step start live window
+```
+
+```text
+mike@pangolin:riff (4e54)  busy  lead  runs Bash: run the live window for 2m  live window for 40m
+```
+
+When it ends well:
+
+```sh
+riff step done
+```
+
+When it fails, give the reason. `riff who` and `riff top` show it in
+red, and the message `step failed: NAME: REASON` wakes your lead:
+
+```sh
+riff step fail the stage gave 502
+```
+
+```text
+mike@pangolin:riff (9c0d)  idle  ready for work for 5m  live window failed 1m ago: the stage gave 502
+```
+
+A new `riff step start` replaces the old step. A failed step shows
+until the next `riff step` command. A new start of `riff-server`
+forgets the step.
+
 ### A blocked session
 
 A session is blocked when it cannot go on with no decision of a
@@ -2567,8 +2645,11 @@ wait as `waiting` by itself.
 
 A message that wakes the blocked session is its answer. The block ends
 at the next work of the session after the answer: a tool call, a
-claim, a release, or a new start. A note or a status request is no
-answer. The answer ends the line `the lead gave no answer` at once.
+claim, a release, or a new start. A prompt of your own in the session
+also ends it. The lead is not blocked: it waits for you. See
+[Say that the lead waits for you](#say-that-the-lead-waits-for-you).
+A note or a status request is no answer. The answer ends the line
+`the lead gave no answer` at once.
 
 When the lead gives no answer, riff tells the person:
 
