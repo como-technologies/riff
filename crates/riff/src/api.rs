@@ -1109,6 +1109,15 @@ impl Api {
                     self.busy(wait, &mut waited).await;
                     continue;
                 }
+                // No reply in the limit of the try (01M48RW9E8NS2FPHFHG2S10R7A).
+                Err(error) if error.is_timeout() && !error.is_connect() => {
+                    let wait = self.try_wait.unwrap_or_default();
+                    return Err(NoReply {
+                        base: self.base.clone(),
+                        wait,
+                    }
+                    .into());
+                }
                 Err(error) => {
                     return Err(error)
                         .with_context(|| format!("cannot reach riff-server at {}", self.base));

@@ -138,9 +138,9 @@ async fn a_call_to_a_server_that_never_replies_fails_after_the_limit_of_the_try(
         "{:?}",
         start.elapsed()
     );
-    assert!(
-        format!("{error:#}").contains("cannot reach riff-server"),
-        "{error:#}"
+    assert_eq!(
+        error.to_string(),
+        riff::text::no_reply(&url, Duration::from_millis(300))
     );
     assert_eq!(accepts.load(Ordering::SeqCst), 1);
 }

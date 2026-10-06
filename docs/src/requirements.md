@@ -3064,7 +3064,8 @@
   each 10 seconds, also with no open call, and drops a connection with
   no answer in 5 seconds. On Linux, a TCP connection with data that
   gets no answer for 20 seconds closes. So a call never waits for ever
-  on a dead connection.
+  on a dead connection. A try with no reply in its limit fails with the
+  error that the server gave no reply in that time.
 - **01M48RW9HNKPNZ75H9R01BG6V5** A stream of the client has the same
   limit for a connect, and no total limit. A stream that gives no byte
   for 45 seconds (`STREAM_IDLE`, three keep-alive comments of the

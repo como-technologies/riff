@@ -3146,7 +3146,7 @@ has time limits:
 | Limit | Value | What riff does |
 |---|---|---|
 | A connect | 5 s | The call or the stream fails, and riff tries again. |
-| One try of a call | 20 s | The call fails with `cannot reach riff-server`. |
+| One try of a call | 20 s | The call fails with `riff-server at URL gave no reply in 20 seconds`. |
 | A stream with no byte | 45 s | The stream ends, and riff connects again. |
 
 The server sends a keep-alive line on each stream each 15 seconds. So
