@@ -198,3 +198,33 @@ async fn a_status_stays_after_a_restart() {
     assert_eq!(brett["status"]["step"], "write the tests", "{brett}");
     assert_eq!(brett["status"]["stale"], true, "{brett}");
 }
+
+/// A long step stays after a restart, with its age from its first start,
+/// and a failed step with its reason (01M49NP8F3A9CTJWZ74MCNZG0M).
+#[tokio::test]
+async fn a_step_stays_after_a_restart() {
+    let store: Arc<dyn Store> = Arc::new(Memory::default());
+    let (old, base) = common::start_on(store.clone()).await;
+    fill(&base).await;
+    let start = json!({ "start": { "name": "live window" } });
+    call(&base, "step", json!({ "me": BRETT, "change": start })).await;
+    let start = json!({ "start": { "name": "deploy" } });
+    call(&base, "step", json!({ "me": MIKE, "change": start })).await;
+    let fail = json!({ "fail": { "reason": "the stage gave 502" } });
+    call(&base, "step", json!({ "me": MIKE, "change": fail })).await;
+    // A whole second, so that a step that started again shows 0.
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    let before = session_of(&base, "brett").await;
+    assert_eq!(before["step"]["name"], "live window", "{before}");
+    old.shutdown().await.unwrap();
+
+    let (_new, base) = common::start_on(store).await;
+    let brett = session_of(&base, "brett").await;
+    assert_eq!(brett["step"]["name"], "live window", "{brett}");
+    assert!(brett["step"]["secs"].as_u64().unwrap() >= 1, "{brett}");
+    assert!(brett["step"].get("failed").is_none(), "{brett}");
+    let mike = session_of(&base, "session=a").await;
+    assert_eq!(mike["step"]["name"], "deploy", "{mike}");
+    assert_eq!(mike["step"]["failed"], "the stage gave 502", "{mike}");
+    assert!(mike["step"]["secs"].as_u64().unwrap() >= 1, "{mike}");
+}

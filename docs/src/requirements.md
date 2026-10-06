@@ -1250,6 +1250,11 @@
 - **01M4263ZZVY8QJ2METTEVR1W26** The checkpoint holds the status of
   each session, with the time of its set. A start of `riff-server`
   gives each session its status again.
+- **01M49NP8F3A9CTJWZ74MCNZG0M** The checkpoint holds the long step of
+  each session in the same entry as its status: the name, the time of
+  its start or its failure, and the reason of a failed step. A start
+  of `riff-server` gives each session its step again, with its age
+  from its first start. A checkpoint with no step loads.
 - **01M4264028A3KVDK10PPERHM0C** On a shutdown (R129), `riff-server`
   writes a last checkpoint after it writes the log, also when no
   record came after the last checkpoint.
@@ -2254,7 +2259,7 @@
   top` show the step after the detail of each state but `offline`:
   `NAME for 12m`, or in red `NAME failed 3m ago: REASON`. A failed
   step shows until the next change. Done removes it. The step is a
-  signal in the memory of `riff-server`.
+  signal, not a record of the log.
 - **01M48VDS663X064YS5ZGCCZSTB** `riff step fail` sends `step failed:
   NAME: REASON` to the lead of the user, which wakes it. A lead sends
   no message to itself.

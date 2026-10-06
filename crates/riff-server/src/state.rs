@@ -653,7 +653,8 @@ impl State {
     /// ([`seen_own_call`]). A record that only names the session, for
     /// example a record of the import of go-live, counts only when
     /// `seen` has no call of it (01M4263ZXH4K23CSY6C5GJPVQH). A status
-    /// that the presence has stays (01M4263ZZVY8QJ2METTEVR1W26).
+    /// and a long step that the presence has stay
+    /// (01M4263ZZVY8QJ2METTEVR1W26, 01M49NP8F3A9CTJWZ74MCNZG0M).
     fn sessions_of_the_log(&mut self, seen: &BTreeMap<Who, u64>, loaded: Instant) {
         for (who, known) in &self.written.sessions().known {
             let at_ms = seen.get(who).copied().unwrap_or(known.at_ms);
@@ -662,6 +663,7 @@ impl State {
                 seen_before_load: Some(at_ms),
                 alive: None,
                 status: old.and_then(|s| s.status.clone()),
+                step: old.and_then(|s| s.step.clone()),
                 ..Session::new(known.uri.place().clone(), loaded)
             };
             self.presence.sessions.insert(who.clone(), session);
@@ -726,6 +728,31 @@ impl State {
 
     /// The written state, the read cursors and the last call of each
     /// session, for a checkpoint. The caller encodes it outside the lock.
+    /// It keeps the status and the long step of each session
+    /// (01M49NP8F3A9CTJWZ74MCNZG0M).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::StepChange;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// let start = StepChange::Start { name: "live window".into() };
+    /// state.set_step(&mike, start, now, 1_000).unwrap();
+    /// let snapshot = state.snapshot(now, 1_000);
+    ///
+    /// // A new start a minute later: the step is back, with its age from
+    /// // its first start.
+    /// let mut loaded = State::load(Some(snapshot), [], now, 61_000);
+    /// loaded.catch_up(state.take_queue());
+    /// let step = loaded.who(now, 61_000, true)[0].step.clone().unwrap();
+    /// assert_eq!((step.name.as_str(), step.secs), ("live window", 60));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn snapshot(&self, now: Instant, now_ms: u64) -> Snapshot {
         let sessions = &self.presence.sessions;
         let seen = |who: &Who| sessions.get(who).map_or(0, |s| s.seen_ms(now, now_ms));

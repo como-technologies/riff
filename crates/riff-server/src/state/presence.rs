@@ -478,8 +478,8 @@ impl Presence {
             .unwrap_or(0)
     }
 
-    /// The read cursors and the status of each session, for a
-    /// checkpoint.
+    /// The read cursors, and the status and the long step of each
+    /// session, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
         Saved {
             cursors: self
@@ -495,11 +495,15 @@ impl Presence {
                 .sessions
                 .iter()
                 .filter_map(|(who, session)| {
-                    let set = session.status.as_ref()?;
-                    Some(SavedStatus {
-                        session: who.clone(),
+                    let status = session.status.as_ref().map(|set| SavedStatus {
                         status: set.status.clone(),
                         set_ms: set.set_ms,
+                    });
+                    let step = session.step.clone();
+                    (status.is_some() || step.is_some()).then(|| SavedSession {
+                        session: who.clone(),
+                        status,
+                        step,
                     })
                 })
                 .collect(),
@@ -507,19 +511,40 @@ impl Presence {
     }
 }
 
-/// The part of the checkpoint that the presence gives: the read cursors
-/// and the status of each session (01M4263ZZVY8QJ2METTEVR1W26).
+/// The part of the checkpoint that the presence gives: the read cursors,
+/// and the status and the long step of each session
+/// (01M4263ZZVY8QJ2METTEVR1W26, 01M49NP8F3A9CTJWZ74MCNZG0M).
+///
+/// One entry of `statuses` keeps both signals of a session. A checkpoint
+/// of 1.1.0 has no `step`, and loads:
+///
+/// ```json
+/// {"statuses": [{"session": {"user": "ann", "session": "a1"},
+///                "status": {"step": "tests"}, "set_ms": 1000,
+///                "step": {"name": "live window", "set_ms": 900}}]}
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Saved {
     #[serde(default)]
     cursors: Vec<SavedCursor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    statuses: Vec<SavedStatus>,
+    statuses: Vec<SavedSession>,
 }
 
+/// What the checkpoint keeps of the signals of one session: its status,
+/// its long step, or both.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SavedSession {
+    session: Who,
+    #[serde(flatten)]
+    status: Option<SavedStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    step: Option<LongStep>,
+}
+
+/// A status with the time of its set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SavedStatus {
-    session: Who,
     status: Status,
     /// The time of the set, in milliseconds since the Unix epoch.
     set_ms: u64,
@@ -533,10 +558,12 @@ struct SavedCursor {
 }
 
 impl Saved {
-    /// Puts the read cursors and the statuses of a checkpoint in
-    /// `presence`, at the load `now`. A status goes only to a session
-    /// that the presence knows. It keeps its age, at least 1 ms: it is
-    /// from before the load, so it is stale.
+    /// Puts the read cursors, the statuses and the long steps of a
+    /// checkpoint in `presence`, at the load `now`. A status and a step
+    /// go only to a session that the presence knows. A status keeps its
+    /// age, at least 1 ms: it is from before the load, so it is stale. A
+    /// step keeps the time of its start or its failure, so its age goes
+    /// on from the first start.
     pub(super) fn restore(self, presence: &mut Presence, now: Instant, now_ms: u64) {
         presence.cursors = self
             .cursors
@@ -544,14 +571,18 @@ impl Saved {
             .map(|c| ((c.session, c.thread), c.seq))
             .collect();
         for saved in self.statuses {
-            if let Some(session) = presence.sessions.get_mut(&saved.session) {
-                let age = Duration::from_millis(now_ms.saturating_sub(saved.set_ms).max(1));
+            let Some(session) = presence.sessions.get_mut(&saved.session) else {
+                continue;
+            };
+            if let Some(SavedStatus { status, set_ms }) = saved.status {
+                let age = Duration::from_millis(now_ms.saturating_sub(set_ms).max(1));
                 session.status = Some(SetStatus {
-                    status: saved.status,
-                    set_ms: saved.set_ms,
+                    status,
+                    set_ms,
                     set: now.checked_sub(age).unwrap_or(now),
                 });
             }
+            session.step = saved.step;
         }
     }
 }
@@ -606,14 +637,16 @@ pub(super) struct SetStatus {
     pub(super) set: Instant,
 }
 
-/// A long step of a session (01M48VDGTD40P8RBZMS0XB5M9N).
-#[derive(Clone)]
+/// A long step of a session (01M48VDGTD40P8RBZMS0XB5M9N). The checkpoint
+/// keeps it as it is (01M49NP8F3A9CTJWZ74MCNZG0M).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct LongStep {
     pub(super) name: String,
     /// The start of the step, or its failure, in milliseconds since the
     /// Unix epoch.
     pub(super) set_ms: u64,
     /// The reason, when the step failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) failed: Option<String>,
 }
 
@@ -930,5 +963,65 @@ mod tests {
         assert_eq!(claims_changed(&presence, &ann()), since);
         assert_eq!(presence.riff_changed, None);
         assert_eq!(presence.cursor(ann().who(), &repo()), 3);
+    }
+
+    fn step(name: &str, set_ms: u64, failed: Option<&str>) -> LongStep {
+        LongStep {
+            name: name.into(),
+            set_ms,
+            failed: failed.map(Into::into),
+        }
+    }
+
+    /// A load of a checkpoint gives each session its status and its long
+    /// step again, a failed step with its reason
+    /// (01M49NP8F3A9CTJWZ74MCNZG0M).
+    #[test]
+    fn a_checkpoint_keeps_the_status_and_the_step_of_each_session() {
+        let since = Instant::now();
+        let mut before = presence(since);
+        let ann_session = before.sessions.get_mut(ann().who()).unwrap();
+        ann_session.status = Some(SetStatus {
+            status: Status {
+                step: "tests".into(),
+            },
+            set_ms: 1_000,
+            set: since,
+        });
+        ann_session.step = Some(step("live window", 900, None));
+        let bob_session = before.sessions.get_mut(bob().who()).unwrap();
+        bob_session.step = Some(step("deploy", 2_000, Some("the stage gave 502")));
+
+        let json = serde_json::to_string(&before.saved()).unwrap();
+        let saved: Saved = serde_json::from_str(&json).unwrap();
+        assert_eq!(saved, before.saved());
+        let mut after = presence(since);
+        saved.restore(&mut after, since + Duration::from_secs(60), 61_000);
+
+        let ann_after = &after.sessions[ann().who()];
+        assert_eq!(ann_after.step, Some(step("live window", 900, None)));
+        let status = ann_after.status.as_ref().unwrap();
+        assert_eq!(
+            (status.status.step.as_str(), status.set_ms),
+            ("tests", 1_000)
+        );
+        let bob_after = &after.sessions[bob().who()];
+        let failed = step("deploy", 2_000, Some("the stage gave 502"));
+        assert_eq!(bob_after.step, Some(failed));
+        assert!(bob_after.status.is_none());
+    }
+
+    /// A checkpoint of 1.1.0 has statuses with no step, and loads.
+    #[test]
+    fn a_checkpoint_of_1_1_0_with_no_step_loads() {
+        let json = r#"{"cursors":[],"statuses":[{"session":{"user":"ann","session":"a1"},"status":{"step":"tests"},"set_ms":1000}]}"#;
+        let saved: Saved = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_string(&saved).unwrap(), json);
+        let since = Instant::now();
+        let mut presence = presence(since);
+        saved.restore(&mut presence, since, 2_000);
+        let ann_after = &presence.sessions[ann().who()];
+        assert_eq!(ann_after.status.as_ref().unwrap().status.step, "tests");
+        assert!(ann_after.step.is_none());
     }
 }
