@@ -206,9 +206,20 @@ async fn a_leave_reports_the_tokens_of_each_claim() {
     let root = tempfile::tempdir().unwrap();
     let run = tempfile::tempdir().unwrap();
     let marks = tempfile::tempdir().unwrap();
-    // A fake gh: it has no comment, and keeps each body that it gets.
+    // A fake gh: it has no comment, and keeps each body that it gets in
+    // the file after `--input`.
     let gh = root.path().join("gh");
-    std::fs::write(&gh, "#!/bin/sh\ncat >> \"$(dirname \"$0\")/sent\"\n").unwrap();
+    std::fs::write(
+        &gh,
+        r#"#!/bin/sh
+prev=
+for a; do
+    [ "$prev" = --input ] && cat "$a" >> "$(dirname "$0")/sent"
+    prev=$a
+done
+"#,
+    )
+    .unwrap();
     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
     let meter = riff::usage::Meter {
         dir: marks.path().to_owned(),

@@ -946,9 +946,8 @@ impl<'a> Forge<'a> {
     }
 
     fn send(&self, method: &str, path: &str, body: &str) -> Result<()> {
-        let input = serde_json::json!({ "body": body }).to_string();
         self.gh
-            .run(&["api", "-X", method, path, "--input", "-"], Some(&input))?;
+            .send(method, path, &serde_json::json!({ "body": body }))?;
         Ok(())
     }
 
@@ -992,8 +991,15 @@ impl<'a> Forge<'a> {
     /// Writes the comment with the total of `issue`
     /// (01M3Y1YP514MPX8DTKMTWDHE8Q): it replaces the total that the
     /// issue has, else it adds one. It returns the total. An issue with
-    /// no report gets no comment.
+    /// no report gets no comment. When the write fails, it reads the
+    /// comments again and tries one more time
+    /// (01M49HF07WQC3M5HGAQNHR8WA0): a first try that GitHub kept is
+    /// then edited, not added again.
     pub fn total(&self, issue: u64) -> Result<Tokens> {
+        self.write_total(issue).or_else(|_| self.write_total(issue))
+    }
+
+    fn write_total(&self, issue: u64) -> Result<Tokens> {
         let comments = self.comments(issue)?;
         let counted = counted(issue, &comments);
         if counted.is_empty() {
@@ -1303,10 +1309,21 @@ impl Meter {
                 ));
             }
         };
-        Ok(match total.total() {
-            0 => format!("#{issue} has no comment with tokens."),
-            _ => format!("The total of #{issue} is on the issue: {}.", total.text()),
-        })
+        Ok(total_written(issue, &total))
+    }
+}
+
+/// The line after riff wrote the total comment of `issue`.
+///
+/// ```
+/// use riff::usage::{Tokens, total_written};
+///
+/// assert_eq!(total_written(7, &Tokens::default()), "#7 has no comment with tokens.");
+/// ```
+pub fn total_written(issue: u64, total: &Tokens) -> String {
+    match total.total() {
+        0 => format!("#{issue} has no comment with tokens."),
+        _ => format!("The total of #{issue} is on the issue: {}.", total.text()),
     }
 }
 

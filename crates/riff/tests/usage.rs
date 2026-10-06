@@ -29,10 +29,22 @@ mod book;
 /// the issue N on one line of `comments-N`, and answers
 /// `gh issue list` from the file `wave`. The file `login` names who
 /// writes: the default is `mike`. With the file `down`, each call fails.
+/// A write reads its body from the file after `--input`. With the file
+/// `empty-reply`, the next POST of a total fails as a reply with no body
+/// does, and keeps nothing. With the file `bad-gateway`, each POST of a
+/// total fails with the status 502.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "gh $*" >> "$dir/gh.log"
 if [ -f "$dir/down" ]; then echo "you are not logged in" >&2; exit 1; fi
+if [ "$1 $2 $3" = "api -X POST" ] && grep -q 'riff:usage-total' "$7" 2>/dev/null; then
+    if [ -f "$dir/empty-reply" ]; then
+        rm "$dir/empty-reply"; echo "unexpected end of JSON input" >&2; exit 1
+    fi
+    if [ -f "$dir/bad-gateway" ]; then
+        printf 'HTTP/2.0 502 Bad Gateway\r\n\r\n'; echo "unexpected end of JSON input" >&2; exit 1
+    fi
+fi
 login=$(cat "$dir/login" 2>/dev/null || echo mike)
 issues=repos/como-technologies/riff/issues/
 case "$1 $2" in
@@ -41,7 +53,8 @@ case "$1 $2" in
     n=${3#"$issues"}; n=${n%/comments}
     cat "$dir/comments-$n" 2>/dev/null ;;
 'api -X')
-    body=$(cat); rest=${body#\{}
+    [ "$5 $6" = "--include --input" ] || { echo "no body file" >&2; exit 1; }
+    body=$(cat "$7"); rest=${body#\{}
     case "$3" in
     POST)
         n=${4#"$issues"}; n=${n%/comments}
@@ -605,10 +618,9 @@ async fn a_new_start_reports_the_claim_that_it_frees() {
 
 const MERGED: &str = r#"{"state":"MERGED","mergeCommit":{"oid":"9f8e7d6c"}}"#;
 
-#[tokio::test]
-async fn pr_wait_writes_the_total_and_the_release_replaces_the_comment_of_its_claim() {
-    let machine = Machine::new().await;
-    // This fake gh also knows pull request 40 of the issue 12.
+/// Makes the fake `gh` of `machine` also know pull request 40 of the
+/// issue 12, merged.
+fn knows_pr_40(machine: &Machine) {
     let gh = machine.bin.path().join("gh");
     let with_pr = FAKE_GH.replace(
         "case \"$1 $2\" in\n",
@@ -621,6 +633,85 @@ async fn pr_wait_writes_the_total_and_the_release_replaces_the_comment_of_its_cl
         ),
     );
     std::fs::write(&gh, with_pr).unwrap();
+}
+
+/// A POST of the total that fails one time with an empty reply: the
+/// second try writes it (01M49HF07WQC3M5HGAQNHR8WA0). A POST that fails
+/// each time: the line names the HTTP status (01M49HF057R08DGW6X5A8EHR42).
+/// Then `riff usage 14 --total` writes the missing total
+/// (01M49HF0ADEQ83XTJCQT0PK3RS).
+#[tokio::test]
+async fn a_failed_post_of_the_total_is_tried_again_and_names_its_http_status() {
+    let machine = Machine::new().await;
+    knows_pr_40(&machine);
+    machine.start("author").await;
+    machine.resume("author").await;
+    machine
+        .works("author", "issue-12", &[(OPUS, [1, 2, 3, 4])])
+        .await;
+    let total = |comments: &str| {
+        comments
+            .lines()
+            .filter(|c| c.contains("riff:usage-total"))
+            .count()
+    };
+
+    std::fs::write(machine.bin.path().join("empty-reply"), "").unwrap();
+    let out = machine.run("author", &["pr", "wait", "40"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("The total of #12 is on the issue: 10 tokens"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!machine.bin.path().join("empty-reply").exists());
+    let comments = machine.comments(12);
+    assert_eq!(total(&comments), 1, "{comments}");
+    assert!(
+        machine.log().contains("--include --input "),
+        "{}",
+        machine.log()
+    );
+
+    // An issue with no total, and a forge that gives 502 to each POST.
+    std::fs::write(machine.bin.path().join("bad-gateway"), "").unwrap();
+    machine
+        .works("author", "issue-14", &[(OPUS, [5, 0, 0, 0])])
+        .await;
+    let out = machine.run("author", &["usage", "14", "--total"]).await;
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains(
+            "gh api -X POST repos/como-technologies/riff/issues/14/comments: HTTP 502: \
+             unexpected end of JSON input"
+        ),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(total(&machine.comments(14)), 0);
+
+    // The forge is good again: the command writes the missing total.
+    std::fs::remove_file(machine.bin.path().join("bad-gateway")).unwrap();
+    let shown = machine.ok("author", &["usage", "14", "--total"]).await;
+    assert!(
+        shown.starts_with(
+            "The total of #14 is on the issue: 5 tokens (input 5, output 0, cache write 0, \
+             cache read 0).\n#14: 5 tokens"
+        ),
+        "{shown}"
+    );
+    let comments = machine.comments(14);
+    assert_eq!(total(&comments), 1, "{comments}");
+    assert!(
+        comments.contains("riff usage total of #14: 5 tokens"),
+        "{comments}"
+    );
+}
+
+#[tokio::test]
+async fn pr_wait_writes_the_total_and_the_release_replaces_the_comment_of_its_claim() {
+    let machine = Machine::new().await;
+    knows_pr_40(&machine);
     machine.start("verifier").await;
     machine.start("author").await;
     machine.resume("author").await;
@@ -769,6 +860,7 @@ fn the_book_shows_how_to_see_the_tokens_of_an_issue() {
         "riff usage 12",
         "riff usage --wave \"Wave 3\"",
         "riff usage",
+        "riff usage 12 --total",
     ] {
         assert!(
             commands.iter().any(|c| c == command),

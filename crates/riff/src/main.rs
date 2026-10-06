@@ -251,6 +251,10 @@ enum Command {
         /// Each issue of this wave, for example "Wave 3".
         #[arg(long, value_name = "TITLE")]
         wave: Option<String>,
+        /// Write the total comment of ISSUE again, for example when
+        /// `riff pr wait` could not write it.
+        #[arg(long, requires = "issue")]
+        total: bool,
     },
     /// Make this session the lead of your user
     ///
@@ -1410,8 +1414,8 @@ async fn main() -> Result<()> {
         }
         return Ok(());
     }
-    if let Command::Usage { issue, wave } = &cli.command {
-        print!("{}", usage_text(issue.as_deref(), wave.as_deref())?);
+    if let Command::Usage { issue, wave, total } = &cli.command {
+        print!("{}", usage_text(issue.as_deref(), wave.as_deref(), *total)?);
         return Ok(());
     }
     if let Command::Lead {
@@ -2469,8 +2473,10 @@ fn count_usage(id: &str, transcript: Option<&std::path::Path>, ends: bool) {
 }
 
 /// The text of `riff usage` ([`usage`]): of `issue`, of each issue of
-/// `wave`, or of the sessions of this machine.
-fn usage_text(issue: Option<&str>, wave: Option<&str>) -> Result<String> {
+/// `wave`, or of the sessions of this machine. With `total`, it first
+/// writes the total comment of the issue again
+/// (01M49HF0ADEQ83XTJCQT0PK3RS).
+fn usage_text(issue: Option<&str>, wave: Option<&str>, total: bool) -> Result<String> {
     if issue.is_none() && wave.is_none() {
         let dir = local::marks().context("this machine has no directory for the marks of riff")?;
         return Ok(usage::machine_text(&dir, usage::now_ms()));
@@ -2488,8 +2494,15 @@ fn usage_text(issue: Option<&str>, wave: Option<&str>) -> Result<String> {
         let number: u64 = number
             .parse()
             .with_context(|| format!("{issue} is no issue: name it as 12, #12 or issue-12"))?;
+        let mut text = String::new();
+        if total {
+            text = usage::total_written(number, &forge.total(number)?) + "\n";
+        }
         let comments = forge.comments(number)?;
-        let mut text = usage::issue_text(number, &usage::counted(number, &comments));
+        text.push_str(&usage::issue_text(
+            number,
+            &usage::counted(number, &comments),
+        ));
         if let Some(line) = usage::uncounted(number, &comments) {
             text.push_str(&line);
             text.push('\n');
