@@ -1930,14 +1930,15 @@ impl State {
     /// state.register(&lead, now);
     /// state.register(&w1, now);
     /// let to = vec![Selector::session("w1")];
+    /// let mut dm = None;
     /// for body in ["request: claim issue-12\nIt is free.", "hi"] {
-    ///     state.post(Post::new(&lead, None, to.clone(), body), now, 0).unwrap();
+    ///     let delivery = state.post(Post::new(&lead, None, to.clone(), body), now, 0).unwrap();
+    ///     dm = Some(delivery.tailed.thread);
     /// }
     /// assert_eq!(state.unread_requests(w1.who()), ["request: claim issue-12"]);
     ///
     /// // A read of the direct thread ends it.
-    /// let dm = state.threads(&w1, now)[0].thread.clone();
-    /// state.read(&w1, &dm, false, now).unwrap();
+    /// state.read(&w1, &dm.unwrap(), false, now).unwrap();
     /// assert!(state.unread_requests(w1.who()).is_empty());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
@@ -4538,7 +4539,8 @@ mod tests {
         let the_lead = lead(api());
         state.register(&the_lead, now);
         let w1 = idle_worker(&mut state, "pangolin", "w1", now);
-        let w2 = idle_worker(&mut state, "pangolin", "w2", now + Duration::from_secs(5));
+        // w2 stays: it is the idle worker with the shortest idle time.
+        idle_worker(&mut state, "pangolin", "w2", now + Duration::from_secs(5));
         let asked = now + Duration::from_secs(70);
         assert_eq!(stopped(&mut state, asked), ["w1"]);
 
@@ -4556,9 +4558,11 @@ mod tests {
             ["request: claim issue-12", "request: claim verify-issue-9"]
         );
         let news = crate::idle::stuck(&stuck[0]);
-        assert!(news.contains("It did not read 2 requests of the lead"), "{news}");
+        assert!(
+            news.contains("It did not read 2 requests of the lead"),
+            "{news}"
+        );
         assert!(news.contains("\"request: claim issue-12\""), "{news}");
-        assert_ne!(w2.who(), w1.who());
     }
 
     /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: an idle worker on each of two hosts:

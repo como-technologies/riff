@@ -4912,7 +4912,9 @@ not pile up, the server looks at the workers each 5 seconds. An idle
 worker is a worker with no claim that makes no call. On each host, the
 server keeps the idle worker with the shortest idle time. It stops
 each other worker that is idle for 60 seconds. It never stops a lead,
-a session that is not a worker, or a worker with a claim.
+a session that is not a worker, or a worker with a claim. It also
+does not stop a worker that has an unread request of your lead: a
+direct message from the lead that starts with `request:`.
 
 ```mermaid
 sequenceDiagram
@@ -4961,6 +4963,15 @@ Stop it on that machine with the command of the note:
 ```sh
 riff workers stop 2a880834
 ```
+
+When your lead sent a request to the worker after the ask, and the
+worker did not read it, the note names each request:
+
+```text
+... Stop it on pangolin: riff workers stop 2a880834. It did not read 1 request of the lead: "request: claim issue-12". Give it to another session.
+```
+
+Stop the worker, and send the request to another worker.
 
 #### Change the idle workers
 
