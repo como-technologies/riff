@@ -124,10 +124,20 @@ impl Gh {
         let mut file = tempfile::NamedTempFile::new().context("cannot make a file for the body")?;
         serde_json::to_writer(&mut file, body)?;
         let file_path = file.path().to_string_lossy().into_owned();
-        let args = ["api", "-X", method, path, "--include", "--input", &file_path];
+        let args = [
+            "api",
+            "-X",
+            method,
+            path,
+            "--include",
+            "--input",
+            &file_path,
+        ];
         let (ok, stdout, stderr) = self.output(&args, None)?;
         if !ok {
-            let status = http_status(&stdout).map(|s| format!("HTTP {s}: ")).unwrap_or_default();
+            let status = http_status(&stdout)
+                .map(|s| format!("HTTP {s}: "))
+                .unwrap_or_default();
             bail!(
                 "gh api -X {method} {path}: {status}{}",
                 text::forge(stderr.trim())

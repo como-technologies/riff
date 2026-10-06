@@ -645,6 +645,7 @@ async fn a_failed_post_of_the_total_is_tried_again_and_names_its_http_status() {
     let machine = Machine::new().await;
     knows_pr_40(&machine);
     machine.start("author").await;
+    machine.resume("author").await;
     machine
         .works("author", "issue-12", &[(OPUS, [1, 2, 3, 4])])
         .await;

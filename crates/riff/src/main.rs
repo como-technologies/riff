@@ -1415,10 +1415,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Usage { issue, wave, total } = &cli.command {
-        print!(
-            "{}",
-            usage_text(issue.as_deref(), wave.as_deref(), *total)?
-        );
+        print!("{}", usage_text(issue.as_deref(), wave.as_deref(), *total)?);
         return Ok(());
     }
     if let Command::Lead {
@@ -2502,7 +2499,10 @@ fn usage_text(issue: Option<&str>, wave: Option<&str>, total: bool) -> Result<St
             text = usage::total_written(number, &forge.total(number)?) + "\n";
         }
         let comments = forge.comments(number)?;
-        text.push_str(&usage::issue_text(number, &usage::counted(number, &comments)));
+        text.push_str(&usage::issue_text(
+            number,
+            &usage::counted(number, &comments),
+        ));
         if let Some(line) = usage::uncounted(number, &comments) {
             text.push_str(&line);
             text.push('\n');

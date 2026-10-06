@@ -996,8 +996,7 @@ impl<'a> Forge<'a> {
     /// (01M49HF07WQC3M5HGAQNHR8WA0): a first try that GitHub kept is
     /// then edited, not added again.
     pub fn total(&self, issue: u64) -> Result<Tokens> {
-        self.write_total(issue)
-            .or_else(|_| self.write_total(issue))
+        self.write_total(issue).or_else(|_| self.write_total(issue))
     }
 
     fn write_total(&self, issue: u64) -> Result<Tokens> {
