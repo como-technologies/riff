@@ -173,6 +173,33 @@ fn with(records: Vec<Record>) -> Vec<Record> {
 /// A real server of this build that loads `records` as its log, with
 /// sign-in. Its owner is mike, signed in with the files of `home`.
 async fn server(records: Vec<Record>, home: &Isolated) -> (Service, String) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let service = serve(records, home, listener, &url).await;
+    (service, url)
+}
+
+/// As [`server`], for a server whose public address is `public`, for
+/// example a proxy in front of it. It gives the address that it listens
+/// on.
+async fn server_at(records: Vec<Record>, home: &Isolated, public: &str) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let service = serve(records, home, listener, public).await;
+    // The service lives as long as the test.
+    std::mem::forget(service);
+    url
+}
+
+/// Loads `records` as the log of a real server with sign-in, serves it
+/// on `listener`, and signs in mike as its owner. `url` is the public
+/// address of the server.
+async fn serve(
+    records: Vec<Record>,
+    home: &Isolated,
+    listener: tokio::net::TcpListener,
+    url: &str,
+) -> Service {
     let store = Memory::default();
     let records: Vec<Record> = records
         .into_iter()
@@ -182,8 +209,6 @@ async fn server(records: Vec<Record>, home: &Isolated) -> (Service, String) {
     riff_server::log::write(&store, &records, &Default::default(), || true)
         .await
         .unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
         require_sign_in: true,
         lease: riff_server::lease::Timing {
@@ -193,13 +218,13 @@ async fn server(records: Vec<Record>, home: &Isolated) -> (Service, String) {
             exit_after: Duration::from_secs(1),
             ..Default::default()
         },
-        ..Config::new(&url)
+        ..Config::new(url)
     };
     let service = Service::load(config, Arc::new(store)).await.unwrap();
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    sign_in(&service, &url, home, "mike@comotechnologies.io", false).await;
-    (service, url)
+    sign_in(&service, url, home, "mike@comotechnologies.io", false).await;
+    service
 }
 
 /// Signs in `email` with a new device key, and keeps both in the
@@ -370,6 +395,62 @@ async fn a_good_wave_passes_each_rule() {
     let calls = std::fs::read_to_string(machine.bin.path().join("gh.log")).unwrap();
     assert!(calls.contains("gh pr list --repo como-technologies/riff --state all"));
     assert!(calls.contains("--search milestone:\"Wave 2\""), "{calls}");
+}
+
+/// The log of a later server has a kind that this build does not know.
+/// `riff audit` skips that record, and the good wave still passes each
+/// rule (01M43GSMZKCMET3DG07K538EDD).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_record_of_a_later_kind_in_the_log_reply_is_skipped() {
+    let machine = Machine::new();
+    // A proxy in front of a real server. It forwards each call, and
+    // puts a record of a later kind in the reply of the log.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy = format!("http://{}", listener.local_addr().unwrap());
+    let real = server_at(good(), &machine.env, &proxy).await;
+    let later = json!({"position": 2, "written_at_ms": BASE + 10_500, "command": "plan",
+        "change": {"plan_set": {"thread": "como-technologies/riff", "items": []}}});
+    let forward = move |request: axum::extract::Request| {
+        let (real, later) = (real.clone(), later.clone());
+        async move {
+            let (parts, body) = request.into_parts();
+            let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+            let url = format!("{real}{}", parts.uri);
+            let mut out = reqwest::Client::new().request(parts.method, url).body(body);
+            for (name, value) in &parts.headers {
+                if name != "host" {
+                    out = out.header(name, value);
+                }
+            }
+            let reply = out.send().await.unwrap();
+            let status = reply.status();
+            let headers = reply.headers().clone();
+            let mut bytes = reply.bytes().await.unwrap().to_vec();
+            if parts.uri.path() == "/v1/log" && status.is_success() {
+                let mut log: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                log["records"].as_array_mut().unwrap().insert(1, later);
+                bytes = serde_json::to_vec(&log).unwrap();
+            }
+            let mut answer = axum::response::Response::new(axum::body::Body::from(bytes));
+            *answer.status_mut() = status;
+            for (name, value) in &headers {
+                if name != "content-length" && name != "transfer-encoding" {
+                    answer.headers_mut().insert(name, value.clone());
+                }
+            }
+            answer
+        }
+    };
+    let app = axum::Router::new().fallback(forward);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let out = machine.run(&proxy, &["audit", "--wave", "Wave 2"]).await;
+    let text = String::from_utf8(out.stdout).unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{text}{stderr}");
+    for rule in 1..=7 {
+        assert!(text.contains(&format!("\nRule {rule}: pass\n")), "{text}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

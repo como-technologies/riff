@@ -129,6 +129,8 @@ time.
 - When the repository has no waves, each open item is in the current
   wave.
 - An item that the lead keeps out of the waves is not free work.
+- A held item is not free work. A claim of a worker of a held item
+  fails with the reason of the hold. Pick another item.
 - An item names the items that it needs in a `Needs:` line, for
   example `Needs: #12, #15`. An item with no `Needs:` line needs
   nothing.
@@ -784,6 +786,11 @@ As the lead, take no claims: no work item and no verify. A verify
 request waits for a free session. Give a verify request only to a
 session with no claim. When no such session is free, start a worker
 for it (see "Workers").
+
+To keep an item from the workers, call `hold` with the item and a
+reason, for example when it waits for the word of your user. Do not
+claim it for that. Call `free` when the item can go on. A hold does
+not end a claim.
 
 1. See what each session of your user holds and does. Call `post`
    with `kind` `status` and `to`

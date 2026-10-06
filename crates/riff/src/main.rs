@@ -191,13 +191,23 @@ enum Command {
     /// Claim a work item
     ///
     /// Then no other session does the same work. It exits with status 1
-    /// when another session holds it.
+    /// when another session holds it, or when a lead holds it and this
+    /// session is a worker.
     Claim {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
         thread: Option<String>,
         /// The work item, for example issue-12.
         item: String,
+    },
+    /// Hold or free a work item of the plan of your repository
+    ///
+    /// A held item is no free work: no worker can claim it. A hold is
+    /// not a claim. Only a lead, the owner or an admin can hold and free
+    /// an item.
+    Plan {
+        #[command(subcommand)]
+        command: PlanCommand,
     },
     /// Release a work item that you claimed
     ///
@@ -958,6 +968,34 @@ enum WatchCommand {
 }
 
 #[derive(Subcommand)]
+enum PlanCommand {
+    /// Hold a work item, so that no worker claims it
+    ///
+    /// The reason says why, for example "waits for the word of Mike". A
+    /// worker that claims the item gets the reason. Each other session
+    /// gets the claim, with the reason as a warning. A hold of a held
+    /// item replaces its reason. It does not end a claim.
+    Hold {
+        /// The repository thread. The default is your repository thread.
+        #[arg(long, short)]
+        thread: Option<String>,
+        /// The work item, for example issue-12.
+        item: String,
+        /// Why the item is held: 1 to 200 characters.
+        #[arg(required = true)]
+        reason: Vec<String>,
+    },
+    /// Free a held work item, so that a worker can claim it again
+    Free {
+        /// The repository thread. The default is your repository thread.
+        #[arg(long, short)]
+        thread: Option<String>,
+        /// The work item, for example issue-12.
+        item: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum LeadCommand {
     /// Show or set how riff compacts the lead at the end of a wave
     ///
@@ -1597,6 +1635,25 @@ async fn main() -> Result<()> {
             if let Some(line) = riff::rollout::at_claim(&dir, &repo, &item).await {
                 println!("{line}");
             }
+        }
+        Command::Plan {
+            command:
+                PlanCommand::Hold {
+                    thread,
+                    item,
+                    reason,
+                },
+        } => {
+            let thread = thread_or_default(thread, &here)?;
+            let reply = api.hold(&me, &thread, &item, &reason.join(" ")).await?;
+            println!("{}", text::held(&reply, &thread, &item));
+        }
+        Command::Plan {
+            command: PlanCommand::Free { thread, item },
+        } => {
+            let thread = thread_or_default(thread, &here)?;
+            let reply = api.free(&me, &thread, &item).await?;
+            println!("{}", text::freed(reply, &thread, &item));
         }
         Command::Release {
             thread,

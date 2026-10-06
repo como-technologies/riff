@@ -214,6 +214,27 @@ pub struct ClaimArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct HoldArgs {
+    /// The repository thread. Leave it out to use your repository
+    /// thread.
+    thread: Option<String>,
+    /// The work item, for example issue-12.
+    item: String,
+    /// Why the item is held, in 1 to 200 characters. A worker that
+    /// claims the item gets it.
+    reason: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct FreeArgs {
+    /// The repository thread. Leave it out to use your repository
+    /// thread.
+    thread: Option<String>,
+    /// The work item, for example issue-12.
+    item: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ReleaseArgs {
     /// The thread. Leave it out to use your repository thread.
     thread: Option<String>,
@@ -554,6 +575,34 @@ the claim of another session of your user, for example one that is gone or that 
                 Ok(out)
             }
         }
+    }
+
+    #[tool(
+        description = "Only the lead: hold a work item with a reason, so that no worker claims \
+it. Use it in place of a claim to keep an item from the workers. A hold is not a claim, and it \
+does not end a claim. Each other session can still claim the item, with a warning."
+    )]
+    async fn hold(&self, Parameters(a): Parameters<HoldArgs>) -> ToolResult {
+        let thread = self.thread(a.thread)?;
+        let me = self.here()?;
+        let reply = self
+            .api
+            .hold(&me, &thread, &a.item, &a.reason)
+            .await
+            .map_err(err)?;
+        self.lead_step(&me, format!("held {}", a.item)).await;
+        Ok(text::held(&reply, &thread, &a.item))
+    }
+
+    #[tool(
+        description = "Only the lead: free a held work item, so that a worker can claim it again."
+    )]
+    async fn free(&self, Parameters(a): Parameters<FreeArgs>) -> ToolResult {
+        let thread = self.thread(a.thread)?;
+        let me = self.here()?;
+        let reply = self.api.free(&me, &thread, &a.item).await.map_err(err)?;
+        self.lead_step(&me, format!("freed {}", a.item)).await;
+        Ok(text::freed(reply, &thread, &a.item))
     }
 
     #[tool(

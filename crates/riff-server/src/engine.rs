@@ -152,9 +152,9 @@ use axum::response::{IntoResponse, Response};
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, Call, Claim, DenyOwner, End, Invite, Join, Keys, Lead, Leave, PassOwner, Pause,
-    Post, REFUSED_HEADER, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle,
-    Start, Tailed, TakeOwner, Wake,
+    AliveReply, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead, Leave,
+    PassOwner, Pause, Post, REFUSED_HEADER, Register, Release, ReleaseFor, Remove, Resume, Revoke,
+    SetAdmin, SetIdle, Start, Tailed, TakeOwner, Wake,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
@@ -245,7 +245,8 @@ macro_rules! routed {
 }
 
 routed!(
-    Register, Start, End, Join, Leave, Claim, Release, ReleaseFor, Lead, Pause, Resume, SetIdle
+    Register, Start, End, Join, Leave, Claim, Release, ReleaseFor, Lead, Pause, Resume, SetIdle,
+    Hold, Free
 );
 
 /// Gives each command of the people its [`Routed`]. Its body names no
@@ -331,9 +332,12 @@ impl Failed {
             Failed::Denied(_) => StatusCode::FORBIDDEN,
             Failed::Refused(refused) => match refused.code {
                 Code::NotAllowed | Code::NoSignIn | Code::NotMember => StatusCode::FORBIDDEN,
-                Code::Held | Code::Paused | Code::MustClear | Code::NotHolder | Code::OtherUser => {
-                    StatusCode::CONFLICT
-                }
+                Code::Held
+                | Code::OnHold
+                | Code::Paused
+                | Code::MustClear
+                | Code::NotHolder
+                | Code::OtherUser => StatusCode::CONFLICT,
                 Code::BadRequest => StatusCode::BAD_REQUEST,
             },
             Failed::Stopped => StatusCode::SERVICE_UNAVAILABLE,

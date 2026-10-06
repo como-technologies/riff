@@ -22,6 +22,7 @@ use riff_core::wire;
 use super::*;
 
 mod people;
+mod plan;
 
 fn ann() -> SessionUri {
     "riff://ann@heron/acme/app?session=a1".parse().unwrap()
@@ -775,7 +776,7 @@ fn a_claim_that_takes_an_item_gives_the_old_holder_a_released_record_in_one_chun
     records.push(claimed(&bob(), "issue-7"));
     let Given { mut state, now } = given(&records).after(CLAIM_GRACE);
     let command = claim("issue-7").of(&ann());
-    let (made, ()) = state.run(&Caller::of(&ann()), &command, now).unwrap();
+    let (made, _) = state.run(&Caller::of(&ann()), &command, now).unwrap();
     let kinds: Vec<&Change> = made.iter().map(|record| &record.change).collect();
     assert_eq!(
         kinds,

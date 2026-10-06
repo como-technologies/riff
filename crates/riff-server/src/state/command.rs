@@ -11,6 +11,7 @@
 //! | threads | [`super::threads`] | [`Join`](riff_core::wire::Join), [`Leave`](riff_core::wire::Leave), [`Post`](riff_core::wire::Post), [`Announce`](super::Announce) |
 //! | work | [`super::work`] | [`Claim`](riff_core::wire::Claim), [`Release`](riff_core::wire::Release), [`ReleaseFor`](riff_core::wire::ReleaseFor), [`Lead`](riff_core::wire::Lead) |
 //! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import) |
+//! | plan | [`super::plan`] | [`Hold`](riff_core::wire::Hold), [`Free`](riff_core::wire::Free) |
 //! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
@@ -340,6 +341,8 @@ command_kinds! {
     EndOwner = "end_owner",
     NameOwner = "name_owner",
     Revoke = "revoke",
+    Hold = "hold",
+    Free = "free",
 }
 
 impl CommandKind {
@@ -391,6 +394,7 @@ impl fmt::Display for CommandKind {
 /// | `no_sign_in` | A command of the people in a riff with no sign-in. | 403 |
 /// | `not_member` | The command names a person who is not a member. | 403 |
 /// | `held` | Another session holds the item. | 409 |
+/// | `on_hold` | A lead holds the item, and the caller is a worker. | 409 |
 /// | `paused` | The riff or the repository is paused. | 409 |
 /// | `must_clear` | A worker must clear its context first. | 409 |
 /// | `not_holder` | The caller does not hold the item. | 409 |
@@ -409,6 +413,9 @@ pub enum Code {
     NotMember,
     /// Another session holds the item.
     Held,
+    /// A lead holds the item, and the caller is a worker
+    /// (01M43GSGPJ69TPWPA4935WR8RW).
+    OnHold,
     /// The riff or the repository is paused.
     Paused,
     /// A worker must clear its context before it claims.
@@ -423,11 +430,12 @@ pub enum Code {
 
 impl Code {
     /// Each code of this release.
-    pub const ALL: [Code; 9] = [
+    pub const ALL: [Code; 10] = [
         Code::NotAllowed,
         Code::NoSignIn,
         Code::NotMember,
         Code::Held,
+        Code::OnHold,
         Code::Paused,
         Code::MustClear,
         Code::NotHolder,
@@ -442,6 +450,7 @@ impl Code {
             Code::NoSignIn => "no_sign_in",
             Code::NotMember => "not_member",
             Code::Held => "held",
+            Code::OnHold => "on_hold",
             Code::Paused => "paused",
             Code::MustClear => "must_clear",
             Code::NotHolder => "not_holder",
@@ -540,6 +549,9 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // The command gives the role: an admin for the whole riff.
         // `handle` checks that a session is a lead.
         CommandKind::Pause | CommandKind::Resume => &[Person, Session],
+        // `handle` checks that the caller is a lead of the thread, the
+        // owner or an admin (01M43GSGGY0QMB5D5EH92M6ZFP).
+        CommandKind::Hold | CommandKind::Free => &[Person, Session],
         // Only a person changes the settings and the people.
         CommandKind::SetIdle
         | CommandKind::Invite
@@ -569,6 +581,12 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         return Err(Refused::new(
             Code::NotAllowed,
             "a worker cannot be the lead. Make another session the lead.",
+        ));
+    }
+    if matches!(kind, CommandKind::Hold | CommandKind::Free) && caller.worker() {
+        return Err(Refused::new(
+            Code::NotAllowed,
+            format!("a worker cannot {kind} an item. Tell the lead."),
         ));
     }
     if matches!(class, Person | Session) && caller.role() < needs {
@@ -698,6 +716,7 @@ mod tests {
             CommandKind::ReleaseFor => (&[Session], true),
             CommandKind::Lead => (&[Session], false),
             CommandKind::Pause | CommandKind::Resume => (&[Person, Session], true),
+            CommandKind::Hold | CommandKind::Free => (&[Person, Session], false),
             CommandKind::SetIdle
             | CommandKind::Invite
             | CommandKind::Remove
@@ -744,8 +763,8 @@ mod tests {
     /// by the own name, and the sign-ins of another person.
     fn needs(kind: CommandKind, caller: &Caller) -> Vec<Role> {
         use riff_core::wire::{
-            Claim, DenyOwner, End, Invite, Join, Kind, Lead, Leave, PassOwner, Pause, Post,
-            Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, Start,
+            Claim, DenyOwner, End, Free, Hold, Invite, Join, Kind, Lead, Leave, PassOwner, Pause,
+            Post, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, Start,
             StartReason, TakeOwner,
         };
 
@@ -809,6 +828,19 @@ mod tests {
                 };
                 of.of(set, kind)
             }
+            CommandKind::Hold => {
+                let reason = "waits".to_owned();
+                of.of(
+                    Hold {
+                        me,
+                        thread,
+                        item,
+                        reason,
+                    },
+                    kind,
+                )
+            }
+            CommandKind::Free => of.of(Free { me, thread, item }, kind),
             CommandKind::Forget => of.of(Forget, kind),
             CommandKind::Import => of.of(Import { changes: vec![] }, kind),
             CommandKind::Admit => {
@@ -878,7 +910,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (28 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (30 + 2) * 4 * 2 * 3);
     }
 
     #[test]

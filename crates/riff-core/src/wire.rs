@@ -26,6 +26,8 @@
 //! | `/v1/pause` | [`Pause`] | [`RiffReply`] | command |
 //! | `/v1/resume` | [`Resume`] | [`RiffReply`] | command |
 //! | `/v1/idle/set` | [`SetIdle`] | [`Idle`] | command |
+//! | `/v1/plan/hold` | [`Hold`] | [`HoldReply`] | command |
+//! | `/v1/plan/free` | [`Free`] | [`FreeReply`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
 //! | `/v1/blocked/look` | [`BlockedLook`] | [`BlockedLookReply`] | signal |
@@ -126,7 +128,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dpop::Key;
 use crate::name::{SessionUri, ThreadName};
-use crate::record::{By, Record};
+use crate::record::{By, Line, Record};
 use crate::selector::Selector;
 use crate::signed::Content;
 
@@ -194,6 +196,8 @@ calls! {
     Pause => "/v1/pause", RiffReply;
     Resume => "/v1/resume", RiffReply;
     SetIdle => "/v1/idle/set", Idle;
+    Hold => "/v1/plan/hold", HoldReply;
+    Free => "/v1/plan/free", FreeReply;
     SetStatus => "/v1/status", ();
     SetBlocked => "/v1/blocked", ();
     BlockedLook => "/v1/blocked/look", BlockedLookReply;
@@ -1359,10 +1363,90 @@ pub struct Claim {
 }
 
 /// The reply to a claim that the server took.
+///
+/// ```
+/// use riff_core::wire::ClaimReply;
+///
+/// // The reply of a server of 1.0.0 has no warning.
+/// let old: ClaimReply = serde_json::from_str(r#"{"holder":"riff://ann@heron/acme/app?session=a1"}"#).unwrap();
+/// assert_eq!(old.warning, None);
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ClaimReply {
     /// The URI of `me` now, with the item in its claims.
     pub holder: SessionUri,
+    /// Why a worker would not get this claim, for example a hold of the
+    /// item (01M43GSGPJ69TPWPA4935WR8RW). The server grants it, because
+    /// the caller is not a worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+/// `POST /v1/plan/hold`: a lead holds an item of its repository thread
+/// with a reason, so that no worker can claim it
+/// (01M43GSGB9ZFHSG0Q83Y50FEGW). A hold of a held item replaces its
+/// reason. Only a lead of the thread, the owner or an admin can
+/// (01M43GSGGY0QMB5D5EH92M6ZFP).
+///
+/// ```
+/// use riff_core::wire::{Call, Hold};
+///
+/// let hold = Hold {
+///     me: "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?,
+///     thread: "como-technologies/riff".parse()?,
+///     item: "issue-366".into(),
+///     reason: "waits for the word of Mike".into(),
+/// };
+/// assert_eq!(Hold::PATH, "/v1/plan/hold");
+/// assert!(serde_json::to_string(&hold).unwrap().contains(r#""reason":"waits for the word of Mike""#));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Hold {
+    pub me: SessionUri,
+    /// The repository thread of the item.
+    pub thread: ThreadName,
+    pub item: String,
+    /// Why the item is held: 1 to 200 characters.
+    pub reason: String,
+}
+
+/// The reply to a hold.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HoldReply {
+    /// True when the call made the hold or changed its reason.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub changed: bool,
+    /// The session that holds a claim of the item now. A hold does not
+    /// end a claim: it stops only the next claim of a worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<SessionUri>,
+}
+
+/// `POST /v1/plan/free`: a lead ends the hold of an item
+/// (01M43GSGB9ZFHSG0Q83Y50FEGW). A free of an item with no hold changes
+/// nothing.
+///
+/// ```
+/// use riff_core::wire::{Call, Free, FreeReply};
+///
+/// assert_eq!(Free::PATH, "/v1/plan/free");
+/// assert_eq!(serde_json::to_string(&FreeReply::default()).unwrap(), "{}");
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Free {
+    pub me: SessionUri,
+    /// The repository thread of the item.
+    pub thread: ThreadName,
+    pub item: String,
+}
+
+/// The reply to a free.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FreeReply {
+    /// True when the item was held, and the call ended the hold.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub freed: bool,
 }
 
 /// `POST /v1/release`: frees a claim. Only its holder can.
@@ -2108,9 +2192,42 @@ pub struct LogQuery {
 /// The reply to [`LogQuery`]: each record of the repository
 /// ([`Record::of_repository`]), in log order. A post has only its mark
 /// ([`Record::for_audit`], 01M3ZWRC3XBFN8FJDGE8XWZ5EA).
+///
+/// A reader skips a record of a kind that its build does not know, as
+/// [`Line::parse`] does (01M43GSMZKCMET3DG07K538EDD). So `riff audit`
+/// of one build reads the log of a later server.
+///
+/// ```
+/// use riff_core::wire::LogReply;
+///
+/// let reply: LogReply = serde_json::from_str(r#"{"records":[
+///     {"position":1,"written_at_ms":1,"change":{"reacted":{"emoji":"+1"}}},
+///     {"position":2,"written_at_ms":1,"change":{"member_invited":{"email":"ann@acme.io"}}}
+/// ]}"#).unwrap();
+/// assert_eq!(reply.records.len(), 1);
+/// assert_eq!(reply.records[0].position, 2);
+/// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogReply {
+    #[serde(deserialize_with = "known_records")]
     pub records: Vec<Record>,
+}
+
+/// The records of a [`LogReply`] with a kind that this build knows.
+/// A record that does not read is an error.
+fn known_records<'de, D>(deserializer: D) -> Result<Vec<Record>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let values = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let mut records = Vec::with_capacity(values.len());
+    for value in values {
+        match Line::parse(&value.to_string()).map_err(serde::de::Error::custom)? {
+            Line::Record(record) => records.push(*record),
+            Line::Unknown { .. } => {}
+        }
+    }
+    Ok(records)
 }
 
 /// `POST /v1/members`: shows who may join the riff.

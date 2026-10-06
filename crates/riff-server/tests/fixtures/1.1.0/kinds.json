@@ -1,0 +1,10 @@
+{
+  "records": [
+    "item_held",
+    "item_freed"
+  ],
+  "commands": [
+    "hold",
+    "free"
+  ]
+}

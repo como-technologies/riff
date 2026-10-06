@@ -107,7 +107,9 @@ fn named(change: &Change) -> Option<&SessionUri> {
         | Change::OwnerSet(_)
         | Change::OwnerAsked(_)
         | Change::OwnerDenied(_)
-        | Change::SigninsEnded(_) => None,
+        | Change::SigninsEnded(_)
+        | Change::ItemHeld(_)
+        | Change::ItemFreed(_) => None,
     }
 }
 

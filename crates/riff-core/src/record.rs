@@ -27,10 +27,11 @@
 //! - A new kind of change gets a new name. A build that does not know a
 //!   kind skips the record ([`Line::Unknown`]).
 //! - A kind is never renamed, and the name of a removed kind is never
-//!   used again (01M3XM2C3MND6YB24SGZ565353). The file
-//!   `crates/riff-server/tests/fixtures/1.0.0/kinds.json` lists the
-//!   kinds of the release, and a test fails when a name of the list is
-//!   gone from the code.
+//!   used again (01M3XM2C3MND6YB24SGZ565353). The file `kinds.json`
+//!   in the directory of each release under
+//!   `crates/riff-server/tests/fixtures/` lists the new kinds of the
+//!   release (01M43GSRSDJMGAH8SR1GD4Z3XF). A test fails when a name of
+//!   a list is gone from the code.
 //! - The enum [`Change`] and the list [`Change::KINDS`] come from one
 //!   macro. So a variant cannot be missing from the list. The order of
 //!   the list is not a part of the format.
@@ -93,7 +94,7 @@
 //! | The caller in `by` | `{"session":"USER/ID"}` | `other` ([`By`]) |
 //! | A session in `woken` ([`Who`]) | `posted` | The read checks no character. A field that the build does not know is skipped. |
 //! | The signature and the payload of a message | `sig`, `payload` | The read keeps the text, and checks nothing. A reader checks them: a text that does not check gives a message that is not verified. |
-//! | An item, an email, a user, the ID of a riff, a body, a command | `item`, `email`, `user`, `riff_id`, `body`, `command` | Free text. |
+//! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason` | Free text. |
 //! | A time, a position, a seq, a count | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
 //! | A mark | `worker`, `must_clear`, `admin` | The line does not read. A mark is `true` or `false`, and its type never changes. |
 //!
@@ -238,6 +239,12 @@ changes! {
     OwnerDenied(Email) = "owner_denied",
     /// Each sign-in of a USER from before this record is ended.
     SigninsEnded(SigninsEnded) = "signins_ended",
+    /// A lead holds an item, with a reason: no worker can claim it. A
+    /// second record for the same item replaces the reason. New in
+    /// 1.1.0.
+    ItemHeld(ItemHeld) = "item_held",
+    /// The hold of an item ends. New in 1.1.0.
+    ItemFreed(ItemFreed) = "item_freed",
 }
 // ANCHOR_END: record
 
@@ -398,7 +405,9 @@ impl Change {
             | Change::OwnerSet(_)
             | Change::OwnerAsked(_)
             | Change::OwnerDenied(_)
-            | Change::SigninsEnded(_) => None,
+            | Change::SigninsEnded(_)
+            | Change::ItemHeld(_)
+            | Change::ItemFreed(_) => None,
         }
     }
 }
@@ -512,6 +521,8 @@ impl Record {
                 Scope::Repository(thread) => thread == repo,
                 Scope::Other => false,
             },
+            Change::ItemHeld(held) => &held.thread == repo,
+            Change::ItemFreed(freed) => &freed.thread == repo,
             Change::SettingChanged(_)
             | Change::RiffMade(_)
             | Change::PersonJoined(_)
@@ -624,6 +635,46 @@ pub struct Member {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claimed {
     pub session: SessionUri,
+    pub thread: ThreadName,
+    pub item: String,
+}
+
+/// The hold of one item in one repository thread, with its reason
+/// (01M43GSGB9ZFHSG0Q83Y50FEGW). The envelope of the record names who held it, and
+/// when. A hold is not a claim.
+///
+/// ```
+/// use riff_core::record::{Change, ItemFreed, ItemHeld};
+///
+/// let held = Change::ItemHeld(ItemHeld {
+///     thread: "como-technologies/riff".parse()?,
+///     item: "issue-366".into(),
+///     reason: "waits for the word of Mike".into(),
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&held).unwrap(),
+///     r#"{"item_held":{"thread":"como-technologies/riff","item":"issue-366","reason":"waits for the word of Mike"}}"#
+/// );
+/// let freed = Change::ItemFreed(ItemFreed {
+///     thread: "como-technologies/riff".parse()?,
+///     item: "issue-366".into(),
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&freed).unwrap(),
+///     r#"{"item_freed":{"thread":"como-technologies/riff","item":"issue-366"}}"#
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemHeld {
+    pub thread: ThreadName,
+    pub item: String,
+    pub reason: String,
+}
+
+/// The end of the hold of one item in one repository thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemFreed {
     pub thread: ThreadName,
     pub item: String,
 }
@@ -1039,6 +1090,15 @@ mod tests {
             }),
             Change::OwnerDenied(email),
             Change::SigninsEnded(SigninsEnded { user: "ann".into() }),
+            Change::ItemHeld(ItemHeld {
+                thread: thread(),
+                item: "issue-7".into(),
+                reason: "waits for ann".into(),
+            }),
+            Change::ItemFreed(ItemFreed {
+                thread: thread(),
+                item: "issue-7".into(),
+            }),
         ]
     }
 

@@ -437,6 +437,26 @@
   and the audit refuses it.
 - **01M3ZWRCF5H95R4SYX09CWAJS8** `riff audit` checks one wave. It has
   no span of time of its own.
+- **01M43GSGB9ZFHSG0Q83Y50FEGW** A lead holds an item of its repository
+  with a reason, and frees it again: `riff plan hold ITEM REASON`,
+  `riff plan free ITEM`, and the tools `hold` and `free`. The server
+  keeps each hold as the record `item_held`, with who held it and
+  when, and each end as `item_freed`. A hold of a held item replaces
+  its reason. A hold names one item by its exact name. A hold is not a
+  claim: it does not end a claim, and only a free ends it. A held item
+  is no free work. The lead holds an item with `hold`, not with a
+  claim.
+- **01M43GSGGY0QMB5D5EH92M6ZFP** Only a lead of the repository thread,
+  the owner or an admin can hold and free an item. A worker gets
+  `not_allowed`, also a worker of the owner. A hold needs a reason of 1
+  to 200 characters. A free of an item with no hold makes no record:
+  the trace is a `no_change` line.
+- **01M43GSGPJ69TPWPA4935WR8RW** A claim of a held item by a worker is
+  refused with the code `on_hold` and the status 409. The reason names
+  the lead, the time and the reason of the hold. Each other session
+  gets the claim, and the reply has the same text as a warning. The
+  checks of a claim run in this order: `must_clear`, the name of the
+  item, `paused`, the caller holds the item already, `on_hold`, `held`.
 - **R222** The skill, the requirements and the book name the concept
   of waves first. Each keeps the form of a forge in one part of its
   own. A new forge needs no change to the concept. Outside these
@@ -985,6 +1005,16 @@
   state of a replay up to that position, and a start from it gives the
   state of a full replay. The import of go-live writes only kinds of
   1.0.0.
+- **01M43GSRSDJMGAH8SR1GD4Z3XF** The fixtures of each release after
+  1.0.0 are in a directory of their own, for example
+  `crates/riff-server/tests/fixtures/1.1.0/`. Its `kinds.json` lists
+  only the new kinds of the release, and the test of the kinds takes
+  the union of the lists. Its log has each new kind, and gets the same
+  checks of a checkpoint at each position.
+- **01M43GSGVYJW7C09SVRWRAQZDZ** The checkpoint has the part `plans`:
+  each hold of each repository thread, with its reason, its caller
+  and its time. An empty part is not written, so the log of 1.0.0
+  gives the checkpoint of 1.0.0.
 - **01M3WRD8WJ2JF9077PRDX04T9A** Each command of `riff-server` goes
   through `Engine::dispatch`, and each signal goes through
   `Engine::signal`. The engine module owns the state, its lock and the
@@ -1374,12 +1404,16 @@
   from the store. A record of the repository is a post, a membership,
   a lead, a claim or a release in its thread; a direct message from a
   session in the repository; the start or the end of a session in the
-  repository; and a pause of the riff or of the repository.
+  repository; a pause of the riff or of the repository; and a hold or
+  a free of an item of the repository.
 - **01M3ZWRC3XBFN8FJDGE8XWZ5EA** A post in the reply of `POST /v1/log`
   has no text of its body, no signature and no payload. Its body is
   only its mark: `request`, `verify request` or `verify result` when
   the body starts with that word and a colon, else empty. The kind,
   the sender, the `to` and the time stay.
+- **01M43GSMZKCMET3DG07K538EDD** A reader of the reply of
+  `POST /v1/log` skips a record of a kind that its build does not
+  know. So `riff audit` of one build reads the log of a later server.
 - **01M3TJWHYB9FTZ3G8G227V0N05** With a bucket, a tool of the log takes
   its access token from the metadata server of Cloud Run. When that
   server does not answer in 2 seconds, the tool takes the token of the

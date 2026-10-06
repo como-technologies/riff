@@ -67,7 +67,15 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Lead",
-        commands: &["lead", "pause", "resume", "workers", "worktrees", "audit"],
+        commands: &[
+            "lead",
+            "plan",
+            "pause",
+            "resume",
+            "workers",
+            "worktrees",
+            "audit",
+        ],
     },
     Group {
         heading: "Host a riff",

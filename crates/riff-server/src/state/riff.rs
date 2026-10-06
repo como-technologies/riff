@@ -11,6 +11,7 @@
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
 //! | [`TheRiff`] | [`super::the_riff`] | The pauses, and the settings. |
 //! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role. |
+//! | [`Plans`] | [`super::plan`] | The holds of each repository thread. |
 //!
 //! # Only `apply` changes the riff
 //!
@@ -48,10 +49,12 @@
 //! | `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins (01M3XA87A9GGFA89RQXWSKY0V6). | Yes. |
 //! | `signins_ended` | It keeps the position of the record for the USER. | Yes. |
 //! | `owner_set` | It ends the request for the owner role that waits. A record with no email says that the owner is gone. | Yes. |
+//! | `item_held` | It keeps the `by` and the time of the record with the hold: who held the item, and when (01M43GSGB9ZFHSG0Q83Y50FEGW). | Yes. |
 
 use riff_core::record::{Change, Record};
 
 use super::people::People;
+use super::plan::Plans;
 use super::sessions::Sessions;
 use super::snapshot::LoadPath;
 use super::the_riff::TheRiff;
@@ -88,6 +91,7 @@ pub struct Riff {
     work: Work,
     the_riff: TheRiff,
     people: People,
+    plans: Plans,
     /// The position of the last record.
     position: u64,
 }
@@ -95,7 +99,9 @@ pub struct Riff {
 impl Riff {
     /// The riff of a checkpoint at `position`. Only the load path of a
     /// checkpoint can call it: only [`super::snapshot`] makes a
-    /// `LoadPath`. So no other code makes a riff with no `apply`.
+    /// `LoadPath`. So no other code makes a riff with no `apply`. It
+    /// takes one argument for each part.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn restore(
         _: LoadPath,
         position: u64,
@@ -104,6 +110,7 @@ impl Riff {
         work: Work,
         the_riff: TheRiff,
         people: People,
+        plans: Plans,
     ) -> Riff {
         Riff {
             sessions,
@@ -111,6 +118,7 @@ impl Riff {
             work,
             the_riff,
             people,
+            plans,
             position,
         }
     }
@@ -143,6 +151,11 @@ impl Riff {
     /// The people: who may join the riff, and with which role.
     pub fn people(&self) -> &People {
         &self.people
+    }
+
+    /// The plan of each repository thread: the holds.
+    pub fn plans(&self) -> &Plans {
+        &self.plans
     }
 }
 
@@ -216,6 +229,8 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::OwnerAsked(asked) => riff.people.owner_asked(asked),
         Change::OwnerDenied(denied) => riff.people.owner_denied(denied),
         Change::SigninsEnded(ended) => riff.people.signins_ended(ended, record.position),
+        Change::ItemHeld(held) => riff.plans.held(held, record),
+        Change::ItemFreed(freed) => riff.plans.freed(freed),
     };
     if let Err(what) = taken {
         tracing::warn!(

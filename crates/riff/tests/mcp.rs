@@ -112,6 +112,8 @@ async fn the_tools_carry_a_conversation() {
         [
             "blocked",
             "claim",
+            "free",
+            "hold",
             "join",
             "join_thread",
             "lead",
@@ -859,4 +861,73 @@ async fn a_call_in_flight_at_an_update_gets_its_answer() {
     let next = next.ok().and_then(|line| line.unwrap()).unwrap_or_default();
     assert!(next.contains("\"id\":2"), "{next}");
     assert!(child.try_wait().unwrap().is_none(), "{}", log());
+}
+
+/// The case of #498 through the tools (01M43GSGB9ZFHSG0Q83Y50FEGW,
+/// 01M43GSGPJ69TPWPA4935WR8RW, 01M43GSGGY0QMB5D5EH92M6ZFP): the lead
+/// holds `issue-12`; a worker gets `on_hold` with the lead, the time and
+/// the reason, and cannot hold or free; brett gets the item with a
+/// warning; after `free`, the worker gets the item.
+#[tokio::test]
+async fn the_lead_holds_an_item_and_a_worker_cannot_claim_it() {
+    let api = start_server().await;
+    let mike = connect(&api, MIKE).await;
+    call(&mike, "resume", serde_json::json!({ "riff": true })).await;
+    let reason = "waits for the word of Mike";
+    let hold = serde_json::json!({ "item": "issue-12", "reason": reason });
+    let (held, is_error) = call(&mike, "hold", hold.clone()).await;
+    assert!(!is_error, "{held}");
+    assert!(
+        held.starts_with("issue-12 in como-technologies/riff is on hold now"),
+        "{held}"
+    );
+    let (again, _) = call(&mike, "hold", hold).await;
+    assert!(
+        again.contains("on hold with this reason already"),
+        "{again}"
+    );
+
+    let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1#w1"
+        .parse()
+        .unwrap();
+    api.register_as(&worker, true).await.unwrap();
+    let thread = worker.default_thread().unwrap();
+    let refused = api.claim(&worker, &thread, "issue-12").await.unwrap();
+    assert!(!refused.granted);
+    let text = refused.held.unwrap();
+    assert!(
+        text.starts_with("issue-12 is held by the lead (the session mike/a1) since 20"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with(&format!("{reason}. Pick another item.")),
+        "{text}"
+    );
+    let error = api.hold(&worker, &thread, "issue-13", "mine").await;
+    let error = format!("{:#}", error.unwrap_err());
+    assert!(error.contains("a worker cannot hold an item"), "{error}");
+    let error = api.free(&worker, &thread, "issue-12").await;
+    let error = format!("{:#}", error.unwrap_err());
+    assert!(error.contains("a worker cannot free an item"), "{error}");
+
+    let brett = connect(&api, BRETT).await;
+    let claim = serde_json::json!({ "item": "issue-12" });
+    let (granted, is_error) = call(&brett, "claim", claim.clone()).await;
+    assert!(!is_error, "{granted}");
+    let warned =
+        "You hold issue-12 in como-technologies/riff. Warning: issue-12 is held by the lead";
+    assert!(granted.starts_with(warned), "{granted}");
+    assert!(
+        granted.contains("A worker does not get this claim."),
+        "{granted}"
+    );
+    call(&brett, "release", claim).await;
+
+    let free = serde_json::json!({ "item": "issue-12" });
+    let (freed, _) = call(&mike, "free", free.clone()).await;
+    assert!(freed.contains("is free of its hold"), "{freed}");
+    let (twice, _) = call(&mike, "free", free).await;
+    assert!(twice.contains("was not on hold"), "{twice}");
+    let claimed = api.claim(&worker, &thread, "issue-12").await.unwrap();
+    assert!(claimed.granted && claimed.warning.is_none());
 }
