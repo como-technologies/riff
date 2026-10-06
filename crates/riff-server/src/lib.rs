@@ -2738,7 +2738,9 @@ where
     BroadcastStream::new(rx)
         .take_while(|event| {
             if let Err(lag) = event {
-                tracing::info!("an event stream lags ({lag}): it ends, and the client connects again");
+                tracing::info!(
+                    "an event stream lags ({lag}): it ends, and the client connects again"
+                );
             }
             std::future::ready(event.is_ok())
         })

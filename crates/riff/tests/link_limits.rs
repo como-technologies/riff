@@ -92,7 +92,11 @@ fn fast() -> Limits {
 async fn accepts_reach(accepts: &AtomicUsize, n: usize) {
     let start = Instant::now();
     while accepts.load(Ordering::SeqCst) < n {
-        assert!(start.elapsed() < WAIT, "{} accepts, not {n}", accepts.load(Ordering::SeqCst));
+        assert!(
+            start.elapsed() < WAIT,
+            "{} accepts, not {n}",
+            accepts.load(Ordering::SeqCst)
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -113,7 +117,11 @@ async fn a_stream_with_no_byte_ends_and_connects_again() {
         () = accepts_reach(&accepts, 3) => {}
     }
     // Three connects with an idle limit of 300 ms each: not before 600 ms.
-    assert!(start.elapsed() >= Duration::from_millis(600), "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() >= Duration::from_millis(600),
+        "{:?}",
+        start.elapsed()
+    );
 }
 
 /// A server that accepts and never replies gives a call an error after
@@ -125,7 +133,11 @@ async fn a_call_to_a_server_that_never_replies_fails_after_the_limit_of_the_try(
     let start = Instant::now();
     let call = tokio::time::timeout(WAIT, api.has_sign_in()).await;
     let error = call.expect("the call waits for ever").unwrap_err();
-    assert!(start.elapsed() >= Duration::from_millis(300), "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() >= Duration::from_millis(300),
+        "{:?}",
+        start.elapsed()
+    );
     assert!(
         format!("{error:#}").contains("cannot reach riff-server"),
         "{error:#}"

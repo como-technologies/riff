@@ -3137,6 +3137,47 @@ while it moves an instance. Such a reply has no `riff-build` header.
 `riff` tries the call again in the same way. It does not show a
 version error for it.
 
+### When a connection dies with no sign
+
+A laptop sleeps, or its address changes. Then a connection to the
+server can die with no sign. So each call and each stream of `riff`
+has time limits:
+
+| Limit | Value | What riff does |
+|---|---|---|
+| A connect | 5 s | The call or the stream fails, and riff tries again. |
+| One try of a call | 20 s | The call fails with `cannot reach riff-server`. |
+| A stream with no byte | 45 s | The stream ends, and riff connects again. |
+
+The server sends a keep-alive line on each stream each 15 seconds. So
+a stream that is alive never meets the limit of 45 seconds. A stream
+of `riff watch`, `riff tail`, `riff chat` or `riff workers host` that
+died comes back in at most 45 seconds. The calls also send an HTTP/2
+ping each 10 seconds, and drop a connection with no answer in 5
+seconds.
+
+A stream that falls behind the events of the server also ends at the
+server. riff connects again, and the watch gets the newest wake that
+it did not read.
+
+```mermaid
+sequenceDiagram
+    participant R as riff tail
+    participant S as riff-server
+    R->>S: open the stream
+    S-->>R: a keep-alive line each 15 s
+    Note over R,S: the laptop sleeps: no byte comes
+    R->>R: 45 s with no byte: the stream ends
+    R->>S: open the stream again
+```
+
+You do nothing. To see it, keep `riff tail` open, sleep the laptop,
+and wake it again. The new messages come again in at most 45 seconds:
+
+```sh
+riff tail
+```
+
 ## Run the lead and its workers in tmux
 
 In tmux, riff lays out your sessions. The lead gets a `riff tail`
