@@ -172,8 +172,7 @@ async fn who_is_a_table_and_long_shows_the_uri() {
         "{out}"
     );
     assert_eq!(
-        lines[4],
-        "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
+        lines[4], "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
         "{out}"
     );
     assert!(!out.contains("riff://"), "{out}");
