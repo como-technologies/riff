@@ -11,14 +11,22 @@ fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The `test` recipe of the justfile: its line and its body.
+/// The `test` recipe of the justfile and the private `cargo-test`
+/// recipe that it runs: their lines and their bodies.
 fn recipe() -> String {
     let justfile = std::fs::read_to_string(repo().join("justfile")).unwrap();
-    let start = justfile.find("\ntest *ARGS:\n").expect("a test recipe") + 1;
-    let end = justfile[start..]
-        .find("\n\n")
-        .map_or(justfile.len(), |n| start + n);
-    justfile[start..end].to_owned()
+    let block = |head: &str| {
+        let start = justfile.find(head).expect(head) + 1;
+        let end = justfile[start..]
+            .find("\n\n")
+            .map_or(justfile.len(), |n| start + n);
+        justfile[start..end].to_owned()
+    };
+    format!(
+        "{}\n\n{}\n",
+        block("\ntest *ARGS:\n"),
+        block("\n[private]\ncargo-test *ARGS:\n")
+    )
 }
 
 /// The `TMPDIR` that the fake `cargo` of `just test` gets, when `just`

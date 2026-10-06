@@ -88,7 +88,7 @@ fn a_second_run_in_a_worktree_with_a_live_lock_stops_at_once() {
         "a just ci runs in this worktree already (pid {pid}, started 3 min ago); \
          wait for it, or stop it"
     );
-    for recipe in ["ci", "ci-full"] {
+    for recipe in ["ci", "ci-full", "check"] {
         let at = Instant::now();
         let out = just(dir.path(), recipe);
         let took = at.elapsed();

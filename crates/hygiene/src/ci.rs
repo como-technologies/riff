@@ -23,6 +23,24 @@
 //! one line for the person to stderr: the set, and why. The Gate on
 //! GitHub runs `just ci-full` (01M3WNN7VQJKN5MJH7JN50VF4D).
 //!
+//! ## The check of an author: `just check`
+//!
+//! The job `Gate` of GitHub runs `just ci-full`: the one full run of
+//! each pushed commit (01M49HAZ5BZYGAR9PGC089RM3F). Before a push, an
+//! author runs `just check` (01M49HAZA5K08XW2JQ11TG87JP): the fast
+//! checks (`fmt-check`, `lint`, `doc`, `book`, `reqs`, `wrap`) and the
+//! tests of the crates that the diff touches. `hygiene crates [BASE]`
+//! prints the arguments of `cargo test` for these crates ([`tests`]),
+//! and one line for the person to stderr.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     D["the changed files"] --> T{"each file"}
+//!     T -- "text" --> N["no test"]
+//!     T -- "in crates/NAME/" --> C["NAME, and each crate<br/>that depends on it"]
+//!     T -- "each other file" --> W["--workspace"]
+//! ```
+//!
 //! ## One run at a time in a worktree
 //!
 //! Two runs in one worktree share its `target`. Each waits for the
@@ -154,6 +172,162 @@ pub fn choose(base: &str, changed: Option<&[String]>) -> Choice {
     }
 }
 
+/// A crate of the workspace, as `cargo metadata --no-deps` gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    /// The name of the package, for example `riff-core`.
+    pub name: String,
+    /// The directory of the crate from the top of the repository, for
+    /// example `crates/riff-core`.
+    pub dir: String,
+    /// The names of each dependency: normal, dev and build.
+    pub deps: Vec<String>,
+}
+
+/// The tests that `just check` runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tests {
+    /// No test: the diff changes no crate.
+    None,
+    /// The tests of these crates, in name order.
+    Crates(Vec<String>),
+    /// The tests of each crate.
+    Workspace,
+}
+
+impl Tests {
+    /// The arguments of `cargo test`: empty, `-p NAME` for each crate, or
+    /// `--workspace`.
+    pub fn args(&self) -> String {
+        match self {
+            Self::None => String::new(),
+            Self::Crates(names) => names
+                .iter()
+                .map(|name| format!("-p {name}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+            Self::Workspace => "--workspace".to_owned(),
+        }
+    }
+}
+
+/// The tests that `just check` runs, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestChoice {
+    /// The tests.
+    pub tests: Tests,
+    /// The reason, for the line that `just check` prints.
+    pub why: String,
+}
+
+impl fmt::Display for TestChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let set = match &self.tests {
+            Tests::None => "no test".to_owned(),
+            Tests::Crates(names) => format!("the tests of {}", names.join(", ")),
+            Tests::Workspace => "the tests of each crate".to_owned(),
+        };
+        write!(f, "just check runs {set}: {}", self.why)
+    }
+}
+
+/// The tests for the files `changed` that differ from the merge base
+/// with `base` (01M49HAZA5K08XW2JQ11TG87JP): the tests of each crate
+/// with a changed file, and of each crate that depends on one of them,
+/// also through another crate. A text file ([`is_text`]) needs no test.
+/// Each other file outside the crates, for example `Cargo.lock` or the
+/// `justfile`, needs the tests of each crate. `None` says that git
+/// cannot compare with `base`: then each crate.
+///
+/// ```
+/// use hygiene::ci::{tests, Member, Tests};
+///
+/// let member = |name: &str, deps: &[&str]| Member {
+///     name: name.into(),
+///     dir: format!("crates/{name}"),
+///     deps: deps.iter().map(|&d| d.into()).collect(),
+/// };
+/// let members = [
+///     member("riff-core", &[]),
+///     member("riff-server", &["riff-core"]),
+///     member("riff", &["riff-core", "riff-server"]),
+///     member("reqs", &[]),
+/// ];
+/// let changed = ["crates/riff-server/src/lib.rs".to_owned()];
+/// let choice = tests("origin/main", Some(&changed), &members);
+/// assert_eq!(choice.tests.args(), "-p riff -p riff-server");
+///
+/// let core = ["crates/riff-core/src/record.rs".to_owned()];
+/// let choice = tests("origin/main", Some(&core), &members);
+/// assert_eq!(choice.tests.args(), "-p riff -p riff-core -p riff-server");
+///
+/// let book = ["docs/src/development.md".to_owned()];
+/// assert_eq!(tests("origin/main", Some(&book), &members).tests, Tests::None);
+///
+/// let lock = ["Cargo.lock".to_owned()];
+/// let choice = tests("origin/main", Some(&lock), &members);
+/// assert_eq!(choice.tests, Tests::Workspace);
+/// assert_eq!(
+///     choice.to_string(),
+///     "just check runs the tests of each crate: Cargo.lock is in no crate, and it is not text"
+/// );
+/// ```
+pub fn tests(base: &str, changed: Option<&[String]>, members: &[Member]) -> TestChoice {
+    let Some(changed) = changed else {
+        return TestChoice {
+            tests: Tests::Workspace,
+            why: format!("git cannot compare this tree with {base}"),
+        };
+    };
+    let mut names: Vec<String> = Vec::new();
+    for path in changed {
+        let member = members
+            .iter()
+            .find(|m| path.starts_with(&format!("{}/", m.dir)));
+        match member {
+            Some(member) => names.push(member.name.clone()),
+            None if is_text(path) => {}
+            None => {
+                return TestChoice {
+                    tests: Tests::Workspace,
+                    why: format!("{path} is in no crate, and it is not text"),
+                };
+            }
+        }
+    }
+    if names.is_empty() {
+        return TestChoice {
+            tests: Tests::None,
+            why: format!("no crate differs from {base}"),
+        };
+    }
+    names.sort();
+    names.dedup();
+    let changed_crates = match &names[..] {
+        [one] => format!("{one} differs"),
+        many => format!("{} differ", many.join(", ")),
+    };
+    loop {
+        let more: Vec<String> = members
+            .iter()
+            .filter(|m| !names.contains(&m.name))
+            .filter(|m| m.deps.iter().any(|d| names.contains(d)))
+            .map(|m| m.name.clone())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        names.extend(more);
+    }
+    names.sort();
+    TestChoice {
+        tests: Tests::Crates(names),
+        why: format!(
+            "{changed_crates} from {base}, and each crate that depends on a changed crate runs too"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +372,69 @@ mod tests {
         ] {
             assert!(!is_text(path), "{path}");
         }
+    }
+
+    fn members() -> Vec<Member> {
+        let member = |name: &str, deps: &[&str]| Member {
+            name: name.into(),
+            dir: format!("crates/{name}"),
+            deps: deps.iter().map(|&d| d.into()).collect(),
+        };
+        vec![
+            member("hygiene", &[]),
+            member("isolated", &[]),
+            member("riff-core", &[]),
+            member("riff-server", &["riff-core", "isolated"]),
+            member("riff", &["riff-core", "hygiene", "riff-server", "isolated"]),
+        ]
+    }
+
+    #[test]
+    fn a_crate_with_no_dependent_runs_only_its_own_tests() {
+        let changed = paths(&["crates/riff/src/pr.rs", "docs/src/development.md"]);
+        let choice = tests("origin/main", Some(&changed), &members());
+        assert_eq!(choice.tests, Tests::Crates(vec!["riff".into()]));
+        assert_eq!(
+            choice.to_string(),
+            "just check runs the tests of riff: riff differs from origin/main, and each crate \
+             that depends on a changed crate runs too"
+        );
+    }
+
+    #[test]
+    fn the_dependents_of_a_crate_run_also_through_another_crate() {
+        let changed = paths(&["crates/isolated/src/lib.rs"]);
+        let choice = tests("origin/main", Some(&changed), &members());
+        assert_eq!(choice.tests.args(), "-p isolated -p riff -p riff-server");
+    }
+
+    #[test]
+    fn a_crate_dir_is_not_the_start_of_another_crate_dir() {
+        let changed = paths(&["crates/riff-core/src/lib.rs"]);
+        let choice = tests("origin/main", Some(&changed), &members());
+        assert_eq!(choice.tests.args(), "-p riff -p riff-core -p riff-server");
+        let hygiene = paths(&["crates/hygiene/ci-lock.sh"]);
+        let choice = tests("origin/main", Some(&hygiene), &members());
+        assert_eq!(choice.tests.args(), "-p hygiene -p riff");
+    }
+
+    #[test]
+    fn a_file_outside_the_crates_runs_each_test_and_text_runs_none() {
+        for path in ["justfile", ".github/workflows/ci.yml", "Cargo.toml"] {
+            let choice = tests("origin/main", Some(&paths(&[path])), &members());
+            assert_eq!(choice.tests, Tests::Workspace, "{path}");
+            assert_eq!(choice.tests.args(), "--workspace");
+        }
+        let text = paths(&["CLAUDE.md", "docs/src/how-it-works.md"]);
+        let choice = tests("origin/main", Some(&text), &members());
+        assert_eq!(choice.tests, Tests::None);
+        assert_eq!(choice.tests.args(), "");
+        assert_eq!(
+            choice.to_string(),
+            "just check runs no test: no crate differs from origin/main"
+        );
+        let unknown = tests("origin/main", None, &members());
+        assert_eq!(unknown.tests, Tests::Workspace);
     }
 
     #[test]

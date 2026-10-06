@@ -2,7 +2,9 @@
 //! checks the message of a commit with `git`. `hygiene book [DIR]` builds
 //! the book in DIR with `mdbook` and checks it. `hygiene wrap [DIR]`
 //! checks the wrap of each Markdown file in DIR. `hygiene ci [BASE]`
-//! prints the recipe that `just ci` runs. See the library docs.
+//! prints the recipe that `just ci` runs. `hygiene crates [BASE]` prints
+//! the arguments of `cargo test` that `just check` runs. See the library
+//! docs.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -12,7 +14,7 @@ use hygiene::{Issue, PullRequest};
 use serde::de::DeserializeOwned;
 
 const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
-                     | hygiene wrap [DIR] | hygiene ci [BASE]";
+                     | hygiene wrap [DIR] | hygiene ci [BASE] | hygiene crates [BASE]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -26,6 +28,8 @@ fn main() -> ExitCode {
         ["wrap", dir] => wrap(dir),
         ["ci"] => ci("origin/main"),
         ["ci", base] => ci(base),
+        ["crates"] => crates("origin/main"),
+        ["crates", base] => crates(base),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -159,6 +163,66 @@ fn ci(base: &str) -> ExitCode {
     eprintln!("{choice}");
     println!("{}", choice.checks.recipe());
     ExitCode::SUCCESS
+}
+
+/// Prints the arguments of `cargo test` that `just check` runs for the
+/// diff from the merge base with `base` to stdout, and the tests and
+/// the reason to stderr. When cargo cannot read the workspace, the
+/// tests of each crate.
+fn crates(base: &str) -> ExitCode {
+    let changed = changed(base);
+    let choice = match members() {
+        Ok(members) => hygiene::ci::tests(base, changed.as_deref(), &members),
+        Err(e) => hygiene::ci::TestChoice {
+            tests: hygiene::ci::Tests::Workspace,
+            why: format!("cargo metadata: {e}"),
+        },
+    };
+    eprintln!("{choice}");
+    println!("{}", choice.tests.args());
+    ExitCode::SUCCESS
+}
+
+/// The crates of the workspace, from `cargo metadata --no-deps`.
+fn members() -> Result<Vec<hygiene::ci::Member>, String> {
+    #[derive(serde::Deserialize)]
+    struct Metadata {
+        workspace_root: PathBuf,
+        packages: Vec<Package>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Package {
+        name: String,
+        manifest_path: PathBuf,
+        dependencies: Vec<Dependency>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Dependency {
+        name: String,
+    }
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let out = Command::new(cargo)
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
+    }
+    let metadata: Metadata = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    let members = metadata.packages.into_iter().map(|package| {
+        let dir = package
+            .manifest_path
+            .parent()
+            .and_then(|dir| dir.strip_prefix(&metadata.workspace_root).ok())
+            .map(|dir| dir.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        hygiene::ci::Member {
+            name: package.name,
+            dir,
+            deps: package.dependencies.into_iter().map(|d| d.name).collect(),
+        }
+    });
+    Ok(members.collect())
 }
 
 /// The files of this repository that differ from the merge base of
