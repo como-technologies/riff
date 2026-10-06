@@ -28,6 +28,12 @@
 //! wake takes it back too. So a worker that claims work, or that the
 //! lead wakes with a request, before its next keep-alive goes on.
 //!
+//! A worker with an unread request of its lead (a direct message that
+//! starts with `request:`) is not idle: the server does not ask it to
+//! stop (01M49KT28N4B07P4G80Z74GRAH). When the lead sends a request
+//! after the ask, and the worker still runs, the note of [`stuck`]
+//! names each unread request (01M49KT3JXZATXMA4WNTR9BJCK).
+//!
 //! The lead gets one note for the first ask after the last change of
 //! the claims of the worker. A wake, for example the pause and the
 //! resume of the repository, takes the mark back, and the server asks
@@ -124,6 +130,7 @@ pub fn news(stopping: &Stopping, idle: &Idle) -> String {
 ///     worker: "riff://mike@pangolin/como-technologies/riff?session=1a2b3c4d5e".parse()?,
 ///     host: "pangolin".into(),
 ///     asked: Duration::from_secs(65),
+///     requests: Vec::new(),
 /// };
 /// assert_eq!(
 ///     stuck(&stuck_worker),
@@ -132,17 +139,41 @@ pub fn news(stopping: &Stopping, idle: &Idle) -> String {
 ///      for example, its riff mcp ended and its watch is of an older riff, or no riff \
 ///      workers run wraps it. Stop it on pangolin: riff workers stop 1a2b3c4d"
 /// );
+///
+/// // The note names each unread request of the lead (01M49KT3JXZATXMA4WNTR9BJCK).
+/// let with_requests = Stuck {
+///     requests: vec!["request: claim issue-12".into(), "request: claim verify-issue-9".into()],
+///     ..stuck_worker
+/// };
+/// assert!(stuck(&with_requests).ends_with(
+///     "riff workers stop 1a2b3c4d. It did not read 2 requests of the lead: \
+///      \"request: claim issue-12\", \"request: claim verify-issue-9\". Give them to \
+///      another session."
+/// ));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn stuck(stuck: &Stuck) -> String {
     let id = stuck.worker.who().session().unwrap_or_default();
     let short: String = id.chars().take(8).collect();
-    format!(
+    let mut news = format!(
         "workers: the idle worker {short} on {host} still runs {secs} seconds after the ask \
          to stop. Its riff mcp and its watch did not stop its riff workers run: for \
          example, its riff mcp ended and its watch is of an older riff, or no riff workers \
          run wraps it. Stop it on {host}: riff workers stop {short}",
         host = stuck.host,
         secs = stuck.asked.as_secs()
-    )
+    );
+    let requests: Vec<String> = stuck.requests.iter().map(|r| format!("{r:?}")).collect();
+    match requests.len() {
+        0 => {}
+        1 => news.push_str(&format!(
+            ". It did not read 1 request of the lead: {}. Give it to another session.",
+            requests[0]
+        )),
+        n => news.push_str(&format!(
+            ". It did not read {n} requests of the lead: {}. Give them to another session.",
+            requests.join(", ")
+        )),
+    }
+    news
 }
