@@ -291,3 +291,94 @@ impl Saved {
         calls
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use riff_core::name::Who;
+    use riff_core::record::{Change, Email};
+
+    use super::*;
+
+    fn record(position: u64, by: &By, call: Option<&str>, at_ms: u64) -> Record {
+        Record {
+            position,
+            written_at_ms: at_ms,
+            by: Some(by.clone()),
+            command: Some("invite".into()),
+            call: call.map(str::to_owned),
+            change: Change::MemberInvited(Email {
+                email: format!("p{position}@acme.io"),
+            }),
+        }
+    }
+
+    fn ann() -> By {
+        By::Session(Who::new("ann", Some("s1")).unwrap())
+    }
+
+    fn positions(kept: &Kept) -> Vec<u64> {
+        kept.done.made.iter().map(|r| r.position).collect()
+    }
+
+    #[test]
+    fn the_records_of_one_command_make_one_result() {
+        let mut calls = Calls::default();
+        let ann = ann();
+        for position in [4, 5] {
+            calls.record(&record(position, &ann, Some("c1"), 10));
+        }
+        // A record with no call ID makes no result.
+        calls.record(&record(6, &ann, None, 10));
+        let kept = calls.get(&Key::new(&ann, "c1"), 10).unwrap();
+        assert_eq!(positions(kept), [4, 5]);
+        assert_eq!(kept.at_ms, 10);
+        assert_eq!(calls.kept.len(), 1);
+    }
+
+    #[test]
+    fn a_new_command_with_an_old_call_id_starts_a_new_result() {
+        let mut calls = Calls::default();
+        let ann = ann();
+        calls.record(&record(4, &ann, Some("c1"), 10));
+        calls.record(&record(9, &ann, Some("c1"), 20));
+        let kept = calls.get(&Key::new(&ann, "c1"), 20).unwrap();
+        assert_eq!(positions(kept), [9]);
+        assert_eq!(kept.at_ms, 20);
+    }
+
+    #[test]
+    fn the_limit_of_one_caller_drops_no_key_of_another_caller() {
+        let mut calls = Calls::default();
+        let ann = ann();
+        calls.keep(Key::new(&By::Server, "old"), Kept::new(Done::default(), None, 0));
+        for n in 0..=CALL_KEEP_MOST as u64 {
+            let key = Key::new(&ann, &format!("c{n}"));
+            calls.keep(key, Kept::new(Done::default(), None, n + 1));
+        }
+        let now = CALL_KEEP_MOST as u64 + 1;
+        assert!(calls.get(&Key::new(&By::Server, "old"), now).is_some());
+        assert!(calls.get(&Key::new(&ann, "c0"), now).is_none());
+        assert!(calls.get(&Key::new(&ann, "c1"), now).is_some());
+    }
+
+    #[test]
+    fn a_checkpoint_keeps_the_records_of_each_young_call() {
+        let mut calls = Calls::default();
+        let ann = ann();
+        let day = keep_ms();
+        calls.record(&record(1, &ann, Some("old"), 0));
+        calls.record(&record(2, &ann, Some("c1"), day));
+        calls.record(&record(3, &By::Server, Some("c2"), day));
+        let saved = calls.saved(day + 1);
+        let saved_at: Vec<u64> = saved.calls.iter().map(|r| r.position).collect();
+        assert_eq!(saved_at, [2, 3]);
+
+        let json = serde_json::to_string(&saved).unwrap();
+        let restored = serde_json::from_str::<Saved>(&json).unwrap().restore();
+        assert!(restored.get(&Key::new(&ann, "c1"), day + 1).is_some());
+        assert!(restored.get(&Key::new(&By::Server, "c2"), day + 1).is_some());
+        assert!(restored.get(&Key::new(&ann, "old"), day + 1).is_none());
+        // An empty part writes nothing: a checkpoint of 1.0.0 has none.
+        assert_eq!(serde_json::to_string(&Saved::default()).unwrap(), "{}");
+    }
+}
