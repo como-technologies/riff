@@ -255,7 +255,7 @@ impl Project {
     /// project settings and the local settings do not have.
     ///
     /// ```
-    /// let dir = tempfile::tempdir()?;
+    /// let dir = isolated::outside_git();
     /// let project = riff::permissions::Project::of(dir.path());
     /// let user = dir.path().join("user.json");
     /// assert_eq!(project.missing(Some(&user)), project.rules());
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn a_directory_outside_git_uses_main_and_no_repo() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = isolated::outside_git();
         let project = Project::of(dir.path());
         assert_eq!(project.top, dir.path());
         assert_eq!(project.repo, None);
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_rule_in_the_local_settings_is_not_missing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = isolated::outside_git();
         let project = Project::of(dir.path());
         std::fs::create_dir(dir.path().join(".claude")).unwrap();
         std::fs::write(

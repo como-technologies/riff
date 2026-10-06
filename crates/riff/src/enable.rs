@@ -140,7 +140,7 @@ impl Repo {
     /// ```
     /// use riff::enable::Repo;
     ///
-    /// let dir = tempfile::tempdir()?;
+    /// let dir = isolated::outside_git();
     /// assert_eq!(Repo::of(dir.path()), None);
     /// let main = dir.path().join("app");
     /// let tree = main.join(".claude/worktrees/issue-12");
@@ -251,7 +251,7 @@ impl State {
     /// ```
     /// use riff::enable::{State, set};
     ///
-    /// let dir = tempfile::tempdir()?;
+    /// let dir = isolated::outside_git();
     /// let user = dir.path().join("user.json");
     /// set(&user, Some(true))?;
     /// assert!(!State::of(dir.path(), Some(&user), false).on);
@@ -1388,9 +1388,24 @@ mod tests {
 
     #[test]
     fn a_place_in_a_repository_needs_a_repository() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = isolated::outside_git();
         let error = enable(dir.path(), Place::Local, None).unwrap_err();
         assert!(format!("{error:#}").contains("--global"), "{error:#}");
+    }
+
+    #[test]
+    fn a_test_with_its_temp_dir_in_a_repository_writes_nothing_there() {
+        // The TMPDIR of a worker, under a home that is a repository.
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(".git")).unwrap();
+        let tmp = home.path().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut roots = vec![tmp];
+        roots.extend(isolated::temp_roots());
+        let dir = isolated::outside_git_from(&roots);
+        assert!(enable(dir.path(), Place::Local, None).is_err());
+        assert!(!home.path().join(".claude").exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]

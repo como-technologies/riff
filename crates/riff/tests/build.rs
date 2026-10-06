@@ -444,7 +444,7 @@ fn marked(router: axum::Router, asked: Arc<AtomicBool>) -> axum::Router {
 /// `asked` is the mark of the server ([`marked`]).
 async fn runs_the_new_binary(url: &str, asked: &AtomicBool, args: &[&str]) {
     asked.store(false, Ordering::SeqCst);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = isolated::outside_git();
     let binary = dir.path().join("riff");
     by_child(
         Command::new("cp")

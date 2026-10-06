@@ -25,6 +25,12 @@
 //! drops. A test sets its own variables after the helper, so its
 //! values win.
 //!
+//! A test that needs a place outside each git repository gets its temp
+//! dir from [`outside_git`]. The `TMPDIR` of a worker is under the home
+//! of the person, and a home can be a git repository. A plain temp dir
+//! then is in that repository, and a test of "no repository" finds it,
+//! or writes to it (01M43B48Z8R0SXAWBQP75CPR55).
+//!
 //! [`offenders`] finds each test file that names a binary of riff
 //! without the helper. A test of this crate fails on each one.
 //!
@@ -296,6 +302,70 @@ pub fn offenders(root: &Path) -> Vec<String> {
         }
     }
     found
+}
+
+/// The roots that [`outside_git`] tries, in order: the temp dir of the
+/// process, then the temp dirs of the system, on disk first. `just test`
+/// tries the same roots.
+pub fn temp_roots() -> Vec<PathBuf> {
+    let mut roots = vec![std::env::temp_dir()];
+    roots.extend(["/var/tmp", "/tmp", "/dev/shm"].map(PathBuf::from));
+    roots
+}
+
+/// A new temp dir with no git repository at it or above it
+/// (01M43B48Z8R0SXAWBQP75CPR55). It is in the first of [`temp_roots`]
+/// that is outside each repository.
+///
+/// # Panics
+///
+/// When each root is in a git repository.
+pub fn outside_git() -> TempDir {
+    outside_git_from(&temp_roots())
+}
+
+/// A new temp dir in the first of `roots` that is a dir outside each git
+/// repository.
+///
+/// ```
+/// let home = tempfile::tempdir()?;
+/// std::fs::create_dir_all(home.path().join(".git"))?;
+/// let tmp = home.path().join("tmp");
+/// std::fs::create_dir_all(&tmp)?;
+/// let clean = isolated::outside_git();
+///
+/// let dir = isolated::outside_git_from(&[tmp, clean.path().into()]);
+/// assert!(dir.path().starts_with(clean.path()));
+/// assert!(!isolated::in_git(dir.path()));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// # Panics
+///
+/// When each root is in a git repository, or is not a dir.
+pub fn outside_git_from(roots: &[PathBuf]) -> TempDir {
+    let root = roots
+        .iter()
+        .find(|root| root.is_dir() && !in_git(root))
+        .unwrap_or_else(|| panic!("each temp root is in a git repository: {roots:?}"));
+    tempfile::tempdir_in(root).expect("a temp dir")
+}
+
+/// True when `dir`, or a dir above it, holds `.git`: a git repository
+/// or a linked worktree. The path counts as the OS resolves it.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let sub = dir.path().join("a/b");
+/// std::fs::create_dir_all(&sub)?;
+/// std::fs::create_dir_all(dir.path().join(".git"))?;
+/// assert!(isolated::in_git(&sub));
+/// assert!(!isolated::in_git(isolated::outside_git().path()));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn in_git(dir: &Path) -> bool {
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_owned());
+    dir.ancestors().any(|d| d.join(".git").exists())
 }
 
 /// True when a line of a test names a binary of riff directly.
