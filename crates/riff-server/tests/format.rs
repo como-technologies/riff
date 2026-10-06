@@ -87,6 +87,7 @@ fn records_of(release: &str, name: &str) -> Vec<Record> {
 /// The names of `kinds.json`.
 #[derive(Deserialize)]
 struct Kinds {
+    #[serde(default)]
     envelope: Vec<String>,
     records: Vec<String>,
     commands: Vec<String>,
@@ -96,11 +97,13 @@ struct Kinds {
 /// releases.
 fn kinds() -> Kinds {
     let mut all = Kinds {
+        envelope: Vec::new(),
         records: Vec::new(),
         commands: Vec::new(),
     };
     for release in RELEASES {
         let kinds: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
+        all.envelope.extend(kinds.envelope);
         all.records.extend(kinds.records);
         all.commands.extend(kinds.commands);
     }
