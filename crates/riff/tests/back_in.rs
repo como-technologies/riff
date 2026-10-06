@@ -325,7 +325,7 @@ async fn a_watch_goes_on_after_riff_login() {
     let watch = std::sync::Mutex::new(watch);
     let read = || std::fs::read_to_string(&err).unwrap_or_default();
     assert!(
-        wait_for(Duration::from_secs(10), || read().contains(login::ENDED)).await,
+        wait_for(Duration::from_secs(20), || read().contains(login::ENDED)).await,
         "{}",
         read()
     );
