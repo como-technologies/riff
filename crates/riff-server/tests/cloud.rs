@@ -359,7 +359,7 @@ fn the_book_lets_only_an_approved_job_deploy() {
         "#### Let only an approved job deploy",
         "CLOUD_GITHUB_ENVIRONMENT",
         "```sh\nriff cloud create shared\nriff cloud create stage\n```",
-        "repo:como-technologies/riff:environment:production",
+        "attribute.environment/production",
         "gcloud iam service-accounts get-iam-policy riff-deploy@",
     ] {
         assert!(part.contains(text), "{text} is not in the part");

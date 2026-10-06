@@ -986,9 +986,9 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
 /// flowchart LR
 ///     job[job of the repository] --> pool{provider github:\nrepository, main or v*}
 ///     pool -- no --> refused[no sign-in]
-///     pool -- yes --> sub{sub = repo:R:environment:E}
-///     sub -- E of the account --> account[deploy account]
-///     sub -- other --> refused
+///     pool -- yes --> env{attribute.environment}
+///     env -- E of the account --> account[deploy account]
+///     env -- other, or none --> refused
 /// ```
 fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
     if s.github_environment.is_empty() {
@@ -1050,9 +1050,14 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
         )
     };
     if gcloud.exists(&provider("describe"))? {
-        println!("Identity provider github: exists. Setting its condition.");
+        println!("Identity provider github: exists. Setting its mapping and condition.");
         let mut update = provider("update-oidc");
-        update.extend(args(&["--attribute-condition", &condition]));
+        update.extend(args(&[
+            "--attribute-mapping",
+            GITHUB_MAPPING,
+            "--attribute-condition",
+            &condition,
+        ]));
         gcloud.run(&update, None)?;
     } else {
         println!("Identity provider github: making it.");
@@ -1061,7 +1066,7 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
             "--issuer-uri",
             "https://token.actions.githubusercontent.com",
             "--attribute-mapping",
-            "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref",
+            GITHUB_MAPPING,
             "--attribute-condition",
             &condition,
         ]));
@@ -1155,10 +1160,16 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The member of the pool `github` for a job in the GitHub environment
-/// of `s` (01M49M8W30M2084QN4HX1FJFKS). GitHub gives such a job the
-/// subject `repo:OWNER/REPO:environment:NAME`, and the pool maps the
-/// subject to `google.subject`.
+/// The attribute mapping of the provider `github`. The deploy accounts
+/// bind `attribute.environment` (01M49M8W30M2084QN4HX1FJFKS): the
+/// subject of a job can have the immutable form of GitHub, with the IDs
+/// of the owner and the repository, but the claim `environment` is the
+/// plain name.
+pub const GITHUB_MAPPING: &str = "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment";
+
+/// The member of the pool `github` for each job in the GitHub
+/// environment of `s` (01M49M8W30M2084QN4HX1FJFKS). The condition of
+/// the provider lets in only the repository of `s`.
 ///
 /// ```
 /// let mut s = riff::cloud::Settings::new("mine", "acme", "123", "europe-west1");
@@ -1166,13 +1177,14 @@ fn ci_deploy(gcloud: &Gcloud, s: &Settings, place: &[String]) -> Result<()> {
 /// s.github_environment = "production".into();
 /// assert_eq!(
 ///     riff::cloud::github_job(&s),
-///     "principal://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/github/subject/repo:acme/app:environment:production"
+///     "principalSet://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/github/attribute.environment/production"
 /// );
+/// assert!(riff::cloud::GITHUB_MAPPING.contains("attribute.environment=assertion.environment"));
 /// ```
 pub fn github_job(s: &Settings) -> String {
     format!(
-        "principal://iam.googleapis.com/projects/{}/locations/global/workloadIdentityPools/github/subject/repo:{}:environment:{}",
-        s.project_number, s.github_repo, s.github_environment
+        "principalSet://iam.googleapis.com/projects/{}/locations/global/workloadIdentityPools/github/attribute.environment/{}",
+        s.project_number, s.github_environment
     )
 }
 

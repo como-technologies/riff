@@ -1722,8 +1722,13 @@ riff cloud create shared
 riff cloud create stage
 ```
 
-Check the members of the deploy account. Only the subject
-`repo:como-technologies/riff:environment:production` shows:
+The provider `github` maps the claim `environment` of a job to
+`attribute.environment`. The deploy account takes the jobs with that
+attribute. It does not take a subject: the subject of a job of this
+repository has the IDs of the owner and the repository.
+
+Check the members of the deploy account. Only the member that ends
+with `attribute.environment/production` shows:
 
 ```sh
 gcloud iam service-accounts get-iam-policy riff-deploy@como-riff.iam.gserviceaccount.com --project como-riff

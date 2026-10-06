@@ -300,9 +300,10 @@ fn create_again_keeps_each_resource() {
         assert!(!ran.calls.contains(made), "{made} in:\n{}", ran.calls);
     }
     ran.line("storage buckets update gs://como-riff-state --lifecycle-file ");
-    // A provider that exists gets the condition again.
+    // A provider that exists gets the mapping and the condition again.
     let update = ran.line("iam workload-identity-pools providers update-oidc github ");
     assert!(update.contains(CONDITION), "{update}");
+    assert!(update.contains(&format!("--attribute-mapping {MAPPING} ")), "{update}");
 }
 
 /// R46, and 01M3TJWJEPTSF1S3S5PJD25Z7Y: an older version of an object
@@ -431,6 +432,7 @@ fn only_main_and_the_release_tags_sign_in_as_the_deploy_account() {
         "{provider}"
     );
     assert!(provider.contains(CONDITION), "{provider}");
+    assert!(provider.contains(&format!("--attribute-mapping {MAPPING} ")), "{provider}");
     assert!(
         !ran.calls.contains("providers update-oidc"),
         "{}",
@@ -444,9 +446,15 @@ fn only_main_and_the_release_tags_sign_in_as_the_deploy_account() {
     );
 }
 
-/// The member of the pool for a job of the repository in the GitHub
-/// environment `production`.
-const PRODUCTION: &str = "principal://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/subject/repo:como-technologies/riff:environment:production";
+/// The member of the pool for each job of the repository in the GitHub
+/// environment `production`. It is not the subject: this repository
+/// has the immutable subject of GitHub, with the IDs of the owner and
+/// the repository.
+const PRODUCTION: &str = "principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.environment/production";
+
+/// The attribute mapping of the provider: it maps the claim
+/// `environment` of a job.
+const MAPPING: &str = "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment";
 
 /// The member of the pool for each job of the repository.
 const REPOSITORY: &str = "principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.repository/como-technologies/riff";
@@ -469,7 +477,7 @@ fn only_a_job_in_its_github_environment_signs_in_as_a_deploy_account() {
             .collect();
         assert_eq!(users.len(), 1, "{users:#?}");
         let member = format!(
-            "--member principal://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/subject/repo:como-technologies/riff:environment:{environment} "
+            "--member principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.environment/{environment} "
         );
         assert!(
             users[0].starts_with(&format!(
