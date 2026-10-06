@@ -29,9 +29,11 @@ struct Machine {
 
 impl Machine {
     fn new() -> Machine {
-        let machine = Machine {
-            env: Isolated::new(),
-        };
+        Machine::with(Isolated::new())
+    }
+
+    fn with(env: Isolated) -> Machine {
+        let machine = Machine { env };
         let script = |name: &str, body: &str| {
             let path = machine.bin().join(name);
             std::fs::create_dir_all(machine.bin()).unwrap();
@@ -755,6 +757,41 @@ fn enable_writes_the_local_or_the_shared_settings_and_disable_removes_the_entry(
     assert!(!outside.status.success());
     let err = String::from_utf8_lossy(&outside.stderr);
     assert!(err.contains("not in a git repository"), "{err}");
+}
+
+/// The `TMPDIR` of a worker is in the home of the person, and the home
+/// can be a git repository. The test dirs of a machine are outside it,
+/// so each command that writes settings writes nothing in the home
+/// (01M49NP2JW8JFWYY56K7AK3H05).
+#[test]
+fn a_tmpdir_in_a_home_that_is_a_repository_gets_no_settings() {
+    let home = isolated::outside_git();
+    let git = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(home.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status();
+    assert!(git.unwrap().success());
+    let tmp = home.path().join(".cache/riff/tmp/w1");
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let machine = Machine::with(Isolated::in_roots(&[tmp, std::env::temp_dir()]));
+    assert!(!isolated::in_git(machine.env.path()));
+    let plain = machine.plain("downloads");
+    let out = machine.connect(&plain, &["--scope", "repo"]);
+    assert!(
+        out.contains("This directory is not in a git repository."),
+        "{out}"
+    );
+    for args in [&["enable"][..], &["enable", "--shared"]] {
+        let out = machine.riff(&plain, args).output().unwrap();
+        assert!(!out.status.success(), "riff {args:?}: {out:?}");
+    }
+    // Outside a repository, setup writes in the dir itself.
+    machine.run(&plain, &["setup"]);
+    assert!(shared(&plain).is_file());
+    assert!(!home.path().join(".claude").exists());
 }
 
 /// To turn riff off in one repository changes nothing in another one.

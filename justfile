@@ -96,33 +96,11 @@ build:
 test *ARGS:
     {{just_executable()}} cargo-test --workspace {{ARGS}}
 
-# 01M43B491Z25KT0XBC7CANFS5G: a TMPDIR in a git repository (the home of a
-# worker) moves to the first temp root outside each repository.
-# cargo test ARGS for test and check, in the environment of the tests
+# cargo test ARGS for test and check, in the environment of the tests.
+# 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
 [private]
 cargo-test *ARGS:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    in_git() {
-        local d
-        d=$(realpath "$1")
-        while :; do
-            [ -e "$d/.git" ] && return 0
-            [ "$d" = / ] && return 1
-            d=$(dirname "$d")
-        done
-    }
-    tmp="${TMPDIR:-/tmp}"
-    if in_git "$tmp"; then
-        for root in /var/tmp /tmp /dev/shm; do
-            if [ -d "$root" ] && ! in_git "$root"; then
-                tmp="$root/riff-test-$(id -u)"
-                mkdir -p "$tmp"
-                break
-            fi
-        done
-    fi
-    env TMPDIR="$tmp" RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test {{ARGS}}
+    RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:
