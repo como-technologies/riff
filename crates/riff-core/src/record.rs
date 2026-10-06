@@ -120,6 +120,7 @@
 //!     written_at_ms: 1_790_000_000_000,
 //!     by: Some(By::Session(Who::new("ann", Some("s1"))?)),
 //!     command: Some("claim".into()),
+//!     call: None,
 //!     change: Change::Claimed(Claimed {
 //!         session: "riff://ann@heron/acme/app?session=s1".parse()?,
 //!         thread: "acme/app".parse()?,
@@ -497,7 +498,7 @@ impl Record {
     /// use riff_core::wire::RiffState;
     ///
     /// let repo = "acme/app".parse()?;
-    /// let record = |change| Record { position: 1, written_at_ms: 1, by: None, command: None, change };
+    /// let record = |change| Record { position: 1, written_at_ms: 1, by: None, command: None, call: None, change };
     /// let claim = |thread: &str| record(Change::Claimed(Claimed {
     ///     session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
     ///     thread: thread.parse().unwrap(),

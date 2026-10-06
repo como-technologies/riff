@@ -71,6 +71,7 @@
 //!     written_at_ms: 1_790_000_000_000,
 //!     by: None,
 //!     command: None,
+//!     call: None,
 //!     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 //! };
 //! write(&store, &[record(1), record(2), record(3)], &Timing::default(), || true).await?;
@@ -164,6 +165,7 @@ pub fn utc(ms: u64) -> String {
 ///     written_at_ms: 1_790_000_000_000,
 ///     by: Some(By::Session(Who::new("ann", Some("s1"))?)),
 ///     command: Some("claim".into()),
+///     call: None,
 ///     change: Change::Claimed(Claimed {
 ///         session: "riff://ann@heron/acme/app?session=s1".parse()?,
 ///         thread: "acme/app".parse()?,

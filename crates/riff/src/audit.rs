@@ -55,6 +55,7 @@
 //!     written_at_ms: position * 1000,
 //!     by: Some(By::Session(session.who().clone())),
 //!     command: None,
+//!     call: None,
 //!     change,
 //! };
 //! let claim = |session: &riff_core::name::SessionUri, item: &str| Claimed {

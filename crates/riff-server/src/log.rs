@@ -80,6 +80,7 @@
 //!     written_at_ms: 0,
 //!     by: None,
 //!     command: None,
+//!     call: None,
 //!     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 //! };
 //! let serving = || true;
@@ -174,6 +175,7 @@ pub fn encode(records: &[Record]) -> Vec<u8> {
 ///     written_at_ms: 0,
 ///     by: None,
 ///     command: None,
+///     call: None,
 ///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Paused }),
 /// };
 /// let (header, lines) = decode(&encode(&[record.clone()])).unwrap();
@@ -270,6 +272,7 @@ pub async fn write(
 ///     written_at_ms: 0,
 ///     by: None,
 ///     command: None,
+///     call: None,
 ///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 /// };
 /// let (store, failed) = (Memory::default(), AtomicU64::new(0));
@@ -384,6 +387,7 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 ///     written_at_ms: 0,
 ///     by: None,
 ///     command: None,
+///     call: None,
 ///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 /// };
 /// write(&store, &[record(1), record(2)], &Timing::default(), || true).await?;
