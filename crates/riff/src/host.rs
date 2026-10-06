@@ -663,8 +663,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     // The compile cache of the workers: the install runs while the host
     // serves, and a failed install is one note to the lead
     // (01M4923963S666V9YWTZ46ZZ50).
-    let mut install =
-        tokio::task::spawn_blocking(|| crate::sccache::ensure(Path::new("cargo")));
+    let mut install = tokio::task::spawn_blocking(|| crate::sccache::ensure(Path::new("cargo")));
     let mut installing = true;
     let mut cache_note = None;
     loop {

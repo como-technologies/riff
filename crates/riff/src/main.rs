@@ -2053,7 +2053,9 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             let cache = riff::sccache::Cache::here(&path)?;
             if *clear {
                 let Some(cache) = &cache else {
-                    anyhow::bail!("this machine has no sccache, so it has no compile cache to empty");
+                    anyhow::bail!(
+                        "this machine has no sccache, so it has no compile cache to empty"
+                    );
                 };
                 let workers = Tmux::machine().worker_panes()?.len();
                 if workers > 0 {

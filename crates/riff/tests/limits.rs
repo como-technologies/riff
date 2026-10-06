@@ -914,7 +914,10 @@ fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
         "echo \"[$RUSTC_WRAPPER] [$SCCACHE_DIR] [$SCCACHE_CACHE_SIZE] [$SCCACHE_SERVER_PORT]\" > '{}'",
         seen.display()
     ));
-    let person = [("RUSTC_WRAPPER", "/person/sccache"), ("SCCACHE_DIR", "/person/cache")];
+    let person = [
+        ("RUSTC_WRAPPER", "/person/sccache"),
+        ("SCCACHE_DIR", "/person/cache"),
+    ];
 
     let out = m.wrapper(&claude, &person);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
@@ -934,7 +937,11 @@ fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
     let port = riff::sccache::port(&dir);
     assert_eq!(
         read(&seen),
-        format!("[{}] [{}] [20G] [{port}]\n", sccache.display(), dir.display())
+        format!(
+            "[{}] [{}] [20G] [{port}]\n",
+            sccache.display(),
+            dir.display()
+        )
     );
     assert!(!stderr(&out).contains("sccache"), "{out:?}");
 }
@@ -948,7 +955,10 @@ fn riff_workers_cache_shows_sets_and_clears_the_cache() {
     let m = Machine::new(isolated::DEAD_SERVER);
     let off = m.workers(&["cache"]);
     assert!(off.starts_with("workers.cache  40G  ("), "{off}");
-    assert!(off.ends_with("cache off: no sccache. riff update installs it.\n"), "{off}");
+    assert!(
+        off.ends_with("cache off: no sccache. riff update installs it.\n"),
+        "{off}"
+    );
     let listed = m.workers(&[]);
     assert!(listed.contains("cache off: no sccache."), "{listed}");
 
@@ -962,8 +972,10 @@ fn riff_workers_cache_shows_sets_and_clears_the_cache() {
     assert!(listed.contains(&line), "{listed}");
     let port = riff::sccache::port(&dir);
     assert!(
-        read(&m.bin().join("sccache.log"))
-            .contains(&format!("--show-stats --stats-format json [{}] [{port}]", dir.display())),
+        read(&m.bin().join("sccache.log")).contains(&format!(
+            "--show-stats --stats-format json [{}] [{port}]",
+            dir.display()
+        )),
         "the stats come from the server of the workers"
     );
 
@@ -972,7 +984,10 @@ fn riff_workers_cache_shows_sets_and_clears_the_cache() {
 
     std::fs::create_dir_all(dir.join("a")).unwrap();
     let cleared = m.workers(&["cache", "--clear"]);
-    assert_eq!(cleared, format!("Emptied the compile cache in {}.\n", dir.display()));
+    assert_eq!(
+        cleared,
+        format!("Emptied the compile cache in {}.\n", dir.display())
+    );
     assert!(!dir.exists());
     assert!(read(&m.bin().join("sccache.log")).contains("--stop-server ["));
 }

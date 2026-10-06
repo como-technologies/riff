@@ -1437,5 +1437,8 @@ async fn a_host_installs_the_pinned_sccache_and_tells_the_lead_a_failure() {
     assert_eq!(read.matches("cannot install sccache").count(), 1, "{read}");
     tokio::time::sleep(Duration::from_secs(2)).await;
     let later = riff::text::inbox(&api.inbox(&lead, None, false).await.unwrap(), &lead);
-    assert!(!later.contains("cannot install sccache"), "one note: {later}");
+    assert!(
+        !later.contains("cannot install sccache"),
+        "one note: {later}"
+    );
 }

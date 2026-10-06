@@ -863,7 +863,9 @@ pub fn temp_line(root: &Path, bytes: u64) -> String {
 ///     "cache off: no sccache. riff update installs it.\n"
 /// );
 /// ```
-pub fn cache_line(cache: Option<(&crate::sccache::Cache, Option<&crate::sccache::Stats>)>) -> String {
+pub fn cache_line(
+    cache: Option<(&crate::sccache::Cache, Option<&crate::sccache::Stats>)>,
+) -> String {
     let line = match cache {
         None => "cache off: no sccache. riff update installs it.".to_owned(),
         Some((cache, None)) => format!(

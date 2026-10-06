@@ -490,8 +490,15 @@ async fn update_installs_sccache_on_a_machine_with_workers() {
     let out = run(with(bin.path())).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     let err = text(&out.stderr);
-    assert_eq!(err.matches("cannot install sccache 0.18.0").count(), 1, "{err}");
-    assert!(err.contains("The workers there build with no compile cache."), "{err}");
+    assert_eq!(
+        err.matches("cannot install sccache 0.18.0").count(),
+        1,
+        "{err}"
+    );
+    assert!(
+        err.contains("The workers there build with no compile cache."),
+        "{err}"
+    );
 }
 
 #[tokio::test]

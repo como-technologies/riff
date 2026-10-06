@@ -269,9 +269,15 @@ pub fn find_in(path: Option<&OsStr>, extra: Option<&Path>) -> Option<PathBuf> {
 /// assert_eq!(version_of("command not found"), None);
 /// ```
 pub fn version_of(out: &str) -> Option<(u32, u32, u32)> {
-    let word = out.split_whitespace().find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
+    let word = out
+        .split_whitespace()
+        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
     let mut parts = word.split(['.', '-', '+']).map(str::parse::<u32>);
-    Some((parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?))
+    Some((
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    ))
 }
 
 /// The version of the `sccache` binary `bin`, or `None` when it gives
@@ -369,7 +375,9 @@ impl Stats {
                 .get("cache_size")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
-            max: info.get("max_cache_size").and_then(serde_json::Value::as_u64),
+            max: info
+                .get("max_cache_size")
+                .and_then(serde_json::Value::as_u64),
             hits: count("cache_hits"),
             misses: count("cache_misses"),
         })

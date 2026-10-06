@@ -460,7 +460,10 @@ pub async fn update(
     {
         let host = crate::identity::this_host();
         let pinned = crate::sccache::PINNED;
-        eprintln!("{}", crate::text::sccache_failed(&host, pinned, &format!("{e:#}")));
+        eprintln!(
+            "{}",
+            crate::text::sccache_failed(&host, pinned, &format!("{e:#}"))
+        );
     }
     let out = Command::new("riff-server")
         .arg("--version")
