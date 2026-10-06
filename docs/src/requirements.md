@@ -3886,9 +3886,9 @@
 - **01M49HAZA5K08XW2JQ11TG87JP** `just check` runs `fmt-check`,
   `lint`, `doc`, `book`, `reqs` and `wrap`, then the tests of each
   crate of the diff and of each crate that depends on one of them.
-  The diff is the diff of 01M3WNMKB6PAP6J0QXX4A684HH. A text file
-  needs no test. A file that is not text and is in no crate needs the
-  tests of each crate, and so does a tree that git cannot compare.
+  The diff is the diff of 01M3WNMKB6PAP6J0QXX4A684HH. A file in no
+  crate needs the tests of each crate, also a text file: a test can
+  read it. A tree that git cannot compare needs them too.
   `hygiene crates` prints the arguments of `cargo test`, and one line
   that names the tests and the reason. `just check` holds the lock of
   01M43DKYVAX0TJ2F5YYGYFSZ4G.

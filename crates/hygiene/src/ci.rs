@@ -31,14 +31,14 @@
 //! checks (`fmt-check`, `lint`, `doc`, `book`, `reqs`, `wrap`) and the
 //! tests of the crates that the diff touches. `hygiene crates [BASE]`
 //! prints the arguments of `cargo test` for these crates ([`tests`]),
-//! and one line for the person to stderr.
+//! and one line for the person to stderr. A text file needs a test
+//! here: the tests read the book, `CLAUDE.md` and the requirements.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     D["the changed files"] --> T{"each file"}
-//!     T -- "text" --> N["no test"]
 //!     T -- "in crates/NAME/" --> C["NAME, and each crate<br/>that depends on it"]
-//!     T -- "each other file" --> W["--workspace"]
+//!     T -- "each other file,<br/>also text" --> W["--workspace"]
 //! ```
 //!
 //! ## One run at a time in a worktree
@@ -234,10 +234,10 @@ impl fmt::Display for TestChoice {
 /// The tests for the files `changed` that differ from the merge base
 /// with `base` (01M49HAZA5K08XW2JQ11TG87JP): the tests of each crate
 /// with a changed file, and of each crate that depends on one of them,
-/// also through another crate. A text file ([`is_text`]) needs no test.
-/// Each other file outside the crates, for example `Cargo.lock` or the
-/// `justfile`, needs the tests of each crate. `None` says that git
-/// cannot compare with `base`: then each crate.
+/// also through another crate. Each file outside the crates, for
+/// example `Cargo.lock`, the `justfile` or a page of the book, needs the
+/// tests of each crate: a test can read it. `None` says that git cannot
+/// compare with `base`: then each crate.
 ///
 /// ```
 /// use hygiene::ci::{tests, Member, Tests};
@@ -262,15 +262,15 @@ impl fmt::Display for TestChoice {
 /// assert_eq!(choice.tests.args(), "-p riff -p riff-core -p riff-server");
 ///
 /// let book = ["docs/src/development.md".to_owned()];
-/// assert_eq!(tests("origin/main", Some(&book), &members).tests, Tests::None);
-///
-/// let lock = ["Cargo.lock".to_owned()];
-/// let choice = tests("origin/main", Some(&lock), &members);
+/// let choice = tests("origin/main", Some(&book), &members);
 /// assert_eq!(choice.tests, Tests::Workspace);
 /// assert_eq!(
 ///     choice.to_string(),
-///     "just check runs the tests of each crate: Cargo.lock is in no crate, and it is not text"
+///     "just check runs the tests of each crate: docs/src/development.md is in no crate, \
+///      and a test can read it"
 /// );
+///
+/// assert_eq!(tests("origin/main", Some(&[]), &members).tests, Tests::None);
 /// ```
 pub fn tests(base: &str, changed: Option<&[String]>, members: &[Member]) -> TestChoice {
     let Some(changed) = changed else {
@@ -286,11 +286,10 @@ pub fn tests(base: &str, changed: Option<&[String]>, members: &[Member]) -> Test
             .find(|m| path.starts_with(&format!("{}/", m.dir)));
         match member {
             Some(member) => names.push(member.name.clone()),
-            None if is_text(path) => {}
             None => {
                 return TestChoice {
                     tests: Tests::Workspace,
-                    why: format!("{path} is in no crate, and it is not text"),
+                    why: format!("{path} is in no crate, and a test can read it"),
                 };
             }
         }
@@ -419,18 +418,26 @@ mod tests {
     }
 
     #[test]
-    fn a_file_outside_the_crates_runs_each_test_and_text_runs_none() {
-        for path in ["justfile", ".github/workflows/ci.yml", "Cargo.toml"] {
+    fn a_file_outside_the_crates_runs_each_test_also_text() {
+        for path in [
+            "justfile",
+            ".github/workflows/ci.yml",
+            "Cargo.toml",
+            "CLAUDE.md",
+            "README.md",
+            "docs/src/how-it-works.md",
+            "docs/src/requirements.md",
+            "design/reviews/x.md",
+        ] {
             let choice = tests("origin/main", Some(&paths(&[path])), &members());
             assert_eq!(choice.tests, Tests::Workspace, "{path}");
             assert_eq!(choice.tests.args(), "--workspace");
         }
-        let text = paths(&["CLAUDE.md", "docs/src/how-it-works.md"]);
-        let choice = tests("origin/main", Some(&text), &members());
-        assert_eq!(choice.tests, Tests::None);
-        assert_eq!(choice.tests.args(), "");
+        let none = tests("origin/main", Some(&[]), &members());
+        assert_eq!(none.tests, Tests::None);
+        assert_eq!(none.tests.args(), "");
         assert_eq!(
-            choice.to_string(),
+            none.to_string(),
             "just check runs no test: no crate differs from origin/main"
         );
         let unknown = tests("origin/main", None, &members());

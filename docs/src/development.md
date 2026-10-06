@@ -37,9 +37,8 @@ just check runs the tests of riff, riff-core, riff-server: riff-core differs fro
 flowchart TD
     D["just check: the files that differ<br/>from origin/main"] --> F["the fast checks"]
     F --> T{"each file"}
-    T -- "text" --> N["no test"]
     T -- "in crates/NAME/" --> C["the tests of NAME and of<br/>each crate that depends on it"]
-    T -- "another file, for example<br/>Cargo.lock or the justfile" --> W["the tests of each crate"]
+    T -- "another file, for example<br/>Cargo.lock or a page of the book" --> W["the tests of each crate"]
 ```
 
 To see only the crates, with no check:

@@ -242,10 +242,11 @@ fn crates_names_the_changed_crates_and_their_dependents() {
     let dir = workspace();
     write(dir.path(), "docs/src/how-it-works.md", "# How\n\nNew.\n");
     let (args, line) = crates(dir.path());
-    assert_eq!(args, "");
+    assert_eq!(args, "--workspace");
     assert_eq!(
         line,
-        "just check runs no test: no crate differs from origin/main"
+        "just check runs the tests of each crate: docs/src/how-it-works.md is in no crate, \
+         and a test can read it"
     );
 
     let dir = workspace();
@@ -254,7 +255,15 @@ fn crates_names_the_changed_crates_and_their_dependents() {
     assert_eq!(args, "--workspace");
     assert_eq!(
         line,
-        "just check runs the tests of each crate: justfile is in no crate, and it is not text"
+        "just check runs the tests of each crate: justfile is in no crate, and a test can read it"
+    );
+
+    let dir = workspace();
+    let (args, line) = crates(dir.path());
+    assert_eq!(args, "");
+    assert_eq!(
+        line,
+        "just check runs no test: no crate differs from origin/main"
     );
 }
 
