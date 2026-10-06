@@ -168,11 +168,12 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     assert_eq!(lines[0], "riff   paused by the server", "{out}");
     assert_eq!(lines[2], "", "{out}");
     assert_eq!(
-        lines[3], "SESSION                        STATE    ROLE      DETAIL",
+        lines[3], "SESSION                        STATE   ROLE      DETAIL",
         "{out}"
     );
     assert_eq!(
-        lines[4], "mike@pangolin:riff (a6cf2205)  offline  you lead  seen 0s ago",
+        lines[4],
+        "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
         "{out}"
     );
     assert!(!out.contains("riff://"), "{out}");
@@ -183,7 +184,7 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     let uri = format!("riff://mike@pangolin/{THREAD}?session=a6cf2205-1&lead=true");
     assert!(out.contains("\nURI  "), "{out}");
     assert!(
-        out.contains(&format!("\n{uri}  offline  you lead  seen ")),
+        out.contains(&format!("\n{uri}  paused  you lead  stopped at: ")),
         "{out}"
     );
     assert!(!out.contains("(a6cf2205)"), "{out}");
