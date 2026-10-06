@@ -465,30 +465,41 @@ impl Limits {
 
 /// The command that runs `claude` with `args` for a worker: through
 /// `nice -n` when the increment `nice` is more than 0 ([`nice_by`]),
-/// and in a scope of `slice` when the machine has one.
+/// and in a scope of `slice` when the machine has one. The scope has the
+/// name `unit` ([`crate::workload::scope_unit`],
+/// 01M49SV9W4S1HJ4BYANA388VD2).
 ///
 /// ```
 /// use riff::limits::command;
 ///
 /// let args = ["Join the riff.".to_owned()];
-/// assert_eq!(command("claude".as_ref(), &args, 0, None), ["claude", "Join the riff."]);
+/// assert_eq!(command("claude".as_ref(), &args, 0, None, None), ["claude", "Join the riff."]);
 /// assert_eq!(
-///     command("claude".as_ref(), &args, 10, None),
+///     command("claude".as_ref(), &args, 10, None, Some("riff-worker-w1.42.scope")),
 ///     ["nice", "-n", "10", "claude", "Join the riff."],
 /// );
 /// assert_eq!(
-///     command("claude".as_ref(), &args, 10, Some("riff-workers.slice")),
+///     command("claude".as_ref(), &args, 10, Some("riff-workers.slice"), Some("riff-worker-w1.42.scope")),
 ///     [
-///         "systemd-run", "--user", "--scope", "--quiet", "--slice=riff-workers.slice", "--",
-///         "nice", "-n", "10", "claude", "Join the riff.",
+///         "systemd-run", "--user", "--scope", "--quiet", "--slice=riff-workers.slice",
+///         "--unit=riff-worker-w1.42.scope", "--", "nice", "-n", "10", "claude", "Join the riff.",
 ///     ],
 /// );
 /// ```
-pub fn command(claude: &Path, args: &[String], nice: u8, slice: Option<&str>) -> Vec<OsString> {
+pub fn command(
+    claude: &Path,
+    args: &[String],
+    nice: u8,
+    slice: Option<&str>,
+    unit: Option<&str>,
+) -> Vec<OsString> {
     let mut command: Vec<OsString> = Vec::new();
     if let Some(slice) = slice {
         command.extend(["systemd-run", "--user", "--scope", "--quiet"].map(OsString::from));
         command.push(format!("--slice={slice}").into());
+        if let Some(unit) = unit {
+            command.push(format!("--unit={unit}").into());
+        }
         command.push("--".into());
     }
     if nice > 0 {

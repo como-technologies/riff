@@ -92,6 +92,10 @@ pub const VARS: [&str; 5] = [
     "SCCACHE_IGNORE_SERVER_IO_ERROR",
 ];
 
+/// The idle time of the `sccache` server, in seconds. riff sets it to
+/// 0: the server never ends for idle time (01M49SVFZS7HTYM3FSCV4ZCS0Q).
+pub const IDLE_VAR: &str = "SCCACHE_IDLE_TIMEOUT";
+
 /// The variable that `sccache` gives the server that it starts
 /// (01M49AB2TBMHGNXM3GE4NDFYYG).
 pub const SERVER_MARK: &str = "SCCACHE_START_SERVER";
@@ -137,20 +141,75 @@ impl Cache {
 
     /// Starts the server of the cache when it does not run, with no
     /// variable of a worker in `worker_vars`, and in its own process
-    /// group (01M49AB2QYGJ73Y19KGAY1WDW7). A server that runs makes the
-    /// start fail: no matter.
-    pub fn start_server(&self, worker_vars: &[&str]) {
+    /// group (01M49AB2QYGJ73Y19KGAY1WDW7). With `scope`, it runs in a
+    /// systemd scope of its own ([`Cache::server_command`],
+    /// 01M49SVFZS7HTYM3FSCV4ZCS0Q); when that start fails, it starts
+    /// with no scope. A server that runs makes the start fail: no
+    /// matter.
+    pub fn start_server(&self, worker_vars: &[&str], scope: bool) {
+        let start = |scope| {
+            self.server_command(worker_vars, scope)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        if !(scope && start(true)) {
+            start(false);
+        }
+    }
+
+    /// The command that starts the server of the cache: `sccache
+    /// --start-server` with no variable of `worker_vars`, in its own
+    /// process group, and with no idle end, so that no build of a worker
+    /// starts it again in the scope of that worker. With `scope`, it runs
+    /// in the systemd scope `riff-sccache-PORT.scope` (01M49SVFZS7HTYM3FSCV4ZCS0Q).
+    ///
+    /// ```
+    /// use riff::sccache::Cache;
+    ///
+    /// let cache = Cache { bin: "/c/bin/sccache".into(), dir: "/h/sccache".into(), size: "40G".into() };
+    /// let port = riff::sccache::port("/h/sccache".as_ref());
+    /// let cmd = cache.server_command(&["RIFF_SESSION"], true);
+    /// assert_eq!(cmd.get_program(), "systemd-run");
+    /// let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+    /// assert_eq!(args, [
+    ///     "--user", "--scope", "--quiet", &format!("--unit=riff-sccache-{port}.scope"),
+    ///     "--", "/c/bin/sccache", "--start-server",
+    /// ]);
+    /// let env: Vec<_> = cmd.get_envs().map(|(k, v)| (k.to_owned(), v.map(|v| v.to_owned()))).collect();
+    /// assert!(env.contains(&("SCCACHE_IDLE_TIMEOUT".into(), Some("0".into()))));
+    /// assert!(env.contains(&("RIFF_SESSION".into(), None)));
+    /// let plain = cache.server_command(&[], false);
+    /// assert_eq!(plain.get_program(), "/c/bin/sccache");
+    /// ```
+    pub fn server_command(&self, worker_vars: &[&str], scope: bool) -> Command {
         use std::os::unix::process::CommandExt;
-        let mut cmd = self.command(&["--start-server"]);
+        let mut cmd = if scope {
+            let mut cmd = Command::new("systemd-run");
+            cmd.args(["--user", "--scope", "--quiet"])
+                .arg(format!("--unit=riff-sccache-{}.scope", port(&self.dir)))
+                .arg("--")
+                .arg(&self.bin)
+                .arg("--start-server");
+            cmd
+        } else {
+            let mut cmd = Command::new(&self.bin);
+            cmd.arg("--start-server");
+            cmd
+        };
+        for (var, value) in env(Some(self)) {
+            if let Some(value) = value {
+                cmd.env(var, value);
+            }
+        }
+        cmd.env(IDLE_VAR, "0");
         for var in worker_vars {
             cmd.env_remove(var);
         }
-        let _ = cmd
-            .process_group(0)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        cmd.process_group(0);
+        cmd
     }
 
     /// The numbers of the server of the cache, or `None` when `sccache`

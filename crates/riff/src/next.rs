@@ -446,7 +446,8 @@ pub fn stop_old_context(agent: &dyn Agent, me: &SessionUri) -> Vec<crate::worklo
     let var = agent.context_var();
     let all = crate::workload::all(var);
     let old = crate::workload::old_context(&all, session, std::process::id(), None);
-    crate::workload::stop(&old, var)
+    crate::workload::say_here(old.by, session);
+    crate::workload::stop(&old.procs, var)
 }
 
 /// Takes the lock file `clear-ID.lock` of the worker `session` in the
