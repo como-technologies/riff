@@ -181,7 +181,7 @@ pub fn utc(ms: u64) -> String {
 ///     "1234  2026-09-21T14:13:20Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)"
 /// );
 /// // A record from before the cause.
-/// (record.by, record.command) = (None, None);
+/// (record.envelope.by, record.envelope.command) = (None, None);
 /// assert!(show(&record).ends_with("  (cause not known)"));
 ///
 /// // The start of a worker, and the release of its last claim.

@@ -1103,11 +1103,11 @@ impl State {
     /// let mut state = State::default();
     /// let join = Join { me: mike.clone(), thread: "design".parse()? };
     /// let (made, ()) = state.run(&Caller::of(&mike), &join, Instant::now()).unwrap();
-    /// assert_eq!(made[0].by, Some(By::Session(mike.who().clone())));
-    /// assert_eq!(made[0].command.as_deref(), Some("join"));
+    /// assert_eq!(made[0].envelope.by, Some(By::Session(mike.who().clone())));
+    /// assert_eq!(made[0].envelope.command.as_deref(), Some("join"));
     /// // The register that the state ran first is a command of its own.
     /// let log = state.take_queue();
-    /// assert_eq!(log[0].command.as_deref(), Some("register"));
+    /// assert_eq!(log[0].envelope.command.as_deref(), Some("register"));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn queue(&mut self, cause: &Cause, changes: &[Change], now: Instant) -> Vec<Record> {

@@ -22,7 +22,7 @@
 //!   [`CALL_KEEP_MOST`] keys of each caller. The oldest key goes first
 //!   (01M48VFXEE2GGT7JE10DWBNZEV).
 //! - Each record of a command with a call ID has the ID in its envelope
-//!   ([`Record::call`], 01M48VFFY5CK9MRXJESV2NHY5F). A checkpoint keeps
+//!   ([`riff_core::record::Envelope::call`], 01M48VFFY5CK9MRXJESV2NHY5F). A checkpoint keeps
 //!   the records of each kept call ([`Saved`]). A load makes [`Kept`]
 //!   from the checkpoint and from each record after it, with the default
 //!   note (01M48VFXHHND8SX4DBXZTFMJGQ). So a start from a checkpoint and
@@ -45,7 +45,7 @@
 //! let join = Join { me: mike.clone(), thread: "design".parse()? };
 //! let (changes, ()) = state.check(&Caller::of(&mike), &join, now).result.unwrap();
 //! let made = state.queue(&cause, &changes, now);
-//! assert_eq!(made[0].call.as_deref(), Some("c1"));
+//! assert_eq!(made[0].envelope.call.as_deref(), Some("c1"));
 //! let mut log: Vec<Record> = state.take_queue();
 //! log.extend(made);
 //!

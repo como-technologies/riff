@@ -143,7 +143,7 @@
 //! // A record with no cause reads. Its cause is not known.
 //! let old = r#"{"position":7,"written_at_ms":1,"change":{"member_invited":{"email":"ann@acme.io"}}}"#;
 //! let Line::Record(old) = Line::parse(old)? else { panic!("a known kind") };
-//! assert_eq!((old.by, old.command), (None, None));
+//! assert_eq!((old.envelope.by, old.envelope.command), (None, None));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -512,7 +512,8 @@ impl Record {
     /// use riff_core::wire::RiffState;
     ///
     /// let repo = "acme/app".parse()?;
-    /// let record = |change| Record { position: 1, written_at_ms: 1, by: None, command: None, call: None, change };
+    /// let envelope = Envelope { position: 1, written_at_ms: 1, by: None, command: None, call: None };
+    /// let record = |change| Record { envelope: envelope.clone(), change };
     /// let claim = |thread: &str| record(Change::Claimed(Claimed {
     ///     session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
     ///     thread: thread.parse().unwrap(),
@@ -994,7 +995,7 @@ impl Line {
     ///
     /// let called = r#"{"position":3,"written_at_ms":1,"call":"c1","change":{"member_invited":{"email":"a@acme.io"}}}"#;
     /// let Line::Record(record) = Line::parse(called).unwrap() else { panic!("a known kind") };
-    /// assert_eq!(record.call.as_deref(), Some("c1"));
+    /// assert_eq!(record.envelope.call.as_deref(), Some("c1"));
     ///
     /// let later = r#"{"position":9,"written_at_ms":1,"change":{"reacted":{"emoji":"+1"}}}"#;
     /// assert_eq!(

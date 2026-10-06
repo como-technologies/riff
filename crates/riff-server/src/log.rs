@@ -89,7 +89,7 @@
 //! write(&store, &[record(1), record(2)], &Timing::default(), serving).await?;
 //! write(&store, &[record(3)], &Timing::default(), serving).await?;
 //! let replayed = replay(&store).await?;
-//! let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
+//! let positions: Vec<u64> = replayed.records.iter().map(|r| r.envelope.position).collect();
 //! assert_eq!(positions, [1, 2, 3]);
 //! assert_eq!(replayed.last, 3);
 //! # Ok(()) }
@@ -402,7 +402,7 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 /// write(&store, &[record(1), record(2)], &Timing::default(), || true).await?;
 /// write(&store, &[record(3)], &Timing::default(), || true).await?;
 /// let replayed = replay_after(&store, 1).await?;
-/// let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
+/// let positions: Vec<u64> = replayed.records.iter().map(|r| r.envelope.position).collect();
 /// assert_eq!(positions, [2, 3]);
 /// assert!(replay_after(&store, 3).await?.records.is_empty());
 ///

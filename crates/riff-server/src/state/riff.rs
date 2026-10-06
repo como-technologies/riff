@@ -81,7 +81,8 @@ use super::work::Work;
 ///
 /// let mut riff = Riff::default();
 /// let change = Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running });
-/// apply(&mut riff, &Record { position: 7, written_at_ms: 0, by: None, command: None, call: None, change });
+/// let envelope = Envelope { position: 7, written_at_ms: 0, by: None, command: None, call: None };
+/// apply(&mut riff, &Record { envelope, change });
 /// assert_eq!(riff.position(), 7);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -174,7 +175,10 @@ impl Riff {
 ///     item: "issue-7".into(),
 /// };
 /// let mut riff = Riff::default();
-/// let record = |position, change| Record { position, written_at_ms: 0, by: None, command: None, call: None, change };
+/// let record = |position, change| Record {
+///     envelope: Envelope { position, written_at_ms: 0, by: None, command: None, call: None },
+///     change,
+/// };
 /// apply(&mut riff, &record(1, Change::Claimed(claimed.clone())));
 /// assert_eq!(riff.position(), 1);
 ///

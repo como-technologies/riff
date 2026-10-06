@@ -2335,7 +2335,7 @@ pub struct LogQuery {
 ///     {"position":2,"written_at_ms":1,"change":{"member_invited":{"email":"ann@acme.io"}}}
 /// ]}"#).unwrap();
 /// assert_eq!(reply.records.len(), 1);
-/// assert_eq!(reply.records[0].position, 2);
+/// assert_eq!(reply.records[0].envelope.position, 2);
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogReply {

@@ -374,7 +374,7 @@ impl Command for Register {
 /// assert!(matches!(made[0].change, Change::JoinedThread(_)));
 /// assert!(matches!(made[1].change, Change::SessionStarted(_)));
 /// assert_eq!(made.len(), 2);
-/// assert_eq!(made[1].command.as_deref(), Some("register"));
+/// assert_eq!(made[1].envelope.command.as_deref(), Some("register"));
 /// assert!(!state.uri(mike.who(), now).lead());
 ///
 /// // A register of the session makes it the lead.
