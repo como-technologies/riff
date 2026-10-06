@@ -243,6 +243,26 @@ fn workers_start_fast_forwards_a_clean_main_clone() {
     );
 }
 
+/// A dir in a clone that is not its top, for example a temp dir in a
+/// home that is a git repository, moves no clone
+/// (01M49JW9Y8SNT3J242SF646DF4).
+#[test]
+fn the_fast_forward_never_moves_a_clone_above_its_dir() {
+    let clone = Clone::behind();
+    let before = clone.head();
+    let sub = clone.main().join("tmp");
+    std::fs::create_dir(&sub).unwrap();
+    assert_eq!(
+        riff::hygiene::fast_forward(&sub),
+        riff::hygiene::Fresh::NoRemote
+    );
+    assert_eq!(clone.head(), before);
+    assert!(matches!(
+        riff::hygiene::fast_forward(&clone.main()),
+        riff::hygiene::Fresh::Forwarded { commits: 2, .. }
+    ));
+}
+
 #[test]
 fn workers_start_keeps_a_main_clone_with_local_changes() {
     let clone = Clone::behind();

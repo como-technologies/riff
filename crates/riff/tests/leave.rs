@@ -281,9 +281,39 @@ async fn a_leave_on_the_default_branch_keeps_the_claims() {
     assert!(who.contains("claim=issue-12"), "{who}");
 }
 
+/// A session whose dir is in a repository but not at its top, for
+/// example a temp dir in a home that is a git repository, commits and
+/// pushes nothing there (01M49JW9Y8SNT3J242SF646DF4).
+#[tokio::test]
+async fn a_leave_in_a_dir_below_the_top_of_a_repository_commits_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let work = clone_on(root.path(), "worktree-issue-12");
+    let sub = work.join("tmp");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("scratch"), "test data").unwrap();
+    let before = git(&work, &["rev-parse", "HEAD"]);
+    let api = start_server().await;
+    let mike: SessionUri = MIKE.parse().unwrap();
+    let m = connect(
+        &api,
+        Tools::new(api.clone(), mike.clone()).in_dir(sub.clone()),
+        &mike,
+    )
+    .await;
+    call(&m, "claim", json!({ "item": "issue-12" })).await;
+    let (text, error) = call(&m, "leave", json!({})).await;
+    assert!(error, "{text}");
+    assert!(text.contains("not the top of a git worktree"), "{text}");
+    assert_eq!(git(&work, &["rev-parse", "HEAD"]), before);
+    let remote = root.path().join("remote.git");
+    assert_eq!(git(&remote, &["branch", "--list", "worktree-issue-12"]), "");
+    let (who, _) = call(&m, "who", json!({})).await;
+    assert!(who.contains("claim=issue-12"), "{who}");
+}
+
 #[tokio::test]
 async fn a_leave_with_no_claim_pushes_nothing() {
-    let not_git = tempfile::tempdir().unwrap();
+    let not_git = isolated::outside_git();
     let run = tempfile::tempdir().unwrap();
     let api = start_server().await;
     let mike: SessionUri = MIKE.parse().unwrap();
@@ -334,7 +364,7 @@ async fn a_leave_holds_for_new_tools() {
 /// refuses, and the session stays (01M3XQVK05FAT3PR43W8RNEYHY).
 #[tokio::test]
 async fn a_leave_that_riff_cannot_keep_is_refused() {
-    let not_git = tempfile::tempdir().unwrap();
+    let not_git = isolated::outside_git();
     let api = start_server().await;
     let mike: SessionUri = MIKE.parse().unwrap();
     let tools = Tools::new(api.clone(), mike.clone()).in_dir(not_git.path().to_owned());

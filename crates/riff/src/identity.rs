@@ -314,6 +314,28 @@ pub fn host(riff_host: Option<&str>, remote: Option<&str>, machine: &str) -> Str
     }
 }
 
+/// True when `dir` is the top of a git worktree, not a dir in a
+/// repository above it (01M49JW9Y8SNT3J242SF646DF4).
+///
+/// ```
+/// let dir = isolated::outside_git();
+/// assert!(!riff::identity::is_top(dir.path()));
+/// std::process::Command::new("git").arg("init").arg("-q").arg(dir.path()).status()?;
+/// assert!(riff::identity::is_top(dir.path()));
+/// std::fs::create_dir(dir.path().join("sub"))?;
+/// assert!(!riff::identity::is_top(&dir.path().join("sub")));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn is_top(dir: &Path) -> bool {
+    let Some(top) = git(dir, &["rev-parse", "--show-toplevel"]) else {
+        return false;
+    };
+    match (std::fs::canonicalize(top), std::fs::canonicalize(dir)) {
+        (Ok(top), Ok(dir)) => top == dir,
+        _ => false,
+    }
+}
+
 /// The main worktree of the repository of `dir`: the first worktree
 /// that `git worktree list` names. `None` outside git.
 pub fn main_worktree(dir: &Path) -> Option<std::path::PathBuf> {

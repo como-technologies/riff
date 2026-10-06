@@ -55,15 +55,28 @@ pub const WIP_MESSAGE: &str = "WIP: the session left the riff";
 
 /// Commits each change in the worktree of `dir` as a WIP commit, and
 /// pushes its branch to `origin`, as in a pause. It gives the branch.
-/// It refuses on the default branch, on a detached `HEAD`, and when the
-/// push fails.
+/// It refuses on the default branch, on a detached `HEAD`, when the
+/// push fails, and when `dir` is not the top of a git worktree, so it
+/// never commits in a repository above `dir`
+/// (01M49JW9Y8SNT3J242SF646DF4).
 ///
 /// ```
-/// let dir = tempfile::tempdir()?;
+/// let dir = isolated::outside_git();
 /// assert!(riff::leave::wip(dir.path()).is_err());
+/// std::process::Command::new("git").arg("init").arg("-q").arg(dir.path()).status()?;
+/// let sub = dir.path().join("sub");
+/// std::fs::create_dir(&sub)?;
+/// let refused = riff::leave::wip(&sub).unwrap_err().to_string();
+/// assert!(refused.contains("not the top of a git worktree"), "{refused}");
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn wip(dir: &Path) -> Result<String> {
+    if !crate::identity::is_top(dir) {
+        bail!(
+            "{} is not the top of a git worktree, so riff commits and pushes nothing there",
+            dir.display()
+        );
+    }
     let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     if branch == "HEAD" {
         bail!("the worktree has no branch, so riff cannot push its work. Check out a branch first");
