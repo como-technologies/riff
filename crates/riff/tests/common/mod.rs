@@ -52,6 +52,10 @@ pub async fn listen() -> (tokio::net::TcpListener, String) {
 /// The client ID of riff at the fake provider.
 pub const CLIENT: &str = "riff-client";
 
+/// The refresh token of the account at the fake provider: the token of
+/// the test account of a smoke test.
+pub const REFRESH: &str = "test-refresh-token";
+
 /// An account at the fake provider: its email, and its `hd` claim.
 #[derive(Clone)]
 struct Account {
@@ -135,8 +139,14 @@ async fn provider_token(
     State(fake): State<Fake>,
     Form(f): Form<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let challenge = fake.codes.lock().unwrap().remove(&f["code"]);
-    if challenge != Some(login::challenge(&f["code_verifier"])) || f["client_id"] != CLIENT {
+    let granted = match f.get("grant_type").map(String::as_str) {
+        Some("refresh_token") => f.get("refresh_token").map(String::as_str) == Some(REFRESH),
+        _ => {
+            let challenge = fake.codes.lock().unwrap().remove(&f["code"]);
+            challenge == Some(login::challenge(&f["code_verifier"]))
+        }
+    };
+    if !granted || f["client_id"] != CLIENT {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "invalid_grant"})),

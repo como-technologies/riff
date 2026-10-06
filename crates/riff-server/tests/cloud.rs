@@ -36,20 +36,25 @@ fn ci_deploys_after_the_gate_or_the_release_check_with_no_key() {
 /// The deploy job of the CI workflow, and the triggers of the workflow.
 fn ci_parts() -> (String, String) {
     let text = fs::read_to_string(deploy().join("../.github/workflows/ci.yml")).unwrap();
-    let (on, rest) = text.split_once("\njobs:\n").unwrap();
-    let job = rest
-        .split_once("\n  deploy:\n")
-        .unwrap()
-        .1
-        .split_once("\n  audit:\n")
-        .unwrap()
-        .0;
-    (on.to_owned(), job.to_owned())
+    let on = text.split_once("\njobs:\n").unwrap().0;
+    (on.to_owned(), ci_job("deploy"))
 }
 
-/// The `if:` of the deploy job, as one line.
-fn deploy_if() -> String {
-    let (_, job) = ci_parts();
+/// The job `name` of the CI workflow, up to the next job.
+fn ci_job(name: &str) -> String {
+    let text = fs::read_to_string(deploy().join("../.github/workflows/ci.yml")).unwrap();
+    let jobs = text.split_once("\njobs:").unwrap().1;
+    let job = jobs.split_once(&format!("\n  {name}:\n")).unwrap().1;
+    let end = job
+        .match_indices("\n  ")
+        .find(|(at, _)| job[at + 3..].starts_with(|c: char| c.is_ascii_alphabetic()))
+        .map_or(job.len(), |(at, _)| at);
+    job[..end].to_owned()
+}
+
+/// The `if:` of the job `name`, as one line.
+fn job_if(name: &str) -> String {
+    let job = ci_job(name);
     let when = job.split_once("\n    if: >-\n").unwrap().1;
     let when = when.split_once("\n    runs-on:").unwrap().0;
     when.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -164,7 +169,12 @@ impl Eval<'_> {
 
 /// Does the deploy job run in the context `ctx`?
 fn deploys(ctx: &[(&str, &str)]) -> bool {
-    let when = deploy_if();
+    runs("deploy", ctx)
+}
+
+/// Does the job `name` run in the context `ctx`?
+fn runs(name: &str, ctx: &[(&str, &str)]) -> bool {
+    let when = job_if(name);
     let mut eval = Eval { rest: &when, ctx };
     let value = eval.or();
     assert!(eval.rest.trim().is_empty(), "left: {}", eval.rest);
@@ -241,6 +251,74 @@ fn a_release_tag_or_a_run_by_hand_deploys() {
         "v0.5.0",
         "success"
     ))));
+}
+
+/// 01M496K1KN392S11YEH33JGK9N: the deploy of a release runs in the
+/// GitHub environment production, so it waits for the approval of its
+/// reviewer. The stage job needs no approval: it runs in the
+/// environment stage.
+#[test]
+fn a_release_deploy_waits_in_production_and_the_stage_in_stage() {
+    assert!(ci_job("deploy").contains("\n    environment: production\n"));
+    assert!(ci_job("stage").contains("\n    environment: stage\n"));
+    assert!(!ci_job("gate").contains("environment:"));
+}
+
+/// The context of a push of `git_ref` for the stage job, with the result
+/// of the gate.
+fn stage_push(git_ref: &'static str, gate: &'static str) -> Ctx {
+    vec![
+        ("github.event_name", "push"),
+        ("github.ref", git_ref),
+        ("vars.STAGE_DEPLOY", "true"),
+        ("needs.gate.result", gate),
+    ]
+}
+
+/// 01M496JT94NQ686GVSY5CCGZK7, 01M496JTDB16G52G22CJZRA8J0,
+/// 01M496JTHN19BZ7YN94993R35X: each push to main, after its gate,
+/// deploys the image of its commit to the stage, and the smoke test
+/// runs with the secret of the environment. Nothing else deploys the
+/// stage, and the stage job never deploys the shared riff.
+#[test]
+fn each_push_to_main_deploys_the_stage_and_runs_the_smoke_test() {
+    let job = ci_job("stage");
+    for part in [
+        "needs: [gate]",
+        "id-token: write",
+        "group: stage",
+        "COMMIT: ${{ github.sha }}",
+        "deploy/cloud/stage.env",
+        "riff-server:$COMMIT",
+        "google-github-actions/auth@",
+        "cloud deploy stage \"$COMMIT\"",
+        "RIFF_SMOKE_TOKEN: ${{ secrets.RIFF_SMOKE_TOKEN }}",
+        "RIFF_HOME: ${{ runner.temp }}/riff-home",
+        "cloud smoke stage",
+    ] {
+        assert!(job.contains(part), "{part} is not in the stage job");
+    }
+    assert!(job.find("cloud deploy stage").unwrap() < job.find("cloud smoke stage").unwrap());
+    for shared in ["shared.env", "cloud deploy shared", "CLOUD_DEPLOY ="] {
+        assert!(!job.contains(shared), "{shared} in: {job}");
+    }
+    assert!(
+        !job.contains("credentials_json"),
+        "the job must not use a key"
+    );
+
+    assert!(runs("stage", &stage_push("refs/heads/main", "success")));
+    for gate in ["failure", "skipped", "cancelled"] {
+        assert!(!runs("stage", &stage_push("refs/heads/main", gate)));
+    }
+    assert!(!runs("stage", &stage_push("refs/heads/other", "success")));
+    assert!(!runs("stage", &stage_push("refs/tags/v1.2.0", "success")));
+    let mut off = stage_push("refs/heads/main", "success");
+    off.retain(|(key, _)| *key != "vars.STAGE_DEPLOY");
+    assert!(!runs("stage", &off));
+    let mut pr = stage_push("refs/heads/main", "success");
+    pr[0] = ("github.event_name", "pull_request");
+    assert!(!runs("stage", &pr));
 }
 
 /// The part of the Development page under `heading`, up to the next

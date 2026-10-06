@@ -1611,6 +1611,11 @@ first. Then the job `Deploy` checks out the tag, checks it, builds the
 image and deploys it. A tag that is not `vX.Y.Z` does not deploy. One
 deploy runs at a time.
 
+The job `Deploy` runs in the GitHub environment `production`. It waits
+for the approval of the owner. Approve it in the GitHub app or on the
+page of the run. See
+[Approve the deploy of a release](#approve-the-deploy-of-a-release).
+
 Then update each machine: each person runs `riff update`, or has
 `riff update --auto on` (see
 [Update riff](start-a-riff.md#update-riff) and
@@ -1621,6 +1626,18 @@ same release:
 
 ```sh
 riff server
+```
+
+### Approve the deploy of a release
+
+The owner approves each deploy to the shared riff. Find the run that
+waits, and its environment ID. Then approve it:
+
+```sh
+gh run list --workflow CI --status waiting --limit 1
+gh api repos/como-technologies/riff/actions/runs/RUN_ID/pending_deployments --jq '.[].environment.id'
+gh api -X POST repos/como-technologies/riff/actions/runs/RUN_ID/pending_deployments \
+  -F 'environment_ids[]=ENV_ID' -f state=approved -f comment='Release vX.Y.Z'
 ```
 
 ### Go live with release 1.0.0
@@ -1875,8 +1892,19 @@ The stage is a second `riff-server` on Cloud Run, in the project
 `como-riff`. `deploy/cloud/stage.env` holds its settings. It has its own
 service `riff-stage`, bucket, accounts, sign-in client and secret. It
 holds no data of the shared riff, and no setting of the stage names a
-resource of the shared riff. It has no domain, no alert and no CI
-deploy.
+resource of the shared riff. It has no domain and no alert. It scales
+to zero between calls. CI deploys each merge to `main` to the stage,
+and runs a smoke test against it.
+
+```mermaid
+flowchart LR
+    M[merge to main] --> G[Gate]
+    G --> I[image riff-server:COMMIT]
+    I --> D[riff cloud deploy stage COMMIT]
+    D --> T[riff cloud smoke stage]
+    R[tag vX.Y.Z] --> A{approval in production}
+    A --> P[riff cloud deploy shared TAG]
+```
 
 Rehearse a release that moves the state of the shared riff, before its
 tag. The rehearsal shows the hand-over on a real bucket: the release
@@ -1919,6 +1947,80 @@ riff cloud signin stage
 It puts the secret in Secret Manager and the ID in
 `deploy/cloud/stage.env`. Commit that file.
 
+### Set up the stage deploy of each merge
+
+Do this once, after [Set up the stage](#set-up-the-stage). An admin of
+the repository does it. `riff cloud create stage` also makes the deploy
+account `riff-stage-deploy`, which CI signs in as with no key.
+
+Make the GitHub environments. The environment `stage` needs no
+approval. The environment `production` waits for the approval of the
+owner (the reviewer ID is the GitHub user ID):
+
+```sh
+gh api -X PUT repos/como-technologies/riff/environments/stage
+gh api user --jq .id
+gh api -X PUT repos/como-technologies/riff/environments/production \
+  --input - <<<'{"reviewers":[{"type":"User","id":USER_ID}]}'
+```
+
+The smoke test signs in as a test account: a Google account that only
+the stage admits. Invite it on the stage, as the owner of the stage:
+
+```sh
+. deploy/cloud/stage.env
+riff invite --server "$CLOUD_URL" TEST_EMAIL
+```
+
+Get a refresh token of the test account for the sign-in client of the
+stage. Open this URL in a browser, sign in as the test account, and
+copy the `code` from the address bar of the page that does not load:
+
+```sh
+echo "https://accounts.google.com/o/oauth2/v2/auth?client_id=$RIFF_OIDC_CLIENT_ID&redirect_uri=http://127.0.0.1:9&response_type=code&scope=openid%20email&access_type=offline&prompt=consent"
+```
+
+Swap the code for the refresh token, and keep it as the secret
+`RIFF_SMOKE_TOKEN` of the environment `stage`. The token goes from the
+reply to GitHub, and to no file:
+
+```sh
+SECRET=$(gcloud secrets versions access latest --secret "$CLOUD_SECRET" --project "$CLOUD_PROJECT")
+curl -s https://oauth2.googleapis.com/token -d grant_type=authorization_code \
+  -d code=CODE -d redirect_uri=http://127.0.0.1:9 \
+  -d client_id="$RIFF_OIDC_CLIENT_ID" -d client_secret="$SECRET" \
+  | jq -r .refresh_token | gh secret set RIFF_SMOKE_TOKEN --env stage
+```
+
+Then turn the stage deploy on. From the next merge, CI deploys each
+merge to the stage:
+
+```sh
+gh variable set STAGE_DEPLOY --body true
+```
+
+### See the stage result of a merge
+
+The job `Stage` of the CI run of the merge deploys the merge commit and
+runs the smoke test. The smoke test prints one line for each step:
+sign in, post, read, build and end. See the last run on `main`, and the
+log of the job:
+
+```sh
+gh run list --workflow CI --branch main --event push --limit 1
+gh run view RUN_ID --job JOB_ID --log
+riff cloud status stage
+```
+
+`riff cloud status stage` shows the image of the commit. To run the
+smoke test by hand, give the refresh token of the test account, and a
+new riff home, so that the sign-in stays out of your keyring:
+
+```sh
+read -rs RIFF_SMOKE_TOKEN && export RIFF_SMOKE_TOKEN
+RIFF_HOME=$(mktemp -d) riff cloud smoke stage
+```
+
 ### Deploy a release on the stage
 
 Give the release tag. The deploy uses the image that CI built for the
@@ -1929,6 +2031,14 @@ owner, as the shared riff:
 export RIFF_OWNER=YOUR_EMAIL
 riff cloud deploy stage v0.8.0
 riff cloud status stage
+```
+
+The full ID of a commit of `main` deploys the image that CI built for
+that merge. Only the stage takes it; the shared riff takes only a
+release tag:
+
+```sh
+riff cloud deploy stage COMMIT
 ```
 
 With no tag, Cloud Build builds the image from your tree:

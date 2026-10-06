@@ -1601,12 +1601,13 @@
   the how-to in the book. `riff cloud signin` puts the client secret in
   Secret Manager and the client ID in the settings file. The secret is
   never in the repository or in a downloaded file.
-- **01M3ZE3Z26N1CG090D5D5FZ3NW** The stage is a second riff-server in
-  the project, for the rehearsal of a release. `deploy/cloud/stage.env`
-  holds its settings. It has its own service, bucket, accounts, sign-in
-  client and secret, and no alert, domain or CI deploy. No setting of
-  one riff names the bucket, the service, the secret or another
-  resource of a different riff. A test proves it.
+- **01M3ZE3Z26N1CG090D5D5FZ3NW** Replaced by 01M496JTN962N0AX378MA1MBPM.
+- **01M496JTN962N0AX378MA1MBPM** The stage is a second riff-server in
+  the project, for the rehearsal of a release and the check of each
+  merge. `deploy/cloud/stage.env` holds its settings. It has its own
+  service, bucket, accounts, sign-in client and secret, and no alert
+  or domain. No setting of one riff names the bucket, the service, the
+  secret or another resource of a different riff. A test proves it.
 - **01M3ZE3Z580RB5AYAJX6321DFW** `riff cloud` takes the settings of a
   riff by name: `stage` reads `deploy/cloud/stage.env`, and `shared`
   reads `deploy/cloud/shared.env`, the shared riff.
@@ -1642,6 +1643,31 @@
 - **01M4262E0QJHCZXNH7EFG7FXN2** The CI deploy job deploys with
   `riff cloud deploy shared TAG --confirm shared`, from the riff of the
   tag.
+- **01M496K1KN392S11YEH33JGK9N** The CI deploy job of a release runs in
+  the GitHub environment `production`. It waits for the approval of the
+  reviewer of that environment, the owner, and deploys only after it.
+- **01M496JT94NQ686GVSY5CCGZK7** Each push to `main` deploys to the
+  stage in CI, when the repository variable `STAGE_DEPLOY` is `true`,
+  after the gate of the push passes. The job runs in the GitHub
+  environment `stage`, with no approval, and signs in to Google Cloud
+  as the deploy account of the stage. One stage deploy runs at a time.
+- **01M496JTDB16G52G22CJZRA8J0** The stage job tags the image of a push
+  with the full ID of its commit, and deploys it with
+  `riff cloud deploy stage COMMIT`. Only an instance with
+  `CLOUD_CONFIRM=false` takes the image of a commit. The shared riff
+  takes only a release tag.
+- **01M496JT648QS9WTE1QVHAJEE5** The setting `CLOUD_MIN_INSTANCES` is
+  the least number of instances of a service: 1, or 0. With no value it
+  is 1. The shared riff has 1. The stage has 0, so it scales to zero
+  between calls.
+- **01M496JTHN19BZ7YN94993R35X** After each stage deploy, CI runs
+  `riff cloud smoke stage`. It signs in as a test account with the
+  refresh token of the provider in `RIFF_SMOKE_TOKEN`, a secret of the
+  environment `stage`. It registers a session, posts a message to the
+  thread `riff/smoke`, reads it back, checks that the server runs the
+  build of the `riff` that runs the test, and ends the session. Each
+  step prints one line. A failed step stops the test with its name and
+  a code that is not 0. Only the stage admits the test account.
 - **01M4382RKERWAPKBRY9W8F2GSA** When a `gcloud` call of `riff cloud`
   fails, riff prints the error of `gcloud` in one line and exits with a
   code that is not 0. An ended sign-in gives
