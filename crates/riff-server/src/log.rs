@@ -69,24 +69,27 @@
 //!
 //! ```
 //! # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
-//! use riff_core::record::{Change, PauseSet, Record, Scope};
+//! use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 //! use riff_core::wire::RiffState;
 //! use riff_server::log::{Timing, replay, write};
 //! use riff_server::store::Memory;
 //!
 //! let store = Memory::default();
 //! let record = |position| Record {
-//!     position,
-//!     written_at_ms: 0,
-//!     by: None,
-//!     command: None,
+//!     envelope: Envelope {
+//!         position,
+//!         written_at_ms: 0,
+//!         by: None,
+//!         command: None,
+//!         call: None,
+//!     },
 //!     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 //! };
 //! let serving = || true;
 //! write(&store, &[record(1), record(2)], &Timing::default(), serving).await?;
 //! write(&store, &[record(3)], &Timing::default(), serving).await?;
 //! let replayed = replay(&store).await?;
-//! let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
+//! let positions: Vec<u64> = replayed.records.iter().map(|r| r.envelope.position).collect();
 //! assert_eq!(positions, [1, 2, 3]);
 //! assert_eq!(replayed.last, 3);
 //! # Ok(()) }
@@ -153,7 +156,7 @@ pub fn chunk_name(first: u64) -> String {
 pub fn encode(records: &[Record]) -> Vec<u8> {
     let header = Header {
         format: FORMAT,
-        first: records[0].position,
+        first: records[0].envelope.position,
     };
     let mut bytes = to_line(&header);
     for record in records {
@@ -165,17 +168,21 @@ pub fn encode(records: &[Record]) -> Vec<u8> {
 /// Reads the lines of a chunk.
 ///
 /// ```
-/// use riff_core::record::{Change, Line, PauseSet, Record, Scope};
+/// use riff_core::record::{Change, Envelope, Line, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::log::{decode, encode};
 ///
 /// let record = Record {
-///     position: 7,
-///     written_at_ms: 0,
-///     by: None,
-///     command: None,
+///     envelope: Envelope {
+///         position: 7,
+///         written_at_ms: 0,
+///         by: None,
+///         command: Some("pause".into()),
+///         call: Some("c1".into()),
+///     },
 ///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Paused }),
 /// };
+/// // The line keeps the call ID.
 /// let (header, lines) = decode(&encode(&[record.clone()])).unwrap();
 /// assert_eq!((header.format, header.first), (1, 7));
 /// assert_eq!(lines, [Line::Record(Box::new(record))]);
@@ -227,7 +234,7 @@ pub struct Written {
 impl Written {
     fn of(records: &[Record]) -> Written {
         Written {
-            first: records.first().map(|record| record.position),
+            first: records.first().map(|record| record.envelope.position),
             count: records.len(),
         }
     }
@@ -260,16 +267,19 @@ pub async fn write(
 /// ```
 /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
 /// use std::sync::atomic::{AtomicU64, Ordering};
-/// use riff_core::record::{Change, PauseSet, Record, Scope};
+/// use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::log::{Timing, write_counted};
 /// use riff_server::store::Memory;
 ///
 /// let record = Record {
-///     position: 1,
-///     written_at_ms: 0,
-///     by: None,
-///     command: None,
+///     envelope: Envelope {
+///         position: 1,
+///         written_at_ms: 0,
+///         by: None,
+///         command: None,
+///         call: None,
+///     },
 ///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 /// };
 /// let (store, failed) = (Memory::default(), AtomicU64::new(0));
@@ -291,7 +301,7 @@ pub async fn write_counted(
     if records.is_empty() {
         return Ok(Written::of(records));
     }
-    let name = chunk_name(records[0].position);
+    let name = chunk_name(records[0].envelope.position);
     let bytes = encode(records);
     let start = tokio::time::Instant::now();
     let mut backoff = timing.backoff;
@@ -373,23 +383,26 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 ///
 /// ```
 /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
-/// use riff_core::record::{Change, PauseSet, Record, Scope};
+/// use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
 /// use riff_server::log::{Timing, replay_after, write};
 /// use riff_server::store::Memory;
 ///
 /// let store = Memory::default();
 /// let record = |position| Record {
-///     position,
-///     written_at_ms: 0,
-///     by: None,
-///     command: None,
+///     envelope: Envelope {
+///         position,
+///         written_at_ms: 0,
+///         by: None,
+///         command: None,
+///         call: None,
+///     },
 ///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 /// };
 /// write(&store, &[record(1), record(2)], &Timing::default(), || true).await?;
 /// write(&store, &[record(3)], &Timing::default(), || true).await?;
 /// let replayed = replay_after(&store, 1).await?;
-/// let positions: Vec<u64> = replayed.records.iter().map(|r| r.position).collect();
+/// let positions: Vec<u64> = replayed.records.iter().map(|r| r.envelope.position).collect();
 /// assert_eq!(positions, [2, 3]);
 /// assert!(replay_after(&store, 3).await?.records.is_empty());
 ///
@@ -437,7 +450,7 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
         let mut position = header.first;
         for line in lines {
             let at = match &line {
-                Line::Record(record) => record.position,
+                Line::Record(record) => record.envelope.position,
                 Line::Unknown { position, .. } => *position,
             };
             if at != position {
@@ -453,10 +466,10 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
                 Line::Record(record) => {
                     if let Some(field) = record.other() {
                         tracing::warn!(
-                            position = record.position,
+                            position = record.envelope.position,
                             "read a value of the field {field} that this build does not know as other"
                         );
-                        skipped = skipped.or(Some(record.position));
+                        skipped = skipped.or(Some(record.envelope.position));
                         skips += 1;
                     }
                     records.push(*record);

@@ -121,12 +121,12 @@ fn named(change: &Change) -> Option<&SessionUri> {
 /// cause is not known.
 pub(super) fn own_call(record: &Record) -> Option<(&Who, u64)> {
     let who = named(&record.change)?.who();
-    let own = match &record.by {
+    let own = match &record.envelope.by {
         Some(By::Session(by)) => by == who,
         Some(_) => false,
         None => true,
     };
-    own.then_some((who, record.written_at_ms))
+    own.then_some((who, record.envelope.written_at_ms))
 }
 
 impl Sessions {
@@ -137,7 +137,7 @@ impl Sessions {
             && uri.who() != crate::owner::server_uri().who()
         {
             let uri = SessionUri::new(uri.who().clone(), uri.place().clone());
-            let at_ms = record.written_at_ms;
+            let at_ms = record.envelope.written_at_ms;
             self.known
                 .entry(uri.who().clone())
                 .and_modify(|known| {
@@ -374,7 +374,7 @@ impl Command for Register {
 /// assert!(matches!(made[0].change, Change::JoinedThread(_)));
 /// assert!(matches!(made[1].change, Change::SessionStarted(_)));
 /// assert_eq!(made.len(), 2);
-/// assert_eq!(made[1].command.as_deref(), Some("register"));
+/// assert_eq!(made[1].envelope.command.as_deref(), Some("register"));
 /// assert!(!state.uri(mike.who(), now).lead());
 ///
 /// // A register of the session makes it the lead.
@@ -493,14 +493,18 @@ impl Command for End {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riff_core::record::Envelope;
 
     /// A record at `at_ms` by `by` that names `session`.
     fn joined(session: &SessionUri, by: Option<By>, at_ms: u64) -> Record {
         Record {
-            position: at_ms,
-            written_at_ms: at_ms,
-            by,
-            command: None,
+            envelope: Envelope {
+                position: at_ms,
+                written_at_ms: at_ms,
+                by,
+                command: None,
+                call: None,
+            },
             change: Change::JoinedThread(Member {
                 session: session.clone(),
                 thread: "design".parse().unwrap(),

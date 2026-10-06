@@ -770,6 +770,32 @@ lock, and gives the chunk and the proof of its write to
 
 The tests keep the given/when/then form of the store design.
 
+## A repeated call
+
+The link of `riff` sends a command again until it gets a reply (see
+[the client link](design-link.md)). So each command carries a call ID,
+and the engine runs each call one time only. `Engine::check` looks up
+the key of the call (the caller and the call ID) before `handle`:
+
+```mermaid
+flowchart TD
+    C[a command with a call ID] --> K{the key}
+    K -->|kept| R["the reply from the kept result,<br/>on the written copy of now:<br/>no handle, riff-repeat: 1"]
+    K -->|pending| W[wait for the entry of the first try] --> K
+    K -->|none| H[permits and handle, as each command] --> Q["the entry has the key;<br/>the records have the call ID"]
+    Q --> F{"Engine::finish"}
+    F -->|accepted| KEPT["kept: the records and the note,<br/>under the lock of the write"]
+    F -->|refused| GONE[no key]
+```
+
+- The table of the kept calls is a part of the state. The waits of the
+  second tries are in the engine, under the same lock.
+- The writer keeps the result, not the call. So a cut, which drops the
+  future of the call, does not lose the result.
+- A checkpoint keeps the records of each kept call. A load makes the
+  kept calls again from the checkpoint and the records after it.
+- The rustdoc of `state/calls.rs` has the rules and the limits.
+
 ## The records
 
 Release 1.0.0 fixes this list. The enum `Change` and the list of its
@@ -778,7 +804,11 @@ other. The fixtures of CI hold one record of each kind:
 `crates/riff-server/tests/fixtures/1.0.0/`.
 
 The envelope of each record: `position`, `written_at_ms`, `by`,
-`command`, `change`.
+`command` and `call`, next to its `change`. `call` came after 1.0.0:
+the call ID of the command, when its call has one (see
+[A repeated call](#a-repeated-call)). A build of 1.0.0 skips it. The
+envelope is one Rust type, `Envelope`. The record and the reader of a
+log line share it, so a new field gets to each path.
 
 | Kind | Fields | Made by |
 |---|---|---|

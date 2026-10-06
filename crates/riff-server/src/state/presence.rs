@@ -763,6 +763,7 @@ mod tests {
 
     use super::super::riff::apply;
     use super::*;
+    use riff_core::record::Envelope;
 
     fn ann() -> SessionUri {
         "riff://ann@heron/acme/app?session=a1".parse().unwrap()
@@ -797,10 +798,13 @@ mod tests {
 
     fn record(change: Change) -> Record {
         Record {
-            position: 1,
-            written_at_ms: 0,
-            by: None,
-            command: None,
+            envelope: Envelope {
+                position: 1,
+                written_at_ms: 0,
+                by: None,
+                command: None,
+                call: None,
+            },
             change,
         }
     }

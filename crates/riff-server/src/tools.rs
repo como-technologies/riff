@@ -59,7 +59,7 @@
 //!
 //! ```
 //! # #[tokio::main] async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use riff_core::record::{Change, PauseSet, Record, Scope};
+//! use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 //! use riff_core::wire::RiffState;
 //! use riff_server::log::{Timing, write};
 //! use riff_server::store::Memory;
@@ -67,10 +67,13 @@
 //!
 //! let store = Memory::default();
 //! let record = |position| Record {
-//!     position,
-//!     written_at_ms: 1_790_000_000_000,
-//!     by: None,
-//!     command: None,
+//!     envelope: Envelope {
+//!         position,
+//!         written_at_ms: 1_790_000_000_000,
+//!         by: None,
+//!         command: None,
+//!         call: None,
+//!     },
 //!     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
 //! };
 //! write(&store, &[record(1), record(2), record(3)], &Timing::default(), || true).await?;
@@ -156,14 +159,17 @@ pub fn utc(ms: u64) -> String {
 ///
 /// ```
 /// use riff_core::name::Who;
-/// use riff_core::record::{By, Change, Claimed, Record};
+/// use riff_core::record::{By, Change, Claimed, Envelope, Record};
 /// use riff_server::tools::show;
 ///
 /// let mut record = Record {
-///     position: 1234,
-///     written_at_ms: 1_790_000_000_000,
-///     by: Some(By::Session(Who::new("ann", Some("s1"))?)),
-///     command: Some("claim".into()),
+///     envelope: Envelope {
+///         position: 1234,
+///         written_at_ms: 1_790_000_000_000,
+///         by: Some(By::Session(Who::new("ann", Some("s1"))?)),
+///         command: Some("claim".into()),
+///         call: None,
+///     },
 ///     change: Change::Claimed(Claimed {
 ///         session: "riff://ann@heron/acme/app?session=s1".parse()?,
 ///         thread: "acme/app".parse()?,
@@ -175,7 +181,7 @@ pub fn utc(ms: u64) -> String {
 ///     "1234  2026-09-21T14:13:20Z  claimed  issue-7 in acme/app by riff://ann@heron/acme/app?session=s1  (claim, the session ann/s1)"
 /// );
 /// // A record from before the cause.
-/// (record.by, record.command) = (None, None);
+/// (record.envelope.by, record.envelope.command) = (None, None);
 /// assert!(show(&record).ends_with("  (cause not known)"));
 ///
 /// // The start of a worker, and the release of its last claim.
@@ -258,8 +264,8 @@ pub fn show(record: &Record) -> String {
     };
     format!(
         "{}  {}  {facts}  ({})",
-        record.position,
-        utc(record.written_at_ms),
+        record.envelope.position,
+        utc(record.envelope.written_at_ms),
         cause(record)
     )
 }
@@ -267,7 +273,7 @@ pub fn show(record: &Record) -> String {
 /// The cause of a record as text: the kind of its command and its
 /// caller (01M3X4Z60G1FXQTDC5XDJ05BAX). A record from before the cause has none.
 fn cause(record: &Record) -> String {
-    match (&record.command, &record.by) {
+    match (&record.envelope.command, &record.envelope.by) {
         (Some(command), Some(by)) => format!("{command}, {by}"),
         (Some(command), None) => command.clone(),
         (None, Some(by)) => by.to_string(),
@@ -318,7 +324,7 @@ fn show_line(line: &Line) -> String {
 
 fn position_of(line: &Line) -> u64 {
     match line {
-        Line::Record(record) => record.position,
+        Line::Record(record) => record.envelope.position,
         Line::Unknown { position, .. } => *position,
     }
 }
@@ -1038,16 +1044,20 @@ mod tests {
     use crate::state::State;
     use crate::store::Memory;
     use futures::future::{BoxFuture, FutureExt};
+    use riff_core::record::Envelope;
     use riff_core::record::{Claimed, PauseSet};
     use riff_core::wire::RiffState;
     use std::time::{Duration, Instant};
 
     fn running(position: u64) -> Record {
         Record {
-            position,
-            written_at_ms: 0,
-            by: None,
-            command: None,
+            envelope: Envelope {
+                position,
+                written_at_ms: 0,
+                by: None,
+                command: None,
+                call: None,
+            },
             change: Change::PauseSet(PauseSet {
                 scope: Scope::Riff,
                 state: RiffState::Running,
@@ -1057,10 +1067,13 @@ mod tests {
 
     fn claimed(position: u64, item: &str) -> Record {
         Record {
-            position,
-            written_at_ms: 0,
-            by: None,
-            command: None,
+            envelope: Envelope {
+                position,
+                written_at_ms: 0,
+                by: None,
+                command: None,
+                call: None,
+            },
             change: Change::Claimed(Claimed {
                 session: "riff://ann@heron/acme/app?session=s1".parse().unwrap(),
                 thread: "acme/app".parse().unwrap(),

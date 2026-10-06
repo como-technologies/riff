@@ -9,6 +9,11 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# Test data for the tests of the other crates, for example
+# `record::one_of_each`.
+test-support = []
+
 [dependencies]
 base64.workspace = true
 getrandom.workspace = true

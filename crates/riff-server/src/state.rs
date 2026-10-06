@@ -250,7 +250,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use riff_core::name::{SessionUri, ThreadName, Who};
-use riff_core::record::{Change, Posted, Record};
+use riff_core::record::{Change, Envelope, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AliveReply, BlockedInfo, Claim, End, Facts, Freed, Idle, ItemFact, Join, Keys, Kind,
@@ -263,6 +263,7 @@ use riff_core::wire::{
 /// ([`State::look_blocks`]).
 pub type Blocked = (SessionUri, String);
 
+pub mod calls;
 pub mod command;
 pub mod people;
 pub mod plan;
@@ -275,6 +276,7 @@ pub mod threads;
 pub mod view;
 pub mod work;
 
+pub use calls::{CALL_KEEP, CALL_KEEP_MOST, Calls, Kept, Key};
 pub use command::{
     Caller, Cause, Class, Code, Command, CommandKind, Done, Now, Refused, Role, permits,
 };
@@ -341,6 +343,9 @@ pub struct State {
     /// The settings of the server that `handle` and `reply` read
     /// (01M3XA87F70CD3WH4STADSCW6S). They are not in the log.
     settings: Settings,
+    /// The result of each call with a call ID that the writer wrote
+    /// (01M48VFX22S4811DYBBD7QDW24). See [`calls`].
+    calls: Calls,
 }
 
 impl Default for State {
@@ -357,6 +362,7 @@ impl Default for State {
             presence: Presence::default(),
             skipped_to: 0,
             settings: Settings::default(),
+            calls: Calls::default(),
         }
     }
 }
@@ -555,9 +561,10 @@ impl State {
         let mut seen = BTreeMap::new();
         let mut saved = None;
         if let Some(snapshot) = snapshot {
-            let (riff, presence, seen_ms) = snapshot.into_parts();
+            let (riff, presence, seen_ms, calls) = snapshot.into_parts();
             state.pending = riff.clone();
             state.written = riff;
+            state.calls = calls.restore();
             saved = Some(presence);
             seen = seen_ms;
             seen.retain(|_, ms| *ms > 0);
@@ -565,8 +572,10 @@ impl State {
         for record in records {
             apply(&mut state.pending, &record);
             state.apply_written(&record, None);
+            state.calls.record(&record);
             seen_own_call(&mut seen, &record);
         }
+        state.calls.expire(now_ms);
         state.presence.riff_changed = Some(now);
         state.presence.loaded = Some(now);
         state.sessions_of_the_log(&seen, now);
@@ -614,6 +623,7 @@ impl State {
         for record in records {
             apply(&mut self.pending, &record);
             self.apply_written(&record, None);
+            self.calls.record(&record);
             seen_own_call(&mut seen, &record);
         }
         let Some(loaded) = self.presence.loaded else {
@@ -705,7 +715,50 @@ impl State {
     pub fn snapshot(&self, now: Instant, now_ms: u64) -> Snapshot {
         let sessions = &self.presence.sessions;
         let seen = |who: &Who| sessions.get(who).map_or(0, |s| s.seen_ms(now, now_ms));
-        Snapshot::new(self.written_position(), &self.written, &self.presence, seen)
+        let calls = self.calls.saved(now_ms);
+        Snapshot::new(
+            self.written_position(),
+            &self.written,
+            &self.presence,
+            seen,
+            calls,
+        )
+    }
+
+    /// The kept result of the call `key`, when it is younger than
+    /// [`CALL_KEEP`] at `now` (01M48VFX22S4811DYBBD7QDW24).
+    pub fn kept(&self, key: &Key, now: Instant) -> Option<&Kept> {
+        self.calls.get(key, self.ms(now))
+    }
+
+    /// Keeps the result of the call `key` that the writer wrote at
+    /// `now`: its records and its note. The engine calls it with the
+    /// write of the records, under the same lock. So a checkpoint has
+    /// the records of a call only with its key.
+    pub fn keep(
+        &mut self,
+        key: Key,
+        done: Done,
+        note: Box<dyn std::any::Any + Send>,
+        now: Instant,
+    ) {
+        let at_ms = self.ms(now);
+        self.calls.keep(key, Kept::new(done, Some(note), at_ms));
+    }
+
+    /// Sets the number of sign-ins that the records of the kept call
+    /// `key` ended: the writer knows it only after their effects.
+    pub fn kept_ended(&mut self, key: &Key, ended: usize) {
+        if let Some(kept) = self.calls.get_mut(key) {
+            kept.done.ended = ended;
+        }
+    }
+
+    /// The caller of a call with its worker mark from the pending copy,
+    /// for the reply to a repeated call.
+    pub fn with_worker(&self, caller: Caller) -> Caller {
+        let worker = self.pending.sessions().worker(caller.who());
+        caller.with_worker(worker)
     }
 
     /// Applies a record to the written copy, and then to the presence
@@ -810,7 +863,7 @@ impl State {
         let mut wakes = Vec::new();
         if self.writer {
             for record in records {
-                let at = self.made.remove(&record.position);
+                let at = self.made.remove(&record.envelope.position);
                 wakes.extend(self.apply_written(record, at));
             }
         }
@@ -1050,26 +1103,29 @@ impl State {
     /// let mut state = State::default();
     /// let join = Join { me: mike.clone(), thread: "design".parse()? };
     /// let (made, ()) = state.run(&Caller::of(&mike), &join, Instant::now()).unwrap();
-    /// assert_eq!(made[0].by, Some(By::Session(mike.who().clone())));
-    /// assert_eq!(made[0].command.as_deref(), Some("join"));
+    /// assert_eq!(made[0].envelope.by, Some(By::Session(mike.who().clone())));
+    /// assert_eq!(made[0].envelope.command.as_deref(), Some("join"));
     /// // The register that the state ran first is a command of its own.
     /// let log = state.take_queue();
-    /// assert_eq!(log[0].command.as_deref(), Some("register"));
+    /// assert_eq!(log[0].envelope.command.as_deref(), Some("register"));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn queue(&mut self, cause: &Cause, changes: &[Change], now: Instant) -> Vec<Record> {
         let mut records = Vec::with_capacity(changes.len());
         for change in changes {
             let record = Record {
-                position: self.position() + 1,
-                written_at_ms: self.ms(now),
-                by: Some(cause.by.clone()),
-                command: Some(cause.command.as_str().to_owned()),
+                envelope: Envelope {
+                    position: self.position() + 1,
+                    written_at_ms: self.ms(now),
+                    by: Some(cause.by.clone()),
+                    command: Some(cause.command.as_str().to_owned()),
+                    call: cause.call.clone(),
+                },
                 change: change.clone(),
             };
             apply(&mut self.pending, &record);
             if self.writer {
-                self.made.insert(record.position, now);
+                self.made.insert(record.envelope.position, now);
             } else {
                 // The sync form sends no wake.
                 let _ = self.apply_written(&record, Some(now));
@@ -3957,7 +4013,7 @@ mod tests {
         assert!(!state.claim(&tests(), &repo(), "issue-6", now).unwrap().0);
         let chunk = state.take_queue();
         assert_eq!(chunk.len(), 3, "the claim, and the arrival of brett");
-        assert!(chunk.iter().all(|r| r.written_at_ms == T0));
+        assert!(chunk.iter().all(|r| r.envelope.written_at_ms == T0));
         state.written(&chunk);
         assert_eq!(state.uri(api().who(), now).claims(), ["issue-6"]);
         assert_eq!(state.written_position(), state.position());

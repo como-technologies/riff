@@ -1419,6 +1419,34 @@
   server does not answer in 2 seconds, the tool takes the token of the
   Google sign-in of the person: the output of
   `gcloud auth print-access-token`.
+- **01M48VFX22S4811DYBBD7QDW24** `riff-server` runs each command with a
+  call ID one time only. The call ID is in the header `riff-call`. The
+  key of a call is its caller and its call ID. The writer keeps the
+  result of each accepted call: its records and its note. A second try
+  of a kept call runs no `handle`. Its reply comes from the kept
+  result, on the written state of now, and has the header
+  `riff-repeat: 1`. A query and a signal take no call ID.
+- **01M48VFX8K93F8XRWDB2BDP240** A second try of a call whose first try
+  waits for the writer waits for the same entry. Then it gets the reply
+  of the kept call.
+- **01M48VFXBGBW3PTC2JNHYNSE0W** A refused command keeps no key. A
+  second try of it runs `handle` again.
+- **01M48VFXEE2GGT7JE10DWBNZEV** The server keeps a call for
+  `CALL_KEEP` (24 hours), and at most `CALL_KEEP_MOST` (1024) calls of
+  each caller. The oldest call goes first.
+- **01M48VFFY5CK9MRXJESV2NHY5F** The envelope of each record of a
+  command with a call ID has the field `call`, next to `by` and
+  `command`. A record with no `call` is of a command with no call ID.
+  A build that does not know the field skips it.
+- **01M48VFXHHND8SX4DBXZTFMJGQ** A checkpoint keeps the records of each
+  kept call, in the field `calls`. A load makes the kept calls from the
+  checkpoint and from each record after it, with the default note. So
+  a start from a checkpoint and a start from the full log give the
+  same reply to a repeated call. A command that made no record is not
+  kept after a start.
+- **01M48VFXMHBT491BA5XYSRB3BA** A rollback to a build with no call ID
+  loses the kept calls. For `CALL_KEEP` after it, a repeated command
+  can run two times. The steps of a rollback say so.
 
 ## Cloud
 

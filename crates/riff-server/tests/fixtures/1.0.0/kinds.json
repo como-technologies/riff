@@ -1,4 +1,12 @@
 {
+  "envelope": [
+    "position",
+    "written_at_ms",
+    "by",
+    "command",
+    "call",
+    "change"
+  ],
   "records": [
     "posted",
     "joined_thread",

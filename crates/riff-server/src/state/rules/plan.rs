@@ -192,14 +192,14 @@ fn a_held_item_refuses_a_worker_and_warns_each_other_session() {
     let lead = Caller::of(&ann());
     let hold = hold("issue-12").of(&ann());
     let (made, ()) = state.run(&lead, &hold, now).unwrap();
-    assert_eq!(made[0].by, Some(By::Session(ann().who().clone())));
+    assert_eq!(made[0].envelope.by, Some(By::Session(ann().who().clone())));
 
     // The worker ann2 is refused.
     let worker = Caller::of(&ann2());
     let claim_12 = claim("issue-12").of(&ann2());
     let refused = state.check(&worker, &claim_12, now).result.unwrap_err();
     assert_eq!(refused.code, Code::OnHold);
-    let since = crate::tools::utc(made[0].written_at_ms);
+    let since = crate::tools::utc(made[0].envelope.written_at_ms);
     let expected = format!(
         "issue-12 is held by the lead (the session ann/a1) since {since}: {REASON}. Pick another \
          item."

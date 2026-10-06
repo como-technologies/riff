@@ -175,8 +175,8 @@ impl TheRiff {
     ) -> Result<(), &'static str> {
         let pause = match state {
             RiffState::Paused => Some(PauseInfo {
-                by: record.by.clone(),
-                at_ms: record.written_at_ms,
+                by: record.envelope.by.clone(),
+                at_ms: record.envelope.written_at_ms,
             }),
             RiffState::Running => None,
         };

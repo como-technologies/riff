@@ -369,16 +369,19 @@ pub async fn prune(
 mod tests {
     use super::*;
     use crate::store::Memory;
-    use riff_core::record::{Change, PauseSet, Record, Scope};
+    use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
     use riff_core::wire::RiffState;
     use std::time::Instant;
 
     fn record(position: u64) -> Record {
         Record {
-            position,
-            written_at_ms: 0,
-            by: None,
-            command: None,
+            envelope: Envelope {
+                position,
+                written_at_ms: 0,
+                by: None,
+                command: None,
+                call: None,
+            },
             change: Change::PauseSet(PauseSet {
                 scope: Scope::Riff,
                 state: RiffState::Running,
@@ -428,7 +431,7 @@ mod tests {
         for position in [4, 5] {
             let replayed = log::replay_after(&store, position).await.unwrap();
             assert_eq!(replayed.last, 8);
-            assert_eq!(replayed.records[0].position, position + 1);
+            assert_eq!(replayed.records[0].envelope.position, position + 1);
         }
     }
 

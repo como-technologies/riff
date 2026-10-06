@@ -133,8 +133,8 @@ impl Plans {
     pub(super) fn held(&mut self, held: &ItemHeld, record: &Record) -> Result<(), &'static str> {
         let hold = HoldInfo {
             reason: held.reason.clone(),
-            by: record.by.clone(),
-            at_ms: record.written_at_ms,
+            by: record.envelope.by.clone(),
+            at_ms: record.envelope.written_at_ms,
         };
         let plan = self.plans.entry(held.thread.clone()).or_default();
         plan.holds.insert(held.item.clone(), hold);

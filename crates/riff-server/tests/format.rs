@@ -4,8 +4,11 @@
 //! The directory `fixtures/1.0.0` holds the format of the release:
 //!
 //! - `kinds.json`: the name of each record kind and of each command
-//!   kind of the release (01M3XM2C3MND6YB24SGZ565353). A name never
-//!   goes out of this list.
+//!   kind of the release (01M3XM2C3MND6YB24SGZ565353), and each field
+//!   of the envelope of a record. A name never goes out of this list.
+//!   The field `call` came after the release
+//!   (01M48VFFY5CK9MRXJESV2NHY5F): a record of the release has none,
+//!   and a build of the release skips it.
 //! - `log.jsonl`: one chunk with each kind of record of the release
 //!   (01M3XM2C60TKF05NETHY8EYP3P). It starts with the records that the
 //!   import of go-live writes for the people. A thread gets more
@@ -39,7 +42,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use riff_core::record::{Change, Line, Record};
+use riff_core::record::{By, Change, Envelope, Line, Record};
 use riff_server::checkpoint::{self, Checkpoint};
 use riff_server::log;
 use riff_server::state::{CommandKind, Riff, State, apply};
@@ -84,6 +87,8 @@ fn records_of(release: &str, name: &str) -> Vec<Record> {
 /// The names of `kinds.json`.
 #[derive(Deserialize)]
 struct Kinds {
+    #[serde(default)]
+    envelope: Vec<String>,
     records: Vec<String>,
     commands: Vec<String>,
 }
@@ -92,11 +97,13 @@ struct Kinds {
 /// releases.
 fn kinds() -> Kinds {
     let mut all = Kinds {
+        envelope: Vec::new(),
         records: Vec::new(),
         commands: Vec::new(),
     };
     for release in RELEASES {
         let kinds: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
+        all.envelope.extend(kinds.envelope);
         all.records.extend(kinds.records);
         all.commands.extend(kinds.commands);
     }
@@ -179,9 +186,9 @@ fn the_fixture_log_has_a_record_of_each_kind() {
     // No record of the release has a value that reads as `other`.
     assert!(records.iter().all(|record| record.other().is_none()));
     // A record with no cause reads.
-    assert!(records.iter().any(|record| record.by.is_none()));
+    assert!(records.iter().any(|record| record.envelope.by.is_none()));
     // The first records come from the command `import` of go-live.
-    let import = records[0].command.as_deref();
+    let import = records[0].envelope.command.as_deref();
     assert_eq!(import, Some(CommandKind::Import.as_str()));
     // A kind of command that the build does not know reads as text.
     let later = serde_json::to_string(&records[0])
@@ -190,7 +197,7 @@ fn the_fixture_log_has_a_record_of_each_kind() {
     let Line::Record(later) = Line::parse(&later).unwrap() else {
         panic!("a known kind of record");
     };
-    let merge = later.command.as_deref();
+    let merge = later.envelope.command.as_deref();
     assert_eq!(merge, Some("merge"));
     assert!(
         CommandKind::ALL
@@ -328,7 +335,10 @@ async fn a_value_of_a_later_build_reads_as_other_and_counts_as_a_skipped_record(
     let moved: Vec<Record> = later
         .into_iter()
         .zip(first..)
-        .map(|(record, position)| Record { position, ..record })
+        .map(|(mut record, position)| {
+            record.envelope.position = position;
+            record
+        })
         .collect();
     log::write(&store, &moved, &timing, || true).await.unwrap();
 
@@ -411,4 +421,62 @@ fn a_riff_with_no_hold_writes_no_part_plans() {
     assert!(!replayed.contains("\"plans\""));
     let held = String::from_utf8(bytes_of(HOLDS, "replayed.json")).unwrap();
     assert!(held.contains("\"plans\""));
+}
+
+/// The list names each field of the envelope of a record, and the code
+/// has each field of the list: a field is never removed and never
+/// renamed (01M3T4111PFM0C6KPREWFS9EQQ).
+#[test]
+fn the_list_has_each_field_of_the_envelope() {
+    let Record { envelope, change } = records("log.jsonl")[0].clone();
+    let record = Record {
+        envelope: Envelope {
+            position: envelope.position,
+            written_at_ms: envelope.written_at_ms,
+            by: Some(By::Server),
+            command: Some("import".into()),
+            call: Some("c1".into()),
+        },
+        change,
+    };
+    let json = serde_json::to_value(&record).unwrap();
+    let code = set(json.as_object().unwrap().keys().map(String::as_str));
+    let kinds = kinds();
+    assert_eq!(code, set(kinds.envelope.iter().map(String::as_str)));
+}
+
+/// The envelope of a record of release 1.0.0: a copy of its type,
+/// with no field `call`.
+#[derive(Debug, Deserialize)]
+struct Record100 {
+    position: u64,
+    written_at_ms: u64,
+    #[serde(default)]
+    by: Option<By>,
+    #[serde(default)]
+    command: Option<String>,
+    change: Change,
+}
+
+/// A record with a call ID loads in a build that does not know the
+/// field: the build of 1.0.0 skips it (01M48VFFY5CK9MRXJESV2NHY5F).
+/// A record of 1.0.0 has no call ID.
+#[test]
+fn a_record_with_a_call_id_loads_in_a_build_of_the_release() {
+    let records = records("log.jsonl");
+    assert!(records.iter().all(|record| record.envelope.call.is_none()));
+    for record in records {
+        let mut with_call = record.clone();
+        with_call.envelope.call = Some("c1".into());
+        let line = serde_json::to_string(&with_call).unwrap();
+        assert!(line.contains(r#""call":"c1""#), "{line}");
+        let old: Record100 = serde_json::from_str(&line).unwrap();
+        assert_eq!(old.position, record.envelope.position);
+        assert_eq!(old.written_at_ms, record.envelope.written_at_ms);
+        assert_eq!(
+            (old.by, old.command),
+            (record.envelope.by, record.envelope.command)
+        );
+        assert_eq!(old.change, record.change);
+    }
 }

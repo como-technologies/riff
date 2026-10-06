@@ -79,6 +79,29 @@
 //! only waits, and makes the reply. A call that the client drops loses
 //! only its reply.
 //!
+//! # A repeated call
+//!
+//! A command can carry a call ID: the header `riff-call`
+//! ([`Authenticated::with_call`], 01M48VFX22S4811DYBBD7QDW24). The
+//! engine runs each call one time only:
+//!
+//! - `check` looks up the key of the call first: its caller and its
+//!   call ID ([`Key`]). A kept call gets its reply from the kept result,
+//!   on the written copy of now, and runs no `handle`. A call whose
+//!   first try waits for the writer waits for that entry
+//!   (01M48VFX8K93F8XRWDB2BDP240). With no key, the command runs as each
+//!   command.
+//! - The entry of the command has the key, and each of its records has
+//!   the call ID. [`Engine::finish`] keeps the records and the note in
+//!   the state, under the lock of the write. So a cut, which drops the
+//!   future of the call, does not lose the result. A refused command
+//!   keeps no key (01M48VFXBGBW3PTC2JNHYNSE0W).
+//! - [`Engine::run`] says whether a reply is the reply of a kept call.
+//!   The handler then sets the header `riff-repeat: 1`.
+//!
+//! [`crate::state::calls`] has the table, its limits and its part of a
+//! checkpoint.
+//!
 //! # The trace of a command
 //!
 //! Each command leaves one trace (01M3X4Z62RJREQ5H8F18Y85T6V): its records, or one log
@@ -142,6 +165,8 @@
 //! # }
 //! ```
 
+use std::any::Any;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -152,9 +177,9 @@ use axum::response::{IntoResponse, Response};
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead, Leave,
-    PassOwner, Pause, Post, REFUSED_HEADER, Register, Release, ReleaseFor, Remove, Resume, Revoke,
-    SetAdmin, SetIdle, Start, Tailed, TakeOwner, Wake,
+    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead,
+    Leave, PassOwner, Pause, Post, REFUSED_HEADER, REPEAT_HEADER, Register, Release, ReleaseFor,
+    Remove, Resume, Revoke, SetAdmin, SetIdle, Start, Tailed, TakeOwner, Wake,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
@@ -163,13 +188,16 @@ use crate::log::Written;
 use crate::oidc::Identity;
 use crate::state::{
     Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
-    CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, MakeRiff,
+    CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, Key, MakeRiff,
     NameOwner, OwnerChange, Refused, Role, Signal, State, Stopping, Stuck,
 };
 use crate::trace::{Denied, DeniedCode, Limit, Named, Outcome, Traced};
 
 /// Events that a slow stream may miss before it drops them.
 const EVENT_BUFFER: usize = 1024;
+
+/// The longest call ID that the server takes, in bytes.
+pub const CALL_ID_MOST: usize = 128;
 
 /// What the engine asks the token layer about the sign-ins of the
 /// riff. The people and their roles are in the state.
@@ -448,6 +476,42 @@ impl Admitted {
 pub struct Authenticated<C> {
     admitted: Admitted,
     command: C,
+    /// The call ID of the call: the header `riff-call`
+    /// (01M48VFX22S4811DYBBD7QDW24). `None` for a call with no ID, and
+    /// for each command of the server.
+    call: Option<String>,
+}
+
+impl<C> Authenticated<C> {
+    /// The same call with the call ID `call`. Each try of one call has
+    /// the same ID. The engine runs a command with a call ID one time
+    /// only (01M48VFX22S4811DYBBD7QDW24).
+    pub fn with_call(self, call: Option<String>) -> Authenticated<C> {
+        Authenticated { call, ..self }
+    }
+}
+
+/// A reply, and whether it is the reply of a kept call: a second try
+/// of a call that the engine ran (01M48VFX22S4811DYBBD7QDW24). The
+/// handler then sets the header `riff-repeat`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Replied<R> {
+    pub reply: R,
+    pub repeat: bool,
+}
+
+/// What `Engine::check` gives: the next stage, the reply of a kept
+/// call, or the wait for the first try of the same call.
+enum Try<'s, C: Command> {
+    Run(Checked<'s, C>),
+    Kept(C::Reply),
+    Wait(Authenticated<C>, oneshot::Receiver<()>),
+}
+
+/// The step of [`Engine::run`] after the check, with no lock.
+enum Next<C: Command> {
+    Queued(Queued<C>),
+    Wait(Authenticated<C>, oneshot::Receiver<()>),
 }
 
 /// The second stage: `permits` and `handle` ran. It holds the lock of
@@ -459,6 +523,8 @@ pub struct Checked<'s, C: Command> {
     check: Check<C::Note>,
     /// The key of the token of the caller, for the log line.
     key: Option<String>,
+    /// The key of the call, when it has a call ID.
+    called: Option<Key>,
     now: Instant,
 }
 
@@ -495,6 +561,16 @@ struct Entry {
     /// Tells the call that the entry is done. The `register` that the
     /// engine runs first for a caller has no call of its own.
     done: Option<oneshot::Sender<Done>>,
+    /// The key of a command with a call ID, and its note. The writer
+    /// keeps the result of the call ([`Engine::finish`]).
+    call: Option<Called>,
+}
+
+/// The key of a call in the queue, and the note of `handle`: `None`
+/// for a refused command.
+struct Called {
+    key: Key,
+    note: Option<Box<dyn Any + Send>>,
 }
 
 /// The trace of a command that makes no record: who sent it, and why it
@@ -532,6 +608,9 @@ struct Core {
     queue: Vec<Entry>,
     /// True once the server stopped for good: no entry is done.
     stopped: bool,
+    /// Each call with a call ID whose entry waits for the writer, with
+    /// the second tries that wait for it (01M48VFX8K93F8XRWDB2BDP240).
+    pending: BTreeMap<Key, Vec<oneshot::Sender<()>>>,
 }
 
 struct Shared {
@@ -561,6 +640,7 @@ impl Engine {
                 state,
                 queue: Vec::new(),
                 stopped: false,
+                pending: BTreeMap::new(),
             }),
             queued: Arc::new(Notify::new()),
             wakes,
@@ -652,7 +732,11 @@ impl Engine {
         command
             .prepare(proof, now_ms())
             .map_err(|why| Failed::Denied(Denied::new(DeniedCode::BadProof, why)))?;
-        Ok(Authenticated { admitted, command })
+        Ok(Authenticated {
+            admitted,
+            command,
+            call: None,
+        })
     }
 
     /// The first stage of a command of the server itself.
@@ -664,6 +748,7 @@ impl Engine {
                 started: None,
             },
             command,
+            call: None,
         }
     }
 
@@ -689,18 +774,54 @@ impl Engine {
     ///      |                                    ---- ^^^^^^^^^^^^^^^^^^^ the trait `Handler<_, _>` is not implemented for fn item `fn(State<Engine>, Authenticated<Register>) -> ... {command::<...>}`
     /// ```
     pub async fn dispatch<C: Command>(&self, call: Authenticated<C>) -> Result<C::Reply, Failed> {
-        let queued: Queued<C> = self.send(call); // the check and the entry
-        let applied: Applied<C> = queued.applied().await?; // the writer did the rest
-        applied.reply() // the reply, or the refusal
+        self.run(call).await.map(|replied| replied.reply)
     }
 
-    /// The first stages of [`Engine::dispatch`], with no `await`: the
-    /// check under the lock, and the entry in the queue. The writer
+    /// [`Engine::dispatch`], which also says whether the reply is the
+    /// reply of a kept call (01M48VFX22S4811DYBBD7QDW24). A second try
+    /// of a call that waits for the writer waits for the same entry, and
+    /// then gets the kept reply (01M48VFX8K93F8XRWDB2BDP240). When the
+    /// first try was refused, the second try runs `handle`
+    /// (01M48VFXBGBW3PTC2JNHYNSE0W).
+    pub async fn run<C: Command>(
+        &self,
+        mut call: Authenticated<C>,
+    ) -> Result<Replied<C::Reply>, Failed> {
+        loop {
+            let next = match self.check(call) {
+                // lock, permits, handle, signal; then positions, the entry
+                Try::Run(checked) => Next::Queued(checked.queue()),
+                Try::Kept(reply) => {
+                    let repeat = true;
+                    return Ok(Replied { reply, repeat });
+                }
+                Try::Wait(again, wait) => Next::Wait(again, wait),
+            };
+            match next {
+                Next::Queued(queued) => {
+                    let applied: Applied<C> = queued.applied().await?; // the writer did the rest
+                    let reply = applied.reply()?; // the reply, or the refusal
+                    let repeat = false;
+                    return Ok(Replied { reply, repeat });
+                }
+                Next::Wait(again, wait) => {
+                    wait.await.map_err(|_| Failed::Stopped)?;
+                    call = again;
+                }
+            }
+        }
+    }
+
+    /// The first stages of a command of the server, with no `await`:
+    /// the check under the lock, and the entry in the queue. The writer
     /// finishes the command, also when nobody waits for it: a call that
-    /// is gone loses only its reply.
-    fn send<C: Command>(&self, call: Authenticated<C>) -> Queued<C> {
-        let checked: Checked<'_, C> = self.check(call); // lock, permits, handle, signal
-        checked.queue() // positions, the entry
+    /// is gone loses only its reply. A command of the server has no
+    /// call ID, so it always gets an entry.
+    fn send<C: Command>(&self, call: Authenticated<C>) -> Option<Queued<C>> {
+        match self.check(call) {
+            Try::Run(checked) => Some(checked.queue()),
+            Try::Kept(_) | Try::Wait(..) => None,
+        }
     }
     // ANCHOR_END: dispatch
 
@@ -721,11 +842,22 @@ impl Engine {
     /// before `permits`, with the code `no_sign_in`
     /// (01M3WRD9G5GAF65EX8P6D5DMQM). The refused command has its entry
     /// in the queue, as each refused command.
-    fn check<C: Command>(&self, call: Authenticated<C>) -> Checked<'_, C> {
+    ///
+    /// A call with a call ID looks up its key first
+    /// (01M48VFX22S4811DYBBD7QDW24). A kept call gets the reply of its
+    /// kept result, on the written copy of now, and runs no `handle`. A
+    /// call whose first try waits for the writer waits for it
+    /// (01M48VFX8K93F8XRWDB2BDP240).
+    fn check<C: Command>(&self, call: Authenticated<C>) -> Try<'_, C> {
         let now = Instant::now();
-        let Authenticated { admitted, command } = call;
+        let Authenticated {
+            admitted,
+            command,
+            call,
+        } = call;
         let mut core = self.core();
         let caller = self.with_role(&admitted, &core.state);
+        let mut called = None;
         // A sign-in from before the last end of the sign-ins of its user
         // sends no command (01M3XGP03RDF6S15JYS718WWFC): the record of
         // the end can wait in the queue, and the writer ends the
@@ -752,16 +884,37 @@ impl Engine {
                 )),
             }
         } else {
+            let key = call.as_deref().map(|id| Key::new(&caller.by(), id));
+            if let Some(key) = &key {
+                if let Some(kept) = core.state.kept(key, now) {
+                    let caller = core.state.with_worker(caller);
+                    let note = kept.note::<C::Note>();
+                    let reply = core.state.reply(&caller, &command, &kept.done, note, now);
+                    return Try::Kept(reply);
+                }
+                if let Some(waiting) = core.pending.get_mut(key) {
+                    let (tx, rx) = oneshot::channel();
+                    waiting.push(tx);
+                    let again = Authenticated {
+                        admitted,
+                        command,
+                        call,
+                    };
+                    return Try::Wait(again, rx);
+                }
+            }
+            called = key;
             core.state.check(&caller, &command, now)
         };
-        Checked {
+        Try::Run(Checked {
             engine: self,
             core,
             command,
             check,
             key: admitted.key,
+            called,
             now,
-        }
+        })
     }
 
     /// The caller of `admitted` with its role. The role of a caller
@@ -847,6 +1000,7 @@ impl Engine {
                 started: None,
             },
             command: admit,
+            call: None,
         })
         .await
     }
@@ -877,6 +1031,7 @@ impl Engine {
                 made: Vec::new(),
                 sent: None,
                 done: Some(tx),
+                call: None,
             });
         }
         self.0.queued.notify_one();
@@ -904,6 +1059,7 @@ impl Engine {
         self.dispatch(Authenticated {
             admitted: admitted.clone(),
             command: Arrive { me: me.clone() },
+            call: None,
         })
         .await
     }
@@ -1027,7 +1183,7 @@ impl Engine {
     ///
     /// A proof of other records is an error of the writer: the chunk
     /// fails, and the engine stops.
-    pub fn finish(&self, chunk: Chunk, written: Written) {
+    pub fn finish(&self, mut chunk: Chunk, written: Written) {
         if !written.covers(&chunk.records()) {
             self.fail(chunk);
             self.stop("the writer gave the proof of other records");
@@ -1035,9 +1191,19 @@ impl Engine {
         }
         let mut missed = Vec::new();
         {
+            let now = Instant::now();
             let mut core = self.core();
-            for entry in &chunk.entries {
+            for entry in &mut chunk.entries {
                 missed.extend(core.state.written(&entry.made));
+                // The writer keeps the result of an accepted call with
+                // its records, under the same lock
+                // (01M48VFX22S4811DYBBD7QDW24).
+                if let Some(called) = &mut entry.call
+                    && let Some(note) = called.note.take()
+                {
+                    let done = Done::of(entry.made.clone());
+                    core.state.keep(called.key.clone(), done, note, now);
+                }
             }
         }
         for wake in &missed {
@@ -1052,6 +1218,9 @@ impl Engine {
                 });
             }
             let ended = self.effects(&entry.made, &missed);
+            if let Some(called) = &entry.call {
+                self.called(&called.key, ended);
+            }
             if let Some(done) = entry.done {
                 let made = entry.made;
                 let _ = done.send(Done { made, ended });
@@ -1059,6 +1228,22 @@ impl Engine {
         }
     }
     // ANCHOR_END: finish
+
+    /// Ends the wait of the call `key`: it sets the sign-ins that its
+    /// records `ended`, and wakes each second try that waits for it. A
+    /// second try of a kept call gets the kept reply. A second try of a
+    /// refused call runs `handle` (01M48VFXBGBW3PTC2JNHYNSE0W).
+    fn called(&self, key: &Key, ended: usize) {
+        let waiting = {
+            let mut core = self.core();
+            core.state.kept_ended(key, ended);
+            core.pending.remove(key).unwrap_or_default()
+        };
+        for wait in waiting {
+            // A send fails only when the try is gone. That is not an error.
+            let _ = wait.send(());
+        }
+    }
 
     /// Ends each command of a chunk whose write failed: one log line
     /// `failed` with the severity `ERROR` for each (01M3X4Z62RJREQ5H8F18Y85T6V). Each call of the chunk
@@ -1101,12 +1286,12 @@ impl Engine {
                 Change::MemberRemoved(removed) => {
                     let users = self.read(|state| state.users_of(&removed.email));
                     for user in users {
-                        ended += self.0.sign_ins.end(&user, record.position);
+                        ended += self.0.sign_ins.end(&user, record.envelope.position);
                     }
                     continue;
                 }
                 Change::SigninsEnded(signins) => {
-                    ended += self.0.sign_ins.end(&signins.user, record.position);
+                    ended += self.0.sign_ins.end(&signins.user, record.envelope.position);
                     continue;
                 }
                 _ => continue,
@@ -1139,6 +1324,8 @@ impl Engine {
         let waiting = {
             let mut core = self.core();
             core.stopped = true;
+            // Each second try that waits fails as stopped.
+            core.pending.clear();
             std::mem::take(&mut core.queue)
         };
         Engine::failed(waiting, Outcome::Stopped(why));
@@ -1158,6 +1345,7 @@ impl<'s, C: Command> Checked<'s, C> {
             command,
             check,
             key,
+            called,
             now,
         } = self;
         let Check {
@@ -1178,7 +1366,8 @@ impl<'s, C: Command> Checked<'s, C> {
         let (tx, done) = oneshot::channel();
         let (made, outcome) = match result {
             Ok((changes, note)) => {
-                let cause = Cause::of(&caller, C::KIND);
+                let call = called.as_ref().map(|key| key.call().to_owned());
+                let cause = Cause::of(&caller, C::KIND).with_call(call);
                 (core.state.queue(&cause, &changes, now), Ok(note))
             }
             Err(refused) => (Vec::new(), Err(refused)),
@@ -1190,12 +1379,22 @@ impl<'s, C: Command> Checked<'s, C> {
                     made,
                     sent: Some(sent(CommandKind::Register, None)),
                     done: None,
+                    call: None,
                 });
             }
+            // A second try of this call waits for this entry
+            // (01M48VFX8K93F8XRWDB2BDP240).
+            let call = called.map(|key| {
+                core.pending.insert(key.clone(), Vec::new());
+                let note = outcome.as_ref().ok().cloned();
+                let note = note.map(|note| Box::new(note) as Box<dyn Any + Send>);
+                Called { key, note }
+            });
             core.queue.push(Entry {
                 made,
                 sent: Some(sent(C::KIND, outcome.as_ref().err().cloned())),
                 done: Some(tx),
+                call,
             });
         }
         drop(core);
@@ -1251,25 +1450,56 @@ where
     async fn from_request(request: Request, state: &S) -> Result<Self, Response> {
         let engine = Engine::from_ref(state);
         let proof = request.extensions().get::<SignedIn>().cloned();
+        let call = call_id(&request).map_err(IntoResponse::into_response)?;
         let Json(command) = Json::<C>::from_request(request, state)
             .await
             .map_err(IntoResponse::into_response)?;
         let me = command.me().cloned();
         engine
             .authenticate(proof.as_ref(), command)
+            .map(|call_of| call_of.with_call(call))
             .inspect_err(|failed| failed.trace_denied(engine.limit(), C::PATH, me.as_ref()))
             .map_err(IntoResponse::into_response)
     }
 }
 
+/// The call ID of a request: its header `riff-call`
+/// (01M48VFX22S4811DYBBD7QDW24). An ID that is empty, longer than
+/// [`CALL_ID_MOST`] or not visible ASCII is refused with
+/// `bad_request`.
+fn call_id(request: &Request) -> Result<Option<String>, Failed> {
+    let Some(value) = request.headers().get(CALL_HEADER) else {
+        return Ok(None);
+    };
+    let id = value.to_str().unwrap_or_default();
+    let good =
+        !id.is_empty() && id.len() <= CALL_ID_MOST && id.bytes().all(|b| b.is_ascii_graphic());
+    if !good {
+        let reason =
+            format!("the header {CALL_HEADER} needs 1 to {CALL_ID_MOST} visible ASCII characters");
+        return Err(Refused::new(Code::BadRequest, reason).into());
+    }
+    Ok(Some(id.to_owned()))
+}
+
 // ANCHOR: handler
 /// The handler of each routed command. The router makes one route for
 /// each: `.route(C::PATH, post(command::<C>))`.
+///
+/// The reply to a repeated call has the header `riff-repeat: 1`
+/// (01M48VFX22S4811DYBBD7QDW24).
 pub async fn command<C: Routed>(
     AxumState(engine): AxumState<Engine>,
     call: Authenticated<C>,
-) -> Result<Json<<C as Call>::Reply>, Failed> {
-    engine.dispatch(call).await.map(Json)
+) -> Result<Response, Failed>
+where
+    <C as Call>::Reply: serde::Serialize,
+{
+    let Replied { reply, repeat } = engine.run(call).await?;
+    Ok(match repeat {
+        true => ([(REPEAT_HEADER, "1")], Json(reply)).into_response(),
+        false => Json(reply).into_response(),
+    })
 }
 // ANCHOR_END: handler
 
