@@ -11,5 +11,6 @@ publish = false
 
 [dependencies]
 assert_cmd.workspace = true
+nix = { workspace = true, features = ["resource"] }
 tempfile.workspace = true
 tokio.workspace = true

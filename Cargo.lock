@@ -1509,6 +1509,7 @@ name = "isolated"
 version = "1.2.0"
 dependencies = [
  "assert_cmd",
+ "nix",
  "tempfile",
  "tokio",
 ]
