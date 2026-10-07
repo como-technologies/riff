@@ -620,9 +620,9 @@ session, with its work that is not committed.
   `CARGO_TARGET_<TRIPLE>_RUNNER`. A build of a worker waits for a free
   job of the pool. A test takes the free jobs of the pool as its test
   threads. Do not change these variables. Do not set
-  `CARGO_BUILD_JOBS` or `RUST_TEST_THREADS`, and do not replace the
-  test runner, for example with `nice`: riff runs the worker with nice
-  already.
+  `CARGO_BUILD_JOBS` or `RUST_TEST_THREADS`. Also,
+  do not replace the test runner, for example with `nice`: riff runs
+  the worker with nice already.
 - With no pool, riff sets the fixed share in `CARGO_BUILD_JOBS` and
   `RUST_TEST_THREADS`. Do not change them.
 - To run a test many times, for example to find a test that fails only

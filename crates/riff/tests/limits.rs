@@ -895,7 +895,7 @@ fn the_book_has_a_how_to_for_each_limit() {
     for (heading, command) in [
         (
             "#### Choose the limit from the memory",
-            "riff workers limit 3",
+            "riff workers limit 4",
         ),
         ("#### See the pool of build jobs", "riff workers jobs"),
         ("#### Set the jobs of a worker", "riff workers jobs 4"),
