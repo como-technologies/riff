@@ -35,7 +35,8 @@
 //! (01M4BV70C3P5CZFBSFYFWEWRRA). It looks each [`LOOK_EVERY`], and at
 //! once when `riff mcp` asks after a claim or a release
 //! ([`Files::ask`]). It makes a new token when the role changes, or
-//! [`RENEW_BEFORE`] before the token ends ([`due`]).
+//! [`RENEW_BEFORE`] before the token ends ([`due`],
+//! 01M4BV70JZNMT3X99E77GC58K9).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -58,7 +59,7 @@
 //! | lead | metadata, actions, checks, statuses: read; contents, issues, pull requests: write |
 //! | worker | the same as the lead |
 //! | verifier | metadata, actions, checks, contents: read; issues, pull requests, statuses: write |
-//! | test run | no token |
+//! | test run | no token (01M4BV70N7HRW7KQ9ER9D9CDT9) |
 //!
 //! - No role gets `administration`, `deployments`, `environments` or
 //!   `workflows`. So no token approves a deploy, changes a ruleset or
@@ -67,6 +68,9 @@
 //!   worker write the code. So no token can both set `riff/verify` and
 //!   merge. The ruleset `releases` stops the push of a `v*` tag, and the
 //!   ruleset `main` stops each push to `main` (01M4BV70GQ42MY0YHMRS47EK1E).
+//! - GitHub keeps milestones and labels in `issues`, and a worker needs
+//!   `issues: write` for its comments. So the lead and the worker get
+//!   the same permissions. riff-server keeps the plan to the lead.
 //!
 //! ```
 //! use riff::forge::{Access, permissions};

@@ -22,6 +22,7 @@ mod conduct;
 mod dev;
 mod enable;
 mod end;
+mod forge;
 mod forge_text;
 mod fresh;
 mod github;

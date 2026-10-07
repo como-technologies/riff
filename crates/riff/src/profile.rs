@@ -34,7 +34,8 @@
 //! - [`Profile::of`] refuses a session whose paths give the home of the
 //!   person, a folder above it, or a place of a secret
 //!   ([`Session::secrets`]): the keyring, the D-Bus socket, the keys of
-//!   SSH and GnuPG, the sign-in of `gh`. So the home of a person that
+//!   SSH and GnuPG, the sign-in of `gh`, the key of the GitHub App of
+//!   riff ([`crate::forge`]). So the home of a person that
 //!   is a git repository can never be the clone.
 //! - [`Profile::of`] refuses a path that is not absolute or that has a
 //!   `..` component (01M4BR61PPQV7JJE5Y2G9Q90AF): it compares
@@ -324,6 +325,7 @@ impl Session {
     /// assert!(s.secrets().contains(&Path::new("/h/.local/share/keyrings").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/user/7/systemd").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/dbus").to_path_buf()));
+    /// assert!(s.secrets().contains(&Path::new("/h/.config/riff/forge").to_path_buf()));
     /// ```
     pub fn secrets(&self) -> Vec<PathBuf> {
         let home = |p: &str| self.home.join(p);
@@ -333,6 +335,7 @@ impl Session {
             home(".ssh"),
             home(".gnupg"),
             home(".config/gh"),
+            home(".config/riff/forge"),
             runtime("bus"),
             runtime("systemd"),
             runtime("keyring"),

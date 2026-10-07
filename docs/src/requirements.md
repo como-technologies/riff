@@ -4233,6 +4233,35 @@
   but the loopback. Outside a test run, it prints a skip line.
 - **01M4BTG7E55337GBS5WANAD6MG** The Gate installs bubblewrap and lets
   it make namespaces before it runs the checks.
+- **01M4BV7057YSHEMEHKXK20X0GJ** The person makes one GitHub App of
+  riff. `riff forge app` saves its ID in the settings and its private
+  key in a file that only the person reads. No profile reads that
+  file.
+- **01M4BV707FYHJDNC1499YAWR8D** The wrapper of a worker makes an
+  installation token of the App for the role of the session: for the
+  repository of the session only, with only the permissions of the
+  role. riff refuses a token with more or fewer permissions than the
+  role.
+- **01M4BV709WGHZ57AM3STC15B69** `gh` and git in a worker session use
+  the token of the session. No token of the person reaches the
+  session. When riff cannot make the token, the session has no token.
+- **01M4BV70C3P5CZFBSFYFWEWRRA** The role of the token of a worker
+  session follows its claims on riff-server: a `verify-` claim gives
+  the verifier token, each other case the worker token. A worker
+  session never gets the token of the lead.
+- **01M4BV70ED4R56M31119BYJ93S** No token gets the permissions
+  `administration`, `deployments`, `environments`, `secrets` or
+  `workflows`.
+- **01M4BV70GQ42MY0YHMRS47EK1E** Only the verifier token sets a commit
+  status, and it does not write the code. The lead and worker tokens
+  write the code and set no status. GitHub keeps milestones and labels
+  in the permission of the comments on issues, so the lead and worker
+  tokens have the same permissions. The ruleset `main` stops each push
+  to `main`, and the ruleset `releases` stops each `v*` tag of a token.
+- **01M4BV70JZNMT3X99E77GC58K9** The wrapper makes a new token 10
+  minutes before the old one ends, and when the role changes. It reads
+  the claims each minute, and at once after a claim or a release.
+- **01M4BV70N7HRW7KQ9ER9D9CDT9** The test run gets no forge token.
 
 ## Open
 
