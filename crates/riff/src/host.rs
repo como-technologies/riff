@@ -117,26 +117,30 @@
 //!
 //! # Calls to the server
 //!
-//! Each call of the host to the server has a time limit, [`CALL_WAIT`]
-//! (01M3WN72M02P3J24ACCHTMNSFY): the status, the read of the requests,
-//! the reply, the connect of the watch, the end of a session, and the
-//! calls for a worker that died. When
-//! no reply comes in time, the host says so on its output and goes on.
-//! It sets its status again at the next [`REFRESH`]. When the read of
-//! the requests failed, it reads them again at the next [`REFRESH`], so
-//! no request of the lead is lost.
+//! Each call of the host to the server has the budget of a short
+//! command, [`crate::link::SHORT_BUDGET`] (01M3WN72M02P3J24ACCHTMNSFY,
+//! 01M4A803Z4Q0KX6NT1KC6QR43H): the status, the read of the requests,
+//! the reply, the end of a session, and the calls for a worker that
+//! died. A try with no reply in [`crate::link::TRY_WAIT`] gets a new
+//! try, with the same call ID. When the budget ends with no reply, the
+//! host says so on its output and goes on. It sets its status again at
+//! the next [`REFRESH`]. When the read of the requests failed, it reads
+//! them again at the next [`REFRESH`], so no request of the lead is
+//! lost.
 //!
 //! ```mermaid
 //! flowchart TD
 //!     W[a wake, or the refresh] --> C[a call to the server]
-//!     C -- a reply in time --> G[the host goes on]
-//!     C -- no reply in CALL_WAIT --> S[the host says so on its output]
+//!     C -- a reply --> G[the host goes on]
+//!     C -- no reply in TRY_WAIT --> T[a new try, while the budget lasts]
+//!     T --> C
+//!     C -- no reply in SHORT_BUDGET --> S[the host says so on its output]
 //!     S --> G
 //!     G --> R[at the next refresh: the status again, and the requests that it did not read]
 //! ```
 //!
 //! The watch of the host has a connection of its own, so no call waits
-//! behind it (see "Streams" in [`crate::api`]).
+//! behind it (see [`crate::link`]).
 //!
 //! # A change of the settings
 //!
@@ -171,7 +175,6 @@
 //! that a new one replaced (01M3Q55KMQSSJVQEN86XFB8PSG).
 
 use std::fmt;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
@@ -186,6 +189,7 @@ use riff_core::wire::{Kind, SessionInfo, Status};
 use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
 use crate::disk::Disk;
+use crate::link::STREAM_RETRY;
 use crate::machine::Machine;
 use crate::monitor::Numbers;
 use crate::reap::{self, Reaper, Watched};
@@ -200,47 +204,9 @@ pub const MARK: &str = "workers host";
 /// that ended.
 pub const REFRESH: Duration = Duration::from_secs(30);
 
-/// The time between two tries to connect the watch of a host.
-const RETRY: Duration = Duration::from_secs(5);
-
 /// The longest time that a host waits for the end of its session after
 /// a signal.
 pub const END_WAIT: Duration = Duration::from_secs(1);
-
-/// The longest time that a host waits for the reply to one call to the
-/// server (01M3WN72M02P3J24ACCHTMNSFY).
-pub const CALL_WAIT: Duration = Duration::from_secs(20);
-
-/// Runs `call`, a call to the server at `base`. It fails when no reply
-/// comes in `wait`.
-///
-/// ```
-/// use std::time::Duration;
-///
-/// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() {
-/// let base = "http://127.0.0.1:7878";
-/// let wait = Duration::from_millis(10);
-/// let held = std::future::pending::<anyhow::Result<()>>();
-/// let error = riff::host::in_time(base, wait, held).await.unwrap_err();
-/// assert_eq!(error.to_string(), riff::text::no_reply(base, wait));
-/// assert_eq!(riff::host::in_time(base, wait, async { anyhow::Ok(7) }).await.unwrap(), 7);
-/// # }
-/// ```
-pub async fn in_time<T>(
-    base: &str,
-    wait: Duration,
-    call: impl Future<Output = Result<T>>,
-) -> Result<T> {
-    match tokio::time::timeout(wait, call).await {
-        Ok(result) => result,
-        Err(_) => Err(crate::api::NoReply {
-            base: base.to_owned(),
-            wait,
-        }
-        .into()),
-    }
-}
 
 /// What the status of a host tells: its limit, its floor of available
 /// memory (01M3WFZ01PTAYYKG3T5CFA2W4D), the numbers of its machine
@@ -711,8 +677,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
         server: server.to_owned(),
     };
     let _ = session.set((host.api.clone(), host.me.clone()));
-    let connect = || in_time(host.api.base(), CALL_WAIT, host.api.watch(&host.me));
-    let mut wakes = Box::pin(follow(connect, RETRY));
+    let mut wakes = Box::pin(follow(|| host.api.watch(&host.me), STREAM_RETRY));
     let mut refresh = tokio::time::interval(REFRESH);
     let mut link = Reconnect::default();
     let mut update = std::pin::pin!(binary.new_one());
@@ -851,19 +816,13 @@ impl Host {
         let status = Status {
             step: status.line(),
         };
-        self.call(self.api.status(&self.me, &status)).await
-    }
-
-    /// Runs `call`, a call to the server, with [`CALL_WAIT`] as its
-    /// time limit (01M3WN72M02P3J24ACCHTMNSFY).
-    async fn call<T>(&self, call: impl Future<Output = Result<T>>) -> Result<T> {
-        in_time(self.api.base(), CALL_WAIT, call).await
+        self.api.status(&self.me, &status).await
     }
 
     /// Reads the unread direct messages, and answers each request.
     /// Returns false when it did not read them.
     async fn answer(&self) -> bool {
-        let inbox = match self.call(self.api.inbox(&self.me, None, false)).await {
+        let inbox = match self.api.inbox(&self.me, None, false).await {
             Ok(inbox) => inbox,
             Err(e) => {
                 eprintln!("riff: cannot read the requests: {e:#}");
@@ -903,7 +862,7 @@ impl Host {
         let post = self
             .api
             .post(&self.me, thread.as_ref(), &to, reply, Kind::Note);
-        self.call(post).await?;
+        post.await?;
         Ok(())
     }
 
@@ -912,7 +871,7 @@ impl Host {
     /// (01M3WG2460P4GF7GEVBY92Q33W). The pane of the worker ended with
     /// no end call. A pane that the host stopped itself has its end.
     async fn reap(&self, lost: &[Watched]) {
-        let sessions = match self.call(self.api.who(&self.me, false)).await {
+        let sessions = match self.api.who(&self.me, false).await {
             Ok(sessions) => sessions,
             Err(e) => {
                 eprintln!("riff: cannot end the session of a lost worker: {e:#}");
@@ -1025,7 +984,7 @@ impl Host {
         };
         let to = [Selector::lead(self.me.who().user(), &thread.to_string())];
         let post = self.api.post(&self.me, Some(&thread), &to, body, kind);
-        self.call(post).await?;
+        post.await?;
         Ok(())
     }
 

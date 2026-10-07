@@ -570,7 +570,7 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
             let (facts, act) = state_facts(&pauses, me.default_thread().as_ref());
             rows.extend(facts);
             action = act;
-            rows.extend(build_facts(crate::api::server_build().as_ref()));
+            rows.extend(build_facts(crate::link::server_build().as_ref()));
         }
         Err(e) => rows.push(("riff", styled(ERROR, &format!("unknown: {}", safe(&e))))),
     }
@@ -700,7 +700,7 @@ pub fn who(
             rows.push(("owner", format!("{} ({})", safe(user), safe(email))));
         }
     }
-    rows.extend(build_facts(crate::api::server_build().as_ref()));
+    rows.extend(build_facts(crate::link::server_build().as_ref()));
     let mut out = facts(&rows);
     out.push('\n');
     if sessions.is_empty() {

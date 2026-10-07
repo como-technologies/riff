@@ -93,87 +93,16 @@
 //! trusts its network, and the reader counts each of its messages as
 //! verified (R212).
 //!
-//! # Tries
+//! # The link
 //!
-//! Cloud Run can stop a call or a stream at any time: at a deploy, and
-//! after 60 minutes for each stream. So:
-//!
-//! - While the server replies 503, the client sends the request again,
-//!   for up to [`BUSY_LIMIT`] (R132). See [`busy_waits`]. A start of
-//!   `riff-server` has a gap of about 15 seconds. When a request waits
-//!   for [`WAIT_LINE_AFTER`], the client shows the line [`WAITING`]
-//!   (01M3THEE5V3RFHF9QTA8MA8QDF): on stderr, or where
-//!   [`Api::waits_to`] says. It shows the line one time for each gap.
-//! - `riff-server` opens its port only after its load, so in the gap of
-//!   a start on one machine each connect is refused. When this process
-//!   got a reply from the server before, the client tries a refused
-//!   connect again in the same way (01M3TJWJ9914B7Z5EQJF310REK). So
-//!   `riff mcp`, `riff watch`, `riff chat` and `riff top` wait through a
-//!   restart. A process that got no reply yet fails at once: riff cannot
-//!   tell a server that starts from no server.
-//! - A 5xx or 429 reply with no build header comes from the front end, not
-//!   from `riff-server`. The client sends the request again in the same
-//!   way, and never reads it as another build
-//!   (01M3QCMJ9F1GRTRRSB4AW9TC3D). See [`outage`].
-//! - [`follow`] opens a stream again each time it ends (R131). `riff
-//!   watch` and `riff tail` use it.
-//!
-//! # Time limits
-//!
-//! A dead connection gives no sign: a sleep of the laptop, a new
-//! address. So each call and each stream has time limits
-//! (01M48RW9E8NS2FPHFHG2S10R7A, 01M48RW9HNKPNZ75H9R01BG6V5). [`Limits`]
-//! holds them. A test gives limits in milliseconds with
-//! [`Api::with_limits`].
-//!
-//! | Limit | Value | Of |
-//! |---|---|---|
-//! | [`CONNECT_WAIT`] | 5 s | each connect, of a call or a stream |
-//! | [`TRY_WAIT`] | 20 s | each try of a call, to the end of its reply |
-//! | [`STREAM_IDLE`] | 45 s | a stream with no byte: it ends, and [`follow`] connects again |
-//!
-//! The client of the calls also sends an HTTP/2 ping each
-//! [`PING_EVERY`], also with no open call, and drops a connection with no
-//! answer in [`PING_WAIT`]. On Linux, a TCP connection with data that
-//! gets no answer for [`TRY_WAIT`] closes. A stream has no total limit.
-//! The server sends a comment each 15 s, so a live stream never meets
-//! [`STREAM_IDLE`].
-//!
-//! ```mermaid
-//! flowchart LR
-//!     C[a call] -- "connect: CONNECT_WAIT" --> S[riff-server]
-//!     C -- "each try: TRY_WAIT" --> S
-//!     W[a stream] -- "connect: CONNECT_WAIT" --> S
-//!     S -- "a comment each 15 s" --> W
-//!     W -- "no byte for STREAM_IDLE" --> F[follow connects again]
-//! ```
-//!
-//! # Streams
-//!
-//! A call uses a connection from the pool of the client. A stream
-//! (`watch`, `tail`) never does: each stream opens a connection of its
-//! own, and that connection never goes to the pool
-//! (01M3WN72ECF0WKR4M7M6ZYAF9J). So no call can get the connection of an
-//! open stream.
-//!
-//! A process with a stream and calls on one pool can lose a call. The
-//! pool can give a stream a connection at the moment a call gives it
-//! back, and then take it back as idle while the stream is open. The
-//! next call goes on that connection, and waits for the end of the
-//! stream: it gets no reply.
-//!
-//! ```mermaid
-//! flowchart LR
-//!     C[a call] --> P[the pool: connections for calls]
-//!     P --> S[riff-server]
-//!     W[a stream: watch, tail] --> O[a connection of its own, never in the pool]
-//!     O --> S
-//! ```
+//! Each request goes through the link of its server ([`crate::link`]):
+//! one shared HTTP client, the budget of each call, the rule for a new
+//! try, and the call ID of each call. [`follow`] opens a stream again
+//! each time it ends (R131). `riff watch` and `riff tail` use it.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -183,20 +112,21 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Activity, AdminSet, Alive, AliveReply, BlockedLook, Call, Claim, ClaimReply, DenyOwner, End,
-    Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited, ItemFact, ItemFacts,
-    Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER,
-    Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked,
-    RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle,
-    SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner,
-    ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply,
-    WhoRequest,
+    Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
+    DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
+    ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
+    Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post,
+    Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed,
+    Resume, Revoke, Revoked, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin,
+    SetBlocked, SetIdle, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
+    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
+    WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
-use crate::{auto_update, device, local, login, secrets, text};
+use crate::link::{self, Budget, Limits, Link, Outcome, Reply, WaitLine};
+use crate::{device, local, login, secrets, text};
 
 /// A change of the members that `riff-server` made, and the posts of
 /// its note (01M3MN14ZCTRVD3T455P6TFK1B). The change stands also when
@@ -277,101 +207,6 @@ pub enum Told {
     Nobody,
     /// The session is the lead: its own person reads its terminal.
     You,
-}
-
-/// How long the client tries a request again while the server replies
-/// 503 (R132).
-pub const BUSY_LIMIT: Duration = Duration::from_secs(60);
-
-/// The waits between two tries of a request that got 503 (R132). The
-/// first wait is 250 ms. Each next wait is double, up to 5 seconds.
-/// Together they last [`BUSY_LIMIT`].
-///
-/// ```
-/// use std::time::Duration;
-/// use riff::api::{BUSY_LIMIT, busy_waits};
-///
-/// let waits: Vec<Duration> = busy_waits().collect();
-/// assert_eq!(waits[..3], [250, 500, 1000].map(Duration::from_millis));
-/// assert!(waits.iter().all(|w| *w <= Duration::from_secs(5)));
-/// assert_eq!(waits.iter().sum::<Duration>(), BUSY_LIMIT);
-/// ```
-pub fn busy_waits() -> impl Iterator<Item = Duration> {
-    let most = Duration::from_secs(5);
-    let mut left = BUSY_LIMIT;
-    let mut next = Duration::from_millis(250);
-    std::iter::from_fn(move || {
-        if left.is_zero() {
-            return None;
-        }
-        let wait = next.min(left);
-        left -= wait;
-        next = (next * 2).min(most);
-        Some(wait)
-    })
-}
-
-/// The line that the client shows while it waits for a server that
-/// replies 503 (01M3THEE5V3RFHF9QTA8MA8QDF).
-pub const WAITING: &str = "(waits for riff-server…)";
-
-/// A request shows [`WAITING`] when it waited this long.
-pub const WAIT_LINE_AFTER: Duration = Duration::from_secs(1);
-
-/// True once a request showed [`WAITING`], until a request gets its
-/// reply. So each gap shows one line, also with many requests.
-static WAIT_SHOWN: AtomicBool = AtomicBool::new(false);
-
-/// True when a request that waited `waited` before its next wait shows
-/// [`WAITING`]. A short 503 shows nothing.
-///
-/// ```
-/// use std::time::Duration;
-/// use riff::api::{busy_waits, shows_wait_line};
-///
-/// let mut waited = Duration::ZERO;
-/// let shown: Vec<bool> = busy_waits()
-///     .take(5)
-///     .map(|wait| {
-///         let shows = shows_wait_line(waited);
-///         waited += wait;
-///         shows
-///     })
-///     .collect();
-/// // After 250 ms, 500 ms and 1 s, the request waited 1.75 seconds.
-/// assert_eq!(shown, [false, false, false, true, true]);
-/// ```
-pub fn shows_wait_line(waited: Duration) -> bool {
-    waited >= WAIT_LINE_AFTER
-}
-
-/// Where an [`Api`] shows [`WAITING`].
-type WaitLine = Arc<dyn Fn(&str) + Send + Sync>;
-
-/// Each server that gave a reply to this process
-/// (01M3TJWJ9914B7Z5EQJF310REK).
-static REPLIED: std::sync::Mutex<std::collections::BTreeSet<String>> =
-    std::sync::Mutex::new(std::collections::BTreeSet::new());
-
-/// True when the server at `base` gave a reply to this process before.
-/// Then a refused connect is a restart, and the client tries again.
-///
-/// ```
-/// assert!(!riff::api::replied("http://127.0.0.1:9"));
-/// ```
-pub fn replied(base: &str) -> bool {
-    REPLIED
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .contains(base)
-}
-
-/// Records that the server at `base` gave a reply.
-fn note_reply(base: &str) {
-    let mut replied = REPLIED.lock().unwrap_or_else(|poison| poison.into_inner());
-    if !replied.contains(base) {
-        replied.insert(base.to_owned());
-    }
 }
 
 /// Follows a stream across connections (R131, R148). `connect` opens the
@@ -455,60 +290,6 @@ where
             }
         },
     )
-}
-
-/// The limit of each connect, of a call or a stream
-/// (01M48RW9E8NS2FPHFHG2S10R7A).
-pub const CONNECT_WAIT: Duration = Duration::from_secs(5);
-
-/// The limit of each try of a call, from the send to the end of the
-/// reply (01M48RW9E8NS2FPHFHG2S10R7A).
-pub const TRY_WAIT: Duration = Duration::from_secs(20);
-
-/// A stream that gives no byte for this time ends, and [`follow`]
-/// connects again (01M48RW9HNKPNZ75H9R01BG6V5). It is three keep-alive
-/// comments of the server.
-pub const STREAM_IDLE: Duration = Duration::from_secs(45);
-
-/// The client of the calls sends an HTTP/2 ping at this interval.
-pub const PING_EVERY: Duration = Duration::from_secs(10);
-
-/// The client of the calls drops a connection when a ping gets no
-/// answer in this time.
-pub const PING_WAIT: Duration = Duration::from_secs(5);
-
-/// The time limits of a client. See "Time limits" in the module doc.
-/// [`Limits::default`] has the constants. A test gives limits in
-/// milliseconds.
-///
-/// ```
-/// use std::time::Duration;
-/// use riff::api::{Limits, CONNECT_WAIT, STREAM_IDLE, TRY_WAIT};
-///
-/// let limits = Limits::default();
-/// assert_eq!(limits.connect, CONNECT_WAIT);
-/// assert_eq!(limits.try_wait, TRY_WAIT);
-/// assert_eq!(limits.stream_idle, STREAM_IDLE);
-/// assert_eq!(STREAM_IDLE, Duration::from_secs(45));
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Limits {
-    /// The limit of each connect.
-    pub connect: Duration,
-    /// The limit of each try of a call.
-    pub try_wait: Duration,
-    /// The longest time with no byte on a stream.
-    pub stream_idle: Duration,
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Limits {
-            connect: CONNECT_WAIT,
-            try_wait: TRY_WAIT,
-            stream_idle: STREAM_IDLE,
-        }
-    }
 }
 
 /// The line of [`Reconnect`] while a connect fails.
@@ -622,17 +403,14 @@ impl PauseScope {
 /// the `DPoP` scheme, and a new proof from the device key (R18).
 #[derive(Clone)]
 pub struct Api {
-    http: reqwest::Client,
-    /// The client of the streams. It has no pool: see "Streams" in the
-    /// module doc.
-    streams: reqwest::Client,
-    limits: Limits,
-    /// The limit of each try of a request: [`Limits::try_wait`] for a
-    /// call, `None` for a stream.
-    try_wait: Option<Duration>,
-    base: String,
+    /// The link of the server: its clients and what the process knows
+    /// of it ([`crate::link`]).
+    link: Arc<Link>,
+    /// The budget of each call of this client
+    /// (01M4A803Z4Q0KX6NT1KC6QR43H).
+    budget: Budget,
     auth: Option<Arc<Auth>>,
-    /// Where the client shows [`WAITING`]. `None` is stderr.
+    /// Where the client shows [`crate::link::WAITING`]. `None` is stderr.
     waits: Option<WaitLine>,
     /// The mark of the leave of the session of this client. `None` for
     /// a person, and for a client that no session uses.
@@ -665,70 +443,70 @@ struct Held {
     expires_at: u64,
 }
 
-/// The HTTP client of the calls (01M48RW9E8NS2FPHFHG2S10R7A).
-/// `Client::new` stops the process on the same error.
-fn call_client(limits: &Limits) -> reqwest::Client {
-    let builder = reqwest::Client::builder()
-        .connect_timeout(limits.connect)
-        .http2_keep_alive_interval(PING_EVERY)
-        .http2_keep_alive_timeout(PING_WAIT)
-        .http2_keep_alive_while_idle(true);
-    #[cfg(target_os = "linux")]
-    let builder = builder.tcp_user_timeout(limits.try_wait);
-    builder.build().expect("the HTTP client of the calls")
+/// Where a request goes: a call, which gets the whole reply in the
+/// limit of each try, or the open of a stream, which has no limit after
+/// its head.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Via {
+    Call,
+    Stream,
 }
 
-/// The HTTP client of the streams. `pool_max_idle_per_host(0)` keeps no
-/// idle connection, so the client has no pool, also for HTTP/2. The read
-/// limit resets at each read, so a stream has no total limit
-/// (01M48RW9HNKPNZ75H9R01BG6V5).
-fn stream_client(limits: &Limits) -> reqwest::Client {
-    reqwest::Client::builder()
-        .pool_max_idle_per_host(0)
-        .connect_timeout(limits.connect)
-        .read_timeout(limits.stream_idle)
-        .build()
-        .expect("the HTTP client of the streams")
+/// What a request got.
+enum Got {
+    /// The whole reply of a call.
+    Whole(Reply),
+    /// The head of a stream. Its body is the stream.
+    Open(reqwest::Response),
+}
+
+/// The end of one try (01M4A8041F8EK1VYDE4C9QG8N8).
+enum Step {
+    /// A reply or a refusal of `riff-server`.
+    Done(Got),
+    /// A new token: a new try at once.
+    Again,
+    /// A fault: a new try after a wait, while the budget lasts. It has
+    /// what the call gives when the budget ends.
+    Fault(Result<Got>),
+    /// An error that a new try cannot repair.
+    End(anyhow::Error),
 }
 
 impl Api {
+    /// A client of the server at `base`, on the one link of that server
+    /// in the process ([`crate::link::of`]).
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use riff::api::Api;
+    ///
+    /// let one = Api::new("http://127.0.0.1:7878");
+    /// let two = Api::new("http://127.0.0.1:7878");
+    /// assert!(Arc::ptr_eq(one.link(), two.link()));
+    /// ```
     pub fn new(base: &str) -> Self {
-        let limits = Limits::default();
         Self {
-            http: call_client(&limits),
-            streams: stream_client(&limits),
-            limits,
-            try_wait: Some(limits.try_wait),
-            base: base.trim_end_matches('/').to_owned(),
+            link: link::of(base),
+            budget: Budget::Short,
             auth: None,
             waits: None,
             mark: None,
         }
     }
 
-    /// The same caller with no open connection: each next request opens
-    /// a new connection (01M3Z8FXE2DY34ZP75WJE1S8HR). A connection can
-    /// die with no sign, for example when the address of the machine
-    /// changes. `riff top` calls it after a look that failed.
-    ///
-    /// ```
-    /// let api = riff::api::Api::new("http://127.0.0.1:7878");
-    /// assert_eq!(api.reconnected().base(), api.base());
-    /// ```
-    pub fn reconnected(&self) -> Api {
-        Api {
-            http: call_client(&self.limits),
-            streams: stream_client(&self.limits),
-            ..self.clone()
-        }
+    /// The link of the server of this client.
+    pub fn link(&self) -> &Arc<Link> {
+        &self.link
     }
 
-    /// The same caller with the time limits `limits`, on new
-    /// connections. See "Time limits" in the module doc.
+    /// The same caller with the time limits `limits`, on the link of
+    /// those limits. A test gives limits in milliseconds.
     ///
     /// ```
     /// use std::time::Duration;
-    /// use riff::api::{Api, Limits};
+    /// use riff::api::Api;
+    /// use riff::link::Limits;
     ///
     /// let fast = Limits { try_wait: Duration::from_millis(200), ..Limits::default() };
     /// let api = Api::new("http://127.0.0.1:7878").with_limits(fast);
@@ -736,16 +514,48 @@ impl Api {
     /// ```
     pub fn with_limits(&self, limits: Limits) -> Api {
         Api {
-            limits,
-            try_wait: Some(limits.try_wait),
+            link: link::with(self.base(), limits),
             ..self.clone()
         }
-        .reconnected()
     }
 
     /// The time limits of this client.
     pub fn limits(&self) -> Limits {
-        self.limits
+        self.link.limits()
+    }
+
+    /// The same caller, with the budget `time` for each call
+    /// (01M4A803Z4Q0KX6NT1KC6QR43H).
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use riff::{api::Api, link::Budget};
+    ///
+    /// let api = Api::new("http://127.0.0.1:7878");
+    /// assert_eq!(api.budget(), Budget::Short);
+    /// let three = Duration::from_secs(3);
+    /// assert_eq!(api.with_budget(three).budget(), Budget::Within(three));
+    /// assert_eq!(api.one_try(three).budget(), Budget::OneTry(three));
+    /// ```
+    pub fn with_budget(&self, time: Duration) -> Api {
+        Api {
+            budget: Budget::Within(time),
+            ..self.clone()
+        }
+    }
+
+    /// The same caller, with one try in `time` for each call: the status
+    /// line.
+    pub fn one_try(&self, time: Duration) -> Api {
+        Api {
+            budget: Budget::OneTry(time),
+            ..self.clone()
+        }
+    }
+
+    /// The budget of each call of this client.
+    pub fn budget(&self) -> Budget {
+        self.budget
     }
 
     /// The same client for the session `session`, with the mark of its
@@ -806,24 +616,9 @@ impl Api {
         self
     }
 
-    /// Waits `wait` before the next try of a request that waited
-    /// `waited` before. It shows [`WAITING`] when the request waited for
-    /// [`WAIT_LINE_AFTER`], one time for each gap.
-    async fn busy(&self, wait: Duration, waited: &mut Duration) {
-        if shows_wait_line(*waited) && !WAIT_SHOWN.swap(true, Ordering::SeqCst) {
-            let line = crate::style::styled(crate::style::DIM, WAITING);
-            match &self.waits {
-                Some(show) => show(&line),
-                None => anstream::eprintln!("{line}"),
-            }
-        }
-        *waited += wait;
-        tokio::time::sleep(wait).await;
-    }
-
     /// The URL of the server.
     pub fn base(&self) -> &str {
-        &self.base
+        self.link.base()
     }
 
     /// The sign-in provider of the server.
@@ -832,10 +627,10 @@ impl Api {
             .anonymous()
             .send_with(reqwest::Method::GET, "/v1/sign-in", |r| r, Check::None)
             .await?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            bail!("riff-server at {} has no sign-in provider", self.base);
+        if response.status == reqwest::StatusCode::NOT_FOUND {
+            bail!("riff-server at {} has no sign-in provider", self.base());
         }
-        Ok(response.error_for_status()?.json().await?)
+        response.error_for_status()?.json()
     }
 
     /// True when the server has a sign-in provider. A riff with no
@@ -845,7 +640,7 @@ impl Api {
             .anonymous()
             .send_with(reqwest::Method::GET, "/v1/sign-in", |r| r, Check::None)
             .await?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        if response.status == reqwest::StatusCode::NOT_FOUND {
             return Ok(false);
         }
         response.error_for_status()?;
@@ -856,14 +651,16 @@ impl Api {
     /// of its build, within `wait`: for `riff server` and `riff update`
     /// (01M3Q5VE74608N5H2M73RB6Y2Z). An error when it does not answer.
     pub async fn probe(&self, wait: Duration) -> Result<Probe> {
+        let base = self.base();
         let response = self
-            .http
-            .get(format!("{}/v1/sign-in", self.base))
+            .link
+            .client()
+            .get(format!("{base}/v1/sign-in"))
             .header(build::HEADER, build::VERSION)
             .timeout(wait)
             .send()
             .await
-            .with_context(|| format!("cannot reach riff-server at {}", self.base))?;
+            .with_context(|| format!("cannot reach riff-server at {base}"))?;
         let build = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
         let sign_in = match response.status() {
             reqwest::StatusCode::NOT_FOUND => Some(false),
@@ -880,15 +677,15 @@ impl Api {
         if !matches!(self.has_sign_in().await, Ok(false)) {
             return error;
         }
-        let kept = login::stored(&self.base).is_ok_and(|s| s.is_some());
-        anyhow::anyhow!(text::no_sign_in(&self.base, kept))
+        let kept = login::stored(self.base()).is_ok_and(|s| s.is_some());
+        anyhow::anyhow!(text::no_sign_in(self.base(), kept))
     }
 
     /// Calls the token endpoint with a proof from the device key `key`
     /// (R18). See [`TokenRequest`] for the grants. A refusal of the
     /// server is a [`TokenRefused`].
     pub async fn token(&self, request: &TokenRequest, key: &Key) -> Result<TokenReply> {
-        let url = format!("{}/v1/token", self.base);
+        let url = format!("{}/v1/token", self.base());
         let response = self
             .anonymous()
             .send_with(
@@ -901,10 +698,10 @@ impl Api {
                 Check::None,
             )
             .await?;
-        if response.status().is_success() {
-            return Ok(response.json().await?);
+        if response.status.is_success() {
+            return response.json();
         }
-        let refused = response.json::<TokenError>().await.map_or_else(
+        let refused = response.json::<TokenError>().map_or_else(
             |_| TokenRefused {
                 error: "no reason".into(),
                 description: None,
@@ -931,26 +728,16 @@ impl Api {
         if let (Some(dir), Some(session)) = (local::marks(), session) {
             self = self.for_session(&dir, session);
         }
-        if !secrets::has_keyring() || login::stored(&self.base)?.is_none() {
+        if !secrets::has_keyring() || login::stored(self.base())?.is_none() {
             return Ok(self);
         }
         self.auth = Some(Arc::new(Auth {
-            key: device::key(&self.base)?,
+            key: device::key(self.base())?,
             session: session.map(str::to_owned),
             held: Mutex::new(None),
             riff_checked: tokio::sync::OnceCell::new(),
         }));
         Ok(self)
-    }
-
-    /// The same caller for a stream: each request opens a connection of
-    /// its own (01M3WN72ECF0WKR4M7M6ZYAF9J).
-    fn for_stream(&self) -> Api {
-        Api {
-            http: self.streams.clone(),
-            try_wait: None,
-            ..self.clone()
-        }
     }
 
     /// The same server with no token.
@@ -969,11 +756,11 @@ impl Api {
         let Ok(config) = self.sign_in_config().await else {
             return Ok(());
         };
-        let old = login::stored(&self.base)?
+        let old = login::stored(self.base())?
             .is_some_and(|s| s.riff_id.as_deref() != Some(config.riff_id.as_str()));
         if old {
-            login::logout(&self.base)?;
-            bail!(text::new_riff(&self.base));
+            login::logout(self.base())?;
+            bail!(text::new_riff(self.base()));
         }
         Ok(())
     }
@@ -1027,7 +814,7 @@ impl Api {
     /// the next request gets a new one (01M3MX4VCEBTY0DN4JMF624WYE).
     async fn forget(&self, auth: &Auth, token: &str) -> Result<()> {
         if auth.session.is_none() {
-            return login::forget(&self.base, token).await;
+            return login::forget(self.base(), token).await;
         }
         if let Some(held) = auth.held.lock().await.as_mut()
             && held.access_token == token
@@ -1039,15 +826,20 @@ impl Api {
 
     /// A request to one path, with a token and a proof when the client
     /// is signed in, and the token. The proof names the URL without the
-    /// query.
+    /// query. A call goes on the shared client of the link, a stream on a
+    /// connection of its own (01M3WN72ECF0WKR4M7M6ZYAF9J).
     async fn request(
         &self,
         method: reqwest::Method,
         path: &str,
+        via: Via,
     ) -> Result<(reqwest::RequestBuilder, Option<String>)> {
-        let url = format!("{}{path}", self.base);
-        let request = self
-            .http
+        let url = format!("{}{path}", self.base());
+        let client = match via {
+            Via::Call => self.link.client(),
+            Via::Stream => self.link.streams(),
+        };
+        let request = client
             .request(method.clone(), &url)
             .header(build::HEADER, build::VERSION);
         let Some(auth) = &self.auth else {
@@ -1064,109 +856,205 @@ impl Api {
         Ok((request, Some(token)))
     }
 
-    /// Sends a request to one path, and checks the build of the reply.
-    /// See [`Api::send_with`].
+    /// Sends a call to one path, checks the build of the reply, and gives
+    /// the whole reply. See [`Api::send_with`].
     async fn send(
         &self,
         method: reqwest::Method,
         path: &str,
         body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
-    ) -> Result<reqwest::Response> {
+    ) -> Result<Reply> {
         self.send_with(method, path, body, Check::Build).await
     }
 
-    /// Sends a request to one path. `body` adds the rest to the request.
-    /// While the server replies 503, it waits and sends a new request,
-    /// with a new proof (R132). See [`busy_waits`]. It waits in the same
-    /// way while a server that replied before refuses the connect
-    /// (01M3TJWJ9914B7Z5EQJF310REK). An outage of the
-    /// front end ([`is_outage`]) waits the same way, before the check of
-    /// the build (01M3QCMJ9F1GRTRRSB4AW9TC3D). After a 401 to a
-    /// token, it sends the request once more with a new token
-    /// (01M3MX4VCEBTY0DN4JMF624WYE).
-    ///
-    /// Each request of the client goes through this function. So it
-    /// has the one check of the leave: before each request, also before
-    /// a new try, it fails with [`Left`] when the session of the client
-    /// left the riff (01M3XQVJXWBC3DKAVWBPXPSGZS).
+    /// Sends a call to one path, with the rule for a new try of the link
+    /// (01M4A8041F8EK1VYDE4C9QG8N8), and gives the whole reply, also a
+    /// refusal. `body` adds the rest to each try of the request.
     async fn send_with(
         &self,
         method: reqwest::Method,
         path: &str,
         body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
         check: Check,
+    ) -> Result<Reply> {
+        match self.tries(method, path, body, check, Via::Call).await? {
+            Got::Whole(reply) => Ok(reply),
+            Got::Open(_) => unreachable!("a call gets the whole reply"),
+        }
+    }
+
+    /// Opens a stream at one path, with the rule for a new try of the
+    /// link, and checks the build of its head.
+    async fn open(
+        &self,
+        path: &str,
+        body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
-        let mut waits = busy_waits();
+        let got = self.tries(reqwest::Method::GET, path, body, Check::Build, Via::Stream);
+        match got.await? {
+            Got::Open(response) => Ok(response),
+            Got::Whole(_) => unreachable!("a stream gets its head"),
+        }
+    }
+
+    /// Sends a request until it gets a reply or a refusal, or its budget
+    /// ends (01M4A803Z4Q0KX6NT1KC6QR43H, 01M4A8041F8EK1VYDE4C9QG8N8). Each
+    /// try has the limit `min(TRY_WAIT, the budget that is left)`. A
+    /// fault gets a new try after a wait of [`link::waits`]. After a 401
+    /// to a token, it sends the request once more with a new token
+    /// (01M3MX4VCEBTY0DN4JMF624WYE). The waits of a gap show
+    /// [`link::WAITING`] one time (01M3THEE5V3RFHF9QTA8MA8QDF).
+    ///
+    /// Each request of the client goes through this function. So it
+    /// has the one check of the leave: before each request, also before
+    /// a new try, it fails with [`Left`] when the session of the client
+    /// left the riff (01M3XQVJXWBC3DKAVWBPXPSGZS).
+    async fn tries(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+        check: Check,
+        via: Via,
+    ) -> Result<Got> {
+        let limits = self.link.limits();
+        let deadline = tokio::time::Instant::now() + self.budget.time(&limits);
+        let mut waits = link::waits(&limits);
         let mut waited = Duration::ZERO;
         let mut again = true;
         loop {
             if self.left() {
                 return Err(Left.into());
             }
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            // A token is a request too: it gets the budget that is left.
             // A box: a request may need a token, and a token is a request.
-            let (request, token) = Box::pin(self.request(method.clone(), path)).await?;
-            let request = match self.try_wait {
-                Some(limit) => request.timeout(limit),
-                None => request,
-            };
-            let response = match body(request).send().await {
-                Ok(response) => response,
-                // The server of this process starts again: its port is
-                // closed until its load is done (01M3TJWJ9914B7Z5EQJF310REK).
-                Err(error) if error.is_connect() && replied(&self.base) => {
-                    let Some(wait) = waits.next() else {
-                        return Err(error)
-                            .with_context(|| format!("cannot reach riff-server at {}", self.base));
-                    };
-                    self.busy(wait, &mut waited).await;
+            let within = self.with_budget(left);
+            let (request, token) = Box::pin(within.request(method.clone(), path, via)).await?;
+            let limit = limits.try_wait.min(left);
+            let renew = again && token.is_some();
+            let tried = self.try_once(body(request), limit, check, via, renew).await;
+            let last = match tried {
+                Step::Done(got) => {
+                    self.link.ended_wait();
+                    return Ok(got);
+                }
+                Step::End(error) => return Err(error),
+                Step::Again => {
+                    again = false;
+                    if let (Some(auth), Some(token)) = (&self.auth, &token) {
+                        self.forget(auth, token).await?;
+                    }
                     continue;
                 }
-                // No reply in the limit of the try (01M48RW9E8NS2FPHFHG2S10R7A).
-                Err(error) if error.is_timeout() && !error.is_connect() => {
-                    let wait = self.try_wait.unwrap_or_default();
-                    return Err(NoReply {
-                        base: self.base.clone(),
-                        wait,
-                    }
-                    .into());
-                }
-                Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("cannot reach riff-server at {}", self.base));
-                }
+                Step::Fault(last) => last,
             };
-            note_reply(&self.base);
-            if is_outage(&response) {
-                let Some(wait) = waits.next() else {
-                    return Err(Outage {
-                        base: self.base.clone(),
-                        status: response.status(),
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let wait = waits.next().unwrap_or(limits.most_wait);
+            if !self.budget.again() || wait >= left {
+                return last;
+            }
+            self.link.show_wait(waited, self.waits.as_ref());
+            waited += wait;
+            tokio::time::sleep(wait).await;
+        }
+    }
+
+    /// One try of a request in `limit` (01M4A8041F8EK1VYDE4C9QG8N8).
+    /// With `renew`, a 401 asks for a new token.
+    async fn try_once(
+        &self,
+        request: reqwest::RequestBuilder,
+        limit: Duration,
+        check: Check,
+        via: Via,
+        renew: bool,
+    ) -> Step {
+        let link = &self.link;
+        let no_reply = || -> anyhow::Error {
+            NoReply {
+                base: self.base().to_owned(),
+                wait: limit,
+            }
+            .into()
+        };
+        // A call has the limit to the end of its reply. A stream has it
+        // to the end of its head: its body has no limit.
+        let sent = match via {
+            Via::Call => request.timeout(limit).send().await,
+            Via::Stream => match tokio::time::timeout(limit, request.send()).await {
+                Ok(sent) => sent,
+                Err(_) => return Step::Fault(Err(no_reply())),
+            },
+        };
+        let response = match sent {
+            Ok(response) => response,
+            Err(error) => {
+                let away = format!("cannot reach riff-server at {}", self.base());
+                // No server on this machine (01M4A804683G1EXM53893VHW7S).
+                if link::refused(&error) && link::loopback(self.base()) && !link.replied() {
+                    return Step::End(anyhow::Error::new(error).context(away));
+                }
+                if error.is_builder() {
+                    return Step::End(error.into());
+                }
+                // A fault with no HTTP reply: a dead connection can stay
+                // in the pool (01M4A8043S2ZCKRH19Z3Q8AJ1F).
+                if via == Via::Call {
+                    link.swap();
+                }
+                if error.is_timeout() && !error.is_connect() {
+                    return Step::Fault(Err(no_reply()));
+                }
+                return Step::Fault(Err(anyhow::Error::new(error).context(away)));
+            }
+        };
+        link.note_reply();
+        let status = response.status();
+        let has_build = response.headers().contains_key(build::HEADER);
+        let outcome = link::outcome(status, has_build);
+        // A reply of the front end, before the check of the build
+        // (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+        if outcome == Outcome::Fault && !has_build {
+            let base = self.base().to_owned();
+            return Step::Fault(Err(Outage { base, status }.into()));
+        }
+        if check == Check::Build
+            && let Err(error) = link.check_build(status, response.headers(), response.url())
+        {
+            return Step::End(error);
+        }
+        if status == reqwest::StatusCode::UNAUTHORIZED && renew {
+            return Step::Again;
+        }
+        let got = match via {
+            Via::Stream => Got::Open(response),
+            Via::Call => {
+                let headers = response.headers().clone();
+                match response.bytes().await {
+                    Ok(body) => Got::Whole(Reply {
+                        status,
+                        headers,
+                        body: body.to_vec(),
+                    }),
+                    // A cut in the body.
+                    Err(error) => {
+                        link.swap();
+                        if error.is_timeout() {
+                            return Step::Fault(Err(no_reply()));
+                        }
+                        let base = self.base().to_owned();
+                        let cut = anyhow::Error::new(error)
+                            .context(format!("cannot reach riff-server at {base}"));
+                        return Step::Fault(Err(cut));
                     }
-                    .into());
-                };
-                self.busy(wait, &mut waited).await;
-                continue;
-            }
-            if check == Check::Build {
-                check_build(&self.base, &response)?;
-            }
-            if response.status() == reqwest::StatusCode::UNAUTHORIZED
-                && again
-                && let (Some(auth), Some(token)) = (&self.auth, token)
-            {
-                again = false;
-                self.forget(auth, &token).await?;
-                continue;
-            }
-            match waits.next() {
-                Some(wait) if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
-                    self.busy(wait, &mut waited).await;
-                }
-                _ => {
-                    WAIT_SHOWN.store(false, Ordering::SeqCst);
-                    return Ok(response);
                 }
             }
+        };
+        match outcome {
+            // A 503 of riff-server: when the budget ends, the call gives it.
+            Outcome::Fault => Step::Fault(Ok(got)),
+            Outcome::Reply | Outcome::Refusal => Step::Done(got),
         }
     }
 
@@ -1399,7 +1287,7 @@ impl Api {
         let response = self
             .send_with(reqwest::Method::GET, "/v1/server", |r| r, Check::None)
             .await?;
-        Ok(response.error_for_status()?.json().await?)
+        response.error_for_status()?.json()
     }
 
     pub async fn threads(&self, me: &SessionUri) -> Result<Vec<ThreadInfo>> {
@@ -2007,27 +1895,28 @@ impl Api {
             return Ok(());
         }
         if matches!(self.has_sign_in().await, Ok(false)) {
-            bail!(text::nobody_signs_in(&self.base));
+            bail!(text::nobody_signs_in(self.base()));
         }
-        bail!("no sign-in for {}: run riff login", self.base);
+        bail!("no sign-in for {}: run riff login", self.base());
     }
 
     /// Sends one call, and gives its reply: the one function for each
     /// call (01M3WRD8TBDPA4JNEZY6J4N2EX). The type of the call gives the
     /// path and the type of the reply ([`Call`]). A call that the server
-    /// refuses gives a [`Refusal`].
+    /// refuses gives a [`Refusal`]. Each try of the call sends one call
+    /// ID ([`link::call_id`], 01M4A8048J60YSVNVYF2432KE8), so the server
+    /// runs a command one time only.
     async fn call<C: Call>(&self, call: &C) -> Result<C::Reply> {
+        let id = link::call_id();
         let response = self
-            .send(reqwest::Method::POST, C::PATH, |r| r.json(call))
+            .send(reqwest::Method::POST, C::PATH, |r| {
+                r.json(call).header(CALL_HEADER, &id)
+            })
             .await?;
-        let status = response.status();
+        let status = response.status;
         if !status.is_success() {
-            let code = response
-                .headers()
-                .get(REFUSED_HEADER)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_owned);
-            let text = response.text().await.unwrap_or_default();
+            let code = response.header(REFUSED_HEADER).map(str::to_owned);
+            let text = response.text();
             let op = C::PATH.trim_start_matches("/v1/").to_owned();
             return Err(Refusal {
                 op,
@@ -2037,7 +1926,7 @@ impl Api {
             }
             .into());
         }
-        Ok(response.json().await?)
+        response.json()
     }
 
     /// `GET /v1/{op}` with `query`.
@@ -2051,12 +1940,12 @@ impl Api {
                 r.query(query)
             })
             .await?;
-        let status = response.status();
+        let status = response.status;
         if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
+            let text = response.text();
             bail!("{op} failed ({status}): {text}");
         }
-        Ok(response.json().await?)
+        response.json()
     }
 
     /// Reads a server-sent event stream and parses each `data:` line.
@@ -2067,12 +1956,7 @@ impl Api {
         op: &str,
         query: &[(&str, String)],
     ) -> Result<impl Stream<Item = Result<T>> + use<T>> {
-        let response = self
-            .for_stream()
-            .send(reqwest::Method::GET, &format!("/v1/{op}"), |r| {
-                r.query(query)
-            })
-            .await?;
+        let response = self.open(&format!("/v1/{op}"), |r| r.query(query)).await?;
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
@@ -2108,7 +1992,7 @@ impl Api {
 /// Whether [`Api::send_with`] checks the build of the reply.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Check {
-    /// [`check_build`].
+    /// [`Link::check_build`].
     Build,
     /// No check: a call that each version takes
     /// (01M3MX4V43SF2XFCZWANHD19WV).
@@ -2167,7 +2051,7 @@ impl std::fmt::Display for TokenRefused {
 impl std::error::Error for TokenRefused {}
 
 /// The front end of `riff-server` replied by itself for
-/// [`BUSY_LIMIT`]: see [`outage`].
+/// the budget of a call: see [`link::outcome`].
 ///
 /// ```
 /// let outage = riff::api::Outage {
@@ -2266,87 +2150,6 @@ pub fn passes(error: &anyhow::Error) -> bool {
                 .downcast_ref::<reqwest::Error>()
                 .is_some_and(|e| !e.is_status() && !e.is_builder())
     })
-}
-
-/// The build of the last `riff-server` that this process talked to.
-static SERVER_BUILD: std::sync::Mutex<Option<Build>> = std::sync::Mutex::new(None);
-
-/// True once this process printed the note of another build.
-static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// The build of the last `riff-server` that answered this process with
-/// a version that it can talk to. `None` before the first answer.
-pub fn server_build() -> Option<Build> {
-    SERVER_BUILD.lock().ok()?.clone()
-}
-
-/// True when a reply comes from the front end, not from `riff-server`:
-/// its status is 5xx or 429 and it names no build, for example a 502 of
-/// Cloud Run while it moves an instance. It is a short outage, not another
-/// build (01M3QCMJ9F1GRTRRSB4AW9TC3D).
-///
-/// ```
-/// use riff::api::outage;
-/// use reqwest::StatusCode;
-///
-/// assert!(outage(StatusCode::BAD_GATEWAY, false));
-/// assert!(outage(StatusCode::SERVICE_UNAVAILABLE, false));
-/// assert!(outage(StatusCode::GATEWAY_TIMEOUT, false));
-/// assert!(outage(StatusCode::TOO_MANY_REQUESTS, false));
-/// // A reply of riff-server names its build.
-/// assert!(!outage(StatusCode::BAD_GATEWAY, true));
-/// // Another 2xx or 4xx with no build is an old server.
-/// assert!(!outage(StatusCode::OK, false));
-/// assert!(!outage(StatusCode::NOT_FOUND, false));
-/// ```
-pub fn outage(status: reqwest::StatusCode, has_build: bool) -> bool {
-    (status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS) && !has_build
-}
-
-/// [`outage`] for a reply.
-fn is_outage(response: &reqwest::Response) -> bool {
-    outage(
-        response.status(),
-        response.headers().contains_key(build::HEADER),
-    )
-}
-
-/// Refuses a reply of a `riff-server` of a version that this `riff`
-/// cannot talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T).
-/// For a reply with no build, the error names its status and URL
-/// (01M3QCMJ9F1GRTRRSB4AW9TC3D).
-/// The error is a [`Mismatch`]. Another build that it can talk to goes
-/// on, with one note on stderr for each process
-/// (01M3MX1E8M9TKBN90P4DYKH3H8). A newer release at `base` can start
-/// the update of riff by itself ([`auto_update::begin`]).
-fn check_build(base: &str, response: &reqwest::Response) -> Result<()> {
-    let this = Build::this();
-    let server = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
-    if let Some(server) = &server {
-        auto_update::begin(base, server);
-    }
-    match server {
-        Some(server) if build::compatible(&this, &server) => {
-            if !server.matches(&this) && !NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                eprintln!("riff: {}", build::other_build(&this, &server));
-            }
-            if let Ok(mut seen) = SERVER_BUILD.lock() {
-                *seen = Some(server);
-            }
-            Ok(())
-        }
-        server => {
-            let seen = server
-                .is_none()
-                .then(|| format!("status {} from {}", response.status(), response.url()));
-            Err(Mismatch {
-                riff: Some(this),
-                server,
-                seen,
-            }
-            .into())
-        }
-    }
 }
 
 /// Seconds since the Unix epoch, for proofs.
@@ -2617,14 +2420,5 @@ mod tests {
             .collect()
             .await;
         assert_eq!(items, [1, 2]);
-    }
-
-    #[test]
-    fn busy_waits_grow_and_stop_at_the_limit() {
-        let waits: Vec<Duration> = busy_waits().collect();
-        let (last, rest) = waits.split_last().unwrap();
-        assert!(rest.windows(2).all(|w| w[0] <= w[1]));
-        assert!(*last <= Duration::from_secs(5));
-        assert_eq!(waits.iter().sum::<Duration>(), BUSY_LIMIT);
     }
 }

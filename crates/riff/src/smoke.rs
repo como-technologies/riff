@@ -31,7 +31,7 @@ use riff_core::build::Build;
 use riff_core::name::{Place, Repo, SessionUri, ThreadName, Who};
 use riff_core::wire::Kind;
 
-use crate::api::{self, Api};
+use crate::api::Api;
 use crate::login;
 
 /// The variable that holds the refresh token of the test account.
@@ -110,7 +110,7 @@ pub async fn run(api: &Api, token: &str, mut step: impl FnMut(&str)) -> Result<(
     step(&format!("read: {text}"));
 
     let this = Build::this();
-    match api::server_build() {
+    match crate::link::server_build() {
         Some(server) if server.matches(&this) => step(&format!("build: {server}")),
         Some(server) => bail!("smoke test: build: the server runs {server}, not {this}"),
         None => bail!("smoke test: build: the server names no build"),

@@ -344,7 +344,7 @@ your repository) and who set it."
             Ok(pauses) => format!(
                 "{}\n{}",
                 text::riff_state(&pauses, now.default_thread().as_ref()),
-                text::build_line(crate::api::server_build().as_ref())
+                text::build_line(crate::link::server_build().as_ref())
             ),
             Err(e) => format!("riff cannot read the state of the riff: {e:#}"),
         };
@@ -366,7 +366,7 @@ your repository) and who set it."
         Ok(format!(
             "{}\n{owner}{}\n{}",
             text::riff_state(&pauses, me.default_thread().as_ref()),
-            text::build_line(crate::api::server_build().as_ref()),
+            text::build_line(crate::link::server_build().as_ref()),
             text::who(&who.sessions, &who.owner, &me)
         ))
     }
