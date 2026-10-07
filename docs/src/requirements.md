@@ -4162,6 +4162,23 @@
   worktrees of the clone.
 - **01M4BT3JQCY5G7YZ373MV5C5JM** `riff workers rules` prints the
   permission rules that a worker in this clone gets, as JSON.
+- **01M4BSSWWEBVHZGXCVYMJ7D7PQ** `riff` with no command starts the
+  riff. It is the one action of a person to start the lead of a
+  repository.
+- **01M4BSSWYVJ1RTEM1PTH94S5DH** riff runs its own tmux server, with
+  the socket `riff` and a config of its own. No tmux config of the
+  person changes a riff pane. Each repository has one tmux session
+  there, and its first window holds the lead.
+- **01M4BSSX1BN322T63HTW0KVSA5** `riff` shows a picker: the clones that
+  riff knows on this host and the clone of the current directory, each
+  with the state of its repository (running or paused) and its live
+  sessions. The person picks one, or names the path of a new clone.
+  riff keeps each picked clone.
+- **01M4BSSX3RSK79ZSJZZB1S0NYF** When the tmux session of the picked
+  repository runs, `riff` attaches to it and starts no second lead.
+- **01M4BSSX66A2NNVQK48KQH8BEZ** Outside tmux, a riff command that
+  lists, stops or types into the panes of the workers uses the tmux
+  server of riff.
 
 ## Open
 
