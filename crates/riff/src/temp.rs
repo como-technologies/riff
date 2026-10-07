@@ -153,9 +153,8 @@ pub fn here(session: &str) -> Option<PathBuf> {
 }
 
 /// `args` of `claude` with the variables of `dir` in the `env` of its
-/// flag settings (01M41VAGJC69S9R2TD1B1EQ4W4). It changes the first
-/// `--settings` that holds a JSON object, and else adds a new
-/// `--settings` at the end.
+/// flag settings (01M41VAGJC69S9R2TD1B1EQ4W4), by
+/// [`crate::terminal::with_settings`].
 ///
 /// ```
 /// use riff::temp::with_env;
@@ -172,7 +171,7 @@ pub fn here(session: &str) -> Option<PathBuf> {
 /// ```
 pub fn with_env(args: &[String], dir: &Path) -> Vec<String> {
     let dir = dir.to_string_lossy();
-    let add = |settings: &mut serde_json::Map<String, serde_json::Value>| {
+    crate::terminal::with_settings(args, |settings| {
         let env = settings
             .entry("env")
             .or_insert_with(|| serde_json::json!({}));
@@ -181,26 +180,7 @@ pub fn with_env(args: &[String], dir: &Path) -> Vec<String> {
                 env.insert(var.into(), dir.as_ref().into());
             }
         }
-    };
-    let mut out = args.to_vec();
-    let at = out.windows(2).position(|pair| {
-        pair[0] == "--settings"
-            && serde_json::from_str::<serde_json::Value>(&pair[1]).is_ok_and(|v| v.is_object())
-    });
-    if let Some(at) = at {
-        let mut value: serde_json::Value =
-            serde_json::from_str(&out[at + 1]).unwrap_or_else(|_| serde_json::json!({}));
-        if let Some(settings) = value.as_object_mut() {
-            add(settings);
-        }
-        out[at + 1] = value.to_string();
-        return out;
-    }
-    let mut settings = serde_json::Map::new();
-    add(&mut settings);
-    out.push("--settings".to_owned());
-    out.push(serde_json::Value::Object(settings).to_string());
-    out
+    })
 }
 
 /// What a process of this user holds in the file system.

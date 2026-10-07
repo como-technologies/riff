@@ -4143,6 +4143,25 @@
   with a path that is not absolute or that has a `..` component. The
   step that applies a profile resolves each symlink before it grants a
   path.
+- **01M4BT33R71HXAVQGHFD4ZFGR5** The Claude Code permission rules of a
+  role come from its profile. riff passes them in the flag settings of
+  `claude` at each start of the role. A rule allows the read of each
+  path that the role reads, and the read and the edit of each path
+  that it writes.
+- **01M4BT33TPSXJVB6JZDZ3F1GGX** The rules of a role deny the read and
+  the edit of each file and folder of the home of the person that
+  holds no path of the profile. riff finds them on the disk at the
+  start. They also deny each place of a secret of the person.
+- **01M4BT33X0WVVJH7Y6AXSWZEYC** The rules of each role deny the edit
+  of each `settings.json` and `settings.local.json` of Claude Code.
+- **01M4BT33Z914GBHCGCAXFVQ2X7** When riff cannot make the profile of
+  a role, the role starts with no rules of a profile, and says why in
+  one line.
+- **01M4BT341H1M1N1MT947HXNXDR** A worker starts with no item. So the
+  worktree and the target folder of its profile are the folder of the
+  worktrees of the clone.
+- **01M4BT3JQCY5G7YZ373MV5C5JM** `riff workers rules` prints the
+  permission rules that a worker in this clone gets, as JSON.
 
 ## Open
 

@@ -943,6 +943,18 @@ enum Workers {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
         after: Option<u64>,
     },
+    /// Show the permission rules of a worker in this clone
+    ///
+    /// riff makes them from the profile of the worker: it allows the
+    /// paths that the worker reads and writes, and denies each other
+    /// path of your home, the secrets, and the edit of each settings file
+    /// of Claude Code. Each worker gets them in its --settings. It prints
+    /// them as JSON.
+    Rules {
+        /// The claude command.
+        #[arg(long, default_value = "claude")]
+        claude: std::path::PathBuf,
+    },
     /// Run CLAUDE as a worker, and wait
     ///
     /// When CLAUDE exits on its own, it posts a note to the lead with the
@@ -2128,6 +2140,15 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             Ok(())
         }
         Some(Workers::Stop { pane, .. }) => stop_workers(pane.as_deref(), server).await,
+        // 01M4BT3JQCY5G7YZ373MV5C5JM
+        Some(Workers::Rules { claude }) => {
+            let rules = worker::profile_rules(claude, None, server).map_err(anyhow::Error::msg)?;
+            let value = serde_json::json!({
+                "permissions": {"allow": rules.allow, "deny": rules.deny}
+            });
+            anstream::println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(())
+        }
         Some(Workers::Run { claude, args }) => {
             std::process::exit(worker::run(claude, args, server).await?)
         }

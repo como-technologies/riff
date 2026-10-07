@@ -1861,6 +1861,20 @@ pub fn nice_above(here: u8, nice: u8) -> String {
     )
 }
 
+/// The line of a role that starts with no rules of its profile
+/// (01M4BT33Z914GBHCGCAXFVQ2X7).
+///
+/// ```
+/// use riff::profile::Role;
+/// assert_eq!(
+///     riff::text::no_role_rules(Role::Worker, "the path / gives the home"),
+///     "riff: the worker starts with no permission rules of its profile: the path / gives the home."
+/// );
+/// ```
+pub fn no_role_rules(role: crate::profile::Role, why: &str) -> String {
+    format!("riff: the {role} starts with no permission rules of its profile: {why}.")
+}
+
 /// What `riff workers start` says one time when riff cannot make the
 /// pool of build jobs (01M3ZGZMRHXRBP762QPVCV0YX8).
 ///

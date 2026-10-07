@@ -68,6 +68,12 @@
 //! The wrapper gives `claude` a temp folder of its own on disk, and
 //! deletes it when `claude` ended ([`crate::temp`]).
 //!
+//! # Permission rules
+//!
+//! The wrapper adds the permission rules of the profile of a worker to
+//! the flag settings of `claude` ([`crate::role_rules`],
+//! 01M4BT33R71HXAVQGHFD4ZFGR5). `riff workers rules` prints them.
+//!
 //! # Limits
 //!
 //! The wrapper gives `claude` the limits of a worker
@@ -257,6 +263,15 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         Some(folder) => temp::with_env(args, folder.path()),
         None => args.to_vec(),
     };
+    // The permission rules of the profile of a worker
+    // (01M4BT33R71HXAVQGHFD4ZFGR5).
+    let args = match profile_rules(claude, folder.as_ref().map(temp::Folder::path), server) {
+        Ok(rules) => crate::role_rules::flag(&args, &rules),
+        Err(why) => {
+            eprintln!("{why}");
+            args
+        }
+    };
     // The scope has the name of the worker, so the clear, the reap and
     // the stop find each of its processes (01M49SV9W4S1HJ4BYANA388VD2).
     let session = std::env::var(identity::SESSION_VARS[0]).ok();
@@ -332,6 +347,22 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         }
     }
     Ok(status.code().unwrap_or(1))
+}
+
+/// The permission rules of a worker in this main clone, or the line
+/// that says why it has none (01M4BT33Z914GBHCGCAXFVQ2X7).
+pub fn profile_rules(
+    claude: &Path,
+    temp: Option<&Path>,
+    server: &str,
+) -> std::result::Result<crate::permissions::Rules, String> {
+    let no = |why: &str| crate::text::no_role_rules(crate::profile::Role::Worker, why);
+    let here = std::env::current_dir().map_err(|e| no(&e.to_string()))?;
+    let clone = identity::main_worktree(&here).ok_or_else(|| no("it runs in no git repository"))?;
+    let temp = temp.map_or_else(std::env::temp_dir, Path::to_path_buf);
+    let session = crate::role_rules::worker_session(&clone, &temp, claude, server)
+        .ok_or_else(|| no("it has no HOME, or the server URL has no host"))?;
+    crate::role_rules::here(crate::profile::Role::Worker, &session)
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].
