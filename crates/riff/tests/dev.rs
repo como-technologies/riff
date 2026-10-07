@@ -173,7 +173,9 @@ fn dev_runs_claude_with_the_tree_build_against_its_own_server() {
         format!(
             "cargo build --workspace\n\
              riff-server \n\
-             claude --plugin-dir {} --settings {{\"enabledPlugins\":{{\"riff@riff\":false}}}}\n\
+             claude --plugin-dir {} --strict-mcp-config --mcp-config \
+             {{\"mcpServers\":{{\"riff\":{{\"command\":\"riff\",\"args\":[\"mcp\"]}}}}}} \
+             --settings {{\"statusLine\":{{\"type\":\"command\",\"command\":\"riff statusline\"}}}}\n\
              claude uses {}\n\
              riff server\n\
              riff at http://{listen}\n",

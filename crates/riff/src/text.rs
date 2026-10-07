@@ -919,7 +919,7 @@ pub fn new_riff(server: &str) -> String {
 ///      \n\
 ///      cargo install --locked --git https://github.com/como-technologies/riff riff\n\
 ///      echo 'export RIFF_SERVER=https://riff.example.com' >> ~/.bashrc\n\
-///      riff connect claude"
+///      riff login"
 /// );
 /// ```
 pub fn invited(done: &Invited) -> String {
@@ -930,7 +930,7 @@ pub fn invited(done: &Invited) -> String {
          \n\
          cargo install --locked --git {} riff\n\
          echo 'export RIFF_SERVER={address}' >> ~/.bashrc\n\
-         riff connect claude",
+         riff login",
         env!("CARGO_PKG_REPOSITORY")
     )
 }
@@ -1989,6 +1989,10 @@ pub fn yes(answer: &str) -> bool {
 /// The answer of `riff` when the person keeps the old entries.
 pub const OLD_CONFIG_KEPT: &str =
     "riff kept the entries. A plain claude can still load the old riff plugin.";
+
+/// The answer of the hidden `riff connect` (01M4BYH84X7B2D9EFYGP11GP8Y).
+pub const CONNECT_GONE: &str = "riff connect is gone: riff gives Claude its plugin at each \
+start. Start the riff with riff.";
 
 /// The answer of `riff` after it removed the old entries.
 pub const OLD_CONFIG_REMOVED: &str = "riff removed the entries.";

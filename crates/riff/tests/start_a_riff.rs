@@ -10,7 +10,6 @@ use crate::book;
 
 use isolated::Isolated;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
 
@@ -66,11 +65,13 @@ fn the_page_names_no_insecure_no_systemd_and_no_install_subcommand() {
     }
 }
 
+/// The install, the server and `riff`: three commands (R4).
 #[test]
 fn a_person_starts_a_riff_with_at_most_three_commands() {
-    let commands = commands();
-    assert!(!commands.is_empty());
-    assert!(commands.len() <= 3, "{commands:?}");
+    let mut commands = commands();
+    commands.extend(commands_of_part(PAGE, "Start the riff"));
+    assert_eq!(commands.len(), 3, "{commands:?}");
+    assert_eq!(commands[1..], ["riff-server", "riff"]);
 }
 
 #[test]
@@ -85,21 +86,11 @@ fn the_install_command_installs_riff_and_its_server_from_the_repository() {
 
 #[test]
 fn each_riff_command_of_the_page_is_real_and_none_signs_in() {
-    let riff: Vec<String> = commands()
-        .into_iter()
-        .filter(|c| c.starts_with("riff "))
-        .collect();
-    assert_eq!(riff, ["riff connect claude"]);
+    let riff = commands_of_part(PAGE, "Start the riff");
+    assert_eq!(riff, ["riff"]);
     each_is_real(&riff);
-}
-
-/// A fake `claude` command in `dir`. It fails `mcp remove`, as `claude`
-/// does when there is no old entry.
-fn fake_claude(dir: &Path) -> std::path::PathBuf {
-    let path = dir.join("claude");
-    fs::write(&path, "#!/bin/sh\n[ \"$1\" = mcp ] && exit 1\nexit 0\n").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path
+    let text = part(PAGE, "Start the riff");
+    assert!(!text.contains("riff login"), "{text}");
 }
 
 /// Runs `riff ARGS` for the riff at `server`, away from the runtime of
@@ -122,34 +113,18 @@ async fn riff(server: &str, dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-/// Step 3 of "Just this machine": at the riff of this machine, with no
-/// sign-in, `riff connect claude` installs the plugin and signs in to
-/// nothing. Then `riff who` works with no sign-in. The installed
-/// `riff` of the home stays the same (01M3MRDEVR5VPPV6B1BDDVYSBG).
+/// The riff of this machine needs no sign-in: `riff who` works with
+/// no `riff login`. The installed `riff` of the home stays the same
+/// (01M3MRDEVR5VPPV6B1BDDVYSBG).
 #[tokio::test]
-async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
-    assert_eq!(commands()[2], "riff connect claude");
+async fn the_riff_of_this_machine_needs_no_sign_in() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let server = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
     let dir = tempfile::tempdir().unwrap();
-    let claude = fake_claude(dir.path());
     let installed = dir.path().join("home/.cargo/bin/riff");
     fs::create_dir_all(installed.parent().unwrap()).unwrap();
     fs::write(&installed, "#!/bin/sh\necho riff 0.1.0 release\n").unwrap();
-
-    let connect = riff(
-        &server,
-        dir.path(),
-        &["connect", "claude", "--claude", claude.to_str().unwrap()],
-    )
-    .await;
-    let stdout = String::from_utf8_lossy(&connect.stdout);
-    let stderr = String::from_utf8_lossy(&connect.stderr);
-    assert!(connect.status.success(), "{stdout}{stderr}");
-    assert!(stdout.starts_with("Added the riff plugin"), "{stdout}");
-    assert!(!stdout.contains("sign"), "{stdout}");
-    assert_eq!(stderr, "");
 
     let who = riff(&server, dir.path(), &["who"]).await;
     assert!(
@@ -226,7 +201,6 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud delete NAME",
             "riff cloud list",
             "riff login",
-            "riff enable --shared",
             "riff invite EMAIL",
             "riff tail",
             "riff owner --take",

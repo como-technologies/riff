@@ -512,8 +512,7 @@ fn install(from: &Path, to: &Path) {
 /// A watch whose working directory is gone at an update runs the new
 /// riff in the nearest parent that exists, and keeps watching: the next
 /// post wakes it (01M3NJGD45GF7Y4CZWQ7GRDHZN). The update goes as
-/// `riff update` does it: riff, then riff-server, then
-/// `riff connect claude`.
+/// `riff update` does it: riff, then riff-server.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_watch_in_a_removed_worktree_runs_the_new_riff_and_keeps_watching() {
     let url = real(Build::this()).await;
@@ -536,25 +535,6 @@ async fn a_watch_in_a_removed_worktree_runs_the_new_riff_and_keeps_watching() {
     std::fs::remove_dir(&worktree).unwrap();
     install(&isolated.riff_path(), &bin.join("riff"));
     install(&isolated.riff_server_path(), &bin.join("riff-server"));
-    let claude = root.path().join("claude");
-    by_child(
-        Command::new("sh")
-            .args([
-                "-c",
-                "printf '#!/bin/sh\\nexit 0\\n' > \"$0\" && chmod 755 \"$0\"",
-            ])
-            .arg(&claude),
-    );
-    let mut connect = riff_at(&bin.join("riff"), &url, root.path(), &["connect", "claude"]);
-    connect
-        .arg("--claude")
-        .arg(&claude)
-        .env("XDG_DATA_HOME", &data)
-        .env("HOME", &data)
-        .env_remove("CLAUDE_CONFIG_DIR");
-    let connected = run(connect).await;
-    assert!(connected.status.success(), "{}", text(&connected.stderr));
-
     let moved = format!(
         "riff: the working directory {} is gone. The new riff runs in {}.",
         worktree.display(),

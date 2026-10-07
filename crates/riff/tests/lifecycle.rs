@@ -153,14 +153,8 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
         );
         assert!(lines[after + 1].starts_with("  release   "), "{stdout}");
     } else {
-        assert_eq!(lines.len(), after + 1, "{stdout}");
+        assert_eq!(lines.len(), after, "{stdout}");
     }
-    // The last line: whether riff is on here (01M3XY2SYKG91SAB2FS1QNCZ2H).
-    assert_eq!(
-        lines.last(),
-        Some(&"repository  riff on (RIFF_ON=1)"),
-        "{stdout}"
-    );
 }
 
 /// The label of each line of facts in `riff server`, in order.
@@ -441,24 +435,20 @@ fn update(bin: &Path, cargo_status: u8, server: &str) -> Command {
         0,
     );
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let mut cmd = riff(&["update", "--claude", "/opt/claude", "--server", server]);
+    let mut cmd = riff(&["update", "--server", server]);
     cmd.arg("--cargo").arg(cargo).env("PATH", path);
     cmd
 }
 
 #[tokio::test]
-async fn update_installs_both_binaries_then_updates_the_plugin() {
+async fn update_installs_both_binaries_and_runs_no_riff() {
     let bin = tempfile::tempdir().unwrap();
     let addr = real().await;
     let out = run(update(bin.path(), 0, &addr)).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(log(bin.path(), "cargo"), install(&release()));
-    assert_eq!(
-        log(bin.path(), "riff"),
-        "connect claude --claude /opt/claude\n"
-    );
+    assert_eq!(log(bin.path(), "riff"), "");
     let stdout = text(&out.stdout);
-    assert!(stdout.contains("Installed the riff plugin."), "{stdout}");
     assert!(
         stdout.ends_with("riff is up to date. Start your Claude Code sessions again.\n"),
         "{stdout}"

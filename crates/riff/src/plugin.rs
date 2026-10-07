@@ -128,7 +128,7 @@ pub fn write(dir: &Path) -> io::Result<()> {
 }
 
 /// The directory for the marketplace: `$XDG_DATA_HOME/riff/claude-plugin`,
-/// or `$HOME/.local/share/riff/claude-plugin` (R74).
+/// or `$HOME/.local/share/riff/claude-plugin` (01M4BYH7Y3P1JMQR51TWFGVZ39).
 ///
 /// ```
 /// use std::path::Path;

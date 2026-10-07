@@ -53,8 +53,7 @@
 //! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
 //! | `lead.notify` | true | riff shows a block with no answer of the lead in a desktop notification on the machine of the lead (01M41FZQKZKW131Z8822G31T5G). |
 //! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
-//! | `connect.scope` | none | The answer to the scope question of `riff connect claude`: `repo`, `global` or `none` (see [`enable`](crate::enable), 01M3XY2SNXQJRSH5QX82AFVM2S). With no key, nobody answered yet. |
-//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
+//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff` ask a person once when the key is missing (see [`ask_update_auto`]). |
 //! | `forge.app` | none | The ID of the GitHub App of riff. With it, each worker gets a forge token of its role (see [`forge`](crate::forge), 01M4BV7057YSHEMEHKXK20X0GJ). |
 
 use std::path::{Path, PathBuf};

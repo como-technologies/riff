@@ -79,13 +79,6 @@
 //!   session. A workers host posts the same note when it starts a
 //!   worker.
 //!
-//! - **Where riff is off** (01M3XY2T542DCHBN95H9PX4AGQ). A worker
-//!   starts in the main clone. When riff is off there, the machine of
-//!   the lead is no place for a worker: riff starts none there, and the
-//!   lead gets one note with the reason and `riff enable`
-//!   (01M3YCGKKRDNFC338K1JSK30JK). A workers host can still take the
-//!   work.
-//!
 //! The rollout never stops a worker. The server stops idle workers
 //! (#259). A worker over the limit of its machine ends after its item
 //! ([`crate::next`], 01M402VFGAJQM1QW8B42NKMJM4).

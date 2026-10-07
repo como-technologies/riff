@@ -1,4 +1,4 @@
-//! "Join a Riff" (01M3MEHCGZ4AG4C2A77J5HA3P7): one set of steps joins a
+//! "Join a Riff" (01M4BYH8BV4YQDD6D73YV3RHPH): one set of steps joins a
 //! riff with sign-in, for a person that the owner invites and for a
 //! second machine of the owner. The page test follows the steps on
 //! three machines, against a real riff and a fake provider: a session
@@ -39,7 +39,7 @@ fn a_person_joins_with_three_commands() {
         [
             install.as_str(),
             "echo 'export RIFF_SERVER=ADDRESS' >> ~/.bashrc",
-            "riff connect claude",
+            "riff login",
         ]
     );
 }
@@ -66,12 +66,12 @@ fn each_riff_command_of_the_page_is_real() {
     assert_eq!(
         riff,
         [
-            "riff connect claude",
-            "riff enable",
+            "riff login",
+            "riff",
             "riff server",
             "riff who",
             "riff update",
-            "riff connect claude",
+            "riff login",
         ]
     );
     each_is_real(&riff);
@@ -117,9 +117,8 @@ impl Machine {
     }
 
     /// Does the steps of "Join the riff" on this machine, with `server`
-    /// in `RIFF_SERVER`: `riff connect claude` signs in
-    /// (01M3JZN1ZZED3FXQEFNJ4KVCN5). The test leaves out the install
-    /// and the plugin.
+    /// in `RIFF_SERVER`: `riff login` signs in. The test leaves out
+    /// the install and the start of the riff.
     async fn join(&self, server: &str) -> anyhow::Result<()> {
         self.use_keyring();
         login::ensure(&Api::new(server), browser).await?;

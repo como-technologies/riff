@@ -88,7 +88,7 @@ pub fn args(given: &Given) -> Vec<String> {
 }
 
 /// The `statusLine` setting of the riff status line
-/// (01M3JFFJEW8BSRBZ9JQPKT0S8Z).
+/// (01M4BYH7Y3P1JMQR51TWFGVZ39).
 ///
 /// ```
 /// assert_eq!(riff::launch::statusline()["command"], "riff statusline");

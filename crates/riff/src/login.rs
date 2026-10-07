@@ -212,11 +212,11 @@ pub async fn logout_all(api: &Api, user: Option<&str>) -> Result<Revoked> {
 }
 
 /// Signs in at the server of `api` when the server has sign-in and this
-/// device has no sign-in there (01M3JZN1ZZED3FXQEFNJ4KVCN5). A sign-in of
+/// device has no sign-in there (01M4BYH84X7B2D9EFYGP11GP8Y). A sign-in of
 /// a riff that is gone does not count: it is removed first
 /// (01M3JNVBRS35B3CD67367JF7SJ). Returns the new sign-in, or `None` when
 /// the riff has no sign-in or this device has one. A sign-in that ended
-/// ([`SignIn::ended`]) does not count. `riff connect claude` runs it.
+/// ([`SignIn::ended`]) does not count. `riff` runs it.
 pub async fn ensure(api: &Api, open: impl FnOnce(&str)) -> Result<Option<SignIn>> {
     if !api.has_sign_in().await? {
         return Ok(None);

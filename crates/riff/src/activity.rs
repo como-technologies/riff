@@ -113,7 +113,7 @@ pub fn of_hook(hook: Hook, input: &str) -> Option<Fact> {
             .unwrap_or_default()
             .to_owned()
     };
-    if name.starts_with("mcp__riff__") || name.starts_with("mcp__plugin_riff_") {
+    if name.starts_with("mcp__riff__") {
         return None;
     }
     if name == "Bash" && field("command").starts_with("riff watch") {
@@ -302,8 +302,8 @@ mod tests {
     }
 
     #[test]
-    fn a_plugin_riff_tool_gives_no_fact() {
-        let input = r#"{"tool_name":"mcp__plugin_riff_riff__status","tool_input":{}}"#;
+    fn a_riff_tool_gives_no_fact() {
+        let input = r#"{"tool_name":"mcp__riff__status","tool_input":{}}"#;
         assert_eq!(of_hook(Hook::Post, input), None);
     }
 }

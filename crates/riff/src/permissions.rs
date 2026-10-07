@@ -53,7 +53,7 @@ impl Rules {
 
 /// The rules of riff work for the repository `repo` (OWNER and REPO,
 /// when it has a GitHub `origin`) with the default branch `branch`
-/// (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+/// (01M4BYH874WQ16Q0337WQA8AMV).
 ///
 /// - Allow: each riff tool (`mcp__riff`), each `riff` command, and the
 ///   steps of the pull request flow.

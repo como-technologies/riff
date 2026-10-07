@@ -410,6 +410,15 @@ enum Command {
         #[command(subcommand)]
         event: HookEvent,
     },
+    /// Do nothing: riff gives Claude its plugin at each start
+    ///
+    /// `riff update` of riff 1.3 runs it after the install, so it ends
+    /// with success (01M4BYH84X7B2D9EFYGP11GP8Y).
+    #[command(hide = true)]
+    Connect {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Show the riff that riff uses
     ///
     /// It shows one fact on a line: the release of riff, the riff that
@@ -1267,6 +1276,10 @@ async fn main() -> Result<()> {
             },
         }
     }
+    if let Command::Connect { .. } = command {
+        println!("{}", text::CONNECT_GONE);
+        return Ok(());
+    }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
@@ -1853,6 +1866,7 @@ async fn main() -> Result<()> {
             served?
         }
         Command::Hook { .. }
+        | Command::Connect { .. }
         | Command::Usage { .. }
         | Command::Statusline
         | Command::Server
