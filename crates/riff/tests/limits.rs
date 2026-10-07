@@ -481,11 +481,19 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     std::fs::remove_file(&seen).unwrap();
     let out = m.wrapper(&claude, &[("RIFF_WORKER_SLICE", "riff-workers.slice")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    // The first scope is the check that a scope works in the pane.
+    // The first scope is the check that a scope works in the pane. The
+    // scope of claude has the name of the worker and of the wrapper
+    // (01M49SV9W4S1HJ4BYANA388VD2).
+    let log = m.log("systemd-run.log");
+    let (check, worker) = log.trim().split_once('\n').unwrap();
+    assert_eq!(check, "--user --scope --quiet --slice=riff-workers.slice");
+    let unit = worker
+        .strip_prefix(" --user --scope --quiet --slice=riff-workers.slice --unit=")
+        .unwrap_or_else(|| panic!("no scope name: {log:?}"));
     assert_eq!(
-        m.log("systemd-run.log").trim(),
-        "--user --scope --quiet --slice=riff-workers.slice\n \
-         --user --scope --quiet --slice=riff-workers.slice"
+        riff::workload::scope_worker(unit).as_deref(),
+        Some("w1"),
+        "{log:?}"
     );
     // claude still gets its marks, its jobs and its arguments.
     assert_eq!(read(&seen).trim(), "1 3 Join the riff.");

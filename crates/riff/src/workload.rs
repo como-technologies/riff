@@ -577,9 +577,17 @@ mod tests {
             p(20, 1, Some("w2"), true),
             p(30, 1, None, true),
         ];
-        let pids: Vec<u32> = of_worker(&all, "w1", 99).procs.iter().map(|p| p.pid).collect();
+        let pids: Vec<u32> = of_worker(&all, "w1", 99)
+            .procs
+            .iter()
+            .map(|p| p.pid)
+            .collect();
         assert_eq!(pids, [10, 11, 12]);
-        let pids: Vec<u32> = of_worker(&all, "w1", 12).procs.iter().map(|p| p.pid).collect();
+        let pids: Vec<u32> = of_worker(&all, "w1", 12)
+            .procs
+            .iter()
+            .map(|p| p.pid)
+            .collect();
         assert!(pids.is_empty(), "12 and its parents: {pids:?}");
     }
 
