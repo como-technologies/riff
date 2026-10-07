@@ -457,6 +457,46 @@
   gets the claim, and the reply has the same text as a warning. The
   checks of a claim run in this order: `must_clear`, the name of the
   item, `paused`, the caller holds the item already, `on_hold`, `held`.
+- **01M4A4YTNSJR0R1T9JNXPBSKHC** The server keeps the plan of each
+  repository thread: the current wave, its items with their needs, and
+  the done needs. The command `plan` writes the full plan as the record
+  `plan_set`, and the record replaces the plan of its thread. The
+  command `plan_off` writes the record `plan_ended`: the server forgets
+  the plan, and the holds stay. A `plan_off` with no plan makes no
+  record.
+- **01M4A4YTR2NKVBPE6BT9EC3X75** A `plan` names its `base`: the
+  position of the `plan_set` record of the plan that the client
+  compared with, or none when the repository has no plan. When `base`
+  is not that position on the server, the server refuses the command
+  with the code `stale_base` and the status 409. The reason names the
+  position of the plan of the server, and the client reads that plan
+  with the query `plan`. So no old plan replaces a new one. A `plan`
+  equal to the plan of the server makes no record, and counts as a
+  `plan_seen`.
+- **01M4A4YTTB24XNB4G49675QMHT** `plan` checks the form: each item,
+  each need and each done need is `issue-N`, no item is twice in the
+  items, and the thread is a repository thread. Else the server refuses
+  it with `bad_request`.
+- **01M4A4YTWK68JDA0DKXX2HV4FA** Each session in the repository thread
+  that is not a worker, the owner and each admin can send `plan` and
+  `plan_off`. A worker gets `not_allowed`, also a worker of the owner.
+- **01M4A4YTYVHFGK0CJVACJQ8DQ3** The signal `plan_seen` names the
+  position of the plan that a look saw. When it is the position of the
+  plan of the server, and the caller is a session in the repository
+  thread that is not a worker, the server keeps the time as the last
+  look of the plan. Else the signal changes nothing. The reply is the
+  plan of the server.
+- **01M4A4Z1NKPDBXV2PRZCG86G6A** The query `plan` gives each member
+  the plan of a repository thread: the wave, the items with their
+  needs, the done needs, the holder of each item of the plan with a
+  claim, the position and the time of the `plan_set` record, the time
+  of the last look, and whether the plan is stale. It also gives each
+  hold of the thread. The reply of `plan` and of `plan_seen` is the
+  same.
+- **01M4A4Z1QTHYXZDMCP9DZ39WVT** A plan is stale when no `plan` and no
+  `plan_seen` came for `PLAN_TTL` (10 minutes). The time of the last
+  look is in memory: after a new start of the server, the count starts
+  at the start.
 - **R222** The skill, the requirements and the book name the concept
   of waves first. Each keeps the form of a forge in one part of its
   own. A new forge needs no change to the concept. Outside these
@@ -1045,6 +1085,10 @@
   each hold of each repository thread, with its reason, its caller
   and its time. An empty part is not written, so the log of 1.0.0
   gives the checkpoint of 1.0.0.
+- **01M4A4Z3QVRC57RE7M43ZRF4T2** The part `plans` of the checkpoint
+  also has the plan of each repository thread, with the position and
+  the time of its `plan_set` record. The time of the last look is not
+  in the checkpoint.
 - **01M3WRD8WJ2JF9077PRDX04T9A** Each command of `riff-server` goes
   through `Engine::dispatch`, and each signal goes through
   `Engine::signal`. The engine module owns the state, its lock and the

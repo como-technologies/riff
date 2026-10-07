@@ -11,7 +11,7 @@
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
 //! | [`TheRiff`] | [`super::the_riff`] | The pauses, and the settings. |
 //! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role. |
-//! | [`Plans`] | [`super::plan`] | The holds of each repository thread. |
+//! | [`Plans`] | [`super::plan`] | The holds and the plan of each repository thread. |
 //!
 //! # Only `apply` changes the riff
 //!
@@ -50,6 +50,7 @@
 //! | `signins_ended` | It keeps the position of the record for the USER. | Yes. |
 //! | `owner_set` | It ends the request for the owner role that waits. A record with no email says that the owner is gone. | Yes. |
 //! | `item_held` | It keeps the `by` and the time of the record with the hold: who held the item, and when (01M43GSGB9ZFHSG0Q83Y50FEGW). | Yes. |
+//! | `plan_set` | It keeps the position and the time of the record with the plan (01M4A4Z3QVRC57RE7M43ZRF4T2). | Yes. |
 
 use riff_core::record::{Change, Record};
 
@@ -237,6 +238,8 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::SigninsEnded(ended) => riff.people.signins_ended(ended, record.envelope.position),
         Change::ItemHeld(held) => riff.plans.held(held, record),
         Change::ItemFreed(freed) => riff.plans.freed(freed),
+        Change::PlanSet(set) => riff.plans.set(set, record),
+        Change::PlanEnded(ended) => riff.plans.ended(ended),
     };
     if let Err(what) = taken {
         tracing::warn!(

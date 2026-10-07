@@ -11,7 +11,7 @@
 //! | threads | [`super::threads`] | [`Join`](riff_core::wire::Join), [`Leave`](riff_core::wire::Leave), [`Post`](riff_core::wire::Post), [`Announce`](super::Announce) |
 //! | work | [`super::work`] | [`Claim`](riff_core::wire::Claim), [`Release`](riff_core::wire::Release), [`ReleaseFor`](riff_core::wire::ReleaseFor), [`Lead`](riff_core::wire::Lead) |
 //! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import) |
-//! | plan | [`super::plan`] | [`Hold`](riff_core::wire::Hold), [`Free`](riff_core::wire::Free) |
+//! | plan | [`super::plan`] | [`Hold`](riff_core::wire::Hold), [`Free`](riff_core::wire::Free), [`SetPlan`](riff_core::wire::SetPlan), [`PlanOff`](riff_core::wire::PlanOff) |
 //! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
@@ -352,6 +352,8 @@ command_kinds! {
     Revoke = "revoke",
     Hold = "hold",
     Free = "free",
+    Plan = "plan",
+    PlanOff = "plan_off",
 }
 
 impl CommandKind {
@@ -404,6 +406,7 @@ impl fmt::Display for CommandKind {
 /// | `not_member` | The command names a person who is not a member. | 403 |
 /// | `held` | Another session holds the item. | 409 |
 /// | `on_hold` | A lead holds the item, and the caller is a worker. | 409 |
+/// | `stale_base` | The `base` of a `plan` is not the position of the plan of the server. | 409 |
 /// | `paused` | The riff or the repository is paused. | 409 |
 /// | `must_clear` | A worker must clear its context first. | 409 |
 /// | `not_holder` | The caller does not hold the item. | 409 |
@@ -425,6 +428,9 @@ pub enum Code {
     /// A lead holds the item, and the caller is a worker
     /// (01M43GSGPJ69TPWPA4935WR8RW).
     OnHold,
+    /// The `base` of a `plan` is not the position of the plan of the
+    /// server (01M4A4YTR2NKVBPE6BT9EC3X75).
+    StaleBase,
     /// The riff or the repository is paused.
     Paused,
     /// A worker must clear its context before it claims.
@@ -439,12 +445,13 @@ pub enum Code {
 
 impl Code {
     /// Each code of this release.
-    pub const ALL: [Code; 10] = [
+    pub const ALL: [Code; 11] = [
         Code::NotAllowed,
         Code::NoSignIn,
         Code::NotMember,
         Code::Held,
         Code::OnHold,
+        Code::StaleBase,
         Code::Paused,
         Code::MustClear,
         Code::NotHolder,
@@ -460,6 +467,7 @@ impl Code {
             Code::NotMember => "not_member",
             Code::Held => "held",
             Code::OnHold => "on_hold",
+            Code::StaleBase => "stale_base",
             Code::Paused => "paused",
             Code::MustClear => "must_clear",
             Code::NotHolder => "not_holder",
@@ -561,6 +569,9 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // `handle` checks that the caller is a lead of the thread, the
         // owner or an admin (01M43GSGGY0QMB5D5EH92M6ZFP).
         CommandKind::Hold | CommandKind::Free => &[Person, Session],
+        // `handle` checks that the caller is a session in the thread, the
+        // owner or an admin (01M4A4YTWK68JDA0DKXX2HV4FA).
+        CommandKind::Plan | CommandKind::PlanOff => &[Person, Session],
         // Only a person changes the settings and the people.
         CommandKind::SetIdle
         | CommandKind::Invite
@@ -596,6 +607,12 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         return Err(Refused::new(
             Code::NotAllowed,
             format!("a worker cannot {kind} an item. Tell the lead."),
+        ));
+    }
+    if matches!(kind, CommandKind::Plan | CommandKind::PlanOff) && caller.worker() {
+        return Err(Refused::new(
+            Code::NotAllowed,
+            format!("a worker cannot send {kind}. Tell the lead."),
         ));
     }
     if matches!(class, Person | Session) && caller.role() < needs {
@@ -730,6 +747,7 @@ mod tests {
             CommandKind::Lead => (&[Session], false),
             CommandKind::Pause | CommandKind::Resume => (&[Person, Session], true),
             CommandKind::Hold | CommandKind::Free => (&[Person, Session], false),
+            CommandKind::Plan | CommandKind::PlanOff => (&[Person, Session], false),
             CommandKind::SetIdle
             | CommandKind::Invite
             | CommandKind::Remove
@@ -775,10 +793,11 @@ mod tests {
     /// `revoke` has more than one case: the own sign-ins, by no name and
     /// by the own name, and the sign-ins of another person.
     fn needs(kind: CommandKind, caller: &Caller) -> Vec<Role> {
+        use riff_core::record::{Plan, PlanSet};
         use riff_core::wire::{
             Claim, DenyOwner, End, Free, Hold, Invite, Join, Kind, Lead, Leave, PassOwner, Pause,
-            Post, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, Start,
-            StartReason, TakeOwner,
+            PlanOff, Post, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin,
+            SetIdle, SetPlan, Start, StartReason, TakeOwner,
         };
 
         use crate::state::{
@@ -854,6 +873,21 @@ mod tests {
                 )
             }
             CommandKind::Free => of.of(Free { me, thread, item }, kind),
+            CommandKind::Plan => {
+                let plan = PlanSet {
+                    thread,
+                    plan: Plan::default(),
+                };
+                of.of(
+                    SetPlan {
+                        me,
+                        base: None,
+                        plan,
+                    },
+                    kind,
+                )
+            }
+            CommandKind::PlanOff => of.of(PlanOff { me, thread }, kind),
             CommandKind::Forget => of.of(Forget, kind),
             CommandKind::Import => of.of(Import { changes: vec![] }, kind),
             CommandKind::Admit => {
@@ -923,7 +957,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (30 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (32 + 2) * 4 * 2 * 3);
     }
 
     #[test]

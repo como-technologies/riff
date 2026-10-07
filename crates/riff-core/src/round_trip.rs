@@ -259,7 +259,7 @@ fn type_name(item: &str) -> String {
 mod tests {
     use super::*;
     use crate::name::{SessionUri, ThreadName, Who};
-    use crate::record::{By, Envelope, Record, one_of_each};
+    use crate::record::{By, Envelope, Plan, PlanItem, PlanSet, Record, Wave, one_of_each};
     use crate::selector::Selector;
     use crate::signed::{Content, Signed};
     use crate::wire::*;
@@ -595,6 +595,57 @@ mod tests {
             item: text("issue-7"),
         });
         c.trip(&FreeReply { freed: true });
+        let plan = Plan {
+            wave: Some(Wave {
+                number: 3,
+                title: text("Wave 3"),
+            }),
+            items: vec![PlanItem {
+                item: text("issue-7"),
+                needs: vec![text("issue-6")],
+            }],
+            done: vec![text("issue-6")],
+        };
+        c.trip(&SetPlan {
+            me: me(),
+            base: Some(3),
+            plan: PlanSet {
+                thread: thread(),
+                plan: plan.clone(),
+            },
+        });
+        c.trip(&PlanOff {
+            me: me(),
+            thread: thread(),
+        });
+        c.trip(&PlanOffReply { ended: true });
+        c.trip(&PlanSeen {
+            me: me(),
+            thread: thread(),
+            position: 3,
+        });
+        c.trip(&PlanShow {
+            me: me(),
+            thread: thread(),
+        });
+        c.trip(&PlanReply {
+            plan: Some(PlanShown {
+                plan,
+                position: 3,
+                set_ms: 5,
+                seen_ms: Some(6),
+                stale: true,
+                holders: BTreeMap::from([(text("issue-7"), me())]),
+            }),
+            holds: BTreeMap::from([(
+                text("issue-8"),
+                HoldInfo {
+                    reason: text("waits for ann"),
+                    by: Some(By::Session(who())),
+                    at_ms: 5,
+                },
+            )]),
+        });
         c.trip(&Release {
             me: me(),
             thread: thread(),

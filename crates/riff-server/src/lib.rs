@@ -219,11 +219,11 @@ use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
     Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
     ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    PassOwner, Pause, Person, Post, Read, ReadReply, Register, Release, ReleaseFor, Remove,
-    ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata,
-    SetAdmin, SetBlocked, SetIdle, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE,
-    TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply,
-    WhoRequest,
+    PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Read, ReadReply,
+    Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery,
+    RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan, SetStatus,
+    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
+    TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -1839,7 +1839,9 @@ impl Service {
             .route(Pause::PATH, post(command::<Pause>))
             .route(Resume::PATH, post(command::<Resume>))
             .route(Hold::PATH, post(command::<Hold>))
-            .route(Free::PATH, post(command::<Free>));
+            .route(Free::PATH, post(command::<Free>))
+            .route(SetPlan::PATH, post(command::<SetPlan>))
+            .route(PlanOff::PATH, post(command::<PlanOff>));
         // `set_idle` has a router of its own: in a riff with sign-in,
         // its route always has the token check.
         let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));
@@ -1856,6 +1858,8 @@ impl Service {
             .route(Threads::PATH, post(threads))
             .route(Read::PATH, post(read))
             .route(RiffQuery::PATH, post(riff))
+            .route(PlanSeen::PATH, post(plan_seen))
+            .route(PlanShow::PATH, post(plan_show))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
@@ -2336,6 +2340,55 @@ async fn riff(
     let reply = s
         .engine
         .query(&caller, move |state| state.pauses_at(&me))
+        .await?;
+    Ok(Json(reply))
+}
+
+/// A look saw the plan of the server at `position`: a signal
+/// (01M4A4YTYVHFGK0CJVACJQ8DQ3). It counts only from a session in the
+/// thread that is not a worker, and only for the position of the plan
+/// of the server. The reply is the plan of the server.
+async fn plan_seen(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<PlanSeen>,
+) -> Reply<PlanReply> {
+    let caller = admit(&s, &proof, &r.me)?;
+    let PlanSeen {
+        me: _,
+        thread,
+        position,
+    } = r;
+    let who = caller.caller().who().clone();
+    let seen = s
+        .engine
+        .query(&caller, |state| state.sees_plan(&who, &thread, position))
+        .await?;
+    if seen {
+        let signal = Signal::PlanSeen {
+            thread: thread.clone(),
+        };
+        s.engine.signal(&caller, signal).await?;
+    }
+    let reply = s
+        .engine
+        .read(|state| state.plan(&thread, Instant::now(), now_ms()));
+    Ok(Json(reply))
+}
+
+/// Reads the plan of a repository thread and its holds: a query
+/// (01M4A4Z1NKPDBXV2PRZCG86G6A).
+async fn plan_show(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<PlanShow>,
+) -> Reply<PlanReply> {
+    let caller = admit(&s, &proof, &r.me)?;
+    let reply = s
+        .engine
+        .query(&caller, |state| {
+            state.plan(&r.thread, Instant::now(), now_ms())
+        })
         .await?;
     Ok(Json(reply))
 }
