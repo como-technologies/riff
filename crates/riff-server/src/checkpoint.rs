@@ -116,7 +116,7 @@ impl Default for Settings {
 }
 
 /// One checkpoint.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Checkpoint {
     pub format: u32,
     /// The crate version of the build that wrote it.

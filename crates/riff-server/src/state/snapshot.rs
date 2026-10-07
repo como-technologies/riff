@@ -31,7 +31,7 @@ use super::{calls, people, plan, presence, sessions, the_riff, threads, work};
 /// [`Snapshot::position`], the read cursors, and the last call of each
 /// session. See [`crate::checkpoint`]. A new field has a default, as in
 /// a record (01M3T4111PFM0C6KPREWFS9EQQ).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Snapshot {
     /// The position of the last record in the state.
     pub position: u64,

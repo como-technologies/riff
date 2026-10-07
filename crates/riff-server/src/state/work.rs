@@ -119,7 +119,7 @@ impl Work {
 }
 
 /// The part of the checkpoint of this group.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     claims: Vec<SavedClaim>,
@@ -128,7 +128,7 @@ pub(super) struct Saved {
 }
 
 /// A claim: the map entry of [`Work::claims`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedClaim {
     thread: ThreadName,
     item: String,
@@ -137,7 +137,7 @@ struct SavedClaim {
 
 /// A lead: the map entry of [`Work::leads`]. The user of the key is
 /// the user of the lead.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedLead {
     thread: ThreadName,
     lead: Who,

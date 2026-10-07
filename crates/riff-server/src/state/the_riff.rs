@@ -229,7 +229,7 @@ impl TheRiff {
 /// who set it and when (01M3XAHZQ92GGFHBC50FQ7FQ0K). A checkpoint from
 /// before the pause of a repository has only `riff` and `idle`: it
 /// reads, and nobody is known to have set its pause.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     riff: RiffState,

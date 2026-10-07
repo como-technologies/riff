@@ -47,7 +47,7 @@ pub(super) struct Thread {
 
 /// A message of a thread, with each session that it woke. A
 /// checkpoint holds it as it is.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Stored {
     pub(super) message: Message,
     /// Each session that the message woke.
@@ -162,14 +162,14 @@ impl Threads {
 }
 
 /// The part of the checkpoint of this group.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     threads: Vec<SavedThread>,
 }
 
 /// A thread with its name: the map entry of [`Threads`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedThread {
     thread: ThreadName,
     #[serde(default)]

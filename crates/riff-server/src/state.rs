@@ -3917,6 +3917,95 @@ mod tests {
         );
     }
 
+    /// A checkpoint with each field of each part set, and each variant
+    /// of the signals of a session.
+    fn full_checkpoint() -> serde_json::Value {
+        let ann = serde_json::json!({"user": "mike", "session": "a1"});
+        let message = serde_json::json!({
+            "seq": 1, "from": "riff://mike@pangolin/como-technologies/riff?session=a1#api",
+            "to": [{"user": "mike", "session": "b2", "host": "pangolin",
+                    "repo": "como-technologies/riff", "worktree": "docs",
+                    "claim": "issue-7", "lead": true}],
+            "body": "hi", "at_ms": T0, "kind": "note", "sig": "h.p.s", "payload": "cA",
+        });
+        serde_json::json!({
+            "format": crate::checkpoint::FORMAT,
+            "build": "1.2.0",
+            "written_at_ms": T0,
+            "state": {
+                "position": 2,
+                "riff": "paused",
+                "idle": {"per_host": 2, "after_secs": 300},
+                "riff_pause": {"by": {"session": "mike/a1"}, "at_ms": T0},
+                "pauses": {"design": {"by": {"session": "mike/a1"}, "at_ms": T0}},
+                "threads": [{"thread": "como-technologies/riff", "members": [ann],
+                             "messages": [{"message": message, "woken": [ann]}]}],
+                "claims": [{"thread": "como-technologies/riff", "item": "issue-7", "holder": ann}],
+                "leads": [{"thread": "como-technologies/riff", "lead": ann}],
+                "sessions": [
+                    {"session": "riff://mike@pangolin/como-technologies/riff?session=a1#api",
+                     "at_ms": T0, "seen_ms": T0, "worker": true, "must_clear": true,
+                     "fresh_ms": T0},
+                    {"session": "riff://mike@pangolin/como-technologies/riff?session=b2#docs",
+                     "at_ms": T0, "seen_ms": T0, "worker": true, "must_clear": true,
+                     "fresh_ms": T0},
+                    {"session": "riff://mike@pangolin/como-technologies/riff?session=c3#tests",
+                     "at_ms": T0, "seen_ms": T0, "worker": true, "must_clear": true,
+                     "fresh_ms": T0},
+                ],
+                "cursors": [{"session": ann, "thread": "como-technologies/riff", "seq": 1}],
+                "statuses": [
+                    {"session": ann, "status": {"step": "tests"}, "set_ms": T0,
+                     "step": {"name": "deploy", "set_ms": T0, "failed": "502"}},
+                    {"session": {"user": "mike", "session": "b2"},
+                     "status": {"step": "docs"}, "set_ms": T0},
+                    {"session": {"user": "mike", "session": "c3"},
+                     "step": {"name": "live window", "set_ms": T0, "failed": "gone"}},
+                ],
+                "riff_id": "r1",
+                "users": {"mike": "mike@acme.io"},
+                "members": ["bob@acme.io"],
+                "admins": ["cy@acme.io"],
+                "owner": "mike@acme.io",
+                "no_owner": true,
+                "owner_asked": {"email": "cy@acme.io", "due_ms": T0},
+                "signins_ended": {"bob": 1},
+                "plans": {"como-technologies/riff": {"holds": {"issue-8": {
+                    "reason": "waits for mike", "by": {"session": "mike/a1"}, "at_ms": T0}}}},
+                "calls": [{"position": 2, "written_at_ms": T0, "by": {"session": "mike/a1"},
+                           "command": "claim", "call": "c1",
+                           "change": {"claimed": {
+                               "session": "riff://mike@pangolin/como-technologies/riff?session=a1",
+                               "thread": "como-technologies/riff", "item": "issue-7"}}}],
+            },
+        })
+    }
+
+    /// Each part of a checkpoint reads back with each field
+    /// (01M49W18ETF4KZJN848M91VY35): a JSON round trip, and a load of
+    /// the state and its checkpoint again. So each saved form and each
+    /// restore keeps each field.
+    #[test]
+    fn each_part_of_a_checkpoint_reads_back_with_each_field() {
+        let full: crate::checkpoint::Checkpoint =
+            serde_json::from_value(full_checkpoint()).unwrap();
+        let mut covered = riff_core::round_trip::Covered::default();
+        covered.trip(&full);
+        // The round trip of riff-core shows each variant of the types
+        // of the log and the wire.
+        let of_the_log = ["Change:", "Kind:", "RiffState:"];
+        let gaps: Vec<String> = covered
+            .gaps()
+            .into_iter()
+            .filter(|gap| !of_the_log.iter().any(|name| gap.starts_with(name)))
+            .collect();
+        assert_eq!(gaps, Vec::<String>::new());
+
+        let now = Instant::now();
+        let state = State::load(Some(full.state.clone()), [], now, T0);
+        assert_eq!(state.snapshot(now, T0), full.state);
+    }
+
     /// A JSON round trip of the snapshot of `state`, as a checkpoint
     /// does.
     fn through_json(state: &State, now: Instant) -> Snapshot {

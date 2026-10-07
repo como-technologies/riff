@@ -2366,6 +2366,7 @@ dependencies = [
  "jsonwebtoken",
  "reqwest",
  "riff-core",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

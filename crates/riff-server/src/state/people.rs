@@ -290,7 +290,7 @@ impl People {
 /// it is not written. So the checkpoint of a riff with no people has
 /// the bytes of a checkpoint from before the people
 /// (01M3WNQR41K41TV832GRQZ2CQS).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     riff_id: Option<String>,

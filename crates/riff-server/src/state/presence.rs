@@ -525,7 +525,7 @@ impl Presence {
 ///                "status": {"step": "tests"}, "set_ms": 1000,
 ///                "step": {"name": "live window", "set_ms": 900}}]}
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     cursors: Vec<SavedCursor>,
@@ -534,7 +534,7 @@ pub(super) struct Saved {
 }
 
 /// What the checkpoint keeps of the signals of one session.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedSession {
     session: Who,
     #[serde(flatten)]
@@ -545,7 +545,7 @@ struct SavedSession {
 /// neither cannot be (01M49W18QQKF4KYDRYP3ZK9F1Q): it does not load.
 /// Each variant has the JSON of 1.1.0: the fields of the status in the
 /// entry, and the step in `step`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 enum Signals {
     Both {
@@ -592,7 +592,7 @@ impl Signals {
 }
 
 /// A status with the time of its set.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedStatus {
     status: Status,
     /// The time of the set, in milliseconds since the Unix epoch.
@@ -600,7 +600,7 @@ struct SavedStatus {
 }
 
 /// A read cursor: the map entry of [`Presence::cursors`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedCursor {
     session: Who,
     thread: ThreadName,
@@ -700,7 +700,7 @@ pub(super) struct SetStatus {
 
 /// A long step of a session (01M48VDGTD40P8RBZMS0XB5M9N). The checkpoint
 /// keeps it as it is (01M49NP8F3A9CTJWZ74MCNZG0M).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct LongStep {
     pub(super) name: String,
     /// The start of the step, or its failure, in milliseconds since the

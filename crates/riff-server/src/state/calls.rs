@@ -282,7 +282,7 @@ fn keep_ms() -> u64 {
 
 /// The part of the calls in a checkpoint: the records of each kept
 /// call (01M48VFXHHND8SX4DBXZTFMJGQ). A checkpoint of 1.0.0 has none.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Saved {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     calls: Vec<Record>,

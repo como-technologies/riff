@@ -243,13 +243,13 @@ impl Sessions {
 
 /// The part of the checkpoint of this group: each session that the log
 /// names, with its life cycle (01M3X9XD8QWHS2CXTFSQK0PN1Y).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     sessions: Vec<SavedSession>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedSession {
     /// The URI of the last record that names the session.
     session: SessionUri,

@@ -50,7 +50,7 @@ pub const REASON_MAX: usize = 200;
 
 /// The hold of one item: its reason, and who held it and when: the `by`
 /// and the time of its `item_held` record.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HoldInfo {
     pub reason: String,
     /// The caller of the hold. `None` when the record has no cause.
@@ -61,7 +61,7 @@ pub struct HoldInfo {
 }
 
 /// The plan of one repository thread. This build has only its holds.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct Plan {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     holds: BTreeMap<String, HoldInfo>,
@@ -182,7 +182,7 @@ impl Plans {
 /// The part of the checkpoint of this group: the plan of each
 /// repository thread, with each hold, its reason, its `by` and its
 /// time. An empty part is not written (01M43GSGVYJW7C09SVRWRAQZDZ).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     plans: BTreeMap<ThreadName, Plan>,
