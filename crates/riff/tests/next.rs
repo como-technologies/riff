@@ -25,6 +25,8 @@ use riff_server::store::Memory;
 /// next to it names a `riff`, the key `/clear` runs the start hook of
 /// the worker `w1` with that `riff`, as `/clear` in a real pane does.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 d="$(dirname "$0")"
 printf '%s\n' "$*" >> "$d/log"
 if [ "$*" = "send-keys -t %3 -l /clear" ] && [ -e "$d/clears" ]; then

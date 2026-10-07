@@ -301,6 +301,8 @@ fn lead_compact_shows_and_sets_the_setting() {
 /// A fake `tmux`: it logs each call, and `capture-pane` prints the file
 /// `screen`.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 case "$1" in
   capture-pane) cat "$dir/screen" ;;

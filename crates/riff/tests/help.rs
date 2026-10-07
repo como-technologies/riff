@@ -179,27 +179,17 @@ fn the_server_help_is_short_and_riff_help_server_has_the_long_text() {
 }
 
 #[test]
-fn riff_with_no_command_names_no_hidden_command() {
-    for args in [&[][..], &["--server", "127.0.0.1:9"]] {
-        let out = Isolated::shared().riff().args(args).output().unwrap();
-        assert_eq!(out.status.code(), Some(2), "riff {args:?}: {out:?}");
-        let err = String::from_utf8(out.stderr).unwrap();
-        for name in PLUMBING {
-            assert!(!err.contains(name), "riff {args:?}: {name}: {err}");
-        }
-        assert!(!err.contains("[subcommands:"), "riff {args:?}: {err}");
-    }
-    let out = Isolated::shared().riff().output().unwrap();
-    let help = String::from_utf8(out.stderr).unwrap();
-    assert!(help.contains("Get started:\n"), "{help}");
+fn a_usage_error_names_no_hidden_command() {
+    // `riff` with no argument at all starts the riff (see start.rs).
     let out = Isolated::shared()
         .riff()
-        .args(["--server", "127.0.0.1:9"])
+        .args(["--server", "127.0.0.1:9", "--color", "never", "--bad"])
         .output()
         .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
     let err = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(
-        err,
-        "error: name a command. Run 'riff --help' to list them.\n"
-    );
+    for name in PLUMBING {
+        assert!(!err.contains(name), "{name}: {err}");
+    }
+    assert!(!err.contains("[subcommands:"), "{err}");
 }

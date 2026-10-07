@@ -2,8 +2,8 @@
 //!
 //! # Design
 //!
-//! A person runs the lead in a terminal. When that terminal is tmux,
-//! riff lays out two windows (01M3JD390F49HZSKEJ3VACX0ZA,
+//! `riff` starts the lead in the tmux server of riff (see
+//! [`crate::start`]). In tmux, riff lays out two windows (01M3JD390F49HZSKEJ3VACX0ZA,
 //! 01M3JD392Q5ANX0FPZ51W7B0E3):
 //!
 //! - **The lead window.** `riff mcp` of the lead adds a pane with
@@ -24,8 +24,8 @@
 //!     participant M as riff mcp of the lead
 //!     participant T as tmux
 //!     participant S as riff-server
-//!     P->>T: tmux new -s riff
-//!     P->>L: claude --remote-control
+//!     P->>T: riff: tmux -L riff new-session
+//!     T->>L: claude --remote-control
 //!     L->>M: start
 //!     M->>S: register, who
 //!     S-->>M: this session is the lead
@@ -365,6 +365,9 @@ pub trait Terminal {
 pub struct Tmux {
     bin: PathBuf,
     pane: String,
+    /// The socket name of the server (`-L`), or `None` for the server
+    /// of `TMUX`.
+    socket: Option<String>,
 }
 
 impl Tmux {
@@ -394,13 +397,39 @@ impl Tmux {
         Tmux {
             bin: bin.into(),
             pane: pane.to_owned(),
+            socket: None,
         }
     }
 
     /// The tmux of this machine, with `tmux` on `PATH`. It needs no
-    /// pane: it lists and stops the workers from any terminal.
+    /// pane: it lists and stops the workers from any terminal. Outside
+    /// tmux, it is the server of riff (01M4BSSX66A2NNVQK48KQH8BEZ, see
+    /// [`crate::start`]).
     pub fn machine() -> Self {
-        Self::new("tmux", "")
+        Self::machine_with("tmux", std::env::var_os("TMUX"))
+    }
+
+    /// [`Tmux::machine`] at `bin`, with `tmux`, the value of `TMUX`.
+    ///
+    /// ```
+    /// use riff::terminal::Tmux;
+    /// assert_eq!(Tmux::machine_with("tmux", None).socket(), Some("riff"));
+    /// assert_eq!(Tmux::machine_with("tmux", Some("".into())).socket(), Some("riff"));
+    /// let pane = Some("/tmp/tmux-1000/default,1,0".into());
+    /// assert_eq!(Tmux::machine_with("tmux", pane).socket(), None);
+    /// ```
+    pub fn machine_with(bin: impl Into<PathBuf>, tmux: Option<OsString>) -> Self {
+        let mut machine = Self::new(bin, "");
+        if tmux.is_none_or(|t| t.is_empty()) {
+            machine.socket = Some(crate::start::SOCKET.into());
+        }
+        machine
+    }
+
+    /// The socket name of the server, when it is not the server of
+    /// `TMUX`.
+    pub fn socket(&self) -> Option<&str> {
+        self.socket.as_deref()
     }
 
     /// The process ID of the program of `pane`, or `None` when tmux
@@ -422,7 +451,11 @@ impl Tmux {
 
     /// Runs tmux. The inner error is the stderr of a failed command.
     fn try_run(&self, args: &[&str]) -> Result<std::result::Result<String, String>> {
-        let out = Command::new(&self.bin)
+        let mut cmd = Command::new(&self.bin);
+        if let Some(socket) = &self.socket {
+            cmd.args(["-L", socket]);
+        }
+        let out = cmd
             .args(args)
             .output()
             .with_context(|| format!("cannot run {}", self.bin.display()))?;

@@ -65,6 +65,7 @@ mod session;
 mod setup;
 mod signed;
 mod smoke;
+mod start;
 mod start_a_riff;
 mod states;
 mod statusline;

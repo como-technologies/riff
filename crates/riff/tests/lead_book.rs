@@ -74,7 +74,7 @@ fn the_lead_takes_no_claims_not_even_a_verify() {
 #[test]
 fn start_a_riff_says_which_session_is_your_lead() {
     let page = read("start-a-riff.md");
-    assert!(page.contains("The first session that you start in a project is your lead."));
+    assert!(page.contains("riff starts your\nlead there"));
     assert!(page.contains("(how-it-works.md#the-lead)"));
 }
 

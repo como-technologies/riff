@@ -16,6 +16,8 @@ use riff_core::wire::{RiffState, StartReason};
 
 /// A `tmux` that answers the calls of `riff workers start`.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 case "$1" in
   display-message) echo "@0" ;;
   new-window) echo "@7 %1" ;;

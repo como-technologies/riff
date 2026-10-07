@@ -20,6 +20,8 @@ use riff_core::wire::RiffState;
 
 /// A tmux with no worker pane.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 case "$1" in
   display-message) echo "@0" ;;
 esac

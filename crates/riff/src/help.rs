@@ -26,7 +26,6 @@
 
 use std::ffi::OsString;
 use std::fmt::Write;
-use std::io::IsTerminal;
 
 use clap::builder::StyledStr;
 use clap::error::ErrorKind;
@@ -124,17 +123,9 @@ pub fn grouped(cmd: Command, groups: &[Group]) -> Command {
 }
 
 /// Parse the arguments of this process with `cmd`. See [`try_matches`].
-/// With no argument at all, show the help on stderr and exit with 2.
-pub fn matches(mut cmd: Command) -> ArgMatches {
-    if std::env::args_os().len() == 1 {
-        let help = cmd.render_help();
-        if std::io::stderr().is_terminal() {
-            eprint!("{}", help.ansi());
-        } else {
-            eprint!("{help}");
-        }
-        std::process::exit(2);
-    }
+/// With no argument at all, `riff` starts the riff (see
+/// [`crate::start`]).
+pub fn matches(cmd: Command) -> ArgMatches {
     try_matches(cmd, std::env::args_os()).unwrap_or_else(|e| e.exit())
 }
 

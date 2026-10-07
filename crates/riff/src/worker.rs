@@ -360,7 +360,7 @@ pub fn profile_rules(
     let here = std::env::current_dir().map_err(|e| no(&e.to_string()))?;
     let clone = identity::main_worktree(&here).ok_or_else(|| no("it runs in no git repository"))?;
     let temp = temp.map_or_else(std::env::temp_dir, Path::to_path_buf);
-    let session = crate::role_rules::worker_session(&clone, &temp, claude, server)
+    let session = crate::role_rules::clone_session(&clone, &temp, claude, server)
         .ok_or_else(|| no("it has no HOME, or the server URL has no host"))?;
     crate::role_rules::here(crate::profile::Role::Worker, &session)
 }

@@ -19,6 +19,8 @@ use riff_core::wire::{RiffState, Status};
 /// `list-panes -a` lists the worker panes with their session marks, from
 /// the file `workers`. `kill-pane` removes a pane from it.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
 n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
@@ -909,7 +911,8 @@ fn the_book_has_a_how_to_for_each_step() {
         .find("## Run the lead and its workers in tmux")
         .unwrap()..];
     for (heading, command) in [
-        ("### Start the lead in tmux", "claude --remote-control"),
+        ("### Start the riff", "```sh\nriff\n```"),
+        ("### Start the riff", "tmux -L riff ls"),
         ("### Start workers", "riff workers start 3"),
         ("### Start workers", "riff workers start 1 --claude "),
         (

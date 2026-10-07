@@ -22,6 +22,8 @@ use riff_server::store::Memory;
 /// Logs each call. `list-panes` prints the file `panes`, `kill-pane -t
 /// P` takes the line of `P` out of it.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 dir="$(dirname "$0")"
 printf '%s\n' "$*" >> "$dir/log"
 case "$1" in

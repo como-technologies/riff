@@ -1469,6 +1469,34 @@ workers start started nothing. Your user sets the limit, for example: riff worke
 pub const WORKER_STARTS_NO_WORKER: &str =
     "riff: a worker never starts workers. riff workers start started nothing.";
 
+/// The refusal of `riff` with no command in a worker.
+pub const WORKER_STARTS_NO_RIFF: &str = "a worker never starts the riff. riff started nothing.";
+
+/// The line of `riff` when the lead of `repo` runs already
+/// (01M4BSSX3RSK79ZSJZZB1S0NYF).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_runs("como/riff"),
+///     "The lead of como/riff runs. riff shows it.",
+/// );
+/// ```
+pub fn lead_runs(repo: &str) -> String {
+    format!("The lead of {repo} runs. riff shows it.")
+}
+
+/// The line of `riff` when it started the lead of `repo` in `clone`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_started("como/riff", "/src/riff".as_ref()),
+///     "riff started the lead of como/riff in /src/riff.",
+/// );
+/// ```
+pub fn lead_started(repo: &str, clone: &std::path::Path) -> String {
+    format!("riff started the lead of {repo} in {}.", clone.display())
+}
+
 /// The refusal of `riff workers start` in an agent session that is not
 /// the lead (01M3JPQT79FE47518Z8DFFQYYG).
 pub const NOT_THE_LEAD_STARTS_NO_WORKER: &str = "riff: only the lead of your user starts \

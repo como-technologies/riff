@@ -228,14 +228,15 @@ pub fn pattern(path: &Path) -> String {
     out
 }
 
-/// The session of a worker in the main clone `clone`, with the temp
-/// folder `temp`, from the variables of this process. A worker starts
-/// with no item, so its worktree is the folder of the worktrees of the
-/// clone, and its target is in it (01M4BT341H1M1N1MT947HXNXDR). The
+/// The session of a worker or of the lead in the main clone `clone`,
+/// with the temp folder `temp`, from the variables of this process. A
+/// worker starts with no item, so its worktree is the folder of the
+/// worktrees of the clone, and its target is in it
+/// (01M4BT341H1M1N1MT947HXNXDR). The lead gets no path from them. The
 /// tools are the toolchain of Rust, the binaries of riff and of
 /// `claude`, the plugin of riff and the settings of riff. `None` with no
 /// `HOME`, or with a server URL that has no host.
-pub fn worker_session(clone: &Path, temp: &Path, claude: &Path, server: &str) -> Option<Session> {
+pub fn clone_session(clone: &Path, temp: &Path, claude: &Path, server: &str) -> Option<Session> {
     let home = PathBuf::from(std::env::var_os("HOME").filter(|h| !h.is_empty())?);
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|r| !r.is_empty())

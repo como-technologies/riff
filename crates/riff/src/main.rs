@@ -12,7 +12,7 @@ use riff::link::STREAM_RETRY;
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
-    local, login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view,
+    local, login, mcp, next, permissions, plugin, pr, settings, start, terminal, text, usage, view,
     worker,
 };
 use riff_core::build::{Build, Mismatch};
@@ -30,11 +30,14 @@ const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 /// (01M3MEEFETT9A0DRWBKQTG77Z2).
 const LEFT_POLL: Duration = Duration::from_millis(250);
 
+/// The longest wait of the picker of `riff` for the state of the riff.
+const START_WAIT: Duration = Duration::from_secs(5);
+
 /// The hidden option in which a watch gives the end of its wait to the
 /// new binary of an update (01M3Z64J08GW6N1H42AR2FZQZ4).
 const UNTIL_ARG: &str = "--until";
 
-/// The local client that finds sessions and wakes yours.
+/// The local client of riff. With no command, it starts the riff.
 #[derive(Parser)]
 #[command(version = riff_core::build::VERSION, about)]
 struct Cli {
@@ -57,7 +60,7 @@ struct Cli {
     place: Option<Place>,
 
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -1271,10 +1274,14 @@ async fn main() -> Result<()> {
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
     use_color(cli.color);
+    let Some(command) = cli.command else {
+        let (server, _) = server_of(cli.server.as_deref())?;
+        return start(&server).await;
+    };
     // Each entry of the plugin does nothing where riff is off
     // (01M3XY2ST8R67SKTXJECAYJZRX). A `riff mcp` that an update started
     // again serves a session that runs: it goes on.
-    match &cli.command {
+    match &command {
         Command::Hook { .. } | Command::Statusline if !enable::State::here().on => return Ok(()),
         Command::Mcp { client: None, .. } if !enable::State::here().on => {
             return mcp::serve_off().await;
@@ -1282,7 +1289,7 @@ async fn main() -> Result<()> {
         _ => {}
     }
     let (server, source) = server_of(cli.server.as_deref())?;
-    if let Command::Server = cli.command {
+    if let Command::Server = command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
         anstream::println!("{}", text::server_view(&view));
         return Ok(());
@@ -1293,7 +1300,7 @@ async fn main() -> Result<()> {
         background,
         cargo,
         claude,
-    } = &cli.command
+    } = &command
     {
         if let Some(auto) = auto {
             let path = settings::path()?;
@@ -1325,7 +1332,7 @@ async fn main() -> Result<()> {
     }
     if let Command::Hook {
         event: HookEvent::SessionStart,
-    } = cli.command
+    } = command
     {
         let output = session_start(&server).await;
         if !output.is_empty() {
@@ -1335,21 +1342,21 @@ async fn main() -> Result<()> {
     }
     if let Command::Hook {
         event: HookEvent::SessionEnd,
-    } = cli.command
+    } = command
     {
         session_end(&server).await;
         return Ok(());
     }
     if let Command::Hook {
         event: HookEvent::Stop,
-    } = cli.command
+    } = command
     {
         stop_hook();
         return Ok(());
     }
     if let Command::Hook {
         event: HookEvent::Tool { done },
-    } = cli.command
+    } = command
     {
         let mut stdin = String::new();
         let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -1363,7 +1370,7 @@ async fn main() -> Result<()> {
     }
     if let Command::Hook {
         event: HookEvent::Prompt,
-    } = cli.command
+    } = command
     {
         let mut stdin = String::new();
         let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -1378,7 +1385,7 @@ async fn main() -> Result<()> {
                 transcript,
                 turns,
             },
-    } = &cli.command
+    } = &command
     {
         if let Err(e) = clear_check(session, pane, transcript.as_deref(), *turns, &server).await {
             eprintln!("riff: cannot clear the context of the worker: {e:#}");
@@ -1392,7 +1399,7 @@ async fn main() -> Result<()> {
                 transcript,
                 pane,
             },
-    } = cli.command
+    } = command
     {
         let check = riff::compact::Check {
             session,
@@ -1406,20 +1413,20 @@ async fn main() -> Result<()> {
     }
     if let Command::Hook {
         event: HookEvent::Usage { session, before },
-    } = &cli.command
+    } = &command
     {
         if let Some(meter) = usage::Meter::here() {
             meter.release_all(session, *before);
         }
         return Ok(());
     }
-    if let Command::Usage { issue, wave, total } = &cli.command {
+    if let Command::Usage { issue, wave, total } = &command {
         print!("{}", usage_text(issue.as_deref(), wave.as_deref(), *total)?);
         return Ok(());
     }
     if let Command::Lead {
         command: Some(LeadCommand::Compact { switch, quiet }),
-    } = &cli.command
+    } = &command
     {
         let path = settings::path()?;
         if let Some(switch) = switch {
@@ -1434,7 +1441,7 @@ async fn main() -> Result<()> {
     }
     if let Command::Lead {
         command: Some(LeadCommand::Blocked { wake, notify }),
-    } = &cli.command
+    } = &command
     {
         let path = settings::path()?;
         if let Some(wake) = wake {
@@ -1450,7 +1457,7 @@ async fn main() -> Result<()> {
     if let Command::Watch {
         command: Some(WatchCommand::Limit { seconds }),
         ..
-    } = &cli.command
+    } = &command
     {
         let path = settings::path()?;
         if let Some(seconds) = seconds {
@@ -1460,13 +1467,13 @@ async fn main() -> Result<()> {
         anstream::println!("{}", view::watch_limit(limit, &path));
         return Ok(());
     }
-    if let Command::Statusline = cli.command {
+    if let Command::Statusline = command {
         println!("{}", statusline(&server).await);
         return Ok(());
     }
     if let Command::Connect {
         tool: Tool::Claude { claude, scope },
-    } = &cli.command
+    } = &command
     {
         let settings = plugin::user_settings();
         let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
@@ -1480,29 +1487,29 @@ async fn main() -> Result<()> {
         ask_auto_update();
         return Ok(());
     }
-    if let Command::Setup { check } = cli.command {
+    if let Command::Setup { check } = command {
         return setup(check);
     }
-    if let Command::Enable { place } | Command::Disable { place } = &cli.command {
-        let on = matches!(cli.command, Command::Enable { .. });
+    if let Command::Enable { place } | Command::Disable { place } = &command {
+        let on = matches!(command, Command::Enable { .. });
         println!("{}", text::enabled(&set_enabled(place.place(), on)?, on));
         return Ok(());
     }
-    if let Command::Worktrees(WorktreesCommand::Clean) = &cli.command {
+    if let Command::Worktrees(WorktreesCommand::Clean) = &command {
         for line in riff::worktrees::clean_as_person(&identity::working_dir()?, &server).await? {
             println!("{line}");
         }
         return Ok(());
     }
-    if let Command::Workers { command, long } = &cli.command {
+    if let Command::Workers { command, long } = &command {
         return workers(command.as_ref(), *long, &server).await;
     }
-    if let Command::Cloud { command } = &cli.command {
+    if let Command::Cloud { command } = &command {
         return cloud(command).await;
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
-    } = &cli.command
+    } = &command
     {
         eprintln!("{}", text::pr_waits(*number));
         let every = Duration::from_secs(*every);
@@ -1523,7 +1530,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let api = Api::new(&server);
-    match &cli.command {
+    match &command {
         Command::Login => {
             let sign_in = login::login(&api, open_browser).await?;
             println!("{}", text::signed_in(&sign_in.user, api.base()));
@@ -1614,7 +1621,7 @@ async fn main() -> Result<()> {
     if let Some(id) = me.who().session()
         && local::left_here(id)
     {
-        match cli.command {
+        match command {
             Command::Mcp { .. } => {}
             Command::Watch { .. } => {
                 println!("{}", text::WATCH_LEFT);
@@ -1624,7 +1631,7 @@ async fn main() -> Result<()> {
         }
     }
     let api = api.signed_in(me.who().session())?;
-    match cli.command {
+    match command {
         Command::Whoami => {
             let pauses = api.pauses(&me).await.map_err(|e| format!("{e:#}"));
             anstream::print!("{}", view::whoami(&me, pauses));
@@ -2211,6 +2218,108 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         Err(e) => eprintln!("riff: cannot clean the worktrees: {e:#}"),
     }
     Ok(())
+}
+
+/// `riff` with no command (01M4BSSWWEBVHZGXCVYMJ7D7PQ): the picker, then
+/// the lead of the picked repository in the tmux server of riff. See
+/// [`riff::start`].
+async fn start(server: &str) -> Result<()> {
+    if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
+        anyhow::bail!(text::WORKER_STARTS_NO_RIFF);
+    }
+    let dir = local::dir().context("cannot find the local files of riff: set HOME")?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    let config = dir.join(start::CONFIG_FILE);
+    std::fs::write(&config, start::CONFIG)
+        .with_context(|| format!("cannot write {}", config.display()))?;
+    let here = identity::working_dir()?;
+    let text = std::fs::read_to_string(dir.join(start::CLONES)).unwrap_or_default();
+    let mut paths = start::known(&text);
+    paths.push(here.clone());
+    let clones = start::clones(&paths);
+    let rows = start::rows(
+        &clones,
+        riff_of(server, &here)
+            .await
+            .as_ref()
+            .map(|(p, w)| (p, &w[..])),
+    );
+    let clone = start::choose(
+        &rows,
+        &here,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout(),
+    )?;
+    start::remember(&dir, &clone.path)?;
+    let tmux = start::RiffTmux::new("tmux", &config);
+    let name = start::session_name(&clone.repo);
+    if tmux.has_session(&name)? {
+        println!("{}", text::lead_runs(&clone.repo));
+    } else {
+        let env = vec![("RIFF_SERVER".to_owned(), server.to_owned())];
+        let claude = std::path::Path::new("claude");
+        let settings = lead_settings(&dir, &name, &clone.path, claude, server);
+        let command = start::lead_command(claude, settings.as_deref());
+        tmux.new_session(&name, &clone.path, &env, &command)?;
+        println!("{}", text::lead_started(&clone.repo, &clone.path));
+    }
+    let inside = start::inside_riff(std::env::var_os("TMUX").as_deref());
+    let status = tmux
+        .attach(&name, inside)
+        .status()
+        .context("cannot run tmux")?;
+    if !status.success() {
+        anyhow::bail!("tmux could not show the session {name}");
+    }
+    Ok(())
+}
+
+/// Writes the permission rules of the lead of `clone` to its file in
+/// `dir`, and gives the file. With no rules, it says why and gives
+/// `None` (01M4BT33Z914GBHCGCAXFVQ2X7).
+fn lead_settings(
+    dir: &std::path::Path,
+    name: &str,
+    clone: &std::path::Path,
+    claude: &std::path::Path,
+    server: &str,
+) -> Option<std::path::PathBuf> {
+    let role = riff::profile::Role::Lead;
+    let rules = riff::role_rules::clone_session(clone, &std::env::temp_dir(), claude, server)
+        .ok_or_else(|| text::no_role_rules(role, "it has no HOME, or the server URL has no host"))
+        .and_then(|session| riff::role_rules::here(role, &session));
+    let file = start::lead_settings_file(dir, name);
+    let written = rules.and_then(|rules| {
+        start::write_lead_settings(&file, &rules)
+            .map_err(|e| text::no_role_rules(role, &format!("{e:#}")))
+    });
+    match written {
+        Ok(()) => Some(file),
+        Err(why) => {
+            eprintln!("{why}");
+            None
+        }
+    }
+}
+
+/// The pauses and the sessions of the riff at `server`, as the person
+/// in `here` sees them. `None` when riff-server does not answer in
+/// [`START_WAIT`].
+async fn riff_of(
+    server: &str,
+    here: &std::path::Path,
+) -> Option<(
+    riff_core::wire::RiffReply,
+    Vec<riff_core::wire::SessionInfo>,
+)> {
+    let ask = async {
+        let api = Api::new(server);
+        let place = identity::place(here)?;
+        let me = identity::person(&Place::host_only(place.host())?, api.base())?;
+        let api = api.signed_in(None)?;
+        anyhow::Ok((api.pauses(&me).await?, api.who(&me, false).await?))
+    };
+    tokio::time::timeout(START_WAIT, ask).await.ok()?.ok()
 }
 
 /// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it

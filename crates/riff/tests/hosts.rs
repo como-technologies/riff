@@ -24,6 +24,8 @@ use riff_core::wire::{RiffState, Status};
 /// window when it was the last pane. A new pane whose program does not
 /// exist goes to the file `dead`: `set-option` on it fails.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
 if [ -f "$dir/slow" ]; then

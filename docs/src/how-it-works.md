@@ -3471,10 +3471,10 @@ riff tail
 
 ## Run the lead and its workers in tmux
 
+`riff` starts the lead in tmux (see [Start the riff](#start-the-riff)).
 In tmux, riff lays out your sessions. The lead gets a `riff tail`
 pane beside it. Your workers get a window of their own, with one pane
-each. Outside tmux, start each session by hand, as in
-[Start a Riff](start-a-riff.md).
+each.
 
 ```mermaid
 flowchart LR
@@ -3532,16 +3532,51 @@ riff who
 Error: cannot reach riff-server at http://127.0.0.1:7878
 ```
 
-### Start the lead in tmux
+### Start the riff
 
-Start tmux in your repository, then start the lead with Remote
-Control (see
-[Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
+Run `riff` with no command in a terminal. It is the one step that
+starts the lead of a repository:
 
 ```sh
-tmux new -s riff
-claude --remote-control
+riff
 ```
+
+riff shows the repositories that it knows on this machine, with the
+state of each. The clone of the current directory is in the list too:
+
+```text
+The riff repositories on this machine:
+  1  como-technologies/riff    running, 4 live sessions  /home/ada/src/riff
+  2  como-technologies/strata  paused, 0 live sessions  /home/ada/src/strata
+Type a number, or the path of a new clone:
+```
+
+Type a number, or the path of a clone that is not in the list. riff
+keeps each clone that you pick, so the list shows it the next time.
+
+riff then shows the tmux session of that repository. When it does not
+run yet, riff starts it with the lead in the main clone, with Remote
+Control (see
+[Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
+`claude --remote-control`. The lead also gets the permission rules of
+its profile (see [The sandbox of each role](#the-sandbox-of-each-role)).
+riff writes them to a file in its local folder, at each start of a
+lead, for example `lead/como-technologies/riff.json`. When riff cannot
+make them, it says why in one line and starts the lead with no rules
+of a profile. When the session runs, riff shows it and
+starts no second lead. To leave the session and keep it running, press
+`Ctrl-b d`. Run `riff` again to come back.
+
+riff runs its own tmux server, with the socket `riff` and a config of
+its own. Your `~/.tmux.conf` does not change a riff pane. To list the
+sessions of that server by hand:
+
+```sh
+tmux -L riff ls
+```
+
+Outside tmux, `riff workers` and `riff workers stop` use the tmux
+server of riff.
 
 When `riff mcp` of the lead starts, it adds a pane with `riff tail` of
 the repository thread beside the lead. It adds the pane once: a restart,
