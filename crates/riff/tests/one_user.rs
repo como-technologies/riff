@@ -46,12 +46,9 @@ fn broken_sign_in(server: &str) {
 #[test]
 fn a_keyring_error_stops_the_user_lookup() {
     let server = "http://127.0.0.1:9";
-    // SAFETY: this test binary changes the environment only here.
-    unsafe { std::env::remove_var("RIFF_USER") };
-    let place = identity::place(std::path::Path::new(".")).unwrap();
 
     broken_sign_in(server);
-    let error = format!("{:#}", identity::me(&place, server).unwrap_err());
+    let error = format!("{:#}", identity::user_with(None, server).unwrap_err());
     assert!(
         error.contains("Unlock the keyring, or set RIFF_USER"),
         "{error}"
