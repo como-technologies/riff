@@ -165,8 +165,9 @@ flowchart LR
 - To wait for a fact, use `span.within(LIMIT)` in the loop and in its
   assert. For a future, use `isolated::in_time(LIMIT, future)` in
   place of `tokio::time::timeout`.
-- To check the speed of a step, use `span.fast(LIMIT)`. It also
-  passes when the CPU time of the step is under the limit.
+- To check that a step returns at once, use `span.within(LIMIT)`
+  after the step. A low CPU time does not pass a check: a step that
+  waits uses no CPU time.
 - Each check fails after 60 s (`isolated::HANG`): that is a hang.
 
 ```rust,ignore

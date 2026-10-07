@@ -10,7 +10,12 @@
 //! | To check | Use | It fails when |
 //! |---|---|---|
 //! | A wait for a fact: a line, a message, a file | [`Span::within`], [`in_time`] | the wall clock passes the limit and the CPU pressure is low, or the wall clock passes [`HANG`] |
-//! | The speed of a step | [`Span::fast`] | the CPU time and the wall clock pass the limit and the CPU pressure is low, or the wall clock passes [`HANG`] |
+//! | A step that returns at once | [`Span::within`] after the step | the same |
+//!
+//! A check never passes on a low CPU time: a step that waits, for a
+//! lock, a child or a sleep, uses no CPU time and is still slow.
+//! [`Span::cpu`] goes in the message of a failed check, so the log
+//! shows whether the step computed or waited.
 //!
 //! The CPU pressure is the share of the wall time of the span in which
 //! a task of the machine waited for a CPU: the `some` line of
@@ -25,9 +30,7 @@
 //!     B -- yes --> P[pass]
 //!     B -- no --> H{wall under HANG?}
 //!     H -- no --> F[fail: a hang]
-//!     H -- yes --> C{fast: CPU time under the limit?}
-//!     C -- yes --> P
-//!     C -- no, or within --> L{CPU pressure over the limit?}
+//!     H -- yes --> L{CPU pressure over the limit?}
 //!     L -- yes --> S[print slow under load, pass]
 //!     L -- no --> F2[fail: the logic is slow]
 //! ```
@@ -177,38 +180,6 @@ impl Span {
             return true;
         }
         wall < HANG && self.slow_under_load(wall, limit)
-    }
-
-    /// True when a step is fast: its wall time is under `limit`, or its
-    /// CPU time is under `limit`, or it is under load. A wall time of
-    /// [`HANG`] or more is never fast. Use it in an assert after the
-    /// step.
-    ///
-    /// ```standalone_crate
-    /// use std::time::Duration;
-    ///
-    /// let dir = tempfile::tempdir()?;
-    /// let file = dir.path().join("cpu");
-    /// std::fs::write(&file, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")?;
-    /// // A step that waits uses little CPU time: it is fast.
-    /// let span = isolated::Span::with_pressure_file(&file);
-    /// std::thread::sleep(Duration::from_millis(50));
-    /// assert!(span.fast(Duration::from_millis(40)));
-    /// // A step that computes for longer than the limit is slow.
-    /// let span = isolated::Span::with_pressure_file(&file);
-    /// let mut n = 0u64;
-    /// while span.cpu() < Duration::from_millis(30) {
-    ///     n = std::hint::black_box(n + 1);
-    /// }
-    /// assert!(!span.fast(Duration::from_millis(10)));
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
-    pub fn fast(&self, limit: Duration) -> bool {
-        let wall = self.wall();
-        if wall < limit {
-            return true;
-        }
-        wall < HANG && (self.cpu() < limit || self.slow_under_load(wall, limit))
     }
 
     /// True when the span is under load. It says so one time on stderr,

@@ -133,7 +133,7 @@ impl Worker {
         let span = isolated::Span::start();
         self.end_turn(id, worker, transcript);
         assert!(
-            span.fast(Duration::from_secs(1)),
+            span.within(Duration::from_secs(1)),
             "{:?}, CPU {:?}",
             span.wall(),
             span.cpu()
