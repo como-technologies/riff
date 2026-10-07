@@ -152,6 +152,9 @@ impl Machine {
             .env("RIFF_MACHINE", PANGOLIN)
             .env("TMUX", "/tmp/tmux-1000/default,1,0")
             .env("TMUX_PANE", "%0")
+            // The memory pressure of the machine of the test does not
+            // count: a test sets its own.
+            .env(riff::jobserver::PSI_VAR, self.root.path().join("no-psi"))
             // A test that runs in a worker has the pool and the test
             // runner of that worker: the machine of the test has none.
             .env_remove("MAKEFLAGS");
@@ -197,14 +200,17 @@ impl Machine {
         self.wrapper_in(nice, claude, &[])
     }
 
-    fn wrapper_in(&self, mut cmd: Command, claude: &Path, vars: &[(&str, &str)]) -> Output {
+    fn wrapper_in(&self, cmd: Command, claude: &Path, vars: &[(&str, &str)]) -> Output {
+        self.wrapper_command(cmd, claude, vars).output().unwrap()
+    }
+
+    fn wrapper_command(&self, mut cmd: Command, claude: &Path, vars: &[(&str, &str)]) -> Command {
         cmd.arg(claude)
             .arg("Join the riff.")
             .env("RIFF_SESSION", "w1")
             .env("TMUX_PANE", "%5")
-            .envs(vars.iter().copied())
-            .output()
-            .unwrap()
+            .envs(vars.iter().copied());
+        cmd
     }
 }
 
@@ -236,8 +242,8 @@ fn nice_here() -> u8 {
 }
 
 /// 01M3WFYZRK5CT22GJW6ZHYT9CC and 01M3ZGZMJ9RF1C4AHG78GQ2NM4: the wrapper
-/// holds the pool and gives `claude` its `MAKEFLAGS`, the test runner,
-/// the fixed share in `RUST_TEST_THREADS`, and no `CARGO_BUILD_JOBS`.
+/// holds the pool and gives `claude` its `MAKEFLAGS` and the test runner,
+/// and no `CARGO_BUILD_JOBS` and no `RUST_TEST_THREADS`.
 /// The setting turns the pool off and replaces the number.
 #[test]
 fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
@@ -251,16 +257,19 @@ fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
         m.root.path().join("home").display(),
         seen.display()
     ));
-    // 16 cores and 4 workers: a pool of 16 - 1 - 4 tokens, 15 / 4 test
-    // threads each.
+    // 16 threads and 4 workers: a pool of 16 - 2 - 4 tokens. The test
+    // threads come from the pool too: no RUST_TEST_THREADS.
     m.workers(&["limit", "4"]);
-    let out = m.wrapper(&claude, &[("CARGO_BUILD_JOBS", "64")]);
+    let out = m.wrapper(
+        &claude,
+        &[("CARGO_BUILD_JOBS", "64"), ("RUST_TEST_THREADS", "9")],
+    );
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let fifo = m.root.path().join("home/state/jobs/fifo");
     let seen_now = read(&seen);
-    let prefix = format!("[] 3 [-j --jobserver-auth=fifo:{}] [/", fifo.display());
+    let prefix = format!("[]  [-j --jobserver-auth=fifo:{}] [/", fifo.display());
     assert!(
-        seen_now.starts_with(&prefix) && seen_now.ends_with(" workers test-run]\n11"),
+        seen_now.starts_with(&prefix) && seen_now.ends_with(" workers test-run]\n10"),
         "the variables of the person do not win over the pool: {seen_now}"
     );
     assert_eq!(
@@ -271,12 +280,70 @@ fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     // 16 cores and 16 workers: 1 or more.
     m.workers(&["limit", "16"]);
     m.wrapper(&claude, &[]);
-    assert!(read(&seen).starts_with("[] 1 [-j"), "{}", read(&seen));
+    assert!(read(&seen).ends_with("\n1"), "{}", read(&seen));
     // The setting wins, with no pool, and no variable of an outer pool
     // stays (01M41CR2HJRFW6R7YMJTPVEMJ1).
     m.workers(&["jobs", "6"]);
     m.wrapper(&claude, &outer_pool(&riff::limits::runner_var()));
     assert!(read(&seen).starts_with("[6] 6 [] []"), "{}", read(&seen));
+}
+
+/// Waits until the pool in `dir` has `free` free tokens.
+fn wait_for_free(dir: &Path, free: u16) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let now = riff::jobserver::state(dir).map(|s| s.free);
+        if now == Some(free) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < end,
+            "free tokens: {now:?}, not {free}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// 01M49XNPMXD3SF6JHBYV9DN59M: while the memory pressure is above the
+/// limit, the pool gives out no new token. Under the limit, it gives
+/// them out again. `riff workers jobs` shows the pressure.
+#[test]
+fn memory_pressure_above_the_limit_stops_new_tokens() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let psi = m.root.path().join("pressure");
+    let high = "some avg10=40.00 avg60=20.00 avg300=5.00 total=1\n\
+                full avg10=10.00 avg60=5.00 avg300=1.00 total=1\n";
+    let low = "some avg10=1.00 avg60=0.50 avg300=0.10 total=2\n\
+               full avg10=0.00 avg60=0.00 avg300=0.00 total=2\n";
+    std::fs::write(&psi, high).unwrap();
+    let stop = m.root.path().join("stop");
+    let claude = m.claude(&format!(
+        "while [ ! -f '{}' ]; do sleep 0.1; done",
+        stop.display()
+    ));
+    m.workers(&["limit", "4"]);
+    let psi_var = (riff::jobserver::PSI_VAR, psi.to_str().unwrap());
+    let mut wrapper = m
+        .wrapper_command(m.riff(&["workers", "run"]), &claude, &[psi_var])
+        .spawn()
+        .unwrap();
+    let dir = m.root.path().join("home/state/jobs");
+    wait_for_free(&dir, 0);
+    let shown = stdout(
+        &m.riff(&["workers", "jobs"])
+            .env(psi_var.0, psi_var.1)
+            .output()
+            .unwrap(),
+    );
+    assert!(
+        shown.contains("Now it is 40.0%: the pool gives out no new token."),
+        "{shown}"
+    );
+
+    std::fs::write(&psi, low).unwrap();
+    wait_for_free(&dir, 10);
+    std::fs::write(&stop, "").unwrap();
+    assert!(wrapper.wait().unwrap().success());
 }
 
 /// 01M3ZGZMRHXRBP762QPVCV0YX8: when riff cannot make the pool, the
@@ -351,8 +418,7 @@ fn with_no_physical_cores_riff_counts_half_of_the_logical_cpus() {
         .unwrap();
     let jobs = stdout(&out);
     assert!(jobs.contains(said), "{jobs}");
-    assert!(jobs.contains("one pool of 5 tokens"), "8 - 1 - 2: {jobs}");
-    assert!(jobs.contains("tests with 3 threads"), "7 / 2: {jobs}");
+    assert!(jobs.contains("one pool of 12 tokens"), "16 - 2 - 2: {jobs}");
 
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
@@ -363,7 +429,7 @@ fn with_no_physical_cores_riff_counts_half_of_the_logical_cpus() {
     ));
     let out = m.wrapper(&claude, &[(riff::limits::CPUINFO, cpuinfo)]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(read(&seen), "3\n5");
+    assert_eq!(read(&seen), "\n12");
 
     script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     let start = |n: &str| {
@@ -400,8 +466,8 @@ fn the_numbers_count_the_workers_over_the_limit() {
     ));
     let out = m.wrapper(&claude, &[]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    // 16 cores and 4 workers, not 2: 15 / 4 threads, 16 - 1 - 4 tokens.
-    assert_eq!(read(&seen), "3 11 4\n");
+    // 16 threads and 4 workers, not 2: 16 - 2 - 4 tokens.
+    assert_eq!(read(&seen), " 10 4\n");
     assert_eq!(riff::jobserver::workers(&dir), 3, "the wrapper left");
 
     // A pool for 2 workers, and 3 that run.
@@ -476,7 +542,7 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     let out = m.wrapper(&claude, &[]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(m.log("systemd-run.log"), "", "no slice: no scope");
-    assert_eq!(read(&seen).trim(), "1 3 Join the riff.");
+    assert_eq!(read(&seen).trim(), "1  Join the riff.");
 
     std::fs::remove_file(&seen).unwrap();
     let out = m.wrapper(&claude, &[("RIFF_WORKER_SLICE", "riff-workers.slice")]);
@@ -496,7 +562,7 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
         "{log:?}"
     );
     // claude still gets its marks, its jobs and its arguments.
-    assert_eq!(read(&seen).trim(), "1 3 Join the riff.");
+    assert_eq!(read(&seen).trim(), "1  Join the riff.");
 }
 
 /// A fake `systemd-run` with no user bus in the pane.
@@ -714,12 +780,14 @@ fn each_setting_of_the_limits_shows_and_sets_its_value() {
     assert_eq!(
         m.workers(&["jobs"]),
         format!(
-            "workers.jobs  0  {file}\nThe machine has 16 physical cores. All workers take \
-             their compile jobs from one pool of 11 tokens: the physical cores less 1, less 4 \
-             workers (the limit, or the workers that run when they are more). Each build also \
-             has one job of its own. No worker runs now. Each worker tests with 3 threads, from \
-             the same pool. Set it with: riff workers jobs N (N turns the pool off; 0: the \
-             pool)\n"
+            "workers.jobs  0  {file}\nThe machine has 16 physical cores and 16 hardware \
+             threads. All workers take their compile jobs and test threads from one pool of 10 \
+             tokens: the hardware threads less 2, less 4 workers (the limit, or the workers that \
+             run when they are more). Each build also has one job of its own. A test program \
+             takes each free token, and runs one test thread for each. No worker runs now. \
+             While the memory pressure is above 10%, the pool gives out no new token. riff \
+             cannot read the memory pressure of this machine. Set it with: riff workers jobs N \
+             (N turns the pool off; 0: the pool)\n"
         )
     );
     assert!(
@@ -827,7 +895,7 @@ fn the_book_has_a_how_to_for_each_limit() {
     for (heading, command) in [
         (
             "#### Choose the limit from the memory",
-            "riff workers limit 3",
+            "riff workers limit 4",
         ),
         ("#### See the pool of build jobs", "riff workers jobs"),
         ("#### Set the jobs of a worker", "riff workers jobs 4"),
@@ -885,7 +953,8 @@ fn the_skill_says_the_pool_shares_the_cores() {
     let part = &part[..part[3..].find("\n## ").map_or(part.len(), |n| n + 3)];
     for text in [
         "one pool of build jobs",
-        "`MAKEFLAGS`, `RUST_TEST_THREADS` and the\n  cargo test runner",
+        "`MAKEFLAGS` and the cargo test runner",
+        "the free jobs of the pool as its test\n  threads",
         "do not replace the test runner",
         "run that test by its name in a loop",
         "not the full `just ci`",

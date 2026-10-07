@@ -171,8 +171,10 @@ fn hold_pool(dir: Option<&Path>, limits: &Limits) -> Option<jobserver::Pool> {
 }
 
 /// The thread that checks the share of a worker in the pool each
-/// [`jobserver::SHARE_EVERY`] ([`jobserver::share`]). The drop stops it
-/// and gives its token back.
+/// [`jobserver::SHARE_EVERY`] ([`jobserver::share`]). In the first
+/// worker, it also holds tokens back under memory pressure
+/// ([`jobserver::hold_back`]). The drop stops it and gives its tokens
+/// back.
 struct Share {
     stop: Option<std::sync::mpsc::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -183,9 +185,13 @@ impl Share {
         let (stop, stopped) = std::sync::mpsc::channel::<()>();
         let (fifo, counted) = (pool.fifo(), pool.counted());
         let thread = std::thread::spawn(move || {
-            let mut kept = None;
+            let (mut kept, mut held) = (None, None);
             loop {
                 jobserver::share(&fifo, counted, &member, &mut kept);
+                let pressure = (member.rank() == 1)
+                    .then(jobserver::pressure_here)
+                    .flatten();
+                jobserver::hold_back(&fifo, pressure, &mut held);
                 match stopped.recv_timeout(jobserver::SHARE_EVERY) {
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     _ => break,
@@ -228,7 +234,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .and_then(|dir| jobserver::Member::join(dir).ok());
     let workers = dir.as_deref().map_or(0, jobserver::workers);
     let cores = limits::Cores::here(&Machine::here());
-    let limit = Limits::of(&settings::path()?, cores.physical, workers)?;
+    let limit = Limits::of(&settings::path()?, &cores, workers)?;
     let slice = std::env::var(limits::SLICE_VAR)
         .ok()
         .filter(|s| !s.is_empty());

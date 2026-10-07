@@ -393,14 +393,15 @@ impl Numbers {
     /// directory.
     pub fn here(path: &Path, machine: &Machine, workers: u16) -> Result<Numbers> {
         let monitor = settings::monitor(path)?;
-        let physical = Cores::here(machine).physical;
+        let cores = Cores::here(machine);
+        let physical = cores.physical;
         let saved = local::dir().and_then(|dir| Saved::read(&dir));
         Ok(Numbers {
             on: monitor.on,
             load5: load_here(machine).1,
             limit: monitor.load * f64::from(physical),
             physical,
-            jobs: JobLimits::of(path, physical, workers)?.jobs,
+            jobs: JobLimits::of(path, &cores, workers)?.jobs,
             kill: saved.and_then(|s| s.kill).map(|k| Kill {
                 what: String::new(),
                 ..k

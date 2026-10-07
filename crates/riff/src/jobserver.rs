@@ -12,10 +12,11 @@
 //!
 //! A jobserver client has one job with no token. So K builds at once
 //! run at most `tokens + K` jobs. The pool holds
-//! `physical cores - 1 - workers` tokens, 1 or more ([`tokens`]). The
+//! `hardware threads - 2 - workers` tokens, 1 or more ([`tokens`]). The
 //! workers are the worker limit, or the workers that run when they are
 //! more. Then all builds of all workers stay at or below
-//! `physical cores - 1`.
+//! `hardware threads - 2`. A compile job waits for memory and disk a
+//! part of its time, so the second thread of a core does work too.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -25,8 +26,10 @@
 //!     C --> B["cargo build"]
 //!     C --> T["cargo test"]
 //!     B -- "a token for each compile job" --> F
-//!     T --> R["riff workers test-run<br/>takes RUST_TEST_THREADS tokens"]
+//!     T --> R["riff workers test-run<br/>takes the free tokens:<br/>one test thread for each"]
 //!     R -- "tokens back at the end,<br/>also when the test is killed" --> F
+//!     G["the first worker each 5 s:<br/>memory pressure above the limit?"] -- "yes: keep each free token" --> F
+//!     G -- "no: give them back" --> F
 //! ```
 //!
 //! - **Hold** ([`Pool::hold`]). Each `riff workers run` holds the pool
@@ -41,15 +44,25 @@
 //!   gives it back when it is within the count again ([`share`]). So a
 //!   lower limit, with workers over it, and a higher limit, with
 //!   a pool of the old size, both keep the builds at or below
-//!   `physical cores - 1`.
+//!   `hardware threads - 2`.
 //! - **Tests** (01M3ZGZMNH1YM56GYNYBMH7AWM). The test runner of Rust
 //!   does not read tokens. So `riff workers test-run` ([`test_run`])
-//!   takes `RUST_TEST_THREADS` tokens for a test program, runs it, and
-//!   writes the tokens back at its end. One runner at a time collects
+//!   takes tokens for a test program, runs it with one test thread for
+//!   each token, and writes the tokens back at its end. It waits for
+//!   one token, then takes each free token, at most the pool
+//!   ([`take_free`]). A `RUST_TEST_THREADS` that a person sets wins: the
+//!   runner then takes that number. One runner at a time collects
 //!   tokens, so two runners never each hold a part and wait for the
 //!   other. A runner waits at most [`WAIT`], then runs with the tokens
 //!   that it has. Only a program in a `deps` directory is a test
 //!   program: `cargo run` of a program takes no tokens.
+//! - **Memory pressure** (01M49XNPMXD3SF6JHBYV9DN59M). The first worker
+//!   reads the memory pressure ([`pressure_here`]) each
+//!   [`SHARE_EVERY`]. While it is above [`PRESSURE_LIMIT`], the worker
+//!   keeps each free token out of the pool, also each token that comes
+//!   back. So the pool gives out no new token. Under the limit, it gives
+//!   them back ([`hold_back`]). This is the signal that systemd-oomd
+//!   acts on, so the builds slow down before oomd kills a worker.
 //! - **Fallback** (01M3ZGZMRHXRBP762QPVCV0YX8). When riff cannot make
 //!   the pool, each worker gets the fixed share of
 //!   [`crate::limits::jobs`]. `riff workers start` says so one time
@@ -60,8 +73,8 @@
 //! ```
 //! use riff::jobserver::{state, tokens, Pool};
 //!
-//! // pangolin: 8 physical cores and a limit of 3 workers.
-//! assert_eq!(tokens(8, 3), 4);
+//! // pangolin: 16 hardware threads and a limit of 4 workers.
+//! assert_eq!(tokens(16, 4), 10);
 //!
 //! let dir = tempfile::tempdir()?;
 //! let pool = Pool::hold(dir.path(), 4, 1)?;
@@ -118,24 +131,38 @@ pub const SAID: &str = "no-jobserver";
 /// One token in the pipe.
 pub const TOKEN: u8 = b'+';
 
+/// The variable of the test threads of a Rust test program.
+pub const THREADS_VAR: &str = "RUST_TEST_THREADS";
+
 /// The longest wait of a test runner for its tokens.
 pub const WAIT: Duration = Duration::from_secs(600);
 
-/// The tokens of the pool for `physical` cores and a worker `limit`:
-/// `physical - 1 - limit`, and 1 or more. No limit counts as one worker
-/// (01M3ZGZMJ9RF1C4AHG78GQ2NM4).
+/// The file of the memory pressure of the machine (PSI).
+pub const PSI: &str = "/proc/pressure/memory";
+
+/// The variable that names another file for [`PSI`], for a test.
+pub const PSI_VAR: &str = "RIFF_PSI";
+
+/// The memory pressure above which the pool gives out no new token: the
+/// percent of the last 10 s in which some task waited for memory
+/// (`some avg10`) (01M49XNPMXD3SF6JHBYV9DN59M).
+pub const PRESSURE_LIMIT: f32 = 10.0;
+
+/// The tokens of the pool for `threads` hardware threads (the logical
+/// CPUs) and a worker `limit`: `threads - 2 - limit`, and 1 or more. No
+/// limit counts as one worker (01M3ZGZMJ9RF1C4AHG78GQ2NM4).
 ///
 /// ```
 /// use riff::jobserver::tokens;
 ///
-/// assert_eq!(tokens(8, 3), 4);
-/// assert_eq!(tokens(16, 4), 11);
+/// assert_eq!(tokens(16, 4), 10, "pangolin");
+/// assert_eq!(tokens(32, 4), 26);
 /// assert_eq!(tokens(4, 4), 1, "1 or more");
-/// assert_eq!(tokens(8, 0), 6, "no limit counts as one worker");
+/// assert_eq!(tokens(8, 0), 5, "no limit counts as one worker");
 /// ```
-pub fn tokens(physical: u16, limit: u16) -> u16 {
-    physical
-        .saturating_sub(1)
+pub fn tokens(threads: u16, limit: u16) -> u16 {
+    threads
+        .saturating_sub(2)
         .saturating_sub(limit.max(1))
         .max(1)
 }
@@ -479,6 +506,65 @@ pub fn share(fifo: &Path, counted: u16, member: &Member, kept: &mut Option<Token
     }
 }
 
+/// The memory pressure in the text of a PSI file: the `avg10` of the
+/// line `some`, or `None`.
+///
+/// ```
+/// use riff::jobserver::pressure_from;
+///
+/// let psi = "some avg10=12.50 avg60=3.00 avg300=1.00 total=99\n\
+///            full avg10=4.00 avg60=1.00 avg300=0.50 total=42\n";
+/// assert_eq!(pressure_from(psi), Some(12.5));
+/// assert_eq!(pressure_from(""), None);
+/// ```
+pub fn pressure_from(text: &str) -> Option<f32> {
+    text.lines()
+        .find_map(|line| line.strip_prefix("some "))?
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("avg10="))?
+        .parse()
+        .ok()
+}
+
+/// The memory pressure of this machine, from [`PSI`] or the file that
+/// [`PSI_VAR`] names. `None` when riff cannot read it, for example with
+/// no PSI in the kernel: then the pool does not hold tokens back.
+pub fn pressure_here() -> Option<f32> {
+    let file = std::env::var_os(PSI_VAR).unwrap_or_else(|| PSI.into());
+    pressure_from(&std::fs::read_to_string(file).ok()?)
+}
+
+/// One check of the memory `pressure` for the pool of the pipe `fifo`
+/// (01M49XNPMXD3SF6JHBYV9DN59M). Above [`PRESSURE_LIMIT`], it takes each
+/// free token into `held`, so the pool gives out no new token. At or
+/// under the limit, and with no pressure to read, it gives them back.
+///
+/// ```
+/// use riff::jobserver::{hold_back, state, Pool};
+///
+/// let dir = tempfile::tempdir()?;
+/// let pool = Pool::hold(dir.path(), 4, 1)?;
+/// let mut held = None;
+/// hold_back(&pool.fifo(), Some(30.0), &mut held);
+/// assert_eq!(state(dir.path()).map(|s| s.free), Some(0), "no new token");
+/// hold_back(&pool.fifo(), Some(2.0), &mut held);
+/// assert_eq!(state(dir.path()).map(|s| s.free), Some(4), "the tokens are back");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn hold_back(fifo: &Path, pressure: Option<f32>, held: &mut Option<Tokens>) {
+    if !pressure.is_some_and(|p| p > PRESSURE_LIMIT) {
+        *held = None;
+        return;
+    }
+    let Ok(Some(more)) = take(fifo, u16::MAX, Duration::ZERO) else {
+        return;
+    };
+    match held {
+        Some(held) => held.absorb(more),
+        None => *held = Some(more),
+    }
+}
+
 /// Checks that riff can make a pool in the local dir `local`
 /// (01M3ZGZMRHXRBP762QPVCV0YX8). When it cannot, it gives the line to
 /// say, one time: the file [`SAID`] in `local` holds that.
@@ -529,6 +615,11 @@ impl Tokens {
     /// The number of tokens.
     pub fn count(&self) -> usize {
         self.count
+    }
+
+    /// Adds the tokens of `other` to these tokens.
+    fn absorb(&mut self, mut other: Tokens) {
+        self.count += std::mem::take(&mut other.count);
     }
 }
 
@@ -586,6 +677,47 @@ pub fn take(fifo: &Path, want: u16, wait: Duration) -> io::Result<Option<Tokens>
     Ok(Some(tokens))
 }
 
+/// Takes the free tokens of the pool of the pipe `fifo`, at most the
+/// size of the pool (01M3ZGZMNH1YM56GYNYBMH7AWM). It waits at most
+/// `wait` for the first token, as [`take`] does. Then it takes each
+/// token that is free, with no wait. `None` when no process holds the
+/// pool.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::jobserver::{take, take_free, Pool};
+///
+/// let dir = tempfile::tempdir()?;
+/// let pool = Pool::hold(dir.path(), 6, 1)?;
+/// let build = take(&pool.fifo(), 2, Duration::ZERO)?.unwrap();
+/// let test = take_free(&pool.fifo(), Duration::ZERO)?.unwrap();
+/// assert_eq!((build.count(), test.count()), (2, 4), "each free token");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn take_free(fifo: &Path, wait: Duration) -> io::Result<Option<Tokens>> {
+    let Some(mut tokens) = take(fifo, 1, wait)? else {
+        return Ok(None);
+    };
+    let most = fifo
+        .parent()
+        .and_then(size_in)
+        .map_or(1, usize::from)
+        .saturating_sub(tokens.count);
+    let mut buf = vec![0; most];
+    while !buf.is_empty() {
+        match tokens.fifo.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                tokens.count += n;
+                buf.truncate(buf.len() - n);
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(Some(tokens))
+}
+
 /// True when `program` is a test program of cargo: it is in a `deps`
 /// directory.
 ///
@@ -603,12 +735,13 @@ pub fn is_test_program(program: &Path) -> bool {
 }
 
 /// `riff workers test-run PROGRAM ARGS`: the test runner of a worker
-/// (01M3ZGZMNH1YM56GYNYBMH7AWM). For a test program, it takes
-/// `RUST_TEST_THREADS` tokens from the pool that `MAKEFLAGS` names.
-/// Then it runs the program, and gives each signal to it. At the end it
-/// gives the tokens back, also when a signal killed the program.
-/// Returns the exit code: the code of the program, or 128 and the
-/// signal.
+/// (01M3ZGZMNH1YM56GYNYBMH7AWM). For a test program, it takes tokens
+/// from the pool that `MAKEFLAGS` names: each free token
+/// ([`take_free`]), or the `RUST_TEST_THREADS` that a person set. Then
+/// it runs the program with one test thread for each token, and gives
+/// each signal to it. At the end it gives the tokens back, also when a
+/// signal killed the program. Returns the exit code: the code of the
+/// program, or 128 and the signal.
 pub async fn test_run(program: &Path, args: &[String]) -> anyhow::Result<i32> {
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
@@ -618,20 +751,27 @@ pub async fn test_run(program: &Path, args: &[String]) -> anyhow::Result<i32> {
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
     let fifo = std::env::var("MAKEFLAGS").ok().and_then(|m| fifo_of(&m));
-    let want = std::env::var("RUST_TEST_THREADS")
-        .ok()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(1);
+    let want: Option<u16> = std::env::var(THREADS_VAR).ok().and_then(|n| n.parse().ok());
     let tokens = match fifo.filter(|_| is_test_program(program)) {
-        Some(fifo) => tokio::task::spawn_blocking(move || take(&fifo, want, WAIT))
-            .await?
-            .unwrap_or_else(|e| {
-                eprintln!("riff: the test runs with no token from the pool: {e}");
-                None
-            }),
+        Some(fifo) => tokio::task::spawn_blocking(move || match want {
+            Some(want) => take(&fifo, want, WAIT),
+            None => take_free(&fifo, WAIT),
+        })
+        .await?
+        .unwrap_or_else(|e| {
+            eprintln!("riff: the test runs with no token from the pool: {e}");
+            None
+        }),
         None => None,
     };
-    let mut child = tokio::process::Command::new(program).args(args).spawn()?;
+    let mut command = tokio::process::Command::new(program);
+    command.args(args);
+    if want.is_none()
+        && let Some(tokens) = &tokens
+    {
+        command.env(THREADS_VAR, tokens.count().max(1).to_string());
+    }
+    let mut child = command.spawn()?;
     let pid = child
         .id()
         .and_then(|id| i32::try_from(id).ok())
@@ -660,14 +800,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_builds_stay_at_or_below_the_physical_cores_less_one() {
-        for physical in [4u16, 8, 16, 32] {
-            for limit in 1..physical / 2 {
+    fn the_pool_is_the_threads_less_2_less_the_limit() {
+        let at_limit_4: Vec<u16> = [4u16, 8, 16, 32].map(|threads| tokens(threads, 4)).into();
+        assert_eq!(at_limit_4, [1, 2, 10, 26]);
+    }
+
+    #[test]
+    fn all_builds_stay_at_or_below_the_threads_less_2() {
+        for threads in [8u16, 16, 32] {
+            for limit in 1..threads / 2 - 1 {
                 // Each build has one job with no token.
-                let most = tokens(physical, limit) + limit;
-                assert!(most < physical, "{physical} cores, {limit} workers: {most}");
+                let most = tokens(threads, limit) + limit;
+                assert!(
+                    most <= threads - 2,
+                    "{threads} threads, {limit} workers: {most}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn under_pressure_the_tokens_that_come_back_stay_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = Pool::hold(dir.path(), 3, 1).unwrap();
+        let build = take(&pool.fifo(), 2, WAIT).unwrap().unwrap();
+        let mut held = None;
+        hold_back(&pool.fifo(), Some(50.0), &mut held);
+        assert_eq!(held.as_ref().map(Tokens::count), Some(1));
+        drop(build);
+        hold_back(&pool.fifo(), Some(50.0), &mut held);
+        assert_eq!(held.as_ref().map(Tokens::count), Some(3));
+        assert_eq!(state(dir.path()).unwrap().free, 0);
+        hold_back(&pool.fifo(), None, &mut held);
+        assert!(held.is_none(), "no pressure to read: no hold");
+        assert_eq!(state(dir.path()).unwrap().free, 3);
     }
 
     #[test]

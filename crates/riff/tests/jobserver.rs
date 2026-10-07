@@ -218,3 +218,83 @@ fn a_program_of_cargo_run_takes_no_token() {
     assert_eq!(std::fs::read_to_string(&seen).unwrap(), "--flag x\n");
     assert_eq!(jobserver::state(&dir).map(|s| s.free), Some(2));
 }
+
+/// A test program with no `RUST_TEST_THREADS` takes each free token of
+/// the pool, and runs one test thread for each
+/// (01M3ZGZMNH1YM56GYNYBMH7AWM). A real `cargo test` with the test runner
+/// of riff runs two tests that each wait for the other: they pass only
+/// with 2 or more test threads. A third test writes the
+/// `RUST_TEST_THREADS` that it got: 3, the free tokens of a pool of 4
+/// with 1 token held, not the default of the harness.
+#[test]
+fn a_test_program_runs_a_thread_for_each_free_token() {
+    let root = tempfile::tempdir().unwrap();
+    let src = root.path().join("src");
+    std::fs::create_dir_all(src.join("src")).unwrap();
+    std::fs::write(
+        src.join("Cargo.toml"),
+        "[package]\nname = \"both\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("src/lib.rs"),
+        "#[cfg(test)]\n\
+         mod tests {\n\
+             use std::sync::atomic::{AtomicUsize, Ordering};\n\
+             use std::time::{Duration, Instant};\n\
+             static IN: AtomicUsize = AtomicUsize::new(0);\n\
+             fn meet() {\n\
+                 IN.fetch_add(1, Ordering::SeqCst);\n\
+                 let end = Instant::now() + Duration::from_secs(60);\n\
+                 while IN.load(Ordering::SeqCst) < 2 {\n\
+                     assert!(Instant::now() < end, \"one test thread\");\n\
+                     std::thread::sleep(Duration::from_millis(10));\n\
+                 }\n\
+             }\n\
+             #[test] fn one() { meet() }\n\
+             #[test] fn two() { meet() }\n\
+             #[test] fn threads() {\n\
+                 let n = std::env::var(\"RUST_TEST_THREADS\").unwrap_or_default();\n\
+                 std::fs::write(std::env::var(\"THREADS_FILE\").unwrap(), n).unwrap();\n\
+             }\n\
+         }\n",
+    )
+    .unwrap();
+    let threads = root.path().join("threads");
+    let dir = root.path().join("jobs");
+    let pool = Pool::hold(&dir, 4, 1).unwrap();
+    let build = jobserver::take(&pool.fifo(), 1, Duration::ZERO)
+        .unwrap()
+        .unwrap();
+    let runner = format!(
+        "{} workers test-run",
+        Isolated::shared().riff_path().display()
+    );
+    let out = Isolated::shared()
+        .command(env!("CARGO"))
+        .args(["test", "--offline", "--quiet", "--lib"])
+        .current_dir(&src)
+        .env_remove("CARGO_BUILD_JOBS")
+        .env_remove("CARGO_MAKEFLAGS")
+        .env_remove("RUST_TEST_THREADS")
+        .env_remove("CARGO_BUILD_RUSTC_WRAPPER")
+        .env_remove("RUSTC_WRAPPER")
+        .env("MAKEFLAGS", pool.makeflags())
+        .env(riff::limits::runner_var(), runner)
+        .env("CARGO_TARGET_DIR", root.path().join("target"))
+        .env("THREADS_FILE", &threads)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(&threads).unwrap(),
+        "3",
+        "one test thread for each free token"
+    );
+    drop(build);
+    assert_eq!(
+        jobserver::state(&dir).map(|s| s.free),
+        Some(4),
+        "the test gave its tokens back"
+    );
+}
