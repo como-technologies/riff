@@ -66,11 +66,19 @@ impl Client {
             .spawn()
             .unwrap();
         let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
-        let hint = in_time(WAIT, stderr.next_line())
-            .await
-            .expect("riff chat is ready in time")
-            .unwrap()
-            .expect("riff chat prints its hint");
+        // A start that waits for the server can show the wait line first.
+        let hint = in_time(WAIT, async {
+            loop {
+                let line = stderr.next_line().await.unwrap();
+                match line {
+                    Some(line) if line.contains(riff::link::WAITING) => continue,
+                    line => break line,
+                }
+            }
+        })
+        .await
+        .expect("riff chat is ready in time")
+        .expect("riff chat prints its hint");
         assert!(hint.contains(&format!("chat as {user}@{host}")), "{hint}");
         Client {
             stdin: child.stdin.take().unwrap(),

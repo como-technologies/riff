@@ -693,14 +693,23 @@ mod tests {
     /// add up to 875 ms. The line shows before the fourth wait, which
     /// takes the gap past 1 s.
     #[tokio::test(start_paused = true)]
-    async fn a_gap_of_2_s_shows_one_line_with_the_lowest_waits() {
-        assert_eq!(wait_through("lowest", Duration::from_secs(2), |half| half).await, 1);
+    async fn a_gap_of_1_5_s_shows_one_line_with_the_lowest_waits() {
+        let gap = Duration::from_millis(1500);
+        assert_eq!(wait_through("lowest", gap, |half| half).await, 1);
     }
 
+    /// No random part: 250, 500, 1000 ms.
     #[tokio::test(start_paused = true)]
-    async fn a_gap_of_2_s_shows_one_line_with_the_highest_waits() {
-        let none = |_| Duration::ZERO;
-        assert_eq!(wait_through("highest", Duration::from_secs(2), none).await, 1);
+    async fn a_gap_of_1_5_s_shows_one_line_with_the_highest_waits() {
+        let gap = Duration::from_millis(1500);
+        assert_eq!(wait_through("highest", gap, |_| Duration::ZERO).await, 1);
+    }
+
+    /// A long gap shows one line too.
+    #[tokio::test(start_paused = true)]
+    async fn a_gap_of_20_s_shows_one_line() {
+        let gap = Duration::from_secs(20);
+        assert_eq!(wait_through("long", gap, |half| half).await, 1);
     }
 
     /// Two waits of at most 250 and 500 ms show no line.
