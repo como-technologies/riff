@@ -531,6 +531,7 @@ fn the_wrapper_starts_claude_with_nice() {
 #[test]
 fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     let m = Machine::new(isolated::DEAD_SERVER);
+    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
@@ -577,6 +578,7 @@ exit 1
 #[test]
 fn with_no_scope_in_the_pane_the_worker_starts_with_no_scope() {
     let m = Machine::new(isolated::DEAD_SERVER);
+    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", NO_BUS);
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!("echo \"$RIFF_WORKER $1\" > '{}'", seen.display()));
@@ -610,6 +612,7 @@ async fn a_killed_worker_tells_the_lead_and_keeps_its_work() {
     let lead: SessionUri = LEAD.parse().unwrap();
     api.register(&lead).await.unwrap();
     let m = Machine::new(api.base());
+    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
     let main = m.main();
     git(
@@ -657,24 +660,22 @@ fn read_file(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
 }
 
-/// 01M3WFYZX6GVFYW6NTTTKF144R: on a machine with systemd,
-/// `riff workers start` gives the slice of the workers a memory limit
-/// and a CPU weight, and names the slice to each worker. The default
-/// limit is three quarters of the memory. The setting changes it.
+/// 01M3WFYZX6GVFYW6NTTTKF144R, 01M4C2PXZ5WNE4C2CJW2HABPY0: on a machine
+/// with systemd, `riff workers start` calls no `systemctl`: it can run
+/// in the sandbox of the lead. It names the slice to each worker. The
+/// wrapper, outside each sandbox, gives the slice a memory limit and a
+/// CPU weight. The default limit is three quarters of the memory. The
+/// setting changes it.
 #[test]
-fn workers_start_gives_the_slice_a_memory_limit() {
+fn the_wrapper_gives_the_slice_a_memory_limit() {
     let m = Machine::new("http://riff.test:7878");
     script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
+    script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
     m.workers(&["limit", "4"]);
     let out = m.workers(&["start", "2"]);
     assert!(out.contains("Started 2 workers in"), "{out}");
     assert!(!out.contains("systemd"), "{out}");
-    // 30 GB: 23 GB at most, and the OS takes memory back from 9/10 of it.
-    assert_eq!(
-        m.log("systemctl.log").trim(),
-        "--user set-property --runtime riff-workers.slice MemoryHigh=21196M MemoryMax=23552M \
-         CPUWeight=50"
-    );
+    assert_eq!(m.log("systemctl.log"), "", "the start calls no systemctl");
     let tmux = m.log("tmux.log");
     assert_eq!(
         tmux.matches("-e RIFF_WORKER_SLICE=riff-workers.slice")
@@ -683,9 +684,22 @@ fn workers_start_gives_the_slice_a_memory_limit() {
         "{tmux}"
     );
 
+    let claude = m.claude("exit 0");
+    let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
+    let out = m.wrapper(&claude, &slice);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    // 30 GB: 23 GB at most, and the OS takes memory back from 9/10 of it.
+    assert_eq!(
+        m.log("systemctl.log").trim(),
+        "--user set-property --runtime riff-workers.slice MemoryHigh=21196M MemoryMax=23552M \
+         CPUWeight=50"
+    );
+    assert!(m.log("systemd-run.log").contains("--slice=riff-workers.slice"));
+
     let shown = m.workers(&["memory", "10"]);
     assert!(shown.starts_with("workers.memory  10  "), "{shown}");
-    m.workers(&["start", "1"]);
+    let out = m.wrapper(&claude, &slice);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
     let last = m.log("systemctl.log");
     assert_eq!(
         last.lines().last().unwrap(),
@@ -695,29 +709,35 @@ fn workers_start_gives_the_slice_a_memory_limit() {
 }
 
 /// 01M3WFYZZENNHVH8Z2BAFSR6TS: on a machine with no systemd user
-/// manager, `riff workers start` says so one time, and starts the
-/// workers with no scope.
+/// manager, the wrapper says so one time in its pane, and starts
+/// `claude` with no scope.
 #[test]
 fn a_machine_with_no_systemd_says_so_one_time() {
-    let m = Machine::new("http://riff.test:7878");
+    let m = Machine::new(isolated::DEAD_SERVER);
     script(&m.bin(), "systemctl", NO_SYSTEMD);
-    m.workers(&["limit", "4"]);
-    let first = m.workers(&["start", "1"]);
-    assert!(first.contains("Started 1 worker in"), "{first}");
+    script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
+    let seen = m.bin().join("seen");
+    let claude = m.claude(&format!("echo \"$RIFF_WORKER $1\" > '{}'", seen.display()));
+    let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
+
+    let first = m.wrapper(&claude, &slice);
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+    assert_eq!(read(&seen).trim(), "1 Join the riff.");
     assert!(
-        first.contains(
-            "This machine has no systemd user manager (Failed to connect to user scope bus \
-             via local transport: No such file or directory), so the workers run with no \
+        stderr(&first).contains(
+            "riff: this machine has no systemd user manager (Failed to connect to user scope \
+             bus via local transport: No such file or directory), so the workers run with no \
              memory limit."
         ),
-        "{first}"
+        "{first:?}"
     );
-    let second = m.workers(&["start", "1"]);
-    assert!(second.contains("Started 1 worker in"), "{second}");
-    assert!(!second.contains("systemd"), "{second}");
-    let tmux = m.log("tmux.log");
-    assert!(tmux.contains("workers run"), "{tmux}");
-    assert!(!tmux.contains("RIFF_WORKER_SLICE"), "{tmux}");
+
+    std::fs::remove_file(&seen).unwrap();
+    let second = m.wrapper(&claude, &slice);
+    assert_eq!(second.status.code(), Some(0), "{second:?}");
+    assert_eq!(read(&seen).trim(), "1 Join the riff.");
+    assert!(!stderr(&second).contains("systemd"), "{second:?}");
+    assert_eq!(m.log("systemd-run.log"), "", "no scope");
 }
 
 /// 01M3WFZ01PTAYYKG3T5CFA2W4D: `riff workers start` starts no worker

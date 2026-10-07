@@ -3536,15 +3536,16 @@
   is 10. 0 means no nice. `riff workers nice` shows it and sets it.
 - **01M3WFYZX6GVFYW6NTTTKF144R** On a machine with systemd, the workers
   of the machine run in the slice `riff-workers.slice` of the systemd
-  user manager, each in a scope of its own. `riff workers start` gives
+  user manager, each in a scope of its own. `riff workers run` gives
   the slice `MemoryMax`, `MemoryHigh` at nine tenths of it, and
   `CPUWeight=50`, until the next start of the machine. `MemoryMax` is
   the setting `workers.memory` in GB. 0, the default, means three
   quarters of the memory of the machine. `riff workers memory` shows it
   and sets it. `riff workers run` stays outside the slice.
 - **01M3WFYZZENNHVH8Z2BAFSR6TS** On a machine where `systemctl --user`
-  cannot set the slice, `riff workers start` says one time that the
-  workers run with no memory limit, and starts them with no scope.
+  cannot set the slice, `riff workers run` says one time on the
+  machine, in its pane, that the workers run with no memory limit, and
+  starts `claude` with no scope.
 - **01M407J8R79WVYVABVCSHFAMJ9** The nice value of `workers.nice` is
   absolute: `claude` of a worker runs at that value, also when
   `riff workers run` runs at a nice value of its own. When the wrapper
@@ -4139,6 +4140,15 @@
   person as a whole, a folder above it, the keyring, the D-Bus socket,
   the keys of SSH and GnuPG, or the sign-in of `gh`. riff makes no
   profile for a session whose paths give one of them.
+- **01M4C2PY1DRWVWENJBM42D60M9** No profile gives a bus of systemd: the
+  user bus, the folder `systemd` of the runtime folder of the person
+  (the private socket of the user manager), or the system bus
+  `/run/dbus`. riff makes no profile for a session whose paths give one
+  of them.
+- **01M4C2PXZ5WNE4C2CJW2HABPY0** No process of a sandbox calls
+  systemd. Only `riff workers run`, outside each sandbox, calls it: it
+  sets the properties of the slice of the workers and starts the scope
+  of `claude`. `riff workers start` calls no `systemctl`.
 - **01M4BR61PPQV7JJE5Y2G9Q90AF** riff makes no profile for a session
   with a path that is not absolute or that has a `..` component. The
   step that applies a profile resolves each symlink before it grants a
