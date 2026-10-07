@@ -1984,6 +1984,23 @@ pub fn no_role_rules(role: crate::profile::Role, why: &str) -> String {
     format!("riff: the {role} starts with no permission rules of its profile: {why}.")
 }
 
+/// The line of the wrapper of a worker when it cannot make the forge
+/// token of its session (#610).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::forge_no_token("no App"),
+///     "riff: no forge token for this session: no App. gh and git push fail until riff makes \
+///      one. Run riff forge check.",
+/// );
+/// ```
+pub fn forge_no_token(why: &str) -> String {
+    format!(
+        "riff: no forge token for this session: {why}. gh and git push fail until riff makes \
+         one. Run riff forge check."
+    )
+}
+
 /// What `riff workers start` says one time when riff cannot make the
 /// pool of build jobs (01M3ZGZMRHXRBP762QPVCV0YX8).
 ///

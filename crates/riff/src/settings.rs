@@ -30,6 +30,9 @@
 //!
 //! [connect]
 //! scope = "repo"
+//!
+//! [forge]
+//! app = 123456
 //! ```
 //!
 //! | Key | Default | Meaning |
@@ -52,6 +55,7 @@
 //! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
 //! | `connect.scope` | none | The answer to the scope question of `riff connect claude`: `repo`, `global` or `none` (see [`enable`](crate::enable), 01M3XY2SNXQJRSH5QX82AFVM2S). With no key, nobody answered yet. |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
+//! | `forge.app` | none | The ID of the GitHub App of riff. With it, each worker gets a forge token of its role (see [`forge`](crate::forge), 01M4BV7057YSHEMEHKXK20X0GJ). |
 
 use std::path::{Path, PathBuf};
 
@@ -386,6 +390,37 @@ pub fn update_auto(path: &Path) -> Result<bool> {
 /// Sets `update.auto`. It keeps each other key.
 pub fn set_update_auto(path: &Path, auto: bool) -> Result<()> {
     set(path, "update", "auto", value(auto))
+}
+
+/// The ID of the GitHub App of riff: `forge.app` (see
+/// [`forge`](crate::forge), 01M4BV7057YSHEMEHKXK20X0GJ). `None` when the
+/// file or the key is missing: then riff gives no forge token.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::forge_app(&path)?, None);
+/// riff::settings::set_forge_app(&path, 123456)?;
+/// assert_eq!(riff::settings::forge_app(&path)?, Some(123456));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn forge_app(path: &Path) -> Result<Option<u64>> {
+    let doc = read(path)?;
+    let Some(app) = doc.get("forge").and_then(|f| f.get("app")) else {
+        return Ok(None);
+    };
+    let Some(app) = app.as_integer() else {
+        bail!("forge.app in {} is not a number", path.display());
+    };
+    u64::try_from(app)
+        .map(Some)
+        .with_context(|| format!("forge.app in {} is out of range", path.display()))
+}
+
+/// Sets `forge.app`. It keeps each other key.
+pub fn set_forge_app(path: &Path, app: u64) -> Result<()> {
+    let app = i64::try_from(app).context("the ID of the App is too large")?;
+    set(path, "forge", "app", value(app))
 }
 
 /// The default of `monitor.every`, in seconds.

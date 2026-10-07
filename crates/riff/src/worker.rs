@@ -100,7 +100,7 @@ use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
 use crate::{
-    enable, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, worker_mcp,
+    enable, forge, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, worker_mcp,
     workload,
 };
 
@@ -311,6 +311,20 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
             cmd.env(var, folder.path());
         }
     }
+    // The forge token of the role of this session, in place of the token
+    // of the person (01M4BV707FYHJDNC1499YAWR8D, 01M4BV709WGHZ57AM3STC15B69).
+    let _keep = match forge_keeper(folder.as_ref(), session.as_deref(), server, &riff).await {
+        Some((env, keep)) => {
+            for (var, value) in env {
+                match value {
+                    Some(value) => cmd.env(var, value),
+                    None => cmd.env_remove(var),
+                };
+            }
+            keep.map(AbortOnDrop)
+        }
+        None => None,
+    };
     let makeflags = pool.as_ref().map(jobserver::Pool::makeflags);
     for (var, value) in limits::jobs_env(&limit, makeflags.as_deref(), &riff) {
         match value {
@@ -373,6 +387,73 @@ pub fn profile_rules(
     let session = crate::role_rules::clone_session(&clone, &temp, claude, server)
         .ok_or_else(|| no("it has no HOME, or the server URL has no host"))?;
     crate::role_rules::here(crate::profile::Role::Worker, &session)
+}
+
+/// Stops a task when it drops.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// The forge token of a worker session, when the settings name a GitHub
+/// App ([`forge`]): the environment of `claude` and the task that keeps
+/// the token. The environment holds no token of the person also when
+/// riff cannot make a token, so a session never falls back to the
+/// rights of the person. `None` with no App.
+async fn forge_keeper(
+    folder: Option<&temp::Folder>,
+    session: Option<&str>,
+    server: &str,
+    riff: &Path,
+) -> Option<(
+    Vec<(&'static str, Option<String>)>,
+    Option<tokio::task::JoinHandle<()>>,
+)> {
+    let settings = settings::path().ok()?;
+    if !matches!(settings::forge_app(&settings), Ok(Some(_))) {
+        return None;
+    }
+    let no_token = |why: String| eprintln!("{}", crate::text::forge_no_token(&why));
+    let Some(folder) = folder else {
+        no_token("the worker has no temp folder".into());
+        return Some((forge::Files::in_temp(Path::new("/nonexistent")).env(riff), None));
+    };
+    let files = forge::Files::in_temp(folder.path());
+    let env = files.env(riff);
+    let made = (|| {
+        let app = forge::App::here(&settings)?.context("no forge.app")?;
+        let place = identity::here(None)?;
+        let repo = place.repo_text();
+        anyhow::ensure!(repo != "-", "this folder is in no repository");
+        let session = session.context("the worker has no session ID")?.to_owned();
+        anyhow::Ok((app, repo, place, session))
+    })();
+    let (app, repo, place, id) = match made {
+        Ok(made) => made,
+        Err(e) => {
+            no_token(format!("{e:#}"));
+            return Some((env, None));
+        }
+    };
+    let server = server.to_owned();
+    let claims = move || {
+        let (place, id, server) = (place.clone(), id.clone(), server.clone());
+        async move {
+            let api = Api::new(&server).one_try(forge::LOOK_EVERY / 2);
+            let me = identity::agent(&place, &id, api.base()).ok()?;
+            let info = api.signed_in(me.who().session()).ok()?.me(&me).await.ok()?;
+            Some(info.session?.uri.claims().to_vec())
+        }
+    };
+    let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files);
+    // The first token comes before `claude` starts.
+    if let Err(e) = keeper.step(claims().await.as_deref()).await {
+        no_token(format!("{e:#}"));
+    }
+    Some((env, Some(tokio::spawn(forge::keep(keeper, claims)))))
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].

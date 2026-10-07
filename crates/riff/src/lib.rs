@@ -88,6 +88,7 @@ pub mod disk;
 pub mod docs;
 pub mod dropped;
 pub mod enable;
+pub mod forge;
 pub mod help;
 pub mod home;
 pub mod hook;
