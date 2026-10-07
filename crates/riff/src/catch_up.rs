@@ -54,7 +54,7 @@ pub enum Start {
 #[derive(Debug)]
 pub enum Seen {
     /// A message, one time.
-    Message(Checked),
+    Message(Box<Checked>),
     /// The number of messages of a break that the server no longer
     /// keeps.
     Lost(u64),
@@ -178,7 +178,7 @@ pub async fn connect<'a>(
             first.extend(
                 read.into_iter()
                     .filter(|c| shown.is_new(c.message.seq))
-                    .map(Seen::Message),
+                    .map(|c| Seen::Message(Box::new(c))),
             );
         }
     }
@@ -190,7 +190,7 @@ pub async fn connect<'a>(
                 .map(|c| {
                     lock(&shown)
                         .is_new(c.message.seq)
-                        .then_some(Seen::Message(c))
+                        .then(|| Seen::Message(Box::new(c)))
                 })
                 .transpose();
             std::future::ready(seen)
