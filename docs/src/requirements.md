@@ -3957,18 +3957,20 @@
   (`import.rs`) is the one exception.
 - **01M49W17M2JVNYSHDQJWHZ8A7X** Each conversion between two types of
   the log, the wire, the checkpoint or the state names each field of
-  its source in a destructure with no `..`. It builds its target with
-  no `..` either. So a new field fails the build at each conversion.
+  its source in a destructure with no `..`. A field that the target
+  does not need is named with `_`. So a new field fails the build at
+  each conversion. A type of the frozen format of v0.8.0 gets no new
+  field, so the read in `import.rs` needs no destructure.
 - **01M49W18ETF4KZJN848M91VY35** Each type of the log, the wire and
   the checkpoint has a round-trip test: a value of each variant with
   each optional field set, written to JSON, read back and compared. A
   test lists the serde types of `record.rs`, `wire.rs` and the
   checkpoint, and fails when one has no round trip. The round trip of
   the log goes through the store.
-- **01M49W18QQKF4KYDRYP3ZK9F1Q** A type of the log, the wire, the
-  checkpoint or the state cannot hold an invalid state. For example, a
-  saved session has a status, a step, or both: an enum, not two
-  options.
+- **01M49W18QQKF4KYDRYP3ZK9F1Q** A new or changed type of the log,
+  the wire, the checkpoint or the state cannot hold an invalid state.
+  For example, a saved session has a status, a step, or both: an
+  enum, not two options.
 
 ## Open
 

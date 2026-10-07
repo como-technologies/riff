@@ -30,9 +30,10 @@
 //! itself, as [`Line::parse`] holds the [`Envelope`] with
 //! `#[serde(flatten)]`: it never keeps a second list of the fields.
 //! Each conversion between two such types names each field of its
-//! source in a destructure with no `..`, and builds its target with no
-//! `..` (01M49W17M2JVNYSHDQJWHZ8A7X). So a new field fails the build
-//! at each place that must carry it, and no review must find it:
+//! source in a destructure with no `..` (01M49W17M2JVNYSHDQJWHZ8A7X):
+//! a field that the target does not need is named with `_`. So a new
+//! field fails the build at each place that must carry it, and no
+//! review must find it:
 //!
 //! ```compile_fail
 //! use riff_core::record::Envelope;

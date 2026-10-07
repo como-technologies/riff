@@ -183,11 +183,14 @@ pub fn write(dir: &Path, session: &str, fact: &Fact, at_ms: u64) -> std::io::Res
 /// no hook wrote one, or the file does not read.
 pub fn read(dir: &Path, session: &str, now_ms: u64) -> Option<Activity> {
     let text = std::fs::read(path(dir, session)).ok()?;
-    let saved: Saved = serde_json::from_slice(&text).ok()?;
+    let Saved {
+        fact: Fact { tool, turn },
+        at_ms,
+    } = serde_json::from_slice(&text).ok()?;
     Some(Activity {
-        tool: saved.fact.tool,
-        turn: saved.fact.turn,
-        secs: now_ms.saturating_sub(saved.at_ms) / 1000,
+        tool,
+        turn,
+        secs: now_ms.saturating_sub(at_ms) / 1000,
     })
 }
 

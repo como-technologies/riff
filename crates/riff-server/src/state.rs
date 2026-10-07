@@ -291,7 +291,8 @@ pub use threads::{Announce, may_read};
 pub use view::{Settings, View};
 pub use work::{MUST_CLEAR, released_for};
 
-use presence::Session;
+use presence::{Block, LongStep, Session, SetStatus};
+use sessions::Known;
 use threads::wake;
 
 /// True when `message` to `to` is a request of the lead of its user:
@@ -657,14 +658,21 @@ impl State {
     /// (01M4263ZZVY8QJ2METTEVR1W26, 01M49NP8F3A9CTJWZ74MCNZG0M).
     fn sessions_of_the_log(&mut self, seen: &BTreeMap<Who, u64>, loaded: Instant) {
         for (who, known) in &self.written.sessions().known {
-            let at_ms = seen.get(who).copied().unwrap_or(known.at_ms);
+            let Known {
+                uri,
+                at_ms,
+                worker: _,
+                must_clear: _,
+                fresh_ms: _,
+            } = known;
+            let at_ms = seen.get(who).copied().unwrap_or(*at_ms);
             let old = self.presence.sessions.get(who);
             let session = Session {
                 seen_before_load: Some(at_ms),
                 alive: None,
                 status: old.and_then(|s| s.status.clone()),
                 step: old.and_then(|s| s.step.clone()),
-                ..Session::new(known.uri.place().clone(), loaded)
+                ..Session::new(uri.place().clone(), loaded)
             };
             self.presence.sessions.insert(who.clone(), session);
         }
@@ -711,13 +719,14 @@ impl State {
     pub fn imported(&mut self, imported: Imported, now: Instant) {
         let loaded = self.presence.loaded.unwrap_or(now);
         self.presence.loaded = Some(loaded);
-        for session in imported.sessions {
+        let Imported { sessions, cursors } = imported;
+        for session in sessions {
             if let Some(known) = self.written.sessions().known.get(&session.who) {
                 let place = known.uri.place().clone();
                 self.presence.imported(session, place, loaded);
             }
         }
-        for (who, thread, seq) in imported.cursors {
+        for (who, thread, seq) in cursors {
             let threads = self.written.threads();
             if self.presence.knows(&who) && threads.has(&thread) {
                 let seq = seq.min(threads.last_seq(&thread));
@@ -1556,38 +1565,70 @@ impl State {
         // (01M48VDGQ5KETKPM4G6TKTC2MB).
         let live = session.watching(now) || (uri.lead() && !session.gone(now));
         let repository = session.place.default_thread();
-        let status = session.status.as_ref().map(|s| StatusInfo {
-            status: s.status.clone(),
-            age_secs: now_ms.saturating_sub(s.set_ms) / 1000,
-            stale: s.before(Some(session.claims_changed))
-                || s.before(self.presence.riff_changed)
-                || s.before(
-                    repository
-                        .as_ref()
-                        .and_then(|r| self.presence.repository_changed.get(r))
-                        .copied(),
-                ),
+        let status = session.status.as_ref().map(|s| {
+            let SetStatus {
+                status,
+                set_ms,
+                set: _,
+            } = s;
+            StatusInfo {
+                status: status.clone(),
+                age_secs: now_ms.saturating_sub(*set_ms) / 1000,
+                stale: s.before(Some(session.claims_changed))
+                    || s.before(self.presence.riff_changed)
+                    || s.before(
+                        repository
+                            .as_ref()
+                            .and_then(|r| self.presence.repository_changed.get(r))
+                            .copied(),
+                    ),
+            }
         });
-        let blocked = session.blocked.as_ref().map(|b| BlockedInfo {
-            reason: b.reason.clone(),
-            secs: now_ms.saturating_sub(b.set_ms) / 1000,
-            answered: b.answered.is_some(),
-            woken_again: b.woken_again.is_some(),
-            unanswered: b.unanswered,
+        let blocked = session.blocked.as_ref().map(|b| {
+            let Block {
+                reason,
+                set_ms,
+                set: _,
+                answered,
+                woken_again,
+                unanswered,
+            } = b;
+            BlockedInfo {
+                reason: reason.clone(),
+                secs: now_ms.saturating_sub(*set_ms) / 1000,
+                answered: answered.is_some(),
+                woken_again: woken_again.is_some(),
+                unanswered: *unanswered,
+            }
         });
         let waits = repository
             .as_ref()
             .and_then(|thread| self.waits(thread, uri.claims()));
-        let work = session.work.as_ref().map(|(activity, at)| Activity {
-            secs: now.saturating_duration_since(*at).as_secs(),
-            ..activity.clone()
+        let work = session.work.as_ref().map(|(activity, at)| {
+            let Activity {
+                tool,
+                turn,
+                secs: _,
+            } = activity;
+            Activity {
+                tool: tool.clone(),
+                turn: *turn,
+                secs: now.saturating_duration_since(*at).as_secs(),
+            }
         });
         let sessions = self.written.sessions();
         let must_clear = sessions.must_clear(who);
-        let step = session.step.as_ref().map(|s| StepInfo {
-            name: s.name.clone(),
-            secs: now_ms.saturating_sub(s.set_ms) / 1000,
-            failed: s.failed.clone(),
+        let step = session.step.as_ref().map(|s| {
+            let LongStep {
+                name,
+                set_ms,
+                failed,
+            } = s;
+            StepInfo {
+                name: name.clone(),
+                secs: now_ms.saturating_sub(*set_ms) / 1000,
+                failed: failed.clone(),
+            }
         });
         let state = SessionState::of(&Facts {
             live,

@@ -272,7 +272,11 @@ impl Command for Claim {
         now: Now,
     ) -> Result<(Vec<Change>, Option<String>), Refused> {
         let who = caller.who();
-        let Claim { thread, item, .. } = self;
+        let Claim {
+            thread,
+            item,
+            me: _,
+        } = self;
         if view.riff.sessions().must_clear(who) {
             return Err(Refused::new(Code::MustClear, MUST_CLEAR));
         }
@@ -368,7 +372,11 @@ impl Command for Release {
         now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
         let who = caller.who();
-        let Release { thread, item, .. } = self;
+        let Release {
+            thread,
+            item,
+            me: _,
+        } = self;
         match view.riff.work().holder(thread, item) {
             Some(holder) if holder == who => Ok((
                 vec![Change::Released(Released {
@@ -423,7 +431,7 @@ impl Command for ReleaseFor {
             thread,
             item,
             session: id,
-            ..
+            me: _,
         } = self;
         let Some(holder) = view.riff.work().holder(thread, item) else {
             return Err(Refused::new(

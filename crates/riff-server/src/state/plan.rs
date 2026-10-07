@@ -283,7 +283,7 @@ impl Command for Hold {
             thread,
             item,
             reason,
-            ..
+            me: _,
         } = self;
         may_change(Self::KIND, thread, item, caller, view, now)?;
         let reason = reason.trim();
@@ -330,7 +330,11 @@ impl Command for Free {
         view: &View<'_>,
         now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
-        let Free { thread, item, .. } = self;
+        let Free {
+            thread,
+            item,
+            me: _,
+        } = self;
         may_change(Self::KIND, thread, item, caller, view, now)?;
         let mut changes = Vec::new();
         if view.hold(thread, item).is_some() {

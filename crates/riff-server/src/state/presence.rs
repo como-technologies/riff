@@ -618,7 +618,13 @@ impl Saved {
         let Saved { cursors, statuses } = self;
         presence.cursors = cursors
             .into_iter()
-            .map(|SavedCursor { session, thread, seq }| ((session, thread), seq))
+            .map(
+                |SavedCursor {
+                     session,
+                     thread,
+                     seq,
+                 }| ((session, thread), seq),
+            )
             .collect();
         for SavedSession {
             session: who,

@@ -226,11 +226,21 @@ pub fn may_read(who: &Who, thread: &ThreadName) -> bool {
 
 /// The wake that `message` in `thread` gives.
 pub(super) fn wake(thread: &ThreadName, message: &Message) -> Wake {
+    let Message {
+        seq,
+        from,
+        to: _,
+        body: _,
+        at_ms: _,
+        kind,
+        sig: _,
+        payload: _,
+    } = message;
     Wake {
         thread: thread.clone(),
-        seq: message.seq,
-        from: message.from.clone(),
-        kind: message.kind,
+        seq: *seq,
+        from: from.clone(),
+        kind: *kind,
     }
 }
 
@@ -361,9 +371,25 @@ impl View<'_> {
         if message.kind == Kind::Note {
             woken.clear();
         }
+        let Message {
+            seq: _,
+            from,
+            to,
+            body,
+            at_ms,
+            kind,
+            sig,
+            payload,
+        } = message;
         let message = Message {
             seq: threads.last_seq(&thread) + 1,
-            ..message
+            from,
+            to,
+            body,
+            at_ms,
+            kind,
+            sig,
+            payload,
         };
         changes.push(Change::Posted(Box::new(Posted {
             thread,
@@ -505,15 +531,25 @@ impl Command for Post {
                 thread: thread.clone(),
             }));
         }
+        let Post {
+            me: _,
+            thread: _,
+            to,
+            body,
+            kind,
+            at_ms,
+            sig,
+            payload,
+        } = post;
         let message = Message {
             seq: 0,
             from: sender,
-            to: post.to.clone(),
-            body: post.body.clone(),
-            at_ms: post.at_ms.unwrap_or(0),
-            kind: post.kind,
-            sig: post.sig.clone(),
-            payload: post.payload.clone(),
+            to: to.clone(),
+            body: body.clone(),
+            at_ms: at_ms.unwrap_or(0),
+            kind: *kind,
+            sig: sig.clone(),
+            payload: payload.clone(),
         };
         let (mut put, unmatched) = view.put(from, thread, message, now);
         changes.append(&mut put);
@@ -528,15 +564,15 @@ impl Command for Post {
         unmatched: Vec<Selector>,
         now: Now,
     ) -> wire::Posted {
-        let posted = message_of(&done.made).expect("the records of a post end with the message");
+        let Posted {
+            thread,
+            message,
+            woken,
+        } = message_of(&done.made).expect("the records of a post end with the message");
         wire::Posted {
-            thread: posted.thread.clone(),
-            seq: posted.message.seq,
-            woken: posted
-                .woken
-                .iter()
-                .map(|who| view.uri(who, now.at))
-                .collect(),
+            thread: thread.clone(),
+            seq: message.seq,
+            woken: woken.iter().map(|who| view.uri(who, now.at)).collect(),
             unmatched,
         }
     }
@@ -568,15 +604,22 @@ impl Command for Announce {
         view: &View<'_>,
         now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
+        let Announce {
+            thread,
+            to,
+            body,
+            kind,
+            at_ms,
+        } = self;
         let from = caller.who();
-        let thread = view.thread_of(from, self.thread.as_ref(), &self.to, now.at)?;
+        let thread = view.thread_of(from, thread.as_ref(), to, now.at)?;
         let message = Message {
             seq: 0,
             from: caller.me().clone(),
-            to: self.to.clone(),
-            body: self.body.clone(),
-            at_ms: self.at_ms,
-            kind: self.kind,
+            to: to.clone(),
+            body: body.clone(),
+            at_ms: *at_ms,
+            kind: *kind,
             sig: None,
             payload: None,
         };

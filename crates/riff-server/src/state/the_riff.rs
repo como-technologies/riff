@@ -31,7 +31,9 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::ThreadName;
-use riff_core::record::{Change, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged};
+use riff_core::record::{
+    Change, Envelope, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged,
+};
 use riff_core::wire::{
     Idle, Pause, PauseInfo, RepositoryPause, Resume, RiffReply, RiffState, SetIdle,
 };
@@ -173,10 +175,17 @@ impl TheRiff {
         state: RiffState,
         record: &Record,
     ) -> Result<(), &'static str> {
+        let Envelope {
+            position: _,
+            written_at_ms,
+            by,
+            command: _,
+            call: _,
+        } = &record.envelope;
         let pause = match state {
             RiffState::Paused => Some(PauseInfo {
-                by: record.envelope.by.clone(),
-                at_ms: record.envelope.written_at_ms,
+                by: by.clone(),
+                at_ms: *written_at_ms,
             }),
             RiffState::Running => None,
         };
