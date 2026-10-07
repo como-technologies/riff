@@ -61,8 +61,8 @@ use tokio::sync::mpsc;
 use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 
 use crate::api::{Api, Checked, Reconnect};
-use crate::catch_up::{self, Seen, Start};
 use crate::binary::{Follow, with_last, with_place};
+use crate::catch_up::{self, Seen, Start};
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{ACTION, action_text, lost_messages, safe};
 
@@ -342,6 +342,17 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
         );
     }
     let thread = &thread;
+    // After an update, the day of the last line of the old chat: the
+    // new chat shows no date line again for it.
+    let mut day = Day::default();
+    if let Some(seq) = after {
+        let (read, _) = api
+            .read_page(me, thread, true, Some(seq.saturating_sub(1)))
+            .await?;
+        if let Some(last) = read.first().filter(|c| c.message.seq == seq) {
+            day.line(last);
+        }
+    }
     // Connected first, then read: no line falls between the two
     // (see [`crate::catch_up`]).
     let start = after.map_or(Start::History, Start::After);
@@ -351,7 +362,6 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     let mut stream = Box::pin(first.chain(again));
     let (screen, mut input) = Screen::start()?;
     let _ = lines.set(screen.lines.clone());
-    let mut day = Day::default();
     let mut link = Reconnect::default();
     let follow = Follow::this();
     let update = follow.new_one();

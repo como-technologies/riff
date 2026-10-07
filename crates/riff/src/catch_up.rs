@@ -187,7 +187,11 @@ pub async fn connect<'a>(
         .take_while(|item| std::future::ready(item.is_ok()))
         .filter_map(move |item| {
             let seen = item
-                .map(|c| lock(&shown).is_new(c.message.seq).then_some(Seen::Message(c)))
+                .map(|c| {
+                    lock(&shown)
+                        .is_new(c.message.seq)
+                        .then_some(Seen::Message(c))
+                })
                 .transpose();
             std::future::ready(seen)
         });

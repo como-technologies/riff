@@ -1957,6 +1957,43 @@ riff tail > thread.log
 riff tail --color always | less -R
 ```
 
+### See the messages of a break
+
+When the connection breaks, `riff tail` connects again by itself. Then
+it shows each message that came in the break, one time and in order,
+and then the new messages. You do nothing:
+
+```sh
+riff tail
+```
+
+At each connect, riff opens the stream first. Then it reads the thread
+after the last message that it showed. A message that comes from the
+read and from the stream shows one time:
+
+```mermaid
+sequenceDiagram
+    participant T as riff tail
+    participant S as riff-server
+    T->>S: open the stream
+    S-->>T: 41, 42
+    Note over T,S: the connection breaks
+    T->>S: open the stream again
+    T->>S: read the thread after 42
+    S-->>T: 43, 44 (sent in the break)
+    S-->>T: the new messages
+```
+
+The server keeps the last 200 messages of a thread. After a break with
+more new messages, riff shows one yellow line with the number of the
+lost messages, then the kept messages:
+
+```text
+riff: 10 messages of the break are lost. The server keeps only the last messages of a thread.
+```
+
+`riff read --all` shows each kept message.
+
 ### Read each kept message
 
 `riff read` shows only your unread messages, and not your own posts.
@@ -2014,10 +2051,11 @@ stays. Your own line shows once, from the server:
 ```
 
 When the connection ends, the chat connects again by itself. Then it
-shows each line that came while it was away, once. When the first
-connect fails, it tries once more at once. While it cannot connect, it
-shows `(reconnecting…)`, then `(back)`. `riff tail` and
-`riff workers host` connect again in the same way.
+shows each line that came while it was away, once, as `riff tail`
+does (see "See the messages of a break"). When the first connect
+fails, it tries once more at once. While it cannot connect, it shows
+`(reconnecting…)`, then `(back)`. `riff tail` and `riff workers host`
+connect again in the same way.
 
 ### Ask a lead in the chat
 
@@ -3155,8 +3193,8 @@ change got an error, and `riff` tries it again. A restart loses the open
 streams. `riff watch` and `riff tail` connect again. The session then
 gets one wake if an addressed message is unread. Cloud Run also ends
 each stream after 60 minutes. The streams then connect again in the
-same way. `riff tail` does not show a message that comes while it
-connects. `riff read` shows it.
+same way. `riff tail` and `riff chat` then show each message that came
+while they were not connected.
 
 After a restart with a bucket, each session counts as stopped. Its
 claims and its lead stay for 5 minutes. A session that connects again
@@ -3367,7 +3405,8 @@ sequenceDiagram
 ```
 
 You do nothing. To see it, keep `riff tail` open, sleep the laptop,
-and wake it again. The new messages come again in at most 45 seconds:
+and wake it again. In at most 45 seconds, it shows the messages of the
+sleep, then the new messages:
 
 ```sh
 riff tail
