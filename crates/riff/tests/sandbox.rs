@@ -6,7 +6,6 @@
 
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 fn in_a_test_run() -> bool {
@@ -53,7 +52,10 @@ fn the_home_of_the_person_is_not_visible() {
             entry.file_name()
         );
     }
-    assert!(!Path::new("/run/user").exists(), "the runtime folder is visible");
+    assert!(
+        !Path::new("/run/user").exists(),
+        "the runtime folder is visible"
+    );
 }
 
 #[test]
@@ -89,7 +91,11 @@ fn a_process_of_the_host_is_not_visible() {
         return;
     }
     let first = std::fs::read_to_string("/proc/1/comm").unwrap();
-    assert_eq!(first.trim(), "bwrap", "PID 1 is the first process of the run");
+    assert_eq!(
+        first.trim(),
+        "bwrap",
+        "PID 1 is the first process of the run"
+    );
     for entry in std::fs::read_dir("/proc").unwrap() {
         let name = entry.unwrap().file_name();
         if name.to_string_lossy().parse::<u32>().is_err() {
@@ -121,14 +127,20 @@ fn the_run_has_the_loopback_network_only() {
     assert!(TcpStream::connect(listener.local_addr().unwrap()).is_ok());
 }
 
+/// `riff test-run -- true` with only `bin` on the `PATH`.
+fn test_run_with_path(bin: &Path) -> std::process::Output {
+    let env = isolated::Isolated::new();
+    env.riff()
+        .args(["test-run", "--", "true"])
+        .env("PATH", bin)
+        .output()
+        .unwrap()
+}
+
 #[test]
 fn a_test_run_with_no_bwrap_prints_the_sudo_line_and_runs_nothing() {
     let empty = tempfile::tempdir().unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_riff"))
-        .args(["test-run", "--", "true"])
-        .env("PATH", empty.path())
-        .output()
-        .unwrap();
+    let out = test_run_with_path(empty.path());
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(err.lines().count(), 1, "{err}");
@@ -139,14 +151,14 @@ fn a_test_run_with_no_bwrap_prints_the_sudo_line_and_runs_nothing() {
 fn a_host_that_refuses_the_namespaces_gets_the_apparmor_line() {
     let bin = tempfile::tempdir().unwrap();
     let bwrap = bin.path().join("bwrap");
-    std::fs::write(&bwrap, "#!/bin/sh\necho 'bwrap: No permissions' >&2\nexit 1\n").unwrap();
+    std::fs::write(
+        &bwrap,
+        "#!/bin/sh\necho 'bwrap: No permissions' >&2\nexit 1\n",
+    )
+    .unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&bwrap, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_riff"))
-        .args(["test-run", "--", "true"])
-        .env("PATH", bin.path())
-        .output()
-        .unwrap();
+    let out = test_run_with_path(bin.path());
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(err.lines().count(), 1, "{err}");

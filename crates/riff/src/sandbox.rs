@@ -75,7 +75,7 @@
 //! # Ok::<(), riff::profile::Refused>(())
 //! ```
 
-use crate::profile::{Endpoint, Profile, Role, SYSTEM, Session};
+use crate::profile::{Endpoint, Profile, Role, Session};
 use anyhow::{Context, Result, bail};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -328,13 +328,9 @@ pub fn args(
     mounts.sort_by_key(|(p, _)| p.components().count());
 
     let text = |p: &Path| p.display().to_string();
-    let mut args: Vec<String> = [
-        "--unshare-all",
-        "--die-with-parent",
-        "--new-session",
-    ]
-    .map(String::from)
-    .to_vec();
+    let mut args: Vec<String> = ["--unshare-all", "--die-with-parent", "--new-session"]
+        .map(String::from)
+        .to_vec();
     for (path, mount) in mounts {
         let path = text(&path);
         match (mount, path.as_str()) {
@@ -439,7 +435,10 @@ mod tests {
     #[test]
     fn a_test_run_has_each_namespace_and_dies_with_riff() {
         let a = of(None);
-        assert_eq!(a[..3], ["--unshare-all", "--die-with-parent", "--new-session"]);
+        assert_eq!(
+            a[..3],
+            ["--unshare-all", "--die-with-parent", "--new-session"]
+        );
         assert!(!a.iter().any(|x| x.starts_with("--share")), "{a:?}");
     }
 
@@ -475,8 +474,12 @@ mod tests {
     fn the_pool_of_build_jobs_is_writable_in_the_run() {
         let a = of(Some(Path::new("/run/user/1000/riff/jobs")));
         assert!(
-            a.windows(3)
-                .any(|w| w == ["--bind", "/run/user/1000/riff/jobs", "/run/user/1000/riff/jobs"]),
+            a.windows(3).any(|w| w
+                == [
+                    "--bind",
+                    "/run/user/1000/riff/jobs",
+                    "/run/user/1000/riff/jobs"
+                ]),
             "{a:?}"
         );
     }

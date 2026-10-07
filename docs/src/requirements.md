@@ -4206,8 +4206,8 @@
   checks the sandbox: no file of the home of the person, no file in
   `/tmp` from before the run, no process of the host, and no network
   but the loopback. Outside a test run, it prints a skip line.
-- **01M4BTG7E55337GBS5WANAD6MG** The Gate installs bubblewrap and lets it
-  make namespaces before it runs the checks.
+- **01M4BTG7E55337GBS5WANAD6MG** The Gate installs bubblewrap and lets
+  it make namespaces before it runs the checks.
 
 ## Open
 
