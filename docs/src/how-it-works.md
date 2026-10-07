@@ -3271,11 +3271,23 @@ systemctl --user status riff-workers.slice
 
 ## The forge token of each role
 
-With no GitHub App, each worker runs `gh` and git with your sign-in,
-so it can do each thing that you can. With the GitHub App of riff,
-each worker gets a token of its role, and GitHub refuses each other
-step. riff makes the token outside the sandbox, and gives the session
-only the token, never the key of the App.
+A worker never gets your sign-in. riff starts `claude` with an empty
+environment, and adds only a short list of variables (the
+`KEPT_VARS` of `riff::profile`). So `GH_TOKEN`, your `gh` sign-in,
+your git helpers and your ssh agent never reach a worker.
+
+With the GitHub App of riff, each worker gets a token of its role, and
+GitHub refuses each other step. riff makes the token outside the
+sandbox, and gives the session only the token, never the key of the
+App. With no App, a worker has no forge token: `gh` and `git push`
+fail. Make the App first (see "Make the GitHub App of riff").
+
+```mermaid
+flowchart LR
+    P[your environment] -->|only the kept variables| C[claude of a worker]
+    F[riff forge token files] -->|GH_CONFIG_DIR, git helper of riff| C
+    P -. GH_TOKEN, gh sign-in, git helpers, ssh agent .-> N[stays out]
+```
 
 | Role | GitHub permissions of its token |
 |---|---|

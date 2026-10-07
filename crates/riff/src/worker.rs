@@ -444,7 +444,11 @@ async fn forge_token(
     let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files.clone());
     // The first token comes before `claude` starts.
     let first = keeper.first(claims().await.as_deref()).await;
-    (first, files, Some(tokio::spawn(forge::keep(keeper, claims))))
+    (
+        first,
+        files,
+        Some(tokio::spawn(forge::keep(keeper, claims))),
+    )
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].

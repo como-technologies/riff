@@ -4267,6 +4267,18 @@
   removes the token files and revokes the old token before it asks for
   the token of the new role. While the revoke fails, the session has no
   token.
+- **01M4BYVSNQ5SY2GRGT73FV0Z3E** No worker or AI session ever gets a
+  credential of the person. riff starts `claude` with an empty
+  environment and sets only the kept variables and the variables of
+  riff. With no GitHub App, and when riff cannot make a token, the
+  session has no forge token: never the token of the person. The type
+  `forge::ForgeEnv` is the only way to make the command of `claude`.
+- **01M4BYVSR06B9HNX4SP83SY2SX** The kept variables are one list,
+  `profile::KEPT_VARS`: the account, the language and the terminal,
+  tmux, the XDG folders of the person, the user manager of systemd,
+  the proxy and the certificates, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_*`,
+  and the riff variables of the server, the session, the person and
+  the machine.
 
 ## Open
 

@@ -335,7 +335,11 @@ fn git_and_gh_in_a_session_use_the_token_of_the_files() {
     parent.push(("PATH".into(), std::env::var_os("PATH").unwrap()));
     parent.push(("GH_TOKEN".into(), "ghp_person".into()));
     let mut git = forge_env
-        .command("git".as_ref(), &["credential".into(), "fill".into()], parent)
+        .command(
+            "git".as_ref(),
+            &["credential".into(), "fill".into()],
+            parent,
+        )
         .into_std();
     git.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped());
@@ -518,7 +522,9 @@ async fn run_worker(server: &str, outcome: &Outcome) -> (String, String) {
     let gitconfig = home.join(".gitconfig");
     std::fs::write(
         &gitconfig,
-        format!("[credential]\n\thelper = \"!f() {{ echo username=me; echo password={MARKER}; }}; f\"\n"),
+        format!(
+            "[credential]\n\thelper = \"!f() {{ echo username=me; echo password={MARKER}; }}; f\"\n"
+        ),
     )
     .unwrap();
     let riff_home = root.join("riff-home");
@@ -578,7 +584,11 @@ async fn run_worker(server: &str, outcome: &Outcome) -> (String, String) {
     let seen = ["env", "git", "gh"]
         .map(|f| std::fs::read_to_string(out.join(f)).unwrap_or_default())
         .join("\n");
-    assert!(!seen.is_empty(), "{}: claude did not run: {stderr}", outcome.name);
+    assert!(
+        !seen.is_empty(),
+        "{}: claude did not run: {stderr}",
+        outcome.name
+    );
     (seen, stderr)
 }
 

@@ -24,9 +24,13 @@
 //!
 //! - `gh` reads the token from `GH_CONFIG_DIR/hosts.yml`.
 //! - git reads it through the credential helper `riff forge
-//!   credential`, which [`Files::env`] sets for the github.com URLs.
-//! - The wrapper removes `GH_TOKEN` and `GITHUB_TOKEN`, so no token of
-//!   the person reaches the session (01M4BV709WGHZ57AM3STC15B69).
+//!   credential`, which [`ForgeEnv`] sets for the github.com URLs.
+//! - [`ForgeEnv`] is the only way to make the command of `claude`. It
+//!   starts from an empty environment with only the
+//!   [`crate::profile::KEPT_VARS`], so no credential of the person
+//!   reaches the session, also with no App or no token
+//!   (01M4BV709WGHZ57AM3STC15B69, 01M4BYVSNQ5SY2GRGT73FV0Z3E). Each
+//!   cause of no token is an [`Error`].
 //!
 //! The role of a worker session follows its claims ([`role_of`]): a
 //! `verify-` claim gives the verifier token, each other case the
@@ -669,7 +673,10 @@ impl Files {
             ("GIT_CONFIG_KEY_1", helper.into()),
             ("GIT_CONFIG_VALUE_1", String::new()),
             ("GIT_CONFIG_KEY_2", helper.into()),
-            ("GIT_CONFIG_VALUE_2", format!("!'{quoted}' forge credential")),
+            (
+                "GIT_CONFIG_VALUE_2",
+                format!("!'{quoted}' forge credential"),
+            ),
         ]
     }
 }
@@ -988,8 +995,14 @@ mod tests {
         };
         assert!(matches!(of(None), Err(Error::NotSet)));
         assert!(matches!(of(Some("[forge]\n")), Err(Error::NotSet)));
-        assert!(matches!(of(Some("[forge]\napp = \"1\"\n")), Err(Error::BadSetting(_))));
-        assert!(matches!(of(Some("[forge]\napp = -1\n")), Err(Error::BadSetting(_))));
+        assert!(matches!(
+            of(Some("[forge]\napp = \"1\"\n")),
+            Err(Error::BadSetting(_))
+        ));
+        assert!(matches!(
+            of(Some("[forge]\napp = -1\n")),
+            Err(Error::BadSetting(_))
+        ));
         assert!(matches!(of(Some("not toml [")), Err(Error::BadSetting(_))));
         assert!(matches!(of(Some("[forge]\napp = 1\n")), Err(Error::Key(_))));
         let no_home = App::of(Err(anyhow::anyhow!("no HOME")));
