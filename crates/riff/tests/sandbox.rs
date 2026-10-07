@@ -64,7 +64,9 @@ fn the_tmp_holds_nothing_from_before_the_run() {
         return;
     }
     let start = start_of_the_run();
-    assert_eq!(std::env::var("TMPDIR").unwrap(), "/tmp");
+    // riff test-run gives /tmp; .cargo/config.toml gives each test /var/tmp.
+    let tmpdir = std::env::var("TMPDIR").unwrap();
+    assert!(["/tmp", "/var/tmp"].contains(&tmpdir.as_str()), "{tmpdir}");
     for dir in ["/tmp", "/var/tmp"] {
         for entry in std::fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
