@@ -264,8 +264,8 @@ impl Calls {
     /// younger than [`CALL_KEEP`] at `now_ms`, in the order of their
     /// positions. A kept call with no record is not in it.
     pub(super) fn saved(&self, now_ms: u64) -> Saved {
-        let mut calls: Vec<Record> = self
-            .kept
+        let Calls { kept } = self;
+        let mut calls: Vec<Record> = kept
             .values()
             .filter(|kept| now_ms.saturating_sub(kept.at_ms) < keep_ms())
             .flat_map(|kept| kept.done.made.iter().cloned())
@@ -291,8 +291,9 @@ pub struct Saved {
 impl Saved {
     /// The table that the checkpoint gives.
     pub(super) fn restore(self) -> Calls {
+        let Saved { calls: records } = self;
         let mut calls = Calls::default();
-        for record in &self.calls {
+        for record in &records {
             calls.record(record);
         }
         calls

@@ -263,15 +263,25 @@ impl People {
 
     /// The people, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        let People {
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            asked,
+            ended,
+        } = self.clone();
         Saved {
-            riff_id: self.riff_id.clone(),
-            users: self.users.clone(),
-            members: self.members.clone(),
-            admins: self.admins.clone(),
-            owner: self.owner.clone(),
-            no_owner: self.no_owner,
-            owner_asked: self.asked.clone(),
-            signins_ended: self.ended.clone(),
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            owner_asked: asked,
+            signins_ended: ended,
         }
     }
 }
@@ -302,15 +312,25 @@ pub(super) struct Saved {
 
 impl Saved {
     pub(super) fn restore(self) -> People {
+        let Saved {
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            owner_asked,
+            signins_ended,
+        } = self;
         People {
-            riff_id: self.riff_id,
-            users: self.users,
-            members: self.members,
-            admins: self.admins,
-            owner: self.owner,
-            no_owner: self.no_owner,
-            asked: self.owner_asked,
-            ended: self.signins_ended,
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            asked: owner_asked,
+            ended: signins_ended,
         }
     }
 }

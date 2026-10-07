@@ -200,19 +200,18 @@ impl TheRiff {
 
     /// The pauses and the settings, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
-        let riff = match self.pauses.riff {
-            Some(_) => RiffState::Paused,
-            None => RiffState::Running,
-        };
+        let TheRiff {
+            pauses: Pauses { riff, repositories },
+            idle,
+        } = self.clone();
         Saved {
-            riff,
-            idle: self.idle,
-            riff_pause: self
-                .pauses
-                .riff
-                .clone()
-                .filter(|pause| *pause != PauseInfo::default()),
-            pauses: self.pauses.repositories.clone(),
+            riff: match riff {
+                Some(_) => RiffState::Paused,
+                None => RiffState::Running,
+            },
+            idle,
+            riff_pause: riff.filter(|pause| *pause != PauseInfo::default()),
+            pauses: repositories,
         }
     }
 }
@@ -238,16 +237,22 @@ pub(super) struct Saved {
 
 impl Saved {
     pub(super) fn restore(self) -> TheRiff {
-        let riff = match self.riff {
-            RiffState::Paused => Some(self.riff_pause.unwrap_or_default()),
+        let Saved {
+            riff,
+            idle,
+            riff_pause,
+            pauses,
+        } = self;
+        let riff = match riff {
+            RiffState::Paused => Some(riff_pause.unwrap_or_default()),
             RiffState::Running => None,
         };
         TheRiff {
             pauses: Pauses {
                 riff,
-                repositories: self.pauses,
+                repositories: pauses,
             },
-            idle: self.idle,
+            idle,
         }
     }
 }

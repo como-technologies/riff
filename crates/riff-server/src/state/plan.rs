@@ -38,7 +38,7 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::{ThreadName, check};
-use riff_core::record::{By, Change, ItemFreed, ItemHeld, Record};
+use riff_core::record::{By, Change, Envelope, ItemFreed, ItemHeld, Record};
 use riff_core::wire::{Free, FreeReply, Hold, HoldReply};
 use serde::{Deserialize, Serialize};
 
@@ -131,13 +131,25 @@ impl Plans {
     /// `by` and the time of the record. A second record replaces the
     /// reason, the `by` and the time.
     pub(super) fn held(&mut self, held: &ItemHeld, record: &Record) -> Result<(), &'static str> {
+        let ItemHeld {
+            thread,
+            item,
+            reason,
+        } = held;
+        let Envelope {
+            position: _,
+            written_at_ms,
+            by,
+            command: _,
+            call: _,
+        } = &record.envelope;
         let hold = HoldInfo {
-            reason: held.reason.clone(),
-            by: record.envelope.by.clone(),
-            at_ms: record.envelope.written_at_ms,
+            reason: reason.clone(),
+            by: by.clone(),
+            at_ms: *written_at_ms,
         };
-        let plan = self.plans.entry(held.thread.clone()).or_default();
-        plan.holds.insert(held.item.clone(), hold);
+        let plan = self.plans.entry(thread.clone()).or_default();
+        plan.holds.insert(item.clone(), hold);
         Ok(())
     }
 
@@ -160,8 +172,9 @@ impl Plans {
 
     /// The plans, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        let Plans { plans } = self;
         Saved {
-            plans: self.plans.clone(),
+            plans: plans.clone(),
         }
     }
 }
@@ -176,9 +189,10 @@ pub(super) struct Saved {
 }
 
 impl Saved {
-    pub(super) fn restore(mut self) -> Plans {
-        self.plans.retain(|_, plan| !plan.is_empty());
-        Plans { plans: self.plans }
+    pub(super) fn restore(self) -> Plans {
+        let Saved { mut plans } = self;
+        plans.retain(|_, plan| !plan.is_empty());
+        Plans { plans }
     }
 }
 

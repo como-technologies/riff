@@ -85,17 +85,28 @@ impl Snapshot {
     /// The state that the log gives, the part of the presence, the
     /// last call of each session, and the kept calls.
     pub(super) fn into_parts(self) -> (Riff, presence::Saved, BTreeMap<Who, u64>, calls::Saved) {
-        let (sessions, seen) = self.sessions.restore();
+        let Snapshot {
+            position,
+            the_riff,
+            threads,
+            work,
+            sessions,
+            presence,
+            people,
+            plans,
+            calls,
+        } = self;
+        let (sessions, seen) = sessions.restore();
         let riff = Riff::restore(
             LoadPath(()),
-            self.position,
+            position,
             sessions,
-            self.threads.restore(),
-            self.work.restore(),
-            self.the_riff.restore(),
-            self.people.restore(),
-            self.plans.restore(),
+            threads.restore(),
+            work.restore(),
+            the_riff.restore(),
+            people.restore(),
+            plans.restore(),
         );
-        (riff, self.presence, seen, self.calls)
+        (riff, presence, seen, calls)
     }
 }
