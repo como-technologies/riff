@@ -98,9 +98,14 @@ test *ARGS:
 
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
+# 01M4BTG77E656440W5JSGTK4E5: the build runs outside, with the cache and
+# the network; the tests run in the sandbox of riff test-run, built from
+# this tree.
 [private]
 cargo-test *ARGS:
-    RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test {{ARGS}}
+    cargo test --no-run {{ARGS}}
+    cargo build -q -p riff --bin riff
+    RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus "${CARGO_TARGET_DIR:-target}/debug/riff" test-run -- cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:

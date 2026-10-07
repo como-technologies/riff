@@ -561,6 +561,22 @@ enum Command {
         #[command(subcommand)]
         command: Option<Workers>,
     },
+    /// Run the tests in a sandbox: new home, new /tmp, no network
+    ///
+    /// It runs PROGRAM with bubblewrap in namespaces of its own: an empty
+    /// home, an empty /tmp, its own processes, and the loopback network
+    /// only. It reads the system, the toolchain and the worktree, and
+    /// writes only the target. Build first: the run has no network. When
+    /// the host cannot make the sandbox, it prints one line with the
+    /// sudo command and runs nothing. For example: riff test-run -- cargo
+    /// test --workspace
+    TestRun {
+        /// The program, for example cargo.
+        program: std::ffi::OsString,
+        /// The arguments of PROGRAM.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
 }
 
 /// The top level of the tree of `riff top`.
@@ -1288,6 +1304,19 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
+    // A test run needs no riff server (01M4BTG72XPKSTDF4KYRKS4Z0D).
+    if let Command::TestRun { program, args } = &command {
+        match riff::sandbox::test_run(program, args) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => match e.downcast_ref::<riff::sandbox::Missing>() {
+                Some(missing) => {
+                    eprintln!("{missing}");
+                    std::process::exit(1);
+                }
+                None => return Err(e),
+            },
+        }
+    }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
@@ -1908,6 +1937,7 @@ async fn main() -> Result<()> {
         | Command::Remove { .. }
         | Command::Members
         | Command::Audit { .. }
+        | Command::TestRun { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
         | Command::Owner { .. } => unreachable!("handled before the identity"),
