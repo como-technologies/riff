@@ -3197,8 +3197,9 @@ profile.
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
 No role reads your home as a whole, your keyring, your D-Bus, your
-SSH or GnuPG keys, or the sign-in of `gh`. riff refuses a path of a
-session that is not absolute or that has a `..` part.
+SSH or GnuPG keys, the sign-in of `gh`, or the key of the GitHub App
+of riff. riff refuses a path of a session that is not absolute or that
+has a `..` part.
 
 ```mermaid
 flowchart LR
@@ -3267,6 +3268,94 @@ gives the workers on your machine:
 ```sh
 systemctl --user status riff-workers.slice
 ```
+
+## The forge token of each role
+
+With no GitHub App, each worker runs `gh` and git with your sign-in,
+so it can do each thing that you can. With the GitHub App of riff,
+each worker gets a token of its role, and GitHub refuses each other
+step. riff makes the token outside the sandbox, and gives the session
+only the token, never the key of the App.
+
+| Role | GitHub permissions of its token |
+|---|---|
+| lead, worker | contents, issues, pull requests: write; actions, checks, statuses, metadata: read |
+| verifier | issues, pull requests, statuses: write; actions, checks, contents, metadata: read |
+| test run | no token |
+
+- A worker token pushes a branch and opens a pull request. It cannot
+  set the `riff/verify` status.
+- A verifier token sets the status. It cannot push or merge.
+- No token can approve a deploy, change a ruleset or a workflow, or
+  push a `v*` tag.
+- GitHub keeps the waves and the labels with the comments on issues, so
+  the lead and worker tokens are the same. riff-server keeps the plan
+  to the lead.
+
+A worker that claims a `verify-` item gets the verifier token. After
+the release, it gets the worker token again. A token lasts one hour;
+riff makes a new one 10 minutes before the end.
+
+```mermaid
+sequenceDiagram
+    participant W as riff workers run
+    participant S as riff-server
+    participant G as GitHub
+    participant C as the worker (claude, gh, git)
+    W->>S: the claims of the session
+    W->>G: the App asks for a token of the role
+    G-->>W: a token for one hour
+    W->>C: the token, in the temp folder of the session
+    C->>W: a claim or a release
+    W->>G: a token of the new role
+```
+
+### Make the GitHub App of riff
+
+Do these steps one time, as an owner of the GitHub account of the
+repository.
+
+1. On GitHub, open Settings, Developer settings, GitHub Apps, and
+   click "New GitHub App".
+2. Give it a name, for example `riff-ACCOUNT`, and a homepage URL, for
+   example the URL of the repository.
+3. Clear "Active" under Webhook.
+4. Under Repository permissions, set: Actions: read, Checks: read,
+   Commit statuses: read and write, Contents: read and write, Issues:
+   read and write, Metadata: read, Pull requests: read and write. Set
+   no other permission.
+5. Under "Where can this GitHub App be installed?", select "Only on
+   this account". Click "Create GitHub App".
+6. Write down the App ID. Click "Generate a private key". GitHub
+   downloads a `.pem` file.
+7. Click "Install App", and install it on the repositories of the
+   riff only.
+
+Then save the App on each machine that runs workers:
+
+```sh
+riff forge app APP_ID ~/Downloads/riff-ACCOUNT.private-key.pem
+```
+
+riff copies the key to `forge/app.pem` beside the riff settings, where
+only you read it, and saves the ID as `forge.app`. Delete the
+downloaded file.
+
+### Check the GitHub App
+
+Run this in the clone of a repository of the riff. It makes a token of
+each role and shows its permissions, never the token:
+
+```sh
+riff forge check
+```
+
+Each line shows a role and its permissions. A line with an error names
+the permission that the App lacks: add it in the settings of the App,
+then accept the new permissions on the installation.
+
+Workers that start after the save get their tokens. Stop the old
+workers with `riff workers stop`; the rollout starts new ones.
 
 ## A restart
 

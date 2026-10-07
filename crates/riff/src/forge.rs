@@ -210,7 +210,9 @@ pub struct App {
 
 impl fmt::Debug for App {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("App").field("id", &self.id).finish_non_exhaustive()
+        f.debug_struct("App")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
     }
 }
 
@@ -463,14 +465,10 @@ impl GitHub {
             "{}/app/installations/{installation}/access_tokens",
             self.base
         );
-        let request = self
-            .http
-            .post(url)
-            .bearer_auth(app.jwt(now)?)
-            .json(&Ask {
-                repositories: [name],
-                permissions,
-            });
+        let request = self.http.post(url).bearer_auth(app.jwt(now)?).json(&Ask {
+            repositories: [name],
+            permissions,
+        });
         let given: Given = self
             .send(request, &format!("a {role} token for {repo}"))
             .await?;
@@ -536,8 +534,10 @@ impl Files {
             .create(&gh)
             .with_context(|| format!("cannot make {}", gh.display()))?;
         put(&self.token_path(), &token.token)?;
-        let hosts =
-            format!("github.com:\n    oauth_token: {}\n    user: {TOKEN_USER}\n", token.token);
+        let hosts = format!(
+            "github.com:\n    oauth_token: {}\n    user: {TOKEN_USER}\n",
+            token.token
+        );
         put(&gh.join("hosts.yml"), &hosts)
     }
 
@@ -727,7 +727,13 @@ mod tests {
     fn no_role_gets_the_rights_of_an_admin() {
         for role in Role::ALL {
             let p = permissions(role);
-            for name in ["administration", "deployments", "environments", "workflows", "secrets"] {
+            for name in [
+                "administration",
+                "deployments",
+                "environments",
+                "workflows",
+                "secrets",
+            ] {
                 assert!(!p.contains_key(name), "{role} has {name}");
             }
         }
@@ -765,7 +771,10 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o077, 0, "only the person reads the token");
-        assert!(!format!("{token:?}").contains("ghs_one"), "Debug hides the token");
+        assert!(
+            !format!("{token:?}").contains("ghs_one"),
+            "Debug hides the token"
+        );
     }
 
     #[test]

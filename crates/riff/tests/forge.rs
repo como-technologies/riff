@@ -49,8 +49,8 @@ fn app_claims(headers: &HeaderMap) -> Result<Value, StatusCode> {
     let key = jsonwebtoken::DecodingKey::from_jwk(&set.keys[0]).unwrap();
     let mut check = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
     check.set_required_spec_claims(&["exp", "iat", "iss"]);
-    let data = jsonwebtoken::decode::<Value>(jwt, &key, &check)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let data =
+        jsonwebtoken::decode::<Value>(jwt, &key, &check).map_err(|_| StatusCode::UNAUTHORIZED)?;
     let c = data.claims;
     let span = c["exp"].as_u64().unwrap() - c["iat"].as_u64().unwrap();
     assert!(span <= 600, "GitHub takes a JWT of ten minutes at most");
@@ -244,7 +244,8 @@ fn git_and_gh_in_a_session_use_the_token_of_the_files() {
         .unwrap();
     let vars = files.env(&env.riff_path());
     let mut git = env.command("git");
-    git.args(["credential", "fill"]).env("GH_TOKEN", "ghp_person");
+    git.args(["credential", "fill"])
+        .env("GH_TOKEN", "ghp_person");
     for (var, value) in &vars {
         match value {
             Some(value) => git.env(var, value),
@@ -275,7 +276,10 @@ fn git_and_gh_in_a_session_use_the_token_of_the_files() {
     let hosts = std::fs::read_to_string(std::path::Path::new(&gh_dir).join("hosts.yml")).unwrap();
     assert!(hosts.contains("oauth_token: ghs_session"), "{hosts}");
     for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
-        assert!(vars.contains(&(var, None)), "the session has no {var} of the person");
+        assert!(
+            vars.contains(&(var, None)),
+            "the session has no {var} of the person"
+        );
     }
 }
 
@@ -314,7 +318,11 @@ async fn riff_forge_app_saves_the_app_and_riff_forge_check_shows_each_role() {
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(text.contains("riff saved the GitHub App 123"), "{text}");
     let saved = env.riff_home().join("forge/app.pem");
     use std::os::unix::fs::PermissionsExt;
@@ -345,12 +353,19 @@ async fn riff_forge_app_saves_the_app_and_riff_forge_check_shows_each_role() {
         .await
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(out.status.success(), "{text} {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{text} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(text.contains("lead: "), "{text}");
     assert!(text.contains("worker: "), "{text}");
     assert!(text.contains("verifier: actions read"), "{text}");
     assert!(text.contains("statuses write"), "{text}");
-    assert!(!text.contains("ghs_"), "riff forge check shows no token: {text}");
+    assert!(
+        !text.contains("ghs_"),
+        "riff forge check shows no token: {text}"
+    );
 }
 
 #[test]

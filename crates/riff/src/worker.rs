@@ -100,8 +100,8 @@ use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
 use crate::{
-    enable, forge, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, worker_mcp,
-    workload,
+    enable, forge, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp,
+    worker_mcp, workload,
 };
 
 /// The variable that marks a worker session.
@@ -419,7 +419,9 @@ async fn forge_keeper(
     let no_token = |why: String| eprintln!("{}", crate::text::forge_no_token(&why));
     let Some(folder) = folder else {
         no_token("the worker has no temp folder".into());
-        return Some((forge::Files::in_temp(Path::new("/nonexistent")).env(riff), None));
+        // Files in no folder: `gh` and git find no token.
+        let none = forge::Files::in_temp(Path::new("/nonexistent"));
+        return Some((none.env(riff), None));
     };
     let files = forge::Files::in_temp(folder.path());
     let env = files.env(riff);

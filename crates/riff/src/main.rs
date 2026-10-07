@@ -2432,10 +2432,17 @@ async fn forge(command: &ForgeCommand) -> Result<()> {
             let settings = settings::path()?;
             let app = forge::App::here(&settings)?.context(text::FORGE_NO_APP)?;
             let repo = identity::here(None)?.repo_text();
-            anyhow::ensure!(repo != "-", "riff forge check runs in the clone of a repository");
+            anyhow::ensure!(
+                repo != "-",
+                "riff forge check runs in the clone of a repository"
+            );
             let github = forge::GitHub::here();
             let mut failed = false;
-            for role in [riff::profile::Role::Lead, riff::profile::Role::Worker, riff::profile::Role::Verifier] {
+            for role in [
+                riff::profile::Role::Lead,
+                riff::profile::Role::Worker,
+                riff::profile::Role::Verifier,
+            ] {
                 match github.token(&app, &repo, role).await {
                     Ok(token) => println!("{}", text::forge_token_line(&token)),
                     Err(e) => {

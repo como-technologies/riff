@@ -4254,7 +4254,7 @@
   `workflows`.
 - **01M4BV70GQ42MY0YHMRS47EK1E** Only the verifier token sets a commit
   status, and it does not write the code. The lead and worker tokens
-  write the code and set no status. GitHub keeps milestones and labels
+  write the code and set no status. GitHub keeps the waves and the labels
   in the permission of the comments on issues, so the lead and worker
   tokens have the same permissions. The ruleset `main` stops each push
   to `main`, and the ruleset `releases` stops each `v*` tag of a token.
