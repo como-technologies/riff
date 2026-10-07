@@ -201,7 +201,11 @@ impl Endpoint {
 }
 
 /// The hosts of the forge: GitHub, its API and its files.
-pub const FORGE: [&str; 3] = ["github.com", "api.github.com", "objects.githubusercontent.com"];
+pub const FORGE: [&str; 3] = [
+    "github.com",
+    "api.github.com",
+    "objects.githubusercontent.com",
+];
 
 /// The hosts of the package registries: crates.io, its index and its
 /// files.
@@ -425,7 +429,11 @@ impl Profile {
 
     fn check(&self, s: &Session) -> Result<(), Refused> {
         let secrets = s.secrets();
-        for p in self.writes.paths().chain(self.reads.iter().map(PathBuf::as_path)) {
+        for p in self
+            .writes
+            .paths()
+            .chain(self.reads.iter().map(PathBuf::as_path))
+        {
             if !p.is_absolute() {
                 return Err(Refused::Relative(p.to_owned()));
             }
@@ -557,7 +565,12 @@ mod tests {
         for role in [Role::Lead, Role::Worker, Role::Verifier] {
             let p = Profile::of(role, &session()).unwrap();
             assert_eq!(p.network().ports(), [443], "{role}");
-            let hosts: Vec<String> = p.network().endpoints().into_iter().map(|e| e.host).collect();
+            let hosts: Vec<String> = p
+                .network()
+                .endpoints()
+                .into_iter()
+                .map(|e| e.host)
+                .collect();
             for host in ["riff.example.com", "github.com", "index.crates.io", MODEL] {
                 assert!(hosts.iter().any(|h| h == host), "{role}: {host}");
             }
@@ -570,7 +583,10 @@ mod tests {
     #[test]
     fn each_role_has_the_forge_rights_of_its_row() {
         use Right::*;
-        assert_eq!(Role::Lead.rights(), [Read, Plan, Comment, Push, PullRequest]);
+        assert_eq!(
+            Role::Lead.rights(),
+            [Read, Plan, Comment, Push, PullRequest]
+        );
         assert_eq!(Role::Worker.rights(), [Read, Comment, Push, PullRequest]);
         assert_eq!(Role::Verifier.rights(), [Read, Comment, Verify]);
         assert!(Role::TestRun.rights().is_empty());
