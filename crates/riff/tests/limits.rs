@@ -694,7 +694,10 @@ fn the_wrapper_gives_the_slice_a_memory_limit() {
         "--user set-property --runtime riff-workers.slice MemoryHigh=21196M MemoryMax=23552M \
          CPUWeight=50"
     );
-    assert!(m.log("systemd-run.log").contains("--slice=riff-workers.slice"));
+    assert!(
+        m.log("systemd-run.log")
+            .contains("--slice=riff-workers.slice")
+    );
 
     let shown = m.workers(&["memory", "10"]);
     assert!(shown.starts_with("workers.memory  10  "), "{shown}");

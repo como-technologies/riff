@@ -2231,13 +2231,9 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         "{}",
         text::workers_started(n, &started.window, &started.main)
     );
-    for line in [
-        &started.limited,
-        &started.no_pool,
-        &started.no_cores,
-    ]
-    .into_iter()
-    .flatten()
+    for line in [&started.limited, &started.no_pool, &started.no_cores]
+        .into_iter()
+        .flatten()
     {
         println!("{line}");
     }

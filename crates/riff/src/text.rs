@@ -3625,13 +3625,9 @@ pub fn host_started(host: &str, started: &crate::worker::Started) -> String {
         started.main.display(),
         panes.join(", ")
     );
-    for more in [
-        &started.limited,
-        &started.no_pool,
-        &started.no_cores,
-    ]
-    .into_iter()
-    .flatten()
+    for more in [&started.limited, &started.no_pool, &started.no_cores]
+        .into_iter()
+        .flatten()
     {
         line.push(' ');
         line.push_str(more);
