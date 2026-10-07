@@ -1288,14 +1288,14 @@ async fn hold_the_first_read(
     next.run(request).await
 }
 
-/// A call of the host that gets no reply ends after
-/// [`riff::host::CALL_WAIT`]. The host says so on its output and goes
-/// on: it sets its status again, and it reads the request of the lead at
-/// its next refresh (01M3WN72M02P3J24ACCHTMNSFY). Before, the host
-/// waited for the reply with no end: it started no worker, set no
+/// A try of a call of the host that gets no reply ends after
+/// [`riff::link::TRY_WAIT`], and the call gets a new try in its budget
+/// (01M3WN72M02P3J24ACCHTMNSFY, 01M4A8041F8EK1VYDE4C9QG8N8). So the host
+/// reads the request of the lead with no error, and goes on. Before, the
+/// host waited for the reply with no end: it started no worker, set no
 /// status and printed nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_host_goes_on_after_a_call_with_no_reply() {
+async fn a_host_tries_again_after_a_call_with_no_reply() {
     let calls = std::sync::Arc::new(Calls::default());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
@@ -1316,29 +1316,15 @@ async fn a_host_goes_on_after_a_call_with_no_reply() {
     let host_id = host_session(&api, &lead, "b").await;
 
     api.tell(&lead, &host_id, "workers start 1").await.unwrap();
-    let no_reply = format!(
-        "riff: cannot read the requests: {}",
-        riff::text::no_reply(api.base(), riff::host::CALL_WAIT)
-    );
-    until("the host says that it got no reply", || async {
-        b.host_output().contains(&no_reply).then_some(())
-    })
-    .await;
-    // The host is the only session that sets a status. It set no
-    // status while it waited for the reply.
-    let before = calls.statuses.load(Ordering::SeqCst);
-    until("the host sets its status again", || async {
-        (calls.statuses.load(Ordering::SeqCst) > before).then_some(())
-    })
-    .await;
-
     reads(&api, &lead, "b: started 1 worker").await;
     assert_eq!(b.workers().len(), 1, "{}", b.log());
     assert_eq!(
         calls.reads.load(Ordering::SeqCst),
         2,
-        "one call held, one read"
+        "one try held, one new try"
     );
+    let output = b.host_output();
+    assert!(!output.contains("cannot read the requests"), "{output}");
 }
 
 /// The book says what the host does when the server gives no reply,
@@ -1353,7 +1339,7 @@ fn the_book_says_what_a_host_does_with_no_reply() {
     let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
     let line = format!(
         "riff: cannot read the requests: {}",
-        riff::text::no_reply("https://riff.example.com", riff::host::CALL_WAIT)
+        riff::text::no_reply("https://riff.example.com", riff::link::SHORT_BUDGET)
     );
     let refresh = format!("Each {} seconds", riff::host::REFRESH.as_secs());
     for words in [

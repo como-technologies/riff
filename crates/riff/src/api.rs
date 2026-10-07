@@ -952,7 +952,15 @@ impl Api {
             let left = deadline.saturating_duration_since(tokio::time::Instant::now());
             let wait = waits.next().unwrap_or(limits.most_wait);
             if !self.budget.again() || wait >= left {
-                return last;
+                // No reply in the whole budget: the error names it.
+                return last.map_err(|error| match error.downcast::<NoReply>() {
+                    Ok(_) => NoReply {
+                        base: self.base().to_owned(),
+                        wait: self.budget.time(&limits),
+                    }
+                    .into(),
+                    Err(error) => error,
+                });
             }
             self.link.show_wait(waited, self.waits.as_ref());
             waited += wait;

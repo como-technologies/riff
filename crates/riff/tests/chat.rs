@@ -957,7 +957,11 @@ async fn a_front_end_error_with_no_build_is_no_version_error() {
         warned.push(line);
     }
     // At most the short lines of a cut or a wait: no version error.
-    let short = [riff::api::RECONNECTING, riff::api::BACK, riff::api::WAITING];
+    let short = [
+        riff::api::RECONNECTING,
+        riff::api::BACK,
+        riff::link::WAITING,
+    ];
     assert!(
         warned.iter().all(|l| short.contains(&l.as_str())),
         "{warned:?}"

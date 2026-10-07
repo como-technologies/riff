@@ -248,7 +248,7 @@ async fn post_tries_again_while_the_server_replies_503() {
     assert_eq!(calls.post.load(Ordering::SeqCst), 3);
     // A wait of less than 1 second shows no line.
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(!stderr.contains(riff::api::WAITING), "{stderr}");
+    assert!(!stderr.contains(riff::link::WAITING), "{stderr}");
 }
 
 /// The gap of a start of `riff-server`: 503 for more than 1 second.
@@ -270,8 +270,8 @@ async fn post_shows_one_line_while_it_waits_for_the_server() {
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Posted message 7"), "{stdout}");
-    assert!(!stdout.contains(riff::api::WAITING), "{stdout}");
+    assert!(!stdout.contains(riff::link::WAITING), "{stdout}");
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(stderr.matches(riff::api::WAITING).count(), 1, "{stderr}");
+    assert_eq!(stderr.matches(riff::link::WAITING).count(), 1, "{stderr}");
     assert_eq!(calls.post.load(Ordering::SeqCst), 6);
 }
