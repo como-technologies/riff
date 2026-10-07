@@ -292,11 +292,13 @@ pub fn token_hash(token: &str) -> String {
     B64.encode(Sha256::digest(token.as_bytes()))
 }
 
+/// The header of a proof and of a message signature: one layout for
+/// both (01M49W17GGV1K5FZEKJRPV0GNA).
 #[derive(Serialize, Deserialize)]
-struct Header {
-    typ: String,
-    alg: String,
-    jwk: Jwk,
+pub(crate) struct Header {
+    pub(crate) typ: String,
+    pub(crate) alg: String,
+    pub(crate) jwk: Jwk,
 }
 
 #[derive(Serialize, Deserialize)]

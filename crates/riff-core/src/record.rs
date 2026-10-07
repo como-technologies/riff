@@ -1099,10 +1099,10 @@ pub fn one_of_each() -> Vec<Change> {
             message: Message {
                 seq: 1,
                 from: uri(),
-                to: vec![],
+                to: vec!["user=ann,session=s1,host=heron,repo=acme/app,worktree=issue-7,claim=issue-7,lead=true".parse().unwrap()],
                 body: "hi".into(),
                 at_ms: 5,
-                kind: crate::wire::Kind::Message,
+                kind: crate::wire::Kind::Status,
                 sig: Some("h..s".into()),
                 payload: Some("cA".into()),
             },
@@ -1144,7 +1144,9 @@ pub fn one_of_each() -> Vec<Change> {
             email: email.email.clone(),
             admin: true,
         }),
-        Change::OwnerSet(OwnerSet { email: None }),
+        Change::OwnerSet(OwnerSet {
+            email: Some(email.email.clone()),
+        }),
         Change::OwnerAsked(OwnerAsked {
             email: email.email.clone(),
             due_ms: 9,

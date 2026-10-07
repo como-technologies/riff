@@ -84,7 +84,7 @@ use p256::ecdsa::signature::Verifier;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::dpop::{ALG, Jwk, Key, json_b64};
+use crate::dpop::{ALG, Header, Key, json_b64};
 use crate::name::{ThreadName, Who};
 use crate::selector::Selector;
 use crate::wire::Kind;
@@ -274,13 +274,6 @@ impl fmt::Display for SignError {
 }
 
 impl std::error::Error for SignError {}
-
-#[derive(Serialize, Deserialize)]
-struct Header {
-    typ: String,
-    alg: String,
-    jwk: Jwk,
-}
 
 fn decode<T: for<'de> Deserialize<'de>>(part: &str) -> Result<T, SignError> {
     let bytes = B64

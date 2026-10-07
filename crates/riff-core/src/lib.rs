@@ -78,6 +78,8 @@ pub mod build;
 pub mod dpop;
 pub mod name;
 pub mod record;
+#[cfg(test)]
+mod round_trip;
 pub mod selector;
 pub mod signed;
 pub mod wire;
