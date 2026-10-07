@@ -1,10 +1,11 @@
-//! The rules of the holds (01M43GSGB9ZFHSG0Q83Y50FEGW): one test for
-//! each rule of [`plan`](crate::state::plan), in the form given, when,
-//! then.
+//! The rules of the holds (01M43GSGB9ZFHSG0Q83Y50FEGW) and of the plan
+//! (01M4A4YTNSJR0R1T9JNXPBSKHC): one test for each rule of
+//! [`plan`](crate::state::plan), in the form given, when, then.
 
-use riff_core::record::{ItemFreed, ItemHeld};
+use riff_core::record::{ItemFreed, ItemHeld, Plan, PlanEnded, PlanItem, PlanSet, Wave};
 
 use super::*;
+use crate::state::plan::PLAN_TTL;
 
 struct Hold {
     item: &'static str,
@@ -244,4 +245,312 @@ fn a_held_item_refuses_a_worker_and_warns_each_other_session() {
     let (changes, warning) = state.check(&worker, &claim_12, now).result.unwrap();
     assert_eq!(changes, [claimed(&ann2(), "issue-12")]);
     assert_eq!(warning, None);
+}
+
+/// The plan of `items`, each with no need, in the repository thread.
+struct SendPlan {
+    base: Option<u64>,
+    items: &'static [&'static str],
+}
+
+impl Ask for SendPlan {
+    type Command = wire::SetPlan;
+    fn of(self, me: &SessionUri) -> wire::SetPlan {
+        wire::SetPlan {
+            me: me.clone(),
+            base: self.base,
+            plan: PlanSet {
+                thread: repo(),
+                plan: plan_of(self.items),
+            },
+        }
+    }
+}
+
+struct Off;
+
+impl Ask for Off {
+    type Command = wire::PlanOff;
+    fn of(self, me: &SessionUri) -> wire::PlanOff {
+        wire::PlanOff {
+            me: me.clone(),
+            thread: repo(),
+        }
+    }
+}
+
+fn plan_of(items: &[&str]) -> Plan {
+    Plan {
+        wave: Some(Wave {
+            number: 21,
+            title: "Wave 21".into(),
+        }),
+        items: items
+            .iter()
+            .map(|item| PlanItem {
+                item: (*item).into(),
+                needs: vec![],
+            })
+            .collect(),
+        done: vec![],
+    }
+}
+
+fn plan_set(items: &[&str]) -> Change {
+    Change::PlanSet(PlanSet {
+        thread: repo(),
+        plan: plan_of(items),
+    })
+}
+
+/// The records of the team and a plan of `items`, and the position of
+/// the `plan_set` in the records of [`given`].
+fn planned(items: &[&str]) -> (Vec<Change>, u64) {
+    let records = [team(), vec![plan_set(items)]].concat();
+    let position = u64::try_from(records.len()).unwrap();
+    (records, position)
+}
+
+/// A session of another repository.
+fn cy() -> SessionUri {
+    "riff://cy@wren/acme/lib?session=c1".parse().unwrap()
+}
+
+/// The case of the issue (01M4A4YTR2NKVBPE6BT9EC3X75): two `plan`
+/// commands with the same `base` cross. The first is taken. The second
+/// gets `stale_base`, and its old plan does not replace the new one.
+#[test]
+fn two_plans_that_cross_give_the_second_stale_base() {
+    let Given { mut state, now } = given(&team()).live(&[ann(), bob()]);
+    let first = SendPlan {
+        base: None,
+        items: &["issue-12", "issue-13"],
+    }
+    .of(&ann());
+    let second = SendPlan {
+        base: None,
+        items: &["issue-12"],
+    }
+    .of(&bob());
+    let (made, ()) = state.run(&Caller::of(&ann()), &first, now).unwrap();
+    let refused = state.run(&Caller::of(&bob()), &second, now).unwrap_err();
+    assert_eq!(refused.code, Code::StaleBase);
+    let position = made[0].envelope.position;
+    let part = format!("at position {position}, and the base is no plan");
+    assert!(refused.reason.contains(&part), "{refused}");
+    state.written(&made);
+    let kept = state.plans().plan(&repo()).unwrap();
+    assert_eq!(kept.plan, plan_of(&["issue-12", "issue-13"]));
+    assert_eq!(kept.position, position);
+
+    // With the base of the server, the plan of bob is taken.
+    let again = SendPlan {
+        base: Some(position),
+        items: &["issue-12"],
+    }
+    .of(&bob());
+    let (made, ()) = state.run(&Caller::of(&bob()), &again, now).unwrap();
+    assert_eq!(made[0].change, plan_set(&["issue-12"]));
+}
+
+/// A `plan` equal to the plan of the server makes no record. With no
+/// plan on the server, a base is stale; with a plan, no base is stale.
+#[test]
+fn the_same_plan_makes_no_record() {
+    let (records, position) = planned(&["issue-12"]);
+    let member = Caller::of(&ann());
+    let same = || SendPlan {
+        base: Some(position),
+        items: &["issue-12"],
+    };
+    given(&records).when_as(&member, same()).then(&[]);
+    given(&team())
+        .when_as(&member, same())
+        .then_refused_as(Code::StaleBase, "has no plan on the server");
+    let no_base = SendPlan {
+        base: None,
+        items: &["issue-12"],
+    };
+    given(&records)
+        .when_as(&member, no_base)
+        .then_refused_as(Code::StaleBase, "and the base is no plan");
+}
+
+/// `plan` checks the form (01M4A4YTTB24XNB4G49675QMHT).
+#[test]
+fn a_plan_needs_items_of_the_form_issue_n_once_each() {
+    let member = Caller::of(&ann());
+    let send = |thread: ThreadName, plan: Plan| wire::SetPlan {
+        me: ann(),
+        base: None,
+        plan: PlanSet { thread, plan },
+    };
+    let twice = plan_of(&["issue-12", "issue-12"]);
+    let mut bad_need = plan_of(&["issue-12"]);
+    bad_need.items[0].needs = vec!["verify-issue-3".into()];
+    let mut bad_done = plan_of(&["issue-12"]);
+    bad_done.done = vec!["#3".into()];
+    for (thread, plan, part) in [
+        (repo(), twice, "issue-12 is twice"),
+        (repo(), plan_of(&["wave5-live"]), "wave5-live is not a name"),
+        (repo(), bad_need, "verify-issue-3 is not a name"),
+        (repo(), bad_done, "#3 is not a name"),
+        (design(), plan_of(&["issue-12"]), "not a repository thread"),
+    ] {
+        let Given { mut state, now } = given(&team()).live(&[ann()]);
+        let command = send(thread, plan);
+        let refused = state.check(&member, &command, now).result.unwrap_err();
+        assert_eq!(refused.code, Code::BadRequest, "{refused}");
+        assert!(refused.reason.contains(part), "{refused}");
+    }
+}
+
+/// The case of the issue (01M4A4YTWK68JDA0DKXX2HV4FA): a worker gets
+/// `not_allowed` for `plan` and `plan_off`, also with the role of the
+/// owner. A session out of the thread and a person who is a member
+/// get it too. The owner and an admin can.
+#[test]
+fn a_worker_cannot_send_a_plan() {
+    let (records, _) = planned(&["issue-12"]);
+    let records = [records, worker_records()].concat();
+    for role in Role::ALL {
+        let worker = Caller::of(&ann2()).with_role(role);
+        let send = SendPlan {
+            base: None,
+            items: &["issue-12"],
+        };
+        given(&worker_records())
+            .when_as(&worker, send)
+            .then_refused_as(Code::NotAllowed, "a worker cannot send plan");
+        given(&records)
+            .when_as(&worker, Off)
+            .then_refused_as(Code::NotAllowed, "a worker cannot send plan_off");
+    }
+    given(&records)
+        .when_as(&Caller::of(&cy()), Off)
+        .then_refused_as(Code::NotAllowed, "only a session in acme/app");
+    given(&records)
+        .when_as(&Caller::of(&person()), Off)
+        .then_refused_as(Code::NotAllowed, "the owner or an admin");
+    let ended = Change::PlanEnded(PlanEnded { thread: repo() });
+    given(&records)
+        .when_as(&Caller::of(&person()).with_role(Role::Owner), Off)
+        .then(std::slice::from_ref(&ended));
+    given(&records)
+        .when_as(&Caller::of(&cy()).with_role(Role::Admin), Off)
+        .then(&[ended]);
+}
+
+/// The case of the issue (01M4A4YTNSJR0R1T9JNXPBSKHC): `plan_off`
+/// removes the plan and keeps the holds. A `plan_off` with no plan
+/// makes no record.
+#[test]
+fn plan_off_removes_the_plan_and_keeps_the_holds() {
+    let (records, _) = planned(&["issue-12"]);
+    let records = [records, vec![item_held("issue-13", REASON)]].concat();
+    let Given { mut state, now } = given(&records).live(&[ann()]);
+    let member = Caller::of(&ann());
+    let (made, ()) = state.run(&member, &Off.of(&ann()), now).unwrap();
+    assert_eq!(made.len(), 1);
+    state.written(&made);
+    assert!(state.plans().plan(&repo()).is_none());
+    let held = state.plans().hold(&repo(), "issue-13").unwrap();
+    assert_eq!(held.reason, REASON);
+    let (made, ()) = state.run(&member, &Off.of(&ann()), now).unwrap();
+    assert!(made.is_empty());
+
+    let reply = state.plan(&repo(), now, 0);
+    assert_eq!(reply.plan, None);
+    assert_eq!(reply.holds.len(), 1);
+}
+
+/// The case of the issue (01M4A4Z1QTHYXZDMCP9DZ39WVT), with a fake
+/// clock: the plan is stale `PLAN_TTL` after the last `plan` or
+/// `plan_seen`, and not stale after a new `plan_seen`.
+#[test]
+fn a_plan_is_stale_plan_ttl_after_the_last_look() {
+    let Given { mut state, now } = given(&team()).live(&[ann(), bob()]);
+    let send = SendPlan {
+        base: None,
+        items: &["issue-12"],
+    }
+    .of(&ann());
+    let (made, ()) = state.run(&Caller::of(&ann()), &send, now).unwrap();
+    state.written(&made);
+    let position = made[0].envelope.position;
+    let stale = |state: &State, at: Instant| state.plan(&repo(), at, 0).plan.unwrap().stale;
+    let tick = Duration::from_secs(1);
+    assert!(!stale(&state, now + PLAN_TTL - tick));
+    assert!(stale(&state, now + PLAN_TTL));
+
+    // A plan_seen of bob at the position of the plan is a new look.
+    let seen = now + PLAN_TTL;
+    assert!(state.sees_plan(bob().who(), &repo(), position));
+    state.signal(bob().who(), Signal::PlanSeen { thread: repo() }, seen);
+    assert!(!stale(&state, seen + PLAN_TTL - tick));
+    assert!(stale(&state, seen + PLAN_TTL));
+
+    // A plan that is the same as the plan of the server is a look too,
+    // with no record.
+    let same = SendPlan {
+        base: Some(position),
+        items: &["issue-12"],
+    }
+    .of(&ann());
+    let later = seen + PLAN_TTL;
+    let (made, ()) = state.run(&Caller::of(&ann()), &same, later).unwrap();
+    assert!(made.is_empty());
+    assert!(!stale(&state, later + PLAN_TTL - tick));
+    assert!(stale(&state, later + PLAN_TTL));
+}
+
+/// `plan_seen` counts only from a session in the thread that is not a
+/// worker, and only for the position of the plan of the server
+/// (01M4A4YTYVHFGK0CJVACJQ8DQ3).
+#[test]
+fn plan_seen_counts_only_for_the_plan_of_the_server() {
+    let (records, position) = planned(&["issue-12"]);
+    let records = [records, worker_records()].concat();
+    let Given { state, now: _ } = given(&records);
+    assert!(state.sees_plan(ann().who(), &repo(), position));
+    assert!(!state.sees_plan(ann().who(), &repo(), position - 1));
+    assert!(!state.sees_plan(ann2().who(), &repo(), position));
+    assert!(!state.sees_plan(person().who(), &repo(), position));
+    assert!(!state.sees_plan(cy().who(), &repo(), position));
+}
+
+/// The query (01M4A4Z1NKPDBXV2PRZCG86G6A): the plan, the position and
+/// the time of its record, the time of the last look, the holder of
+/// each item of the plan with a claim, and each hold of the thread.
+#[test]
+fn the_query_gives_the_plan_its_holders_and_the_holds() {
+    let (records, position) = planned(&["issue-12", "issue-13"]);
+    let more = vec![
+        claimed(&bob(), "issue-13"),
+        claimed(&bob(), "issue-99"),
+        item_held("issue-14", REASON),
+    ];
+    let records = [records, more].concat();
+    let Given { mut state, now } = given(&records).live(&[bob()]);
+    let reply = state.plan(&repo(), now, 5_000);
+    let shown = reply.plan.unwrap();
+    assert_eq!(shown.plan, plan_of(&["issue-12", "issue-13"]));
+    assert_eq!(shown.position, position);
+    assert_eq!(shown.set_ms, 0);
+    // No look since the start: the count starts at the start.
+    assert_eq!(shown.seen_ms, None);
+    assert!(!shown.stale);
+    let holders: Vec<&str> = shown.holders.keys().map(String::as_str).collect();
+    assert_eq!(holders, ["issue-13"]);
+    assert_eq!(shown.holders["issue-13"].who(), bob().who());
+    assert_eq!(reply.holds["issue-14"].reason, REASON);
+
+    let look = now + Duration::from_secs(2);
+    state.signal(ann().who(), Signal::PlanSeen { thread: repo() }, look);
+    let later = look + Duration::from_secs(3);
+    let shown = state.plan(&repo(), later, 9_000).plan.unwrap();
+    assert_eq!(shown.seen_ms, Some(6_000));
+    // A thread with no plan and no hold gives an empty reply.
+    let lib = "acme/lib".parse().unwrap();
+    assert_eq!(state.plan(&lib, now, 0), wire::PlanReply::default());
 }

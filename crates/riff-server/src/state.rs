@@ -3993,8 +3993,12 @@ mod tests {
                 "no_owner": true,
                 "owner_asked": {"email": "cy@acme.io", "due_ms": T0},
                 "signins_ended": {"bob": 1},
-                "plans": {"como-technologies/riff": {"holds": {"issue-8": {
-                    "reason": "waits for mike", "by": {"session": "mike/a1"}, "at_ms": T0}}}},
+                "plans": {"como-technologies/riff": {
+                    "holds": {"issue-8": {
+                        "reason": "waits for mike", "by": {"session": "mike/a1"}, "at_ms": T0}},
+                    "plan": {"wave": {"number": 21, "title": "Wave 21"},
+                             "items": [{"item": "issue-7", "needs": ["issue-6"]}],
+                             "done": ["issue-6"], "position": 2, "at_ms": T0}}},
                 "calls": [{"position": 2, "written_at_ms": T0, "by": {"session": "mike/a1"},
                            "command": "claim", "call": "c1",
                            "change": {"claimed": {

@@ -606,6 +606,8 @@ mod tests {
             }],
             done: vec![text("issue-6")],
         };
+        // A flattened type has no name in the schema of its holder.
+        c.trip(&plan);
         c.trip(&SetPlan {
             me: me(),
             base: Some(3),

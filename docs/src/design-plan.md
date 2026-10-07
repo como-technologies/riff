@@ -121,8 +121,10 @@ sequenceDiagram
 ### Two writers, and the age of the copy
 
 - `handle` of `plan` refuses the command with the code `stale_base`
-  when `base` is not the position of the last `plan_set` record of
-  the repository. The reply holds the plan of the server. The look
+  when `base` is not the position of the `plan_set` record of the plan
+  of the repository, or not none when the repository has no plan. A
+  refusal is text, so the reason names the position of the plan of the
+  server, and the look reads that plan with the query `plan`. The look
   reads the forge again at its next turn. So two looks that cross never
   write an old plan over a new one.
 - `plan` with the plan that the server has already gives no record. It
@@ -223,7 +225,7 @@ and its replay. The test of the kinds takes the union of the lists.
 
 | Path | Type | Kind |
 |---|---|---|
-| `/v1/plan` | `PlanSet` (the plan and `base`) | command `plan` |
+| `/v1/plan` | `SetPlan` (the record `PlanSet` and `base`) | command `plan` |
 | `/v1/plan/seen` | `PlanSeen` (the position) | signal |
 | `/v1/plan/off` | `PlanOff` | command `plan_off` |
 | `/v1/plan/hold` | `Hold` (the item and the reason) | command `hold` |
@@ -231,8 +233,11 @@ and its replay. The test of the kinds takes the union of the lists.
 | `/v1/plan/show` | `PlanShow` (the repository) | query `plan` |
 
 - The reply of `plan`, `plan_seen` and the query is the plan of the
-  server: the wave, the items with their state, the holds, the
-  position of the last `plan_set`, and the time of the last look.
+  server (`PlanReply`): the wave, the items with their needs, the done
+  needs, the holder of each item with a claim, the holds, the position
+  and the time of the `plan_set` record, the time of the last look,
+  and whether the plan is stale. A client finds the rest of the state
+  of an item from these: waits, held, claimed.
 - `POST /v1/log` skips a record of a kind that the client does not
   know, as `Line::parse` does, so that `riff audit` of one build reads
   the log of a later one. P1 adds this to the reader of `LogReply`.

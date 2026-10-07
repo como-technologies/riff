@@ -12,7 +12,7 @@
 //!   written, so a log with no hold and no plan gives the checkpoint of
 //!   1.0.0 (01M43GSGVYJW7C09SVRWRAQZDZ, 01M4A4Z3QVRC57RE7M43ZRF4T2).
 //! - Presence: the time of the last look of each plan
-//!   ([`Signal::PlanSeen`](super::Signal::PlanSeen)). A plan is stale
+//!   ([`Signal::PlanSeen`]). A plan is stale
 //!   [`PLAN_TTL`] after it (01M4A4Z1QTHYXZDMCP9DZ39WVT).
 //! - The check of a claim: `View::hold` (see [`super::work`]).
 //!

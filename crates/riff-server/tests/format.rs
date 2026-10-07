@@ -37,6 +37,11 @@
 //!   of the release; the test of the kinds takes the union of the lists
 //!   of each release. `log.jsonl` has each new kind, and ends with holds
 //!   in two repositories, so `replayed.json` has the part `plans`.
+//! - `fixtures/1.3.0`: the plan. `log.jsonl` sets a plan in three
+//!   repositories, changes one, and ends two: one keeps a hold, and one
+//!   has nothing left. Its last `plan_set` has no caller. So
+//!   `replayed.json` has a plan and a hold in one repository, and only
+//!   a hold in another.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -52,8 +57,11 @@ use serde::Deserialize;
 /// The release of the fixtures of the holds.
 const HOLDS: &str = "1.1.0";
 
+/// The release of the fixtures of the plan.
+const PLANS: &str = "1.3.0";
+
 /// Each release with a directory of its own and a `kinds.json`.
-const RELEASES: [&str; 2] = ["1.0.0", HOLDS];
+const RELEASES: [&str; 3] = ["1.0.0", HOLDS, PLANS];
 
 fn bytes(name: &str) -> Vec<u8> {
     bytes_of("1.0.0", name)
@@ -172,16 +180,23 @@ fn the_list_of_the_release_has_no_riff_state_set() {
 /// log of each release has each kind of its own list.
 #[test]
 fn the_fixture_log_has_a_record_of_each_kind() {
-    let holds = records_of(HOLDS, "log.jsonl");
-    let new: Kinds = serde_json::from_slice(&bytes_of(HOLDS, "kinds.json")).unwrap();
-    let found = set(holds.iter().map(|record| record.change.kind()));
-    let listed = set(new.records.iter().map(String::as_str));
-    assert!(found.is_superset(&listed), "{found:?}");
-    assert!(holds.iter().all(|record| record.other().is_none()));
+    let mut all = BTreeSet::new();
+    for release in [HOLDS, PLANS] {
+        let log = records_of(release, "log.jsonl");
+        let new: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
+        let found = set(log.iter().map(|record| record.change.kind()));
+        let listed: BTreeSet<String> = new.records.into_iter().collect();
+        assert!(
+            listed.iter().all(|kind| found.contains(kind.as_str())),
+            "{release}: {found:?}"
+        );
+        assert!(log.iter().all(|record| record.other().is_none()));
+        all.extend(listed);
+    }
 
     let records = records("log.jsonl");
-    let found = set(records.iter().map(|record| record.change.kind()));
-    let all = found.union(&listed).copied().collect::<BTreeSet<_>>();
+    all.extend(records.iter().map(|record| record.change.kind().to_owned()));
+    let all = set(all.iter().map(String::as_str));
     assert_eq!(all, set(Change::KINDS.iter().copied()));
     // No record of the release has a value that reads as `other`.
     assert!(records.iter().all(|record| record.other().is_none()));
@@ -401,6 +416,47 @@ fn the_log_of_the_holds_gives_its_checkpoint_at_each_position() {
     assert!(full.plans().hold(&thread, "issue-13").is_none());
     let lib = "acme/lib".parse().unwrap();
     assert_eq!(full.plans().holds(&lib).count(), 1);
+
+    for at in 0..=records.len() {
+        let (before, after) = records.split_at(at);
+        let state = State::replay(before.to_vec(), now, 0);
+        let saved = checkpoint::decode(&written(&state, &expected)).unwrap();
+        let alone = State::load(Some(saved.state.clone()), [], now, 0);
+        assert!(alone.same_log_state(&state), "the checkpoint at {at}");
+        let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
+        assert!(loaded.same_log_state(&full), "a start from {at}");
+    }
+}
+
+/// The log of the plan: this build writes its bytes, a replay gives
+/// `replayed.json` with the plan and the holds, and a load of the
+/// checkpoint at each position gives the state of a replay
+/// (01M4A4Z3QVRC57RE7M43ZRF4T2). `plan_ended` keeps the holds
+/// (01M4A4YTNSJR0R1T9JNXPBSKHC).
+#[test]
+fn the_log_of_the_plans_gives_its_checkpoint_at_each_position() {
+    let records = records_of(PLANS, "log.jsonl");
+    assert_eq!(log::encode(&records), bytes_of(PLANS, "log.jsonl"));
+    let expected = checkpoint::decode(&bytes_of(PLANS, "replayed.json")).unwrap();
+    assert_eq!(
+        checkpoint::encode(&expected),
+        bytes_of(PLANS, "replayed.json")
+    );
+
+    let now = Instant::now();
+    let full = State::replay(records.clone(), now, 0);
+    assert_eq!(written(&full, &expected), bytes_of(PLANS, "replayed.json"));
+    let app = "acme/app".parse().unwrap();
+    let plan = full.plans().plan(&app).unwrap();
+    assert_eq!((plan.position, plan.at_ms), (14, 1_794_000_011_000));
+    assert_eq!(plan.plan.items[0].item, "issue-15");
+    assert_eq!(plan.plan.done, ["issue-12"]);
+    assert!(full.plans().hold(&app, "issue-14").is_some());
+    let lib = "acme/lib".parse().unwrap();
+    assert!(full.plans().plan(&lib).is_none());
+    assert!(full.plans().hold(&lib, "issue-3").is_some());
+    let web = "acme/web".parse().unwrap();
+    assert!(full.plans().plan(&web).is_none());
 
     for at in 0..=records.len() {
         let (before, after) = records.split_at(at);
