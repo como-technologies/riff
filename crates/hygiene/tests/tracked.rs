@@ -6,13 +6,8 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::Mutex;
 
-/// Held while a test writes a fake tool, and while it starts a process.
-/// A process that starts while another thread writes the script gets a
-/// copy of its open file, and then the exec of the script fails with
-/// "Text file busy".
-static SPAWN: Mutex<()> = Mutex::new(());
+use crate::SPAWN;
 
 /// Runs `cmd` to its end. It starts under [`SPAWN`].
 fn run(cmd: &mut Command) -> Output {

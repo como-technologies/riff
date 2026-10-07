@@ -6,7 +6,7 @@
 //! `crates/riff-server/tests/start_a_riff.rs`. "Join a Riff" is checked
 //! in `join_a_riff.rs`.
 
-mod book;
+use crate::book;
 
 use isolated::Isolated;
 use std::fs;

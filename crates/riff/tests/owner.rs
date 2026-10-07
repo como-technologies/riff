@@ -10,8 +10,8 @@
 //! tests read the people through [`Service::members`] and the routes,
 //! and never through the token store.
 
-mod book;
-mod common;
+use crate::book;
+use crate::common;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

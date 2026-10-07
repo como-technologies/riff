@@ -8,7 +8,7 @@
 //! through [`Service::members`] and the routes, and never through the
 //! token store.
 
-mod common;
+use crate::common;
 
 use std::time::Instant;
 

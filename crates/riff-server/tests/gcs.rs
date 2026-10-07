@@ -1,7 +1,7 @@
 //! The Cloud Storage store against a fake Cloud Storage and metadata
 //! server.
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};

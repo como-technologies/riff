@@ -14,7 +14,7 @@ use std::time::Duration;
 use rmcp::ServiceExt;
 use serde_json::{Value, json};
 
-mod book;
+use crate::book;
 
 const ID: &str = "a6cf2205-d54a-4c1e-9b1f-2e3d4c5b6a7f";
 

@@ -3,7 +3,7 @@
 //! store of `keyring-core`. All tests share it, so each server starts
 //! with no old sign-in at its URL (`common::fresh_url`).
 
-mod common;
+use crate::common;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

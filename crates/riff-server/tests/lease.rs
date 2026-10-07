@@ -1,6 +1,6 @@
 //! Only one instance serves at a time (R29, R137-R142), over HTTP.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

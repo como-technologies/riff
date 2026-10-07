@@ -22,7 +22,7 @@ const KEY: &str = include_str!("../../../riff-server/testdata/test-only-rsa-key.
 const JWKS: &str = include_str!("../../../riff-server/testdata/test-only-jwks.json");
 
 /// Makes the mock store of `keyring-core` the keyring of this test
-/// process. All tests of a test file share it.
+/// process. All tests of the test binary share it.
 pub fn mock_keyring() {
     static MOCK_KEYRING: Once = Once::new();
     MOCK_KEYRING.call_once(|| {

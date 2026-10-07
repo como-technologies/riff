@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 publish = false
+autotests = false
 
 [dependencies]
 riff-core.workspace = true
@@ -47,3 +48,19 @@ rmcp = { workspace = true, features = ["client"] }
 tower.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 vt100.workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "back_in"
+path = "tests/back_in.rs"
+
+[[test]]
+name = "join_a_riff"
+path = "tests/join_a_riff.rs"
+
+[[test]]
+name = "isolation"
+path = "tests/isolation.rs"

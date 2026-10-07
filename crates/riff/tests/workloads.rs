@@ -6,7 +6,7 @@
 //! variable of the agent tool. A fake `tmux` lists the worker pane, and
 //! a fake `gh` gives the pull requests.
 
-mod book;
+use crate::book;
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;

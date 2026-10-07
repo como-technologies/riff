@@ -1176,8 +1176,6 @@ async fn the_host_reads_no_input() {
     assert!(info.starts_with("pos:\t0\n"), "{info}");
 }
 
-static MOCK_KEYRING: std::sync::Once = std::sync::Once::new();
-
 /// The sign-in of a pair from the server.
 fn signed(pair: riff_core::wire::TokenReply) -> riff::login::SignIn {
     riff::login::SignIn {
@@ -1222,9 +1220,7 @@ async fn a_host_works_against_a_server_with_sign_in() {
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
     // The lead runs in this process, with its sign-in in the mock store.
-    MOCK_KEYRING.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-    });
+    crate::common::mock_keyring();
     let person = Api::new(&url);
     let jkt = riff::device::key(&url).unwrap().thumbprint();
     // Only the owner or an admin resumes the whole riff: the first

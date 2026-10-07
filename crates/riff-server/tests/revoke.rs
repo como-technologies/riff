@@ -1,7 +1,7 @@
 //! `POST /v1/revoke` over HTTP (R20). Each riff here has sign-in: a
 //! riff with no sign-in has no people.
 
-mod common;
+use crate::common;
 
 use std::time::Instant;
 

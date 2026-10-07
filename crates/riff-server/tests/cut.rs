@@ -3,7 +3,7 @@
 //! log does not hold, so a later removal ends each sign-in of its
 //! person.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

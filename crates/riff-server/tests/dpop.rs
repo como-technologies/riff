@@ -1,6 +1,6 @@
 //! Tokens bound to a device key (R18, RFC 9449), over HTTP.
 
-mod common;
+use crate::common;
 
 use std::time::Instant;
 

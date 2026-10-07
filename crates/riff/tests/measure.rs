@@ -5,7 +5,7 @@
 //! a quiet machine:
 //!
 //! ```sh
-//! cargo test -p riff --test measure -- --ignored --nocapture
+//! cargo test -p riff --test all measure:: -- --ignored --nocapture
 //! ```
 //!
 //! The store is in memory, and each write of a chunk of the log takes

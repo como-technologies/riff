@@ -4,7 +4,7 @@
 //! 01M3JY7T109BR860EQBSKEFDHY, 01M3JY7T3645CMQ8CS4T4ABZTP,
 //! 01M3JYX8NPZASQY6031R35H39P, 01M3JYX8QSEZDB5RZJ3Y57DR4Y).
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::time::Duration;

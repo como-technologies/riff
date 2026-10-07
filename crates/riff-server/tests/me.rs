@@ -2,7 +2,7 @@
 //! claims, its status and the build of the server. It changes nothing
 //! (01M3T5GFVS8NMA992KHZN4VE17).
 
-mod common;
+use crate::common;
 
 use riff_core::wire::{MeReply, SessionState, WhoReply};
 use serde_json::{Value, json};

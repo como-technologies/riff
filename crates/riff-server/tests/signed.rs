@@ -1,7 +1,7 @@
 //! Signed messages (R195-R201), over HTTP: the check at the server, the
 //! keys for the reader, and a message that changed in storage.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};

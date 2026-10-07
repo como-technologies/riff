@@ -8,8 +8,8 @@
 //! [`BASE`]. The fake `gh` gives the waves, the issues and the pull
 //! requests from files.
 
-mod book;
-mod common;
+use crate::book;
+use crate::common;
 
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output};

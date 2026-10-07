@@ -2,7 +2,7 @@
 //! and `plan_off`, the signal `plan_seen` and the query `plan`, on a
 //! real server with no sign-in.
 
-mod common;
+use crate::common;
 
 use riff_core::wire::{PlanOffReply, PlanReply, REFUSED_HEADER};
 use serde_json::{Value, json};

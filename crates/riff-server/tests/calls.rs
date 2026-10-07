@@ -2,7 +2,7 @@
 //! (01M48VFX22S4811DYBBD7QDW24). A second try of the same call gets the
 //! reply of the first, with the header `riff-repeat`.
 
-mod common;
+use crate::common;
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 

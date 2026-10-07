@@ -4,7 +4,7 @@
 //! (01M3JCE4ZD4DZCQ21FA69RT52D). With OIDC settings, it requires
 //! sign-in.
 
-mod common;
+use crate::common;
 
 use isolated::Isolated;
 use std::io::{BufRead, BufReader};

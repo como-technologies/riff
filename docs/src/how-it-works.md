@@ -3687,7 +3687,7 @@ at the end, also when the test is killed. When you set
 and the test runs with your number:
 
 ```sh
-RUST_TEST_THREADS=1 cargo test -p riff --test limits
+RUST_TEST_THREADS=1 cargo test -p riff --test all limits::
 ```
 
 When you lower the limit, the workers that run go on (see

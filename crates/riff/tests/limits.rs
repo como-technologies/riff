@@ -3,7 +3,7 @@
 //! `systemctl` and a fake `systemd-run` run in place of the real ones.
 //! No test changes a setting or a slice of the machine.
 
-mod book;
+use crate::book;
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;

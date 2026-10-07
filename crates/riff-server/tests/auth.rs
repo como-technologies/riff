@@ -1,6 +1,6 @@
 //! The MCP authorization spec, over HTTP (R22).
 
-mod common;
+use crate::common;
 
 use std::time::Instant;
 
