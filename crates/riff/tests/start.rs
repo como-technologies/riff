@@ -175,10 +175,8 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     );
     let log = m.read("log");
     let lines: Vec<&str> = log.lines().collect();
-    let settings = riff::start::lead_settings_file(
-        &m.home.path().join("state"),
-        "como-technologies/riff",
-    );
+    let settings =
+        riff::start::lead_settings_file(&m.home.path().join("state"), "como-technologies/riff");
     assert_eq!(
         lines,
         [
