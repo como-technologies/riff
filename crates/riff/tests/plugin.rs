@@ -13,20 +13,19 @@ fn claude_accepts_the_written_plugin() {
         return;
     };
     assert!(out.status.success());
-    for path in [dir.path().join(riff::plugin::NAME)] {
-        let out = Command::new("claude")
-            .args(["plugin", "validate", "--strict"])
-            .arg(&path)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}: {}{}",
-            path.display(),
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
+    let path = dir.path().join(riff::plugin::NAME);
+    let out = Command::new("claude")
+        .args(["plugin", "validate", "--strict"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}: {}{}",
+        path.display(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]

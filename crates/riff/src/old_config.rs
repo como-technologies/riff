@@ -291,7 +291,9 @@ pub fn lines(entry: &Entry) -> Vec<String> {
         Entry::Install {
             scope,
             project: None,
-        } => vec![format!("the plugin {PLUGIN}, installed in the scope {scope}")],
+        } => vec![format!(
+            "the plugin {PLUGIN}, installed in the scope {scope}"
+        )],
         Entry::Marketplace => vec![format!("the plugin marketplace {MARKETPLACE}")],
     }
 }

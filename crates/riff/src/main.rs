@@ -12,9 +12,8 @@ use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::link::STREAM_RETRY;
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
-    launch, local, login, mcp, next, pr, settings, start, terminal, text, usage, view,
-    worker,
+    activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, launch,
+    lifecycle, local, login, mcp, next, pr, settings, start, terminal, text, usage, view, worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -1305,14 +1304,8 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         if let (true, Some(tag)) = (background, tag) {
-            return riff::auto_update::run(
-                cargo,
-                tag,
-                &server,
-                DEFAULT_SERVER,
-                cli.place.as_ref(),
-            )
-            .await;
+            return riff::auto_update::run(cargo, tag, &server, DEFAULT_SERVER, cli.place.as_ref())
+                .await;
         }
         println!(
             "{}",

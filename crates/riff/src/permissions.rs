@@ -27,7 +27,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-
 use crate::identity::parse_remote;
 
 /// A set of permission rules of Claude Code.

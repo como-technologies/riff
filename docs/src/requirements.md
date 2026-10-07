@@ -22,51 +22,53 @@
   OAuth client of the person, and the person signs in on each machine
   (01M3JZN229S3YA3BR6GN5H3MTY).
 - **01M3MEHCGZ4AG4C2A77J5HA3P7** Replaced by 01M4BYH8BV4YQDD6D73YV3RHPH.
-- **01M4BYH8BV4YQDD6D73YV3RHPH** The book page "Join a Riff" has the steps to join a riff
-  with sign-in: install `riff`, put the address of the riff in
-  `RIFF_SERVER`, run `riff login`, then start the riff with `riff`.
-  The steps are the same for a second machine of the owner and for a
-  person that the owner invites.
+- **01M4BYH8BV4YQDD6D73YV3RHPH** The book page "Join a Riff" has the
+  steps to join a riff with sign-in: install `riff`, put the address of
+  the riff in `RIFF_SERVER`, run `riff login`, then start the riff with
+  `riff`. The steps are the same for a second machine of the owner and
+  for a person that the owner invites.
 - **R44** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
-- **01M4BYH7Y3P1JMQR51TWFGVZ39** riff is not in the Claude config of the person: no riff
-  MCP server, plugin, hook, permission rule or status line in
-  `~/.claude` or in `.claude/` of a repository. A plain `claude` is
-  plain Claude. Each start of `claude` by riff (the lead, each worker)
-  passes `--plugin-dir` with the plugin, `--strict-mcp-config` and
-  `--mcp-config` with the riff MCP server, and `--settings` with the
+- **01M4BYH7Y3P1JMQR51TWFGVZ39** riff is not in the Claude config of the
+  person: no riff MCP server, plugin, hook, permission rule or status
+  line in `~/.claude` or in `.claude/` of a repository. A plain `claude`
+  is plain Claude. Each start of `claude` by riff (the lead, each
+  worker) passes `--plugin-dir` with the plugin, `--strict-mcp-config`
+  and `--mcp-config` with the riff MCP server, and `--settings` with the
   status line and the permission rules of the role. riff writes the
   plugin at each start to `$XDG_DATA_HOME/riff/claude-plugin`, else
   `~/.local/share/riff/claude-plugin`. The plugin has no MCP server.
-- **01M4BYH80CFW1TBGKVA2VN9ZBQ** riff gives each `claude` that it starts `RIFF_ON=1`. The
-  hooks, `riff statusline` and `riff mcp` act only with it. So a plain
-  `claude` with the plugin of an older release does nothing of riff.
-- **01M4BYH82P03FTXZBYC72BJ6F3** `riff` finds the riff entries that older releases wrote to
-  the Claude config: `enabledPlugins."riff@riff"`,
-  `extraKnownMarketplaces.riff`, the `statusLine` of `riff statusline`
-  and each rule of a riff tool or a `riff` command, in the user
-  settings and in `.claude/settings.json` and
-  `.claude/settings.local.json` of each clone that riff knows (there
+- **01M4BYH80CFW1TBGKVA2VN9ZBQ** riff gives each `claude` that it starts
+  `RIFF_ON=1`. The hooks, `riff statusline` and `riff mcp` act only with
+  it. So a plain `claude` with the plugin of an older release does
+  nothing of riff.
+- **01M4BYH82P03FTXZBYC72BJ6F3** `riff` finds the riff entries that
+  older releases wrote to the Claude config:
+  `enabledPlugins."riff@riff"`, `extraKnownMarketplaces.riff`, the
+  `statusLine` of `riff statusline` and each rule of a riff tool or a
+  `riff` command, in the user settings and in `.claude/settings.json`
+  and `.claude/settings.local.json` of each clone that riff knows (there
   also each rule that `riff setup` wrote), the install of `riff@riff`
   and the marketplace `riff`. It lists them, and asks `[Y/n]`. On yes,
   it removes them with `claude plugin uninstall`, `claude plugin
   marketplace remove` and an edit of each settings file. It keeps each
   other entry. On no, it asks again at the next start.
-- **01M4BYH84X7B2D9EFYGP11GP8Y** `riff connect`, `riff enable`, `riff disable` and `riff
-  setup` are gone. `riff connect` stays as a hidden command that does
-  nothing, so that `riff update` of riff 1.3, which runs it after the
-  install, ends with success. `riff` signs in when the riff has sign-in
-  and this machine has no sign-in for it, as `riff connect claude` did.
-- **01M4BYH874WQ16Q0337WQA8AMV** The flag settings of each session that riff starts hold the
-  rules of riff work: allow each riff tool (`mcp__riff`), `Bash(riff)`,
-  `Bash(riff *)`, the pull request steps (`gh pr create`, `gh pr merge
-  * --auto --squash`, `gh pr comment`, `gh pr view`) and the statuses
-  of the GitHub repository; deny a push to the default branch and
-  `gh pr merge --admin`.
-- **01M4BYH89ESJWCVY7Q6Y2F6E8Y** The lead gets the same MCP config as the workers: the riff
-  MCP server and the servers of `workers.mcp`.
-- **01M4BYH8E39RTG938XPETZHPP6** The release after 1.3 is 2.0.0. It has no code for the old
-  start. The book has "Move from riff 1.3 to 2.0", and the release
-  notes of 2.0.0 link it.
+- **01M4BYH84X7B2D9EFYGP11GP8Y** `riff connect`, `riff enable`, `riff
+  disable` and `riff setup` are gone. `riff connect` stays as a hidden
+  command that does nothing, so that `riff update` of riff 1.3, which
+  runs it after the install, ends with success. `riff` signs in when the
+  riff has sign-in and this machine has no sign-in for it, as `riff
+  connect claude` did.
+- **01M4BYH874WQ16Q0337WQA8AMV** The flag settings of each session that
+  riff starts hold the rules of riff work: allow each riff tool
+  (`mcp__riff`), `Bash(riff)`, `Bash(riff *)`, the pull request steps
+  (`gh pr create`, `gh pr merge * --auto --squash`, `gh pr comment`, `gh
+  pr view`) and the statuses of the GitHub repository; deny a push to
+  the default branch and `gh pr merge --admin`.
+- **01M4BYH89ESJWCVY7Q6Y2F6E8Y** The lead gets the same MCP config as
+  the workers: the riff MCP server and the servers of `workers.mcp`.
+- **01M4BYH8E39RTG938XPETZHPP6** The release after 1.3 is 2.0.0. It has
+  no code for the old start. The book has "Move from riff 1.3 to 2.0",
+  and the release notes of 2.0.0 link it.
 - **R52** The plugin files live in the riff repository. The `riff`
   binary carries a copy of them, so the plugin matches the binary.
 - **R53** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
@@ -307,14 +309,16 @@
 - **01M3XY2SNXQJRSH5QX82AFVM2S** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
 - **01M3XY2SR3VJZAKEPC6CBCS292** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
 - **01M3XY2ST8R67SKTXJECAYJZRX** In a session that riff did not start
-  (01M4BYH80CFW1TBGKVA2VN9ZBQ), each entry of the plugin does nothing: `riff hook` and `riff statusline` make no call
-  to the server, run no `git`, and print nothing. `riff mcp` serves no
-  tool, makes no call to the server, and says in its instructions how to
-  start the riff. A `riff mcp` that an update starts again serves a
-  session that runs, so it goes on.
+  (01M4BYH80CFW1TBGKVA2VN9ZBQ), each entry of the plugin does nothing:
+  `riff hook` and `riff statusline` make no call to the server, run no
+  `git`, and print nothing. `riff mcp` serves no tool, makes no call to
+  the server, and says in its instructions how to start the riff. A
+  `riff mcp` that an update starts again serves a session that runs, so
+  it goes on.
 - **01M3XY2SWEK0N8MC3MY4TMYTD3** `RIFF_ON=1` turns riff on for the
-  processes that have it, also outside a repository. `just dev` and
-  the helper crate `isolated` set it. Each worker gets it (01M4BYH80CFW1TBGKVA2VN9ZBQ).
+  processes that have it, also outside a repository. `just dev` and the
+  helper crate `isolated` set it. Each worker gets it
+  (01M4BYH80CFW1TBGKVA2VN9ZBQ).
 - **01M3XY2SYKG91SAB2FS1QNCZ2H** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
 - **01M3XY2T0R2Q39XYX8AYV7T0RK** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
 - **01M3XY2T542DCHBN95H9PX4AGQ** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
@@ -2139,11 +2143,11 @@
   `riff top` keeps the titles and the board of its last good read of
   `gh`.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
-  line of a Claude Code session: `riff`, the short session ID of
-  `riff who`, `lead`, each claim, and `blocked`. It is the
-  `statusLine` command in the flag settings of each session that riff
-  starts (01M4BYH7Y3P1JMQR51TWFGVZ39). It never fails, and it waits at most 2 seconds for
-  riff-server.
+  line of a Claude Code session: `riff`, the short session ID of `riff
+  who`, `lead`, each claim, and `blocked`. It is the `statusLine`
+  command in the flag settings of each session that riff starts
+  (01M4BYH7Y3P1JMQR51TWFGVZ39). It never fails, and it waits at most 2
+  seconds for riff-server.
 - **01M3T5GFVS8NMA992KHZN4VE17** `riff statusline` calls
   `GET /v1/me`, not `who`. The reply holds only the session of the
   caller: its state, claims and status, and the build of the server.

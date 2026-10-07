@@ -247,4 +247,3 @@ async fn riff_mcp_serves_no_tool_in_a_session_that_riff_did_not_start() {
     );
     assert_eq!(machine.git_calls(), "");
 }
-

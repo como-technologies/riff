@@ -112,10 +112,7 @@ pub fn settings(rules: &Rules) -> Map<String, Value> {
     let mut settings = Map::new();
     settings.insert("statusLine".into(), statusline());
     let args = crate::role_rules::flag(
-        &[
-            "--settings".to_owned(),
-            Value::Object(settings).to_string(),
-        ],
+        &["--settings".to_owned(), Value::Object(settings).to_string()],
         rules,
     );
     match serde_json::from_str(&args[1]) {

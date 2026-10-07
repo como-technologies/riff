@@ -110,12 +110,12 @@ paused again. Run `riff resume --riff` when you want the sessions to
 work.
 
 Then end your lead and your workers, and start the riff again with
-`riff`. To move from riff 1.3, see
-[Move from riff 1.3 to 2.0](how-it-works.md#move-from-riff-13-to-20). Pull each clone of your
-project too (see
-[A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
-A riff of another version can refuse `riff` (see
-[Builds](how-it-works.md#builds)). When you joined a riff, see
-[Update riff](join-a-riff.md#update-riff) of Join a Riff.
+`riff`. To move from riff 1.3, see [Move from riff 1.3 to
+2.0](how-it-works.md#move-from-riff-13-to-20). Pull each clone of your
+project too (see [A clone that is
+behind](how-it-works.md#a-clone-that-is-behind)). A riff of another
+version can refuse `riff` (see [Builds](how-it-works.md#builds)). When
+you joined a riff, see [Update riff](join-a-riff.md#update-riff) of Join
+a Riff.
 
 To learn more, read [How It Works](how-it-works.md).

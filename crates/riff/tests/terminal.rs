@@ -249,7 +249,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert!(!log.contains("remote-control"), "{log}");
     assert_eq!(
         log.matches(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}'"#
         )
         .count(),
         3,
@@ -324,7 +324,7 @@ fn a_worker_starts_with_each_plugin_with_a_language_server_off() {
     assert!(out.status.success(), "{out:?}");
     assert!(
         m.log().contains(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
         ),
         "{}",
         m.log()
@@ -459,10 +459,7 @@ fn a_second_start_adds_panes_to_the_same_window() {
     let log = m.log();
     assert_eq!(log.matches("new-window").count(), 1, "{log}");
     assert_eq!(log.matches("split-window -t @7").count(), 2, "{log}");
-    assert!(
-        log.contains("run '/opt/claude' '--plugin-dir'"),
-        "{log}"
-    );
+    assert!(log.contains("run '/opt/claude' '--plugin-dir'"), "{log}");
 }
 
 #[test]

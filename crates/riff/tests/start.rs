@@ -97,7 +97,9 @@ impl Machine {
 
     /// The root of the plugin that riff writes.
     fn plugin(&self) -> PathBuf {
-        self.user.path().join(".local/share/riff/claude-plugin/riff")
+        self.user
+            .path()
+            .join(".local/share/riff/claude-plugin/riff")
     }
 
     fn read(&self, name: &str) -> String {
@@ -265,7 +267,10 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     // Claude config of the person.
     let servers: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
-    assert_eq!(servers["mcpServers"]["riff"]["args"], serde_json::json!(["mcp"]));
+    assert_eq!(
+        servers["mcpServers"]["riff"]["args"],
+        serde_json::json!(["mcp"])
+    );
     assert!(!m.user.path().join(".claude").exists());
     assert!(!riff.join(".claude/settings.json").exists());
     assert!(!riff.join(".claude/settings.local.json").exists());
@@ -288,8 +293,14 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     // The status line and the rules of riff work
     // (01M4BYH874WQ16Q0337WQA8AMV).
     assert_eq!(settings["statusLine"]["command"], "riff statusline");
-    assert!(rules("allow").contains(&"Bash(riff *)".to_owned()), "{settings}");
-    assert!(rules("allow").contains(&"mcp__riff".to_owned()), "{settings}");
+    assert!(
+        rules("allow").contains(&"Bash(riff *)".to_owned()),
+        "{settings}"
+    );
+    assert!(
+        rules("allow").contains(&"mcp__riff".to_owned()),
+        "{settings}"
+    );
     assert!(
         rules("deny").contains(&"Bash(git push * main)".to_owned()),
         "{settings}"
@@ -372,15 +383,24 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
         format!("  {}: statusLine", user.display()),
         format!("  {}: permissions.allow: Bash(riff *)", user.display()),
         format!("  {}: enabledPlugins.\"riff@riff\"", local.display()),
-        format!("  {}: permissions.allow: Bash(gh pr view *)", shared.display()),
-        format!("  {}: permissions.deny: Bash(git push * main)", shared.display()),
+        format!(
+            "  {}: permissions.allow: Bash(gh pr view *)",
+            shared.display()
+        ),
+        format!(
+            "  {}: permissions.deny: Bash(git push * main)",
+            shared.display()
+        ),
         "  the plugin riff@riff, installed in the scope user".to_owned(),
         "  the plugin marketplace riff".to_owned(),
         riff::text::OLD_CONFIG_KEPT.to_owned(),
     ] {
         assert!(shown.contains(&line), "{line}: {shown}");
     }
-    assert!(!shown.contains("Bash(ls)") && !shown.contains("Bash(make)"), "{shown}");
+    assert!(
+        !shown.contains("Bash(ls)") && !shown.contains("Bash(make)"),
+        "{shown}"
+    );
     assert_eq!(before(&user), user_text);
     assert_eq!(before(&local), local_text);
     assert_eq!(before(&shared), shared_text);
@@ -389,7 +409,10 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
     // A yes removes them, and riff starts the lead.
     let out = m.riff(&riff, &[], "\n1\n");
     assert!(out.status.success(), "{out:?}");
-    assert!(stdout(&out).contains(riff::text::OLD_CONFIG_REMOVED), "{out:?}");
+    assert!(
+        stdout(&out).contains(riff::text::OLD_CONFIG_REMOVED),
+        "{out:?}"
+    );
     let json = |path: &Path| -> serde_json::Value { serde_json::from_str(&before(path)).unwrap() };
     assert_eq!(
         json(&user),

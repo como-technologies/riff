@@ -407,12 +407,7 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// an old riff with [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
 /// words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
-pub async fn update(
-    cargo: &Path,
-    tag: Option<&str>,
-    server: &str,
-    local: &str,
-) -> Result<String> {
+pub async fn update(cargo: &Path, tag: Option<&str>, server: &str, local: &str) -> Result<String> {
     let tag = match tag {
         Some(tag) => tag.to_owned(),
         None if same_riff(server, local) => newest_release()?,

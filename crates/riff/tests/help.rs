@@ -75,9 +75,7 @@ fn the_help_shows_the_groups_in_order() {
     let headings: Vec<_> = groups.iter().map(|(h, _)| h.as_str()).collect();
     assert_eq!(headings, HEADINGS, "{help}");
     let names: Vec<_> = groups.iter().flat_map(|(_, n)| n.clone()).collect();
-    for name in [
-        "connect", "who", "claim", "pr", "verify", "workers", "invite",
-    ] {
+    for name in ["login", "who", "claim", "pr", "verify", "workers", "invite"] {
         assert!(names.contains(&name.to_owned()), "{name}: {help}");
     }
     let mut unique = names.clone();
