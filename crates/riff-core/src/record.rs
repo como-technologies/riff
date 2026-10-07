@@ -23,6 +23,33 @@
 //! build of 1.0.0 skips the field. `riff-server` uses it to give a
 //! repeated call the reply of the first try, also after a start.
 //!
+//! # One layout for each type
+//!
+//! Each type of the log, the wire and the checkpoint has one struct
+//! (01M49W17GGV1K5FZEKJRPV0GNA). A tolerant reader holds the struct
+//! itself, as [`Line::parse`] holds the [`Envelope`] with
+//! `#[serde(flatten)]`: it never keeps a second list of the fields.
+//! Each conversion between two such types names each field of its
+//! source in a destructure with no `..` (01M49W17M2JVNYSHDQJWHZ8A7X):
+//! a field that the target does not need is named with `_`. So a new
+//! field fails the build at each place that must carry it, and no
+//! review must find it:
+//!
+//! ```compile_fail
+//! use riff_core::record::Envelope;
+//!
+//! // A conversion that does not name the field `call` does not build.
+//! fn written(envelope: Envelope) -> (u64, u64) {
+//!     let Envelope { position, written_at_ms, by: _, command: _ } = envelope;
+//!     (position, written_at_ms)
+//! }
+//! ```
+//!
+//! Each type has a round-trip test: each variant with each optional
+//! field set, written and read back (01M49W18ETF4KZJN848M91VY35). The
+//! records go through the real path of the store in
+//! `riff-server/tests/calls.rs`.
+//!
 //! A record names a session by its URI with no lead mark and no claims:
 //! the who and the place at the time of the change
 //! (01M3T411QW1SQV12RJVATEJ8YD). So a replay knows
@@ -162,7 +189,7 @@ use crate::wire::{Idle, Message, RiffState, StartReason};
 macro_rules! changes {
     ($($(#[$doc:meta])* $variant:ident($body:ty) = $kind:literal,)*) => {
         /// What happened.
-        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+        #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
         pub enum Change {
             $($(#[$doc])* #[serde(rename = $kind)] $variant($body),)*
         }
@@ -186,7 +213,7 @@ macro_rules! changes {
 
 // ANCHOR: record
 /// One line of the log: its envelope and its change.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Record {
     #[serde(flatten)]
     pub envelope: Envelope,
@@ -195,7 +222,7 @@ pub struct Record {
 
 /// The fields of a record next to its change. See the design of the
 /// module.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Envelope {
     /// The place of the record in the one log of the riff: 1, 2, 3, and
     /// so on.
@@ -578,7 +605,7 @@ impl Record {
 }
 
 /// A message in a thread.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Posted {
     pub thread: ThreadName,
     /// The message, with its seq. A signed message keeps its payload and
@@ -653,14 +680,14 @@ impl Posted {
 }
 
 /// A session and a thread.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Member {
     pub session: SessionUri,
     pub thread: ThreadName,
 }
 
 /// A claim of one work item in one thread.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Claimed {
     pub session: SessionUri,
     pub thread: ThreadName,
@@ -693,7 +720,7 @@ pub struct Claimed {
 /// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ItemHeld {
     pub thread: ThreadName,
     pub item: String,
@@ -701,7 +728,7 @@ pub struct ItemHeld {
 }
 
 /// The end of the hold of one item in one repository thread.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ItemFreed {
     pub thread: ThreadName,
     pub item: String,
@@ -727,7 +754,7 @@ pub struct ItemFreed {
 /// assert!(serde_json::to_string(&last).unwrap().ends_with(r#""must_clear":true}"#));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Released {
     pub session: SessionUri,
     pub thread: ThreadName,
@@ -742,10 +769,15 @@ pub struct Released {
 impl Released {
     /// The release of `claim`, with no ask to clear.
     pub fn of(claim: Claimed) -> Released {
+        let Claimed {
+            session,
+            thread,
+            item,
+        } = claim;
         Released {
-            session: claim.session,
-            thread: claim.thread,
-            item: claim.item,
+            session,
+            thread,
+            item,
             must_clear: false,
         }
     }
@@ -771,7 +803,7 @@ impl Released {
 /// assert!(!started.reason.is_fresh());
 /// # Ok::<(), String>(())
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionStarted {
     pub session: SessionUri,
     /// Why the record is there. `process` and `clear` are fresh starts.
@@ -800,7 +832,7 @@ pub struct SessionStarted {
 /// assert_eq!(serde_json::to_string(&riff).unwrap(), r#"{"scope":"riff","state":"running"}"#);
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PauseSet {
     pub scope: Scope,
     /// `paused` sets the pause, and `running` ends it.
@@ -881,6 +913,18 @@ impl std::fmt::Display for Scope {
     }
 }
 
+/// The schema takes each value: [`Scope`] reads a scope that it does
+/// not know as [`Scope::Other`].
+impl schemars::JsonSchema for Scope {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Scope".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({})
+    }
+}
+
 impl Serialize for Scope {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -899,27 +943,27 @@ impl<'de> Deserialize<'de> for Scope {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SettingChanged {
     /// The settings of idle workers.
     pub idle: Idle,
 }
 
 /// A session that the state forgets.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Forgotten {
     pub session: SessionUri,
 }
 
 /// The ID of a riff (01M3JNVBPMZ1K9WX7Q7DP6Y0DH).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RiffMade {
     pub riff_id: String,
 }
 
 /// The first sign-in of a person: the verified email holds the USER
 /// (R209).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PersonJoined {
     pub user: String,
     /// The verified email, in lower case.
@@ -928,12 +972,12 @@ pub struct PersonJoined {
 
 /// A person, by the verified email in lower case. A record of the
 /// people names a person by the email: the state finds the USER.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Email {
     pub email: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AdminSet {
     pub email: String,
     /// True: the person is an admin. False: the person is a member
@@ -950,7 +994,7 @@ pub struct AdminSet {
 /// assert_eq!(serde_json::to_string(&gone).unwrap(), "{}");
 /// assert_eq!(serde_json::from_str::<OwnerSet>("{}").unwrap(), gone);
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OwnerSet {
     /// The email of the owner. `None`: the owner is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -958,7 +1002,7 @@ pub struct OwnerSet {
 }
 
 /// A request for the owner role.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OwnerAsked {
     /// The email of the admin that asks.
     pub email: String,
@@ -967,7 +1011,7 @@ pub struct OwnerAsked {
     pub due_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SigninsEnded {
     pub user: String,
 }
@@ -1055,10 +1099,10 @@ pub fn one_of_each() -> Vec<Change> {
             message: Message {
                 seq: 1,
                 from: uri(),
-                to: vec![],
+                to: vec!["user=ann,session=s1,host=heron,repo=acme/app,worktree=issue-7,claim=issue-7,lead=true".parse().unwrap()],
                 body: "hi".into(),
                 at_ms: 5,
-                kind: crate::wire::Kind::Message,
+                kind: crate::wire::Kind::Status,
                 sig: Some("h..s".into()),
                 payload: Some("cA".into()),
             },
@@ -1068,8 +1112,10 @@ pub fn one_of_each() -> Vec<Change> {
         Change::LeftThread(member.clone()),
         Change::Claimed(claim.clone()),
         Change::Released(Released {
+            session: claim.session,
+            thread: claim.thread,
+            item: claim.item,
             must_clear: true,
-            ..Released::of(claim)
         }),
         Change::LeadSet(member),
         Change::SettingChanged(SettingChanged {
@@ -1098,7 +1144,9 @@ pub fn one_of_each() -> Vec<Change> {
             email: email.email.clone(),
             admin: true,
         }),
-        Change::OwnerSet(OwnerSet { email: None }),
+        Change::OwnerSet(OwnerSet {
+            email: Some(email.email.clone()),
+        }),
         Change::OwnerAsked(OwnerAsked {
             email: email.email.clone(),
             due_ms: 9,
@@ -1156,6 +1204,41 @@ mod tests {
             assert!(line.contains(&format!(r#""change":{{"{kind}":"#)), "{line}");
             assert_eq!(Line::parse(&line).unwrap(), Line::Record(Box::new(record)));
         }
+    }
+
+    /// Each field of the envelope comes through the tolerant reader
+    /// (01M49W17GGV1K5FZEKJRPV0GNA). The destructure names each field:
+    /// a new field of the envelope does not build until it is set here
+    /// too, and then the reader must keep it.
+    #[test]
+    fn each_field_of_the_envelope_comes_through_the_reader() {
+        let envelope = Envelope {
+            position: 7,
+            written_at_ms: 8,
+            by: Some(By::Session(uri().who().clone())),
+            command: Some("claim".into()),
+            call: Some("call-7".into()),
+        };
+        let Envelope {
+            position,
+            written_at_ms,
+            by,
+            command,
+            call,
+        } = &envelope;
+        assert!(*position != 0 && *written_at_ms != 0);
+        assert!(by.is_some() && command.is_some() && call.is_some());
+        let record = Record {
+            envelope: envelope.clone(),
+            change: Change::RiffMade(RiffMade {
+                riff_id: "r1".into(),
+            }),
+        };
+        let line = serde_json::to_string(&record).unwrap();
+        let Line::Record(read) = Line::parse(&line).unwrap() else {
+            panic!("a known kind");
+        };
+        assert_eq!(read.envelope, envelope);
     }
 
     #[test]

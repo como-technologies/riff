@@ -481,29 +481,31 @@ impl Presence {
     /// The read cursors, and the status and the long step of each
     /// session, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        // The rest is not saved: a load starts it again.
+        let Presence {
+            sessions,
+            cursors,
+            riff_changed: _,
+            repository_changed: _,
+            loaded: _,
+            items: _,
+        } = self;
         Saved {
-            cursors: self
-                .cursors
+            cursors: cursors
                 .iter()
-                .map(|((who, thread), seq)| SavedCursor {
-                    session: who.clone(),
+                .map(|((session, thread), seq)| SavedCursor {
+                    session: session.clone(),
                     thread: thread.clone(),
                     seq: *seq,
                 })
                 .collect(),
-            statuses: self
-                .sessions
+            statuses: sessions
                 .iter()
                 .filter_map(|(who, session)| {
-                    let status = session.status.as_ref().map(|set| SavedStatus {
-                        status: set.status.clone(),
-                        set_ms: set.set_ms,
-                    });
-                    let step = session.step.clone();
-                    (status.is_some() || step.is_some()).then(|| SavedSession {
+                    let signals = Signals::of(session.status.as_ref(), session.step.as_ref())?;
+                    Some(SavedSession {
                         session: who.clone(),
-                        status,
-                        step,
+                        signals,
                     })
                 })
                 .collect(),
@@ -523,7 +525,7 @@ impl Presence {
 ///                "status": {"step": "tests"}, "set_ms": 1000,
 ///                "step": {"name": "live window", "set_ms": 900}}]}
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     cursors: Vec<SavedCursor>,
@@ -531,26 +533,74 @@ pub(super) struct Saved {
     statuses: Vec<SavedSession>,
 }
 
-/// What the checkpoint keeps of the signals of one session: its status,
-/// its long step, or both.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What the checkpoint keeps of the signals of one session.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedSession {
     session: Who,
     #[serde(flatten)]
-    status: Option<SavedStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    step: Option<LongStep>,
+    signals: Signals,
+}
+
+/// The status of a session, its long step, or both. An entry with
+/// neither cannot be (01M49W18QQKF4KYDRYP3ZK9F1Q): it does not load.
+/// Each variant has the JSON of 1.1.0: the fields of the status in the
+/// entry, and the step in `step`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum Signals {
+    Both {
+        #[serde(flatten)]
+        status: SavedStatus,
+        step: LongStep,
+    },
+    Status(SavedStatus),
+    Step {
+        step: LongStep,
+    },
+}
+
+impl Signals {
+    /// The signals of a session to save. `None` when it has neither.
+    fn of(status: Option<&SetStatus>, step: Option<&LongStep>) -> Option<Signals> {
+        let status = status.map(|set| {
+            let SetStatus {
+                status,
+                set_ms,
+                set: _,
+            } = set;
+            SavedStatus {
+                status: status.clone(),
+                set_ms: *set_ms,
+            }
+        });
+        match (status, step.cloned()) {
+            (Some(status), Some(step)) => Some(Signals::Both { status, step }),
+            (Some(status), None) => Some(Signals::Status(status)),
+            (None, Some(step)) => Some(Signals::Step { step }),
+            (None, None) => None,
+        }
+    }
+
+    /// The status and the step.
+    fn into_parts(self) -> (Option<SavedStatus>, Option<LongStep>) {
+        match self {
+            Signals::Both { status, step } => (Some(status), Some(step)),
+            Signals::Status(status) => (Some(status), None),
+            Signals::Step { step } => (None, Some(step)),
+        }
+    }
 }
 
 /// A status with the time of its set.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedStatus {
     status: Status,
     /// The time of the set, in milliseconds since the Unix epoch.
     set_ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A read cursor: the map entry of [`Presence::cursors`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedCursor {
     session: Who,
     thread: ThreadName,
@@ -565,16 +615,27 @@ impl Saved {
     /// step keeps the time of its start or its failure, so its age goes
     /// on from the first start.
     pub(super) fn restore(self, presence: &mut Presence, now: Instant, now_ms: u64) {
-        presence.cursors = self
-            .cursors
+        let Saved { cursors, statuses } = self;
+        presence.cursors = cursors
             .into_iter()
-            .map(|c| ((c.session, c.thread), c.seq))
+            .map(
+                |SavedCursor {
+                     session,
+                     thread,
+                     seq,
+                 }| ((session, thread), seq),
+            )
             .collect();
-        for saved in self.statuses {
-            let Some(session) = presence.sessions.get_mut(&saved.session) else {
+        for SavedSession {
+            session: who,
+            signals,
+        } in statuses
+        {
+            let Some(session) = presence.sessions.get_mut(&who) else {
                 continue;
             };
-            if let Some(SavedStatus { status, set_ms }) = saved.status {
+            let (status, step) = signals.into_parts();
+            if let Some(SavedStatus { status, set_ms }) = status {
                 let age = Duration::from_millis(now_ms.saturating_sub(set_ms).max(1));
                 session.status = Some(SetStatus {
                     status,
@@ -582,7 +643,7 @@ impl Saved {
                     set: now.checked_sub(age).unwrap_or(now),
                 });
             }
-            session.step = saved.step;
+            session.step = step;
         }
     }
 }
@@ -639,7 +700,7 @@ pub(super) struct SetStatus {
 
 /// A long step of a session (01M48VDGTD40P8RBZMS0XB5M9N). The checkpoint
 /// keeps it as it is (01M49NP8F3A9CTJWZ74MCNZG0M).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct LongStep {
     pub(super) name: String,
     /// The start of the step, or its failure, in milliseconds since the
@@ -1023,5 +1084,32 @@ mod tests {
         let ann_after = &presence.sessions[ann().who()];
         assert_eq!(ann_after.status.as_ref().unwrap().status.step, "tests");
         assert!(ann_after.step.is_none());
+    }
+
+    /// Each variant of the signals of a saved session reads back with
+    /// its JSON. An entry with neither a status nor a step cannot be
+    /// (01M49W18QQKF4KYDRYP3ZK9F1Q): it does not load.
+    #[test]
+    fn each_variant_of_a_saved_session_reads_back_and_an_empty_one_does_not_load() {
+        let session = r#""session":{"user":"ann","session":"a1""#;
+        let status = r#""status":{"step":"tests"},"set_ms":1000"#;
+        let step = r#""step":{"name":"deploy","set_ms":900,"failed":"502"}"#;
+        for (json, variant) in [
+            (format!("{{{session}}},{status},{step}}}"), "both"),
+            (format!("{{{session}}},{status}}}"), "status"),
+            (format!("{{{session}}},{step}}}"), "step"),
+        ] {
+            let saved: SavedSession = serde_json::from_str(&json).unwrap();
+            let read = match &saved.signals {
+                Signals::Both { .. } => "both",
+                Signals::Status(_) => "status",
+                Signals::Step { .. } => "step",
+            };
+            assert_eq!(read, variant, "{json}");
+            assert_eq!(serde_json::to_string(&saved).unwrap(), json);
+        }
+        let empty = format!("{{{session}}}}}");
+        assert!(serde_json::from_str::<SavedSession>(&empty).is_err());
+        assert_eq!(Signals::of(None, None), None);
     }
 }

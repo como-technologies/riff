@@ -215,17 +215,26 @@ impl Sessions {
     /// The sessions, for a checkpoint. `seen` gives the last call of a
     /// session before the checkpoint, or 0.
     pub(super) fn saved(&self, seen: impl Fn(&Who) -> u64) -> Saved {
+        let Sessions { known } = self;
         Saved {
-            sessions: self
-                .known
+            sessions: known
                 .values()
-                .map(|known| SavedSession {
-                    session: known.uri.clone(),
-                    at_ms: known.at_ms,
-                    seen_ms: seen(known.uri.who()),
-                    worker: known.worker,
-                    must_clear: known.must_clear,
-                    fresh_ms: known.fresh_ms,
+                .map(|known| {
+                    let Known {
+                        uri,
+                        at_ms,
+                        worker,
+                        must_clear,
+                        fresh_ms,
+                    } = known;
+                    SavedSession {
+                        session: uri.clone(),
+                        at_ms: *at_ms,
+                        seen_ms: seen(uri.who()),
+                        worker: *worker,
+                        must_clear: *must_clear,
+                        fresh_ms: *fresh_ms,
+                    }
                 })
                 .collect(),
         }
@@ -234,13 +243,13 @@ impl Sessions {
 
 /// The part of the checkpoint of this group: each session that the log
 /// names, with its life cycle (01M3X9XD8QWHS2CXTFSQK0PN1Y).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     sessions: Vec<SavedSession>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedSession {
     /// The URI of the last record that names the session.
     session: SessionUri,
@@ -263,19 +272,28 @@ struct SavedSession {
 impl Saved {
     /// The sessions of a checkpoint, and the last call of each.
     pub(super) fn restore(self) -> (Sessions, BTreeMap<Who, u64>) {
+        let Saved { sessions: saved } = self;
         let mut sessions = Sessions::default();
         let mut seen = BTreeMap::new();
-        for s in self.sessions {
-            let who = s.session.who().clone();
-            seen.insert(who.clone(), s.seen_ms);
+        for SavedSession {
+            session,
+            at_ms,
+            seen_ms,
+            worker,
+            must_clear,
+            fresh_ms,
+        } in saved
+        {
+            let who = session.who().clone();
+            seen.insert(who.clone(), seen_ms);
             sessions.known.insert(
                 who,
                 Known {
-                    uri: s.session,
-                    at_ms: s.at_ms,
-                    worker: s.worker,
-                    must_clear: s.must_clear,
-                    fresh_ms: s.fresh_ms,
+                    uri: session,
+                    at_ms,
+                    worker,
+                    must_clear,
+                    fresh_ms,
                 },
             );
         }
@@ -414,9 +432,14 @@ impl Command for Arrive {
 fn freed(made: &[Record]) -> Vec<Freed> {
     made.iter()
         .filter_map(|record| match &record.change {
-            Change::Released(released) => Some(Freed {
-                thread: released.thread.clone(),
-                item: released.item.clone(),
+            Change::Released(Released {
+                session: _,
+                thread,
+                item,
+                must_clear: _,
+            }) => Some(Freed {
+                thread: thread.clone(),
+                item: item.clone(),
             }),
             _ => None,
         })

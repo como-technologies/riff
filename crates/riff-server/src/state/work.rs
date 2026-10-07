@@ -97,9 +97,9 @@ impl Work {
 
     /// The claims and the leads, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        let Work { claims, leads } = self;
         Saved {
-            claims: self
-                .claims
+            claims: claims
                 .iter()
                 .map(|((thread, item), holder)| SavedClaim {
                     thread: thread.clone(),
@@ -107,8 +107,7 @@ impl Work {
                     holder: holder.clone(),
                 })
                 .collect(),
-            leads: self
-                .leads
+            leads: leads
                 .iter()
                 .map(|((_, thread), lead)| SavedLead {
                     thread: thread.clone(),
@@ -120,7 +119,7 @@ impl Work {
 }
 
 /// The part of the checkpoint of this group.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     claims: Vec<SavedClaim>,
@@ -128,14 +127,17 @@ pub(super) struct Saved {
     leads: Vec<SavedLead>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A claim: the map entry of [`Work::claims`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedClaim {
     thread: ThreadName,
     item: String,
     holder: Who,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A lead: the map entry of [`Work::leads`]. The user of the key is
+/// the user of the lead.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedLead {
     thread: ThreadName,
     lead: Who,
@@ -143,13 +145,18 @@ struct SavedLead {
 
 impl Saved {
     pub(super) fn restore(self) -> Work {
+        let Saved { claims, leads } = self;
         let mut work = Work::default();
-        for c in self.claims {
-            work.claims.insert((c.thread, c.item), c.holder);
+        for SavedClaim {
+            thread,
+            item,
+            holder,
+        } in claims
+        {
+            work.claims.insert((thread, item), holder);
         }
-        for l in self.leads {
-            work.leads
-                .insert((l.lead.user().to_owned(), l.thread), l.lead);
+        for SavedLead { thread, lead } in leads {
+            work.leads.insert((lead.user().to_owned(), thread), lead);
         }
         work
     }
@@ -265,7 +272,11 @@ impl Command for Claim {
         now: Now,
     ) -> Result<(Vec<Change>, Option<String>), Refused> {
         let who = caller.who();
-        let Claim { thread, item, .. } = self;
+        let Claim {
+            thread,
+            item,
+            me: _,
+        } = self;
         if view.riff.sessions().must_clear(who) {
             return Err(Refused::new(Code::MustClear, MUST_CLEAR));
         }
@@ -361,7 +372,11 @@ impl Command for Release {
         now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
         let who = caller.who();
-        let Release { thread, item, .. } = self;
+        let Release {
+            thread,
+            item,
+            me: _,
+        } = self;
         match view.riff.work().holder(thread, item) {
             Some(holder) if holder == who => Ok((
                 vec![Change::Released(Released {
@@ -416,7 +431,7 @@ impl Command for ReleaseFor {
             thread,
             item,
             session: id,
-            ..
+            me: _,
         } = self;
         let Some(holder) = view.riff.work().holder(thread, item) else {
             return Err(Refused::new(

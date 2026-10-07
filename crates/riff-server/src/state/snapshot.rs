@@ -31,7 +31,7 @@ use super::{calls, people, plan, presence, sessions, the_riff, threads, work};
 /// [`Snapshot::position`], the read cursors, and the last call of each
 /// session. See [`crate::checkpoint`]. A new field has a default, as in
 /// a record (01M3T4111PFM0C6KPREWFS9EQQ).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Snapshot {
     /// The position of the last record in the state.
     pub position: u64,
@@ -85,17 +85,28 @@ impl Snapshot {
     /// The state that the log gives, the part of the presence, the
     /// last call of each session, and the kept calls.
     pub(super) fn into_parts(self) -> (Riff, presence::Saved, BTreeMap<Who, u64>, calls::Saved) {
-        let (sessions, seen) = self.sessions.restore();
+        let Snapshot {
+            position,
+            the_riff,
+            threads,
+            work,
+            sessions,
+            presence,
+            people,
+            plans,
+            calls,
+        } = self;
+        let (sessions, seen) = sessions.restore();
         let riff = Riff::restore(
             LoadPath(()),
-            self.position,
+            position,
             sessions,
-            self.threads.restore(),
-            self.work.restore(),
-            self.the_riff.restore(),
-            self.people.restore(),
-            self.plans.restore(),
+            threads.restore(),
+            work.restore(),
+            the_riff.restore(),
+            people.restore(),
+            plans.restore(),
         );
-        (riff, self.presence, seen, self.calls)
+        (riff, presence, seen, calls)
     }
 }

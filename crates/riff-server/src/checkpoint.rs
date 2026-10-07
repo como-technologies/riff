@@ -116,7 +116,7 @@ impl Default for Settings {
 }
 
 /// One checkpoint.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Checkpoint {
     pub format: u32,
     /// The crate version of the build that wrote it.
@@ -170,17 +170,17 @@ pub fn encode(checkpoint: &Checkpoint) -> Vec<u8> {
 
 /// Reads a checkpoint. A checkpoint of a later format does not read.
 pub fn decode(bytes: &[u8]) -> Result<Checkpoint, String> {
-    #[derive(Deserialize)]
-    struct Format {
-        format: u32,
-    }
-    let Format { format } = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if format > FORMAT {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let format = value
+        .get("format")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("the checkpoint has no format")?;
+    if format > u64::from(FORMAT) {
         return Err(format!(
             "the checkpoint has format {format}, and this build reads format {FORMAT} only"
         ));
     }
-    serde_json::from_slice(bytes).map_err(|e| e.to_string())
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 
 /// True when the version `theirs` is later than `ours`. A version that is

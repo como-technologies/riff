@@ -118,21 +118,11 @@ pub struct People {
     no_owner: bool,
     /// The request for the owner role that waits for the owner
     /// (01M3N7K3ZAZFGABN7032AYJWEM).
-    asked: Option<Asked>,
+    asked: Option<record::OwnerAsked>,
     /// The position of the last `member_removed` or `signins_ended`
     /// record of each USER. A sign-in that started before it is ended
     /// (01M3XA87A9GGFA89RQXWSKY0V6).
     ended: BTreeMap<String, u64>,
-}
-
-/// A request for the owner role that waits for the answer of the owner.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Asked {
-    /// The email of the admin that asked.
-    email: String,
-    /// With no answer before this time, the admin is the owner. In
-    /// milliseconds since the Unix epoch.
-    due_ms: u64,
 }
 
 impl People {
@@ -193,10 +183,7 @@ impl People {
 
     /// The email asks for the owner role.
     pub(super) fn owner_asked(&mut self, asked: &record::OwnerAsked) -> Result<(), &'static str> {
-        self.asked = Some(Asked {
-            email: asked.email.clone(),
-            due_ms: asked.due_ms,
-        });
+        self.asked = Some(asked.clone());
         Ok(())
     }
 
@@ -276,15 +263,25 @@ impl People {
 
     /// The people, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        let People {
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            asked,
+            ended,
+        } = self.clone();
         Saved {
-            riff_id: self.riff_id.clone(),
-            users: self.users.clone(),
-            members: self.members.clone(),
-            admins: self.admins.clone(),
-            owner: self.owner.clone(),
-            no_owner: self.no_owner,
-            owner_asked: self.asked.clone(),
-            signins_ended: self.ended.clone(),
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            owner_asked: asked,
+            signins_ended: ended,
         }
     }
 }
@@ -293,7 +290,7 @@ impl People {
 /// it is not written. So the checkpoint of a riff with no people has
 /// the bytes of a checkpoint from before the people
 /// (01M3WNQR41K41TV832GRQZ2CQS).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     riff_id: Option<String>,
@@ -308,22 +305,32 @@ pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_owner: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    owner_asked: Option<Asked>,
+    owner_asked: Option<record::OwnerAsked>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     signins_ended: BTreeMap<String, u64>,
 }
 
 impl Saved {
     pub(super) fn restore(self) -> People {
+        let Saved {
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            owner_asked,
+            signins_ended,
+        } = self;
         People {
-            riff_id: self.riff_id,
-            users: self.users,
-            members: self.members,
-            admins: self.admins,
-            owner: self.owner,
-            no_owner: self.no_owner,
-            asked: self.owner_asked,
-            ended: self.signins_ended,
+            riff_id,
+            users,
+            members,
+            admins,
+            owner,
+            no_owner,
+            asked: owner_asked,
+            ended: signins_ended,
         }
     }
 }

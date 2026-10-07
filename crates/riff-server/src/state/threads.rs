@@ -45,10 +45,13 @@ pub(super) struct Thread {
     pub(super) messages: VecDeque<Stored>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A message of a thread, with each session that it woke. A
+/// checkpoint holds it as it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Stored {
     pub(super) message: Message,
     /// Each session that the message woke.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) woken: BTreeSet<Who>,
 }
 
@@ -140,21 +143,18 @@ impl Threads {
 
     /// The threads, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        // A restore makes the copies again from the messages.
+        let Threads { by_name, copies: _ } = self;
         Saved {
-            threads: self
-                .by_name
+            threads: by_name
                 .iter()
-                .map(|(name, thread)| SavedThread {
-                    thread: name.clone(),
-                    members: thread.members.iter().cloned().collect(),
-                    messages: thread
-                        .messages
-                        .iter()
-                        .map(|m| SavedMessage {
-                            message: m.message.clone(),
-                            woken: m.woken.clone(),
-                        })
-                        .collect(),
+                .map(|(name, thread)| {
+                    let Thread { members, messages } = thread;
+                    SavedThread {
+                        thread: name.clone(),
+                        members: members.iter().cloned().collect(),
+                        messages: messages.iter().cloned().collect(),
+                    }
                 })
                 .collect(),
         }
@@ -162,51 +162,44 @@ impl Threads {
 }
 
 /// The part of the checkpoint of this group.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     threads: Vec<SavedThread>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A thread with its name: the map entry of [`Threads`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct SavedThread {
     thread: ThreadName,
     #[serde(default)]
     members: Vec<Who>,
     #[serde(default)]
-    messages: Vec<SavedMessage>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct SavedMessage {
-    message: Message,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    woken: BTreeSet<Who>,
+    messages: Vec<Stored>,
 }
 
 impl Saved {
     pub(super) fn restore(self) -> Threads {
+        let Saved { threads: saved } = self;
         let mut threads = Threads::default();
-        for t in self.threads {
-            for m in &t.messages {
+        for SavedThread {
+            thread: name,
+            members,
+            messages,
+        } in saved
+        {
+            for m in &messages {
                 if let Some(payload) = &m.message.payload {
                     threads
                         .copies
-                        .insert((t.thread.clone(), payload_hash(payload)), m.message.seq);
+                        .insert((name.clone(), payload_hash(payload)), m.message.seq);
                 }
             }
             let thread = Thread {
-                members: t.members.into_iter().collect(),
-                messages: t
-                    .messages
-                    .into_iter()
-                    .map(|m| Stored {
-                        message: m.message,
-                        woken: m.woken,
-                    })
-                    .collect(),
+                members: members.into_iter().collect(),
+                messages: messages.into_iter().collect(),
             };
-            threads.by_name.insert(t.thread, thread);
+            threads.by_name.insert(name, thread);
         }
         threads
     }
@@ -233,11 +226,21 @@ pub fn may_read(who: &Who, thread: &ThreadName) -> bool {
 
 /// The wake that `message` in `thread` gives.
 pub(super) fn wake(thread: &ThreadName, message: &Message) -> Wake {
+    let Message {
+        seq,
+        from,
+        to: _,
+        body: _,
+        at_ms: _,
+        kind,
+        sig: _,
+        payload: _,
+    } = message;
     Wake {
         thread: thread.clone(),
-        seq: message.seq,
-        from: message.from.clone(),
-        kind: message.kind,
+        seq: *seq,
+        from: from.clone(),
+        kind: *kind,
     }
 }
 
@@ -368,9 +371,25 @@ impl View<'_> {
         if message.kind == Kind::Note {
             woken.clear();
         }
+        let Message {
+            seq: _,
+            from,
+            to,
+            body,
+            at_ms,
+            kind,
+            sig,
+            payload,
+        } = message;
         let message = Message {
             seq: threads.last_seq(&thread) + 1,
-            ..message
+            from,
+            to,
+            body,
+            at_ms,
+            kind,
+            sig,
+            payload,
         };
         changes.push(Change::Posted(Box::new(Posted {
             thread,
@@ -512,15 +531,25 @@ impl Command for Post {
                 thread: thread.clone(),
             }));
         }
+        let Post {
+            me: _,
+            thread: _,
+            to,
+            body,
+            kind,
+            at_ms,
+            sig,
+            payload,
+        } = post;
         let message = Message {
             seq: 0,
             from: sender,
-            to: post.to.clone(),
-            body: post.body.clone(),
-            at_ms: post.at_ms.unwrap_or(0),
-            kind: post.kind,
-            sig: post.sig.clone(),
-            payload: post.payload.clone(),
+            to: to.clone(),
+            body: body.clone(),
+            at_ms: at_ms.unwrap_or(0),
+            kind: *kind,
+            sig: sig.clone(),
+            payload: payload.clone(),
         };
         let (mut put, unmatched) = view.put(from, thread, message, now);
         changes.append(&mut put);
@@ -535,15 +564,15 @@ impl Command for Post {
         unmatched: Vec<Selector>,
         now: Now,
     ) -> wire::Posted {
-        let posted = message_of(&done.made).expect("the records of a post end with the message");
+        let Posted {
+            thread,
+            message,
+            woken,
+        } = message_of(&done.made).expect("the records of a post end with the message");
         wire::Posted {
-            thread: posted.thread.clone(),
-            seq: posted.message.seq,
-            woken: posted
-                .woken
-                .iter()
-                .map(|who| view.uri(who, now.at))
-                .collect(),
+            thread: thread.clone(),
+            seq: message.seq,
+            woken: woken.iter().map(|who| view.uri(who, now.at)).collect(),
             unmatched,
         }
     }
@@ -575,15 +604,22 @@ impl Command for Announce {
         view: &View<'_>,
         now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
+        let Announce {
+            thread,
+            to,
+            body,
+            kind,
+            at_ms,
+        } = self;
         let from = caller.who();
-        let thread = view.thread_of(from, self.thread.as_ref(), &self.to, now.at)?;
+        let thread = view.thread_of(from, thread.as_ref(), to, now.at)?;
         let message = Message {
             seq: 0,
             from: caller.me().clone(),
-            to: self.to.clone(),
-            body: self.body.clone(),
-            at_ms: self.at_ms,
-            kind: self.kind,
+            to: to.clone(),
+            body: body.clone(),
+            at_ms: *at_ms,
+            kind: *kind,
             sig: None,
             payload: None,
         };

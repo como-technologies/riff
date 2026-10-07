@@ -31,7 +31,9 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::ThreadName;
-use riff_core::record::{Change, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged};
+use riff_core::record::{
+    Change, Envelope, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged,
+};
 use riff_core::wire::{
     Idle, Pause, PauseInfo, RepositoryPause, Resume, RiffReply, RiffState, SetIdle,
 };
@@ -173,10 +175,17 @@ impl TheRiff {
         state: RiffState,
         record: &Record,
     ) -> Result<(), &'static str> {
+        let Envelope {
+            position: _,
+            written_at_ms,
+            by,
+            command: _,
+            call: _,
+        } = &record.envelope;
         let pause = match state {
             RiffState::Paused => Some(PauseInfo {
-                by: record.envelope.by.clone(),
-                at_ms: record.envelope.written_at_ms,
+                by: by.clone(),
+                at_ms: *written_at_ms,
             }),
             RiffState::Running => None,
         };
@@ -200,19 +209,18 @@ impl TheRiff {
 
     /// The pauses and the settings, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
-        let riff = match self.pauses.riff {
-            Some(_) => RiffState::Paused,
-            None => RiffState::Running,
-        };
+        let TheRiff {
+            pauses: Pauses { riff, repositories },
+            idle,
+        } = self.clone();
         Saved {
-            riff,
-            idle: self.idle,
-            riff_pause: self
-                .pauses
-                .riff
-                .clone()
-                .filter(|pause| *pause != PauseInfo::default()),
-            pauses: self.pauses.repositories.clone(),
+            riff: match riff {
+                Some(_) => RiffState::Paused,
+                None => RiffState::Running,
+            },
+            idle,
+            riff_pause: riff.filter(|pause| *pause != PauseInfo::default()),
+            pauses: repositories,
         }
     }
 }
@@ -221,7 +229,7 @@ impl TheRiff {
 /// who set it and when (01M3XAHZQ92GGFHBC50FQ7FQ0K). A checkpoint from
 /// before the pause of a repository has only `riff` and `idle`: it
 /// reads, and nobody is known to have set its pause.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default)]
     riff: RiffState,
@@ -238,16 +246,22 @@ pub(super) struct Saved {
 
 impl Saved {
     pub(super) fn restore(self) -> TheRiff {
-        let riff = match self.riff {
-            RiffState::Paused => Some(self.riff_pause.unwrap_or_default()),
+        let Saved {
+            riff,
+            idle,
+            riff_pause,
+            pauses,
+        } = self;
+        let riff = match riff {
+            RiffState::Paused => Some(riff_pause.unwrap_or_default()),
             RiffState::Running => None,
         };
         TheRiff {
             pauses: Pauses {
                 riff,
-                repositories: self.pauses,
+                repositories: pauses,
             },
-            idle: self.idle,
+            idle,
         }
     }
 }

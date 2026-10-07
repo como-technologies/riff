@@ -1218,14 +1218,26 @@ impl Post {
     /// What the signature covers. `None` when the post has no signed
     /// time.
     pub fn content(&self) -> Option<Content<'_>> {
+        // A new field of a post must say here whether the signature
+        // covers it.
+        let Post {
+            me,
+            thread,
+            to,
+            body,
+            kind,
+            at_ms,
+            sig: _,
+            payload: _,
+        } = self;
         Some(Content {
-            from: self.me.who(),
-            lead: self.me.lead(),
-            thread: self.thread.as_ref(),
-            to: &self.to,
-            body: &self.body,
-            kind: self.kind,
-            at_ms: self.at_ms?,
+            from: me.who(),
+            lead: me.lead(),
+            thread: thread.as_ref(),
+            to,
+            body,
+            kind: *kind,
+            at_ms: (*at_ms)?,
         })
     }
 }
@@ -1439,15 +1451,27 @@ impl Message {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn verified(&self, thread: &ThreadName, keys: &Keys) -> bool {
-        let (Some(sig), Some(payload)) = (&self.sig, &self.payload) else {
+        // A new field of a message must say here whether the signature
+        // covers it.
+        let Message {
+            seq: _,
+            from: sender,
+            to,
+            body,
+            at_ms,
+            kind,
+            sig,
+            payload,
+        } = self;
+        let (Some(sig), Some(payload)) = (sig, payload) else {
             return false;
         };
-        let from = self.from.who();
+        let from = sender.who();
         let signed_thread = if thread.is_direct() {
             let Some(peer) = thread.peer(from) else {
                 return false;
             };
-            let [to] = &self.to[..] else {
+            let [to] = &to[..] else {
                 return false;
             };
             // A selector of a later build matches no session, so it
@@ -1467,12 +1491,12 @@ impl Message {
         };
         let content = Content {
             from,
-            lead: self.from.lead(),
+            lead: sender.lead(),
             thread: signed_thread,
-            to: &self.to,
-            body: &self.body,
-            kind: self.kind,
-            at_ms: self.at_ms,
+            to,
+            body,
+            kind: *kind,
+            at_ms: *at_ms,
         };
         let Some(keys) = keys.get(from.user()) else {
             return false;
@@ -2212,14 +2236,9 @@ pub struct SetAdmin {
     pub admin: bool,
 }
 
-/// The reply to [`SetAdmin`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct AdminSet {
-    /// The email, in lower case.
-    pub email: String,
-    /// True when the person is now an admin.
-    pub admin: bool,
-}
+/// The reply to [`SetAdmin`]: the change of its record, with the email
+/// in lower case.
+pub use crate::record::AdminSet;
 
 /// `POST /v1/owner`: the owner passes the owner role to a member or an
 /// admin. The old owner stays an admin.

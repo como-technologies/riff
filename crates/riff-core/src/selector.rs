@@ -84,7 +84,13 @@ use crate::name::{NameError, SessionUri};
 
 /// Picks sessions by who they are, where they work, and what they hold.
 /// Each field that is set must match. Set one or more fields.
-#[derive(Clone, Debug, Default, PartialEq, Eq, JsonSchema)]
+///
+/// The derive of serde is `remote = "Self"`: it gives the read and the
+/// write of the fields of this build as functions, and the impls below
+/// add the selector `other`. So the tolerant reader holds this struct
+/// itself, not a second copy of its fields (01M49W17GGV1K5FZEKJRPV0GNA).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(remote = "Self", deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct Selector {
     /// The user, for example `mike`.
@@ -112,47 +118,18 @@ pub struct Selector {
     /// The JSON of a selector that this build does not know, as it
     /// came. Each field above is then empty, and the selector matches
     /// no session.
+    #[serde(skip)]
     #[schemars(skip)]
     pub other: Option<serde_json::Value>,
-}
-
-/// The selector of this build, as its JSON has it.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Known {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    user: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    session: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    host: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    repo: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    worktree: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    claim: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    lead: Option<bool>,
 }
 
 /// A selector `other` writes its JSON as it came.
 impl Serialize for Selector {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if let Some(other) = &self.other {
-            return other.serialize(serializer);
+        match &self.other {
+            Some(other) => other.serialize(serializer),
+            None => Selector::serialize(self, serializer),
         }
-        let selector = self.clone();
-        Known {
-            user: selector.user,
-            session: selector.session,
-            host: selector.host,
-            repo: selector.repo,
-            worktree: selector.worktree,
-            claim: selector.claim,
-            lead: selector.lead,
-        }
-        .serialize(serializer)
     }
 }
 
@@ -166,24 +143,12 @@ impl<'de> Deserialize<'de> for Selector {
         // in the order of the fields is not.
         let known = value
             .is_object()
-            .then(|| Known::deserialize(&value).ok())
+            .then(|| Selector::deserialize(&value).ok())
             .flatten();
-        Ok(match known {
-            Some(known) => Selector {
-                user: known.user,
-                session: known.session,
-                host: known.host,
-                repo: known.repo,
-                worktree: known.worktree,
-                claim: known.claim,
-                lead: known.lead,
-                other: None,
-            },
-            None => Selector {
-                other: Some(value),
-                ..Selector::default()
-            },
-        })
+        Ok(known.unwrap_or_else(|| Selector {
+            other: Some(value),
+            ..Selector::default()
+        }))
     }
 }
 

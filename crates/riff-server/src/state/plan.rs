@@ -38,7 +38,7 @@
 use std::collections::BTreeMap;
 
 use riff_core::name::{ThreadName, check};
-use riff_core::record::{By, Change, ItemFreed, ItemHeld, Record};
+use riff_core::record::{By, Change, Envelope, ItemFreed, ItemHeld, Record};
 use riff_core::wire::{Free, FreeReply, Hold, HoldReply};
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +50,7 @@ pub const REASON_MAX: usize = 200;
 
 /// The hold of one item: its reason, and who held it and when: the `by`
 /// and the time of its `item_held` record.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HoldInfo {
     pub reason: String,
     /// The caller of the hold. `None` when the record has no cause.
@@ -61,7 +61,7 @@ pub struct HoldInfo {
 }
 
 /// The plan of one repository thread. This build has only its holds.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 struct Plan {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     holds: BTreeMap<String, HoldInfo>,
@@ -131,13 +131,25 @@ impl Plans {
     /// `by` and the time of the record. A second record replaces the
     /// reason, the `by` and the time.
     pub(super) fn held(&mut self, held: &ItemHeld, record: &Record) -> Result<(), &'static str> {
+        let ItemHeld {
+            thread,
+            item,
+            reason,
+        } = held;
+        let Envelope {
+            position: _,
+            written_at_ms,
+            by,
+            command: _,
+            call: _,
+        } = &record.envelope;
         let hold = HoldInfo {
-            reason: held.reason.clone(),
-            by: record.envelope.by.clone(),
-            at_ms: record.envelope.written_at_ms,
+            reason: reason.clone(),
+            by: by.clone(),
+            at_ms: *written_at_ms,
         };
-        let plan = self.plans.entry(held.thread.clone()).or_default();
-        plan.holds.insert(held.item.clone(), hold);
+        let plan = self.plans.entry(thread.clone()).or_default();
+        plan.holds.insert(item.clone(), hold);
         Ok(())
     }
 
@@ -160,8 +172,9 @@ impl Plans {
 
     /// The plans, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        let Plans { plans } = self;
         Saved {
-            plans: self.plans.clone(),
+            plans: plans.clone(),
         }
     }
 }
@@ -169,16 +182,17 @@ impl Plans {
 /// The part of the checkpoint of this group: the plan of each
 /// repository thread, with each hold, its reason, its `by` and its
 /// time. An empty part is not written (01M43GSGVYJW7C09SVRWRAQZDZ).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(super) struct Saved {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     plans: BTreeMap<ThreadName, Plan>,
 }
 
 impl Saved {
-    pub(super) fn restore(mut self) -> Plans {
-        self.plans.retain(|_, plan| !plan.is_empty());
-        Plans { plans: self.plans }
+    pub(super) fn restore(self) -> Plans {
+        let Saved { mut plans } = self;
+        plans.retain(|_, plan| !plan.is_empty());
+        Plans { plans }
     }
 }
 
@@ -269,7 +283,7 @@ impl Command for Hold {
             thread,
             item,
             reason,
-            ..
+            me: _,
         } = self;
         may_change(Self::KIND, thread, item, caller, view, now)?;
         let reason = reason.trim();
@@ -316,7 +330,11 @@ impl Command for Free {
         view: &View<'_>,
         now: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
-        let Free { thread, item, .. } = self;
+        let Free {
+            thread,
+            item,
+            me: _,
+        } = self;
         may_change(Self::KIND, thread, item, caller, view, now)?;
         let mut changes = Vec::new();
         if view.hold(thread, item).is_some() {
