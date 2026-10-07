@@ -3002,7 +3002,7 @@
   `RIFF_WORKER=1`. A second start adds panes to the same window. No
   person types a key.
 - **01M3JD394YFA3TQRE3E72ZER4Z** A worker starts with no Remote
-  Control. The book starts the lead with `claude --remote-control`.
+  Control. `riff` starts the lead with `claude --remote-control`.
 - **01M3JV0ZNGKDFMRR9ACT0480V9** `riff workers start` runs each worker
   with the flag settings `{"remoteControlAtStartup":false}`. So a
   worker has no Remote Control, also when the user settings turn on

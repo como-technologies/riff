@@ -909,7 +909,8 @@ fn the_book_has_a_how_to_for_each_step() {
         .find("## Run the lead and its workers in tmux")
         .unwrap()..];
     for (heading, command) in [
-        ("### Start the lead in tmux", "claude --remote-control"),
+        ("### Start the riff", "```sh\nriff\n```"),
+        ("### Start the riff", "tmux -L riff ls"),
         ("### Start workers", "riff workers start 3"),
         ("### Start workers", "riff workers start 1 --claude "),
         (

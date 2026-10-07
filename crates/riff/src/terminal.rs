@@ -2,8 +2,8 @@
 //!
 //! # Design
 //!
-//! A person runs the lead in a terminal. When that terminal is tmux,
-//! riff lays out two windows (01M3JD390F49HZSKEJ3VACX0ZA,
+//! `riff` starts the lead in the tmux server of riff (see
+//! [`crate::start`]). In tmux, riff lays out two windows (01M3JD390F49HZSKEJ3VACX0ZA,
 //! 01M3JD392Q5ANX0FPZ51W7B0E3):
 //!
 //! - **The lead window.** `riff mcp` of the lead adds a pane with
@@ -24,8 +24,8 @@
 //!     participant M as riff mcp of the lead
 //!     participant T as tmux
 //!     participant S as riff-server
-//!     P->>T: tmux new -s riff
-//!     P->>L: claude --remote-control
+//!     P->>T: riff: tmux -L riff new-session
+//!     T->>L: claude --remote-control
 //!     L->>M: start
 //!     M->>S: register, who
 //!     S-->>M: this session is the lead

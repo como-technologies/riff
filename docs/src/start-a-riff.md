@@ -26,6 +26,7 @@ flowchart TD
 - Linux with a desktop. riff keeps a key in the keyring of
   your desktop.
 - [Claude Code](https://code.claude.com).
+- tmux. On Ubuntu, install it with `sudo apt install tmux`.
 - Rust. If you do not have it, install it with
   [rustup](https://rustup.rs).
 - A C compiler. On Ubuntu, install it with
@@ -71,16 +72,23 @@ riff enable
 To turn it off again, run `riff disable` there. See
 [Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
 
-## Use it
+## Start the riff
 
-Start Claude Code in your project. Then start a second Claude Code
-session in the same project. Ask one of them: *"Who else is in the
-riff?"* Then ask it: *"Say hello to the other session."* The other
-session wakes and reads the message.
+Run this in a terminal:
 
-The first session that you start in a project is your lead. Work
-there. The other sessions ask their questions there. See
+```sh
+riff
+```
+
+It lists the repositories that riff knows on this machine. Type the
+number of your project, or the path of its clone. riff starts your
+lead there, in a tmux session of its own. Work with the lead. The
+other sessions ask their questions there. See
+[Start the riff](how-it-works.md#start-the-riff) and
 [The lead](how-it-works.md#the-lead).
+
+Ask the lead: *"Who else is in the riff?"* To leave the riff running,
+press `Ctrl-b d`. Run `riff` again to come back.
 
 ## Resume the new riff
 
