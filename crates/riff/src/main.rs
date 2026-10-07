@@ -1305,7 +1305,7 @@ async fn main() -> Result<()> {
         _ => {}
     }
     // A test run needs no riff server (01M4BTG72XPKSTDF4KYRKS4Z0D).
-    if let Command::TestRun { program, args } = &cli.command {
+    if let Command::TestRun { program, args } = &command {
         match riff::sandbox::test_run(program, args) {
             Ok(code) => std::process::exit(code),
             Err(e) => match e.downcast_ref::<riff::sandbox::Missing>() {
