@@ -144,7 +144,12 @@ done
 A test waits for the fact that it checks, for example a message or a
 line in a log, with a generous time limit.
 
-## Time a step in a test
+## Write a test
+
+A test runs `riff` and `riff-server` only through the crate
+`isolated`. It waits for the fact that it checks.
+
+### Time a step in a test
 
 A test that runs slow on a busy machine has not failed. So a test does
 not compare the wall clock with a tight limit. It measures a
