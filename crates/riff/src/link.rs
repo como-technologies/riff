@@ -685,8 +685,7 @@ mod tests {
             link.wait(&mut waited, wait, Some(&show)).await;
         }
         link.ended_wait();
-        let count = lines.lock().unwrap().len();
-        count
+        lines.lock().unwrap().len()
     }
 
     /// The lowest random parts: 125, 250, 500, 1000 ms. The first three
