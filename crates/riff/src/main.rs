@@ -214,7 +214,7 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// Hold or free a work item of the plan of your repository
+    /// Hold, free or check the work items of the plan of your repository
     ///
     /// A held item is no free work: no worker can claim it. A hold is
     /// not a claim. Only a lead, the owner or an admin can hold and free
@@ -1059,6 +1059,13 @@ enum PlanCommand {
         /// The work item, for example issue-12.
         item: String,
     },
+    /// List each item of an open wave with no docs criterion
+    ///
+    /// It reads the open issues of the repository of this directory with
+    /// the gh of this machine. It prints each issue of an open wave whose
+    /// `Done when:` line has no criterion `- Docs:`. It exits with 1 when
+    /// it finds one.
+    Check,
 }
 
 #[derive(Subcommand)]
@@ -1598,6 +1605,18 @@ async fn main() -> Result<()> {
             anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
             return Ok(());
         }
+        Command::Plan {
+            command: PlanCommand::Check,
+        } => {
+            let here = identity::place(&identity::working_dir()?)?;
+            let open = riff::docs::open_items(&pr::Gh::default(), &here.repo_text())?;
+            let missing = riff::docs::missing(&open);
+            print!("{}", text::docs_missing(&missing));
+            if !missing.is_empty() {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
         Command::Audit { wave } => {
             let here = identity::place(&identity::working_dir()?)?;
             let repo = audit::repo_of(&here)?;
@@ -1937,6 +1956,9 @@ async fn main() -> Result<()> {
         | Command::Remove { .. }
         | Command::Members
         | Command::Audit { .. }
+        | Command::Plan {
+            command: PlanCommand::Check,
+        }
         | Command::TestRun { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
