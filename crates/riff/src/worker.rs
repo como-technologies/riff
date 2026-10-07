@@ -251,7 +251,13 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         Some(folder) => temp::with_env(args, folder.path()),
         None => args.to_vec(),
     };
-    let command = limits::command(claude, &args, nice, slice.as_deref());
+    // The scope has the name of the worker, so the clear, the reap and
+    // the stop find each of its processes (01M49SV9W4S1HJ4BYANA388VD2).
+    let session = std::env::var(identity::SESSION_VARS[0]).ok();
+    let unit = session
+        .as_deref()
+        .map(|session| workload::scope_unit(session, std::process::id()));
+    let command = limits::command(claude, &args, nice, slice.as_deref(), unit.as_deref());
     // The pool lives while this wrapper lives (01M3ZGZMJ9RF1C4AHG78GQ2NM4).
     let pool = hold_pool(dir.as_deref(), &limit);
     // A worker past the count of the pool keeps one token out of it.
@@ -290,7 +296,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         let context = crate::next::Agent::context_var(&crate::next::ClaudeCode);
         let mut vars = vec![WORKER, WRAPPER, context];
         vars.extend(identity::SESSION_VARS);
-        cache.start_server(&vars);
+        cache.start_server(&vars, slice.is_some());
     }
     for (var, value) in crate::sccache::env(cache.as_ref()) {
         match value {
@@ -318,7 +324,6 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         return Ok(0);
     }
     let pane = std::env::var("TMUX_PANE").ok();
-    let session = std::env::var(identity::SESSION_VARS[0]).ok();
     let body = crate::text::worker_stopped(pane.as_deref(), session.as_deref(), &status);
     eprintln!("{body}");
     if let Err(e) = note_lead(server, &body).await {
@@ -562,10 +567,9 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
         // Each process of the worker, also one that left the pane
         // (01M3ZV0TMNQDK9WC3BR1NPGAC2).
         let all = workload::all(var);
-        let stopped = workload::stop(
-            &workload::of_worker(&all, &worker.session, std::process::id()),
-            var,
-        );
+        let found = workload::of_worker(&all, &worker.session, std::process::id());
+        workload::say_here(found.by, &worker.session);
+        let stopped = workload::stop(&found.procs, var);
         if !stopped.is_empty() {
             println!("{}", text::stopped_after_pane(&worker.pane, &stopped));
         }
@@ -612,7 +616,8 @@ pub fn reap(tmux: &dyn Terminal, pane: Option<&str>, dir: &Path) -> Result<Vec<S
             continue;
         };
         let old = workload::old_context(&all, &worker.session, std::process::id(), Some(since));
-        let stopped = workload::stop(&old, var);
+        workload::say_here(old.by, &worker.session);
+        let stopped = workload::stop(&old.procs, var);
         if stopped.is_empty() {
             lines.push(text::reaped_none(&worker.pane));
         }

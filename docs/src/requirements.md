@@ -3480,8 +3480,9 @@
   the free work. The message of a loop of deaths goes to the user of
   the lead.
 - **01M3ZV0QSFVCHRSEKYK57B88VA** riff stops the processes of a worker
-  itself, in code. The agent never names a process ID. A process is of
-  the worker `ID` when its environment has `RIFF_WORKER=1` and
+  itself, in code. The agent never names a process ID. With no scope
+  of the worker (01M49SVFW0FZ3DK57PACS7W5EY), a process is of the
+  worker `ID` when its environment has `RIFF_WORKER=1` and
   `RIFF_SESSION=ID`. A process is of a context when it also has the
   variable that the agent tool gives to each command and hook, and not
   to itself or its MCP servers: `CLAUDE_PID` for Claude Code.
@@ -3489,6 +3490,18 @@
   never stops `riff watch`, the process that calls it, or a parent of
   one. It sends SIGTERM, then SIGKILL after 3 seconds. It sends no
   signal to a process ID that a new process took.
+- **01M49SV9W4S1HJ4BYANA388VD2** `riff workers run` runs the agent
+  tool of the worker `ID` in the systemd scope
+  `riff-worker-ID.PID.scope`, where PID is the wrapper. In `ID`, each
+  character but a letter, a digit, `_` and `-` becomes `_`.
+- **01M49SV9Z2A7TXWFTMVNYXSQNM** When a process is in a scope
+  `riff-worker-ID.N.scope`, the clear, the reap and the stop of the
+  worker `ID` select by the scope: a process is of the worker only
+  when its cgroup is such a scope. Its environment does not count.
+- **01M49SVFW0FZ3DK57PACS7W5EY** When no process is in a scope of the
+  worker, for example on a machine with no systemd, riff selects by
+  the environment (01M3ZV0QSFVCHRSEKYK57B88VA). It says so one time
+  on the machine, until a selection by a scope works again.
 - **01M438620PJHSVSPAENBKKJ6C2** A process is of a worker of this
   riff only when its `RIFF_HOME` is the `RIFF_HOME` of the riff that
   looks, or both have none (01M3ZV0QSFVCHRSEKYK57B88VA). riff never
@@ -3586,6 +3599,13 @@
 - **01M49AB2QYGJ73Y19KGAY1WDW7** `riff workers run` starts the
   `sccache` server of the machine before it starts `claude`, with no
   variable of a worker and in its own process group.
+- **01M49SVFZS7HTYM3FSCV4ZCS0Q** The `sccache` server of the machine
+  runs outside the scope of each worker. When the worker has a scope,
+  `riff workers run` starts the server in the systemd scope
+  `riff-sccache-PORT.scope`. The server has
+  `SCCACHE_IDLE_TIMEOUT=0`, so it never ends for idle time, and a
+  build of a worker does not start it again in the scope of that
+  worker.
 - **01M49AB2TBMHGNXM3GE4NDFYYG** A process with
   `SCCACHE_START_SERVER=1` whose binary (`/proc/PID/exe`, by device and
   inode) is the `sccache` of the machine is the `sccache` server of the

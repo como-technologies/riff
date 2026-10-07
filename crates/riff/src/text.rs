@@ -1770,6 +1770,25 @@ pub fn no_scope(why: &str) -> String {
     )
 }
 
+/// What the clear, the reap and the stop say one time when they find
+/// the processes of the worker `session` by their environment: no
+/// process is in a systemd scope of the worker
+/// (01M49SVFW0FZ3DK57PACS7W5EY).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::workers_by_environment("2a880834"),
+///     "riff: the worker 2a880834 has no systemd scope, so riff finds its processes by \
+///      RIFF_WORKER and RIFF_SESSION. A process that drops them is not found."
+/// );
+/// ```
+pub fn workers_by_environment(session: &str) -> String {
+    format!(
+        "riff: the worker {session} has no systemd scope, so riff finds its processes by \
+         RIFF_WORKER and RIFF_SESSION. A process that drops them is not found."
+    )
+}
+
 /// What `riff workers run` says in its pane when it runs at a higher
 /// nice value than `workers.nice` (01M407J8R79WVYVABVCSHFAMJ9).
 ///
@@ -3806,7 +3825,7 @@ pub fn worker_over_limit(host: &str, pane: &str, limit: u16, runs: usize) -> Str
 ///
 /// ```
 /// use riff::workload::Proc;
-/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, context: true };
+/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, scope: None, context: true };
 /// assert_eq!(
 ///     riff::text::old_context_stopped("%3", &[p]),
 ///     "riff stopped 1 process of the old context of the worker in the pane %3, before its \
@@ -3835,7 +3854,7 @@ fn proc_words(p: &crate::workload::Proc) -> String {
 ///
 /// ```
 /// use riff::workload::Proc;
-/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, context: true };
+/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, scope: None, context: true };
 /// assert_eq!(riff::text::reaped("%3", &p), "pane %3: stopped 4242 just ci");
 /// ```
 pub fn reaped(pane: &str, p: &crate::workload::Proc) -> String {
@@ -3869,7 +3888,7 @@ pub fn reap_no_start(pane: &str) -> String {
 ///
 /// ```
 /// use riff::workload::Proc;
-/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, context: true };
+/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, scope: None, context: true };
 /// assert_eq!(
 ///     riff::text::stopped_after_pane("%3", &[p]),
 ///     "pane %3: also stopped 1 process that lived after the pane: 4242 just ci"

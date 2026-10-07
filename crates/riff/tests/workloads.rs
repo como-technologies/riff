@@ -254,6 +254,60 @@ fn marked(mut cmd: Command, home: &Path, id: &str, stdin: Stdio) -> Child {
     cmd.spawn().unwrap()
 }
 
+/// True when `systemd-run --user --scope` works here. A machine with no
+/// systemd user manager, for example a CI runner, has no scope.
+fn scopes_work() -> bool {
+    Command::new("systemd-run")
+        .args(["--user", "--scope", "--quiet", "--", "true"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// A `sleep` of the worker `id` of the riff home `home` in the systemd
+/// scope `riff-worker-ID.N.scope` of the worker (01M49SV9W4S1HJ4BYANA388VD2).
+/// With `context`, it has the variable of the agent tool. With `drop`,
+/// it runs `env -u RIFF_WORKER -u RIFF_SESSION sleep 300`: it has no
+/// variable of the worker. `systemd-run --scope` runs the command in
+/// its own process, so the child is the `sleep`.
+fn scoped_sleeper(home: &Path, id: &str, n: u32, context: bool, drop: bool) -> Child {
+    let mut cmd = Command::new("systemd-run");
+    cmd.args(["--user", "--scope", "--quiet"])
+        .arg(format!("--unit={}", riff::workload::scope_unit(id, n)))
+        .arg("--");
+    if drop {
+        cmd.args(["env", "-u", "RIFF_WORKER", "-u", "RIFF_SESSION"]);
+    }
+    cmd.args(["sleep", "300"])
+        .env("RIFF_WORKER", "1")
+        .env("RIFF_SESSION", id)
+        .env("RIFF_HOME", home)
+        .env_remove(CONTEXT)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if context {
+        cmd.env(CONTEXT, "1");
+    }
+    cmd.spawn().unwrap()
+}
+
+/// Waits until the process of `child` is in a scope of a worker: the
+/// start of `systemd-run` is short, but not instant.
+fn in_scope(child: &Child) {
+    let end = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < end {
+        let cgroup = std::fs::read_to_string(format!("/proc/{}/cgroup", child.id()));
+        let path = cgroup.ok().and_then(|text| riff::reap::cgroup_path(&text));
+        if path.is_some_and(|path| riff::workload::scope_worker(&path).is_some()) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("the process {} is in no scope of a worker", child.id());
+}
+
 /// Waits until `child` ends, at most 20 seconds. True when it ended.
 fn ends(child: &mut Child) -> bool {
     let end = Instant::now() + Duration::from_secs(20);
@@ -372,9 +426,20 @@ async fn reap_stops_the_orphan_of_an_old_context_and_keeps_the_new_one() {
     assert!(lives(&mut new), "the current context stopped");
     assert!(lives(&mut claude), "claude stopped");
 
+    // No scope: the first reap says so, and the second one does not say
+    // it again (01M49SVFW0FZ3DK57PACS7W5EY).
+    let by_environment = riff::text::workers_by_environment(id);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(&by_environment),
+        "{out:?}"
+    );
     // A second reap finds no orphan.
     let out = r.riff(&r.main(), &["workers", "reap"]).output().unwrap();
     assert_eq!(stdout(&out).trim(), "pane %5: no orphan process", "{out:?}");
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("no systemd scope"),
+        "{out:?}"
+    );
     for mut child in [new, claude] {
         child.kill().unwrap();
         child.wait().unwrap();
@@ -432,6 +497,13 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     assert!(stdout(&out).contains("also stopped 5 processes"), "{out:?}");
+    // No scope: riff finds the processes by their environment, and says
+    // so (01M49SVFW0FZ3DK57PACS7W5EY).
+    let by_environment = riff::text::workers_by_environment(id);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(&by_environment),
+        "{out:?}"
+    );
     for child in &mut all {
         assert!(ends(child), "a process of the worker still runs");
     }
@@ -442,6 +514,88 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
         child.kill().unwrap();
         child.wait().unwrap();
     }
+}
+
+/// The clear finds the processes of a worker by its scope: a command of
+/// the context that drops `RIFF_WORKER` and `RIFF_SESSION` stops, and
+/// `claude` stays. A process with the variables of the worker outside
+/// its scope is not of the worker (01M49SV9Z2A7TXWFTMVNYXSQNM). It
+/// needs a systemd user manager; with none, it says so and checks
+/// nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_clear_stops_a_process_that_dropped_the_variables_of_its_worker() {
+    if !scopes_work() {
+        eprintln!("skip: systemd-run --user --scope does not work here");
+        return;
+    }
+    let r = Riff::new().await;
+    let id = &unique("wscope1");
+    let w = r.uri(&r.main(), id);
+    r.api.start(&w, StartReason::Process, true).await.unwrap();
+    let thread = w.default_thread().unwrap();
+    r.api.claim(&w, &thread, "issue-12").await.unwrap();
+    let mut claude = scoped_sleeper(r.run.path(), id, 1, false, false);
+    let mut dropped = scoped_sleeper(r.run.path(), id, 2, true, true);
+    let mut outside = r.sleeper(id, true);
+    in_scope(&claude);
+    in_scope(&dropped);
+
+    let out = r.in_worker(id, &["release", "issue-12"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let input = format!(r#"{{"session_id":"{id}","hook_event_name":"Stop"}}"#);
+    let out = r.hook(id, "stop", &input);
+    assert!(out.status.success(), "{out:?}");
+
+    assert!(
+        ends(&mut dropped),
+        "a process with no variable of the worker still runs"
+    );
+    assert!(lives(&mut claude), "claude stopped");
+    assert!(lives(&mut outside), "a process outside the scope stopped");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("no systemd scope"), "{stderr}");
+    for mut child in [claude, outside] {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}
+
+/// `riff workers stop PANE` stops each process in the scope of the
+/// worker, also one that dropped the variables of the worker, and no
+/// process outside of it (01M49SV9Z2A7TXWFTMVNYXSQNM).
+#[tokio::test(flavor = "multi_thread")]
+async fn workers_stop_stops_each_process_in_the_scope_of_the_worker() {
+    if !scopes_work() {
+        eprintln!("skip: systemd-run --user --scope does not work here");
+        return;
+    }
+    let r = Riff::new().await;
+    let id = &unique("wscope2");
+    r.pane(id);
+    let w = r.uri(&r.main(), id);
+    r.api.start(&w, StartReason::Process, true).await.unwrap();
+    let mut all = [
+        scoped_sleeper(r.run.path(), id, 1, false, false),
+        scoped_sleeper(r.run.path(), id, 2, true, true),
+        scoped_sleeper(r.run.path(), id, 3, false, true),
+    ];
+    for child in &all {
+        in_scope(child);
+    }
+    let mut outside = r.sleeper(id, true);
+
+    let out = r
+        .riff(&r.main(), &["workers", "stop", "%5"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout(&out).contains("also stopped 3 processes"), "{out:?}");
+    for child in &mut all {
+        assert!(ends(child), "a process of the scope still runs");
+    }
+    assert!(lives(&mut outside), "a process outside the scope stopped");
+    outside.kill().unwrap();
+    outside.wait().unwrap();
 }
 
 /// A worktree of the agent tool in the clone of `r`, on a new branch.

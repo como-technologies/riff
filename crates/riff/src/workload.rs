@@ -11,7 +11,8 @@
 //!
 //! | Process | How riff knows it |
 //! |---|---|
-//! | of the worker `ID` | its environment has `RIFF_WORKER=1`, `RIFF_SESSION=ID` and the `RIFF_HOME` of the caller (none when the caller has none). Each child gets the variables of its parent, also after its parent ends. |
+//! | of the worker `ID` | its cgroup is a systemd scope of the worker: `riff-worker-ID.PID.scope` ([`scope_unit`], 01M49SV9W4S1HJ4BYANA388VD2, 01M49SV9Z2A7TXWFTMVNYXSQNM). A process cannot leave its cgroup by a change of its own environment. |
+//! | of the worker `ID`, with no scope | no process is in a scope of the worker, for example on a machine with no systemd. Then its environment has `RIFF_WORKER=1`, `RIFF_SESSION=ID` and the `RIFF_HOME` of the caller (none when the caller has none). Each child gets the variables of its parent, also after its parent ends. riff says one time that it uses the environment ([`say`], 01M49SVFW0FZ3DK57PACS7W5EY). |
 //! | the server of the compile cache | [`crate::sccache::SERVER_MARK`]`=1`, and `/proc/PID/exe` is the binary of [`crate::sccache::find`] ([`is_cache_server`]). It is of the machine, never of a worker (01M49AB2TBMHGNXM3GE4NDFYYG). |
 //! | of a context | it has also the variable of the agent tool ([`crate::next::Agent::context_var`]): Claude Code gives it to each command of its Bash tool and to each hook, not to `claude` and not to its MCP servers. |
 //! | the watch | `riff watch`. riff keeps it and its parents: a worker keeps its watch over a clear (01M3JQCD16CNWN5FCQBRKHXYMP). |
@@ -20,9 +21,13 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A["each process of the user<br/>/proc/PID/environ"] --> W{"RIFF_WORKER=1 and<br/>RIFF_SESSION=ID?"}
-//!     W -- no --> K["not of this worker"]
-//!     W -- yes --> C{"variable of the agent tool?"}
+//!     A["each process of the user<br/>/proc/PID/cgroup"] --> G{"a process in the scope<br/>riff-worker-ID.N.scope?"}
+//!     G -- yes --> P{"in that scope?"}
+//!     G -- "no: say so one time" --> W{"/proc/PID/environ:<br/>RIFF_WORKER=1 and RIFF_SESSION=ID?"}
+//!     P -- no --> K["not of this worker"]
+//!     W -- no --> K
+//!     P -- yes --> C{"variable of the agent tool?"}
+//!     W -- yes --> C
 //!     C -- "no: claude, MCP server" --> S["keep"]
 //!     C -- yes --> R{"riff watch, or the caller,<br/>or a parent of one?"}
 //!     R -- yes --> S
@@ -52,6 +57,7 @@
 //!     start,
 //!     argv: argv.iter().map(|a| a.to_string()).collect(),
 //!     worker: Some("w1".into()),
+//!     scope: None,
 //!     context,
 //! };
 //! let all = [
@@ -64,10 +70,10 @@
 //!     p(40, 1, 400, &["riff", "hook", "clear"], true),
 //! ];
 //! // The clear: riff hook clear (40) stops `just ci` and its shell.
-//! let old: Vec<u32> = old_context(&all, "w1", 40, None).iter().map(|p| p.pid).collect();
-//! assert_eq!(old, [30, 31]);
+//! let old = old_context(&all, "w1", 40, None);
+//! assert_eq!(old.procs.iter().map(|p| p.pid).collect::<Vec<_>>(), [30, 31]);
 //! // A reap after a context that started at 250 keeps a new `just ci`.
-//! assert!(old_context(&all, "w1", 40, Some(250)).is_empty());
+//! assert!(old_context(&all, "w1", 40, Some(250)).procs.is_empty());
 //! ```
 
 use std::collections::BTreeSet;
@@ -93,6 +99,9 @@ pub struct Proc {
     /// The session ID of the worker, when the process is of a worker:
     /// `RIFF_WORKER=1` and `RIFF_SESSION`.
     pub worker: Option<String>,
+    /// The worker of the systemd scope that holds the process, in the
+    /// form of [`unit_part`], from its cgroup ([`scope_worker`]).
+    pub scope: Option<String>,
     /// True when the process has the variable of a context of the agent
     /// tool.
     pub context: bool,
@@ -103,7 +112,7 @@ impl Proc {
     ///
     /// ```
     /// use riff::workload::Proc;
-    /// let p = |argv: &[&str]| Proc { pid: 1, ppid: 0, start: 0, argv: argv.iter().map(|a| a.to_string()).collect(), worker: None, context: true };
+    /// let p = |argv: &[&str]| Proc { pid: 1, ppid: 0, start: 0, argv: argv.iter().map(|a| a.to_string()).collect(), worker: None, scope: None, context: true };
     /// assert!(p(&["/home/m/.cargo/bin/riff", "watch", "--once"]).is_watch());
     /// assert!(!p(&["riff", "workers"]).is_watch());
     /// assert!(!p(&["bash", "-c", "riff watch --once"]).is_watch());
@@ -120,7 +129,7 @@ impl Proc {
     ///
     /// ```
     /// use riff::workload::Proc;
-    /// let p = Proc { pid: 1, ppid: 0, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, context: true };
+    /// let p = Proc { pid: 1, ppid: 0, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, scope: None, context: true };
     /// assert_eq!(p.line(), "just ci");
     /// ```
     pub fn line(&self) -> String {
@@ -191,6 +200,155 @@ pub fn parse_environ(env: &[u8], context_var: &str, home: Option<&str>) -> (Opti
     (session.filter(|_| worker && here), context)
 }
 
+/// The start of the name of the systemd scope of a worker.
+pub const SCOPE_PREFIX: &str = "riff-worker-";
+
+/// The file in the local dir that says that riff said one time that it
+/// finds the processes of a worker by their environment
+/// (01M49SVFW0FZ3DK57PACS7W5EY).
+pub const SAID_BY_ENVIRONMENT: &str = "no-scope-select";
+
+/// The session `session` as a part of a systemd unit name: each
+/// character but a letter, a digit, `_` and `-` becomes `_`.
+///
+/// ```
+/// use riff::workload::unit_part;
+/// assert_eq!(unit_part("2a880834-5ae9"), "2a880834-5ae9");
+/// assert_eq!(unit_part("w.1~x"), "w_1_x");
+/// ```
+pub fn unit_part(session: &str) -> String {
+    session
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// The systemd scope of the worker `session` that the wrapper `wrapper`
+/// starts: `riff-worker-ID.PID.scope` (01M49SV9W4S1HJ4BYANA388VD2). The
+/// PID of the wrapper makes the name new for each start.
+///
+/// ```
+/// use riff::workload::{scope_unit, scope_worker};
+/// let unit = scope_unit("2a880834", 4242);
+/// assert_eq!(unit, "riff-worker-2a880834.4242.scope");
+/// assert_eq!(scope_worker(&format!("/user.slice/riff-workers.slice/{unit}")).as_deref(), Some("2a880834"));
+/// ```
+pub fn scope_unit(session: &str, wrapper: u32) -> String {
+    format!("{SCOPE_PREFIX}{}.{wrapper}.scope", unit_part(session))
+}
+
+/// The worker of the cgroup path `cgroup`, in the form of
+/// [`unit_part`], when its last part is a scope of [`scope_unit`].
+///
+/// ```
+/// use riff::workload::scope_worker;
+/// assert_eq!(scope_worker("/a.slice/riff-worker-w1.10.scope").as_deref(), Some("w1"));
+/// assert_eq!(scope_worker("/a.slice/riff-worker-w1-2.10.scope").as_deref(), Some("w1-2"));
+/// assert_eq!(scope_worker("/a.slice/riff-worker-w1.scope"), None);
+/// assert_eq!(scope_worker("/a.slice/riff-worker-.10.scope"), None);
+/// assert_eq!(scope_worker("/a.slice/tmux-spawn-f089.scope"), None);
+/// assert_eq!(scope_worker("/a.slice/riff-worker-w1.10.scope/sub"), None);
+/// ```
+pub fn scope_worker(cgroup: &str) -> Option<String> {
+    let unit = cgroup.rsplit('/').next()?;
+    let stem = unit.strip_suffix(".scope")?.strip_prefix(SCOPE_PREFIX)?;
+    let (session, wrapper) = stem.rsplit_once('.')?;
+    let digits = !wrapper.is_empty() && wrapper.bytes().all(|b| b.is_ascii_digit());
+    (digits && !session.is_empty()).then(|| session.to_owned())
+}
+
+/// How riff found the processes of a worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum By {
+    /// By the systemd scope of the worker (01M49SV9Z2A7TXWFTMVNYXSQNM).
+    Scope,
+    /// By the environment: no process is in a scope of the worker
+    /// (01M49SVFW0FZ3DK57PACS7W5EY).
+    Environment,
+}
+
+/// The processes that riff selected, and how it found them.
+#[derive(Debug)]
+pub struct Selection<'a> {
+    pub procs: Vec<&'a Proc>,
+    pub by: By,
+}
+
+/// Each process of the worker `session` in `all`: each process in a
+/// scope of the worker when one process is in one, else each process
+/// with the environment of the worker (01M49SV9Z2A7TXWFTMVNYXSQNM,
+/// 01M49SVFW0FZ3DK57PACS7W5EY).
+///
+/// ```
+/// use riff::workload::{By, Proc, of_session};
+/// let p = |pid, worker: Option<&str>, scope: Option<&str>| Proc {
+///     pid, ppid: 1, start: 0, argv: vec!["sleep".into()],
+///     worker: worker.map(Into::into), scope: scope.map(Into::into), context: true,
+/// };
+/// // The environment only: by the environment.
+/// let all = [p(10, Some("w1"), None), p(11, None, None)];
+/// let found = of_session(&all, "w1");
+/// assert_eq!((found.procs.len(), found.by), (1, By::Environment));
+/// // A scope: a process with no variable of the worker is in it, and a
+/// // process with the variables outside of it is not.
+/// let all = [p(10, Some("w1"), Some("w1")), p(11, None, Some("w1")), p(12, Some("w1"), None)];
+/// let found = of_session(&all, "w1");
+/// assert_eq!(found.by, By::Scope);
+/// assert_eq!(found.procs.iter().map(|p| p.pid).collect::<Vec<_>>(), [10, 11]);
+/// ```
+pub fn of_session<'a>(all: &'a [Proc], session: &str) -> Selection<'a> {
+    let unit = unit_part(session);
+    let scoped = |p: &&Proc| p.scope.as_deref() == Some(unit.as_str());
+    if all.iter().any(|p| scoped(&p)) {
+        return Selection {
+            procs: all.iter().filter(scoped).collect(),
+            by: By::Scope,
+        };
+    }
+    Selection {
+        procs: all
+            .iter()
+            .filter(|p| p.worker.as_deref() == Some(session))
+            .collect(),
+        by: By::Environment,
+    }
+}
+
+/// The line that says that riff found the processes of the worker
+/// `session` by their environment, one time on this machine: the file
+/// [`SAID_BY_ENVIRONMENT`] in the local dir `local` holds that
+/// (01M49SVFW0FZ3DK57PACS7W5EY). A selection by the scope removes the
+/// file, so the line comes again after a scope stops to work.
+///
+/// ```
+/// use riff::workload::{By, say};
+/// let local = tempfile::tempdir()?;
+/// let line = say(By::Environment, "w1", Some(local.path()));
+/// assert!(line.is_some_and(|l| l.contains("no systemd scope")));
+/// assert_eq!(say(By::Environment, "w1", Some(local.path())), None, "one time");
+/// assert_eq!(say(By::Scope, "w1", Some(local.path())), None);
+/// assert!(say(By::Environment, "w1", Some(local.path())).is_some(), "again after a scope");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn say(by: By, session: &str, local: Option<&Path>) -> Option<String> {
+    let said = local.map(|dir| dir.join(SAID_BY_ENVIRONMENT));
+    let line = (by == By::Environment).then(|| crate::text::workers_by_environment(session));
+    crate::limits::once(said.as_deref(), line)
+}
+
+/// [`say`] in the local dir of this machine, on stderr.
+pub fn say_here(by: By, session: &str) {
+    if let Some(line) = say(by, session, crate::local::dir().as_deref()) {
+        eprintln!("{line}");
+    }
+}
+
 /// One file, by each path or link to it: its device and its inode.
 pub type FileId = (u64, u64);
 
@@ -251,10 +409,16 @@ fn read_with(pid: u32, context_var: &str, cache: Option<FileId>) -> Option<Proc>
         .map(|a| String::from_utf8_lossy(a).into_owned())
         .collect();
     let exe = cache.and_then(|_| file_id(&dir.join("exe")));
-    let (worker, context) = if is_cache_server(&env, exe, cache) {
-        (None, false)
+    let (worker, scope, context) = if is_cache_server(&env, exe, cache) {
+        (None, None, false)
     } else {
-        parse_environ(&env, context_var, home)
+        let (worker, context) = parse_environ(&env, context_var, home);
+        let cgroup = std::fs::read_to_string(dir.join("cgroup")).ok();
+        let scope = cgroup
+            .as_deref()
+            .and_then(crate::reap::cgroup_path)
+            .and_then(|path| scope_worker(&path));
+        (worker, scope, context)
     };
     Some(Proc {
         pid,
@@ -262,6 +426,7 @@ fn read_with(pid: u32, context_var: &str, cache: Option<FileId>) -> Option<Proc>
         start,
         argv,
         worker,
+        scope,
         context,
     })
 }
@@ -287,13 +452,13 @@ fn line_of(all: &[Proc], pid: u32) -> BTreeSet<u32> {
     line
 }
 
-/// Each process of the worker `session` in `all`, but `me` and its
-/// parents (01M3ZV0TMNQDK9WC3BR1NPGAC2).
-pub fn of_worker<'a>(all: &'a [Proc], session: &str, me: u32) -> Vec<&'a Proc> {
+/// Each process of the worker `session` in `all` ([`of_session`]), but
+/// `me` and its parents (01M3ZV0TMNQDK9WC3BR1NPGAC2).
+pub fn of_worker<'a>(all: &'a [Proc], session: &str, me: u32) -> Selection<'a> {
     let kept = line_of(all, me);
-    all.iter()
-        .filter(|p| p.worker.as_deref() == Some(session) && !kept.contains(&p.pid))
-        .collect()
+    let mut found = of_session(all, session);
+    found.procs.retain(|p| !kept.contains(&p.pid));
+    found
 }
 
 /// Each process of an old context of the worker `session` in `all`: a
@@ -305,19 +470,16 @@ pub fn old_context<'a>(
     session: &str,
     me: u32,
     since: Option<u64>,
-) -> Vec<&'a Proc> {
-    let mine: Vec<&Proc> = all
-        .iter()
-        .filter(|p| p.worker.as_deref() == Some(session))
-        .collect();
+) -> Selection<'a> {
+    let mut found = of_session(all, session);
     let mut kept = line_of(all, me);
-    for watch in mine.iter().filter(|p| p.is_watch()) {
+    for watch in found.procs.iter().filter(|p| p.is_watch()) {
         kept.extend(line_of(all, watch.pid));
     }
-    mine.into_iter()
-        .filter(|p| p.context && !kept.contains(&p.pid))
-        .filter(|p| since.is_none_or(|since| p.start < since))
-        .collect()
+    found.procs.retain(|p| {
+        p.context && !kept.contains(&p.pid) && since.is_none_or(|since| p.start < since)
+    });
+    found
 }
 
 /// Stops each process of `procs`: SIGTERM, then SIGKILL after
@@ -401,6 +563,7 @@ mod tests {
             start: 0,
             argv: vec!["x".into()],
             worker: worker.map(str::to_owned),
+            scope: None,
             context,
         }
     }
@@ -414,10 +577,41 @@ mod tests {
             p(20, 1, Some("w2"), true),
             p(30, 1, None, true),
         ];
-        let pids: Vec<u32> = of_worker(&all, "w1", 99).iter().map(|p| p.pid).collect();
+        let pids: Vec<u32> = of_worker(&all, "w1", 99)
+            .procs
+            .iter()
+            .map(|p| p.pid)
+            .collect();
         assert_eq!(pids, [10, 11, 12]);
-        let pids: Vec<u32> = of_worker(&all, "w1", 12).iter().map(|p| p.pid).collect();
+        let pids: Vec<u32> = of_worker(&all, "w1", 12)
+            .procs
+            .iter()
+            .map(|p| p.pid)
+            .collect();
         assert!(pids.is_empty(), "12 and its parents: {pids:?}");
+    }
+
+    #[test]
+    fn a_process_that_drops_the_variables_stays_in_the_scope_of_its_worker() {
+        let scoped = |pid, ppid, worker: Option<&str>, context| Proc {
+            scope: Some("w1".into()),
+            ..p(pid, ppid, worker, context)
+        };
+        let all = [
+            scoped(10, 1, Some("w1"), false),
+            scoped(11, 10, Some("w1"), true),
+            // `env -u RIFF_WORKER -u RIFF_SESSION sleep 30 &`
+            scoped(12, 11, None, true),
+            // The variables of the worker, outside its scope.
+            p(20, 1, Some("w1"), true),
+        ];
+        let stop = of_worker(&all, "w1", 99);
+        assert_eq!(stop.by, By::Scope);
+        let pids: Vec<u32> = stop.procs.iter().map(|p| p.pid).collect();
+        assert_eq!(pids, [10, 11, 12]);
+        let clear = old_context(&all, "w1", 99, None);
+        let pids: Vec<u32> = clear.procs.iter().map(|p| p.pid).collect();
+        assert_eq!(pids, [11, 12]);
     }
 
     #[test]
