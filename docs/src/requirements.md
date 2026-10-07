@@ -3333,7 +3333,27 @@
   no worker is idle: each worker with no claim, also a new one that did
   not claim yet, counts. So when no worker takes the counted work, one
   worker waits idle, the server keeps it, and riff starts no more
-  workers.
+  workers. A worker that refused its request does not count
+  (01M49ZK1C1P817KE63EXV3EJDC).
+- **01M49ZK19GQP79Z8HH14PK85QQ** At each look of a running riff, the
+  rollout gives free work to each idle worker of the user of the lead
+  that joined the riff, before it decides on a start. The worker is
+  live, in the repository of the lead, has no claim, and does not wait
+  for a stop or a clear. It gets one direct message of the lead:
+  `request: claim verify-issue-N` for a pull request that waits for a
+  verify, or `request: claim issue-N` for a free item. The verifies
+  come first. A worker has one open request at a time, and an item goes
+  to one worker at a time. A worker in the worktree `issue-N` gets no
+  request for `verify-issue-N`. The lead can still give work by hand.
+- **01M49ZK1C1P817KE63EXV3EJDC** The rollout never sends the same
+  request to the same worker again. A request is open until its worker
+  claims or goes, or its item is no longer free. A worker that does not
+  claim in 6 intervals of the rollout refused the item. Then it can get
+  a request for another free item. When it has no item to take, it
+  does not count as idle for the start of a worker.
+- **01M49ZK1EG52YAKG974XH201RK** An item that two workers refused is no
+  free work for the start of a worker. So the rollout starts at most one
+  more worker for a refused item, and no loop of starts and stops.
 - **01M3X30KHKB6W11C3NBAW7KCGW** The lead gets one message for each
   change of a worker setting: the setting, the old value, the new
   value and the host. The settings are the limit of the machine of the

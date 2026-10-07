@@ -6,7 +6,8 @@
 //! So the start of work does not wait for an agent that remembers a
 //! step. Once each interval ([`crate::settings::workers_interval`],
 //! 10 seconds by default, 01M3Q5QE9H42FQKEDC5G9GKCWD), it looks at the
-//! riff, and starts at most one worker:
+//! riff, gives free work to the idle workers, and starts at most one
+//! worker:
 //!
 //! ```mermaid
 //! flowchart TD
@@ -14,10 +15,11 @@
 //!     L -- no --> T
 //!     L -- yes --> R{"the riff runs?"}
 //!     R -- "no: paused" --> T
-//!     R -- yes --> P{"a machine with room?"}
+//!     R -- yes --> P{"a machine with room,<br/>or an idle worker that joined?"}
 //!     P -- no --> T
 //!     P -- yes --> W["free work (gh): free items of the current wave,<br/>pull requests that wait for a verify"]
-//!     W --> I{"free work, and no idle worker?"}
+//!     W --> O["each idle worker with no open request:<br/>tell it request: claim ITEM"]
+//!     O --> I{"free work, and no idle worker?<br/>(a worker that refused does not count)"}
 //!     I -- no --> T
 //!     I -- yes --> S["start 1 worker on the machine<br/>with the most free capacity"]
 //!     S --> N["a note to the lead: host, pane, session"]
@@ -53,6 +55,13 @@
 //!   claim before the next one starts. When no worker takes the counted work, one
 //!   worker waits idle, the server keeps it (#259), and riff starts no
 //!   more: no loop of starts and stops.
+//! - **Requests** ([`Offers`], 01M49ZK19GQP79Z8HH14PK85QQ to
+//!   01M49ZK1EG52YAKG974XH201RK). An idle worker that joined sleeps on
+//!   its watch: only a wake makes it read. So the rollout gives it free
+//!   work with a request of the lead, as the lead does by hand. A
+//!   worker that does not claim in [`offer_wait`] refused the item: it
+//!   does not block a start. An item that two workers refused starts no
+//!   more workers.
 //! - **Machines** ([`Place`], [`pick`], 01M3Q5QE76BZ27SZ14FFE8HM1G).
 //!   The machine of the lead, when the lead runs in tmux, and each live
 //!   workers host of the user. A machine has room when its workers are
@@ -116,10 +125,10 @@
 //! posts the note for a change of its own MCP servers
 //! ([`crate::host`], 01M3X30RJS8YE5TXJBQDC2FT0C).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use riff_core::name::SessionUri;
@@ -208,6 +217,11 @@ pub struct View {
     pub idle: usize,
     /// The machines, the machine of the lead first.
     pub places: Vec<Place>,
+    /// The free work by name, the verifies first: `verify-issue-N` and
+    /// `issue-N`.
+    pub items: Vec<String>,
+    /// The idle workers that can get a request ([`idlers`]).
+    pub idlers: Vec<Idler>,
 }
 
 impl View {
@@ -228,7 +242,7 @@ impl View {
     ///     machine: None,
     ///     disk: None,
     /// };
-    /// let view = View { running: true, work: 1, idle: 0, places: vec![place("a"), place("b")] };
+    /// let view = View { running: true, work: 1, idle: 0, places: vec![place("a"), place("b")], ..View::default() };
     /// // A person set the limit of `a` from 1 to 2 after the look read it.
     /// let seen = Seen { limits: [("a".to_owned(), 1)].into(), ..Seen::default() };
     /// let view = view.with_limits(&seen);
@@ -292,7 +306,7 @@ pub fn pick(places: &[Place]) -> Option<usize> {
 /// use riff::rollout::{Place, View, decide};
 ///
 /// let here = Place { host: "thelio".into(), session: None, limit: 2, workers: 0, floor: 4, deaths: 0, machine: None, disk: None };
-/// let view = View { running: true, work: 2, idle: 0, places: vec![here] };
+/// let view = View { running: true, work: 2, idle: 0, places: vec![here], ..View::default() };
 /// assert_eq!(decide(&view), Some(0));
 /// assert_eq!(decide(&View { running: false, ..view.clone() }), None);
 /// assert_eq!(decide(&View { work: 0, ..view.clone() }), None);
@@ -303,6 +317,144 @@ pub fn decide(view: &View) -> Option<usize> {
         return None;
     }
     pick(&view.places)
+}
+
+/// An idle worker of the user of the lead that joined the riff. The
+/// rollout can give it free work with a request
+/// (01M49ZK19GQP79Z8HH14PK85QQ).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Idler {
+    /// The session ID.
+    pub session: String,
+    /// The worktree of the session, for example `issue-12`.
+    pub worktree: Option<String>,
+}
+
+/// How long a worker has to claim the item of a request: 6 intervals of
+/// the rollout (01M49ZK1C1P817KE63EXV3EJDC).
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::rollout::offer_wait;
+///
+/// assert_eq!(offer_wait(Duration::from_secs(10)), Duration::from_secs(60));
+/// ```
+pub fn offer_wait(interval: Duration) -> Duration {
+    interval * 6
+}
+
+/// The request that gives `item` to a worker.
+///
+/// ```
+/// assert_eq!(riff::rollout::request("verify-issue-12"), "request: claim verify-issue-12");
+/// ```
+pub fn request(item: &str) -> String {
+    format!("request: claim {item}")
+}
+
+/// The requests of the rollout to idle workers
+/// (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK).
+///
+/// At each look, [`Offers::plan`] gives each idle worker with no open
+/// request one free item: a verify first. An item goes to one worker at
+/// a time. A worker in the worktree `issue-N` gets no request for
+/// `verify-issue-N`: it can be the author. A request is open until its
+/// worker claims or goes, or its item is no longer free. A worker that
+/// does not claim in [`offer_wait`] refused the item. It never gets that
+/// request again. It does not block the start of a new worker, when it
+/// has no other item to take. An item that two workers refused is no
+/// work for a start: so no loop of starts.
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use riff::rollout::{Idler, Offers, View};
+///
+/// let w1 = Idler { session: "w1".into(), worktree: None };
+/// let view = View { running: true, work: 1, idle: 1, items: vec!["verify-issue-12".into()], idlers: vec![w1], ..View::default() };
+/// let (mut offers, wait, t0) = (Offers::default(), Duration::from_secs(60), Instant::now());
+/// let (requests, seen) = offers.plan(&view, t0, wait);
+/// assert_eq!(requests, [("w1".to_owned(), "verify-issue-12".to_owned())]);
+/// // The worker has the request: it is idle, and no worker starts.
+/// assert_eq!(seen.idle, 1);
+/// // No second request within the wait.
+/// assert_eq!(offers.plan(&view, t0 + Duration::from_secs(30), wait).0, []);
+/// // No claim in the wait: the worker refused the item. It does not
+/// // count as idle, so the rollout can start a worker.
+/// let (requests, seen) = offers.plan(&view, t0 + wait, wait);
+/// assert_eq!((requests, seen.idle, seen.work), (vec![], 0, 1));
+/// ```
+#[derive(Debug, Default)]
+pub struct Offers {
+    /// Each open request: the worker, the item and the time of the
+    /// request.
+    open: Vec<(String, String, Instant)>,
+    /// The workers that refused each item.
+    refused: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl Offers {
+    /// The new requests of this look `view` at `now`, as pairs of
+    /// worker and item, and the view for [`decide`]: an idle worker
+    /// with no request and no item to take is not idle, and an item
+    /// that two workers refused is no work.
+    pub fn plan(
+        &mut self,
+        view: &View,
+        now: Instant,
+        wait: Duration,
+    ) -> (Vec<(String, String)>, View) {
+        let idle: HashSet<&str> = view.idlers.iter().map(|i| i.session.as_str()).collect();
+        let free: HashSet<&str> = view.items.iter().map(String::as_str).collect();
+        self.refused.retain(|item, _| free.contains(item.as_str()));
+        let mut open = Vec::new();
+        for (worker, item, at) in std::mem::take(&mut self.open) {
+            if !idle.contains(worker.as_str()) || !free.contains(item.as_str()) {
+                continue;
+            }
+            if now.saturating_duration_since(at) >= wait {
+                self.refused.entry(item).or_default().insert(worker);
+            } else {
+                open.push((worker, item, at));
+            }
+        }
+        self.open = open;
+        let mut requests = Vec::new();
+        let mut spent = 0;
+        for idler in &view.idlers {
+            if self.open.iter().any(|(w, _, _)| *w == idler.session) {
+                continue;
+            }
+            let item = view.items.iter().find(|item| {
+                !self.open.iter().any(|(_, i, _)| i == *item)
+                    && !self
+                        .refused
+                        .get(*item)
+                        .is_some_and(|r| r.contains(&idler.session))
+                    && item
+                        .strip_prefix("verify-")
+                        .is_none_or(|own| idler.worktree.as_deref() != Some(own))
+            });
+            match item {
+                Some(item) => {
+                    self.open.push((idler.session.clone(), item.clone(), now));
+                    requests.push((idler.session.clone(), item.clone()));
+                }
+                None => spent += 1,
+            }
+        }
+        let dead = self.refused.values().filter(|r| r.len() >= 2).count();
+        let view = View {
+            idle: view.idle.saturating_sub(spent),
+            work: view.work.saturating_sub(dead),
+            ..view.clone()
+        };
+        (requests, view)
+    }
+
+    /// Forgets the open request to `worker`: its send failed.
+    pub fn cancel(&mut self, worker: &str) {
+        self.open.retain(|(w, _, _)| w != worker);
+    }
 }
 
 /// The worker settings that the lead sees at one look.
@@ -480,7 +632,7 @@ impl Effect {
 ///     machine: None,
 ///     disk: None,
 /// };
-/// let view = View { running: true, work: 2, idle: 0, places: vec![pangolin] };
+/// let view = View { running: true, work: 2, idle: 0, places: vec![pangolin], ..View::default() };
 /// let raise = Change::Limit { host: "pangolin".into(), old: 3, new: 4 };
 /// assert_eq!(effect(&raise, &view, true), Effect::Starts);
 /// assert_eq!(effect(&raise, &view, false), Effect::Waits { count: 1, remote: true });
@@ -538,6 +690,9 @@ pub trait Env {
     /// Gives `body` to the lead: a message that wakes it when `wake` is
     /// true, else a note.
     fn tell(&self, body: &str, wake: bool) -> impl Future<Output = Result<()>> + Send;
+    /// Gives `item` to the idle worker `worker` with a request of the
+    /// lead (01M49ZK19GQP79Z8HH14PK85QQ).
+    fn offer(&self, worker: &str, item: &str) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Runs the rollout until the task ends. It waits one interval, looks,
@@ -552,9 +707,13 @@ pub trait Env {
 /// One look reads each limit one time, tells the changes, and then
 /// starts the worker ([`View::with_limits`], 01M3XFHSYJEN9V6QEKWJGJWQ8Q).
 /// So the note of a higher limit comes before the start that it names.
+///
+/// At each look of a running riff, it gives free work to the idle
+/// workers first ([`Offers`]), and then decides on a start.
 pub async fn run(env: impl Env) {
     let mut last_error = None;
     let mut known: Option<Seen> = None;
+    let mut offers = Offers::default();
     loop {
         let every = env.interval();
         tokio::time::sleep(if every.is_zero() { OFF_WAIT } else { every }).await;
@@ -585,10 +744,18 @@ pub async fn run(env: impl Env) {
                 Some(known) => known.keep(seen),
                 None => known = Some(seen),
             }
-            if on
-                && let Some(view) = &view
-                && let Some(i) = decide(view)
-            {
+            let Some(view) = view.filter(|view| on && view.running) else {
+                return Ok(());
+            };
+            let now = tokio::time::Instant::now().into_std();
+            let (requests, view) = offers.plan(&view, now, offer_wait(every));
+            for (worker, item) in requests {
+                if let Err(e) = env.offer(&worker, &item).await {
+                    offers.cancel(&worker);
+                    return Err(e);
+                }
+            }
+            if let Some(i) = decide(&view) {
                 env.start(&view.places[i]).await?;
                 eprintln!(
                     "riff: the rollout started a worker on {}",
@@ -942,8 +1109,8 @@ pub fn branch_issue(branch: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-/// The pull requests that wait for a verify ([`Verify::Asked`]): the
-/// branch names an issue, not a draft, no status `riff/verify` on the
+/// The issues of the pull requests that wait for a verify
+/// ([`Verify::Asked`]): the branch names an issue, not a draft, no status `riff/verify` on the
 /// head, and no session claims `verify-issue-N` for the issue of the
 /// branch. A pull request that a person opened by hand names no issue,
 /// so it is no work.
@@ -967,16 +1134,14 @@ pub fn branch_issue(branch: &str) -> Option<u64> {
 ///     pull(45, "worktree-issue-16", Some("FAILURE")),
 /// ];
 /// let claims: HashSet<String> = ["verify-issue-14".to_owned()].into();
-/// assert_eq!(waiting_verifies(&pulls, &claims), [40]);
+/// assert_eq!(waiting_verifies(&pulls, &claims), [12]);
 /// ```
 pub fn waiting_verifies(pulls: &[Pull], claims: &HashSet<String>) -> Vec<u64> {
     pulls
         .iter()
         .filter(|p| p.verify() == Some(Verify::Asked))
-        .filter(|p| {
-            branch_issue(&p.branch).is_some_and(|n| !claims.contains(&format!("verify-issue-{n}")))
-        })
-        .map(|p| p.number)
+        .filter_map(|p| branch_issue(&p.branch))
+        .filter(|n| !claims.contains(&format!("verify-issue-{n}")))
         .collect()
 }
 
@@ -1138,6 +1303,57 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
     mine + others
 }
 
+/// The idle workers of the user of the lead `me` that joined the riff
+/// and can take a request (01M49ZK19GQP79Z8HH14PK85QQ): live, in the
+/// repository of the lead, with no claim, not asked to stop, and with
+/// no clear of the context to wait for.
+///
+/// ```
+/// use riff::rollout::{Idler, idlers};
+/// use riff_core::wire::SessionInfo;
+///
+/// let worker = |uri: &str| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+///     worker: true,
+///     stopping: false,
+///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
+///     state: None,
+///     work: None,
+///     waits: None,
+///     blocked: None,
+///     step: None,
+/// };
+/// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
+/// let sessions = [
+///     worker("riff://mike@pangolin/o/riff?session=w1#issue-12"),
+///     worker("riff://mike@pangolin/o/riff?session=w2&claim=issue-7"),
+///     worker("riff://mike@pangolin/o/strata?session=w3"),
+///     worker("riff://brett@kadomony/o/riff?session=w4"),
+///     SessionInfo { must_clear: true, ..worker("riff://mike@pangolin/o/riff?session=w5") },
+/// ];
+/// assert_eq!(idlers(&sessions, &me), [Idler { session: "w1".into(), worktree: Some("issue-12".into()) }]);
+/// ```
+pub fn idlers(sessions: &[SessionInfo], me: &SessionUri) -> Vec<Idler> {
+    sessions
+        .iter()
+        .filter(|s| s.worker && s.live && !s.stopping && !s.must_clear)
+        .filter(|s| s.uri.who().user() == me.who().user())
+        .filter(|s| s.uri.place().repo() == me.place().repo())
+        .filter(|s| s.uri.claims().is_empty())
+        .filter_map(|s| {
+            Some(Idler {
+                session: s.uri.who().session()?.to_owned(),
+                worktree: s.uri.place().worktree().map(str::to_owned),
+            })
+        })
+        .collect()
+}
+
 /// The open pull requests of the repository `repo` (`OWNER/REPO`),
 /// with `gh`.
 pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
@@ -1155,11 +1371,12 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     ])
 }
 
-/// The free work of the repository `repo` (`OWNER/REPO`), with `gh`:
-/// the free items of the current wave and the pull requests that wait
-/// for a verify. An item counts one time: as a build or as a verify
+/// The free work of the repository `repo` (`OWNER/REPO`), with `gh`,
+/// by name: the pull requests that wait for a verify
+/// (`verify-issue-N`), then the free items of the current wave
+/// (`issue-N`). An item counts one time: as a build or as a verify
 /// (01M3Z9N5HHHS1E17NFGMVBKZ0K).
-pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<usize> {
+pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<Vec<String>> {
     let open: Vec<Milestone> = gh.json(&[
         "api",
         &format!("repos/{repo}/milestones?state=open&per_page=100"),
@@ -1179,11 +1396,16 @@ pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<usize>
                 "--json",
                 "number,body,comments,milestone",
             ])?;
-            free_items(&issues, wave, claims, &pulls).len()
+            free_items(&issues, wave, claims, &pulls)
         }
-        None => 0,
+        None => Vec::new(),
     };
-    Ok(items + waiting_verifies(&pulls, claims).len())
+    let verifies = waiting_verifies(&pulls, claims);
+    Ok(verifies
+        .iter()
+        .map(|n| format!("verify-issue-{n}"))
+        .chain(items.iter().map(|n| format!("issue-{n}")))
+        .collect())
 }
 
 /// The real world of the rollout: the riff, `gh`, and tmux.
@@ -1320,22 +1542,27 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
             }));
         }
         let idle = idle(&sessions, &me, &panes);
-        if !places.iter().any(Place::room) {
+        let idlers = idlers(&sessions, &me);
+        // With no room and no idle worker to give work to, the free
+        // work changes nothing: no call of gh.
+        if !places.iter().any(Place::room) && idlers.is_empty() {
             return Ok(Some(View {
                 running: true,
                 idle,
                 places,
-                work: 0,
+                ..View::default()
             }));
         }
         let claims = claims(&sessions);
         let (gh, repo) = (self.gh.clone(), me.place().repo_text());
-        let work = tokio::task::spawn_blocking(move || free_work(&gh, &repo, &claims)).await??;
+        let items = tokio::task::spawn_blocking(move || free_work(&gh, &repo, &claims)).await??;
         Ok(Some(View {
             running: true,
-            work,
+            work: items.len(),
             idle,
             places,
+            items,
+            idlers,
         }))
     }
 
@@ -1380,6 +1607,11 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
     async fn tell(&self, body: &str, wake: bool) -> Result<()> {
         let kind = if wake { Kind::Message } else { Kind::Note };
         post_lead(self.api.base(), &(self.me)(), body, kind).await
+    }
+
+    async fn offer(&self, worker: &str, item: &str) -> Result<()> {
+        self.api.tell(&(self.me)(), worker, &request(item)).await?;
+        Ok(())
     }
 }
 
@@ -1452,6 +1684,12 @@ mod tests {
         limit_in_look: Option<u16>,
         /// What the rollout did, in order: `told` and `start`.
         order: Vec<&'static str>,
+        /// The free work by name, for the requests.
+        items: Vec<String>,
+        /// The idle workers that joined. Each one is also in `idle`.
+        idlers: Vec<Idler>,
+        /// Each request: the worker and the item, with its time.
+        offers: Vec<(String, String, tokio::time::Instant)>,
     }
 
     impl World {
@@ -1542,8 +1780,18 @@ mod tests {
                     work: w.work,
                     idle: w.idle + w.new.len(),
                     places: w.places.clone(),
+                    items: w.items.clone(),
+                    idlers: w.idlers.clone(),
                 })
             }))
+        }
+
+        async fn offer(&self, worker: &str, item: &str) -> Result<()> {
+            self.with(|w| {
+                let now = tokio::time::Instant::now();
+                w.offers.push((worker.to_owned(), item.to_owned(), now));
+            });
+            Ok(())
         }
 
         async fn start(&self, place: &Place) -> Result<()> {
@@ -1612,6 +1860,9 @@ mod tests {
             told: Vec::new(),
             limit_in_look: None,
             order: Vec::new(),
+            items: Vec::new(),
+            idlers: Vec::new(),
+            offers: Vec::new(),
         }
     }
 
@@ -1720,6 +1971,130 @@ mod tests {
         run_for(&fake, 3600).await;
         assert_eq!(fake.hosts().len(), 1);
         assert_eq!(fake.with(|w| w.stops), 0);
+    }
+
+    fn idler(session: &str) -> Idler {
+        Idler {
+            session: session.into(),
+            worktree: None,
+        }
+    }
+
+    /// One idle worker that joined, and the free work `item`.
+    fn one_idle(item: &str) -> World {
+        World {
+            idle: 1,
+            idlers: vec![idler("w1")],
+            items: vec![item.into()],
+            claim_after: None,
+            ..world(1)
+        }
+    }
+
+    /// The requests up to now: the worker, the item and the second.
+    fn offers(fake: &Fake, begin: tokio::time::Instant) -> Vec<(String, String, u64)> {
+        fake.with(|w| {
+            w.offers
+                .iter()
+                .map(|(s, i, at)| (s.clone(), i.clone(), (*at - begin).as_secs()))
+                .collect()
+        })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_worker_gets_a_request_for_a_waiting_verify() {
+        let fake = Fake::new(one_idle("verify-issue-12"));
+        let begin = tokio::time::Instant::now();
+        run_for(&fake, 15).await;
+        assert_eq!(
+            offers(&fake, begin),
+            [("w1".into(), "verify-issue-12".into(), 10)]
+        );
+        assert!(fake.hosts().is_empty(), "the idle worker has the work");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_worker_gets_a_request_for_a_free_item() {
+        let fake = Fake::new(one_idle("issue-7"));
+        let begin = tokio::time::Instant::now();
+        run_for(&fake, 15).await;
+        assert_eq!(offers(&fake, begin), [("w1".into(), "issue-7".into(), 10)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_worker_gets_no_second_request_for_the_same_item() {
+        let fake = Fake::new(one_idle("issue-7"));
+        run_for(&fake, 600).await;
+        assert_eq!(fake.with(|w| w.offers.len()), 1);
+    }
+
+    /// The worker does not claim in 6 intervals: it does not block the
+    /// start of a new worker.
+    #[tokio::test(start_paused = true)]
+    async fn a_worker_that_does_not_claim_does_not_block_a_start() {
+        let fake = Fake::new(one_idle("issue-7"));
+        let begin = tokio::time::Instant::now();
+        run_for(&fake, 75).await;
+        let secs: Vec<u64> = fake.with(|w| {
+            w.starts
+                .iter()
+                .map(|(_, at)| (*at - begin).as_secs())
+                .collect()
+        });
+        assert_eq!(secs, [70]);
+    }
+
+    /// The new worker joins, gets the request and also does not claim.
+    /// Two workers refused the item: no third worker starts.
+    #[tokio::test(start_paused = true)]
+    async fn an_item_that_two_workers_refuse_starts_no_loop() {
+        let fake = Fake::new(one_idle("issue-7"));
+        let begin = tokio::time::Instant::now();
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(Duration::from_secs(75)).await;
+        fake.with(|w| {
+            // The new worker joins.
+            w.new.clear();
+            w.idle += 1;
+            w.idlers.push(idler("w2"));
+        });
+        tokio::time::sleep(Duration::from_secs(600)).await;
+        task.abort();
+        assert_eq!(fake.hosts().len(), 1);
+        assert_eq!(
+            offers(&fake, begin),
+            [
+                ("w1".into(), "issue-7".into(), 10),
+                ("w2".into(), "issue-7".into(), 80)
+            ]
+        );
+    }
+
+    #[test]
+    fn each_worker_gets_its_own_item_and_no_verify_of_its_worktree() {
+        let author = Idler {
+            session: "w1".into(),
+            worktree: Some("issue-12".into()),
+        };
+        let view = View {
+            running: true,
+            work: 2,
+            idle: 3,
+            items: vec!["verify-issue-12".into(), "issue-7".into()],
+            idlers: vec![author, idler("w2"), idler("w3")],
+            ..View::default()
+        };
+        let mut offers = Offers::default();
+        let (requests, seen) = offers.plan(&view, Instant::now(), Duration::from_secs(60));
+        assert_eq!(
+            requests,
+            [
+                ("w1".to_owned(), "issue-7".to_owned()),
+                ("w2".to_owned(), "verify-issue-12".to_owned())
+            ]
+        );
+        // w3 has no item to take: it does not count as idle.
+        assert_eq!(seen.idle, 2);
     }
 
     #[tokio::test(start_paused = true)]
@@ -2103,7 +2478,7 @@ mod tests {
                 {"number":268,"headRefName":"worktree-issue-262","isDraft":false,"statusCheckRollup":[]}]"#,
         )
         .unwrap();
-        assert_eq!(waiting_verifies(&pulls, &HashSet::new()), [268]);
+        assert_eq!(waiting_verifies(&pulls, &HashSet::new()), [262]);
         // The pull request of 265 waits for the merge: no build.
         assert!(free_items(&issues, "Wave 13", &HashSet::new(), &pulls).is_empty());
     }
@@ -2138,7 +2513,7 @@ mod tests {
         };
         // Asked: one verify, no build.
         let asked = pulls("");
-        assert_eq!(work(&asked, &[]), (vec![], vec![40]));
+        assert_eq!(work(&asked, &[]), (vec![], vec![12]));
         // A verifier holds it: no work.
         assert_eq!(work(&asked, &["verify-issue-12"]), (vec![], vec![]));
         // Passed: the merge waits, no work.
