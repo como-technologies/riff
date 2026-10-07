@@ -2531,9 +2531,20 @@
   again at once, and show nothing for it. Only a connect that fails
   shows one short dim line `(reconnecting…)`, and the next item
   `(back)`. A server that riff cannot talk to shows its error.
-- **01M3NK7VM1J5DDB0PECNZ28P4E** After each connect, `riff chat` reads
-  the thread. So it shows each line that came while it was not
-  connected, and each line only once.
+- **01M3NK7VM1J5DDB0PECNZ28P4E** Replaced by
+  01M49Z4E8QB1QDXVCPE6MX5JX2.
+- **01M49Z4E8QB1QDXVCPE6MX5JX2** At each connect, `riff tail` and
+  `riff chat` open the stream first, then read the thread after the
+  last `seq` that they showed, then show the live messages. They show
+  each message one time, in order: they drop each message with a `seq`
+  that they showed. At the first connect, `riff tail` shows only the
+  new messages, and `riff chat` shows the history, or the lines after
+  `--after N` after an update. The server keeps no cursor for it, and
+  no `Last-Event-ID`.
+- **01M49Z4EB7T972BHEP6T92P574** When the read after a break starts
+  after a gap, because the server no longer keeps the messages of the
+  gap, `riff tail` and `riff chat` show one line with the number of the
+  lost messages.
 - **01M3Q59CAA46C316BD4D1ED7C6** When the first connect after a stream
   ends fails, riff tries once more at once, and shows nothing for it.
   Only when that try fails too does it show `(reconnecting…)`.

@@ -60,10 +60,11 @@ use tokio::sync::mpsc;
 
 use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 
-use crate::api::{Api, Checked, Reconnect, follow};
+use crate::api::{Api, Checked, Reconnect};
 use crate::binary::{Follow, with_last, with_place};
-use crate::style::{DIM, styled};
-use crate::text::{ACTION, action_text, safe};
+use crate::catch_up::{self, Seen, Start};
+use crate::style::{DIM, WARNING, styled};
+use crate::text::{ACTION, action_text, lost_messages, safe};
 
 /// The name of the chat thread.
 pub const THREAD: &str = riff_core::name::CHAT;
@@ -309,8 +310,10 @@ where
 ///
 /// It connects again at once when the stream ends, and shows nothing
 /// for it (01M3NK7VHXB0PAR8VH8GQQA06K). After each connect, it reads the
-/// thread, so it shows each line that came while it was not connected,
-/// once (01M3NK7VM1J5DDB0PECNZ28P4E).
+/// thread after the last line that it showed, so it shows each line
+/// that came while it was not connected, once, or a line with the
+/// number of the lost lines (01M49Z4E8QB1QDXVCPE6MX5JX2,
+/// 01M49Z4EB7T972BHEP6T92P574). See [`crate::catch_up`].
 ///
 /// With `after`, the chat runs after an update: it shows no start line
 /// and no line up to `after`, the last line that the old chat showed.
@@ -339,19 +342,26 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
         );
     }
     let thread = &thread;
-    // Connected first, then read: no line falls between the two.
-    let connect = || async move {
-        let tail = api.tail(me, thread).await?;
-        let read = api.read(me, thread, true).await?;
-        // A stream that fails ends: `follow` connects again.
-        let tail = tail.take_while(|item| std::future::ready(item.is_ok()));
-        anyhow::Ok(futures::stream::iter(read.into_iter().map(Ok)).chain(tail))
-    };
-    let first = connect().await?;
-    let mut stream = Box::pin(first.chain(follow(connect, RETRY)));
+    // After an update, the day of the last line of the old chat: the
+    // new chat shows no date line again for it.
+    let mut day = Day::default();
+    if let Some(seq) = after {
+        let (read, _) = api
+            .read_page(me, thread, true, Some(seq.saturating_sub(1)))
+            .await?;
+        if let Some(last) = read.first().filter(|c| c.message.seq == seq) {
+            day.line(last);
+        }
+    }
+    // Connected first, then read: no line falls between the two
+    // (see [`crate::catch_up`]).
+    let start = after.map_or(Start::History, Start::After);
+    let shown = Arc::new(Mutex::new(catch_up::Shown::new(start)));
+    let first = catch_up::connect(api, me, thread, &shown).await?;
+    let again = catch_up::follow_thread(api, me, thread, Arc::clone(&shown), RETRY);
+    let mut stream = Box::pin(first.chain(again));
     let (screen, mut input) = Screen::start()?;
     let _ = lines.set(screen.lines.clone());
-    let mut shown = Shown::after(after.unwrap_or(0));
     let mut link = Reconnect::default();
     let follow = Follow::this();
     let update = follow.new_one();
@@ -361,7 +371,8 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
             () = &mut update => {
                 screen.leave();
                 let args = with_place(std::env::args_os().skip(1), me.place());
-                follow.run(with_last(args, AFTER, shown.last().to_string()));
+                let last = shown.lock().map_or(None, |s| s.last()).or(after).unwrap_or(0);
+                follow.run(with_last(args, AFTER, last.to_string()));
                 break;
             }
             typed_line = input.recv() => {
@@ -386,8 +397,10 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
                 if let Some(line) = link.line(&item) {
                     screen.warn(&line);
                 }
-                if let Some(line) = item.ok().and_then(|c| shown.next(&c)) {
-                    screen.print(&line);
+                match item {
+                    Ok(Seen::Message(c)) => screen.print(&day.line(&c)),
+                    Ok(Seen::Lost(n)) => screen.warn(&styled(WARNING, &lost_messages(n))),
+                    Err(_) => {}
                 }
             }
         }
@@ -534,43 +547,19 @@ fn clear_typed(line: &str) {
     let _ = out.flush();
 }
 
-/// What the chat has shown: the last message and the last day.
-struct Shown {
-    seq: u64,
-    day: Option<NaiveDate>,
-    /// The last line that an old chat showed.
-    hidden: u64,
-}
+/// The day of the last line that the chat showed.
+#[derive(Default)]
+struct Day(Option<NaiveDate>);
 
-impl Shown {
-    /// Nothing shown yet. The lines up to `hidden` do not show: the old
-    /// chat showed them.
-    fn after(hidden: u64) -> Shown {
-        Shown {
-            seq: 0,
-            day: None,
-            hidden,
-        }
-    }
-
-    /// The last line that this chat or an old chat showed.
-    fn last(&self) -> u64 {
-        self.seq.max(self.hidden)
-    }
-
-    /// The line of `c`, once: a message from the history can come again
-    /// on the stream.
-    fn next(&mut self, c: &Checked) -> Option<String> {
-        if c.message.seq <= self.seq {
-            return None;
-        }
-        self.seq = c.message.seq;
+impl Day {
+    /// The line of `c`, with a date line when its day is new.
+    fn line(&mut self, c: &Checked) -> String {
         let at = i64::try_from(c.message.at_ms)
             .ok()
             .and_then(|ms| Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(Local::now);
-        let line = line(c, &at, self.day);
-        self.day = Some(at.date_naive());
-        (self.seq > self.hidden).then_some(line)
+        let line = line(c, &at, self.0);
+        self.0 = Some(at.date_naive());
+        line
     }
 }

@@ -961,3 +961,197 @@ async fn a_front_end_error_with_no_build_is_no_version_error() {
         "{warned:?}"
     );
 }
+
+/// `riff tail chat --color never` as ann, through `server`, with its
+/// stdout and stderr. It waits for the start line on stderr.
+async fn tail_with_errors(
+    server: &str,
+    dir: &std::path::Path,
+) -> (
+    Child,
+    Lines<BufReader<ChildStdout>>,
+    Lines<BufReader<ChildStderr>>,
+) {
+    let mut child = Isolated::shared()
+        .tokio_riff()
+        .args(["tail", "chat", "--color", "never"])
+        .current_dir(dir)
+        .env("RIFF_SERVER", server)
+        .env("RIFF_USER", "ann")
+        .env("RIFF_HOST", "wren")
+        .env("RIFF_HOME", dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let out = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut err = BufReader::new(child.stderr.take().unwrap()).lines();
+    let started = tokio::time::timeout(WAIT, err.next_line()).await.unwrap();
+    assert!(started.unwrap().unwrap().contains("showing new messages"));
+    (child, out, err)
+}
+
+/// The lines of `lines` that contain `mark`, up to the first line that
+/// contains `end`.
+async fn marked_until(
+    lines: &mut Lines<BufReader<ChildStdout>>,
+    mark: &str,
+    end: &str,
+) -> Vec<String> {
+    let deadline = Instant::now() + WAIT;
+    let mut seen = Vec::new();
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let line = tokio::time::timeout(left, lines.next_line())
+            .await
+            .unwrap_or_else(|_| panic!("no line with {end:?} in time; seen {seen:#?}"))
+            .unwrap()
+            .expect("riff runs");
+        if line.contains(mark) {
+            seen.push(line.clone());
+        }
+        if line.contains(end) {
+            return seen;
+        }
+    }
+}
+
+/// A break of the stream of `riff tail`: 3 messages come in the break.
+/// After the new connection, the tail shows each of them one time, in
+/// order, and then the live messages (01M49Z4E8QB1QDXVCPE6MX5JX2).
+#[tokio::test]
+async fn tail_shows_each_message_of_a_break_once_in_order() {
+    let api = start_server().await;
+    let proxy = Proxy::start(api.base()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut out, _err) = tail_with_errors(&proxy.url, dir.path()).await;
+    connected(&api, &mut out).await;
+    let (lead, chat) = (lead_of("mike"), riff::chat::thread());
+    let post = |body: String| {
+        let (api, lead, chat) = (&api, &lead, &chat);
+        async move {
+            api.post(lead, Some(chat), &[], &body, Kind::Message)
+                .await
+                .unwrap();
+        }
+    };
+    post("break-0 before".into()).await;
+    assert_eq!(marked_until(&mut out, "break-", "break-0").await.len(), 1);
+
+    // The stream breaks, and riff tail cannot connect for a time.
+    proxy.cut(false);
+    for n in 1..=3 {
+        post(format!("break-{n} in the break")).await;
+    }
+    proxy.open();
+    let seen = marked_until(&mut out, "break-", "break-3").await;
+    post("break-4 live".into()).await;
+    let live = marked_until(&mut out, "break-", "break-4").await;
+    let bodies: Vec<&str> = seen.iter().chain(&live).map(|line| line.trim()).collect();
+    assert_eq!(
+        bodies,
+        [
+            "break-1 in the break",
+            "break-2 in the break",
+            "break-3 in the break",
+            "break-4 live"
+        ]
+    );
+    child.kill().await.unwrap();
+}
+
+/// The same for `riff chat`: each line of a break shows one time, in
+/// order, and no line shows two times (01M49Z4E8QB1QDXVCPE6MX5JX2).
+#[tokio::test]
+async fn chat_shows_each_line_of_a_break_once_in_order() {
+    let api = start_server().await;
+    let proxy = Proxy::start(api.base()).await;
+    let behind = Api::new(&proxy.url);
+    let (lead, chat) = (lead_of("mike"), riff::chat::thread());
+    let post = |body: String| {
+        let (api, lead, chat) = (&api, &lead, &chat);
+        async move {
+            api.post(lead, Some(chat), &[], &body, Kind::Message)
+                .await
+                .unwrap();
+        }
+    };
+    post("break-0 history".into()).await;
+    let mut mike = Client::start(&behind, "mike", "thelio", &[]).await;
+    let history = marked_until(&mut mike.stdout, "break-", "break-0").await;
+    assert_eq!(history.len(), 1);
+
+    // The server ends the stream, then the chat cannot connect for a
+    // time.
+    proxy.cut(true);
+    post("break-1 after a cut".into()).await;
+    let cut = marked_until(&mut mike.stdout, "break-", "break-1").await;
+    assert_eq!(cut.len(), 1);
+    proxy.cut(false);
+    for n in 2..=4 {
+        post(format!("break-{n} in the break")).await;
+    }
+    proxy.open();
+    let seen = marked_until(&mut mike.stdout, "break-", "break-4").await;
+    mike.say("break-5 typed").await;
+    let live = marked_until(&mut mike.stdout, "break-", "break-5").await;
+    let bodies: Vec<&str> = seen
+        .iter()
+        .map(|line| {
+            line.rsplit_once("] ")
+                .map_or(line.as_str(), |(_, body)| body)
+        })
+        .collect();
+    assert_eq!(
+        bodies,
+        [
+            "break-2 in the break",
+            "break-3 in the break",
+            "break-4 in the break"
+        ]
+    );
+    assert_eq!(live.len(), 1, "{live:#?}");
+    assert!(live[0].ends_with("<mike@thelio> break-5 typed"), "{live:?}");
+}
+
+/// A break with more new messages than the server keeps (200) shows one
+/// line with the number of the lost messages, then the kept messages
+/// (01M49Z4EB7T972BHEP6T92P574).
+#[tokio::test]
+async fn a_break_longer_than_the_kept_messages_shows_the_lost_number() {
+    let api = start_server().await;
+    let proxy = Proxy::start(api.base()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let (mut child, mut out, mut err) = tail_with_errors(&proxy.url, dir.path()).await;
+    connected(&api, &mut out).await;
+    let (lead, chat) = (lead_of("mike"), riff::chat::thread());
+
+    proxy.cut(false);
+    for n in 1..=210 {
+        let body = format!("many-{n:03}");
+        api.post(&lead, Some(&chat), &[], &body, Kind::Message)
+            .await
+            .unwrap();
+    }
+    proxy.open();
+    let lost = riff::text::lost_messages(10);
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let line = tokio::time::timeout(left, err.next_line())
+            .await
+            .expect("the line of the lost messages in time")
+            .unwrap()
+            .expect("riff tail runs");
+        if line.contains("lost") {
+            assert_eq!(line, lost);
+            break;
+        }
+    }
+    let shown = marked_until(&mut out, "many-", "many-210").await;
+    let first = shown.first().map(|line| line.trim());
+    assert_eq!((shown.len(), first), (200, Some("many-011")));
+    child.kill().await.unwrap();
+}

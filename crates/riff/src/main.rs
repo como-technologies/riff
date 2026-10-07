@@ -3179,18 +3179,30 @@ async fn tail(api: &Api, me: &SessionUri, thread: &ThreadName, here: &Place) {
 /// Prints each message of `thread`. It connects again at once when the
 /// stream ends, and shows only a short dim line while a connect fails,
 /// or the error in red for a version that it cannot talk to
-/// (01M3MNVTC248YYJJQKFD9H1WY9, 01M3NK7VHXB0PAR8VH8GQQA06K).
+/// (01M3MNVTC248YYJJQKFD9H1WY9, 01M3NK7VHXB0PAR8VH8GQQA06K). After a
+/// break, it shows each message of the break one time, or a line with
+/// the number of the lost messages (see [`riff::catch_up`]).
 async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
+    use riff::catch_up::{Seen, Shown, Start, follow_thread};
     let error = riff::style::ERROR;
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
-    let mut stream = Box::pin(follow(|| api.tail(me, thread), RETRY));
+    let shown = std::sync::Arc::new(std::sync::Mutex::new(Shown::new(Start::New)));
+    let mut stream = Box::pin(follow_thread(api, me, thread, shown, RETRY));
     let mut link = Reconnect::default();
     let mut last_day = None;
     while let Some(item) = stream.next().await {
         if let Some(line) = link.line(&item) {
             anstream::eprintln!("{line}");
         }
-        let Ok(checked) = item else { continue };
+        let checked = match item {
+            Ok(Seen::Message(checked)) => checked,
+            Ok(Seen::Lost(n)) => {
+                let warning = riff::style::WARNING;
+                anstream::eprintln!("{warning}{}{warning:#}", text::lost_messages(n));
+                continue;
+            }
+            Err(_) => continue,
+        };
         let at = i64::try_from(checked.message.at_ms)
             .ok()
             .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())

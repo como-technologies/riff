@@ -71,6 +71,7 @@ pub mod api;
 pub mod audit;
 pub mod auto_update;
 pub mod binary;
+pub mod catch_up;
 pub mod chat;
 pub mod cloud;
 pub mod compact;
