@@ -9,8 +9,8 @@
 //!
 //! | Limit | Who sets it | Default | Setting |
 //! |---|---|---|---|
-//! | Compile jobs and test threads of all workers | `riff workers run` | one pool: physical cores - 1 - workers, 1 or more ([`crate::jobserver`]) | `workers.jobs` |
-//! | Test threads of one worker, and its jobs with no pool | `riff workers run` | (physical cores - 1) / workers, 1 or more ([`jobs`]) | `workers.jobs` |
+//! | Compile jobs and test threads of all workers | `riff workers run` | one pool: hardware threads - 2 - workers, 1 or more, none above the memory pressure limit ([`crate::jobserver`]) | `workers.jobs` |
+//! | Jobs and test threads of one worker with no pool | `riff workers run` | (physical cores - 1) / workers, 1 or more ([`jobs`]) | `workers.jobs` |
 //! | Priority | `riff workers run` | nice 10 | `workers.nice` |
 //! | Memory and CPU share of all workers | `riff workers start` | 3/4 of the memory ([`memory`]), CPU weight [`CPU_WEIGHT`] | `workers.memory` |
 //! | Available memory for a new worker | `riff workers start`, the rollout | 4 GB ([`crate::machine::Machine::low`]) | `workers.floor` |
@@ -31,7 +31,7 @@
 //! - **Jobs** (01M3WFYZRK5CT22GJW6ZHYT9CC, 01M3ZGZMJ9RF1C4AHG78GQ2NM4).
 //!   The wrapper holds the pool of the machine ([`crate::jobserver`]),
 //!   and gives `claude` the variables of [`jobs_env`]: `MAKEFLAGS` that
-//!   names the pool, the test runner, and `RUST_TEST_THREADS`. With no
+//!   names the pool, and the test runner. With no
 //!   pool, it gives the fixed share in [`JOBS_VARS`], and unsets the
 //!   variables of a pool (01M41CR2HJRFW6R7YMJTPVEMJ1). Each build and
 //!   each test run of the worker reads them. The wrapper stays for each
@@ -59,22 +59,24 @@
 //!   the available memory is less than the floor.
 //!
 //! - **Cores** (01M3WFYZRK5CT22GJW6ZHYT9CC). riff counts the physical
-//!   cores of the machine ([`Cores`]). When it cannot read them, it
-//!   counts half of the logical CPUs, and says so one time
-//!   ([`say_cores`]).
+//!   cores of the machine ([`Cores`]) for the fixed share, and the
+//!   hardware threads (the logical CPUs) for the pool. When it cannot
+//!   read the physical cores, it counts half of the logical CPUs, and
+//!   says so one time ([`say_cores`]).
 //! - **Workers.** "Workers" in the table is the worker limit, or the
 //!   workers that run when they are more ([`Limits::of`],
 //!   [`crate::jobserver::workers`]). So 4 workers with a limit of 2 do
 //!   not get twice the cores.
 //!
-//! riff sets the limits when a worker starts. It does not watch the
-//! memory, and it does not change a limit while the workers run.
+//! riff sets the limits when a worker starts. It does not change a limit
+//! while the workers run. Only the pool watches the memory pressure
+//! ([`crate::jobserver::hold_back`]).
 //!
 //! ```
 //! use riff::limits::{jobs, memory};
 //!
-//! // pangolin: 8 physical cores, 30 GB, a limit of 3 workers.
-//! assert_eq!(riff::jobserver::tokens(8, 3), 4);
+//! // pangolin: 8 physical cores, 16 threads, 30 GB, a limit of 3 workers.
+//! assert_eq!(riff::jobserver::tokens(16, 3), 11);
 //! assert_eq!(jobs(8, 3, 0), 2);
 //! assert_eq!(memory(30, 0), 23);
 //! ```
@@ -109,7 +111,8 @@ pub fn runner_var() -> String {
 /// The variables of a worker with `limits`: the value to set, or `None`
 /// to unset. With the `MAKEFLAGS` of a pool, each build takes its jobs
 /// from the pool (01M3ZGZMJ9RF1C4AHG78GQ2NM4), and the test runner of
-/// `riff` takes the test threads from it (01M3ZGZMNH1YM56GYNYBMH7AWM).
+/// `riff` takes the test threads from it (01M3ZGZMNH1YM56GYNYBMH7AWM): no
+/// `RUST_TEST_THREADS`.
 /// With no pool, each build and test run gets the fixed share
 /// (01M3WFYZRK5CT22GJW6ZHYT9CC), and no `MAKEFLAGS`,
 /// `CARGO_MAKEFLAGS` or test runner of another pool
@@ -124,7 +127,7 @@ pub fn runner_var() -> String {
 /// let get = |var: &str| env.iter().find(|(v, _)| v == var).map(|(_, value)| value.clone());
 /// assert_eq!(get("MAKEFLAGS"), Some(Some(flags.to_owned())));
 /// assert_eq!(get("CARGO_BUILD_JOBS"), Some(None), "no cap below the pool");
-/// assert_eq!(get("RUST_TEST_THREADS"), Some(Some("2".to_owned())));
+/// assert_eq!(get("RUST_TEST_THREADS"), Some(None), "the threads come from the pool");
 /// assert_eq!(get(&runner_var()), Some(Some("/bin/riff workers test-run".to_owned())));
 ///
 /// let env = jobs_env(&limits, None, "/bin/riff".as_ref());
@@ -156,7 +159,7 @@ pub fn jobs_env(
         ("MAKEFLAGS".into(), Some(makeflags.into())),
         ("CARGO_MAKEFLAGS".into(), None),
         ("CARGO_BUILD_JOBS".into(), None),
-        ("RUST_TEST_THREADS".into(), jobs),
+        ("RUST_TEST_THREADS".into(), None),
         (
             runner_var(),
             Some(format!("{} workers test-run", riff.display())),
@@ -410,8 +413,8 @@ pub fn properties(max_gb: u32) -> [String; 3] {
 /// The limits of one worker on this machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    /// The fixed share: the test threads, and the compile jobs when the
-    /// worker has no pool.
+    /// The fixed share: the test threads and the compile jobs of a
+    /// worker with no pool.
     pub jobs: u16,
     /// The tokens of the pool of the machine
     /// ([`crate::jobserver::tokens`]). 0 is no pool: the setting
@@ -425,37 +428,39 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// The limits from the settings file `path`, the `physical` cores of
-    /// the machine ([`Cores`]), and the `workers` that run. When more
-    /// workers run than the limit, riff counts the workers that run
-    /// (01M3WFYZRK5CT22GJW6ZHYT9CC).
+    /// The limits from the settings file `path`, the `cores` of the
+    /// machine, and the `workers` that run. When more workers run than
+    /// the limit, riff counts the workers that run
+    /// (01M3WFYZRK5CT22GJW6ZHYT9CC). The fixed share counts the physical
+    /// cores, and the pool the hardware threads.
     ///
     /// ```
-    /// use riff::limits::Limits;
+    /// use riff::limits::{Cores, Limits};
     ///
     /// let dir = tempfile::tempdir()?;
     /// let path = dir.path().join("config.toml");
-    /// riff::settings::set_workers_limit(&path, 3)?;
-    /// assert_eq!(Limits::of(&path, 8, 1)?, Limits { jobs: 2, tokens: 4, counted: 3, nice: 10 });
+    /// let cores = Cores { physical: 8, logical: 16, read: true };
+    /// riff::settings::set_workers_limit(&path, 4)?;
+    /// assert_eq!(Limits::of(&path, &cores, 1)?, Limits { jobs: 1, tokens: 10, counted: 4, nice: 10 });
     /// assert_eq!(
-    ///     Limits::of(&path, 8, 6)?,
-    ///     Limits { jobs: 1, tokens: 1, counted: 6, nice: 10 },
+    ///     Limits::of(&path, &cores, 6)?,
+    ///     Limits { jobs: 1, tokens: 8, counted: 6, nice: 10 },
     ///     "6 workers run, more than the limit",
     /// );
     /// riff::settings::set_workers_jobs(&path, 3)?;
     /// riff::settings::set_workers_nice(&path, 0)?;
-    /// assert_eq!(Limits::of(&path, 8, 1)?, Limits { jobs: 3, tokens: 0, counted: 3, nice: 0 });
+    /// assert_eq!(Limits::of(&path, &cores, 1)?, Limits { jobs: 3, tokens: 0, counted: 4, nice: 0 });
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    pub fn of(path: &Path, physical: u16, workers: u16) -> Result<Limits> {
+    pub fn of(path: &Path, cores: &Cores, workers: u16) -> Result<Limits> {
         let counted = settings::workers_limit(path)?.max(workers).max(1);
         let setting = settings::workers_jobs(path)?;
         Ok(Limits {
-            jobs: jobs(physical, counted, setting),
+            jobs: jobs(cores.physical, counted, setting),
             tokens: if setting > 0 {
                 0
             } else {
-                crate::jobserver::tokens(physical, counted)
+                crate::jobserver::tokens(cores.logical, counted)
             },
             counted,
             nice: settings::workers_nice(path)?,

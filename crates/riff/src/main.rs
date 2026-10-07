@@ -810,9 +810,11 @@ enum Workers {
     /// Show the pool of build jobs, or set the jobs of each worker
     ///
     /// With the default 0, all workers of this machine take their compile
-    /// jobs and test threads from one pool: the physical cores less 1,
-    /// less the limit of workers, and 1 or more. It shows the size of the
-    /// pool and the tokens in use. A number N turns the pool off: each
+    /// jobs and test threads from one pool: the hardware threads less 2,
+    /// less the limit of workers, and 1 or more. While the memory pressure
+    /// is above 10%, the pool gives out no new token. It shows the size of
+    /// the pool, the tokens in use and the memory pressure. A number N
+    /// turns the pool off: each
     /// worker gets N in CARGO_BUILD_JOBS and RUST_TEST_THREADS. The next
     /// worker that starts gets the new number. It is in
     /// $XDG_CONFIG_HOME/riff/config.toml, key workers.jobs.
@@ -975,9 +977,11 @@ enum Workers {
     },
     /// Run PROGRAM as the test runner of a worker, and wait
     ///
-    /// For a test program of cargo, it takes RUST_TEST_THREADS tokens
-    /// from the pool of build jobs that MAKEFLAGS names, and gives them
-    /// back at the end. Each worker gets it in CARGO_TARGET_<TRIPLE>_RUNNER.
+    /// For a test program of cargo, it takes the free tokens of the pool
+    /// of build jobs that MAKEFLAGS names, or RUST_TEST_THREADS tokens when
+    /// it is set. It runs one test thread for each token, and gives the
+    /// tokens back at the end. Each worker gets it in
+    /// CARGO_TARGET_<TRIPLE>_RUNNER.
     #[command(hide = true)]
     TestRun {
         /// The program.
@@ -2014,11 +2018,18 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             let cores = riff::limits::Cores::here(&riff::machine::Machine::here());
             let dir = riff::local::dir().map(|dir| riff::jobserver::dir(&dir));
             let workers = dir.as_deref().map_or(0, riff::jobserver::workers);
-            let limits = riff::limits::Limits::of(&path, cores.physical, workers)?;
+            let limits = riff::limits::Limits::of(&path, &cores, workers)?;
             let pool = dir.as_deref().and_then(riff::jobserver::state);
             anstream::println!(
                 "{}",
-                view::workers_jobs(settings::workers_jobs(&path)?, &limits, &cores, pool, &path)
+                view::workers_jobs(
+                    settings::workers_jobs(&path)?,
+                    &limits,
+                    &cores,
+                    pool,
+                    riff::jobserver::pressure_here(),
+                    &path
+                )
             );
             Ok(())
         }
