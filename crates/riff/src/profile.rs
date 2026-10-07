@@ -21,11 +21,16 @@
 //! | Read | the system, its tools, and what it writes | the same | the same | the same, its worktree and the git dir of the clone |
 //! | Read the home of the person | no, except the paths above | no | no | no |
 //! | Network | riff server, forge, registries, model | the same | the same | loopback only |
-//! | Keyring and D-Bus of the person | no | no | no | no |
+//! | Keyring, D-Bus and systemd of the person | no | no | no | no |
 //! | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 //!
 //! - A role has no field for the keyring or the D-Bus of the person:
 //!   no profile can grant them (01M4BPK80NK50S2V26Z8BDT0XM).
+//! - No profile reaches a bus of systemd: the user bus, the private
+//!   socket of the user manager, the system bus
+//!   (01M4C2PY1DRWVWENJBM42D60M9). So no process of a sandbox calls
+//!   systemd. Only `riff workers run`, outside each sandbox, does
+//!   ([`crate::limits`], 01M4C2PXZ5WNE4C2CJW2HABPY0).
 //! - [`Profile::of`] refuses a session whose paths give the home of the
 //!   person, a folder above it, or a place of a secret
 //!   ([`Session::secrets`]): the keyring, the D-Bus socket, the keys of
@@ -294,7 +299,10 @@ pub struct Session {
 
 impl Session {
     /// The places of the secrets of the person. No profile reads or
-    /// writes them, a path in them, or a folder above them.
+    /// writes them, a path in them, or a folder above them. The buses
+    /// of systemd are here too: the user bus, the private socket of the
+    /// user manager and the system bus. So no process of a sandbox
+    /// calls systemd (01M4C2PY1DRWVWENJBM42D60M9).
     ///
     /// ```
     /// use riff::profile::{Endpoint, Session};
@@ -314,6 +322,8 @@ impl Session {
     /// };
     /// assert!(s.secrets().contains(&Path::new("/run/user/7/bus").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/h/.local/share/keyrings").to_path_buf()));
+    /// assert!(s.secrets().contains(&Path::new("/run/user/7/systemd").to_path_buf()));
+    /// assert!(s.secrets().contains(&Path::new("/run/dbus").to_path_buf()));
     /// ```
     pub fn secrets(&self) -> Vec<PathBuf> {
         let home = |p: &str| self.home.join(p);
@@ -324,8 +334,10 @@ impl Session {
             home(".gnupg"),
             home(".config/gh"),
             runtime("bus"),
+            runtime("systemd"),
             runtime("keyring"),
             runtime("gnupg"),
+            SYSTEM_BUS.into(),
         ]
     }
 }
@@ -353,6 +365,9 @@ pub struct Profile {
     reads: Vec<PathBuf>,
     network: Network,
 }
+
+/// The folder of the socket of the D-Bus system bus.
+pub const SYSTEM_BUS: &str = "/run/dbus";
 
 /// The folders of the system that each role reads.
 pub const SYSTEM: [&str; 10] = [
@@ -637,6 +652,38 @@ mod tests {
                 assert!(!p.writes(place), "{role} writes {}", place.display());
             }
         }
+    }
+
+    /// 01M4C2PY1DRWVWENJBM42D60M9: no process of a sandbox calls
+    /// systemd. The worker profile reaches no socket of systemd: not
+    /// the user bus, not the private socket of the user manager, not
+    /// the system bus. The same is true of each other role.
+    #[test]
+    fn the_worker_profile_has_no_access_to_the_systemd_user_bus() {
+        let s = session();
+        let sockets = [
+            s.runtime.join("bus"),
+            s.runtime.join("systemd/private"),
+            s.runtime.join("systemd/notify"),
+            PathBuf::from("/run/dbus/system_bus_socket"),
+        ];
+        for role in Role::ALL {
+            let p = Profile::of(role, &s).unwrap();
+            for socket in &sockets {
+                assert!(!p.reads(socket), "{role} reads {}", socket.display());
+                assert!(!p.writes(socket), "{role} writes {}", socket.display());
+            }
+        }
+        // A session whose riff state is the folder of the user manager
+        // makes no profile.
+        let bad = Session {
+            state: s.runtime.join("systemd"),
+            ..s
+        };
+        assert!(matches!(
+            Profile::of(Role::Worker, &bad),
+            Err(Refused::Secret(_))
+        ));
     }
 
     #[test]

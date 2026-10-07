@@ -3176,6 +3176,37 @@ When riff cannot make the profile, for example when a tool path is your
 home, the worker starts with no rules of a profile and prints why in
 its pane.
 
+### What riff needs of systemd
+
+riff uses systemd only on the host side, outside each sandbox. No
+profile reaches a bus of systemd: not your user bus, not the private
+socket of your user manager, not the system bus. So no process in a
+sandbox calls systemd. The wrapper of each worker, `riff workers run`,
+runs in its tmux pane, outside the sandbox. It is the one process of a
+worker that calls systemd.
+
+```mermaid
+flowchart LR
+    W["riff workers run<br/>(outside the sandbox)"] -->|"systemctl --user set-property"| S["riff-workers.slice"]
+    W -->|"systemd-run --user --scope"| C["scope of the worker"]
+    C --> X["sandbox: claude and each child"]
+    X -. "no bus" .-> S
+```
+
+| riff needs | For | With no systemd |
+|---|---|---|
+| The user manager: the slice `riff-workers.slice` | the memory limit and the CPU share of all workers | the workers run with no memory limit |
+| The user manager: one scope for each worker | riff finds and stops each process of a worker | riff finds the processes by their environment |
+| `systemd-oomd` and its lines in the journal | the cause of a kill in the note to the lead, and the kills in the monitor | the note and the monitor show no cause |
+
+riff needs no systemd to run. Each part has a way to work with no
+systemd, and riff says so one time. To see what the user manager
+gives the workers on your machine:
+
+```sh
+systemctl --user status riff-workers.slice
+```
+
 ## A restart
 
 `riff-server` keeps its state in memory. What a restart keeps depends
@@ -3940,7 +3971,7 @@ With 0, riff makes the limit from the machine again:
 riff workers memory 0
 ```
 
-The next `riff workers start` gives the slice the new limit. To see
+The next worker that starts gives the slice the new limit. To see
 the slice, its memory and its workers:
 
 ```sh
@@ -3955,7 +3986,7 @@ workers there:
 systemd-cgls --user-unit riff.slice
 ```
 
-On a machine with no systemd, the first `riff workers start` says that
+On a machine with no systemd, the pane of the first worker says that
 the workers run with no memory limit. The other limits still apply.
 
 When `systemd-run --user --scope` fails in the pane of a worker, for

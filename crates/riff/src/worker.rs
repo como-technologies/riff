@@ -224,9 +224,12 @@ impl Drop for Share {
 /// the limits of a worker of this machine (see [`crate::limits`]): the
 /// jobs (01M3WFYZRK5CT22GJW6ZHYT9CC), the absolute nice value
 /// (01M3WFYZTX05CGDP2NQF9B356K, 01M407J8R79WVYVABVCSHFAMJ9), and a scope
-/// in the slice that [`limits::SLICE_VAR`] names
-/// (01M3WFYZX6GVFYW6NTTTKF144R), when a scope works in the pane
-/// (01M407J8X25H9AT8M789EG5RQZ). It gives no compile cache
+/// in the slice that [`limits::SLICE_VAR`] names, with the memory of
+/// the settings (01M3WFYZX6GVFYW6NTTTKF144R), when the machine has
+/// systemd and a scope works in the pane (01M3WFYZZENNHVH8Z2BAFSR6TS,
+/// 01M407J8X25H9AT8M789EG5RQZ). It is the one process of a worker that
+/// calls systemd: it runs outside each sandbox
+/// (01M4C2PXZ5WNE4C2CJW2HABPY0). It gives no compile cache
 /// (01M4BQA5K7DQHQ4DSJGQJH8ZQE). When `claude` exits on its own, it
 /// tells the lead. Returns the exit code for the wrapper: the code of
 /// `claude`, or 0 after a stop.
@@ -239,13 +242,20 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .as_deref()
         .and_then(|dir| jobserver::Member::join(dir).ok());
     let workers = dir.as_deref().map_or(0, jobserver::workers);
-    let cores = limits::Cores::here(&Machine::here());
-    let limit = Limits::of(&settings::path()?, &cores, workers)?;
+    let machine = Machine::here();
+    let cores = limits::Cores::here(&machine);
+    let settings = settings::path()?;
+    let limit = Limits::of(&settings, &cores, workers)?;
     let slice = std::env::var(limits::SLICE_VAR)
         .ok()
         .filter(|s| !s.is_empty());
-    let (slice, said) =
-        limits::worker_slice(slice.as_deref(), local::dir().as_deref(), limits::try_scope);
+    let max_gb = limits::memory(machine.mem_gb, settings::workers_memory(&settings)?);
+    let (slice, said) = limits::worker_slice(
+        slice.as_deref(),
+        local::dir().as_deref(),
+        |slice| limits::set_slice(slice, max_gb),
+        limits::try_scope,
+    );
     if let Some(said) = said {
         eprintln!("{said}");
     }
@@ -448,9 +458,6 @@ pub struct Started {
     pub fresh: Option<String>,
     /// The workers that the limit kept from a start, and why.
     pub limited: Option<String>,
-    /// What riff says the first time that the workers of the machine
-    /// run with no scope (01M3WFYZZENNHVH8Z2BAFSR6TS).
-    pub no_scope: Option<String>,
     /// What riff says the first time that it cannot make the pool of
     /// build jobs of the machine (01M3ZGZMRHXRBP762QPVCV0YX8).
     pub no_pool: Option<String>,
@@ -531,7 +538,6 @@ pub fn start(
     let base = Api::new(server).base().to_owned();
     let riff = crate::binary::this_on_disk()?;
     let mcp = worker_mcp::prepare(&main, &riff)?;
-    let scope = limits::scope(&settings, &machine, local::dir().as_deref())?;
     let flags = terminal::worker_settings(&worker_lsp::here());
     let claude = terminal::Claude {
         bin: claude,
@@ -546,7 +552,9 @@ pub fn start(
                 &main,
                 &base,
                 &terminal::new_session_id(),
-                scope.slice,
+                // The wrapper sets the slice: it runs outside each
+                // sandbox (01M4C2PXZ5WNE4C2CJW2HABPY0).
+                Some(limits::SLICE),
             );
             worker.env.extend(on_env(enable::forced()));
             worker
@@ -559,7 +567,6 @@ pub fn start(
         main,
         fresh,
         limited: (start < count).then(|| text::workers_limited(count - start, limit, run)),
-        no_scope: scope.said,
         no_pool: jobserver::check(local::dir().as_deref()),
         no_cores: limits::say_cores(&limits::Cores::here(&machine), local::dir().as_deref()),
     }))
