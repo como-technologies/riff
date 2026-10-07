@@ -51,6 +51,8 @@ struct Cloud {
     signin_ended: bool,
     /// Each call fails as when the account has no permission.
     denied: bool,
+    /// The reply of each `get-iam-policy` call.
+    iam: String,
 }
 
 /// The result of one `riff cloud` run.
@@ -106,7 +108,14 @@ impl Cloud {
             found: Vec::new(),
             signin_ended: false,
             denied: false,
+            iam: String::new(),
         }
+    }
+
+    /// The reply of each `get-iam-policy` call.
+    fn iam(mut self, policy: &str) -> Cloud {
+        self.iam = policy.to_owned();
+        self
     }
 
     /// The describe calls that succeed.
@@ -154,6 +163,8 @@ impl Cloud {
         let each = logs.path().join("args");
         let found = logs.path().join("found");
         fs::write(&found, self.found.join("\n") + "\n").unwrap();
+        let iam = logs.path().join("iam");
+        fs::write(&iam, &self.iam).unwrap();
         let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake");
         let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
         let mut cmd = self.env.riff();
@@ -165,6 +176,7 @@ impl Cloud {
             .env("FAKE_GCLOUD_LOG", &log)
             .env("FAKE_GCLOUD_ARGS", &each)
             .env("FAKE_GCLOUD_FOUND", &found)
+            .env("FAKE_GCLOUD_IAM", &iam)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -288,9 +300,13 @@ fn create_again_keeps_each_resource() {
         assert!(!ran.calls.contains(made), "{made} in:\n{}", ran.calls);
     }
     ran.line("storage buckets update gs://como-riff-state --lifecycle-file ");
-    // A provider that exists gets the condition again.
+    // A provider that exists gets the mapping and the condition again.
     let update = ran.line("iam workload-identity-pools providers update-oidc github ");
     assert!(update.contains(CONDITION), "{update}");
+    assert!(
+        update.contains(&format!("--attribute-mapping {MAPPING} ")),
+        "{update}"
+    );
 }
 
 /// R46, and 01M3TJWJEPTSF1S3S5PJD25Z7Y: an older version of an object
@@ -420,21 +436,126 @@ fn only_main_and_the_release_tags_sign_in_as_the_deploy_account() {
     );
     assert!(provider.contains(CONDITION), "{provider}");
     assert!(
+        provider.contains(&format!("--attribute-mapping {MAPPING} ")),
+        "{provider}"
+    );
+    assert!(
         !ran.calls.contains("providers update-oidc"),
         "{}",
         ran.calls
     );
     let user = ran.line("iam service-accounts add-iam-policy-binding riff-deploy@");
-    assert!(
-        user.contains(
-            "--member principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.repository/como-technologies/riff"
-        ),
-        "{user}"
-    );
+    assert!(user.contains(&format!("--member {PRODUCTION} ")), "{user}");
     assert!(
         user.contains("--role roles/iam.workloadIdentityUser"),
         "{user}"
     );
+}
+
+/// The member of the pool for each job of the repository in the GitHub
+/// environment `production`. It is not the subject: this repository
+/// has the immutable subject of GitHub, with the IDs of the owner and
+/// the repository.
+const PRODUCTION: &str = "principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.environment/production";
+
+/// The attribute mapping of the provider: it maps the claim
+/// `environment` of a job.
+const MAPPING: &str = "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment";
+
+/// The member of the pool for each job of the repository.
+const REPOSITORY: &str = "principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.repository/como-technologies/riff";
+
+/// 01M49M8W30M2084QN4HX1FJFKS: the shared deploy account takes only a
+/// job in the environment `production`, and the stage deploy account
+/// only a job in the environment `stage`. No deploy account takes each
+/// job of the repository.
+#[test]
+fn only_a_job_in_its_github_environment_signs_in_as_a_deploy_account() {
+    for (name, account, environment) in [
+        ("shared", "riff-deploy@", "production"),
+        ("stage", "riff-stage-deploy@", "stage"),
+    ] {
+        let ran = Cloud::new().run(&["create", name]).ok();
+        let users: Vec<&str> = ran
+            .calls
+            .lines()
+            .filter(|l| l.contains("--role roles/iam.workloadIdentityUser"))
+            .collect();
+        assert_eq!(users.len(), 1, "{users:#?}");
+        let member = format!(
+            "--member principalSet://iam.googleapis.com/projects/816917641970/locations/global/workloadIdentityPools/github/attribute.environment/{environment} "
+        );
+        assert!(
+            users[0].starts_with(&format!(
+                "iam service-accounts add-iam-policy-binding {account}"
+            )) && users[0].contains(&member),
+            "{}",
+            users[0]
+        );
+        assert!(
+            !ran.calls.contains("attribute.repository/"),
+            "{}",
+            ran.calls
+        );
+        assert!(
+            ran.stdout().contains(&format!(
+                "CI deploy: set, for a job in the GitHub environment {environment}."
+            )),
+            "{}",
+            ran.stdout()
+        );
+    }
+}
+
+/// `create` removes the old binding that let each job of the
+/// repository sign in as the deploy account.
+#[test]
+fn create_removes_the_sign_in_of_each_job_of_the_repository() {
+    let policy = format!(
+        r#"{{"bindings":[{{"members":["{REPOSITORY}"],"role":"roles/iam.workloadIdentityUser"}}]}}"#
+    );
+    let ran = Cloud::new()
+        .found(&SETUP)
+        .iam(&policy)
+        .run(&["create", "shared"])
+        .ok();
+    let get = ran.line("iam service-accounts get-iam-policy riff-deploy@");
+    assert!(get.contains("--format json"), "{get}");
+    let remove = ran.line("iam service-accounts remove-iam-policy-binding riff-deploy@");
+    assert!(
+        remove.contains(&format!(
+            "--member {REPOSITORY} --role roles/iam.workloadIdentityUser"
+        )),
+        "{remove}"
+    );
+    // The new binding comes first, so the deploy never has no member.
+    let add = ran.calls.find(&format!("--member {PRODUCTION} ")).unwrap();
+    assert!(add < ran.calls.find("remove-iam-policy-binding").unwrap());
+
+    // With no old binding, nothing is removed.
+    let ran = Cloud::new().found(&SETUP).run(&["create", "shared"]).ok();
+    assert!(
+        !ran.calls.contains("remove-iam-policy-binding"),
+        "{}",
+        ran.calls
+    );
+}
+
+/// An instance with a deploy account and no GitHub environment makes
+/// no CI deploy, and says what to set.
+#[test]
+fn a_deploy_account_needs_a_github_environment() {
+    let ran = Cloud::new()
+        .set("stage.env", "CLOUD_GITHUB_ENVIRONMENT", "")
+        .run(&["create", "stage"]);
+    assert!(!ran.out.status.success());
+    assert!(
+        ran.stderr()
+            .contains("stage.env has a CLOUD_DEPLOY_ACCOUNT and no CLOUD_GITHUB_ENVIRONMENT"),
+        "{}",
+        ran.stderr()
+    );
+    assert!(!ran.calls.contains("workloadIdentityUser"), "{}", ran.calls);
 }
 
 #[test]

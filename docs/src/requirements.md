@@ -1626,6 +1626,12 @@
   OIDC token of GitHub. No key exists. Only the `main` branch and the
   tags `v*` of the repository can sign in. The deploy account can push
   images, deploy the service, and run it as `riff-server`.
+- **01M49M8W30M2084QN4HX1FJFKS** Only a CI job in the GitHub
+  environment of an instance (`CLOUD_GITHUB_ENVIRONMENT`) signs in as
+  its deploy account: `production` for the shared riff, `stage` for the
+  stage. No deploy account takes each job of the repository. The
+  binding names the attribute `environment` of the job, not its
+  subject. `riff cloud create` sets it.
 - **R152** Cloud Run lets each caller in. `riff-server` checks each
   token itself (R5).
 - **R143** The Google Cloud project `como-riff` holds each cloud

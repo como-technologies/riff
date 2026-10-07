@@ -1565,7 +1565,9 @@ must be `true`. A push to `main` does not deploy. A `riff` refuses a
 server of another build (see [Builds](how-it-works.md#builds)), so a
 deploy in the middle of a wave would stop each session. The job signs
 in to Google Cloud from GitHub with no key. Only `main` and the tags
-`v*` can sign in.
+`v*` can sign in, and only a job in the GitHub environment `production`
+signs in as the deploy account of the shared riff (see
+[Let only an approved job deploy](#let-only-an-approved-job-deploy)).
 
 A release is a git tag `vX.Y.Z`. X.Y.Z is the version of the crates in
 `Cargo.toml`. [Versions](how-it-works.md#versions) tells you the
@@ -1689,6 +1691,47 @@ gh run list --workflow CI --status waiting --limit 1
 gh api repos/como-technologies/riff/actions/runs/RUN_ID/pending_deployments --jq '.[].environment.id'
 gh api -X POST repos/como-technologies/riff/actions/runs/RUN_ID/pending_deployments \
   -F 'environment_ids[]=ENV_ID' -f state=approved -f comment='Release vX.Y.Z'
+```
+
+#### Let only an approved job deploy
+
+The approval holds only when no other job can sign in as the deploy
+account. So each deploy account takes only a job in the GitHub
+environment of its instance: `CLOUD_GITHUB_ENVIRONMENT` in
+`deploy/cloud/NAME.env`. The shared riff has `production`, the stage
+has `stage`. A job with no environment, or in another environment,
+cannot sign in. A change to the workflow file that drops the
+environment also drops the sign-in.
+
+```mermaid
+flowchart LR
+    J[a job of the repository] --> P{main or a tag v*?}
+    P -- no --> N[no sign-in]
+    P -- yes --> E{its GitHub environment}
+    E -- production, after the approval --> D[riff-deploy: the shared riff]
+    E -- stage --> S[riff-stage-deploy: the stage]
+    E -- none or other --> N
+```
+
+`riff cloud create` sets it. It also removes the old binding that let
+each job of the repository sign in. An owner of the project runs it
+after a change of the settings:
+
+```sh
+riff cloud create shared
+riff cloud create stage
+```
+
+The provider `github` maps the claim `environment` of a job to
+`attribute.environment`. The deploy account takes the jobs with that
+attribute. It does not take a subject: the subject of a job of this
+repository has the IDs of the owner and the repository.
+
+Check the members of the deploy account. Only the member that ends
+with `attribute.environment/production` shows:
+
+```sh
+gcloud iam service-accounts get-iam-policy riff-deploy@como-riff.iam.gserviceaccount.com --project como-riff
 ```
 
 ### Go live with release 1.0.0

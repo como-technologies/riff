@@ -264,6 +264,26 @@ fn a_release_deploy_waits_in_production_and_the_stage_in_stage() {
     assert!(!ci_job("gate").contains("environment:"));
 }
 
+/// 01M49M8W30M2084QN4HX1FJFKS: the job that signs in as the deploy
+/// account of an instance runs in the GitHub environment of its
+/// settings file, so `riff cloud create` binds the account to it.
+#[test]
+fn each_deploy_job_runs_in_the_github_environment_of_its_settings() {
+    for (job, file) in [("deploy", "shared.env"), ("stage", "stage.env")] {
+        let text = fs::read_to_string(deploy().join("cloud").join(file)).unwrap();
+        let environment = text
+            .lines()
+            .find_map(|l| l.strip_prefix("CLOUD_GITHUB_ENVIRONMENT="))
+            .unwrap_or_else(|| panic!("{file} has no CLOUD_GITHUB_ENVIRONMENT"));
+        assert!(!environment.is_empty(), "{file}");
+        let line = format!("\n    environment: {environment}\n");
+        assert!(
+            ci_job(job).contains(&line),
+            "the job {job} is not in {environment}"
+        );
+    }
+}
+
 /// The context of a push of `git_ref` for the stage job, with the result
 /// of the gate.
 fn stage_push(git_ref: &'static str, gate: &'static str) -> Ctx {
@@ -327,6 +347,23 @@ fn book_part(heading: &str) -> String {
     let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
     let part = &page[page.find(heading).unwrap()..];
     part[..part[4..].find("\n### ").unwrap()].to_owned()
+}
+
+/// The part "Approve the deploy of a release" says that only a job in
+/// the environment of an instance signs in as its deploy account, and
+/// how to set it (01M49M8W30M2084QN4HX1FJFKS).
+#[test]
+fn the_book_lets_only_an_approved_job_deploy() {
+    let part = book_part("### Approve the deploy of a release\n");
+    for text in [
+        "#### Let only an approved job deploy",
+        "CLOUD_GITHUB_ENVIRONMENT",
+        "```sh\nriff cloud create shared\nriff cloud create stage\n```",
+        "attribute.environment/production",
+        "gcloud iam service-accounts get-iam-policy riff-deploy@",
+    ] {
+        assert!(part.contains(text), "{text} is not in the part");
+    }
 }
 
 /// The book says that the release tag deploys, and that each machine

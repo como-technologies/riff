@@ -4209,6 +4209,20 @@ pub fn cloud_alert_no_owner(name: &str) -> String {
     )
 }
 
+/// The error of `riff cloud create` for an instance with a deploy
+/// account and no GitHub environment (01M49M8W30M2084QN4HX1FJFKS).
+///
+/// ```
+/// let line = riff::text::cloud_no_github_environment("stage");
+/// assert!(line.contains("stage.env has a CLOUD_DEPLOY_ACCOUNT and no CLOUD_GITHUB_ENVIRONMENT"));
+/// ```
+pub fn cloud_no_github_environment(name: &str) -> String {
+    format!(
+        "{name}.env has a CLOUD_DEPLOY_ACCOUNT and no CLOUD_GITHUB_ENVIRONMENT: set the GitHub \
+         environment of the job that deploys, for example production"
+    )
+}
+
 /// The next step after `riff cloud create`, while the instance has no
 /// sign-in client.
 pub fn cloud_next_signin(name: &str) -> String {
