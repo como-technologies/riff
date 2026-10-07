@@ -603,7 +603,7 @@ impl Api {
         }
     }
 
-    /// The same client, which gives the line [`WAITING`] to `show`, not
+    /// The same client, which gives the line [`crate::link::WAITING`] to `show`, not
     /// to stderr. `riff chat` uses it to keep its screen
     /// (01M3THEE5V3RFHF9QTA8MA8QDF).
     ///
