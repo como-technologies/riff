@@ -112,6 +112,8 @@ pub mod reap;
 pub mod relay;
 pub mod role_rules;
 pub mod rollout;
+pub mod sandbox;
+pub mod sccache;
 pub mod secrets;
 pub mod settings;
 pub mod smoke;

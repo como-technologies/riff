@@ -47,6 +47,18 @@ jobs:
         with:
           tool: just,mdbook,mdbook-gruvbox,mdbook-mermaid
 
+      - name: Let bubblewrap make namespaces
+        # The tests run in riff test-run (01M4BTG7E55337GBS5WANAD6MG).
+        run: |
+          if ! command -v bwrap >/dev/null; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q bubblewrap
+          fi
+          if ! bwrap --unshare-all --ro-bind / / true; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --unshare-all --ro-bind / / true
+
       - name: CI gate
         # Each check, for each diff (01M3WNN7VQJKN5MJH7JN50VF4D).
         run: just ci-full

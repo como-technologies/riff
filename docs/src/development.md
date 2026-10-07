@@ -127,6 +127,68 @@ The Gate on GitHub runs the same command. Tests read the pages of the
 book. So a change of only text that passes `just ci` can still fail a
 test in the Gate.
 
+## Run the tests in a sandbox
+
+`just test`, `just check` and `just ci` build the tests first. Then
+they run the tests in a sandbox of their own:
+
+- an empty home, at the path of your home;
+- an empty `/tmp` and `/var/tmp`;
+- their own processes: a process of your machine is not visible;
+- the loopback network only;
+- no write, except the `target` folder.
+
+A test that leaks a file, a process or a call out of the run cannot
+harm your machine. To run another command in the same sandbox, build
+first, then give the command to `riff test-run`:
+
+```sh
+cargo test --no-run -p riff --test pr
+riff test-run -- cargo test -p riff --test pr
+```
+
+```mermaid
+flowchart LR
+    J["just test"] --> B["cargo test --no-run:<br/>the build, with the network"]
+    B --> R["riff test-run -- cargo test"]
+    R --> W["bubblewrap: new home, new /tmp,<br/>own processes, loopback only"]
+```
+
+### Let bubblewrap make namespaces
+
+The sandbox is [bubblewrap](https://github.com/containers/bubblewrap).
+When your machine cannot make the sandbox, `riff test-run` runs
+nothing and prints one line with the command to run. Run it one time
+on each machine. On Ubuntu 24.04 and later:
+
+```sh
+sudo apt install bubblewrap apparmor
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+```
+
+The Gate on GitHub installs bubblewrap and lets it make namespaces in
+its own step.
+
+### Run the tests that need your machine
+
+A few tests need a part of your machine that the sandbox hides. In
+the sandbox, they print a `skip:` line and check nothing. Run them
+with a plain `cargo test`, outside the sandbox:
+
+| Test | It needs |
+|---|---|
+| `workloads.rs`: `the_clear_stops_a_process_that_dropped_the_variables_of_its_worker`, `workers_stop_stops_each_process_in_the_scope_of_the_worker` | a systemd user manager (`systemd-run --user --scope`) |
+| `plugin.rs`: the tests that run `claude plugin validate` | the `claude` command |
+| `isolation.rs`: the tests that check the riff of the machine on port 7878 | the network of the machine: in the sandbox, no riff of the machine can listen, so the check proves less |
+
+```sh
+cargo test -p riff --test all -- workloads:: plugin::
+cargo test -p riff --test isolation
+```
+
+Each other test uses a fake: a fake `tmux` script on the `PATH`, and a
+D-Bus address where nothing listens in place of the keyring.
+
 ## Run one test many times
 
 A test that fails only on a busy machine waits for a fixed time

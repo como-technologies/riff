@@ -4182,6 +4182,32 @@
 - **01M4BW2SW96JS62ZYQNW6804TV** `riff` writes the permission rules of
   the lead to a settings file in the local folder of riff at each start
   of a lead, and passes the file to `claude` with `--settings`.
+- **01M4BTG70M8MPPCNTJCJ649BW1** The sandbox of a test run is
+  bubblewrap. riff builds its arguments from the profile of the test
+  run.
+- **01M4BTG72XPKSTDF4KYRKS4Z0D** `riff test-run PROGRAM ARGS` runs
+  PROGRAM in new user, PID, network, IPC, UTS and cgroup namespaces. The
+  run has a new empty home at the path of the home, and one new empty
+  folder for `/tmp` and `/var/tmp`, both in the temp folder. It has the
+  loopback network only. It dies when riff ends, and its first process
+  ends each process of the run when it ends. riff removes the run
+  folder at the end. It needs no riff server.
+- **01M4BTG755XSCBZ0F8TMFG7NVF** Before each test run, riff checks that
+  `bwrap` is on the `PATH` and that it can make namespaces. When one
+  fails, riff runs nothing, prints one line with the `sudo` command
+  for the host, and exits with 1.
+- **01M4BTG77E656440W5JSGTK4E5** `just test` and `just check` build the
+  tests outside the sandbox, with the compile cache and the network.
+  Then they run the tests in `riff test-run`, with the riff of the
+  tree.
+- **01M4BTG79MW1DJFGG287X5PH9G** The test run also reads the git dir of
+  the clone, with no write: git in a worktree needs it.
+- **01M4BTG7BXFTWX53R4YAP7YFYD** A test that runs inside the test run
+  checks the sandbox: no file of the home of the person, no file in
+  `/tmp` from before the run, no process of the host, and no network
+  but the loopback. Outside a test run, it prints a skip line.
+- **01M4BTG7E55337GBS5WANAD6MG** The Gate installs bubblewrap and lets it
+  make namespaces before it runs the checks.
 
 ## Open
 

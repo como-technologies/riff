@@ -13,12 +13,12 @@
 //! (01M4BPK6V66QNPQJ6RBRE10WH9). The profile of each role:
 //! lead 01M4BPK72ZBZABCTWS9YM1M9QX, worker 01M4BPK7AKTJD9Y9WVJQKTQY6M,
 //! verifier 01M4BPK7JA9V5PXCYZ01G0KBZT, test run
-//! 01M4BPK7SN7J16KPB3J743CW2B.
+//! 01M4BPK7SN7J16KPB3J743CW2B and 01M4BTG79MW1DJFGG287X5PH9G.
 //!
 //! | | lead | worker | verifier | test run |
 //! |---|---|---|---|---|
 //! | Write | the clone, its worktrees, the riff state, its temp, its Claude folder | its worktree, its target, the git dir of the clone, the riff state, its temp, its Claude folder | its verify worktree, its target, the git dir of the clone, the riff state, its temp, its Claude folder | its temp, its target |
-//! | Read | the system, its tools, and what it writes | the same | the same | the same, and its worktree |
+//! | Read | the system, its tools, and what it writes | the same | the same | the same, its worktree and the git dir of the clone |
 //! | Read the home of the person | no, except the paths above | no | no | no |
 //! | Network | riff server, forge, registries, model | the same | the same | loopback only |
 //! | Keyring and D-Bus of the person | no | no | no | no |
@@ -417,7 +417,7 @@ impl Profile {
         let mut reads: Vec<PathBuf> = SYSTEM.iter().map(PathBuf::from).collect();
         reads.extend(s.tools.iter().cloned());
         if role == Role::TestRun {
-            reads.push(s.worktree.clone());
+            reads.extend([s.worktree.clone(), s.clone.join(".git")]);
         }
         let network = match role {
             Role::TestRun => Network::Loopback,
@@ -578,6 +578,8 @@ mod tests {
         let t = Profile::of(Role::TestRun, &session()).unwrap();
         let src = Path::new("/home/ada/src/app/.claude/worktrees/issue-12/src/lib.rs");
         assert!(t.reads(src) && !t.writes(src));
+        let git = Path::new("/home/ada/src/app/.git/objects/ab");
+        assert!(t.reads(git) && !t.writes(git));
         assert!(t.reads(Path::new("/usr/bin/git")));
         assert!(t.reads(Path::new("/home/ada/.cargo/bin/cargo")));
     }
