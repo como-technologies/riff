@@ -4275,8 +4275,9 @@
   `forge::ForgeEnv` is the only way to make the command of `claude`.
 - **01M4BYVSR06B9HNX4SP83SY2SX** The kept variables are one list,
   `profile::KEPT_VARS`: the account, the language and the terminal,
-  tmux, the XDG folders of the person, the user manager of systemd,
-  the proxy and the certificates, `CLAUDE_CONFIG_DIR`, and the riff
+  tmux, the XDG folders of the person, the runtime folder and the
+  session bus of the person for the local folder and the keyring of
+  riff, the proxy and the certificates, `CLAUDE_CONFIG_DIR`, and the riff
   variables of the server, the session, the person and the machine.
 - **01M4C4WW8JS7QVC0ZYHWPSMWKN** A session never gets an API key of
   Anthropic: no `ANTHROPIC_` variable reaches `claude`. A session gets

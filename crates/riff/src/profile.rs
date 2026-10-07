@@ -528,9 +528,13 @@ impl Profile {
 /// - tmux, for the pane of the worker: `TMUX`, `TMUX_PANE`.
 /// - The folders of the person: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
 ///   `XDG_STATE_HOME`, `XDG_CACHE_HOME`.
-/// - The user manager of systemd, for the scope of the worker, and the
-///   keyring of riff until the secrets come in the environment (#611):
-///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`.
+/// - The runtime folder and the session bus of the person:
+///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`. No process in the
+///   session calls systemd: only the wrapper, outside the sandbox,
+///   does (01M4C2PY1DRWVWENJBM42D60M9). The `riff` of the session
+///   needs them for its local folder `$XDG_RUNTIME_DIR/riff`
+///   ([`crate::local`]) and for its keyring, until the secrets come
+///   in the environment (#611).
 /// - The network: the proxy and the certificates.
 /// - Claude Code: `CLAUDE_CONFIG_DIR`. No `ANTHROPIC_` variable: a
 ///   session gets its model access only from the plan sign-in of the
