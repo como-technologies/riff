@@ -45,10 +45,13 @@ pub(super) struct Thread {
     pub(super) messages: VecDeque<Stored>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A message of a thread, with each session that it woke. A
+/// checkpoint holds it as it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Stored {
     pub(super) message: Message,
     /// Each session that the message woke.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) woken: BTreeSet<Who>,
 }
 
@@ -140,21 +143,18 @@ impl Threads {
 
     /// The threads, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
+        // A restore makes the copies again from the messages.
+        let Threads { by_name, copies: _ } = self;
         Saved {
-            threads: self
-                .by_name
+            threads: by_name
                 .iter()
-                .map(|(name, thread)| SavedThread {
-                    thread: name.clone(),
-                    members: thread.members.iter().cloned().collect(),
-                    messages: thread
-                        .messages
-                        .iter()
-                        .map(|m| SavedMessage {
-                            message: m.message.clone(),
-                            woken: m.woken.clone(),
-                        })
-                        .collect(),
+                .map(|(name, thread)| {
+                    let Thread { members, messages } = thread;
+                    SavedThread {
+                        thread: name.clone(),
+                        members: members.iter().cloned().collect(),
+                        messages: messages.iter().cloned().collect(),
+                    }
                 })
                 .collect(),
         }
@@ -168,45 +168,38 @@ pub(super) struct Saved {
     threads: Vec<SavedThread>,
 }
 
+/// A thread with its name: the map entry of [`Threads`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct SavedThread {
     thread: ThreadName,
     #[serde(default)]
     members: Vec<Who>,
     #[serde(default)]
-    messages: Vec<SavedMessage>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct SavedMessage {
-    message: Message,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    woken: BTreeSet<Who>,
+    messages: Vec<Stored>,
 }
 
 impl Saved {
     pub(super) fn restore(self) -> Threads {
+        let Saved { threads: saved } = self;
         let mut threads = Threads::default();
-        for t in self.threads {
-            for m in &t.messages {
+        for SavedThread {
+            thread: name,
+            members,
+            messages,
+        } in saved
+        {
+            for m in &messages {
                 if let Some(payload) = &m.message.payload {
                     threads
                         .copies
-                        .insert((t.thread.clone(), payload_hash(payload)), m.message.seq);
+                        .insert((name.clone(), payload_hash(payload)), m.message.seq);
                 }
             }
             let thread = Thread {
-                members: t.members.into_iter().collect(),
-                messages: t
-                    .messages
-                    .into_iter()
-                    .map(|m| Stored {
-                        message: m.message,
-                        woken: m.woken,
-                    })
-                    .collect(),
+                members: members.into_iter().collect(),
+                messages: messages.into_iter().collect(),
             };
-            threads.by_name.insert(t.thread, thread);
+            threads.by_name.insert(name, thread);
         }
         threads
     }

@@ -3949,6 +3949,26 @@
   `hygiene crates` prints the arguments of `cargo test`, and one line
   that names the tests and the reason. `just check` holds the lock of
   01M43DKYVAX0TJ2F5YYGYFSZ4G.
+- **01M49W17GGV1K5FZEKJRPV0GNA** A type of the log, the wire or the
+  checkpoint has one struct. A reader, a saved form or a reply that
+  carries the data of a type holds that type, not a second struct
+  with its fields. A tolerant reader holds it with
+  `#[serde(flatten)]`. The read of the frozen format of v0.8.0
+  (`import.rs`) is the one exception.
+- **01M49W17M2JVNYSHDQJWHZ8A7X** Each conversion between two types of
+  the log, the wire, the checkpoint or the state names each field of
+  its source in a destructure with no `..`. It builds its target with
+  no `..` either. So a new field fails the build at each conversion.
+- **01M49W18ETF4KZJN848M91VY35** Each type of the log, the wire and
+  the checkpoint has a round-trip test: a value of each variant with
+  each optional field set, written to JSON, read back and compared. A
+  test lists the serde types of `record.rs`, `wire.rs` and the
+  checkpoint, and fails when one has no round trip. The round trip of
+  the log goes through the store.
+- **01M49W18QQKF4KYDRYP3ZK9F1Q** A type of the log, the wire, the
+  checkpoint or the state cannot hold an invalid state. For example, a
+  saved session has a status, a step, or both: an enum, not two
+  options.
 
 ## Open
 

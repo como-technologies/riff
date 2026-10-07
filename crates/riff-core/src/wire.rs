@@ -2212,14 +2212,9 @@ pub struct SetAdmin {
     pub admin: bool,
 }
 
-/// The reply to [`SetAdmin`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct AdminSet {
-    /// The email, in lower case.
-    pub email: String,
-    /// True when the person is now an admin.
-    pub admin: bool,
-}
+/// The reply to [`SetAdmin`]: the change of its record, with the email
+/// in lower case.
+pub use crate::record::AdminSet;
 
 /// `POST /v1/owner`: the owner passes the owner role to a member or an
 /// admin. The old owner stays an admin.
