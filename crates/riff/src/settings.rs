@@ -16,7 +16,6 @@
 //! memory = 22
 //! floor = 4
 //! tmp = "/data/riff-tmp"
-//! cache = "40G"
 //!
 //! [monitor]
 //! on = true
@@ -43,7 +42,6 @@
 //! | `workers.memory` | 0 | The most memory of all workers of the machine, in GB. 0: riff makes the number from the machine (01M3WFYZX6GVFYW6NTTTKF144R). |
 //! | `workers.floor` | 4 | The available memory in GB under which riff starts no new worker (01M3WFZ01PTAYYKG3T5CFA2W4D). |
 //! | `workers.tmp` | `~/.cache/riff/tmp` | The folder of the temp folders of the workers (see [`temp`](crate::temp), 01M41VAGJC69S9R2TD1B1EQ4W4). |
-//! | `workers.cache` | `40G` | The most size of the compile cache of the workers (see [`sccache`](crate::sccache), 01M49237BM12PVBERD6JXDSX5V). |
 //! | `monitor.on` | false | The monitor of this machine runs (see [`monitor`](crate::monitor), 01M421QPKWPX00X24F8V6DT8Z3). |
 //! | `monitor.every` | 15 | The seconds between two looks of the monitor. |
 //! | `monitor.load` | 1.5 | The 5-minute load over which the monitor tells the lead, for each physical core. |
@@ -301,43 +299,6 @@ pub fn set_workers_tmp(path: &Path, dir: &Path) -> Result<()> {
         "tmp",
         value(dir.to_string_lossy().as_ref()),
     )
-}
-
-/// The most size of the compile cache of the workers: `workers.cache`
-/// (01M49237BM12PVBERD6JXDSX5V). [`crate::sccache::SIZE`] when the
-/// file or the key is missing.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_cache(&path)?, "40G");
-/// riff::settings::set_workers_cache(&path, "20G")?;
-/// assert_eq!(riff::settings::workers_cache(&path)?, "20G");
-/// assert!(riff::settings::set_workers_cache(&path, "20GB").is_err());
-/// std::fs::write(&path, "[workers]\ncache = 3\n")?;
-/// assert!(riff::settings::workers_cache(&path).is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_cache(path: &Path) -> Result<String> {
-    let doc = read(path)?;
-    let Some(item) = doc.get("workers").and_then(|w| w.get("cache")) else {
-        return Ok(crate::sccache::SIZE.to_owned());
-    };
-    match item.as_str() {
-        Some(size) if crate::sccache::valid_size(size) => Ok(size.to_owned()),
-        _ => bail!(
-            "workers.cache in {} is not a size such as 40G",
-            path.display()
-        ),
-    }
-}
-
-/// Sets `workers.cache`. It keeps each other key.
-pub fn set_workers_cache(path: &Path, size: &str) -> Result<()> {
-    if !crate::sccache::valid_size(size) {
-        bail!("the size of the cache is a number with K, M, G or T, for example 40G");
-    }
-    set(path, "workers", "cache", value(size))
 }
 
 /// The number `workers.KEY`, or `default` when the file or the key is

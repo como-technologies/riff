@@ -165,30 +165,6 @@ impl Riff {
         hook.wait_with_output().unwrap()
     }
 
-    /// A stand-in for the `sccache` server that a build of a context of
-    /// the worker `id` started: the binary `sccache` of the machine with
-    /// each variable of that build, and the mark of `sccache`
-    /// (01M49AB2TBMHGNXM3GE4NDFYYG). The binary is a copy of `sh` with
-    /// the name `sccache` on the `PATH` of riff ([`riff::sccache::find`]).
-    /// It waits for a line on its stdin with no child. A child `cp`
-    /// writes the copy, so this process never holds a write fd of it
-    /// (`ETXTBSY`).
-    fn cache_server(&self, id: &str) -> Child {
-        let bin = self.fake.path().join("sccache");
-        if !bin.exists() {
-            let out = Command::new("cp")
-                .arg("-L")
-                .arg("/bin/sh")
-                .arg(&bin)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "{out:?}");
-        }
-        let mut cmd = Command::new(&bin);
-        cmd.args(["-c", "read line"]);
-        marked(cmd, self.run.path(), id, Stdio::piped())
-    }
-
     /// The worker `id` in the pane `%5`.
     fn pane(&self, id: &str) {
         std::fs::write(self.fake.path().join("session"), id).unwrap();
@@ -218,39 +194,6 @@ fn sleeper_in(home: &Path, id: &str, context: bool) -> Child {
     if context {
         cmd.env(CONTEXT, "1");
     }
-    cmd.spawn().unwrap()
-}
-
-/// A process of a context of the worker `id` that says it is the
-/// `sccache` server: `exec -a sccache sh` with the mark of `sccache`.
-/// Its binary is `sh`, not the `sccache` of the machine, so it stays of
-/// the worker (01M49AB2TBMHGNXM3GE4NDFYYG).
-fn disguised(home: &Path, id: &str) -> Child {
-    use std::os::unix::process::CommandExt;
-    let mut cmd = Command::new("sh");
-    cmd.arg0("sccache").args(["-c", "read line"]);
-    marked(cmd, home, id, Stdio::piped())
-}
-
-/// A `sleep` of a context of the worker `id` with the mark of
-/// `sccache`: it is not the server, so it stays of the worker.
-fn marked_sleeper(home: &Path, id: &str) -> Child {
-    let mut cmd = Command::new("sleep");
-    cmd.arg("300");
-    marked(cmd, home, id, Stdio::null())
-}
-
-fn marked(mut cmd: Command, home: &Path, id: &str, stdin: Stdio) -> Child {
-    cmd.env_clear()
-        .env("PATH", std::env::var("PATH").unwrap())
-        .env("RIFF_WORKER", "1")
-        .env("RIFF_SESSION", id)
-        .env("RIFF_HOME", home)
-        .env(CONTEXT, "1")
-        .env(riff::sccache::SERVER_MARK, "1")
-        .stdin(stdin)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
     cmd.spawn().unwrap()
 }
 
@@ -348,10 +291,7 @@ fn stdout(out: &Output) -> String {
 
 /// The clear of a worker stops its old context: a long child of a
 /// command of the context is gone after `riff hook clear`, and
-/// `claude`, its MCP server and the `sccache` server that a build of
-/// the context started stay. A command of the context with the mark of
-/// `sccache` stops, also one with the name `sccache` and another binary
-/// (01M3ZV0TJDQ6JCM7XG0036MSV1, 01M49AB2TBMHGNXM3GE4NDFYYG).
+/// `claude` and its MCP server stay (01M3ZV0TJDQ6JCM7XG0036MSV1).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     let r = Riff::new().await;
@@ -368,9 +308,6 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     // runs at the same time (01M438620PJHSVSPAENBKKJ6C2).
     let home = tempfile::tempdir().unwrap();
     let mut twin = sleeper_in(home.path(), id, true);
-    let mut cache = r.cache_server(id);
-    let mut hidden = marked_sleeper(r.run.path(), id);
-    let mut named = disguised(r.run.path(), id);
 
     let out = r.in_worker(id, &["release", "issue-12"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
@@ -379,14 +316,11 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     assert!(out.status.success(), "{out:?}");
 
     assert!(ends(&mut ci), "the old context still runs");
-    assert!(ends(&mut hidden), "a command with the mark still runs");
-    assert!(ends(&mut named), "a command named sccache still runs");
     assert!(lives(&mut claude), "claude stopped");
     assert!(lives(&mut mcp), "the MCP server stopped");
     assert!(lives(&mut other), "a process of another worker stopped");
     assert!(lives(&mut twin), "a process of another riff home stopped");
-    assert!(lives(&mut cache), "the sccache server stopped");
-    for mut child in [claude, mcp, other, twin, cache] {
+    for mut child in [claude, mcp, other, twin] {
         child.kill().unwrap();
         child.wait().unwrap();
     }
@@ -468,9 +402,8 @@ async fn reap_with_no_start_of_the_context_stops_nothing() {
 }
 
 /// `riff workers stop PANE` leaves no process of the worker: `claude`,
-/// its MCP server and each process of a context, also one with the mark
-/// of `sccache` that is not `sccache`, and one that names itself
-/// `sccache` (01M3ZV0TMNQDK9WC3BR1NPGAC2, 01M49AB2TBMHGNXM3GE4NDFYYG).
+/// its MCP server and each process of a context
+/// (01M3ZV0TMNQDK9WC3BR1NPGAC2).
 #[tokio::test(flavor = "multi_thread")]
 async fn workers_stop_leaves_no_process_of_the_worker() {
     let r = Riff::new().await;
@@ -482,21 +415,18 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
         r.sleeper(id, false),
         r.sleeper(id, false),
         r.sleeper(id, true),
-        marked_sleeper(r.run.path(), id),
-        disguised(r.run.path(), id),
     ];
     let mut other = r.sleeper(&unique("wother2"), true);
     // The same session ID in another riff home (01M438620PJHSVSPAENBKKJ6C2).
     let home = tempfile::tempdir().unwrap();
     let mut twin = sleeper_in(home.path(), id, true);
-    let mut cache = r.cache_server(id);
 
     let out = r
         .riff(&r.main(), &["workers", "stop", "%5"])
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    assert!(stdout(&out).contains("also stopped 5 processes"), "{out:?}");
+    assert!(stdout(&out).contains("also stopped 3 processes"), "{out:?}");
     // No scope: riff finds the processes by their environment, and says
     // so (01M49SVFW0FZ3DK57PACS7W5EY).
     let by_environment = riff::text::workers_by_environment(id);
@@ -509,8 +439,7 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
     }
     assert!(lives(&mut other), "a process of another worker stopped");
     assert!(lives(&mut twin), "a process of another riff home stopped");
-    assert!(lives(&mut cache), "the sccache server stopped");
-    for mut child in [other, twin, cache] {
+    for mut child in [other, twin] {
         child.kill().unwrap();
         child.wait().unwrap();
     }

@@ -3687,7 +3687,6 @@ flowchart TD
 | The memory of all workers | three quarters of the memory | `riff workers memory` |
 | The available memory that a new worker needs | 4 GB | `riff workers floor` |
 | The folder of the temp files of the workers | `~/.cache/riff/tmp` | `riff workers tmp` |
-| The most size of the compile cache of the workers | `40G` | `riff workers cache` |
 
 riff sets the limits when a worker starts. It does not change them
 while the workers run. Only the pool watches the memory pressure.
@@ -4288,10 +4287,6 @@ To see the scopes of the workers of this machine, run this. It lists
 systemctl --user list-units 'riff-worker-*.scope'
 ```
 
-The `sccache` server of the machine runs in its own scope,
-`riff-sccache-PORT.scope`, outside the scope of each worker. It never
-ends for idle time, so no build of a worker starts it again.
-
 ### Clean the worktrees of sessions that ended
 
 A session that ends leaves its worktree in `.claude/worktrees`, often
@@ -4428,68 +4423,24 @@ disk on Ubuntu, stop its tmpfs, then restart the machine:
 sudo systemctl mask tmp.mount
 ```
 
-### Share the compile cache of a host
+### Remove the old compile cache
 
-Each item gets a new worktree. With no cache, each worker builds each
-dependency again in its own `target` folder. So the workers of a
-machine share one compile cache: `sccache`. A new worktree reads the
-dependencies from the cache. The cache is on the machine only.
+riff gives the workers no compile cache. A build of a worker takes
+about the same time with `sccache` and with no cache: most
+of the time goes to work that `sccache` cannot keep, for example proc
+macros, build scripts, the crates of the workspace and the links.
 
-```mermaid
-flowchart TD
-    I["riff workers host, riff update"] --> F{"sccache of the pinned version?"}
-    F -- no --> C["cargo install --locked sccache"]
-    F -- yes --> W
-    C --> W["riff workers run: RUSTC_WRAPPER=sccache"]
-    W --> S["start the sccache server of the machine,<br/>with no variable of a worker"]
-    S --> B["each build of each worker<br/>reads and writes ~/.cache/riff/sccache"]
-```
-
-The `sccache` server is of the machine, not of a worker. So the clear,
-`riff workers reap` and `riff workers stop` of a worker never stop it.
-When the server ends, a build goes on with no cache.
-
-riff installs `sccache` itself. The start of `riff workers host`
-installs it, and `riff update` installs it on a machine with a limit of
-workers. When the install fails, the lead gets one note, and the
-workers build with no cache. To try the install again, run:
+riff 1.3.0 and older started an `sccache` server on each machine with
+workers, and kept the cache in `~/.cache/riff/sccache` (or
+`$RIFF_HOME/sccache`). That server still runs after the update. Stop
+it and delete the cache on each such machine:
 
 ```sh
-riff update
+systemctl --user stop 'riff-sccache-*.scope'
+rm -rf ~/.cache/riff/sccache
 ```
 
-`riff workers` shows the cache under the temp line: its size, its most
-size and its hit rate:
-
-```text
-temp 3.1GB in /home/mike/.cache/riff/tmp
-cache 12.0GB of 40G in /home/mike/.cache/riff/sccache, hits 85%
-```
-
-#### Show or change the size of the cache
-
-Show the most size and the cache now:
-
-```sh
-riff workers cache
-```
-
-Set the most size. The next worker that starts uses it. The default
-is `40G`:
-
-```sh
-riff workers cache 60G
-```
-
-#### Empty the cache
-
-Stop the workers of the machine first. Then stop the `sccache` server
-and delete the cache:
-
-```sh
-riff workers stop
-riff workers cache --clear
-```
+riff ignores the key `workers.cache` in `config.toml`.
 
 ### Watch the health of a machine
 

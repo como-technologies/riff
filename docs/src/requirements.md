@@ -3742,49 +3742,20 @@
   minute.
 - **01M41VAGY396K07BTPSW9TNBX5** `riff workers` shows the disk use of
   ROOT of this machine under the line of its disk.
-- **01M492379BGA3AERT1AM12C650** The workers of a machine share one
-  compile cache. `riff workers run` gives `claude` the variables
-  `RUSTC_WRAPPER` (the `sccache` of the machine), `SCCACHE_DIR`,
-  `SCCACHE_CACHE_SIZE`, `SCCACHE_SERVER_PORT` and
-  `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. With no `sccache`, it unsets the
-  five variables and says one line. The cache is on the
-  machine only: no cloud store, no network.
-- **01M49AB2QYGJ73Y19KGAY1WDW7** `riff workers run` starts the
-  `sccache` server of the machine before it starts `claude`, with no
-  variable of a worker and in its own process group.
-- **01M49SVFZS7HTYM3FSCV4ZCS0Q** The `sccache` server of the machine
-  runs outside the scope of each worker. When the worker has a scope,
-  `riff workers run` starts the server in the systemd scope
-  `riff-sccache-PORT.scope`. The server has
-  `SCCACHE_IDLE_TIMEOUT=0`, so it never ends for idle time, and a
-  build of a worker does not start it again in the scope of that
-  worker.
-- **01M49AB2TBMHGNXM3GE4NDFYYG** A process with
-  `SCCACHE_START_SERVER=1` whose binary (`/proc/PID/exe`, by device and
-  inode) is the `sccache` of the machine is the `sccache` server of the
-  machine. riff never trusts the name in `argv[0]`. No clear, reap or
-  stop of a worker stops the server. Each other process with the
-  variable stays a process of its worker.
-- **01M49237BM12PVBERD6JXDSX5V** The folder of the cache is
-  `$RIFF_HOME/sccache`, else `~/.cache/riff/sccache`. Its most size is
-  `workers.cache`, default `40G`. `riff workers cache` shows and sets
-  it.
-- **01M49237DWTBSEM6CVFH2BYC4V** The port of the `sccache` server
-  comes from the folder of the cache: 20000 to 29999. So the workers of
-  a machine share one server, and it never mixes with another
-  `sccache` server.
-- **01M4923963S666V9YWTZ46ZZ50** The start of `riff workers host`, and
-  `riff update` on a machine with a limit of workers more than 0, run
-  `cargo install --locked sccache --version` of the version that riff
-  pins, when `sccache` is missing or older. The host installs while it
-  serves. A failed install is one note to the lead from a host, and one
-  line from `riff update`. The workers then build with no cache.
-- **01M492398HA0AXX0J8BZCKNGTG** `riff workers` shows the compile cache
-  of this machine under its temp line: the size, the most size and the
-  hit rate, from `sccache --show-stats`.
-- **01M49239AWKEPKEPMZZRRTVRAT** `riff workers cache --clear` stops the
-  `sccache` server of the cache and deletes the folder of the cache. It
-  refuses while workers run on the machine.
+- **01M492379BGA3AERT1AM12C650** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M49AB2QYGJ73Y19KGAY1WDW7** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M49SVFZS7HTYM3FSCV4ZCS0Q** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M49AB2TBMHGNXM3GE4NDFYYG** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M49237BM12PVBERD6JXDSX5V** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M49237DWTBSEM6CVFH2BYC4V** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M4923963S666V9YWTZ46ZZ50** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M492398HA0AXX0J8BZCKNGTG** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M49239AWKEPKEPMZZRRTVRAT** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
+- **01M4BQA5K7DQHQ4DSJGQJH8ZQE** riff gives the workers no compile
+  cache. `riff workers run` sets no `RUSTC_WRAPPER` and no `SCCACHE_*`
+  variable, and starts no `sccache` server. `riff workers host` and
+  `riff update` install no `sccache`. riff has no `riff workers cache`
+  and no setting `workers.cache`.
 - **01M421QPKWPX00X24F8V6DT8Z3** The monitor of a machine reads its
   health each `monitor.every` seconds (default 15) while `monitor.on`
   is true (default false): the 1-minute and 5-minute load average, the
