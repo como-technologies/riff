@@ -553,10 +553,9 @@ impl Link {
     }
 
     /// Waits `wait` for a new try of a call. `waited` is the time of the
-    /// waits of the call before this one. It counts this wait before the
-    /// check of [`Link::show_wait`], so the line shows before the wait
-    /// that takes the gap past [`LINE_AFTER`]
-    /// (01M3THEE5V3RFHF9QTA8MA8QDF).
+    /// waits of the call before this one. When this wait takes the waits
+    /// to [`LINE_AFTER`], it first shows [`WAITING`] with `show`, or on
+    /// stderr, one time for each gap (01M3THEE5V3RFHF9QTA8MA8QDF).
     pub async fn wait(&self, waited: &mut Duration, wait: Duration, show: Option<&WaitLine>) {
         *waited += wait;
         self.show_wait(*waited, show);
