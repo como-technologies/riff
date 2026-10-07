@@ -266,6 +266,15 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     assert_eq!(settings["env"]["CLAUDE_CODE_TMPDIR"], tmp.as_str());
     let deny = settings["permissions"]["deny"].as_array().unwrap();
     assert_eq!(deny[..2], ["Bash(riff cloud)", "Bash(riff cloud *)"]);
+    // The rules of riff work (01M4BYH874WQ16Q0337WQA8AMV).
+    assert!(
+        deny.iter().any(|r| r == "Bash(git push * main)"),
+        "{settings}"
+    );
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    for rule in ["mcp__riff", "Bash(riff)", "Bash(riff *)"] {
+        assert!(allow.iter().any(|r| r == rule), "{rule}: {settings}");
+    }
 }
 
 /// A fake home with a dot file and a folder of notes.

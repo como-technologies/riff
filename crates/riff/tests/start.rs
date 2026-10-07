@@ -1,7 +1,10 @@
 //! `riff` with no command starts the riff (01M4BSSWWEBVHZGXCVYMJ7D7PQ to
 //! 01M4BSSX66A2NNVQK48KQH8BEZ). A fake `tmux` on `PATH` writes each call
 //! to a log and keeps its sessions in a file. Its `new-session` runs the
-//! command of the pane, so a fake `claude` writes its arguments.
+//! command of the pane, so a fake `claude` writes its arguments. riff
+//! gives the lead its plugin, MCP config and settings
+//! (01M4BYH7Y3P1JMQR51TWFGVZ39), and removes the entries of an older riff
+//! after a yes (01M4BYH82P03FTXZBYC72BJ6F3).
 
 use isolated::Isolated;
 use std::io::Write;
@@ -32,12 +35,12 @@ case "$1" in
 esac
 "#;
 
-/// Writes the arguments and the `RIFF_SERVER` that it got, and its
-/// environment.
+/// Writes the arguments, and the `RIFF_SERVER` and `RIFF_ON` that it
+/// got, and its environment.
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/claude.log"
-printf '%s\n' "$RIFF_SERVER" >> "$dir/claude.log"
+printf '%s %s\n' "$RIFF_SERVER" "$RIFF_ON" >> "$dir/claude.log"
 env > "$dir/claude.env"
 "#;
 
@@ -70,11 +73,12 @@ fn clone(root: &Path, name: &str, repo: &str) -> PathBuf {
     std::fs::canonicalize(dir).unwrap()
 }
 
-/// A machine with the fake `tmux` and `claude` first on `PATH` and a
-/// home of riff of its own.
+/// A machine with the fake `tmux` and `claude` first on `PATH`, a home
+/// of riff of its own, and a home of the person of its own.
 struct Machine {
     fake: tempfile::TempDir,
     home: tempfile::TempDir,
+    user: tempfile::TempDir,
     server: String,
 }
 
@@ -86,8 +90,14 @@ impl Machine {
         Machine {
             fake,
             home: tempfile::tempdir().unwrap(),
+            user: tempfile::tempdir().unwrap(),
             server: server.into(),
         }
+    }
+
+    /// The root of the plugin that riff writes.
+    fn plugin(&self) -> PathBuf {
+        self.user.path().join(".local/share/riff/claude-plugin/riff")
     }
 
     fn read(&self, name: &str) -> String {
@@ -107,6 +117,9 @@ impl Machine {
             .current_dir(dir)
             .env("PATH", path)
             .env("RIFF_HOME", self.home.path())
+            .env("HOME", self.user.path())
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("CLAUDE_CONFIG_DIR")
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")
@@ -189,21 +202,28 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     let lines: Vec<&str> = log.lines().collect();
     let settings =
         riff::start::lead_settings_file(&m.home.path().join("state"), "como-technologies/riff");
+    let mcp = m.home.path().join("state").join(riff::worker_mcp::FILE);
+    let plugin = m.plugin();
     assert_eq!(lines.len(), 3, "{log}");
     assert_eq!(
         lines[0],
         format!("-L riff -f {config} has-session -t =como-technologies/riff")
     );
     // The pane runs the lead through `riff workers lead`
-    // (01M4C4WQVZR49FDGPJMFW22GTM).
+    // (01M4C4WQVZR49FDGPJMFW22GTM), with the plugin, the MCP config and
+    // the settings that riff gives (01M4BYH80CFW1TBGKVA2VN9ZBQ).
     let start = format!(
-        "-L riff -f {config} new-session -d -s como-technologies/riff -c {} -e RIFF_SERVER={} '",
+        "-L riff -f {config} new-session -d -s como-technologies/riff -c {} \
+         -e RIFF_SERVER={} -e RIFF_ON=1 '",
         riff.display(),
         api.base(),
     );
     let end = format!(
         "' 'workers' 'lead' '--name' 'lead-como-technologies-riff' \
-         'claude' '--remote-control' '--settings' '{}'",
+         'claude' '--remote-control' '--plugin-dir' '{}' \
+         '--strict-mcp-config' '--mcp-config' '{}' '--settings' '{}'",
+        plugin.display(),
+        mcp.display(),
         settings.display(),
     );
     assert!(
@@ -224,15 +244,31 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
         assert!(!env.contains(MARKER), "{env}");
         assert!(!env.lines().any(|l| l.starts_with("TMUX=")), "{env}");
     }
-    // The fake claude ran with the flags of the lead and the server.
+    // The fake claude ran with the flags of the lead, the server and
+    // RIFF_ON=1 (01M4BYH80CFW1TBGKVA2VN9ZBQ).
     assert_eq!(
         m.read("claude.log"),
         format!(
-            "--remote-control --settings {}\n{}\n",
+            "--remote-control --plugin-dir {} --strict-mcp-config --mcp-config {} \
+             --settings {}\n{} 1\n",
+            plugin.display(),
+            mcp.display(),
             settings.display(),
             api.base()
         )
     );
+    // The plugin has the skill and the hooks, and no MCP server.
+    assert!(plugin.join("skills/riff/SKILL.md").is_file());
+    assert!(plugin.join("hooks/hooks.json").is_file());
+    assert!(!plugin.join(".mcp.json").exists());
+    // The MCP config has the riff server, and riff wrote nothing to the
+    // Claude config of the person.
+    let servers: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&mcp).unwrap()).unwrap();
+    assert_eq!(servers["mcpServers"]["riff"]["args"], serde_json::json!(["mcp"]));
+    assert!(!m.user.path().join(".claude").exists());
+    assert!(!riff.join(".claude/settings.json").exists());
+    assert!(!riff.join(".claude/settings.local.json").exists());
     // Its flag settings hold the permission rules of the profile of the
     // lead (01M4BT33R71HXAVQGHFD4ZFGR5): it edits the clone, and the
     // rules deny the rest of the home.
@@ -249,6 +285,15 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     let edit = format!("Edit(/{}/**)", riff.display());
     assert!(rules("allow").contains(&edit), "{settings}");
     assert!(!rules("deny").is_empty(), "{settings}");
+    // The status line and the rules of riff work
+    // (01M4BYH874WQ16Q0337WQA8AMV).
+    assert_eq!(settings["statusLine"]["command"], "riff statusline");
+    assert!(rules("allow").contains(&"Bash(riff *)".to_owned()), "{settings}");
+    assert!(rules("allow").contains(&"mcp__riff".to_owned()), "{settings}");
+    assert!(
+        rules("deny").contains(&"Bash(git push * main)".to_owned()),
+        "{settings}"
+    );
     let text = std::fs::read_to_string(m.home.path().join("state").join("tmux.conf")).unwrap();
     assert_eq!(text, riff::start::CONFIG);
 
@@ -272,6 +317,101 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     // The new clone is known now too.
     let clones = std::fs::read_to_string(m.home.path().join("state").join("clones")).unwrap();
     assert_eq!(clones, format!("{}\n", riff.display()));
+}
+
+/// `riff` lists the entries of an older riff in the Claude config, and
+/// removes them only after a yes. Each other entry stays
+/// (01M4BYH82P03FTXZBYC72BJ6F3).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
+    let api = start_server().await;
+    let m = Machine::new(api.base());
+    let root = tempfile::tempdir().unwrap();
+    let riff = clone(root.path(), "riff", "como-technologies/riff");
+    let claude = m.user.path().join(".claude");
+    let write = |path: &Path, text: &str| {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    let user = claude.join("settings.json");
+    write(
+        &user,
+        r#"{"theme": "dark",
+            "enabledPlugins": {"riff@riff": true, "x@y": true},
+            "extraKnownMarketplaces": {"riff": {"source": {"source": "directory"}}},
+            "statusLine": {"type": "command", "command": "riff statusline"},
+            "permissions": {"allow": ["Bash(riff *)", "Bash(ls)"]}}"#,
+    );
+    let local = riff.join(".claude/settings.local.json");
+    write(&local, r#"{"enabledPlugins": {"riff@riff": true}}"#);
+    let shared = riff.join(".claude/settings.json");
+    write(
+        &shared,
+        r#"{"permissions": {"allow": ["Bash(gh pr view *)", "Bash(make)"],
+            "deny": ["Bash(git push * main)"]}}"#,
+    );
+    write(
+        &claude.join("plugins/installed_plugins.json"),
+        r#"{"version": 2, "plugins": {"riff@riff": [{"scope": "user"}]}}"#,
+    );
+    write(
+        &claude.join("plugins/known_marketplaces.json"),
+        r#"{"riff": {}}"#,
+    );
+    let before = |path: &Path| std::fs::read_to_string(path).unwrap();
+    let (user_text, local_text, shared_text) = (before(&user), before(&local), before(&shared));
+
+    // A no keeps each entry. The person then picks no repository.
+    let out = m.riff(&riff, &[], "n\n\n");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let shown = stdout(&out);
+    for line in [
+        "An older riff wrote these entries to the Claude config:".to_owned(),
+        format!("  {}: enabledPlugins.\"riff@riff\"", user.display()),
+        format!("  {}: extraKnownMarketplaces.\"riff\"", user.display()),
+        format!("  {}: statusLine", user.display()),
+        format!("  {}: permissions.allow: Bash(riff *)", user.display()),
+        format!("  {}: enabledPlugins.\"riff@riff\"", local.display()),
+        format!("  {}: permissions.allow: Bash(gh pr view *)", shared.display()),
+        format!("  {}: permissions.deny: Bash(git push * main)", shared.display()),
+        "  the plugin riff@riff, installed in the scope user".to_owned(),
+        "  the plugin marketplace riff".to_owned(),
+        riff::text::OLD_CONFIG_KEPT.to_owned(),
+    ] {
+        assert!(shown.contains(&line), "{line}: {shown}");
+    }
+    assert!(!shown.contains("Bash(ls)") && !shown.contains("Bash(make)"), "{shown}");
+    assert_eq!(before(&user), user_text);
+    assert_eq!(before(&local), local_text);
+    assert_eq!(before(&shared), shared_text);
+    assert_eq!(m.read("claude.log"), "");
+
+    // A yes removes them, and riff starts the lead.
+    let out = m.riff(&riff, &[], "\n1\n");
+    assert!(out.status.success(), "{out:?}");
+    assert!(stdout(&out).contains(riff::text::OLD_CONFIG_REMOVED), "{out:?}");
+    let json = |path: &Path| -> serde_json::Value { serde_json::from_str(&before(path)).unwrap() };
+    assert_eq!(
+        json(&user),
+        serde_json::json!({"theme": "dark", "enabledPlugins": {"x@y": true},
+            "permissions": {"allow": ["Bash(ls)"]}})
+    );
+    assert_eq!(json(&local), serde_json::json!({}));
+    assert_eq!(
+        json(&shared),
+        serde_json::json!({"permissions": {"allow": ["Bash(make)"]}})
+    );
+    let calls = m.read("claude.log");
+    let plugin: Vec<&str> = calls.lines().filter(|l| l.starts_with("plugin ")).collect();
+    assert_eq!(
+        plugin,
+        [
+            "plugin uninstall riff@riff --scope user",
+            "plugin marketplace remove riff"
+        ],
+        "{calls}"
+    );
+    assert!(calls.contains("--remote-control"), "{calls}");
 }
 
 /// A path of a new clone starts its lead. An answer that picks nothing
