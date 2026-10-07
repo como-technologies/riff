@@ -465,70 +465,26 @@ async fn update_installs_both_binaries_then_updates_the_plugin() {
     );
 }
 
-/// 01M4923963S666V9YWTZ46ZZ50: `riff update` on a machine with a limit
-/// of workers installs the pinned `sccache` after riff. A failed install
-/// is one line, and the update goes on.
+/// 01M4BQA5K7DQHQ4DSJGQJH8ZQE: `riff update` on a machine with a limit
+/// of workers and no `sccache` installs only riff. It installs no
+/// compile cache.
 #[tokio::test]
-async fn update_installs_sccache_on_a_machine_with_workers() {
+async fn update_installs_no_compile_cache_on_a_machine_with_workers() {
     let addr = real().await;
     let home = tempfile::tempdir().unwrap();
     std::fs::write(home.path().join("config.toml"), "[workers]\nlimit = 2\n").unwrap();
-    let with = |bin: &Path| {
-        let mut cmd = update(bin, 0, &addr);
-        // Only a fake sccache of bin counts.
-        let real = std::env::var_os("PATH").unwrap();
-        let rest = std::env::split_paths(&real).filter(|d| !d.join("sccache").exists());
-        let path = std::env::join_paths(std::iter::once(bin.to_owned()).chain(rest)).unwrap();
-        cmd.env("PATH", path).env("RIFF_HOME", home.path());
-        cmd
-    };
-    let pinned = "install --locked sccache --version 0.18.0\n";
-
-    // The install puts sccache in place.
     let bin = tempfile::tempdir().unwrap();
-    let cmd = with(bin.path());
-    let cargo = bin.path().join("cargo");
-    std::fs::write(
-        &cargo,
-        format!(
-            "#!/bin/sh\necho \"$*\" >> {}/cargo.log\n\
-             case \"$*\" in *sccache*) printf '#!/bin/sh\\necho sccache 0.18.0\\n' > {0}/sccache; \
-             chmod +x {0}/sccache ;; esac\n",
-            bin.path().display()
-        ),
-    )
-    .unwrap();
+    let mut cmd = update(bin.path(), 0, &addr);
+    // No sccache on the PATH.
+    let real = std::env::var_os("PATH").unwrap();
+    let rest = std::env::split_paths(&real).filter(|d| !d.join("sccache").exists());
+    let path = std::env::join_paths(std::iter::once(bin.path().to_owned()).chain(rest)).unwrap();
+    cmd.env("PATH", path).env("RIFF_HOME", home.path());
     let out = run(cmd).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(log(bin.path(), "cargo"), install(&release()) + pinned);
-    assert!(
-        text(&out.stdout).contains("riff: installs sccache 0.18.0 for the compile cache"),
-        "{}",
-        text(&out.stdout)
-    );
-
-    // With the pinned sccache: no second install.
-    let out = run(with(bin.path())).await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(
-        log(bin.path(), "cargo"),
-        install(&release()) + pinned + &install(&release())
-    );
-
-    // A cargo that installs nothing: one line, and the update passes.
-    let bin = tempfile::tempdir().unwrap();
-    let out = run(with(bin.path())).await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let err = text(&out.stderr);
-    assert_eq!(
-        err.matches("cannot install sccache 0.18.0").count(),
-        1,
-        "{err}"
-    );
-    assert!(
-        err.contains("The workers there build with no compile cache."),
-        "{err}"
-    );
+    assert_eq!(log(bin.path(), "cargo"), install(&release()));
+    let all = text(&out.stdout) + &text(&out.stderr);
+    assert!(!all.contains("sccache"), "{all}");
 }
 
 #[tokio::test]

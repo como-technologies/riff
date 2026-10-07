@@ -61,14 +61,6 @@ esac
 exit 0
 "#;
 
-/// A fake `sccache` of the pinned version: it writes each call to the
-/// file `sccache.log`. So no host of a test installs a real one.
-const FAKE_SCCACHE: &str = r#"#!/bin/sh
-printf '%s\n' "$*" >> "$(dirname "$0")/sccache.log"
-[ "$1" = "--version" ] && echo "sccache 0.18.0"
-exit 0
-"#;
-
 /// The bound of each wait. It is generous: it only ends a test that
 /// hangs.
 const WAIT: Duration = Duration::from_secs(60);
@@ -93,7 +85,6 @@ impl Machine {
         let tmux = fake.path().join("tmux");
         std::fs::write(&tmux, FAKE_TMUX).unwrap();
         std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
-        script(fake.path(), "sccache", FAKE_SCCACHE);
         Machine {
             fake,
             home: tempfile::tempdir().unwrap(),
@@ -271,12 +262,10 @@ fn script(dir: &Path, name: &str, body: &str) {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// `PATH` with `dir` first, and with no folder of the machine that has
-/// an `sccache`: only a fake `sccache` of `dir` counts.
+/// `PATH` with `dir` first.
 fn path_with(dir: &Path) -> String {
     let real = std::env::var_os("PATH").unwrap();
-    let rest = std::env::split_paths(&real).filter(|d| !d.join("sccache").exists());
-    let all = std::iter::once(dir.to_owned()).chain(rest);
+    let all = std::iter::once(dir.to_owned()).chain(std::env::split_paths(&real));
     std::env::join_paths(all).unwrap().into_string().unwrap()
 }
 
@@ -1352,71 +1341,27 @@ fn the_book_says_what_a_host_does_with_no_reply() {
     }
 }
 
-/// The fake `cargo` that installs the fake `sccache` of the pinned
-/// version next to itself, and writes its arguments to `cargo.log`.
-fn installing_cargo() -> String {
-    format!(
-        "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/cargo.log\"\n\
-         cat > \"$dir/sccache.new\" <<'EOF'\n{FAKE_SCCACHE}EOF\n\
-         chmod +x \"$dir/sccache.new\"\nmv \"$dir/sccache.new\" \"$dir/sccache\"\n"
-    )
-}
-
-/// 01M4923963S666V9YWTZ46ZZ50: a host with no `sccache` installs the
-/// pinned one with `cargo`. With the pinned one, it runs no `cargo`. A
-/// failed install is one note to the lead.
+/// 01M4BQA5K7DQHQ4DSJGQJH8ZQE: a host runs no `cargo`: it installs no
+/// compile cache, and it sends the lead no note about one.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_host_installs_the_pinned_sccache_and_tells_the_lead_a_failure() {
+async fn a_host_installs_no_compile_cache() {
     let api = start_server().await;
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
     let lead = session(&main, "mike", "a", "l1");
     api.register(&lead).await.unwrap();
     api.set_riff(&lead, RiffState::Running).await.unwrap();
-    let file = |m: &Machine, name: &str| {
-        std::fs::read_to_string(m.fake.path().join(name)).unwrap_or_default()
-    };
-
-    // With the pinned sccache: no cargo.
     let b = Machine::new("b", api.base());
-    script(b.fake.path(), "cargo", &installing_cargo());
-    b.limit(1);
-    let host = b.host(&main);
-    until("the host looks at its sccache", || async {
-        file(&b, "sccache.log").contains("--version").then_some(())
-    })
-    .await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    assert_eq!(file(&b, "cargo.log"), "", "no install");
-    drop(host);
-
-    // With no sccache: the pinned install.
-    let c = Machine::new("c", api.base());
-    std::fs::remove_file(c.fake.path().join("sccache")).unwrap();
-    script(c.fake.path(), "cargo", &installing_cargo());
-    c.limit(1);
-    let _host = c.host(&main);
-    let log = until("the install", || async {
-        let log = file(&c, "cargo.log");
-        (!log.is_empty()).then_some(log)
-    })
-    .await;
-    assert_eq!(log, "install --locked sccache --version 0.18.0\n");
-
-    // A failed install: one note to the lead.
-    let d = Machine::new("d", api.base());
-    std::fs::remove_file(d.fake.path().join("sccache")).unwrap();
-    script(d.fake.path(), "cargo", "#!/bin/sh\nexit 101\n");
-    d.limit(1);
-    let _host = d.host(&main);
-    let note = "riff on d cannot install sccache 0.18.0: cargo install exit status: 101. \
-                The workers there build with no compile cache.";
-    let read = reads(&api, &lead, note).await;
-    assert_eq!(read.matches("cannot install sccache").count(), 1, "{read}");
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let later = riff::text::inbox(&api.inbox(&lead, None, false).await.unwrap(), &lead);
-    assert!(
-        !later.contains("cannot install sccache"),
-        "one note: {later}"
+    script(
+        b.fake.path(),
+        "cargo",
+        "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/cargo.log\"\n",
     );
+    b.limit(1);
+    let _host = b.host(&main);
+    host_session(&api, &lead, "b").await;
+    let cargo = std::fs::read_to_string(b.fake.path().join("cargo.log")).unwrap_or_default();
+    assert_eq!(cargo, "", "no install");
+    let inbox = riff::text::inbox(&api.inbox(&lead, None, false).await.unwrap(), &lead);
+    assert!(!inbox.contains("sccache"), "{inbox}");
 }
