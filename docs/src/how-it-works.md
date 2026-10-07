@@ -4038,7 +4038,12 @@ check refuses it.
 
 ```mermaid
 flowchart TD
-    P["a process of the worker:<br/>RIFF_WORKER=1, RIFF_SESSION=ID,<br/>the same RIFF_HOME"] --> C{"of a context:<br/>CLAUDE_PID set?"}
+    G{"a process in the scope<br/>riff-worker-ID.N.scope?"} -- yes --> I{"in that scope?"}
+    G -- "no: say so one time" --> P{"RIFF_WORKER=1, RIFF_SESSION=ID,<br/>the same RIFF_HOME?"}
+    I -- no --> N["not of the worker"]
+    P -- no --> N
+    I -- yes --> C{"of a context:<br/>CLAUDE_PID set?"}
+    P -- yes --> C
     C -- "no: claude, its MCP servers" --> K[keep]
     C -- yes --> W{"riff watch, or the caller?"}
     W -- yes --> K
@@ -4047,8 +4052,9 @@ flowchart TD
     T -- no --> K
 ```
 
-riff stops only a process of its own `RIFF_HOME`. A riff with another
-home, for example a test, has its own workers.
+With no scope, riff stops only a process of its own `RIFF_HOME`. A
+riff with another home, for example a test, has its own workers. See
+[How riff finds the processes of a worker](#how-riff-finds-the-processes-of-a-worker).
 
 When a process of an old context still runs, stop it. Give no pane
 for each worker of this machine, or the pane of one worker:
@@ -4067,6 +4073,32 @@ pane %4: no orphan process
 
 A process of the current context stays. When riff knows no start of
 the context of a worker, it stops nothing and says so.
+
+### How riff finds the processes of a worker
+
+Each worker runs in a systemd scope of its own:
+`riff-worker-ID.PID.scope`, where ID is the session of the worker and
+PID is its wrapper. A process stays in the cgroup of its parent. So
+each command of the worker is in the scope, also a command that drops
+`RIFF_WORKER` and `RIFF_SESSION`. When a process is in a scope of the
+worker, riff uses only the scope. When no process is in one, for
+example on a machine with no systemd, riff uses the environment. It
+says so one time:
+
+```text
+riff: the worker 2a880834 has no systemd scope, so riff finds its processes by RIFF_WORKER and RIFF_SESSION. A process that drops them is not found.
+```
+
+To see the scopes of the workers of this machine, run this. It lists
+`riff-worker-ID.PID.scope` for each worker:
+
+```sh
+systemctl --user list-units 'riff-worker-*.scope'
+```
+
+The `sccache` server of the machine runs in its own scope,
+`riff-sccache-PORT.scope`, outside the scope of each worker. It never
+ends for idle time, so no build of a worker starts it again.
 
 ### Clean the worktrees of sessions that ended
 

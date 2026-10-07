@@ -687,7 +687,7 @@ mod tests {
 
     #[test]
     fn a_scope_with_no_slice_has_no_systemd_run() {
-        let command = command("claude".as_ref(), &[], 5, None);
+        let command = command("claude".as_ref(), &[], 5, None, None);
         assert_eq!(command, ["nice", "-n", "5", "claude"]);
     }
 }

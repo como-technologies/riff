@@ -24,8 +24,11 @@
 //! `riff workers run` starts it before `claude`, with no variable of a
 //! worker and in its own process group ([`Cache::start_server`]). So
 //! the clear, the reap and the stop of the worker that built first do
-//! not see it. A server that a build starts again, for example after
-//! its idle time, has [`SERVER_MARK`]`=1` in its environment and runs
+//! not see it. When the worker has a systemd scope, the server runs in
+//! a scope of its own, outside the scope of each worker, and it never
+//! ends for idle time ([`Cache::server_command`],
+//! 01M49SVFZS7HTYM3FSCV4ZCS0Q). A server that a build starts again, for
+//! example after a crash, has [`SERVER_MARK`]`=1` in its environment and runs
 //! the binary of [`find`]. [`crate::workload::is_cache_server`] never
 //! counts such a process as a process of a worker. It looks at the
 //! binary in `/proc/PID/exe`, not at the name in `argv[0]`: a process
