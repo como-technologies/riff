@@ -1547,20 +1547,23 @@
   stream is one call.
 - **R131** Cloud Run ends each call after 60 minutes. `riff watch` and
   `riff tail` then connect again.
-- **R132** `riff` tries a call again while the server replies 503, for
-  up to 60 seconds.
+- **R132** `riff` tries a call again after a fault, while the budget of
+  the call lasts (01M4A803Z4Q0KX6NT1KC6QR43H,
+  01M4A8041F8EK1VYDE4C9QG8N8). A 503 of the server is a fault.
 - **01M3THEE5V3RFHF9QTA8MA8QDF** When a call waits for more than 1
   second while the server replies 503, `riff` shows one dim line
   `(waits for riff-server…)` on stderr. It shows the line one time for
   each gap, also with more than one call. `riff chat` shows the line
   above its prompt. `riff top` keeps its table.
-- **01M3TJWJ9914B7Z5EQJF310REK** `riff` tries a refused connect again
-  only when its process got a reply from that server before. It then
-  waits as for a 503 (R132), and shows the same line. A process that
-  got no reply from the server fails at once.
-- **R148** `riff watch` and `riff tail` connect again at once when a
-  stream ends. When a connect fails, they try again every 5 seconds.
-  They stop only when the person stops them.
+- **01M3TJWJ9914B7Z5EQJF310REK** `riff` tries a refused connect to a
+  loopback address again only when its process got a reply from that
+  server before (01M4A804683G1EXM53893VHW7S). It then waits as for a
+  503 (R132), and shows the same line. A process that got no reply from
+  the server fails at once.
+- **R148** `riff watch`, `riff tail`, `riff chat`, `riff top` and
+  `riff workers host` connect a stream again at once when it ends. The
+  open of a stream is one try. When it fails, they try again after
+  `STREAM_RETRY`, 5 seconds. They stop only when the person stops them.
 - **R133** `riff` uses `http://127.0.0.1:7878`, the server on the same
   machine, when no server is set. `--server` or `RIFF_SERVER` names
   another server, for example the shared server (R5).
@@ -2148,10 +2151,11 @@
 - **01M3Z8FXE2DY34ZP75WJE1S8HR** After one good look, `riff top` stays
   open when a look fails and a new try can repair the fault: riff
   cannot reach the server, a connection fails in the middle of a call,
-  the front end replies by itself, or no reply comes in 10 seconds. It
-  keeps the last table. Its first line is then one red line with the
-  time of the last good look and the fault. It looks again at its
-  interval, with new connections. The line goes at the next good look.
+  the front end replies by itself, or no reply comes in the budget of
+  a call (01M4A803Z4Q0KX6NT1KC6QR43H). It keeps the last table. Its
+  first line is then one red line with the time of the last good look
+  and the fault. It looks again at its interval. The line goes at the
+  next good look.
   `riff top --once`, a first look that fails, and each other fault end
   `riff top` with the error and a status that is not 0.
 - **01M3ZC09FA9DZPTHK31XECZ566** When a later read of `gh` fails,
@@ -3312,8 +3316,9 @@
 - **01M3NBV46R0VB0JQNQ1ERG16J6** `riff workers host` reads no input
   and leaves the mode of the terminal as it is.
 - **01M3WN72M02P3J24ACCHTMNSFY** Each call of `riff workers host` to
-  the server has a time limit of 20 seconds. When no reply comes in
-  time, the host says so on its output and goes on. At its next
+  the server has the budget of a short command
+  (01M4A803Z4Q0KX6NT1KC6QR43H). When no reply comes in the budget, the
+  host says so on its output and goes on. At its next
   refresh, it sets its status again, and it reads the requests that it
   did not read.
 - **01M3WN72ECF0WKR4M7M6ZYAF9J** Each stream of the client (`watch`,
@@ -3325,13 +3330,55 @@
   each 10 seconds, also with no open call, and drops a connection with
   no answer in 5 seconds. On Linux, a TCP connection with data that
   gets no answer for 20 seconds closes. So a call never waits for ever
-  on a dead connection. A try with no reply in its limit fails with the
-  error that the server gave no reply in that time.
+  on a dead connection. A try with no reply in its limit is a fault
+  (01M4A8041F8EK1VYDE4C9QG8N8). When the budget of the call ends with
+  no reply, the error says that the server gave no reply in the budget.
 - **01M48RW9HNKPNZ75H9R01BG6V5** A stream of the client has the same
   limit for a connect, and no total limit. A stream that gives no byte
   for 45 seconds (`STREAM_IDLE`, three keep-alive comments of the
   server) ends, and `follow` connects again. So a stream that died
   with no sign, for example after a sleep of the machine, comes back.
+- **01M4A803WN0KTDGGAX2E771XDF** Only the link talks to
+  `riff-server`. A process has one link for each server: a map by the
+  URL of the server. Each `Api` of one server shares the link: one
+  HTTP client of the calls, one client of the streams, and what the
+  process knows of the server.
+- **01M4A803Z4Q0KX6NT1KC6QR43H** Each call has a budget: the time from
+  its first try to its end. A short command, a tool call of `riff mcp`,
+  a post of `riff chat`, a look of `riff top` and a call of
+  `riff workers host` have `SHORT_BUDGET`, 60 seconds. The start hook
+  has `STATE_WAIT`, the end of a session `END_WAIT`, and the status
+  line one try in `STATUSLINE_WAIT`. The budget is a deadline: the link
+  cuts the open try at it. Each try has the limit
+  `min(TRY_WAIT, the budget that is left)`. The open of a stream is one
+  try, and a stream has no budget.
+- **01M4A8041F8EK1VYDE4C9QG8N8** Each try ends in a reply, a fault or a
+  refusal. A fault is no connect, a cut before the end of the reply, no
+  reply in the limit of the try, a 5xx or 429 with no build header, or
+  a 503 of `riff-server`. A fault gets a new try after a wait, while the
+  budget lasts. The wait grows from 250 ms, double each time, to
+  `MOST_WAIT`, 5 seconds, less a random part of up to half of it. A
+  refusal is each other reply of `riff-server`, and a build that riff
+  cannot talk to. It gets no new try. A 401 to a token gets one new try
+  with a new token.
+- **01M4A8043S2ZCKRH19Z3Q8AJ1F** A fault with no HTTP reply (no
+  connect, a cut, no reply in time) makes a new HTTP client of the
+  calls of the link, which each `Api` of the server shares. A 503 or a
+  429 keeps the client.
+- **01M4A804683G1EXM53893VHW7S** A refused connect to a loopback address
+  of a server that never replied to the process ends the call at once.
+  It is no fault. Each other connect error is a fault.
+- **01M4A8048J60YSVNVYF2432KE8** Each call of `riff` has a call ID: 16
+  random bytes in base 64 with no padding, in the header `riff-call`.
+  Each try of the call sends the same ID. So `riff-server` runs a
+  command one time only (01M48VFX22S4811DYBBD7QDW24), also when riff
+  sent it again after a cut or after no reply in time.
+- **01M4A804AWYEHPYZ966A6PXRPF** `riff chat` posts the typed lines from
+  a task of their own, in their order. Its screen takes input while a
+  post waits. At its end, it waits for the posts of the typed lines.
+- **01M4A804D7JAPRAT1YKD09ATK3** A test sets the budget of the short
+  calls of a `riff` process in milliseconds with the environment
+  variable `RIFF_LINK_BUDGET_MS`.
 - **01M48RW9MA30A12E7XWX047CJ0** The server ends a `watch` or `tail`
   stream when the stream lags behind its buffer of events. It does not
   drop the events with no sign. The client connects again, and a

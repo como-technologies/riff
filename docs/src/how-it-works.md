@@ -1110,13 +1110,14 @@ A laptop sleeps, or the Wi-Fi drops. `riff top` stays open. It keeps
 the last table, and its first line is red:
 
 ```text
-riff: no good look since 21:35:07: riff-server gave no reply in 10 seconds
+riff: no good look since 21:35:07: riff-server gave no reply in 60 seconds
 ```
 
 The line has the time of the last good look, then the fault. The fault
-can be another text, for example `cannot reach riff-server`. riff
-tries a look again for 10 seconds before the look fails. So the line
-comes about 13 seconds after the fault starts.
+can be another text, for example `cannot reach riff-server`. Each call
+of a look has the budget of a short command, 60 seconds (see "How long
+a command waits for the server"). So the line comes about 63 seconds
+after the fault starts.
 
 The table under the line is old. It keeps its titles and its board,
 also when `gh` fails too. `riff top` looks again every 3 seconds. You
@@ -3361,9 +3362,10 @@ A server on one machine with `--dir` opens its port only after the
 gap. Before that, each connect is refused. A `riff` that got a reply
 from the server before waits in the same way: `riff mcp`,
 `riff watch`, `riff chat` and `riff top` go on after a restart. A new
-`riff` command cannot tell a server that starts from no server, so it
-fails at once. Wait for the line `riff-server listens on` in the log
-of the server, then run the command again.
+`riff` command cannot tell a server on this machine that starts from
+no server, so a refused connect to `127.0.0.1` or `localhost` ends it
+at once. Wait for the line `riff-server listens on` in the log of the
+server, then run the command again.
 
 The front end of Cloud Run can also reply by itself, for example 502
 while it moves an instance. Such a reply has no `riff-build` header.
@@ -3379,7 +3381,7 @@ has time limits:
 | Limit | Value | What riff does |
 |---|---|---|
 | A connect | 5 s | The call or the stream fails, and riff tries again. |
-| One try of a call | 20 s | The call fails with `riff-server at URL gave no reply in 20 seconds`. |
+| One try of a call | 20 s | riff tries the call again, while the budget of the call lasts. |
 | A stream with no byte | 45 s | The stream ends, and riff connects again. |
 
 The server sends a keep-alive line on each stream each 15 seconds. So
@@ -3433,6 +3435,47 @@ flowchart LR
     L -- "riff workers start 3" --> W1 & W2 & W3
 ```
 
+
+### How long a command waits for the server
+
+Each call of `riff` to the server has a budget: the longest time from
+its first try to its end.
+
+| Call | Budget |
+|---|---|
+| A short command, for example `riff who` or `riff post` | 60 seconds |
+| A tool call of an agent session, a line of `riff chat`, a look of `riff top`, a call of `riff workers host` | 60 seconds |
+| The start of a Claude Code session | 3 seconds |
+| The status line | 2 seconds, one try |
+| The end of a session | 3 seconds |
+
+When a try gets no reply, riff tries again after a short wait, while
+the budget lasts. The wait grows from a quarter of a second to 5
+seconds. A reply that says no, for example `held`, gets no new try.
+
+```mermaid
+flowchart TD
+    T[a try] -->|a reply| R[the command shows it]
+    T -->|a refusal| N[the command shows why]
+    T -->|no reply, a cut, 502, 503 or 429| W{budget left?}
+    W -->|yes| A[wait, then a new try with the same call ID]
+    A --> T
+    W -->|no| E["riff-server at URL gave no reply in 60 seconds"]
+```
+
+Each try of one call sends the same call ID. So the server runs a
+command one time only, also when a reply was lost and riff sent the
+command again. A post or a claim never runs two times.
+
+A command with no server on this machine ends at once:
+
+```sh
+riff who
+```
+
+```text
+Error: cannot reach riff-server at http://127.0.0.1:7878
+```
 ### Start the lead in tmux
 
 Start tmux in your repository, then start the lead with Remote
@@ -4630,12 +4673,13 @@ Starts no worker: 4 workers died in the last hour. riff starts workers again whe
 
 ### When the server gives a workers host no reply
 
-Each call of the host to the server has a time limit of 20 seconds.
-When no reply comes in time, the host prints a line in its pane and
-goes on:
+Each call of the host to the server has the budget of a short command,
+60 seconds. A try with no reply in 20 seconds gets a new try. When the
+budget ends with no reply, the host prints a line in its pane and goes
+on:
 
 ```text
-riff: cannot read the requests: riff-server at https://riff.example.com gave no reply in 20 seconds
+riff: cannot read the requests: riff-server at https://riff.example.com gave no reply in 60 seconds
 ```
 
 You do not start the host again. Each 30 seconds, the host sets its
@@ -4651,7 +4695,8 @@ sequenceDiagram
     L->>S: riff workers start 1 --host pangolin
     S->>H: wake
     H->>S: read the requests
-    Note over H,S: no reply in 20 seconds
+    Note over H,S: no reply in 20 seconds: a new try
+    Note over H,S: no reply in 60 seconds
     H->>H: print "gave no reply", go on
     H->>S: after 30 seconds: status, read the requests
     S-->>H: workers start 1
