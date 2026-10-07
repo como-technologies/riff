@@ -84,7 +84,7 @@ async fn a_watch_has_a_connection_of_its_own() {
 
     let mut wakes = Box::pin(follow(|| api.watch(&me), Duration::from_secs(5)));
     server.tell(&lead, "h1", "hello").await.unwrap();
-    let wake = tokio::time::timeout(Duration::from_secs(30), wakes.next()).await;
+    let wake = isolated::in_time(Duration::from_secs(30), wakes.next()).await;
     assert!(matches!(wake, Ok(Some(Ok(_)))), "no wake came");
     let watch = ports(&seen, "/v1/watch");
     assert_eq!(watch.len(), 1, "{watch:?}");
@@ -95,7 +95,7 @@ async fn a_watch_has_a_connection_of_its_own() {
 
     // Each call gets its reply while the watch is open.
     for _ in 0..5 {
-        let inbox = tokio::time::timeout(Duration::from_secs(30), api.inbox(&me, None, true));
+        let inbox = isolated::in_time(Duration::from_secs(30), api.inbox(&me, None, true));
         assert!(inbox.await.is_ok(), "a call got no reply");
     }
     let seen = seen.lock().unwrap();

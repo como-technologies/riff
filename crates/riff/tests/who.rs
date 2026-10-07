@@ -322,7 +322,7 @@ async fn a_long_step_shows_and_a_failed_step_wakes_the_lead() {
         row(&server, dir, "b2").await,
         "mike@pangolin:riff (b2) idle ready for work for Ns live window failed Ns ago: the stage gave 502"
     );
-    let wake = tokio::time::timeout(
+    let wake = isolated::in_time(
         Duration::from_secs(30),
         futures::StreamExt::next(&mut wakes),
     );

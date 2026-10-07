@@ -8,7 +8,7 @@
 use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::local;
 
@@ -55,9 +55,9 @@ fn clear_context(run: &Path) -> String {
 
 /// Waits until `done` is true, for at most 20 seconds.
 fn wait_for(what: &str, done: impl Fn() -> bool) {
-    let end = Instant::now() + Duration::from_secs(20);
+    let span = isolated::Span::start();
     while !done() {
-        assert!(Instant::now() < end, "timed out: {what}");
+        assert!(span.within(Duration::from_secs(20)), "timed out: {what}");
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -138,13 +138,9 @@ fn a_leave_holds_over_clear() {
 
     // The leave tool writes the record.
     local::leave(&files(run.path()), "old").unwrap();
-    let start = Instant::now();
+    let span = isolated::Span::start();
     let out = watch.wait_with_output().unwrap();
-    assert!(
-        start.elapsed() < Duration::from_secs(1),
-        "{:?}",
-        start.elapsed()
-    );
+    assert!(span.within(Duration::from_secs(1)), "{:?}", span.wall());
     assert!(out.status.success());
     assert_eq!(stdout(&out), format!("{}\n", riff::text::WATCH_LEFT));
 

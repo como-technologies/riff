@@ -12,7 +12,7 @@ use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::api::Api;
 use riff::identity;
@@ -296,8 +296,8 @@ fn scoped_sleeper(home: &Path, id: &str, n: u32, context: bool, drop: bool) -> C
 /// Waits until the process of `child` is in a scope of a worker: the
 /// start of `systemd-run` is short, but not instant.
 fn in_scope(child: &Child) {
-    let end = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < end {
+    let span = isolated::Span::start();
+    while span.within(Duration::from_secs(20)) {
         let cgroup = std::fs::read_to_string(format!("/proc/{}/cgroup", child.id()));
         let path = cgroup.ok().and_then(|text| riff::reap::cgroup_path(&text));
         if path.is_some_and(|path| riff::workload::scope_worker(&path).is_some()) {
@@ -310,8 +310,8 @@ fn in_scope(child: &Child) {
 
 /// Waits until `child` ends, at most 20 seconds. True when it ended.
 fn ends(child: &mut Child) -> bool {
-    let end = Instant::now() + Duration::from_secs(20);
-    while Instant::now() < end {
+    let span = isolated::Span::start();
+    while span.within(Duration::from_secs(20)) {
         if child.try_wait().unwrap().is_some() {
             return true;
         }

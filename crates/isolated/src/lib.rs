@@ -39,6 +39,9 @@
 //! - A test that needs a place outside each git repository gets its
 //!   temp dir from [`outside_git`] (01M43B48Z8R0SXAWBQP75CPR55).
 //!
+//! A check of a time in a test uses a [`Span`]: it fails only when the
+//! logic is slow, not when the machine is busy. See [`time`].
+//!
 //! [`offenders`] finds each test file that names a binary of riff
 //! without the helper. A test of this crate fails on each one.
 //!
@@ -57,6 +60,10 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use tempfile::TempDir;
+
+pub mod time;
+
+pub use time::{HANG, Late, PRESSURE_LIMIT, Span, in_time, stall};
 
 /// The prefixes of the variables that the helper removes: riff and the
 /// agent tool read them.

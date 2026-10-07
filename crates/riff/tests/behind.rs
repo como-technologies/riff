@@ -6,7 +6,7 @@
 use isolated::Isolated;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::hook::{FETCH_WAIT, STATE_WAIT};
 
@@ -47,7 +47,7 @@ fn push_one(root: &Path) {
 }
 
 /// The context of the start hook in `dir`, and how long the hook ran.
-fn context(dir: &Path, env: &[(&str, &str)]) -> (String, Duration) {
+fn context(dir: &Path, env: &[(&str, &str)]) -> (String, isolated::Span) {
     let run = tempfile::tempdir().unwrap();
     let mut cmd = Isolated::shared().riff();
     cmd.args(["hook", "session-start"])
@@ -63,24 +63,23 @@ fn context(dir: &Path, env: &[(&str, &str)]) -> (String, Duration) {
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let start = Instant::now();
+    let span = isolated::Span::start();
     let out = cmd.output().unwrap();
-    let took = start.elapsed();
     assert!(out.status.success(), "{out:?}");
     let out: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let context = out["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap()
         .to_owned();
-    (context, took)
+    (context, span)
 }
 
 /// The hook reads the state of the riff and fetches at the same time.
 /// So it ends within the longer of the two limits, plus a margin for the
 /// process.
-fn within_limits(took: Duration) {
+fn within_limits(took: &isolated::Span) {
     let limit = STATE_WAIT.max(FETCH_WAIT) + Duration::from_secs(2);
-    assert!(took < limit, "the hook took {took:?}");
+    assert!(took.within(limit), "the hook took {:?}", took.wall());
 }
 
 #[test]
@@ -96,7 +95,7 @@ fn a_clone_one_commit_behind_gets_the_line() {
     );
     assert!(context.contains("pull --ff-only"), "{context}");
     assert!(context.contains("Do not pull yourself"), "{context}");
-    within_limits(took);
+    within_limits(&took);
 }
 
 #[test]
@@ -120,7 +119,7 @@ fn a_clone_that_is_up_to_date_gets_no_line() {
     remote_and_clone(root.path());
     let (context, took) = context(&root.path().join("clone"), &[]);
     assert!(!context.contains("behind origin"), "{context}");
-    within_limits(took);
+    within_limits(&took);
 }
 
 #[test]
@@ -140,7 +139,7 @@ fn a_repository_with_no_remote_gets_no_line() {
     git(root.path(), &["init", "-q", "-b", "main", "repo"]);
     let (context, took) = context(&root.path().join("repo"), &[]);
     assert!(!context.contains("behind origin"), "{context}");
-    within_limits(took);
+    within_limits(&took);
 }
 
 #[test]
@@ -155,7 +154,7 @@ fn a_remote_that_is_gone_gets_no_line() {
     );
     let (context, took) = context(&clone, &[]);
     assert!(!context.contains("behind origin"), "{context}");
-    within_limits(took);
+    within_limits(&took);
 }
 
 /// The remote does not answer: the ssh command of git sleeps. The hook
@@ -184,6 +183,10 @@ fn a_remote_that_does_not_answer_gets_no_line_in_time() {
         ],
     );
     assert!(!context.contains("behind origin"), "{context}");
-    assert!(took >= FETCH_WAIT, "the fetch did not wait: {took:?}");
-    within_limits(took);
+    assert!(
+        took.wall() >= FETCH_WAIT,
+        "the fetch did not wait: {:?}",
+        took.wall()
+    );
+    within_limits(&took);
 }

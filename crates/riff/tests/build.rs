@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::http::HeaderValue;
 use axum::response::sse::{Event, Sse};
@@ -195,8 +195,8 @@ const WAIT: Duration = Duration::from_secs(60);
 
 /// Waits up to `limit` until `test` is true.
 async fn wait_for(limit: Duration, test: impl Fn() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < limit {
+    let span = isolated::Span::start();
+    while span.within(limit) {
         if test() {
             return true;
         }
@@ -720,8 +720,8 @@ async fn tail_and_watch_keep_their_place_over_an_update() {
     assert!(!read(tail_err).contains("acme/beta"), "{}", read(tail_err));
     // The tail connects again within one retry, and shows only new
     // messages. So post until it shows one.
-    let start = Instant::now();
-    while !read(tail_out).contains("alpha two") && start.elapsed() < Duration::from_secs(20) {
+    let span = isolated::Span::start();
+    while !read(tail_out).contains("alpha two") && span.within(Duration::from_secs(20)) {
         let mut post = riff(
             &url,
             root.path(),
@@ -743,10 +743,8 @@ async fn tail_and_watch_keep_their_place_over_an_update() {
         text(&run(who).await.stdout)
     };
     let mut listed = arrived().await;
-    let start = Instant::now();
-    while !listed.contains("brett@heron:alpha#issue-12")
-        && start.elapsed() < Duration::from_secs(15)
-    {
+    let span = isolated::Span::start();
+    while !listed.contains("brett@heron:alpha#issue-12") && span.within(Duration::from_secs(15)) {
         tokio::time::sleep(Duration::from_millis(200)).await;
         listed = arrived().await;
     }

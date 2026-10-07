@@ -11,7 +11,7 @@ use riff_core::build::{Build, HEADER};
 use std::path::Path;
 use std::process::Command as Git;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const ID: &str = "a6cf2205-d54a-4c1e-9b1f-2e3d4c5b6a7f";
 
@@ -131,7 +131,7 @@ async fn the_status_line_shows_the_session_and_its_claims() {
 async fn without_a_server_the_status_line_still_shows_the_session() {
     let dir = repo();
     let stdin = format!(r#"{{"session_id":"{ID}"}}"#);
-    let started = std::time::Instant::now();
+    let span = isolated::Span::start();
     let (out, code) = riff(
         "http://127.0.0.1:1",
         dir.path(),
@@ -142,7 +142,7 @@ async fn without_a_server_the_status_line_still_shows_the_session() {
     .await;
     assert_eq!(out, "riff a6cf2205 (not in the riff)\n");
     assert_eq!(code, 0);
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(span.within(std::time::Duration::from_secs(5)));
 }
 
 #[tokio::test]
@@ -300,12 +300,12 @@ async fn a_server_that_does_not_answer_in_time_gives_no_tag_in_time() {
             open.push(socket);
         }
     });
-    let started = Instant::now();
+    let span = isolated::Span::start();
     assert_eq!(
         line(&format!("http://{addr}"), dir.path()).await,
         "riff a6cf2205 (not in the riff)\n"
     );
-    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(span.within(Duration::from_secs(5)));
 }
 
 /// Marks the `riff mcp` of this test process as ended: an `mcp-PID`

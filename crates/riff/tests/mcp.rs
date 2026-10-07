@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use isolated::Isolated;
+use isolated::{Isolated, Span, in_time};
 use riff::api::Api;
 use riff::mcp::Tools;
 use riff_core::name::SessionUri;
@@ -492,8 +492,8 @@ async fn riff_mcp_runs_the_new_binary_and_keeps_the_connection() {
     install(&riff, &binary);
     let new = std::fs::metadata(&binary).unwrap().ino();
     assert_ne!(old, new);
-    let start = Instant::now();
-    while runs(pid) != new && start.elapsed() < Duration::from_secs(10) {
+    let span = Span::start();
+    while runs(pid) != new && span.within(Duration::from_secs(10)) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
@@ -553,8 +553,8 @@ async fn a_new_riff_that_fails_its_check_leaves_the_tools_in_place() {
     let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
 
     install(&broken, &binary);
-    let start = Instant::now();
-    while !log().contains("fails its check") && start.elapsed() < Duration::from_secs(15) {
+    let span = Span::start();
+    while !log().contains("fails its check") && span.within(Duration::from_secs(15)) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(
@@ -571,8 +571,8 @@ async fn a_new_riff_that_fails_its_check_leaves_the_tools_in_place() {
 
     install(&riff, &binary);
     let new = std::fs::metadata(&binary).unwrap().ino();
-    let start = Instant::now();
-    while runs(pid) != new && start.elapsed() < Duration::from_secs(15) {
+    let span = Span::start();
+    while runs(pid) != new && span.within(Duration::from_secs(15)) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(runs(pid), new, "{}", log());
@@ -750,8 +750,8 @@ async fn each_call_in_flight_at_an_update_gets_one_answer() {
     }
     let new = std::fs::metadata(&binary).unwrap().ino();
     let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
-    let wait = Instant::now();
-    while runs(pid) != new && wait.elapsed() < Duration::from_secs(10) {
+    let span = Span::start();
+    while runs(pid) != new && span.within(Duration::from_secs(10)) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(runs(pid), new, "{}", log());
@@ -761,9 +761,8 @@ async fn each_call_in_flight_at_an_update_gets_one_answer() {
         .await
         .unwrap();
 
-    let wait = Instant::now();
-    while answers.lock().unwrap().len() < last as usize && wait.elapsed() < Duration::from_secs(20)
-    {
+    let span = Span::start();
+    while answers.lock().unwrap().len() < last as usize && span.within(Duration::from_secs(20)) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let answers = answers.lock().unwrap();
@@ -832,16 +831,16 @@ async fn a_call_in_flight_at_an_update_gets_its_answer() {
         .write_all(call_line(1, "who").as_bytes())
         .await
         .unwrap();
-    let start = Instant::now();
+    let span = Span::start();
     while held.held.load(Ordering::SeqCst) == 0 {
-        assert!(start.elapsed() < Duration::from_secs(10), "{}", log());
+        assert!(span.within(Duration::from_secs(10)), "{}", log());
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     install(&riff, &binary);
     let new = std::fs::metadata(&binary).unwrap().ino();
 
     // Its answer comes.
-    let answer = tokio::time::timeout(HOLD * 3, lines.next_line()).await;
+    let answer = in_time(HOLD * 3, lines.next_line()).await;
     let answer = answer.ok().and_then(|line| line.unwrap());
     let answer = answer.unwrap_or_else(|| panic!("no answer to the call: {}", log()));
     held.on.store(false, Ordering::SeqCst);
@@ -849,8 +848,8 @@ async fn a_call_in_flight_at_an_update_gets_its_answer() {
     assert!(answer.contains("session=a1"), "{answer}");
 
     // Then the new binary runs, and the next answer is of the next call.
-    let start = Instant::now();
-    while runs(pid) != new && start.elapsed() < Duration::from_secs(10) {
+    let span = Span::start();
+    while runs(pid) != new && span.within(Duration::from_secs(10)) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(runs(pid), new, "{}", log());
@@ -858,7 +857,7 @@ async fn a_call_in_flight_at_an_update_gets_its_answer() {
         .write_all(call_line(2, "whoami").as_bytes())
         .await
         .unwrap();
-    let next = tokio::time::timeout(Duration::from_secs(10), lines.next_line()).await;
+    let next = in_time(Duration::from_secs(10), lines.next_line()).await;
     let next = next.ok().and_then(|line| line.unwrap()).unwrap_or_default();
     assert!(next.contains("\"id\":2"), "{next}");
     assert!(child.try_wait().unwrap().is_none(), "{}", log());

@@ -292,7 +292,7 @@ async fn the_owner_and_the_members_stay_after_a_restart() {
     // A new server on the same store. A setting does not replace the
     // owner that the store holds.
     let (new, url) = serve(&issuer, &[], Some("other@gmail.com"), Some(Arc::new(store))).await;
-    tokio::time::timeout(Duration::from_secs(5), old.stopped())
+    isolated::in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
     let list = new.members();
@@ -341,7 +341,7 @@ async fn the_owner_makes_an_admin_that_stays_after_a_restart() {
     old.save().await.unwrap();
 
     let (new, url) = serve(&issuer, &["Dan@gmail.com"], None, Some(Arc::new(store))).await;
-    tokio::time::timeout(Duration::from_secs(5), old.stopped())
+    isolated::in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
     // The admin that the owner made stays. The admin of the settings
@@ -401,7 +401,7 @@ async fn the_owner_passes_the_role_that_stays_after_a_restart() {
     old.save().await.unwrap();
 
     let (new, url) = serve(&issuer, &[], ada_owner, Some(Arc::new(store))).await;
-    tokio::time::timeout(Duration::from_secs(5), old.stopped())
+    isolated::in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
     assert_eq!(new.members().owner.as_deref(), Some("bob@gmail.com"));
@@ -508,7 +508,7 @@ async fn a_user_stays_with_its_email_after_a_revoke_and_a_restart() {
 
     // When a new server starts on the same store.
     let (new, url) = serve(&issuer, &[], None, Some(Arc::new(store))).await;
-    tokio::time::timeout(Duration::from_secs(5), old.stopped())
+    isolated::in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
 

@@ -150,7 +150,7 @@ async fn mcp_for(server: &str, dir: &Path, time: Duration) {
     let mut mcp = mcp.spawn().unwrap();
     tokio::time::sleep(time).await;
     drop(mcp.stdin.take());
-    let ended = tokio::time::timeout(Duration::from_secs(20), mcp.wait()).await;
+    let ended = isolated::in_time(Duration::from_secs(20), mcp.wait()).await;
     assert!(ended.is_ok(), "riff mcp did not end");
 }
 

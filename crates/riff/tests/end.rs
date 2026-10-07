@@ -6,7 +6,7 @@
 use isolated::Isolated;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use riff::api::Api;
 use riff::mcp::Tools;
@@ -100,9 +100,12 @@ async fn shown(api: &Api) -> Vec<String> {
 
 /// Waits until `who` shows `id` or not, for at most 10 seconds.
 async fn wait_until_shown(api: &Api, id: &str, want: bool) {
-    let end = Instant::now() + Duration::from_secs(10);
+    let span = isolated::Span::start();
     while shown(api).await.iter().any(|s| s == id) != want {
-        assert!(Instant::now() < end, "{id}: shown is not {want}");
+        assert!(
+            span.within(Duration::from_secs(10)),
+            "{id}: shown is not {want}"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }

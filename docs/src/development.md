@@ -144,6 +144,48 @@ done
 A test waits for the fact that it checks, for example a message or a
 line in a log, with a generous time limit.
 
+## Write a test
+
+A test runs `riff` and `riff-server` only through the crate
+`isolated`. It waits for the fact that it checks.
+
+### Time a step in a test
+
+A test that runs slow on a busy machine has not failed. So a test does
+not compare the wall clock with a tight limit. It measures a
+`Span` of the crate `isolated`:
+
+```mermaid
+flowchart LR
+    W[wall time over the limit] --> C{CPU pressure 10 % or more?}
+    C -- yes --> S[slow under load: pass until 60 s]
+    C -- no --> F[fail]
+```
+
+- To wait for a fact, use `span.within(LIMIT)` in the loop and in its
+  assert. For a future, use `isolated::in_time(LIMIT, future)` in
+  place of `tokio::time::timeout`.
+- To check that a step returns at once, use `span.within(LIMIT)`
+  after the step. A low CPU time does not pass a check: a step that
+  waits uses no CPU time.
+- Each check fails after 60 s (`isolated::HANG`): that is a hang.
+
+```rust,ignore
+let span = isolated::Span::start();
+while !log().contains("listens on") {
+    assert!(span.within(Duration::from_secs(10)), "no open port");
+    std::thread::sleep(Duration::from_millis(50));
+}
+```
+
+When a check passes only because of the load, the test prints one
+line `slow under load` with the CPU pressure. To see it, run the test
+with its output:
+
+```sh
+cargo test -p riff --test hosts -- --nocapture 2>&1 | grep 'slow under load'
+```
+
 ## Build riff from your clone
 
 Do [Start a Riff](start-a-riff.md), with one change: in step 1, build

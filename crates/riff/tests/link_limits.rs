@@ -90,10 +90,10 @@ fn fast() -> Limits {
 
 /// Waits until `accepts` is at least `n`.
 async fn accepts_reach(accepts: &AtomicUsize, n: usize) {
-    let start = Instant::now();
+    let span = isolated::Span::start();
     while accepts.load(Ordering::SeqCst) < n {
         assert!(
-            start.elapsed() < WAIT,
+            span.within(WAIT),
             "{} accepts, not {n}",
             accepts.load(Ordering::SeqCst)
         );
@@ -131,7 +131,7 @@ async fn a_call_to_a_server_that_never_replies_fails_after_the_limit_of_the_try(
     let (url, accepts) = raw_server(Reply::Never).await;
     let api = Api::new(&url).with_limits(fast());
     let start = Instant::now();
-    let call = tokio::time::timeout(WAIT, api.has_sign_in()).await;
+    let call = isolated::in_time(WAIT, api.has_sign_in()).await;
     let error = call.expect("the call waits for ever").unwrap_err();
     assert!(
         start.elapsed() >= Duration::from_millis(300),

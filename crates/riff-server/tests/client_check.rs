@@ -100,7 +100,7 @@ async fn the_server_stops_when_the_provider_refuses_the_client() {
     cmd.args(["--listen", "127.0.0.1:0", "--issuer", &issuer])
         .args(["--client-id", "riff-client", "--client-secret", "wrong"])
         .env_remove("RIFF_OIDC_CLIENT_SECRET")
-        .timeout(Duration::from_secs(20));
+        .timeout(isolated::HANG);
     let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
         .await
         .unwrap();

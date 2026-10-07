@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Once};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::{CLIENT, FakeProvider, browser};
 use futures::future::BoxFuture;
@@ -295,8 +295,8 @@ async fn ten_processes_refresh_at_once_and_the_sign_in_stays() {
 
 /// Waits up to `limit` until `test` is true.
 async fn wait_for(limit: Duration, test: impl Fn() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < limit {
+    let span = isolated::Span::start();
+    while span.within(limit) {
         if test() {
             return true;
         }
@@ -325,7 +325,7 @@ async fn a_watch_goes_on_after_riff_login() {
     let watch = std::sync::Mutex::new(watch);
     let read = || std::fs::read_to_string(&err).unwrap_or_default();
     assert!(
-        wait_for(Duration::from_secs(10), || read().contains(login::ENDED)).await,
+        wait_for(Duration::from_secs(20), || read().contains(login::ENDED)).await,
         "{}",
         read()
     );

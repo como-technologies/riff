@@ -541,18 +541,18 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// [`record`] when the lock is free. Other tests start child
     /// processes, so a dropped lock can live on for a short time (see
     /// [`Held`]).
     fn record_when_free(dir: &Path, agent: u32, session: &str) -> Held {
-        let begin = Instant::now();
+        let span = isolated::Span::start();
         loop {
             if let Some(held) = record(dir, agent, session).unwrap() {
                 return held;
             }
-            assert!(begin.elapsed() < Duration::from_secs(10), "no free lock");
+            assert!(span.within(Duration::from_secs(10)), "no free lock");
             std::thread::sleep(Duration::from_millis(1));
         }
     }

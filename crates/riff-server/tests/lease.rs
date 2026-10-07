@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use futures::future::{BoxFuture, FutureExt};
+use isolated::in_time;
 use riff_core::dpop::Key;
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -14,7 +15,7 @@ use riff_server::lease::{Timing, holder, now_ms};
 use riff_server::store::{LEASE, Loaded, Memory, Store, StoreError, Version};
 use riff_server::tools::{Mode, cut, cut_with, verify};
 use serde_json::{Value, json};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a#api";
 const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b#tests";
@@ -54,7 +55,7 @@ async fn a_new_server_stops_the_old_one() {
     let saved = chunks(&store).await;
 
     let (new, new_base) = common::start_on(Arc::new(store.clone())).await;
-    timeout(Duration::from_secs(5), old.stopped())
+    in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
     assert_eq!(
@@ -62,7 +63,7 @@ async fn a_new_server_stops_the_old_one() {
         503
     );
     // The watch stream of the old server ends.
-    timeout(Duration::from_secs(5), watch.bytes())
+    in_time(Duration::from_secs(5), watch.bytes())
         .await
         .unwrap()
         .unwrap();
@@ -298,10 +299,10 @@ const CUT_AFTER: Duration = Duration::from_secs(3);
 /// It panics when the instance stopped for good. The test waits for
 /// the fact, not for a fixed time (01M41A0M2XWCWTWGF7T9DR03W0).
 async fn served(service: &Service, base: &str, body: Value) -> u16 {
-    let started = Instant::now();
+    let span = isolated::Span::start();
     loop {
         let code = status(base, "register", body.clone()).await;
-        if code != 503 || started.elapsed() > common::BUSY_LIMIT {
+        if code != 503 || !span.within(common::BUSY_LIMIT) {
             return code;
         }
         assert!(
@@ -348,7 +349,7 @@ async fn an_instance_that_runs_again_after_a_cut_does_not_serve_and_writes_no_ch
 
     // The instance runs again.
     store.down.store(false, Ordering::SeqCst);
-    timeout(Duration::from_secs(5), service.stopped())
+    in_time(Duration::from_secs(5), service.stopped())
         .await
         .unwrap();
     assert!(service.lease_ended(), "the instance stops with an error");
@@ -391,7 +392,7 @@ async fn the_take_of_the_lease_by_a_cut_stops_an_instance_that_runs() {
         .unwrap();
     assert_eq!(removed.records.len(), 1, "{removed:?}");
     // The instance read the ID of the cut during the wait of the cut.
-    timeout(Duration::from_millis(100), service.stopped())
+    in_time(Duration::from_millis(100), service.stopped())
         .await
         .unwrap();
     assert!(!service.lease_ended());
@@ -417,7 +418,7 @@ async fn in_a_deploy_the_lease_stays_live_and_names_the_new_instance() {
     assert_eq!(held.id, old_id);
 
     let (new, new_base) = start_renewing(Arc::new(store.clone())).await;
-    timeout(Duration::from_secs(5), old.stopped())
+    in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
     let new_id = lease_json(&store).await["id"].as_str().unwrap().to_owned();

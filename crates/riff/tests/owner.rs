@@ -148,9 +148,9 @@ async fn told(api: &Api, user: &str) -> Vec<String> {
 
 /// Waits until `done` is true, for at most 10 seconds.
 async fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
-    let until = Instant::now() + Duration::from_secs(10);
+    let span = isolated::Span::start();
     while !done() {
-        assert!(Instant::now() < until, "timed out: {what}");
+        assert!(span.within(Duration::from_secs(10)), "timed out: {what}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -615,7 +615,7 @@ async fn a_gone_owner_gives_the_role_to_the_admin_that_asked() {
     assert_eq!(admins(&service), ["ada@gmail.com", "carol@gmail.com"]);
     assert_eq!(service.asks(), None, "the request ended");
     // The riff posts the note of the change.
-    let until = Instant::now() + Duration::from_secs(10);
+    let span = isolated::Span::start();
     let last = loop {
         let notes = Api::new(api.base())
             .read(&lead("bob"), &repo(), true)
@@ -625,7 +625,7 @@ async fn a_gone_owner_gives_the_role_to_the_admin_that_asked() {
         if let Some(last) = last.filter(|body| body.contains("is gone")) {
             break last;
         }
-        assert!(Instant::now() < until, "timed out: the note");
+        assert!(span.within(Duration::from_secs(10)), "timed out: the note");
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
     assert!(
@@ -714,7 +714,7 @@ async fn a_riff_with_no_owner_keeps_none_after_a_restart() {
     // When a new server starts on the same store, and its setting
     // names ada as the owner.
     let new = load(Some("ada@gmail.com")).await;
-    tokio::time::timeout(Duration::from_secs(5), old.stopped())
+    isolated::in_time(Duration::from_secs(5), old.stopped())
         .await
         .unwrap();
     front.serve(&new);

@@ -84,7 +84,7 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
         .await
         .unwrap();
     assert_eq!(posted.woken, vec![brett_lead]);
-    let wake = tokio::time::timeout(WAIT, wakes.next())
+    let wake = isolated::in_time(WAIT, wakes.next())
         .await
         .unwrap()
         .unwrap()
@@ -92,7 +92,7 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
     assert_eq!(wake.seq, 2, "the post without an address must not wake");
     assert_eq!(wake.from, mike_lead);
 
-    let first = tokio::time::timeout(WAIT, tail.next())
+    let first = isolated::in_time(WAIT, tail.next())
         .await
         .unwrap()
         .unwrap()
@@ -108,7 +108,7 @@ async fn addresses_and_direct_messages_wake_a_watching_session() {
     )
     .await
     .unwrap();
-    let wake = tokio::time::timeout(WAIT, wakes.next())
+    let wake = isolated::in_time(WAIT, wakes.next())
         .await
         .unwrap()
         .unwrap()
@@ -141,7 +141,7 @@ async fn a_moved_session_keeps_its_watch() {
     )
     .await
     .unwrap();
-    let wake = tokio::time::timeout(WAIT, wakes.next())
+    let wake = isolated::in_time(WAIT, wakes.next())
         .await
         .unwrap()
         .unwrap()
@@ -206,7 +206,7 @@ async fn a_watch_starts_with_a_wake_for_a_missed_message() {
     .unwrap();
 
     let mut wakes = Box::pin(api.watch(&brett).await.unwrap());
-    let wake = tokio::time::timeout(WAIT, wakes.next())
+    let wake = isolated::in_time(WAIT, wakes.next())
         .await
         .unwrap()
         .unwrap()
@@ -246,7 +246,7 @@ async fn a_status_request_wakes_each_session_and_who_shows_each_answer() {
         (&mike, &mut mike_wakes, "write the API"),
         (&brett, &mut brett_wakes, "merge"),
     ] {
-        let wake = tokio::time::timeout(WAIT, wakes.next())
+        let wake = isolated::in_time(WAIT, wakes.next())
             .await
             .unwrap()
             .unwrap()
