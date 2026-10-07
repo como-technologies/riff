@@ -3367,9 +3367,9 @@
   physical cores of the machine less 1, divided by the workers, and 1
   or more. The workers are the worker limit, or the workers that run on
   the machine when they are more. With no pool, each worker gets it in
-  `RUST_TEST_THREADS` and `CARGO_BUILD_JOBS`. The setting `workers.jobs` replaces the number
-  and turns the pool off. 0, the default, means the number from the
-  machine and the pool.
+  `RUST_TEST_THREADS` and `CARGO_BUILD_JOBS`. The setting
+  `workers.jobs` replaces the number and turns the pool off. 0, the
+  default, means the number from the machine and the pool.
 - **01M3ZGZMJ9RF1C4AHG78GQ2NM4** Each `riff workers run` holds one pool
   of build jobs for its machine: a named pipe in the GNU make 4.4
   jobserver form. It holds the hardware threads (the logical CPUs) less

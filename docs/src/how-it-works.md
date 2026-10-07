@@ -3640,7 +3640,8 @@ riff workers limit 4
 ```
 
 When the memory gets short, the pool slows the builds down by itself
-(see [The pool and the memory pressure](#the-pool-and-the-memory-pressure)).
+(see
+[The pool and the memory pressure](#the-pool-and-the-memory-pressure)).
 `riff workers` shows the cores, the memory and the available memory of
 the machine. When the number does not fit, set fewer jobs (see
 [Set the jobs of a worker](#set-the-jobs-of-a-worker)). Each worker
