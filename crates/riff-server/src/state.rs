@@ -254,9 +254,10 @@ use riff_core::record::{Change, Envelope, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AliveReply, BlockedInfo, Claim, End, Facts, Freed, Idle, ItemFact, Join, Keys, Kind,
-    Lead, LeadReply, Leave, Message, Pause, Post, Register, Release, ReleaseFor, ReleaseReply,
-    Resume, RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle, SetStep, Start,
-    StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo, Waits, Wake,
+    Lead, LeadReply, Leave, Message, Pause, PlanReply, Post, Register, Release, ReleaseFor,
+    ReleaseReply, Resume, RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle,
+    SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
+    Waits, Wake,
 };
 
 /// A blocked session that the look of the lead found, with its reason
@@ -2207,6 +2208,28 @@ impl State {
         self.written.plans()
     }
 
+    /// The plan of `thread` and its holds, as the query `plan` gives
+    /// them (01M4A4Z1NKPDBXV2PRZCG86G6A).
+    pub fn plan(&self, thread: &ThreadName, now: Instant, now_ms: u64) -> PlanReply {
+        let now = Now {
+            at: now,
+            ms: now_ms,
+        };
+        self.written_view().plan_reply(thread, now)
+    }
+
+    /// True when the `plan_seen` of `who` counts as a look of the plan
+    /// of `thread` (01M4A4YTYVHFGK0CJVACJQ8DQ3): `who` is a session in
+    /// the thread that is not a worker, and `position` is the position
+    /// of the plan of the server.
+    pub fn sees_plan(&self, who: &Who, thread: &ThreadName, position: u64) -> bool {
+        let riff = &self.written;
+        who.session().is_some()
+            && riff.threads().member(who, thread)
+            && !riff.sessions().worker(who)
+            && riff.plans().plan(thread).map(|plan| plan.position) == Some(position)
+    }
+
     /// The pauses as a caller at the place of `me` sees them
     /// (01M3XAHZJAF6YVDJ7WX74X8RBX): for a session that the state
     /// knows, the place in the state; for each other caller, the place
@@ -3970,8 +3993,12 @@ mod tests {
                 "no_owner": true,
                 "owner_asked": {"email": "cy@acme.io", "due_ms": T0},
                 "signins_ended": {"bob": 1},
-                "plans": {"como-technologies/riff": {"holds": {"issue-8": {
-                    "reason": "waits for mike", "by": {"session": "mike/a1"}, "at_ms": T0}}}},
+                "plans": {"como-technologies/riff": {
+                    "holds": {"issue-8": {
+                        "reason": "waits for mike", "by": {"session": "mike/a1"}, "at_ms": T0}},
+                    "plan": {"wave": {"number": 21, "title": "Wave 21"},
+                             "items": [{"item": "issue-7", "needs": ["issue-6"]}],
+                             "done": ["issue-6"], "position": 2, "at_ms": T0}}},
                 "calls": [{"position": 2, "written_at_ms": T0, "by": {"session": "mike/a1"},
                            "command": "claim", "call": "c1",
                            "change": {"claimed": {

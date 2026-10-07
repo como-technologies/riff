@@ -178,8 +178,8 @@ use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
     AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead,
-    Leave, PassOwner, Pause, Post, REFUSED_HEADER, REPEAT_HEADER, Register, Release, ReleaseFor,
-    Remove, Resume, Revoke, SetAdmin, SetIdle, Start, Tailed, TakeOwner, Wake,
+    Leave, PassOwner, Pause, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register, Release,
+    ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetPlan, Start, Tailed, TakeOwner, Wake,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
@@ -274,7 +274,7 @@ macro_rules! routed {
 
 routed!(
     Register, Start, End, Join, Leave, Claim, Release, ReleaseFor, Lead, Pause, Resume, SetIdle,
-    Hold, Free
+    Hold, Free, SetPlan, PlanOff
 );
 
 /// Gives each command of the people its [`Routed`]. Its body names no
@@ -362,6 +362,7 @@ impl Failed {
                 Code::NotAllowed | Code::NoSignIn | Code::NotMember => StatusCode::FORBIDDEN,
                 Code::Held
                 | Code::OnHold
+                | Code::StaleBase
                 | Code::Paused
                 | Code::MustClear
                 | Code::NotHolder

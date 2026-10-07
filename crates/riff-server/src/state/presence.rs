@@ -70,6 +70,9 @@ pub struct Presence {
     /// The facts of the items of each repository thread, by item
     /// (01M41FZP2C4Z4J6WKRXZ5B31EH).
     pub(super) items: BTreeMap<ThreadName, BTreeMap<String, ItemFact>>,
+    /// The time of the last look at the plan of each repository thread
+    /// (01M4A4YTYVHFGK0CJVACJQ8DQ3).
+    pub(super) looks: BTreeMap<ThreadName, Instant>,
 }
 
 // ANCHOR: signal
@@ -142,6 +145,11 @@ pub enum Signal {
         items: Vec<ItemFact>,
         all: bool,
     },
+    /// A look saw the plan of `thread` (01M4A4YTYVHFGK0CJVACJQ8DQ3): a
+    /// `plan` that the server took, or a `plan_seen` of the position of
+    /// the plan of the server. A plan is stale
+    /// [`PLAN_TTL`](super::plan::PLAN_TTL) after the last look.
+    PlanSeen { thread: ThreadName },
     /// A watch stream opened.
     WatchStarted,
     /// A watch stream closed. It is no sign of life
@@ -183,6 +191,10 @@ impl Signal {
             for fact in items {
                 known.insert(fact.item.clone(), fact);
             }
+            return AliveReply::default();
+        }
+        if let Signal::PlanSeen { thread } = self {
+            presence.looks.insert(thread, now);
             return AliveReply::default();
         }
         if let Signal::Place { place, .. } = &self
@@ -276,7 +288,7 @@ impl Signal {
                 }
                 session.stopping = true;
             }
-            Signal::Read { .. } | Signal::Facts { .. } => {}
+            Signal::Read { .. } | Signal::Facts { .. } | Signal::PlanSeen { .. } => {}
         }
         AliveReply {
             stop: session.stopping,
@@ -412,7 +424,9 @@ impl Presence {
             | Change::OwnerDenied(_)
             | Change::SigninsEnded(_)
             | Change::ItemHeld(_)
-            | Change::ItemFreed(_) => {}
+            | Change::ItemFreed(_)
+            | Change::PlanSet(_)
+            | Change::PlanEnded(_) => {}
         }
     }
 
@@ -489,6 +503,7 @@ impl Presence {
             repository_changed: _,
             loaded: _,
             items: _,
+            looks: _,
         } = self;
         Saved {
             cursors: cursors

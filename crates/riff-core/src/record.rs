@@ -132,8 +132,9 @@
 //! | The caller in `by` | `{"session":"USER/ID"}` | `other` ([`By`]) |
 //! | A session in `woken` ([`Who`]) | `posted` | The read checks no character. A field that the build does not know is skipped. |
 //! | The signature and the payload of a message | `sig`, `payload` | The read keeps the text, and checks nothing. A reader checks them: a text that does not check gives a message that is not verified. |
-//! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason` | Free text. |
-//! | A time, a position, a seq, a count | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
+//! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold, the title of a wave | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason`, `title` | Free text. |
+//! | An item of a plan, a need, a done need | `items`, `needs`, `done` of `plan_set` | Free text: `handle` of `plan` checks the form `issue-N`, and the read does not. |
+//! | A time, a position, a seq, a count, the number of a wave | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host`, `number` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
 //! | A mark | `worker`, `must_clear`, `admin` | The line does not read. A mark is `true` or `false`, and its type never changes. |
 //!
 //! The header of a chunk has the number of the format. A header of a
@@ -300,6 +301,12 @@ changes! {
     ItemHeld(ItemHeld) = "item_held",
     /// The hold of an item ends. New in 1.1.0.
     ItemFreed(ItemFreed) = "item_freed",
+    /// The plan of a repository thread: it replaces the plan of the
+    /// thread. New in 1.3.0.
+    PlanSet(PlanSet) = "plan_set",
+    /// The server forgets the plan of a repository thread. The holds
+    /// stay. New in 1.3.0.
+    PlanEnded(PlanEnded) = "plan_ended",
 }
 // ANCHOR_END: record
 
@@ -462,7 +469,9 @@ impl Change {
             | Change::OwnerDenied(_)
             | Change::SigninsEnded(_)
             | Change::ItemHeld(_)
-            | Change::ItemFreed(_) => None,
+            | Change::ItemFreed(_)
+            | Change::PlanSet(_)
+            | Change::PlanEnded(_) => None,
         }
     }
 }
@@ -579,6 +588,8 @@ impl Record {
             },
             Change::ItemHeld(held) => &held.thread == repo,
             Change::ItemFreed(freed) => &freed.thread == repo,
+            Change::PlanSet(set) => &set.thread == repo,
+            Change::PlanEnded(ended) => &ended.thread == repo,
             Change::SettingChanged(_)
             | Change::RiffMade(_)
             | Change::PersonJoined(_)
@@ -732,6 +743,77 @@ pub struct ItemHeld {
 pub struct ItemFreed {
     pub thread: ThreadName,
     pub item: String,
+}
+
+/// The plan of one repository thread (01M4A4YTNSJR0R1T9JNXPBSKHC): the
+/// full plan, so the record replaces the plan of the thread. The design
+/// is in the book: "Design: the plan on the server".
+///
+/// ```
+/// use riff_core::record::{Change, Plan, PlanEnded, PlanItem, PlanSet, Wave};
+///
+/// let set = Change::PlanSet(PlanSet {
+///     thread: "como-technologies/riff".parse()?,
+///     plan: Plan {
+///         wave: Some(Wave { number: 19, title: "Wave 19".into() }),
+///         items: vec![
+///             PlanItem { item: "issue-366".into(), needs: vec![] },
+///             PlanItem { item: "issue-459".into(), needs: vec!["issue-416".into()] },
+///         ],
+///         done: vec!["issue-416".into()],
+///     },
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&set).unwrap(),
+///     r#"{"plan_set":{"thread":"como-technologies/riff","wave":{"number":19,"title":"Wave 19"},"items":[{"item":"issue-366","needs":[]},{"item":"issue-459","needs":["issue-416"]}],"done":["issue-416"]}}"#
+/// );
+/// let ended = Change::PlanEnded(PlanEnded { thread: "como-technologies/riff".parse()? });
+/// assert_eq!(
+///     serde_json::to_string(&ended).unwrap(),
+///     r#"{"plan_ended":{"thread":"como-technologies/riff"}}"#
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlanSet {
+    pub thread: ThreadName,
+    #[serde(flatten)]
+    pub plan: Plan,
+}
+
+/// A plan with no thread: the current wave, its items with their
+/// needs, and the done needs. A need that is not in `done` is open.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Plan {
+    /// The current wave. `None` when the repository has no open wave:
+    /// then the items are the open issues with no wave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wave: Option<Wave>,
+    #[serde(default)]
+    pub items: Vec<PlanItem>,
+    #[serde(default)]
+    pub done: Vec<String>,
+}
+
+/// A wave of a plan: its number, and its title on the forge.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Wave {
+    pub number: u64,
+    pub title: String,
+}
+
+/// One item of a plan, with the items that it needs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlanItem {
+    pub item: String,
+    #[serde(default)]
+    pub needs: Vec<String>,
+}
+
+/// The end of the plan of one repository thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlanEnded {
+    pub thread: ThreadName,
 }
 
 /// A claim that is free now.
@@ -1162,6 +1244,21 @@ pub fn one_of_each() -> Vec<Change> {
             thread: thread(),
             item: "issue-7".into(),
         }),
+        Change::PlanSet(PlanSet {
+            thread: thread(),
+            plan: Plan {
+                wave: Some(Wave {
+                    number: 3,
+                    title: "Wave 3".into(),
+                }),
+                items: vec![PlanItem {
+                    item: "issue-7".into(),
+                    needs: vec!["issue-6".into()],
+                }],
+                done: vec!["issue-6".into()],
+            },
+        }),
+        Change::PlanEnded(PlanEnded { thread: thread() }),
     ]
 }
 

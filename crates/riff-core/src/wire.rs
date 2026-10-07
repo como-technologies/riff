@@ -28,17 +28,21 @@
 //! | `/v1/idle/set` | [`SetIdle`] | [`Idle`] | command |
 //! | `/v1/plan/hold` | [`Hold`] | [`HoldReply`] | command |
 //! | `/v1/plan/free` | [`Free`] | [`FreeReply`] | command |
+//! | `/v1/plan` | [`SetPlan`] | [`PlanReply`] | command |
+//! | `/v1/plan/off` | [`PlanOff`] | [`PlanOffReply`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
 //! | `/v1/step` | [`SetStep`] | `null` | signal |
 //! | `/v1/blocked/look` | [`BlockedLook`] | [`BlockedLookReply`] | signal |
 //! | `/v1/items` | [`ItemFacts`] | `null` | signal |
 //! | `/v1/alive` | [`Alive`] | [`AliveReply`] | signal |
+//! | `/v1/plan/seen` | [`PlanSeen`] | [`PlanReply`] | signal |
 //! | `/v1/who` | [`WhoRequest`] | [`WhoReply`] | query |
 //! | `/v1/threads` | [`Threads`] | [`ThreadsReply`] | query |
 //! | `/v1/read` | [`Read`] | [`ReadReply`] | query |
 //! | `/v1/riff` | [`RiffQuery`] | [`RiffReply`] | query |
 //! | `/v1/idle` | [`IdleQuery`] | [`Idle`] | query |
+//! | `/v1/plan/show` | [`PlanShow`] | [`PlanReply`] | query |
 //!
 //! `GET /v1/me` gives [`MeReply`]. `GET /v1/server` gives
 //! [`ServerFacts`], also while the server replies 503 to each other
@@ -129,7 +133,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dpop::Key;
 use crate::name::{SessionUri, ThreadName};
-use crate::record::{By, Line, Record};
+use crate::record::{By, Line, Plan, PlanSet, Record};
 use crate::selector::Selector;
 use crate::signed::Content;
 
@@ -210,6 +214,10 @@ calls! {
     SetIdle => "/v1/idle/set", Idle;
     Hold => "/v1/plan/hold", HoldReply;
     Free => "/v1/plan/free", FreeReply;
+    SetPlan => "/v1/plan", PlanReply;
+    PlanOff => "/v1/plan/off", PlanOffReply;
+    PlanSeen => "/v1/plan/seen", PlanReply;
+    PlanShow => "/v1/plan/show", PlanReply;
     SetStatus => "/v1/status", ();
     SetBlocked => "/v1/blocked", ();
     SetStep => "/v1/step", ();
@@ -1601,6 +1609,136 @@ pub struct FreeReply {
     /// True when the item was held, and the call ended the hold.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub freed: bool,
+}
+
+/// The hold of one item: its reason, and who held it and when: the `by`
+/// and the time of its `item_held` record (01M43GSGB9ZFHSG0Q83Y50FEGW).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HoldInfo {
+    pub reason: String,
+    /// The caller of the hold. `None` when the record has no cause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
+    /// The time of the record, in milliseconds since the Unix epoch.
+    pub at_ms: u64,
+}
+
+/// `POST /v1/plan`: a session sends the full plan of its repository
+/// thread (01M4A4YTNSJR0R1T9JNXPBSKHC). `base` is the position of the
+/// `plan_set` record of the plan that the client compared with, or
+/// `None` when the server had no plan. A `base` that is not the
+/// position on the server gets the code `stale_base`
+/// (01M4A4YTR2NKVBPE6BT9EC3X75).
+///
+/// ```
+/// use riff_core::record::{Plan, PlanItem, PlanSet};
+/// use riff_core::wire::{Call, SetPlan};
+///
+/// let plan = SetPlan {
+///     me: "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?,
+///     base: Some(3001),
+///     plan: PlanSet {
+///         thread: "como-technologies/riff".parse()?,
+///         plan: Plan {
+///             wave: None,
+///             items: vec![PlanItem { item: "issue-366".into(), needs: vec![] }],
+///             done: vec![],
+///         },
+///     },
+/// };
+/// assert_eq!(SetPlan::PATH, "/v1/plan");
+/// assert_eq!(
+///     serde_json::to_string(&plan).unwrap(),
+///     r#"{"me":"riff://mike@pangolin/como-technologies/riff?session=a1","base":3001,"plan":{"thread":"como-technologies/riff","items":[{"item":"issue-366","needs":[]}],"done":[]}}"#
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SetPlan {
+    pub me: SessionUri,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<u64>,
+    pub plan: PlanSet,
+}
+
+/// `POST /v1/plan/off`: the server forgets the plan of the repository
+/// thread. The holds stay (01M4A4YTNSJR0R1T9JNXPBSKHC).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct PlanOff {
+    pub me: SessionUri,
+    pub thread: ThreadName,
+}
+
+/// The reply to a `plan_off`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanOffReply {
+    /// True when the thread had a plan, and the call ended it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ended: bool,
+}
+
+/// `POST /v1/plan/seen`: a look saw that the plan of the forge is the
+/// plan of the server at `position` (01M4A4YTYVHFGK0CJVACJQ8DQ3). It is
+/// a signal: it makes no record.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct PlanSeen {
+    pub me: SessionUri,
+    pub thread: ThreadName,
+    pub position: u64,
+}
+
+/// `POST /v1/plan/show`: the plan of a repository thread, and its holds
+/// (01M4A4Z1NKPDBXV2PRZCG86G6A).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct PlanShow {
+    pub me: SessionUri,
+    pub thread: ThreadName,
+}
+
+/// The plan of the server for one repository thread
+/// (01M4A4Z1NKPDBXV2PRZCG86G6A): the reply of `plan`, `plan_seen` and
+/// the query `plan`.
+///
+/// ```
+/// use riff_core::wire::PlanReply;
+///
+/// // A thread with no plan and no hold.
+/// assert_eq!(serde_json::to_string(&PlanReply::default()).unwrap(), "{}");
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanReply {
+    /// The plan. `None` when the plan of the thread is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanShown>,
+    /// Each hold of the thread, by its item: also of an item that is not
+    /// in the plan.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub holds: BTreeMap<String, HoldInfo>,
+}
+
+/// The plan of one repository thread on the server, with its age.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanShown {
+    #[serde(flatten)]
+    pub plan: Plan,
+    /// The position of the `plan_set` record of the plan: the `base` of
+    /// the next `plan`.
+    pub position: u64,
+    /// The time of the `plan_set` record, in milliseconds since the Unix
+    /// epoch.
+    pub set_ms: u64,
+    /// The time of the last `plan` or `plan_seen`, in milliseconds since
+    /// the Unix epoch. `None` when no look came since the start of the
+    /// server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen_ms: Option<u64>,
+    /// True when no look came for `PLAN_TTL` (01M4A4Z1QTHYXZDMCP9DZ39WVT).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
+    /// The session that holds a claim of each item of the plan with a
+    /// claim.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub holders: BTreeMap<String, SessionUri>,
 }
 
 /// `POST /v1/release`: frees a claim. Only its holder can.

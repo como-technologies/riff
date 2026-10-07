@@ -1,0 +1,15 @@
+{"format":1,"first":1}
+{"position":1,"written_at_ms":1794000000000,"by":"server","command":"make_riff","change":{"riff_made":{"riff_id":"6f1d2c3b-4a5e-4f60-8b7c-9d0e1f2a3b4c"}}}
+{"position":2,"written_at_ms":1794000001000,"by":{"person":"ann"},"command":"resume","change":{"pause_set":{"scope":"riff","state":"running"}}}
+{"position":3,"written_at_ms":1794000002000,"by":{"session":"ann/a1"},"command":"register","change":{"joined_thread":{"session":"riff://ann@heron/acme/app?session=a1","thread":"acme/app"}}}
+{"position":4,"written_at_ms":1794000002000,"by":{"session":"ann/a1"},"command":"register","change":{"session_started":{"session":"riff://ann@heron/acme/app?session=a1","reason":"process"}}}
+{"position":5,"written_at_ms":1794000002000,"by":{"session":"ann/a1"},"command":"register","change":{"lead_set":{"session":"riff://ann@heron/acme/app?session=a1","thread":"acme/app"}}}
+{"position":6,"written_at_ms":1794000003000,"by":{"session":"ann/a1"},"command":"plan","change":{"plan_set":{"thread":"acme/app","wave":{"number":21,"title":"Wave 21"},"items":[{"item":"issue-12","needs":["issue-10"]},{"item":"issue-13","needs":[]}],"done":[]}}}
+{"position":7,"written_at_ms":1794000004000,"by":{"session":"ann/a1"},"command":"hold","change":{"item_held":{"thread":"acme/app","item":"issue-14","reason":"the next wave"}}}
+{"position":8,"written_at_ms":1794000005000,"by":{"session":"ann/a1"},"command":"plan","change":{"plan_set":{"thread":"acme/app","wave":{"number":21,"title":"Wave 21"},"items":[{"item":"issue-12","needs":["issue-10"]},{"item":"issue-13","needs":[]}],"done":["issue-10"]}}}
+{"position":9,"written_at_ms":1794000006000,"by":{"person":"ann"},"command":"plan","change":{"plan_set":{"thread":"acme/lib","items":[{"item":"issue-3","needs":[]}],"done":[]}}}
+{"position":10,"written_at_ms":1794000007000,"by":{"person":"ann"},"command":"hold","change":{"item_held":{"thread":"acme/lib","item":"issue-3","reason":"one at a time"}}}
+{"position":11,"written_at_ms":1794000008000,"by":{"person":"ann"},"command":"plan_off","change":{"plan_ended":{"thread":"acme/lib"}}}
+{"position":12,"written_at_ms":1794000009000,"by":{"session":"ann/a1"},"command":"plan","change":{"plan_set":{"thread":"acme/web","wave":{"number":2,"title":"Wave 2: Web"},"items":[{"item":"issue-1","needs":[]}],"done":[]}}}
+{"position":13,"written_at_ms":1794000010000,"by":{"session":"ann/a1"},"command":"plan_off","change":{"plan_ended":{"thread":"acme/web"}}}
+{"position":14,"written_at_ms":1794000011000,"command":"plan","change":{"plan_set":{"thread":"acme/app","wave":{"number":22,"title":"Wave 22"},"items":[{"item":"issue-15","needs":["issue-12","issue-13"]}],"done":["issue-12"]}}}

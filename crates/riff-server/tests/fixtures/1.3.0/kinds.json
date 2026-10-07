@@ -1,0 +1,10 @@
+{
+  "records": [
+    "plan_set",
+    "plan_ended"
+  ],
+  "commands": [
+    "plan",
+    "plan_off"
+  ]
+}
