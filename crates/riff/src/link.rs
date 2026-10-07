@@ -156,7 +156,8 @@ pub const LINE_AFTER: Duration = Duration::from_secs(1);
 pub const WAITING: &str = "(waits for riff-server…)";
 
 /// The time limits of a link. [`Limits::default`] has the constants. A
-/// test gives limits in milliseconds.
+/// test gives limits in milliseconds, or the budget of a `riff` process
+/// with [`BUDGET_VAR`].
 ///
 /// ```
 /// use std::time::Duration;
@@ -186,13 +187,29 @@ pub struct Limits {
     pub most_wait: Duration,
 }
 
+/// The environment variable that sets [`Limits::budget`] of a `riff`
+/// process in milliseconds. Only a test sets it.
+///
+/// ```
+/// assert_eq!(riff::link::BUDGET_VAR, "RIFF_LINK_BUDGET_MS");
+/// ```
+pub const BUDGET_VAR: &str = "RIFF_LINK_BUDGET_MS";
+
+/// [`SHORT_BUDGET`], or the budget that [`BUDGET_VAR`] sets.
+fn short_budget() -> Duration {
+    std::env::var(BUDGET_VAR)
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(SHORT_BUDGET, Duration::from_millis)
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Limits {
             connect: CONNECT_WAIT,
             try_wait: TRY_WAIT,
             stream_idle: STREAM_IDLE,
-            budget: SHORT_BUDGET,
+            budget: short_budget(),
             first_wait: FIRST_WAIT,
             most_wait: MOST_WAIT,
         }

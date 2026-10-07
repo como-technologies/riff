@@ -883,14 +883,16 @@ impl Api {
         }
     }
 
-    /// Opens a stream at one path, with the rule for a new try of the
-    /// link, and checks the build of its head.
+    /// Opens a stream at one path in one try, and checks the build of
+    /// its head. A stream has no budget: [`follow`] connects again after
+    /// [`link::STREAM_RETRY`] when the open fails.
     async fn open(
         &self,
         path: &str,
         body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
-        let got = self.tries(reqwest::Method::GET, path, body, Check::Build, Via::Stream);
+        let once = self.one_try(self.limits().try_wait);
+        let got = once.tries(reqwest::Method::GET, path, body, Check::Build, Via::Stream);
         match got.await? {
             Got::Open(response) => Ok(response),
             Got::Whole(_) => unreachable!("a stream gets its head"),

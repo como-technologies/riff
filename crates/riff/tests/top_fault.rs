@@ -185,6 +185,8 @@ fn top(server: &str, dir: &Path, path: &Path, args: &[&str]) -> Command {
         .args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
+        // A look that gets no reply ends in 3 seconds, not in 60.
+        .env(riff::link::BUDGET_VAR, "3000")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_HOME", dir)
         .env("RIFF_USER", "mike")
