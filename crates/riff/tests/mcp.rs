@@ -493,7 +493,7 @@ async fn riff_mcp_runs_the_new_binary_and_keeps_the_connection() {
     let new = std::fs::metadata(&binary).unwrap().ino();
     assert_ne!(old, new);
     let span = Span::start();
-    while runs(pid) != new && span.within(Duration::from_secs(10)) {
+    while runs(pid) != new && span.within(UPDATE_WAIT) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
@@ -751,7 +751,7 @@ async fn each_call_in_flight_at_an_update_gets_one_answer() {
     let new = std::fs::metadata(&binary).unwrap().ino();
     let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
     let span = Span::start();
-    while runs(pid) != new && span.within(Duration::from_secs(10)) {
+    while runs(pid) != new && span.within(UPDATE_WAIT) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(runs(pid), new, "{}", log());
@@ -790,6 +790,11 @@ struct Hold {
 
 /// Longer than `riff mcp` takes to see a new binary on disk.
 const HOLD: Duration = Duration::from_secs(5);
+
+/// The longest wait for the run of a new binary and its first answer:
+/// the check of the new binary ([`riff::mcp::CHECK_WAIT`]), the exec and
+/// the start of the new `riff mcp` (01M41A0M2XWCWTWGF7T9DR03W0).
+const UPDATE_WAIT: Duration = riff::mcp::CHECK_WAIT.saturating_add(Duration::from_secs(10));
 
 async fn hold(
     axum::extract::State(hold): axum::extract::State<Hold>,
@@ -849,7 +854,7 @@ async fn a_call_in_flight_at_an_update_gets_its_answer() {
 
     // Then the new binary runs, and the next answer is of the next call.
     let span = Span::start();
-    while runs(pid) != new && span.within(Duration::from_secs(10)) {
+    while runs(pid) != new && span.within(UPDATE_WAIT) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(runs(pid), new, "{}", log());
@@ -857,7 +862,7 @@ async fn a_call_in_flight_at_an_update_gets_its_answer() {
         .write_all(call_line(2, "whoami").as_bytes())
         .await
         .unwrap();
-    let next = in_time(Duration::from_secs(10), lines.next_line()).await;
+    let next = in_time(UPDATE_WAIT, lines.next_line()).await;
     let next = next.ok().and_then(|line| line.unwrap()).unwrap_or_default();
     assert!(next.contains("\"id\":2"), "{next}");
     assert!(child.try_wait().unwrap().is_none(), "{}", log());
