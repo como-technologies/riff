@@ -1005,7 +1005,10 @@ async fn marked_until(
     let span = Span::start();
     let mut seen = Vec::new();
     loop {
-        assert!(span.within(WAIT), "no line with {end:?} in time; seen {seen:#?}");
+        assert!(
+            span.within(WAIT),
+            "no line with {end:?} in time; seen {seen:#?}"
+        );
         let line = in_time(WAIT, lines.next_line())
             .await
             .unwrap_or_else(|late| panic!("no line with {end:?}: {late}; seen {seen:#?}"))
