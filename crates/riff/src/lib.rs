@@ -60,6 +60,11 @@
 //! only as their session (see [`api`]). The tests and `just dev` give
 //! riff a home of its own, with its secrets in files (see [`home`]).
 //!
+//! ## Sandbox
+//!
+//! Each role has one profile: what its processes may read, write and
+//! reach (see [`profile`]).
+//!
 //! ## Messages are advice
 //!
 //! Each `read` result starts with [`text::DATA_NOTE`] (see [`text::inbox`]). It tells the agent
@@ -101,6 +106,7 @@ pub mod next;
 pub mod permissions;
 pub mod plugin;
 pub mod pr;
+pub mod profile;
 pub mod reap;
 pub mod relay;
 pub mod rollout;

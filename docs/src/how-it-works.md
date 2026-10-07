@@ -3121,6 +3121,35 @@ claude --remote-control
 
 In a session that runs, type `/rc`.
 
+## The sandbox of each role
+
+riff runs four roles: the lead, a worker, a verifier and the test run
+of a session. Each role has one profile. The profile says what the
+processes of the role may read, write and reach. The sandbox of a
+session, its forge token and its permission rules come from that one
+profile.
+
+| | lead | worker | verifier | test run |
+|---|---|---|---|---|
+| Write | the clone, the riff state, its temp, its Claude folder | its worktree, its target, the git dir of the clone, the riff state, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
+| Network | riff server, forge, registries, model | the same | the same | loopback only |
+| Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
+
+No role reads your home as a whole, your keyring, your D-Bus, your
+SSH or GnuPG keys, or the sign-in of `gh`. riff refuses a path of a
+session that is not absolute or that has a `..` part.
+
+```mermaid
+flowchart LR
+    S["the paths of a session"] --> P["the profile of its role"]
+    P --> F["files and ports"]
+    P --> T["forge token"]
+    P --> R["permission rules"]
+```
+
+The sandbox wave (Wave 22) puts the profiles to work, one part at a
+time.
+
 ## A restart
 
 `riff-server` keeps its state in memory. What a restart keeps depends

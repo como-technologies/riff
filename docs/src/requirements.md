@@ -4139,6 +4139,40 @@
   For example, a saved session has a status, a step, or both: an
   enum, not two options.
 
+## Sandbox
+
+- **01M4BPK6V66QNPQJ6RBRE10WH9** riff has one profile for each role:
+  the lead, a worker, a verifier and the test run. A profile says the
+  paths that a process of the role reads, the paths that it writes,
+  its network and its rights on the forge. riff builds it from the
+  paths of the session. Each part of the sandbox reads this one
+  profile.
+- **01M4BPK72ZBZABCTWS9YM1M9QX** The lead writes the clone with its
+  worktrees, the local files of riff, its temp folder and its Claude
+  Code folder. It connects to the riff server, the forge, the package
+  registries and the model API. On the forge, it reads, plans,
+  comments, pushes a branch and opens a pull request.
+- **01M4BPK7AKTJD9Y9WVJQKTQY6M** A worker writes its worktree, its
+  target folder, the git dir of the clone, the local files of riff,
+  its temp folder and its Claude Code folder. It does not write the
+  rest of the clone. Its network is the network of the lead. On the
+  forge, it reads, comments, pushes a branch and opens a pull request.
+- **01M4BPK7JA9V5PXCYZ01G0KBZT** A verifier writes the same kinds of
+  paths as a worker, for its verify worktree. Its network is the
+  network of the lead. On the forge, it reads, comments and sets the
+  verify status of a commit.
+- **01M4BPK7SN7J16KPB3J743CW2B** The test run writes only its temp
+  folder and its target folder. It reads its worktree. It has the
+  loopback network only, and no right on the forge.
+- **01M4BPK80NK50S2V26Z8BDT0XM** No profile gives the home of the
+  person as a whole, a folder above it, the keyring, the D-Bus socket,
+  the keys of SSH and GnuPG, or the sign-in of `gh`. riff makes no
+  profile for a session whose paths give one of them.
+- **01M4BR61PPQV7JJE5Y2G9Q90AF** riff makes no profile for a session
+  with a path that is not absolute or that has a `..` component. The
+  step that applies a profile resolves each symlink before it grants a
+  path.
+
 ## Open
 
 None.
