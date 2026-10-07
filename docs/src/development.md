@@ -182,6 +182,38 @@ It fails when two requirements have the same ID, or when a file cites an
 ID that no requirement has. It warns when a new ID does not have that
 form, for example the next `R` number.
 
+## Add a field or a type of the log or the wire
+
+A record of the log, a call and a reply of the wire, and the
+checkpoint each have one struct. Do not make a second struct with the
+same fields to read or write them. A conversion between two types
+names each field of its source: write `let Type { a, b, c: _ } = x;`,
+not `x.a` and not `..`. Then the build fails at each place that must
+carry a new field.
+
+Each type has a round trip test with each field set. After you add a
+field or a type, run the round trips:
+
+```sh
+cargo test -p riff-core --lib round_trip
+cargo test -p riff-server --lib each_part_of_a_checkpoint
+cargo test -p riff-server --test calls each_kind_of_record
+```
+
+A test fails when a sample leaves out the new field, or when no sample
+covers the new type. Add the field to its sample in
+`crates/riff-core/src/round_trip.rs`, in `record::one_of_each`, or in
+the full checkpoint of the state tests.
+
+```mermaid
+flowchart LR
+    V[sample with each field] --> W[write JSON]
+    W --> R[read it back]
+    R --> A[write again]
+    A --> C{same JSON?}
+    C --> S[schema: each field set,<br>each variant shown]
+```
+
 ## Check the book
 
 `just ci` builds the book and checks it. To run only this step:
