@@ -532,8 +532,11 @@ impl Profile {
 ///   keyring of riff until the secrets come in the environment (#611):
 ///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`.
 /// - The network: the proxy and the certificates.
-/// - Claude Code: `CLAUDE_CONFIG_DIR` and `ANTHROPIC_`, the model
-///   access of the person.
+/// - Claude Code: `CLAUDE_CONFIG_DIR`, and the model access of the
+///   person: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+///   `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`. The model access is the
+///   one credential of the person that `claude` gets
+///   (01M4C4WW8JS7QVC0ZYHWPSMWKN).
 /// - riff: the server, the session, the person and the machine.
 pub const KEPT_VARS: &[&str] = &[
     "HOME",
@@ -567,7 +570,10 @@ pub const KEPT_VARS: &[&str] = &[
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
     "CLAUDE_CONFIG_DIR",
-    "ANTHROPIC_",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_MODEL",
     "RIFF_SERVER",
     "RIFF_SESSION",
     "RIFF_HOME",
@@ -593,6 +599,8 @@ pub const KEPT_VARS: &[&str] = &[
 /// assert!(!kept("GIT_CONFIG_COUNT"));
 /// assert!(!kept("RIFF_TEST_MARKER"));
 /// assert!(!kept("LC"), "a prefix names no variable by itself");
+/// assert!(kept("ANTHROPIC_API_KEY"), "the model access of the person");
+/// assert!(!kept("ANTHROPIC_OTHER"), "only the named model variables");
 /// ```
 pub fn kept(name: &str) -> bool {
     KEPT_VARS.iter().any(|k| match k.strip_suffix('_') {

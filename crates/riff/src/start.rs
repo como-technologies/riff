@@ -38,8 +38,16 @@
 //! - **One lead for each repository.** When the tmux session of the
 //!   repository runs, `riff` attaches to it and starts no second lead
 //!   (01M4BSSX3RSK79ZSJZZB1S0NYF).
+//! - **No credential of the person.** riff starts the tmux server with
+//!   an empty environment and only the kept variables ([`server_env`]),
+//!   and tmux copies no variable of a client at an attach. So the server
+//!   and each pane hold no credential of the person
+//!   (01M4C4WW15HGA1VEDFRBEMZAW7).
 //! - **The lead.** It is `claude` with the flags of the lead
-//!   ([`lead_args`]) in the main clone. Its flag settings hold the
+//!   ([`lead_args`]) in the main clone. `riff workers lead` starts it,
+//!   with a temp folder of its own and the forge token of the lead,
+//!   through [`crate::forge::ForgeEnv`] ([`lead_command`],
+//!   01M4C4WQVZR49FDGPJMFW22GTM). Its flag settings hold the
 //!   permission rules of the profile of the lead
 //!   ([`write_lead_settings`]). The `riff mcp` of the lead adds
 //!   the `riff tail` pane beside it, as before (see
@@ -87,6 +95,7 @@ set -g status-left '[riff #S] '
 set -g status-left-length 60
 set -g set-titles on
 set -g set-titles-string 'riff #S'
+set -g update-environment ''
 ";
 
 /// A clone that the picker shows: its main worktree and its repository.
@@ -170,16 +179,31 @@ pub fn write_lead_settings(file: &Path, rules: &crate::permissions::Rules) -> Re
     std::fs::write(file, json).with_context(|| format!("cannot write {}", file.display()))
 }
 
-/// The shell command of the lead: `claude` and [`lead_args`].
+/// The name of the temp folder of the lead of `repo`.
+///
+/// ```
+/// assert_eq!(riff::start::lead_name("como/riff.x"), "lead-como-riff.x");
+/// ```
+pub fn lead_name(repo: &str) -> String {
+    format!("lead-{}", repo.replace(['/', ':'], "-"))
+}
+
+/// The shell command of the lead `name`: `riff workers lead`, which runs
+/// `claude` with [`lead_args`] through [`crate::forge::ForgeEnv`]
+/// (01M4C4WQVZR49FDGPJMFW22GTM).
 ///
 /// ```
 /// assert_eq!(
-///     riff::start::lead_command("claude".as_ref(), None),
-///     "'claude' '--remote-control'",
+///     riff::start::lead_command("/bin/riff".as_ref(), "lead-como-riff", "claude".as_ref(), None),
+///     "'/bin/riff' 'workers' 'lead' '--name' 'lead-como-riff' 'claude' '--remote-control'",
 /// );
 /// ```
-pub fn lead_command(claude: &Path, settings: Option<&Path>) -> String {
-    std::iter::once(claude.to_string_lossy().into_owned())
+pub fn lead_command(riff: &Path, name: &str, claude: &Path, settings: Option<&Path>) -> String {
+    let wrapper = [riff.to_string_lossy().into_owned()]
+        .into_iter()
+        .chain(["workers", "lead", "--name", name].map(str::to_owned));
+    wrapper
+        .chain(std::iter::once(claude.to_string_lossy().into_owned()))
         .chain(lead_args(settings))
         .map(|a| quote(&a))
         .collect::<Vec<_>>()
@@ -387,12 +411,13 @@ impl RiffTmux {
     }
 
     /// `tmux -L riff -f CONFIG`. tmux reads the config only when the
-    /// server starts.
+    /// server starts. It gets only the [`server_env`] of this process,
+    /// so the server and each of its panes hold no credential of the
+    /// person (01M4C4WW15HGA1VEDFRBEMZAW7).
     fn command(&self) -> Command {
         let mut cmd = Command::new(&self.bin);
         cmd.args(["-L", SOCKET, "-f"]).arg(&self.config);
-        // A pane of another tmux server must not reach that server.
-        cmd.env_remove("TMUX").env_remove("TMUX_PANE");
+        cmd.env_clear().envs(server_env(std::env::vars_os()));
         cmd
     }
 
@@ -446,6 +471,31 @@ impl RiffTmux {
         cmd.args([verb, "-t", &format!("={name}")]);
         cmd
     }
+}
+
+/// The variables of `parent` that the tmux server of riff gets: the kept
+/// variables of a session ([`crate::profile::kept`]), with no `TMUX` and
+/// no `TMUX_PANE`, so a pane of another tmux server does not reach that
+/// server (01M4C4WW15HGA1VEDFRBEMZAW7).
+///
+/// ```
+/// use std::ffi::OsString;
+/// let parent = [("PATH", "/bin"), ("GH_TOKEN", "ghp_x"), ("TMUX", "/tmp/t,1,0")]
+///     .map(|(k, v)| (OsString::from(k), OsString::from(v)));
+/// let names: Vec<OsString> = riff::start::server_env(parent).into_iter().map(|(k, _)| k).collect();
+/// assert_eq!(names, ["PATH"]);
+/// ```
+pub fn server_env(
+    parent: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    parent
+        .into_iter()
+        .filter(|(name, _)| {
+            name.to_str().is_some_and(|name| {
+                crate::profile::kept(name) && !["TMUX", "TMUX_PANE"].contains(&name)
+            })
+        })
+        .collect()
 }
 
 /// True when `tmux`, the value of `TMUX`, is a pane of the riff server:

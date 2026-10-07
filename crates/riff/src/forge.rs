@@ -814,10 +814,11 @@ pub struct Keeper {
     /// The token files of the session.
     pub files: Files,
     held: Option<Token>,
+    fixed: Option<Role>,
 }
 
 impl Keeper {
-    /// A keeper with no token yet.
+    /// A keeper with no token yet. The role follows the claims.
     pub fn new(app: App, github: GitHub, repo: String, files: Files) -> Keeper {
         Keeper {
             app,
@@ -825,6 +826,16 @@ impl Keeper {
             repo,
             files,
             held: None,
+            fixed: None,
+        }
+    }
+
+    /// The same keeper, with the one role `role` whatever the claims:
+    /// the lead (01M4C4WQVZR49FDGPJMFW22GTM).
+    pub fn with_role(self, role: Role) -> Keeper {
+        Keeper {
+            fixed: Some(role),
+            ..self
         }
     }
 
@@ -852,6 +863,9 @@ impl Keeper {
     }
 
     fn role(&self, claims: Option<&[String]>) -> Role {
+        if let Some(role) = self.fixed {
+            return role;
+        }
         match (claims, &self.held) {
             (Some(claims), _) => role_of(claims),
             (None, Some(held)) => held.role,

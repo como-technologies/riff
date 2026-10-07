@@ -3271,10 +3271,17 @@ systemctl --user status riff-workers.slice
 
 ## The forge token of each role
 
-A worker never gets your sign-in. riff starts `claude` with an empty
-environment, and adds only a short list of variables (the
-`KEPT_VARS` of `riff::profile`). So `GH_TOKEN`, your `gh` sign-in,
-your git helpers and your ssh agent never reach a worker.
+The lead and the workers never get your sign-in. riff starts
+`claude` with an empty environment, and adds only a short list of
+variables (the `KEPT_VARS` of `riff::profile`). So `GH_TOKEN`, your
+`gh` sign-in, your git helpers and your ssh agent never reach a
+session. The tmux server of riff also starts with only these
+variables, so its panes do not hold them either.
+
+Your model access is the one credential that `claude` gets:
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_MODEL`, when you set them. No other `ANTHROPIC_` variable
+reaches `claude`.
 
 With the GitHub App of riff, each worker gets a token of its role, and
 GitHub refuses each other step. riff makes the token outside the
@@ -3284,7 +3291,8 @@ fail. Make the App first (see "Make the GitHub App of riff").
 
 ```mermaid
 flowchart LR
-    P[your environment] -->|only the kept variables| C[claude of a worker]
+    P[your environment] -->|only the kept variables| T[tmux server of riff]
+    T --> C[claude of the lead or a worker]
     F[riff forge token files] -->|GH_CONFIG_DIR, git helper of riff| C
     P -. GH_TOKEN, gh sign-in, git helpers, ssh agent .-> N[stays out]
 ```
@@ -3304,8 +3312,10 @@ flowchart LR
   the lead and worker tokens are the same. riff-server keeps the plan
   to the lead.
 
-A worker that claims a `verify-` item gets the verifier token. After
-the release, it gets the worker token again. At each change of role,
+The lead always gets the lead token. `riff workers lead` starts it
+and keeps its token, like `riff workers run` for a worker. A worker
+that claims a `verify-` item gets the verifier token. After the
+release, it gets the worker token again. At each change of role,
 riff revokes the old token first, so a session never holds two tokens.
 A token lasts one hour; riff makes a new one 10 minutes before the end.
 
@@ -3753,7 +3763,10 @@ riff then shows the tmux session of that repository. When it does not
 run yet, riff starts it with the lead in the main clone, with Remote
 Control (see
 [Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
-`claude --remote-control`. The lead also gets the permission rules of
+`claude --remote-control`. The lead gets a temp folder of its own and
+the forge token of the lead, and none of your credentials (see
+[The forge token of each role](#the-forge-token-of-each-role)). The
+lead also gets the permission rules of
 its profile (see [The sandbox of each role](#the-sandbox-of-each-role)).
 riff writes them to a file in its local folder, at each start of a
 lead, for example `lead/como-technologies/riff.json`. When riff cannot
@@ -3763,7 +3776,8 @@ starts no second lead. To leave the session and keep it running, press
 `Ctrl-b d`. Run `riff` again to come back.
 
 riff runs its own tmux server, with the socket `riff` and a config of
-its own. Your `~/.tmux.conf` does not change a riff pane. To list the
+its own. Your `~/.tmux.conf` does not change a riff pane. The server
+gets only the kept variables of your environment. To list the
 sessions of that server by hand:
 
 ```sh

@@ -302,7 +302,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     // environment with only the kept variables and the forge variables,
     // so no credential of the person reaches it, also with no token
     // (01M4BV707FYHJDNC1499YAWR8D, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
-    let (given, files, keep) = forge_token(folder.as_ref(), session.as_deref(), server).await;
+    let (given, files, keep) = forge_token(folder.as_ref(), session.as_deref(), server, None).await;
     let _keep = keep.map(AbortOnDrop);
     let forge = forge::ForgeEnv::of(&given, &files, &riff);
     if let Some(why) = forge.no_token() {
@@ -396,13 +396,52 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// The first forge token of a worker session ([`forge`]), its token
-/// files, and the task that keeps the token. With no token, the result
-/// names the cause, and the files hold no token.
+/// Runs `claude` with `args` as the lead `name`, and waits
+/// (01M4C4WQVZR49FDGPJMFW22GTM). The pane of the lead in the tmux server
+/// of riff runs it. Like a worker, the lead gets a temp folder of its
+/// own and the forge token of its role, the lead, and `claude` starts
+/// through [`forge::ForgeEnv`]: no credential of the person reaches it.
+/// It gives no limits of a worker. Returns the exit code of `claude`,
+/// or 0 after a stop.
+pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) -> Result<i32> {
+    let mut term = signal(SignalKind::terminate())?;
+    let mut hup = signal(SignalKind::hangup())?;
+    let folder = temp::Folder::make(name);
+    let riff = crate::binary::this_on_disk()?;
+    let lead = Some(crate::profile::Role::Lead);
+    let (given, files, keep) = forge_token(folder.as_ref(), None, server, lead).await;
+    let _keep = keep.map(AbortOnDrop);
+    let forge = forge::ForgeEnv::of(&given, &files, &riff);
+    if let Some(why) = forge.no_token() {
+        eprintln!("{}", crate::text::forge_no_token(why));
+    }
+    let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+    let mut cmd = forge.command(claude.as_os_str(), &args, std::env::vars_os());
+    cmd.env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode));
+    if let Some(folder) = &folder {
+        for var in temp::VARS {
+            cmd.env(var, folder.path());
+        }
+    }
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("cannot start {}", claude.display()))?;
+    tokio::select! {
+        status = child.wait() => Ok(status?.code().unwrap_or(1)),
+        _ = term.recv() => stop_child(&mut child).await,
+        _ = hup.recv() => stop_child(&mut child).await,
+    }
+}
+
+/// The first forge token of a session ([`forge`]), its token files, and
+/// the task that keeps the token. The role is `fixed`, else it follows
+/// the claims of the worker `session`. With no token, the result names
+/// the cause, and the files hold no token.
 async fn forge_token(
     folder: Option<&temp::Folder>,
     session: Option<&str>,
     server: &str,
+    fixed: Option<crate::profile::Role>,
 ) -> (
     std::result::Result<forge::Token, forge::Error>,
     forge::Files,
@@ -421,10 +460,14 @@ async fn forge_token(
             let why = anyhow::anyhow!("this folder is in no repository");
             return Err(forge::Error::Place(why));
         }
-        let session = session
-            .context("the worker has no session ID")
-            .map_err(forge::Error::Place)?
-            .to_owned();
+        let session = match (session, fixed) {
+            (Some(session), _) => Some(session.to_owned()),
+            (None, Some(_)) => None,
+            (None, None) => {
+                let why = anyhow::anyhow!("the worker has no session ID");
+                return Err(forge::Error::Place(why));
+            }
+        };
         Ok((app, repo, place, session))
     });
     let (app, repo, place, id) = match made {
@@ -435,6 +478,7 @@ async fn forge_token(
     let claims = move || {
         let (place, id, server) = (place.clone(), id.clone(), server.clone());
         async move {
+            let id = id?;
             let api = Api::new(&server).one_try(forge::LOOK_EVERY / 2);
             let me = identity::agent(&place, &id, api.base()).ok()?;
             let info = api.signed_in(me.who().session()).ok()?.me(&me).await.ok()?;
@@ -442,6 +486,9 @@ async fn forge_token(
         }
     };
     let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files.clone());
+    if let Some(role) = fixed {
+        keeper = keeper.with_role(role);
+    }
     // The first token comes before `claude` starts.
     let first = keeper.first(claims().await.as_deref()).await;
     (

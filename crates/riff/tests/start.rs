@@ -23,6 +23,7 @@ printf '%s\n' "$*" >> "$dir/log"
 case "$1" in
   has-session) grep -qx "$3" "$dir/sessions" 2>/dev/null ;;
   new-session)
+    env > "$dir/server.env"
     echo "=$4" >> "$dir/sessions"
     for last; do :; done
     (cd "$6" && sh -c "$last") ;;
@@ -31,11 +32,13 @@ case "$1" in
 esac
 "#;
 
-/// Writes the arguments and the `RIFF_SERVER` that it got.
+/// Writes the arguments and the `RIFF_SERVER` that it got, and its
+/// environment.
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/claude.log"
 printf '%s\n' "$RIFF_SERVER" >> "$dir/claude.log"
+env > "$dir/claude.env"
 "#;
 
 fn script(dir: &Path, name: &str, text: &str) {
@@ -108,6 +111,10 @@ impl Machine {
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")
             .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+            // Credentials of the person, as markers.
+            .env("GH_TOKEN", MARKER)
+            .env("SSH_AUTH_SOCK", MARKER)
+            .env("RIFF_TEST_MARKER", MARKER)
             .env_remove("RIFF_SESSION")
             .env_remove("CLAUDE_CODE_SESSION_ID")
             .env_remove("RIFF_WORKER")
@@ -127,6 +134,9 @@ impl Machine {
         child.wait_with_output().unwrap()
     }
 }
+
+/// The value of each credential of the person in [`Machine::riff`].
+const MARKER: &str = "person-secret-7f3a";
 
 fn stdout(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -177,20 +187,41 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     let lines: Vec<&str> = log.lines().collect();
     let settings =
         riff::start::lead_settings_file(&m.home.path().join("state"), "como-technologies/riff");
+    assert_eq!(lines.len(), 3, "{log}");
     assert_eq!(
-        lines,
-        [
-            format!("-L riff -f {config} has-session -t =como-technologies/riff"),
-            format!(
-                "-L riff -f {config} new-session -d -s como-technologies/riff -c {} \
-                 -e RIFF_SERVER={} 'claude' '--remote-control' '--settings' '{}'",
-                riff.display(),
-                api.base(),
-                settings.display(),
-            ),
-            format!("-L riff -f {config} attach-session -t =como-technologies/riff"),
-        ],
+        lines[0],
+        format!("-L riff -f {config} has-session -t =como-technologies/riff")
     );
+    // The pane runs the lead through `riff workers lead`
+    // (01M4C4WQVZR49FDGPJMFW22GTM).
+    let start = format!(
+        "-L riff -f {config} new-session -d -s como-technologies/riff -c {} -e RIFF_SERVER={} '",
+        riff.display(),
+        api.base(),
+    );
+    let end = format!(
+        "' 'workers' 'lead' '--name' 'lead-como-technologies-riff' \
+         'claude' '--remote-control' '--settings' '{}'",
+        settings.display(),
+    );
+    assert!(
+        lines[1].starts_with(&start) && lines[1].ends_with(&end),
+        "{log}"
+    );
+    assert_eq!(
+        lines[2],
+        format!("-L riff -f {config} attach-session -t =como-technologies/riff")
+    );
+    // No credential of the person reaches the tmux server of riff or the
+    // lead (01M4C4WW15HGA1VEDFRBEMZAW7, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
+    let server_env = m.read("server.env");
+    assert!(server_env.contains("RIFF_SERVER="), "{server_env}");
+    let claude_env = m.read("claude.env");
+    assert!(claude_env.contains("GH_CONFIG_DIR="), "{claude_env}");
+    for env in [&server_env, &claude_env] {
+        assert!(!env.contains(MARKER), "{env}");
+        assert!(!env.lines().any(|l| l.starts_with("TMUX=")), "{env}");
+    }
     // The fake claude ran with the flags of the lead and the server.
     assert_eq!(
         m.read("claude.log"),

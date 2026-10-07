@@ -4268,7 +4268,8 @@
   the token of the new role. While the revoke fails, the session has no
   token.
 - **01M4BYVSNQ5SY2GRGT73FV0Z3E** No worker or AI session ever gets a
-  credential of the person. riff starts `claude` with an empty
+  credential of the person, except the model access
+  (01M4C4WW8JS7QVC0ZYHWPSMWKN). riff starts `claude` with an empty
   environment and sets only the kept variables and the variables of
   riff. With no GitHub App, and when riff cannot make a token, the
   session has no forge token: never the token of the person. The type
@@ -4276,9 +4277,23 @@
 - **01M4BYVSR06B9HNX4SP83SY2SX** The kept variables are one list,
   `profile::KEPT_VARS`: the account, the language and the terminal,
   tmux, the XDG folders of the person, the user manager of systemd,
-  the proxy and the certificates, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_*`,
-  and the riff variables of the server, the session, the person and
-  the machine.
+  the proxy and the certificates, `CLAUDE_CONFIG_DIR`, the model
+  access, and the riff variables of the server, the session, the
+  person and the machine.
+- **01M4C4WW8JS7QVC0ZYHWPSMWKN** The model access of the person is the
+  one credential that `claude` gets. The kept variables name each
+  variable of it: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL`. No other `ANTHROPIC_`
+  variable reaches `claude`.
+- **01M4C4WQVZR49FDGPJMFW22GTM** The lead starts through
+  `riff workers lead`, like a worker through `riff workers run`: a temp
+  folder of its own, the forge token of the lead, and `claude` through
+  `forge::ForgeEnv`. The token of the lead does not follow the claims.
+- **01M4C4WW15HGA1VEDFRBEMZAW7** riff starts its tmux server with an
+  empty environment and only the kept variables, with no `TMUX` and no
+  `TMUX_PANE`. Its config sets no variable to copy from a client at an
+  attach. So the global environment of the server and each of its
+  panes hold no credential of the person.
 
 ## Open
 

@@ -1028,6 +1028,22 @@ enum Workers {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Run CLAUDE as the lead, and wait
+    ///
+    /// CLAUDE gets a temp folder of its own, the forge token of the lead
+    /// and an empty environment with only the kept variables. The pane of
+    /// the lead in the tmux server of riff runs it.
+    #[command(hide = true)]
+    Lead {
+        /// The name of the temp folder of the lead.
+        #[arg(long)]
+        name: String,
+        /// The claude command.
+        claude: std::path::PathBuf,
+        /// The arguments of CLAUDE.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Run PROGRAM as the test runner of a worker, and wait
     ///
     /// For a test program of cargo, it takes the free tokens of the pool
@@ -2255,6 +2271,9 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
         Some(Workers::Run { claude, args }) => {
             std::process::exit(worker::run(claude, args, server).await?)
         }
+        Some(Workers::Lead { name, claude, args }) => {
+            std::process::exit(worker::run_lead(claude, args, server, name).await?)
+        }
         Some(Workers::TestRun { program, args }) => {
             std::process::exit(riff::jobserver::test_run(program, args).await?)
         }
@@ -2349,8 +2368,11 @@ async fn start(server: &str) -> Result<()> {
     } else {
         let env = vec![("RIFF_SERVER".to_owned(), server.to_owned())];
         let claude = std::path::Path::new("claude");
-        let settings = lead_settings(&dir, &name, &clone.path, claude, server);
-        let command = start::lead_command(claude, settings.as_deref());
+        let lead = start::lead_name(&clone.repo);
+        let temp = riff::temp::here(&lead).unwrap_or_else(std::env::temp_dir);
+        let settings = lead_settings(&dir, &name, &clone.path, &temp, claude, server);
+        let riff = riff::binary::this_on_disk()?;
+        let command = start::lead_command(&riff, &lead, claude, settings.as_deref());
         tmux.new_session(&name, &clone.path, &env, &command)?;
         println!("{}", text::lead_started(&clone.repo, &clone.path));
     }
@@ -2365,18 +2387,19 @@ async fn start(server: &str) -> Result<()> {
     Ok(())
 }
 
-/// Writes the permission rules of the lead of `clone` to its file in
-/// `dir`, and gives the file. With no rules, it says why and gives
-/// `None` (01M4BT33Z914GBHCGCAXFVQ2X7).
+/// Writes the permission rules of the lead of `clone`, with the temp
+/// folder `temp`, to its file in `dir`, and gives the file. With no
+/// rules, it says why and gives `None` (01M4BT33Z914GBHCGCAXFVQ2X7).
 fn lead_settings(
     dir: &std::path::Path,
     name: &str,
     clone: &std::path::Path,
+    temp: &std::path::Path,
     claude: &std::path::Path,
     server: &str,
 ) -> Option<std::path::PathBuf> {
     let role = riff::profile::Role::Lead;
-    let rules = riff::role_rules::clone_session(clone, &std::env::temp_dir(), claude, server)
+    let rules = riff::role_rules::clone_session(clone, temp, claude, server)
         .ok_or_else(|| text::no_role_rules(role, "it has no HOME, or the server URL has no host"))
         .and_then(|session| riff::role_rules::here(role, &session));
     let file = start::lead_settings_file(dir, name);
