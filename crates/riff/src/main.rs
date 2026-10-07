@@ -2233,7 +2233,6 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     );
     for line in [
         &started.limited,
-        &started.no_scope,
         &started.no_pool,
         &started.no_cores,
     ]

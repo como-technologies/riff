@@ -12,20 +12,19 @@
 //! | Compile jobs and test threads of all workers | `riff workers run` | one pool: hardware threads - 2 - workers, 1 or more, none above the memory pressure limit ([`crate::jobserver`]) | `workers.jobs` |
 //! | Jobs and test threads of one worker with no pool | `riff workers run` | (physical cores - 1) / workers, 1 or more ([`jobs`]) | `workers.jobs` |
 //! | Priority | `riff workers run` | nice 10 | `workers.nice` |
-//! | Memory and CPU share of all workers | `riff workers start` | 3/4 of the memory ([`memory`]), CPU weight [`CPU_WEIGHT`] | `workers.memory` |
+//! | Memory and CPU share of all workers | `riff workers run` | 3/4 of the memory ([`memory`]), CPU weight [`CPU_WEIGHT`] | `workers.memory` |
 //! | Available memory for a new worker | `riff workers start`, the rollout | 4 GB ([`crate::machine::Machine::low`]) | `workers.floor` |
 //!
 //! ```mermaid
 //! flowchart TD
 //!     S["riff workers start"] --> F{"available memory<br/>less than the floor?"}
 //!     F -- yes --> N["start nothing, say why"]
-//!     F -- no --> P["systemctl --user set-property --runtime<br/>riff-workers.slice MemoryHigh MemoryMax CPUWeight"]
-//!     P -- ok --> T["tmux pane: riff workers run<br/>RIFF_WORKER_SLICE=riff-workers.slice"]
-//!     P -- "no systemd" --> U["tmux pane: riff workers run<br/>say it one time"]
-//!     T --> Q{"systemd-run --user --scope<br/>works in the pane?"}
+//!     F -- no --> T["tmux pane: riff workers run<br/>RIFF_WORKER_SLICE=riff-workers.slice"]
+//!     T --> P{"systemctl --user set-property --runtime<br/>riff-workers.slice MemoryHigh MemoryMax CPUWeight"}
+//!     P -- "no systemd, say it one time" --> D
+//!     P -- ok --> Q{"systemd-run --user --scope<br/>works in the pane?"}
 //!     Q -- yes --> C["systemd-run --user --scope --slice=riff-workers.slice<br/>nice -n (10 - nice of the wrapper) claude<br/>jobs_env: the pool or the fixed share"]
-//!     Q -- "no, say it one time" --> D
-//!     U --> D["nice -n (10 - nice of the wrapper) claude<br/>jobs_env: the pool or the fixed share"]
+//!     Q -- "no, say it one time" --> D["nice -n (10 - nice of the wrapper) claude<br/>jobs_env: the pool or the fixed share"]
 //! ```
 //!
 //! - **Jobs** (01M3WFYZRK5CT22GJW6ZHYT9CC, 01M3ZGZMJ9RF1C4AHG78GQ2NM4).
@@ -48,13 +47,19 @@
 //!   So when the OS kills a worker for its memory, the wrapper lives and
 //!   tells the lead (01M3WFZ03Z9Y60HPHJJ9ZE6AQZ), and the desktop of the
 //!   person goes on.
+//! - **Only the wrapper calls systemd** (01M4C2PXZ5WNE4C2CJW2HABPY0).
+//!   `riff workers run` runs in the tmux pane, outside each sandbox
+//!   ([`crate::profile`]). It sets the properties of the slice, then
+//!   starts the scope of `claude`. `riff workers start` can run in the
+//!   sandbox of the lead, so it calls no `systemctl`: it only names the
+//!   slice to the wrapper in [`SLICE_VAR`].
 //! - **No systemd** (01M3WFYZZENNHVH8Z2BAFSR6TS). When `systemctl`
-//!   cannot set the slice, the workers run with no scope. riff says so
-//!   one time ([`scope`]). When `systemd-run --user --scope` fails in
-//!   the pane of a worker, for example with no user bus in the
-//!   environment of the tmux server, the wrapper starts `claude` with no
-//!   scope, and says so one time in the pane ([`worker_slice`],
-//!   01M407J8X25H9AT8M789EG5RQZ).
+//!   cannot set the slice, the wrapper starts `claude` with no scope,
+//!   and says so one time on the machine, in the pane. When
+//!   `systemd-run --user --scope` fails in the pane, for example with no
+//!   user bus in the environment of the tmux server, the wrapper starts
+//!   `claude` with no scope, and says so one time in the pane
+//!   ([`worker_slice`], 01M407J8X25H9AT8M789EG5RQZ).
 //! - **Floor** (01M3WFZ01PTAYYKG3T5CFA2W4D). riff starts no worker while
 //!   the available memory is less than the floor.
 //!
@@ -515,12 +520,12 @@ pub fn command(
     command
 }
 
-/// Sets the properties of [`SLICE`] for `max_gb` of memory, until the
-/// next start of the machine. The error is the reason in words: no
-/// `systemctl`, or no systemd user manager.
-pub fn set_slice(max_gb: u32) -> std::result::Result<(), String> {
+/// Sets the properties of the slice `slice` for `max_gb` of memory,
+/// until the next start of the machine. The error is the reason in
+/// words: no `systemctl`, or no systemd user manager.
+pub fn set_slice(slice: &str, max_gb: u32) -> std::result::Result<(), String> {
     let out = Command::new("systemctl")
-        .args(["--user", "set-property", "--runtime", SLICE])
+        .args(["--user", "set-property", "--runtime", slice])
         .args(properties(max_gb))
         .output()
         .map_err(|e| format!("cannot run systemctl: {e}"))?;
@@ -534,38 +539,6 @@ pub fn set_slice(max_gb: u32) -> std::result::Result<(), String> {
         .unwrap_or("systemctl failed")
         .trim()
         .to_owned())
-}
-
-/// The scope of the next workers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Scope {
-    /// The slice of the workers. `None` on a machine with no systemd.
-    pub slice: Option<&'static str>,
-    /// What riff says, the first time that the machine has no systemd.
-    pub said: Option<String>,
-}
-
-/// Makes the slice of the workers ready, with the memory of the
-/// settings file `path` on `machine` (01M3WFYZX6GVFYW6NTTTKF144R). On a
-/// machine with no systemd, it gives no slice, and the line to say. It
-/// gives the line one time: the file [`SAID`] in `local` holds that
-/// (01M3WFYZZENNHVH8Z2BAFSR6TS).
-pub fn scope(path: &Path, machine: &Machine, local: Option<&Path>) -> Result<Scope> {
-    let max_gb = memory(machine.mem_gb, settings::workers_memory(path)?);
-    let said = local.map(|dir| dir.join(SAID));
-    match set_slice(max_gb) {
-        Ok(()) => {
-            once(said.as_deref(), None);
-            Ok(Scope {
-                slice: Some(SLICE),
-                said: None,
-            })
-        }
-        Err(why) => Ok(Scope {
-            slice: None,
-            said: once(said.as_deref(), Some(crate::text::no_systemd(&why))),
-        }),
-    }
 }
 
 /// Checks that `systemd-run --user --scope` can make a scope of `slice`
@@ -591,33 +564,55 @@ pub fn try_scope(slice: &str) -> std::result::Result<(), String> {
         .to_owned())
 }
 
-/// The slice of a worker that the wrapper got in `slice`, when a scope
-/// of it works here, and the line to say. With no scope, the line comes
-/// one time: the file [`SAID_SCOPE`] in `local` holds that
-/// (01M407J8X25H9AT8M789EG5RQZ).
+/// The slice of a worker that the wrapper got in `slice`, and the line
+/// to say. The wrapper runs outside each sandbox, so it is the one
+/// process of a worker that calls systemd (01M4C2PXZ5WNE4C2CJW2HABPY0).
+/// `set` gives the slice its properties (01M3WFYZX6GVFYW6NTTTKF144R).
+/// When it fails, the machine has no systemd: no scope, and the line
+/// comes one time, as the file [`SAID`] in `local` holds
+/// (01M3WFYZZENNHVH8Z2BAFSR6TS). Then `try_scope` checks that a scope
+/// works here. When it fails, no scope, and the line comes one time, as
+/// the file [`SAID_SCOPE`] in `local` holds (01M407J8X25H9AT8M789EG5RQZ).
 ///
 /// ```
 /// use riff::limits::worker_slice;
 ///
 /// let local = tempfile::tempdir()?;
 /// let works = |_: &str| Ok(());
-/// let fails = |_: &str| Err("Failed to connect to bus".to_owned());
-/// assert_eq!(worker_slice(None, Some(local.path()), fails), (None, None));
-/// assert_eq!(worker_slice(Some("s.slice"), Some(local.path()), works), (Some("s.slice".into()), None));
-/// let (slice, said) = worker_slice(Some("s.slice"), Some(local.path()), fails);
+/// let no_bus = |_: &str| Err("Failed to connect to bus".to_owned());
+/// assert_eq!(worker_slice(None, Some(local.path()), no_bus, no_bus), (None, None));
+/// assert_eq!(worker_slice(Some("s.slice"), Some(local.path()), works, works), (Some("s.slice".into()), None));
+///
+/// // No scope in the pane: one time.
+/// let (slice, said) = worker_slice(Some("s.slice"), Some(local.path()), works, no_bus);
 /// assert_eq!(slice, None);
-/// assert!(said.is_some_and(|line| line.contains("Failed to connect to bus")));
-/// assert_eq!(worker_slice(Some("s.slice"), Some(local.path()), fails), (None, None), "one time");
+/// assert!(said.is_some_and(|line| line.contains("cannot make a scope")));
+/// assert_eq!(worker_slice(Some("s.slice"), Some(local.path()), works, no_bus), (None, None), "one time");
+///
+/// // No systemd: one time. No scope is tried.
+/// let (slice, said) = worker_slice(Some("s.slice"), Some(local.path()), no_bus, works);
+/// assert_eq!(slice, None);
+/// assert!(said.is_some_and(|line| line.contains("no systemd user manager")));
+/// assert_eq!(worker_slice(Some("s.slice"), Some(local.path()), no_bus, works), (None, None), "one time");
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn worker_slice(
     slice: Option<&str>,
     local: Option<&Path>,
+    set: impl Fn(&str) -> std::result::Result<(), String>,
     try_scope: impl Fn(&str) -> std::result::Result<(), String>,
 ) -> (Option<String>, Option<String>) {
     let Some(slice) = slice else {
         return (None, None);
     };
+    let said = local.map(|dir| dir.join(SAID));
+    if let Err(why) = set(slice) {
+        return (
+            None,
+            once(said.as_deref(), Some(crate::text::no_systemd(&why))),
+        );
+    }
+    once(said.as_deref(), None);
     let said = local.map(|dir| dir.join(SAID_SCOPE));
     match try_scope(slice) {
         Ok(()) => {

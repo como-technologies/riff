@@ -1819,20 +1819,21 @@ pub fn low_memory(avail_gb: u32, floor_gb: u32) -> String {
     format!("{avail_gb} GB of memory is available, and the floor of this machine is {floor_gb} GB.")
 }
 
-/// What `riff workers start` says one time on a machine with no systemd
-/// (01M3WFYZZENNHVH8Z2BAFSR6TS). `why` is the error of `systemctl`.
+/// What `riff workers run` says one time on a machine with no systemd,
+/// in its pane (01M3WFYZZENNHVH8Z2BAFSR6TS). `why` is the error of
+/// `systemctl`.
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::no_systemd("cannot run systemctl: not found"),
-///     "This machine has no systemd user manager (cannot run systemctl: not found), so the \
-///      workers run with no memory limit."
+///     "riff: this machine has no systemd user manager (cannot run systemctl: not found), so \
+///      the workers run with no memory limit."
 /// );
 /// ```
 pub fn no_systemd(why: &str) -> String {
     format!(
-        "This machine has no systemd user manager ({why}), so the workers run with no memory \
-         limit."
+        "riff: this machine has no systemd user manager ({why}), so the workers run with no \
+         memory limit."
     )
 }
 
@@ -3604,7 +3605,6 @@ pub fn host_runs(me: &SessionUri, first: &str) -> String {
 ///     main: "/src/riff".into(),
 ///     fresh: None,
 ///     limited: Some("The limit of this machine is 1.".into()),
-///     no_scope: None,
 ///     no_pool: None,
 ///     no_cores: None,
 /// };
@@ -3627,7 +3627,6 @@ pub fn host_started(host: &str, started: &crate::worker::Started) -> String {
     );
     for more in [
         &started.limited,
-        &started.no_scope,
         &started.no_pool,
         &started.no_cores,
     ]
