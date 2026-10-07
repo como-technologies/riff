@@ -2,7 +2,7 @@
 //! sign-in (R19, R104, R107). The sign-in is in the mock store of
 //! `keyring-core`.
 
-mod common;
+use crate::common;
 
 use std::time::Instant;
 

@@ -12,7 +12,7 @@
 //! not signed, a request of a lead, a status request, and a selector
 //! with three fields.
 
-mod common;
+use crate::common;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

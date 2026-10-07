@@ -1,7 +1,7 @@
 //! A token for each session (R19, R104, R105,
 //! 01M3WFVAB44T8EP4QZD4KS7DRF, 01M3WFVADCDZM8XX590KAEMEYG), over HTTP.
 
-mod common;
+use crate::common;
 
 use std::time::Instant;
 

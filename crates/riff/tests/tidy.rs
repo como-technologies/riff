@@ -5,7 +5,7 @@
 //! worker, a fake `gh` that gives the pull requests, and a fake disk in
 //! `RIFF_DISK`.
 
-mod book;
+use crate::book;
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;

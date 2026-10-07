@@ -3,7 +3,7 @@
 //! A riff here has sign-in, unless the test is about a riff with no
 //! sign-in: only a riff with sign-in ends a sign-in.
 
-mod common;
+use crate::common;
 
 use std::time::Instant;
 

@@ -4,7 +4,7 @@
 //! checks of the pages are in `crates/riff/tests/start_a_riff.rs` and
 //! `crates/riff/tests/join_a_riff.rs`.
 
-mod common;
+use crate::common;
 
 use isolated::Isolated;
 use std::fs;

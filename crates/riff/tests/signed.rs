@@ -1,7 +1,7 @@
 //! Signed messages from `riff` to a real server that needs sign-in
 //! (R195-R201). The sign-in is in the mock store of `keyring-core`.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::time::Duration;

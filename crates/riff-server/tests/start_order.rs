@@ -1,7 +1,7 @@
 //! The start order: load, then the lease, then the port
 //! (01M3THEE08ZKV8WGHDSVWV69ZE, 01M3THEE31H5QVV3JAFC4ZRGFR).
 
-mod common;
+use crate::common;
 
 use std::fs;
 use std::process::{Child, Stdio};

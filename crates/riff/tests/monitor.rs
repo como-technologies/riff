@@ -4,7 +4,7 @@
 //! with no worker, fake numbers of the machine in `RIFF_PROC`, and a
 //! fake `journalctl`.
 
-mod book;
+use crate::book;
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;

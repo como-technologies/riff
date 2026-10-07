@@ -877,7 +877,7 @@
   a dir outside the riff repository. So no command of a test writes
   settings in a repository above the dirs of the test.
 - **01M3W98PMDPZW1CR3KJYMPHVQZ** A test server starts with no old
-  sign-in at its URL. The tests of one file share one mock keyring,
+  sign-in at its URL. The tests of one test binary share one mock keyring,
   and the OS can give the port of an earlier test to a later test. A
   test in process that puts a new riff at its URL keeps its listener.
   A test that needs a URL where nothing listens holds the port with a
@@ -4044,6 +4044,19 @@
   `hygiene crates` prints the arguments of `cargo test`, and one line
   that names the tests and the reason. `just check` holds the lock of
   01M43DKYVAX0TJ2F5YYGYFSZ4G.
+- **01M4A4T67MPF0BCNX7AFZRDA8J** The dev and test profiles of the
+  workspace keep only the line tables for the code of the workspace,
+  and no debug info for the dependencies. A backtrace still names the
+  file and the line.
+- **01M4A4T69XGN1XVJHGHVZN1MRJ** The integration tests of a crate are
+  one test binary, `all`: `tests/all.rs` has one module for each file
+  of `tests`. A file whose tests set the keyring store of the process
+  is a test binary of its own: `back_in.rs` and `join_a_riff.rs` of
+  `riff`. Each other test of `riff` that needs a mock keyring uses
+  `common::mock_keyring`.
+- **01M4A4T6C5DH311AXMM6AG54DV** A test fails when a file of `tests`
+  of a crate is in no test binary: not a module of `tests/all.rs`, and
+  not the path of a `[[test]]` in the `Cargo.toml` of the crate.
 - **01M49W17GGV1K5FZEKJRPV0GNA** A type of the log, the wire or the
   checkpoint has one struct. A reader, a saved form or a reply that
   carries the data of a type holds that type, not a second struct

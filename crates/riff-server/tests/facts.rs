@@ -2,7 +2,7 @@
 //! (01M3TJWJ12WEDCXW3W0529KRP2). It answers also while the server replies
 //! 503 to each other call.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

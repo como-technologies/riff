@@ -4,7 +4,7 @@
 //! `riff-server` that counts its replies, a fake provider, and the mock
 //! keyring of `keyring-core`.
 
-mod common;
+use crate::common;
 
 use std::sync::{Arc, Mutex};
 

@@ -55,6 +55,15 @@ tower = { version = "0.5.3", features = ["util"] }
 nix = { version = "0.31.3", features = ["term"] }
 vt100 = "0.16.2"
 
+# 01M4A4T67MPF0BCNX7AFZRDA8J: a backtrace names the file and the line of the code of
+# the workspace. The dependencies have no debug info. The test profile
+# inherits it.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 strip = true
 lto = true

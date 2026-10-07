@@ -3,7 +3,7 @@
 //! error says `riff logout`, and after it each call works. The keyring
 //! is the mock store of `keyring-core`.
 
-mod common;
+use crate::common;
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

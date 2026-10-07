@@ -3,7 +3,7 @@
 //! (01M3TJWHRP49M66NYNHWSYD3XP) and `riff-server log cut`
 //! (01M3TJWHVN730ZWCWHT9ER186R). Each test runs the real binary.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::fs;

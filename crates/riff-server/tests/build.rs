@@ -4,7 +4,7 @@
 //! 01M3MX1E65XGWDZ062PQ9YXQ5T, 01M3MX1DYY6AVDW946NR0B9T2C,
 //! 01M3MX1E1EY1M7JGNCN6FCEVQK).
 
-mod common;
+use crate::common;
 
 use riff_core::build::{Build, HEADER, Semver, VERSION};
 use riff_server::auth::RESOURCE_METADATA_PATH;

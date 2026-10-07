@@ -13,7 +13,7 @@ use std::process::{Command, Output};
 
 use isolated::Isolated;
 
-mod book;
+use crate::book;
 
 /// A fake `gh` in `bin` that logs `gh ARGS` to `bin/gh.log`, copies its
 /// stdin to the log for `--body-file -`, and runs `cases`: the arms of a

@@ -2,16 +2,14 @@
 //! `riff`; it does not fall back to `USER`. The server refuses a known
 //! session ID under a new user.
 
+use crate::common;
 use isolated::Isolated;
-use std::sync::Once;
 
 use keyring_core::{Entry, Error, mock};
 use riff::api::Api;
 use riff::login::{self, SignIn};
 use riff::{identity, secrets};
 use riff_core::name::SessionUri;
-
-static MOCK_KEYRING: Once = Once::new();
 
 fn uri(text: &str) -> SessionUri {
     text.parse().unwrap()
@@ -29,7 +27,7 @@ async fn start_server() -> Api {
 /// A sign-in of mike at `server` in the mock keyring, and a keyring
 /// that fails on the next read of it.
 fn broken_sign_in(server: &str) {
-    MOCK_KEYRING.call_once(|| keyring_core::set_default_store(mock::Store::new().unwrap()));
+    common::mock_keyring();
     let sign_in = SignIn {
         user: "mike".into(),
         access_token: "a-1".into(),

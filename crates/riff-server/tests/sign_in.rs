@@ -1,7 +1,7 @@
 //! `GET /v1/sign-in` and the token exchange, with a fake provider that
 //! serves a discovery document and a JWKS.
 
-mod common;
+use crate::common;
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 

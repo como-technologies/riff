@@ -1,7 +1,7 @@
 //! The state after a restart: a replay of the log (R30, R125, R141),
 //! over HTTP.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

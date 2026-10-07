@@ -2,7 +2,7 @@
 //! each on one short line, and hides the plumbing
 //! (01M3NJDSQ23FFRMH8ZD4GC57WY).
 
-mod book;
+use crate::book;
 
 use isolated::Isolated;
 

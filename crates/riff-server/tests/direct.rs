@@ -2,7 +2,7 @@
 //! caller acts as its token, and gets a direct thread only when it is
 //! one of its two sessions.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

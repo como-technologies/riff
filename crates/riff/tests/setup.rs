@@ -3,7 +3,7 @@
 //! (01M3Q53RNDJBDHVDFHJ9HCX9S1). The tests use a temporary HOME: they
 //! never touch the real Claude settings.
 
-mod book;
+use crate::book;
 
 use isolated::Isolated;
 use std::path::Path;

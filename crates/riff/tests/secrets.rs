@@ -1,11 +1,11 @@
 //! The secrets of `riff` live in the keyring store, and only there.
 
-use keyring_core::{Entry, mock};
+use keyring_core::Entry;
 use riff::secrets::{self, SERVICE};
 
 #[test]
 fn secrets_round_trip_through_the_keyring_store() {
-    keyring_core::set_default_store(mock::Store::new().unwrap());
+    crate::common::mock_keyring();
     let name = "access http://127.0.0.1:7878";
 
     secrets::set(name, "a-1").unwrap();

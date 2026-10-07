@@ -23,7 +23,7 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::{ServiceExt, service::RunningService};
 use serde_json::json;
 
-mod book;
+use crate::book;
 
 /// A fake `gh`: it logs each call to `gh.log`, keeps each comment of
 /// the issue N on one line of `comments-N`, and answers

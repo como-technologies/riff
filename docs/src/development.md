@@ -136,8 +136,8 @@ runs keep the machine busy. This example runs one test of
 
 ```sh
 for i in $(seq 20); do
-  cargo test -q -p riff --test hosts \
-    a_host_ends_the_session_of_a_killed_worker_and_tells_the_lead || break
+  cargo test -q -p riff --test all \
+    hosts::a_host_ends_the_session_of_a_killed_worker_and_tells_the_lead || break
 done
 ```
 
@@ -185,6 +185,49 @@ with its output:
 ```sh
 cargo test -p riff --test hosts -- --nocapture 2>&1 | grep 'slow under load'
 ```
+
+## Run the tests of one file
+
+The integration tests of a crate are one test binary, `all`. Each file
+of `tests` is a module of `tests/all.rs`. One binary links one time, so
+a build writes much less to the disk. To run the tests of one file,
+name its module:
+
+```sh
+cargo test -p riff --test all chat::
+```
+
+Two files of `riff` are test binaries of their own: `back_in` and
+`join_a_riff`. Their tests set the keyring store of the process. Run
+them by their names:
+
+```sh
+cargo test -p riff --test back_in
+```
+
+```mermaid
+flowchart LR
+    A[tests/all.rs] --> M1[mod chat]
+    A --> M2[mod hosts]
+    A --> M3[mod ...]
+    M1 & M2 & M3 --> B[one binary: all]
+    K[tests/back_in.rs] --> C[binary: back_in]
+```
+
+### Add a test file
+
+Write the file in `tests` of the crate. Then add its module to
+`tests/all.rs` of the crate, for example `mod my_feature;`. The file
+reaches the helpers with `use crate::common;`. A test fails when a file
+of `tests` is in no test binary. To run that check:
+
+```sh
+cargo test -p hygiene --test all test_files::
+```
+
+The dev and test builds keep only the line tables of the code of the
+workspace, and no debug info for the dependencies. A backtrace still
+names the file and the line.
 
 ## Build riff from your clone
 
@@ -239,7 +282,7 @@ field or a type, run the round trips:
 ```sh
 cargo test -p riff-core --lib round_trip
 cargo test -p riff-server --lib each_part_of_a_checkpoint
-cargo test -p riff-server --test calls each_kind_of_record
+cargo test -p riff-server --test all calls::each_kind_of_record
 ```
 
 A test fails when a sample leaves out the new field, or when no sample

@@ -2,7 +2,7 @@
 //! refresh token of a test account, and a real `riff-server`
 //! (01M496JTHN19BZ7YN94993R35X).
 
-mod common;
+use crate::common;
 
 use common::{CLIENT, FakeProvider, REFRESH};
 use riff::api::Api;

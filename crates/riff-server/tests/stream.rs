@@ -2,7 +2,7 @@
 //! (01M3QA6TDF6FB5PH8E5V7HCYDQ), behind a front end that holds a reply
 //! until its first body byte, as Cloud Run does.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 
