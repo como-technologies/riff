@@ -638,6 +638,21 @@
   status and no post. It exits with status 1 and one line that names
   the commit, the state of the Gate and `gh pr checks N`.
   `riff verify fail N` needs no Gate.
+- **01M4C4WQ9K6ZC85K24QFXJAZ2W** The `Done when:` line of each issue
+  has one criterion that starts with `- Docs:`: the docs that the
+  change needs. The verifier checks the docs before a pass, and writes
+  what it checked in a result line that starts with `Docs:`.
+- **01M4C4WQHF7PRFHZJ9CNS847KX** `riff verify pass N` reads the issue
+  of the `Issue:` trailer of pull request N with `gh`. When the issue
+  has no criterion `- Docs:` after its `Done when:` line, or the result
+  has no line that starts with `Docs:`, it makes no comment, no status
+  and no post. It exits with status 1 and one line that says what to
+  add. `riff verify fail N` takes a result with no `Docs:` line.
+- **01M4C4WQW5X7ZRES1KXH7KXJSY** `riff plan check` reads the open
+  issues of the repository with `gh`. It prints each issue of an open
+  wave with no criterion `- Docs:`, with its wave and title, and exits
+  with status 1. When each item has one, it says so and exits with
+  status 0.
 - **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.

@@ -160,5 +160,7 @@ To schedule an item, tell your lead: *"Move issue 71 into Wave 4."*
 ### Add an item with no wave
 
 ```sh
-gh issue create --title "Show the wave in riff who" --body "Done when: riff who shows the wave of each claim."
+gh issue create --title "Show the wave in riff who" --body "Done when:
+- riff who shows the wave of each claim.
+- Docs: the book has a how-to for riff who with the wave, with a sh block."
 ```

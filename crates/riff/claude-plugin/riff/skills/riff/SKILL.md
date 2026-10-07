@@ -160,8 +160,11 @@ plan the waves.
 
 1. Look for open items with no wave when your session starts, and
    each time a riff line wakes you.
-2. Place each new item. Write its `Needs:` line. Put it in the first
-   open wave that comes after the waves of its needs. Keep the order:
+2. Place each new item. Write its `Needs:` line, and a `- Docs:`
+   criterion in its `Done when:` line. Put it in the first open wave
+   that comes after the waves of its needs. `riff plan check` lists
+   each item of an open wave with no `- Docs:` criterion. Keep the
+   order:
    - Each item is in a later wave than each of its needs. When an item
      of an open wave needs the new item, move that item to a later
      wave.
@@ -218,6 +221,12 @@ This is the only part of the skill that is special to one forge.
 Each issue needs a `Done when:` line. The line tells a session how to
 check that the work is done. Each criterion names what to run or look
 at, and what the result must be. Write it in ASD-STE100 (rule 1).
+
+One criterion starts with `- Docs:`. It names the docs that the change
+needs: a how-to in the book for each new or changed command, flag or
+setting that a person uses, with a `sh` block, and the design in the
+rustdoc. `riff verify pass` refuses an issue with no `- Docs:`
+criterion.
 
 When the line is missing, or a session cannot test it:
 
@@ -356,8 +365,13 @@ claim, or starts a worker for it.
    read the test of each criterion, and run that test by its name when
    you must. Read the book, the rustdoc and the requirements. Do not
    change the code.
+   Check the docs: the how-to of each new or changed command, flag or
+   setting, with a `sh` block. Run `--help` and compare it with the
+   book. No old text in the book or the skill says the opposite.
 6. Write the result to a file:
-   - Pass: each criterion, with what you did to check it.
+   - Pass: each criterion, with what you did to check it, and a line
+     that starts with `Docs:`: what you checked in the docs.
+     `riff verify pass` refuses a result with no `Docs:` line.
    - Fail: each criterion that failed, with the steps to see the
      failure.
    The result holds only the check against the `Done when:` line. It
