@@ -223,7 +223,9 @@ fn a_program_of_cargo_run_takes_no_token() {
 /// the pool, and runs one test thread for each
 /// (01M3ZGZMNH1YM56GYNYBMH7AWM). A real `cargo test` with the test runner
 /// of riff runs two tests that each wait for the other: they pass only
-/// with 2 or more test threads.
+/// with 2 or more test threads. A third test writes the
+/// `RUST_TEST_THREADS` that it got: 3, the free tokens of a pool of 4
+/// with 1 token held, not the default of the harness.
 #[test]
 fn a_test_program_runs_a_thread_for_each_free_token() {
     let root = tempfile::tempdir().unwrap();
@@ -251,9 +253,14 @@ fn a_test_program_runs_a_thread_for_each_free_token() {
              }\n\
              #[test] fn one() { meet() }\n\
              #[test] fn two() { meet() }\n\
+             #[test] fn threads() {\n\
+                 let n = std::env::var(\"RUST_TEST_THREADS\").unwrap_or_default();\n\
+                 std::fs::write(std::env::var(\"THREADS_FILE\").unwrap(), n).unwrap();\n\
+             }\n\
          }\n",
     )
     .unwrap();
+    let threads = root.path().join("threads");
     let dir = root.path().join("jobs");
     let pool = Pool::hold(&dir, 4, 1).unwrap();
     let build = jobserver::take(&pool.fifo(), 1, Duration::ZERO)
@@ -275,9 +282,15 @@ fn a_test_program_runs_a_thread_for_each_free_token() {
         .env("MAKEFLAGS", pool.makeflags())
         .env(riff::limits::runner_var(), runner)
         .env("CARGO_TARGET_DIR", root.path().join("target"))
+        .env("THREADS_FILE", &threads)
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(&threads).unwrap(),
+        "3",
+        "one test thread for each free token"
+    );
     drop(build);
     assert_eq!(
         jobserver::state(&dir).map(|s| s.free),
