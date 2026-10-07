@@ -128,6 +128,54 @@ pub fn worker_settings(lsp: &[String]) -> String {
     settings.to_string()
 }
 
+/// `args` of `claude` with its flag settings changed by `edit`. It
+/// changes the first `--settings` that holds a JSON object, and else
+/// adds a new `--settings` at the end.
+///
+/// ```
+/// use riff::terminal::with_settings;
+///
+/// let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+/// let on = |s: &mut serde_json::Map<String, serde_json::Value>| {
+///     s.insert("b".into(), true.into());
+/// };
+/// assert_eq!(
+///     with_settings(&args(&["--settings", "x.json", "--settings", r#"{"a":1}"#]), on),
+///     args(&["--settings", "x.json", "--settings", r#"{"a":1,"b":true}"#]),
+/// );
+/// assert_eq!(
+///     with_settings(&args(&["Join the riff."]), on),
+///     args(&["Join the riff.", "--settings", r#"{"b":true}"#]),
+/// );
+/// ```
+pub fn with_settings(
+    args: &[String],
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> Vec<String> {
+    let mut out = args.to_vec();
+    let at = out.windows(2).position(|pair| {
+        pair[0] == "--settings"
+            && serde_json::from_str::<serde_json::Value>(&pair[1]).is_ok_and(|v| v.is_object())
+    });
+    match at {
+        Some(at) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&out[at + 1]).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(settings) = value.as_object_mut() {
+                edit(settings);
+            }
+            out[at + 1] = value.to_string();
+        }
+        None => {
+            let mut settings = serde_json::Map::new();
+            edit(&mut settings);
+            out.push("--settings".to_owned());
+            out.push(serde_json::Value::Object(settings).to_string());
+        }
+    }
+    out
+}
+
 /// A program to run in a new pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {

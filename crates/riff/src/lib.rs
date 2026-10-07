@@ -63,7 +63,8 @@
 //! ## Sandbox
 //!
 //! Each role has one profile: what its processes may read, write and
-//! reach (see [`profile`]).
+//! reach (see [`profile`]). The permission rules of Claude Code of
+//! each role come from its profile (see [`role_rules`]).
 //!
 //! ## Messages are advice
 //!
@@ -109,6 +110,7 @@ pub mod pr;
 pub mod profile;
 pub mod reap;
 pub mod relay;
+pub mod role_rules;
 pub mod rollout;
 pub mod secrets;
 pub mod settings;

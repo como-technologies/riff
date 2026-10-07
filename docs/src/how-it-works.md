@@ -3150,6 +3150,32 @@ flowchart LR
 The sandbox wave (Wave 22) puts the profiles to work, one part at a
 time.
 
+### See the permission rules of a worker
+
+riff gives each worker the Claude Code permission rules of its
+profile, in its `--settings`. They add to your own rules:
+
+- They allow the read of each path that the worker reads, and the read
+  and the edit of each path that it writes.
+- They deny the read and the edit of each file and folder of your home
+  that holds no path of the profile. riff looks at your home when the
+  worker starts. They also deny your keyring, your D-Bus, your SSH and
+  GnuPG keys and the sign-in of `gh`.
+- They deny the edit of each `settings.json` and `settings.local.json`
+  of Claude Code, so a worker cannot widen its own rules.
+
+A worker starts with no item, so its profile has the folder of all
+worktrees of the clone (`.claude/worktrees`). Run this in the clone to
+see the rules that a worker gets:
+
+```sh
+riff workers rules
+```
+
+When riff cannot make the profile, for example when a tool path is your
+home, the worker starts with no rules of a profile and prints why in
+its pane.
+
 ## A restart
 
 `riff-server` keeps its state in memory. What a restart keeps depends

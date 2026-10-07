@@ -251,13 +251,125 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let seen = std::fs::read_to_string(seen).unwrap();
+    let lines: Vec<&str> = seen.lines().collect();
     assert_eq!(
-        std::fs::read_to_string(seen).unwrap(),
-        format!(
-            "--settings\n{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}},\"enabledPlugins\":{{\"rust-lsp@m\":false}},\"env\":{{\"TMPDIR\":\"{tmp}\",\"CLAUDE_CODE_TMPDIR\":\"{tmp}\"}}}}\nJoin the riff.\n",
-            tmp = dir.path().join("tmp/w1").display()
-        )
+        (lines[0], lines[2]),
+        ("--settings", "Join the riff."),
+        "{seen}"
     );
+    let settings: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    let tmp = dir.path().join("tmp/w1").display().to_string();
+    assert_eq!(settings["remoteControlAtStartup"], false);
+    assert_eq!(settings["awaySummaryEnabled"], false);
+    assert_eq!(settings["enabledPlugins"]["rust-lsp@m"], false);
+    assert_eq!(settings["env"]["TMPDIR"], tmp.as_str());
+    assert_eq!(settings["env"]["CLAUDE_CODE_TMPDIR"], tmp.as_str());
+    let deny = settings["permissions"]["deny"].as_array().unwrap();
+    assert_eq!(deny[..2], ["Bash(riff cloud)", "Bash(riff cloud *)"]);
+}
+
+/// A fake home with a dot file and a folder of notes.
+fn home() -> tempfile::TempDir {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join(".bashrc"), "").unwrap();
+    std::fs::create_dir_all(home.path().join("notes")).unwrap();
+    home
+}
+
+/// The allow and the deny rules of the flag settings `settings`.
+fn rules(settings: &serde_json::Value) -> (Vec<String>, Vec<String>) {
+    let list = |name: &str| -> Vec<String> {
+        let rules = settings["permissions"][name].as_array().unwrap();
+        rules
+            .iter()
+            .map(|r| r.as_str().unwrap().to_owned())
+            .collect()
+    };
+    (list("allow"), list("deny"))
+}
+
+/// A rule of `tool` for the absolute path `path`, as Claude Code writes
+/// it: `//` and the path.
+fn rule(tool: &str, path: &Path, tail: &str) -> String {
+    format!("{tool}(/{}{tail})", path.display())
+}
+
+/// The wrapper gives `claude` the permission rules of the profile of a
+/// worker (01M4BT33R71HXAVQGHFD4ZFGR5, 01M4BT33TPSXJVB6JZDZ3F1GGX,
+/// 01M4BT33X0WVVJH7Y6AXSWZEYC, 01M4BT341H1M1N1MT947HXNXDR).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_wrapper_gives_claude_the_rules_of_the_profile() {
+    let api = start_server().await;
+    lead(&api).await;
+    let dir = repo();
+    let home = home();
+    let seen = dir.path().join("seen");
+    let claude = fake_claude(
+        dir.path(),
+        &format!("printf '%s\\n' \"$@\" > '{}'", seen.display()),
+    );
+    let out = riff(&api, dir.path(), "w1")
+        .env("HOME", home.path())
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .args(["workers", "run"])
+        .arg(&claude)
+        .arg(riff::terminal::JOIN)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let seen = std::fs::read_to_string(seen).unwrap();
+    let lines: Vec<&str> = seen.lines().collect();
+    assert_eq!(
+        (lines[0], lines[1]),
+        ("Join the riff.", "--settings"),
+        "{seen}"
+    );
+    let settings: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+    let (allow, deny) = rules(&settings);
+    let worktrees = dir.path().canonicalize().unwrap().join(".claude/worktrees");
+    assert!(
+        allow.contains(&rule("Edit", &worktrees, "/**")),
+        "{allow:?}"
+    );
+    assert!(
+        allow.contains(&rule("Read", &worktrees, "/**")),
+        "{allow:?}"
+    );
+    let h = home.path();
+    assert!(
+        deny.contains(&rule("Read", &h.join(".bashrc"), "")),
+        "{deny:?}"
+    );
+    assert!(
+        deny.contains(&rule("Edit", &h.join("notes"), "/**")),
+        "{deny:?}"
+    );
+    let settings_file = h.join(".claude/settings.json");
+    assert!(deny.contains(&rule("Edit", &settings_file, "")), "{deny:?}");
+    assert!(deny.contains(&"Edit(//**/.claude/settings.local.json)".to_owned()));
+}
+
+/// `riff workers rules` prints the rules that a worker in this clone
+/// gets (01M4BT3JQCY5G7YZ373MV5C5JM).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_workers_rules_prints_the_rules_of_a_worker() {
+    let api = start_server().await;
+    let dir = repo();
+    let home = home();
+    let out = riff(&api, dir.path(), "w1")
+        .env("HOME", home.path())
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .args(["workers", "rules"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let settings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let (allow, deny) = rules(&settings);
+    let git = dir.path().canonicalize().unwrap().join(".git");
+    assert!(allow.contains(&rule("Edit", &git, "/**")), "{allow:?}");
+    let bashrc = home.path().join(".bashrc");
+    assert!(deny.contains(&rule("Read", &bashrc, "")), "{deny:?}");
 }
 
 /// The worker gets a temp folder of its own on disk, in `TMPDIR` and
