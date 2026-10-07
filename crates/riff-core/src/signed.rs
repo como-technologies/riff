@@ -94,22 +94,35 @@ use crate::wire::Kind;
 /// a proof.
 pub const TYP: &str = "riff-message";
 
-/// What the signature of a message covers (R196).
-#[derive(Clone, Copy, Debug, Serialize, schemars::JsonSchema)]
-pub struct Content<'a> {
+/// The fields of a signed payload (R196). One struct is the layout of
+/// both sides (01M49W17GGV1K5FZEKJRPV0GNA): the sender writes a
+/// [`Content`] that borrows the fields of its post, and a reader reads
+/// a [`Signed`] that owns them. A reader skips each field that it does
+/// not know.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Payload<F, T, S, B> {
     /// The user and the session ID of the sender.
-    pub from: &'a Who,
+    pub from: F,
     /// True when the sender posts as the lead (R198). The place and the
     /// claims of the sender are not signed.
     pub lead: bool,
     /// The thread of the post. `None` for a direct message.
-    pub thread: Option<&'a ThreadName>,
-    pub to: &'a [Selector],
-    pub body: &'a str,
+    pub thread: Option<T>,
+    #[serde(default)]
+    pub to: S,
+    pub body: B,
+    #[serde(default)]
     pub kind: Kind,
     /// The time of the message, in milliseconds since the Unix epoch.
     pub at_ms: u64,
 }
+
+/// What the signature of a message covers: the payload that the sender
+/// writes, with the fields of its post.
+pub type Content<'a> = Payload<&'a Who, &'a ThreadName, &'a [Selector], &'a str>;
+
+/// The fields of a signed payload, as a reader decodes them.
+pub type Signed = Payload<Who, ThreadName, Vec<Selector>, String>;
 
 impl Content<'_> {
     /// The payload of the signature: the base64url of the JSON of the
@@ -132,31 +145,25 @@ impl Content<'_> {
     }
 }
 
-/// The fields of a signed payload, as this build knows them. It skips
-/// each field that it does not know.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct Signed {
-    pub from: Who,
-    pub lead: bool,
-    pub thread: Option<ThreadName>,
-    #[serde(default)]
-    pub to: Vec<Selector>,
-    pub body: String,
-    #[serde(default)]
-    pub kind: Kind,
-    pub at_ms: u64,
-}
-
 impl Signed {
     /// True when the payload holds the fields of `content`.
     pub fn covers(&self, content: &Content<'_>) -> bool {
-        self.from == *content.from
-            && self.lead == content.lead
-            && self.thread.as_ref() == content.thread
-            && self.to == content.to
-            && self.body == content.body
-            && self.kind == content.kind
-            && self.at_ms == content.at_ms
+        let Signed {
+            from,
+            lead,
+            thread,
+            to,
+            body,
+            kind,
+            at_ms,
+        } = self;
+        from == content.from
+            && *lead == content.lead
+            && thread.as_ref() == content.thread
+            && to == content.to
+            && body == content.body
+            && *kind == content.kind
+            && *at_ms == content.at_ms
     }
 }
 
