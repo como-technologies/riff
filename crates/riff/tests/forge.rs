@@ -566,6 +566,8 @@ async fn run_worker(server: &str, outcome: &Outcome) -> (String, String) {
         .env("TMUX_PANE", "%5")
         .env("GH_TOKEN", MARKER)
         .env("GITHUB_TOKEN", MARKER)
+        .env("ANTHROPIC_API_KEY", MARKER)
+        .env("ANTHROPIC_AUTH_TOKEN", MARKER)
         .env("RIFF_TEST_MARKER", MARKER)
         .env("SSH_AUTH_SOCK", root.join(MARKER))
         .env_remove("RIFF_WORKER")

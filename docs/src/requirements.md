@@ -4268,8 +4268,7 @@
   the token of the new role. While the revoke fails, the session has no
   token.
 - **01M4BYVSNQ5SY2GRGT73FV0Z3E** No worker or AI session ever gets a
-  credential of the person, except the model access
-  (01M4C4WW8JS7QVC0ZYHWPSMWKN). riff starts `claude` with an empty
+  credential of the person. riff starts `claude` with an empty
   environment and sets only the kept variables and the variables of
   riff. With no GitHub App, and when riff cannot make a token, the
   session has no forge token: never the token of the person. The type
@@ -4277,14 +4276,12 @@
 - **01M4BYVSR06B9HNX4SP83SY2SX** The kept variables are one list,
   `profile::KEPT_VARS`: the account, the language and the terminal,
   tmux, the XDG folders of the person, the user manager of systemd,
-  the proxy and the certificates, `CLAUDE_CONFIG_DIR`, the model
-  access, and the riff variables of the server, the session, the
-  person and the machine.
-- **01M4C4WW8JS7QVC0ZYHWPSMWKN** The model access of the person is the
-  one credential that `claude` gets. The kept variables name each
-  variable of it: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-  `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL`. No other `ANTHROPIC_`
-  variable reaches `claude`.
+  the proxy and the certificates, `CLAUDE_CONFIG_DIR`, and the riff
+  variables of the server, the session, the person and the machine.
+- **01M4C4WW8JS7QVC0ZYHWPSMWKN** A session never gets an API key of
+  Anthropic: no `ANTHROPIC_` variable reaches `claude`. A session gets
+  its model access only from the plan sign-in of its person, so its
+  use counts on the plan of the person.
 - **01M4C4WQVZR49FDGPJMFW22GTM** The lead starts through
   `riff workers lead`, like a worker through `riff workers run`: a temp
   folder of its own, the forge token of the lead, and `claude` through

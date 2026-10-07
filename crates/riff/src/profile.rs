@@ -532,10 +532,9 @@ impl Profile {
 ///   keyring of riff until the secrets come in the environment (#611):
 ///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`.
 /// - The network: the proxy and the certificates.
-/// - Claude Code: `CLAUDE_CONFIG_DIR`, and the model access of the
-///   person: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-///   `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`. The model access is the
-///   one credential of the person that `claude` gets
+/// - Claude Code: `CLAUDE_CONFIG_DIR`. No `ANTHROPIC_` variable: a
+///   session gets its model access only from the plan sign-in of the
+///   person, so its use counts on the plan, never on API billing
 ///   (01M4C4WW8JS7QVC0ZYHWPSMWKN).
 /// - riff: the server, the session, the person and the machine.
 pub const KEPT_VARS: &[&str] = &[
@@ -570,10 +569,6 @@ pub const KEPT_VARS: &[&str] = &[
     "SSL_CERT_DIR",
     "NODE_EXTRA_CA_CERTS",
     "CLAUDE_CONFIG_DIR",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_MODEL",
     "RIFF_SERVER",
     "RIFF_SESSION",
     "RIFF_HOME",
@@ -599,8 +594,9 @@ pub const KEPT_VARS: &[&str] = &[
 /// assert!(!kept("GIT_CONFIG_COUNT"));
 /// assert!(!kept("RIFF_TEST_MARKER"));
 /// assert!(!kept("LC"), "a prefix names no variable by itself");
-/// assert!(kept("ANTHROPIC_API_KEY"), "the model access of the person");
-/// assert!(!kept("ANTHROPIC_OTHER"), "only the named model variables");
+/// assert!(!kept("ANTHROPIC_API_KEY"), "no API billing");
+/// assert!(!kept("ANTHROPIC_AUTH_TOKEN"));
+/// assert!(!kept("ANTHROPIC_BASE_URL"));
 /// ```
 pub fn kept(name: &str) -> bool {
     KEPT_VARS.iter().any(|k| match k.strip_suffix('_') {

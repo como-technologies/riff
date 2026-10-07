@@ -113,6 +113,8 @@ impl Machine {
             .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
             // Credentials of the person, as markers.
             .env("GH_TOKEN", MARKER)
+            .env("ANTHROPIC_API_KEY", MARKER)
+            .env("ANTHROPIC_AUTH_TOKEN", MARKER)
             .env("SSH_AUTH_SOCK", MARKER)
             .env("RIFF_TEST_MARKER", MARKER)
             .env_remove("RIFF_SESSION")

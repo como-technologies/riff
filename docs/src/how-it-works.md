@@ -3278,10 +3278,10 @@ variables (the `KEPT_VARS` of `riff::profile`). So `GH_TOKEN`, your
 session. The tmux server of riff also starts with only these
 variables, so its panes do not hold them either.
 
-Your model access is the one credential that `claude` gets:
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and
-`ANTHROPIC_MODEL`, when you set them. No other `ANTHROPIC_` variable
-reaches `claude`.
+No `ANTHROPIC_` variable reaches `claude`, also not
+`ANTHROPIC_API_KEY`. A session uses only the plan sign-in of your
+Claude Code, so its use counts on your plan, and API billing never
+starts by accident.
 
 With the GitHub App of riff, each worker gets a token of its role, and
 GitHub refuses each other step. riff makes the token outside the
