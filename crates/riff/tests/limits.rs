@@ -21,6 +21,8 @@ const PANGOLIN: &str = "cpu 16x4500MHz, mem 30GB, 24GB available, load 0.50";
 /// A fake `tmux`: it writes each call to the file `tmux.log`, and has
 /// no worker panes.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/tmux.log"
 case "$1" in

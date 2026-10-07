@@ -28,6 +28,8 @@ const CONTEXT: &str = "CLAUDE_PID";
 /// `list-panes -a` lists the pane `%5` of the worker in the file
 /// `session`. Each other call goes to the log.
 const FAKE_TMUX: &str = r#"#!/bin/sh
+# Outside tmux, riff names its own server: -L riff (see start.rs).
+[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
 case "$1" in
