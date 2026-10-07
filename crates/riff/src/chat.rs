@@ -47,7 +47,6 @@
 use std::fmt::Write as _;
 use std::io::{IsTerminal, Write as _};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
@@ -63,6 +62,7 @@ use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 use crate::api::{Api, Checked, Reconnect};
 use crate::binary::{Follow, with_last, with_place};
 use crate::catch_up::{self, Seen, Start};
+use crate::link::STREAM_RETRY;
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{ACTION, action_text, lost_messages, safe};
 
@@ -78,9 +78,6 @@ pub const PROMPT: &str = "[riff] > ";
 /// The hidden option that gives a new chat the last line that the old
 /// chat showed, after an update.
 pub const AFTER: &str = "--after";
-
-/// The time between two tries to connect the chat again.
-const RETRY: Duration = Duration::from_secs(2);
 
 /// The chat thread.
 ///
@@ -321,8 +318,13 @@ where
 /// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
 ///
 /// While `riff-server` starts again, it shows the line
-/// [`crate::api::WAITING`] above the prompt, and keeps its screen
+/// [`crate::link::WAITING`] above the prompt, and keeps its screen
 /// (01M3THEE5V3RFHF9QTA8MA8QDF).
+///
+/// It sends the typed lines from a task of their own, in their order
+/// (01M4A804AWYEHPYZ966A6PXRPF). So the screen takes input while a post
+/// waits for its budget. At the end, it waits for the posts of the lines
+/// that the person typed.
 pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     // The wait line goes to the screen, once there is one.
     let lines = Arc::new(OnceLock::<Lines>::new());
@@ -358,10 +360,11 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     let start = after.map_or(Start::History, Start::After);
     let shown = Arc::new(Mutex::new(catch_up::Shown::new(start)));
     let first = catch_up::connect(api, me, thread, &shown).await?;
-    let again = catch_up::follow_thread(api, me, thread, Arc::clone(&shown), RETRY);
+    let again = catch_up::follow_thread(api, me, thread, Arc::clone(&shown), STREAM_RETRY);
     let mut stream = Box::pin(first.chain(again));
     let (screen, mut input) = Screen::start()?;
     let _ = lines.set(screen.lines.clone());
+    let (send, posts) = posts(api, me, thread, screen.lines.clone());
     let mut link = Reconnect::default();
     let follow = Follow::this();
     let update = follow.new_one();
@@ -388,9 +391,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
                     Typed::Action(text) => format!("{ACTION}{text}"),
                 };
                 let to = wakes(&body, me.who().user());
-                if let Err(e) = api.post(me, Some(thread), &to, &body, Kind::Message).await {
-                    screen.warn(&format!("riff: cannot send the line: {e:#}"));
-                }
+                let _ = send.send((to, body));
             }
             item = stream.next() => {
                 let Some(item) = item else { break };
@@ -405,7 +406,36 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
             }
         }
     }
+    drop(send);
+    let _ = posts.await;
     Ok(())
+}
+
+/// The task that posts each typed line of the chat, in order
+/// (01M4A804AWYEHPYZ966A6PXRPF). A post that fails shows its error on
+/// the screen.
+fn posts(
+    api: &Api,
+    me: &SessionUri,
+    thread: &ThreadName,
+    lines: Lines,
+) -> (
+    mpsc::UnboundedSender<(Vec<Selector>, String)>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (send, mut typed) = mpsc::unbounded_channel::<(Vec<Selector>, String)>();
+    let (api, me, thread) = (api.clone(), me.clone(), thread.clone());
+    let task = tokio::spawn(async move {
+        while let Some((to, body)) = typed.recv().await {
+            if let Err(e) = api
+                .post(&me, Some(&thread), &to, &body, Kind::Message)
+                .await
+            {
+                lines.warn(&format!("riff: cannot send the line: {e:#}"));
+            }
+        }
+    });
+    (send, task)
 }
 
 /// The printer of the line editor: it prints above the prompt.

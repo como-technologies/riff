@@ -90,6 +90,7 @@ pub mod jobserver;
 pub mod leave;
 pub mod lifecycle;
 pub mod limits;
+pub mod link;
 pub mod local;
 pub mod login;
 pub mod look;

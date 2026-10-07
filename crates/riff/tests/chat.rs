@@ -66,11 +66,19 @@ impl Client {
             .spawn()
             .unwrap();
         let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
-        let hint = in_time(WAIT, stderr.next_line())
-            .await
-            .expect("riff chat is ready in time")
-            .unwrap()
-            .expect("riff chat prints its hint");
+        // A start that waits for the server can show the wait line first.
+        let hint = in_time(WAIT, async {
+            loop {
+                let line = stderr.next_line().await.unwrap();
+                match line {
+                    Some(line) if line.contains(riff::link::WAITING) => continue,
+                    line => break line,
+                }
+            }
+        })
+        .await
+        .expect("riff chat is ready in time")
+        .expect("riff chat prints its hint");
         assert!(hint.contains(&format!("chat as {user}@{host}")), "{hint}");
         Client {
             stdin: child.stdin.take().unwrap(),
@@ -957,7 +965,11 @@ async fn a_front_end_error_with_no_build_is_no_version_error() {
         warned.push(line);
     }
     // At most the short lines of a cut or a wait: no version error.
-    let short = [riff::api::RECONNECTING, riff::api::BACK, riff::api::WAITING];
+    let short = [
+        riff::api::RECONNECTING,
+        riff::api::BACK,
+        riff::link::WAITING,
+    ];
     assert!(
         warned.iter().all(|l| short.contains(&l.as_str())),
         "{warned:?}"

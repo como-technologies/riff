@@ -586,11 +586,12 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
         }
         let ended = async {
             let me = identity::agent(&here, &worker.session, api.base())?;
-            api.clone().signed_in(Some(&worker.session))?.end(&me).await
+            // The end call has a budget, so a server that gives no reply
+            // does not hold the next pane (01M3WN72M02P3J24ACCHTMNSFY).
+            let api = api.with_budget(crate::mcp::END_WAIT);
+            api.signed_in(Some(&worker.session))?.end(&me).await
         };
-        // The end call has a time limit, so a server that gives no reply
-        // does not hold the next pane (01M3WN72M02P3J24ACCHTMNSFY).
-        if let Err(e) = crate::host::in_time(api.base(), crate::host::CALL_WAIT, ended).await {
+        if let Err(e) = ended.await {
             eprintln!(
                 "riff: stopped the pane {}, but the end call of its session failed: {e:#}",
                 worker.pane

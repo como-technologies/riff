@@ -64,12 +64,13 @@
 //! Wi-Fi drops or gets a new address. So after one good look, a look
 //! that fails does not end `riff top`
 //! (01M3Z8FXE2DY34ZP75WJE1S8HR), when a new try can repair the fault
-//! ([`crate::api::passes`]). A look also fails when it gets no reply
-//! in [`LOOK_WAIT`]: a dead connection can give no error. `riff top`
-//! keeps the last table, shows [`Top::fault`] as its first line, and
-//! looks again at its interval, with new connections
-//! ([`crate::api::Api::reconnected`]). The line goes at the next good
-//! look.
+//! ([`crate::api::passes`]). Each call of a look has the budget of a
+//! short command, [`crate::link::SHORT_BUDGET`]
+//! (01M4A803Z4Q0KX6NT1KC6QR43H), and the link makes new connections
+//! after a fault ([`crate::link::Link::swap`]). When a look fails,
+//! `riff top` keeps the last table, shows [`Top::fault`] as its first
+//! line, and looks again at its interval. The line goes at the next
+//! good look.
 //!
 //! `riff top --once`, the first look, and a fault that a new try cannot
 //! repair end `riff top` with the error.
@@ -103,10 +104,6 @@ use crate::view;
 
 /// The time between two draws of `riff top` with no message.
 pub const REFRESH: Duration = Duration::from_secs(3);
-
-/// The longest time that `riff top` waits for one look, when it runs
-/// until stopped (01M3Z8FXE2DY34ZP75WJE1S8HR).
-pub const LOOK_WAIT: Duration = Duration::from_secs(10);
 
 /// How long `riff top` keeps the issues of `gh`.
 pub const ISSUES_TTL: Duration = Duration::from_secs(60);

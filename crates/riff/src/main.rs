@@ -8,6 +8,7 @@ use chrono::TimeZone;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
+use riff::link::STREAM_RETRY;
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
@@ -21,10 +22,8 @@ use riff_core::wire::{
     Freed, Kind, PullState, RiffReply, RiffState, SessionInfo, StartReason, Status, StepChange,
 };
 
-/// The time between two tries to connect a stream.
-const RETRY: Duration = Duration::from_secs(5);
-
-/// The longest time that `riff statusline` waits for riff-server.
+/// The budget of the one try of `riff statusline`
+/// (01M4A803Z4Q0KX6NT1KC6QR43H).
 const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 
 /// How often a watch looks for a leave of its session
@@ -2799,7 +2798,7 @@ async fn session_start(server: &str) -> String {
             eprintln!("riff: cannot write the start of the context: {e:#}");
         }
     }
-    let api = Api::new(server);
+    let api = Api::new(server).with_budget(hook::STATE_WAIT);
     let cwd = std::env::current_dir().ok();
     let uri = id.as_deref().zip(cwd.as_deref()).and_then(|(id, cwd)| {
         let here = identity::place(cwd).ok()?;
@@ -3022,7 +3021,7 @@ async fn statusline(server: &str) -> String {
     }
     let find = async {
         let here = identity::place(&identity::working_dir()?)?;
-        let api = Api::new(server);
+        let api = Api::new(server).one_try(STATUSLINE_WAIT);
         let me = identity::agent(&here, &id, api.base())?;
         anyhow::Ok(api.signed_in(me.who().session())?.me(&me).await?.session)
     };
@@ -3031,7 +3030,7 @@ async fn statusline(server: &str) -> String {
     // (01M3NJCWDN5APKZ3Z53XQR8P0B).
     let server = match &found {
         Ok(Err(e)) => e.downcast_ref::<Mismatch>().and_then(|m| m.server.clone()),
-        _ => riff::api::server_build(),
+        _ => riff::link::server_build(),
     };
     let info = found.ok().and_then(Result::ok).flatten();
     let line = text::statusline(&id, info.as_ref());
@@ -3079,7 +3078,7 @@ async fn session_end(server: &str) {
     count_usage(&id, input.transcript_path.as_deref(), true);
     let ended = async {
         let here = identity::place(&identity::working_dir()?)?;
-        let api = Api::new(server);
+        let api = Api::new(server).with_budget(mcp::END_WAIT);
         let me = identity::agent(&here, &id, api.base())?;
         api.signed_in(me.who().session())?.end(&me).await
     };
@@ -3198,7 +3197,7 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
     let error = riff::style::ERROR;
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let shown = std::sync::Arc::new(std::sync::Mutex::new(Shown::new(Start::New)));
-    let mut stream = Box::pin(follow_thread(api, me, thread, shown, RETRY));
+    let mut stream = Box::pin(follow_thread(api, me, thread, shown, STREAM_RETRY));
     let mut link = Reconnect::default();
     let mut last_day = None;
     while let Some(item) = stream.next().await {
@@ -3294,26 +3293,21 @@ async fn draw_top(
     let mut fetched: Option<Instant> = None;
     let mut messages = thread
         .as_ref()
-        .map(|t| Box::pin(follow(|| api.tail(me, t), RETRY)));
+        .map(|t| Box::pin(follow(|| api.tail(me, t), STREAM_RETRY)));
     let clear = !once && std::io::stdout().is_terminal();
     let repo = thread.as_ref().map(ToString::to_string);
-    // The client of the looks. The stream keeps `api`: each stream has
-    // a connection of its own.
-    let mut calls = api.clone();
     // The last good look, and its time.
     let mut last = None;
     loop {
         let look = async {
-            let pauses = calls.pauses(me).await?;
-            let mut who = calls.roster(me, false).await?;
+            let pauses = api.pauses(me).await?;
+            let mut who = api.roster(me, false).await?;
             riff::state::fill(&mut who.sessions, pauses.state);
             anyhow::Ok((pauses, who))
         };
-        let looked = if once {
-            look.await
-        } else {
-            riff::host::in_time(api.base(), riff::top::LOOK_WAIT, look).await
-        };
+        // Each call of a look has the budget of a short command
+        // (01M4A803Z4Q0KX6NT1KC6QR43H).
+        let looked = look.await;
         // After one good look, a fault that a new try can repair keeps
         // the last table (01M3Z8FXE2DY34ZP75WJE1S8HR).
         let failed = match looked {
@@ -3321,11 +3315,7 @@ async fn draw_top(
                 last = Some((look, chrono::Local::now()));
                 None
             }
-            Err(e) if last.is_some() && api::passes(&e) => {
-                // A dead connection can stay in the pool.
-                calls = api.reconnected();
-                Some(e)
-            }
+            Err(e) if last.is_some() && api::passes(&e) => Some(e),
             Err(e) => return Err(e),
         };
         // A fault with no good look ended the loop above.
@@ -3342,7 +3332,7 @@ async fn draw_top(
         }
         let now = chrono::Local::now();
         let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
-        let server = riff::api::server_build();
+        let server = riff::link::server_build();
         let machines = riff::top::machines(&who.sessions, machine_here(me));
         let top = riff::top::Top {
             pauses,
@@ -3401,7 +3391,7 @@ async fn watch(
     limit: Option<Duration>,
     until: Option<u64>,
 ) {
-    let stream = follow(|| api.watch(me), RETRY);
+    let stream = follow(|| api.watch(me), STREAM_RETRY);
     let left = async {
         let Some(id) = me.who().session() else {
             return std::future::pending().await;
@@ -3505,7 +3495,7 @@ async fn print_each<T>(
             Err(e) if !reported => {
                 eprintln!(
                     "riff: {e:#}. Trying again every {} seconds.",
-                    RETRY.as_secs()
+                    STREAM_RETRY.as_secs()
                 );
                 reported = true;
             }

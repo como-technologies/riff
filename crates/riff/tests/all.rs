@@ -36,6 +36,7 @@ mod leave;
 mod left;
 mod lifecycle;
 mod limits;
+mod link;
 mod link_limits;
 mod linked;
 mod login;

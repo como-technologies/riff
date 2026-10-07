@@ -8,7 +8,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use riff::api::{Api, WAITING};
+use riff::api::Api;
+use riff::link::WAITING;
 use riff_core::name::SessionUri;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -41,7 +42,7 @@ async fn a_process_that_got_a_reply_waits_through_a_restart() {
         .waits_to(move |line| lines.lock().unwrap().push(line.to_owned()));
     let me: SessionUri = ME.parse().unwrap();
     api.register(&me).await.unwrap();
-    assert!(riff::api::replied(api.base()));
+    assert!(api.link().replied());
 
     // The server stops: its port is closed.
     stop.send(()).unwrap();
@@ -75,5 +76,5 @@ async fn a_process_that_got_no_reply_fails_at_once() {
         format!("{error:#}").contains("cannot reach riff-server at http://127.0.0.1:9"),
         "{error:#}"
     );
-    assert!(!riff::api::replied(api.base()));
+    assert!(!api.link().replied());
 }
