@@ -3,7 +3,7 @@
 //! (01M3K0Q892KWM76R9DJC1P37JA). The update runs a fake `cargo`, a fake
 //! `riff` and a fake `riff-server` that log their arguments.
 
-use isolated::Isolated;
+use isolated::{Isolated, Span};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
@@ -73,6 +73,35 @@ async fn run(mut cmd: Command) -> Output {
         .unwrap()
 }
 
+/// The output of `riff server` from `cmd` under the real riff, when each
+/// riff that it looks at answers and it shows the facts. Under load, a
+/// probe can pass [`PROBE_WAIT`] and show no answer: then it runs the
+/// command again. With no load, one probe with no answer fails the test
+/// (01M41A0M2XWCWTWGF7T9DR03W0).
+async fn answered(cmd: impl Fn() -> Command) -> String {
+    let span = Span::start();
+    loop {
+        let out = run(cmd()).await;
+        assert!(out.status.success(), "{out:?}");
+        let stdout = text(&out.stdout);
+        let label = |line: &str| line.split_whitespace().next().map(str::to_owned);
+        let labels: Vec<Option<String>> = stdout.lines().map(label).collect();
+        let complete = !labels.iter().any(|l| l.as_deref() == Some("answer"))
+            && FACTS
+                .iter()
+                .all(|fact| labels.iter().any(|l| l.as_deref() == Some(*fact)));
+        if complete {
+            return stdout;
+        }
+        assert!(
+            span.within(PROBE_WAIT),
+            "a riff gave no answer in {:.1?}, CPU time {:.1?}:\n{stdout}",
+            span.wall(),
+            span.cpu()
+        );
+    }
+}
+
 fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
@@ -101,11 +130,12 @@ fn riff_line() -> String {
 #[tokio::test]
 async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
     let addr = real().await;
-    let mut cmd = riff(&["server"]);
-    cmd.env("RIFF_SERVER", format!("http://{addr}"));
-    let out = run(cmd).await;
-    assert!(out.status.success());
-    let stdout = text(&out.stdout);
+    let stdout = answered(|| {
+        let mut cmd = riff(&["server"]);
+        cmd.env("RIFF_SERVER", format!("http://{addr}"));
+        cmd
+    })
+    .await;
     let table = [
         riff_line(),
         format!("server      http://{addr}  (from RIFF_SERVER)"),
@@ -154,11 +184,12 @@ async fn server_shows_each_fact_of_the_riff() {
         .unwrap();
     assert_eq!(registered.status(), 200);
 
-    let mut cmd = riff(&["server"]);
-    cmd.env("RIFF_SERVER", format!("http://{addr}"));
-    let out = run(cmd).await;
-    assert!(out.status.success());
-    let stdout = text(&out.stdout);
+    let stdout = answered(|| {
+        let mut cmd = riff(&["server"]);
+        cmd.env("RIFF_SERVER", format!("http://{addr}"));
+        cmd
+    })
+    .await;
     let rows: Vec<(&str, &str)> = stdout
         .lines()
         .skip(4)
@@ -215,8 +246,7 @@ async fn server_shows_each_fact_of_the_riff() {
 #[tokio::test]
 async fn server_takes_host_and_port_with_no_scheme_and_names_the_flag() {
     let addr = real().await;
-    let out = run(riff(&["--server", &addr, "server"])).await;
-    let stdout = text(&out.stdout);
+    let stdout = answered(|| riff(&["--server", &addr, "server"])).await;
     assert!(
         stdout.contains(&format!("\nserver      http://{addr}  (from --server)\n")),
         "{stdout}"

@@ -22,14 +22,23 @@ use riff_core::name::{Place, SessionUri, Who};
 use riff_core::wire::{RiffState, Status};
 
 /// `list-panes -a` lists the worker panes from the file `workers`.
-/// `kill-pane -t P` takes the pane `P` out of it.
+/// While the file `gate` exists, the call number N of `list-panes -a`
+/// waits for the file `go-N` before it reads `workers`. So a test steps
+/// the looks one at a time ([`Lead::step`]). `kill-pane -t P` takes the
+/// pane `P` out of `workers`.
 const FAKE_TMUX: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
 n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
 case "$1" in
   list-panes)
-    if [ "$2" = "-a" ]; then cat "$dir/workers" 2>/dev/null; else cat "$dir/panes" 2>/dev/null; fi ;;
+    if [ "$2" = "-a" ]; then
+      k=$(grep -c '^list-panes -a' "$dir/log")
+      while [ -e "$dir/gate" ] && [ ! -e "$dir/go-$k" ]; do sleep 0.05; done
+      cat "$dir/workers" 2>/dev/null
+    else
+      cat "$dir/panes" 2>/dev/null
+    fi ;;
   list-windows) cat "$dir/windows" 2>/dev/null ;;
   display-message) echo "@0" ;;
   new-window) echo "@7 %$n" ;;
@@ -199,6 +208,42 @@ impl Lead {
             assert!(start.elapsed() < WAIT, "timed out: no look of the rollout");
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    /// The calls of `list-panes -a` of the fake tmux: the looks at the
+    /// worker panes.
+    fn pane_looks(&self) -> usize {
+        self.tmux_log()
+            .lines()
+            .filter(|line| line.starts_with("list-panes -a"))
+            .count()
+    }
+
+    /// Waits until the look at the worker panes after `before` comes.
+    async fn until_pane_look(&self, before: usize) {
+        let start = Instant::now();
+        while self.pane_looks() <= before {
+            assert!(start.elapsed() < WAIT, "timed out: no look at the panes");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Closes the gate of the fake tmux: each look at the worker panes
+    /// waits for [`Lead::step`]. Only one task may look at the panes:
+    /// the reap. So the rollout must have no room on the machine.
+    async fn gate(&self) {
+        std::fs::write(self.fake.path().join("gate"), "").unwrap();
+        self.until_pane_look(self.pane_looks()).await;
+    }
+
+    /// Lets the look at the worker panes that waits at the gate go on,
+    /// and waits until the next look comes to the gate. The looks run
+    /// one after the other, so the look that went on is complete, with
+    /// each end call and each note that it gave.
+    async fn step(&self) {
+        let look = self.pane_looks();
+        std::fs::write(self.fake.path().join(format!("go-{look}")), "").unwrap();
+        self.until_pane_look(look).await;
     }
 
     /// Waits until the count of workers stays the same for [`QUIET`],
@@ -724,7 +769,9 @@ async fn a_new_worker_takes_the_item_of_a_killed_worker() {
 /// (01M3WG2460P4GF7GEVBY92Q33W).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stopped_worker_and_a_worker_of_another_repository_give_no_note() {
-    let lead = lead(5).await;
+    // A limit of 0: the rollout does not look at the panes, so each
+    // look of the fake tmux is a look of the reap.
+    let lead = lead(0).await;
     lead.issues("[]");
     lead.riff(RiffState::Running).await;
     let workers = lead.fake.path().join("workers");
@@ -739,15 +786,19 @@ async fn a_stopped_worker_and_a_worker_of_another_repository_give_no_note() {
     let held = lead.api.claim(&other, &strata, "issue-7").await.unwrap();
     assert!(held.granted);
     let _other = lead.api.watch(&other).await.unwrap();
-    // riff looked at the panes one time or more.
-    tokio::time::sleep(riff::reap::EVERY * 2).await;
+    // riff looks at the two panes.
+    lead.gate().await;
+    lead.step().await;
 
-    // The two panes end. The stop sends its end call a moment later.
+    // The two panes end. The next look sees that they are gone. The
+    // stop sends its end call after that look, and before the look
+    // after it.
     std::fs::write(&workers, "").unwrap();
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    lead.step().await;
     lead.api.end(&stopped).await.unwrap();
+    // The second look after the end acts on the lost panes.
+    lead.step().await;
 
-    tokio::time::sleep(riff::reap::EVERY * 3).await;
     let who = lead.api.who(&lead.me, false).await.unwrap();
     let kept = who.iter().find(|s| s.uri.who() == other.who());
     assert_eq!(
