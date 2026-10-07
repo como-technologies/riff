@@ -1604,6 +1604,47 @@ flowchart TD
 The session that writes the criteria does not do the work in that
 claim. The next session that claims the issue reviews the criteria.
 
+### Add the docs criterion
+
+One criterion of each `Done when:` line starts with `- Docs:`. It
+names the docs that the change needs: a how-to in the book for each
+new or changed command, flag or setting that a person uses, with a
+`sh` block, and the design in the rustdoc. riff finds the criterion by
+its fixed label. For example:
+
+```text
+Done when:
+
+- A test: riff who shows the wave of each claim.
+- Docs: the book has a how-to for riff who with the wave, with a sh block.
+```
+
+`riff verify pass` refuses an issue with no `- Docs:` criterion. See
+[Report a verify](#report-a-verify).
+
+### Check the docs criterion of each item
+
+The lead runs it when it places an item in a wave:
+
+```sh
+riff plan check
+```
+
+It reads the open issues with the `gh` of your machine. It prints
+each item of an open wave with no `- Docs:` criterion, and exits with
+status 1:
+
+```text
+#12 Wave 3: Show the wave
+1 item of an open wave has no criterion `- Docs:` in the `Done when:` line. Add one to each.
+```
+
+When each item has one, it exits with status 0:
+
+```text
+Each item of an open wave has a criterion `- Docs:`.
+```
+
 ## Verify finished work
 
 A session never verifies its own work. Before the merge, another
@@ -1767,11 +1808,21 @@ gh pr checks 40
 
 Then review what a test run cannot check: the code and its fit with
 the design, each `Done when:` criterion by its test, the book, the
-rustdoc and the requirements.
+rustdoc and the requirements. Check the docs: the how-to of each new
+or changed command, flag or setting, with a `sh` block. Compare the
+`--help` output with the book. No old text in the book or the skill
+says the opposite.
 
 Write the result to a file: each criterion, and what you did to check
-it. For a fail, give the steps to see each failure. Then report a
-pass:
+it. A pass has a line that starts with `Docs:`: what you checked in
+the docs. For example:
+
+```text
+1. riff who shows the wave: pass, by the test who::the_wave_shows.
+Docs: pass. The how-to "See the wave" has a sh block, and riff who --help agrees.
+```
+
+For a fail, give the steps to see each failure. Then report a pass:
 
 ```sh
 riff verify pass 40 --file result.md
@@ -1798,6 +1849,16 @@ riff verify pass: the Gate of commit 1a2b3c4 runs still. A pass needs a Gate suc
 ```
 
 Wait for the Gate, then report again. A fail needs no Gate.
+
+A pass also needs the docs check. When the issue has no `- Docs:`
+criterion, or the result has no `Docs:` line, `riff verify pass`
+reports nothing and prints one line that says what to add:
+
+```text
+riff verify pass: the result has no line `Docs:`. Add one: what you checked in the book, the rustdoc and the skill. Nothing is reported.
+```
+
+A fail needs no `Docs:` line: a fail can stop early.
 
 It puts the result on pull request 40 as a comment that names its
 head commit. It sets the status `riff/verify` of that commit:

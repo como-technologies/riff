@@ -1243,4 +1243,26 @@ mod tests {
             assert!(skill.contains(word), "the skill does not say {word:?}");
         }
     }
+
+    /// Each `Done when:` has a docs criterion, and the verifier checks
+    /// the docs before a pass (01M4C4WQ9K6ZC85K24QFXJAZ2W).
+    #[test]
+    fn the_skill_asks_for_the_docs_in_each_item_and_each_verify() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for word in [
+            "One criterion starts with `- Docs:`",
+            "a how-to in the book for each new or changed command, flag or setting",
+            "`riff verify pass` refuses an issue with no `- Docs:` criterion",
+            "and a `- Docs:` criterion in its `Done when:` line",
+            "`riff plan check` lists each item of an open wave with no `- Docs:` criterion",
+            "Check the docs: the how-to of each new or changed command",
+            "Run `--help` and compare it with the book",
+            "No old text in the book or the skill says the opposite",
+            "a line that starts with `Docs:`: what you checked in the docs",
+            "`riff verify pass` refuses a result with no `Docs:` line",
+        ] {
+            assert!(skill.contains(word), "the skill does not say {word:?}");
+        }
+    }
 }

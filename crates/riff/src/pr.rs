@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again each `--every` seconds. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `api …/commits/COMMIT/check-runs` (a pass), `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `issue view` and `api …/commits/COMMIT/check-runs` (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -43,6 +43,10 @@
 //! [`GATE`] of the head commit has no success ([`gate_state`],
 //! 01M49HAZ7P3JMWNCG1SWCMAXQP). A fail needs no Gate.
 //!
+//! The docs stay current: `riff verify pass` also refuses when the
+//! issue has no criterion `- Docs:`, or the result has no line `Docs:`
+//! (see [`crate::docs`], 01M4C4WQHF7PRFHZJ9CNS847KX).
+//!
 //! The author of a pull request releases its item at the verify
 //! request. So the issue can have no holder. Then the result wakes the
 //! lead of the user of the verifier in the repository ([`result_to`],
@@ -72,7 +76,7 @@ use riff_core::wire::SessionInfo;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::text;
+use crate::{docs, text};
 
 /// The status code in the first line of a reply that `gh api --include`
 /// printed, for example `502` of `HTTP/2.0 502 Bad Gateway`.
@@ -748,7 +752,9 @@ pub fn gate_of(gh: &Gh, repo: &str, commit: &str) -> Result<Gate> {
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
 /// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is
-/// not the commit `tested` ([`same_commit`]), and no pass while the
+/// not the commit `tested` ([`same_commit`]). It reports no pass when
+/// the issue has no docs criterion or the result has no docs line
+/// ([`crate::docs`], 01M4C4WQHF7PRFHZJ9CNS847KX), or while the
 /// [`GATE`] of the head has no success (01M49HAZ7P3JMWNCG1SWCMAXQP). The
 /// caller posts it to the holder of the issue.
 pub fn report(
@@ -767,6 +773,12 @@ pub fn report(
     };
     let commit = head.head_ref_oid;
     if verdict == Verdict::Pass {
+        if !docs::criterion(&docs::issue_body(gh, repo, issue)?) {
+            bail!("{}", text::no_docs_criterion(issue));
+        }
+        if !docs::checked(result) {
+            bail!("{}", text::no_docs_checked());
+        }
         let gate = gate_of(gh, repo, &commit)?;
         if gate != Gate::Passed {
             bail!("{}", text::gate_not_passed(number, &commit, &gate));

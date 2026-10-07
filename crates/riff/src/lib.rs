@@ -18,6 +18,7 @@
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
 //! | `riff audit` | Checks from the log and from `gh` that a wave followed the rules. See [`audit`]. |
+//! | `riff plan check` | Lists each item of an open wave with no docs criterion, with `gh`. See [`docs`]. |
 //! | `riff cloud` | Makes and runs riff-server instances on Cloud Run, with `gcloud`. See [`cloud`]. |
 //!
 //! `riff --help` lists the commands under headings (see [`help`]).
@@ -84,6 +85,7 @@ pub mod compact;
 pub mod deaths;
 pub mod device;
 pub mod disk;
+pub mod docs;
 pub mod dropped;
 pub mod enable;
 pub mod help;

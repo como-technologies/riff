@@ -235,14 +235,18 @@ async fn pr_wait_fails_for_a_failed_required_check() {
 const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"headRefOid":"1a2b3c4d","body":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}' ;;
 *'pr comment 40 --body-file -'*) echo 'https://github.com/como-technologies/riff/pull/40#issuecomment-7' ;;
 *'/statuses/'*) echo '{}' ;;
-*'/check-runs?check_name=Gate'*) echo '{"total_count":1,"check_runs":[{"name":"Gate","status":"completed","conclusion":"success"}]}' ;;"#;
+*'/check-runs?check_name=Gate'*) echo '{"total_count":1,"check_runs":[{"name":"Gate","status":"completed","conclusion":"success"}]}' ;;
+*'issue view 12 --repo como-technologies/riff --json body'*) printf '%s' '{"body":"Show the wave.\n\nDone when:\n\n- The wave shows.\n- Docs: the book shows the wave.\n"}' ;;"#;
+
+/// The result of a verify, with its docs line.
+const RESULT: &str = "1. The wave shows.\nDocs: the how-to shows the wave.\n";
 
 /// `riff verify VERDICT` makes one comment, one status on the head
 /// commit and one post to the holder of the issue.
 async fn verify(verdict: &str, state: &str) {
     let machine = Machine::new(VERIFY).await;
     machine.claim("author", "issue-12").await;
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     let out = machine
         .ok(
             "verifier",
@@ -427,7 +431,7 @@ async fn verify_refuses_when_the_head_is_not_the_tested_commit() {
     let machine = Machine::new(VERIFY).await;
     machine.claim("author", "issue-12").await;
     let tested = commit(&machine);
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     for args in [
         &["verify", "pass", "40", "--file", &result][..],
         &[
@@ -485,7 +489,7 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
     for (fake, line) in cases {
         let machine = Machine::new(&fake).await;
         machine.claim("author", "issue-12").await;
-        let result = machine.write("result.md", "1. The wave shows.\n");
+        let result = machine.write("result.md", RESULT);
         let pass = [
             "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
         ];
@@ -522,6 +526,108 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
     }
 }
 
+/// The docs stay current (01M4C4WQHF7PRFHZJ9CNS847KX). `riff verify
+/// pass` refuses when the issue has no criterion `- Docs:`, or when the
+/// result has no line `Docs:`: no comment, no status and no post. With
+/// both, it passes. `riff verify fail` takes a result with no `Docs:`
+/// line: a fail can stop early.
+#[tokio::test]
+async fn verify_pass_refuses_with_no_docs_check() {
+    let no_criterion = VERIFY.replace(r"- Docs: the book shows the wave.\n", "");
+    assert_ne!(no_criterion, VERIFY);
+    let no_line = "1. The wave shows.\n";
+    let cases = [
+        (
+            no_criterion.as_str(),
+            RESULT,
+            "riff verify pass: issue #12 has no criterion `- Docs:` in its `Done when:` line.",
+        ),
+        (
+            VERIFY,
+            no_line,
+            "riff verify pass: the result has no line `Docs:`.",
+        ),
+    ];
+    for (fake, result, line) in cases {
+        let machine = Machine::new(fake).await;
+        machine.claim("author", "issue-12").await;
+        let result = machine.write("result.md", result);
+        let pass = [
+            "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        let out = machine.run("verifier", &pass).await;
+        assert_eq!(out.status.code(), Some(1), "{line}");
+        let stderr = text(&out.stderr);
+        assert!(stderr.contains(line), "{stderr}");
+        assert!(stderr.contains("Nothing is reported."), "{stderr}");
+        let calls = log(machine.bin.path());
+        assert!(
+            calls.contains("gh issue view 12 --repo como-technologies/riff --json body"),
+            "{calls}"
+        );
+        assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("/statuses/"), "{calls}");
+        let inbox = machine.ok("author", &["read"]).await;
+        assert!(!inbox.contains("verify result:"), "{inbox}");
+
+        // A fail needs no docs line.
+        let fail = [
+            "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        machine.ok("verifier", &fail).await;
+        let calls = log(machine.bin.path());
+        assert!(calls.contains("-f state=failure"), "{calls}");
+    }
+
+    // With the criterion and the line, the pass goes through.
+    let machine = Machine::new(VERIFY).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", RESULT);
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &pass).await;
+    assert!(log(machine.bin.path()).contains("-f state=success"));
+}
+
+/// `riff plan check` names each item of an open wave with no criterion
+/// `- Docs:`, and exits with 1 (01M4C4WQW5X7ZRES1KXH7KXJSY). An item
+/// out of the waves does not count. With none, it exits with 0.
+#[tokio::test]
+async fn plan_check_names_each_item_of_an_open_wave_with_no_docs_criterion() {
+    let list = |issues: &str| {
+        format!(
+            "*'issue list --repo como-technologies/riff --state open --limit 1000 --json \
+             number,title,body,milestone'*) printf '%s' '{issues}' ;;"
+        )
+    };
+    let docs = r#""body":"Done when:\n- A test.\n- Docs: the book.\n""#;
+    let issues = format!(
+        r#"[{{"number":12,"title":"Show the wave","body":"Done when:\n- A test.\n","milestone":{{"title":"Wave 3: Sandbox"}}}},
+{{"number":13,"title":"Show the plan",{docs},"milestone":{{"title":"Wave 3: Sandbox"}}}},
+{{"number":9,"title":"Old idea","body":"","milestone":{{"title":"Backlog"}}}},
+{{"number":8,"title":"No wave","body":"","milestone":null}}]"#
+    );
+    let machine = Machine::new(&list(&issues)).await;
+    let out = machine.run("lead", &["plan", "check"]).await;
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "#12 Wave 3: Sandbox: Show the wave\n\
+         1 item of an open wave has no criterion `- Docs:` in the `Done when:` line. \
+         Add one to each.\n"
+    );
+
+    let all = format!(
+        r#"[{{"number":13,"title":"Show the plan",{docs},"milestone":{{"title":"Wave 3"}}}}]"#
+    );
+    let machine = Machine::new(&list(&all)).await;
+    assert_eq!(
+        machine.ok("lead", &["plan", "check"]).await,
+        "Each item of an open wave has a criterion `- Docs:`.\n"
+    );
+}
+
 /// With no --commit, the tested commit is HEAD of the verifier.
 #[tokio::test]
 async fn verify_takes_head_as_the_tested_commit() {
@@ -529,7 +635,7 @@ async fn verify_takes_head_as_the_tested_commit() {
     machine.claim("author", "issue-12").await;
     let tested = commit(&machine);
     fake_gh(machine.bin.path(), &VERIFY.replace("1a2b3c4d", &tested));
-    let result = machine.write("result.md", "1. The wave shows.\n");
+    let result = machine.write("result.md", RESULT);
     machine
         .ok("verifier", &["verify", "pass", "40", "--file", &result])
         .await;

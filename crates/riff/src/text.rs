@@ -102,6 +102,86 @@ pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
     )
 }
 
+/// The line of a `riff verify pass` whose issue has no docs criterion
+/// (01M4C4WQHF7PRFHZJ9CNS847KX).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_docs_criterion(12),
+///     "riff verify pass: issue #12 has no criterion `- Docs:` in its `Done when:` line. Add \
+///      one to the issue: the docs that the change needs. Nothing is reported."
+/// );
+/// ```
+pub fn no_docs_criterion(issue: u64) -> String {
+    format!(
+        "riff verify pass: issue #{issue} has no criterion `{}` in its `Done when:` line. Add \
+         one to the issue: the docs that the change needs. Nothing is reported.",
+        crate::docs::CRITERION
+    )
+}
+
+/// The line of a `riff verify pass` whose result has no docs line
+/// (01M4C4WQHF7PRFHZJ9CNS847KX).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_docs_checked(),
+///     "riff verify pass: the result has no line `Docs:`. Add one: what you checked in the \
+///      book, the rustdoc and the skill. Nothing is reported."
+/// );
+/// ```
+pub fn no_docs_checked() -> String {
+    format!(
+        "riff verify pass: the result has no line `{}`. Add one: what you checked in the book, \
+         the rustdoc and the skill. Nothing is reported.",
+        crate::docs::CHECKED
+    )
+}
+
+/// The report of `riff plan check` (01M4C4WQW5X7ZRES1KXH7KXJSY): one
+/// line for each item of an open wave with no docs criterion, or one
+/// line that says that each item has one.
+///
+/// ```
+/// use riff::docs::{Item, Milestone};
+///
+/// let item = Item {
+///     number: 12,
+///     title: "Show the wave".into(),
+///     body: String::new(),
+///     milestone: Some(Milestone { title: "Wave 3".into() }),
+/// };
+/// assert_eq!(
+///     riff::text::docs_missing(&[&item]),
+///     "#12 Wave 3: Show the wave\n\
+///      1 item of an open wave has no criterion `- Docs:` in the `Done when:` line. \
+///      Add one to each.\n"
+/// );
+/// assert_eq!(
+///     riff::text::docs_missing(&[]),
+///     "Each item of an open wave has a criterion `- Docs:`.\n"
+/// );
+/// ```
+pub fn docs_missing(items: &[&crate::docs::Item]) -> String {
+    let criterion = crate::docs::CRITERION;
+    if items.is_empty() {
+        return format!("Each item of an open wave has a criterion `{criterion}`.\n");
+    }
+    let mut out = String::new();
+    for item in items {
+        let wave = item.milestone.as_ref().map_or("", |m| m.title.as_str());
+        out.push_str(&format!("#{} {wave}: {}\n", item.number, item.title));
+    }
+    let count = match items.len() {
+        1 => "1 item of an open wave has no criterion".to_owned(),
+        n => format!("{n} items of an open wave have no criterion"),
+    };
+    out.push_str(&format!(
+        "{count} `{criterion}` in the `Done when:` line. Add one to each.\n"
+    ));
+    out
+}
+
 /// The line of a `riff verify pass` that the [`Gate`](crate::pr::GATE)
 /// of the head commit stops (01M49HAZ7P3JMWNCG1SWCMAXQP).
 ///
