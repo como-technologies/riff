@@ -4161,6 +4161,10 @@
   person as a whole, a folder above it, the keyring, the D-Bus socket,
   the keys of SSH and GnuPG, or the sign-in of `gh`. riff makes no
   profile for a session whose paths give one of them.
+- **01M4BR61PPQV7JJE5Y2G9Q90AF** riff makes no profile for a session
+  with a path that is not absolute or that has a `..` component. The
+  step that applies a profile resolves each symlink before it grants a
+  path.
 
 ## Open
 

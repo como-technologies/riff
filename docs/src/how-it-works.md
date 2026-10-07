@@ -3136,7 +3136,8 @@ profile.
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
 No role reads your home as a whole, your keyring, your D-Bus, your
-SSH or GnuPG keys, or the sign-in of `gh`.
+SSH or GnuPG keys, or the sign-in of `gh`. riff refuses a path of a
+session that is not absolute or that has a `..` part.
 
 ```mermaid
 flowchart LR

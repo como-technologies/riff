@@ -31,6 +31,10 @@
 //!   ([`Session::secrets`]): the keyring, the D-Bus socket, the keys of
 //!   SSH and GnuPG, the sign-in of `gh`. So the home of a person that
 //!   is a git repository can never be the clone.
+//! - [`Profile::of`] refuses a path that is not absolute or that has a
+//!   `..` component (01M4BR61PPQV7JJE5Y2G9Q90AF): it compares
+//!   components and does not resolve them. The apply step (#607)
+//!   resolves each symlink on the disk before it grants a path.
 //! - Each role writes its temp folder, so no role writes nothing
 //!   ([`Writes`]).
 //! - A git worktree keeps its objects and its refs in the git dir of
@@ -360,6 +364,9 @@ pub const SYSTEM: [&str; 10] = [
 pub enum Refused {
     /// A path of the session is not absolute.
     Relative(PathBuf),
+    /// A path of the session has a `..` component. A compare of
+    /// components does not resolve it, so riff refuses it.
+    Up(PathBuf),
     /// A path of the profile is the home of the person or a folder
     /// above it.
     Home(PathBuf),
@@ -372,6 +379,7 @@ impl fmt::Display for Refused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Refused::Relative(p) => write!(f, "the path {} is not absolute", p.display()),
+            Refused::Up(p) => write!(f, "the path {} has a `..` component", p.display()),
             Refused::Home(p) => write!(
                 f,
                 "the path {} gives the home of the person; no role may have it",
@@ -428,15 +436,15 @@ impl Profile {
     }
 
     fn check(&self, s: &Session) -> Result<(), Refused> {
+        plain(&s.home)?;
+        plain(&s.runtime)?;
         let secrets = s.secrets();
         for p in self
             .writes
             .paths()
             .chain(self.reads.iter().map(PathBuf::as_path))
         {
-            if !p.is_absolute() {
-                return Err(Refused::Relative(p.to_owned()));
-            }
+            plain(p)?;
             if s.home.starts_with(p) {
                 return Err(Refused::Home(p.to_owned()));
             }
@@ -487,6 +495,20 @@ impl Profile {
     pub fn reads(&self, path: &Path) -> bool {
         self.writes(path) || self.read_paths().any(|p| path.starts_with(p))
     }
+}
+
+/// Refuses a path that is not absolute or that has a `..` component:
+/// [`Path::starts_with`] compares components and does not resolve
+/// them. A symlink is the same gap: the apply step (#607) resolves each
+/// path on the disk before it grants it.
+fn plain(p: &Path) -> Result<(), Refused> {
+    if !p.is_absolute() {
+        return Err(Refused::Relative(p.to_owned()));
+    }
+    if p.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err(Refused::Up(p.to_owned()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -655,6 +677,36 @@ mod tests {
         assert_eq!(
             Profile::of(Role::TestRun, &relative),
             Err(Refused::Relative("tmp".into()))
+        );
+    }
+
+    #[test]
+    fn a_path_with_a_parent_component_makes_no_profile() {
+        let up = Session {
+            clone: "/home/ada/src/..".into(),
+            ..session()
+        };
+        assert_eq!(
+            Profile::of(Role::Lead, &up),
+            Err(Refused::Up("/home/ada/src/..".into()))
+        );
+        let ssh = Session {
+            tools: vec!["/home/ada/src/../.ssh".into()],
+            ..session()
+        };
+        for role in Role::ALL {
+            assert_eq!(
+                Profile::of(role, &ssh),
+                Err(Refused::Up("/home/ada/src/../.ssh".into()))
+            );
+        }
+        let home = Session {
+            home: "/home/ada/x/..".into(),
+            ..session()
+        };
+        assert_eq!(
+            Profile::of(Role::Worker, &home),
+            Err(Refused::Up("/home/ada/x/..".into()))
         );
     }
 }
