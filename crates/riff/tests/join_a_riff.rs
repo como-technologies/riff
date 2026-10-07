@@ -67,7 +67,6 @@ fn each_riff_command_of_the_page_is_real() {
         riff,
         [
             "riff login",
-            "riff",
             "riff server",
             "riff who",
             "riff update",
@@ -75,6 +74,10 @@ fn each_riff_command_of_the_page_is_real() {
         ]
     );
     each_is_real(&riff);
+    // After the sign-in, `riff` starts the riff.
+    let start = commands_of_part(PAGE, "Start the riff");
+    assert_eq!(start, ["riff"]);
+    each_is_real(&start);
 }
 
 /// A person who joins runs no riff of their own. The page names no

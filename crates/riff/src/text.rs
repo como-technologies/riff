@@ -2978,7 +2978,7 @@ where
 ///     answer: Ok(Probe { build: Some(this.clone()), sign_in: Some(false) }),
 ///     user: None,
 /// };
-/// let view = View { source: Source::Default, used: local.clone(), local: None, facts: None, here: None };
+/// let view = View { source: Source::Default, used: local.clone(), local: None, facts: None };
 /// assert_eq!(
 ///     plain(&view),
 ///     format!(
@@ -2997,7 +2997,7 @@ where
 ///     user: None,
 /// };
 /// let down = Seen { answer: Err("refused".into()), ..local };
-/// let view = View { source: Source::Env, used: shared, local: Some(down), facts: None, here: None };
+/// let view = View { source: Source::Env, used: shared, local: Some(down), facts: None };
 /// let text = plain(&view);
 /// assert!(text.contains("\nserver      https://riff.example.com  (from RIFF_SERVER)\n"), "{text}");
 /// assert!(text.contains("\n  sign-in   yes, you are not signed in\n"), "{text}");
@@ -3040,7 +3040,7 @@ where
 ///     now_ms,
 ///     ..ServerFacts::default()
 /// };
-/// let mut view = View { source: Source::Default, used, local: None, facts: Some(facts.clone()), here: None };
+/// let mut view = View { source: Source::Default, used, local: None, facts: Some(facts.clone()) };
 /// let text = anstream::adapter::strip_str(&riff::text::server_view(&view)).to_string();
 /// let rows: Vec<&str> = text.lines().skip(4).collect();
 /// assert_eq!(
