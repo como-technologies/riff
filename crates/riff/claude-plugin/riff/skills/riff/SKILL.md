@@ -848,6 +848,12 @@ gives you a note with the host, the pane and the session. You do not
 start workers for free work. The server stops idle workers past a
 limit: at most 1 on each host (`riff workers idle`).
 
+Your `riff mcp` also gives free work to each idle worker of your user
+that joined: it tells the worker `request: claim ITEM` in your name, a
+verify first. A worker that does not claim in 6 intervals does not
+block the start of a new worker. Give work by hand only when the
+rollout misses it.
+
 Give free work to a free worker. Check each time a riff line wakes
 you, and each time you free an item: a need merges, your user decides
 a scope, or a new item joins the current wave.

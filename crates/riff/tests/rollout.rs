@@ -161,14 +161,12 @@ impl Lead {
     }
 
     /// The worker `n` (from 1) of the fake tmux joins the riff and
-    /// claims nothing. It is live while its watch stream, the second
-    /// value, stays.
-    async fn join_idle(&self, n: usize) -> (SessionUri, impl Sized) {
+    /// claims nothing. A watch of it keeps it live.
+    async fn join_idle(&self, n: usize) -> SessionUri {
         self.until_workers(n).await;
         let (_, worker) = self.worker(n);
         self.api.register_as(&worker, true).await.unwrap();
-        let stream = self.api.watch(&worker).await.unwrap();
-        (worker, stream)
+        worker
     }
 
     /// Waits until `n` workers run.
@@ -491,7 +489,8 @@ async fn an_idle_worker_gets_a_request_for_a_waiting_verify() {
     lead.issues(ONE_ITEM);
     lead.pull(None);
     lead.riff(RiffState::Running).await;
-    let (worker, _stream) = lead.join_idle(1).await;
+    let worker = lead.join_idle(1).await;
+    let _stream = lead.api.watch(&worker).await.unwrap();
     let read = reads(&lead.api, &worker, "request: claim verify-issue-1").await;
     assert!(read.contains("lead=true"), "{read}");
     // More looks within the wait of 6 intervals: no second request.
@@ -517,7 +516,8 @@ async fn an_idle_worker_gets_a_request_for_a_free_item() {
     let lead = lead(5).await;
     lead.issues(ONE_ITEM);
     lead.riff(RiffState::Running).await;
-    let (worker, _stream) = lead.join_idle(1).await;
+    let worker = lead.join_idle(1).await;
+    let _stream = lead.api.watch(&worker).await.unwrap();
     reads(&lead.api, &worker, "request: claim issue-1").await;
 }
 
@@ -530,13 +530,19 @@ async fn a_worker_that_does_not_claim_does_not_block_a_new_worker() {
     let lead = lead(5).await;
     lead.issues(ONE_ITEM);
     lead.riff(RiffState::Running).await;
-    let (first, _first) = lead.join_idle(1).await;
+    let first = lead.join_idle(1).await;
+    let _first = lead.api.watch(&first).await.unwrap();
     reads(&lead.api, &first, "request: claim issue-1").await;
     let start = Instant::now();
     lead.until_workers(2).await;
     // The interval is 1 second: the wait is 6 seconds.
-    assert!(start.elapsed() >= Duration::from_secs(5), "{:?}", start.elapsed());
-    let (second, _second) = lead.join_idle(2).await;
+    assert!(
+        start.elapsed() >= Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    let second = lead.join_idle(2).await;
+    let _second = lead.api.watch(&second).await.unwrap();
     reads(&lead.api, &second, "request: claim issue-1").await;
     // The second worker refuses too.
     tokio::time::sleep(Duration::from_secs(8)).await;
