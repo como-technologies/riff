@@ -303,7 +303,10 @@ fn create_again_keeps_each_resource() {
     // A provider that exists gets the mapping and the condition again.
     let update = ran.line("iam workload-identity-pools providers update-oidc github ");
     assert!(update.contains(CONDITION), "{update}");
-    assert!(update.contains(&format!("--attribute-mapping {MAPPING} ")), "{update}");
+    assert!(
+        update.contains(&format!("--attribute-mapping {MAPPING} ")),
+        "{update}"
+    );
 }
 
 /// R46, and 01M3TJWJEPTSF1S3S5PJD25Z7Y: an older version of an object
@@ -432,7 +435,10 @@ fn only_main_and_the_release_tags_sign_in_as_the_deploy_account() {
         "{provider}"
     );
     assert!(provider.contains(CONDITION), "{provider}");
-    assert!(provider.contains(&format!("--attribute-mapping {MAPPING} ")), "{provider}");
+    assert!(
+        provider.contains(&format!("--attribute-mapping {MAPPING} ")),
+        "{provider}"
+    );
     assert!(
         !ran.calls.contains("providers update-oidc"),
         "{}",
