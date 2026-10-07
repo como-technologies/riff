@@ -933,6 +933,62 @@ pub fn rollout_off(host: &str, why: &str) -> String {
     )
 }
 
+/// The message for a pull request with auto-merge on and a conflict with
+/// the default branch (01M49Q30XMVRFX42YTM1PHX0RZ). `held` is true when
+/// it goes to the session that holds `item`; else it goes to the lead.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::pull_conflict(40, "issue-12", "1a2b3c4d5e", true),
+///     "Pull request #40 of issue-12 has a conflict with the default branch at commit 1a2b3c4, \
+///      so it cannot merge. Rebase it on a fresh default branch, push it, and send a new verify \
+///      request."
+/// );
+/// assert_eq!(
+///     riff::text::pull_conflict(40, "issue-12", "1a2b3c4d5e", false),
+///     "Pull request #40 of issue-12 has a conflict with the default branch at commit 1a2b3c4, \
+///      so it cannot merge. No session holds issue-12: give it to a free session to rebase."
+/// );
+/// ```
+pub fn pull_conflict(number: u64, item: &str, head: &str, held: bool) -> String {
+    let commit: String = head.chars().take(7).collect();
+    let next = if held {
+        "Rebase it on a fresh default branch, push it, and send a new verify request.".to_owned()
+    } else {
+        format!("No session holds {item}: give it to a free session to rebase.")
+    };
+    format!(
+        "Pull request #{number} of {item} has a conflict with the default branch at commit \
+         {commit}, so it cannot merge. {next}"
+    )
+}
+
+/// The message to the lead for a pull request that waits for a verify
+/// with no verify claim for `wait` (01M49Q316RXNATJP587DWGDNCD). The
+/// minutes round up.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// assert_eq!(
+///     riff::text::pull_no_verify(40, "issue-12", "1a2b3c4d5e", Duration::from_secs(1800)),
+///     "Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4 for 30 minutes, and \
+///      no session claims verify-issue-12. Give the verify to a free session."
+/// );
+/// assert!(riff::text::pull_no_verify(40, "issue-12", "1a2b", Duration::from_secs(1)).contains(" for 1 minute,"));
+/// ```
+pub fn pull_no_verify(number: u64, item: &str, head: &str, wait: std::time::Duration) -> String {
+    let commit: String = head.chars().take(7).collect();
+    let minutes = match wait.as_secs().div_ceil(60) {
+        1 => "1 minute".to_owned(),
+        n => format!("{n} minutes"),
+    };
+    format!(
+        "Pull request #{number} of {item} waits for a verify of commit {commit} for {minutes}, \
+         and no session claims verify-{item}. Give the verify to a free session."
+    )
+}
+
 /// The instructions of `riff mcp` in a directory where riff is off
 /// (01M3XY2ST8R67SKTXJECAYJZRX). It serves no tool.
 pub const MCP_OFF: &str = "riff is off in this directory, so riff gives no tools here. Your user \

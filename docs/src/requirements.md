@@ -2317,6 +2317,17 @@
 - **01M49HAW3NXNXNX02ETDZD3YCN** For a wait, an item of a `Needs:` line
   is open only when its issue is open and has no comment that starts
   with `Merged in #`.
+- **01M49Q30XMVRFX42YTM1PHX0RZ** When the look of the lead sees an open
+  pull request of an item with auto-merge on and the state
+  `CONFLICTING`, it sends a message to the session that holds the item.
+  When no session holds the item, the message goes to the lead.
+- **01M49Q316RXNATJP587DWGDNCD** When the look of the lead sees a pull
+  request that waits for a verify, and no session claims its `verify-`
+  item, for 30 minutes, it sends a message to the lead. A `verify-`
+  claim starts the 30 minutes again.
+- **01M49Q31FASDM7CG3JEGPYCZB9** Each message of a pull request that
+  stops comes one time for each pull request, head commit and state.
+  The `riff mcp` of the lead keeps what it told in memory only.
 - **01M41FZPGEK4TNPSM2051W4VMS** A session that cannot go on with no
   decision of a person calls the `blocked` tool, or runs `riff blocked
   REASON`. One command sets the block and sends `blocked: REASON` to

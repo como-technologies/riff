@@ -780,7 +780,8 @@ pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
 }
 
 /// The fields of `gh pr list --json` that [`Pull`] reads.
-pub const PULL_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheckRollup";
+pub const PULL_FIELDS: &str =
+    "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest";
 
 /// An open pull request, as `gh pr list --json` with [`PULL_FIELDS`]
 /// gives it.
@@ -800,6 +801,18 @@ pub struct Pull {
     pub draft: bool,
     #[serde(rename = "statusCheckRollup", default)]
     pub checks: Vec<Check>,
+    /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`: GitHub finds it after a
+    /// push, so it can be `UNKNOWN` for a short time.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub mergeable: Option<String>,
+    /// True when auto-merge is on.
+    #[serde(rename = "autoMergeRequest", default, deserialize_with = "present")]
+    pub auto_merge: bool,
+}
+
+/// True for a value that is not `null`.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    Ok(Option::<serde::de::IgnoredAny>::deserialize(d)?.is_some())
 }
 
 /// A status or a check of the head of a pull request. Only a status has
@@ -882,6 +895,33 @@ impl Pull {
         self.checks
             .iter()
             .find(|c| c.context.as_deref() == Some(crate::pr::VERIFY_CONTEXT))
+    }
+
+    /// True when auto-merge is on and the pull request has a conflict
+    /// with the default branch: it cannot merge (01M49Q30XMVRFX42YTM1PHX0RZ).
+    /// Only a pull request of an item counts, as for [`Pull::verify`].
+    ///
+    /// ```
+    /// use riff::rollout::Pull;
+    ///
+    /// let pull = |mergeable: &str, auto_merge| Pull {
+    ///     number: 40,
+    ///     branch: "worktree-issue-12".into(),
+    ///     mergeable: Some(mergeable.into()),
+    ///     auto_merge,
+    ///     ..Pull::default()
+    /// };
+    /// assert!(pull("CONFLICTING", true).conflict());
+    /// assert!(!pull("CONFLICTING", false).conflict());
+    /// assert!(!pull("UNKNOWN", true).conflict());
+    /// assert!(!pull("MERGEABLE", true).conflict());
+    /// assert!(!Pull { draft: true, ..pull("CONFLICTING", true) }.conflict());
+    /// assert!(!Pull { branch: "main".into(), ..pull("CONFLICTING", true) }.conflict());
+    /// ```
+    pub fn conflict(&self) -> bool {
+        self.auto_merge
+            && self.mergeable.as_deref() == Some("CONFLICTING")
+            && self.verify().is_some()
     }
 }
 
