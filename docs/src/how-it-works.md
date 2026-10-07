@@ -3476,6 +3476,7 @@ riff who
 ```text
 Error: cannot reach riff-server at http://127.0.0.1:7878
 ```
+
 ### Start the lead in tmux
 
 Start tmux in your repository, then start the lead with Remote

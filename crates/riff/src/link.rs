@@ -148,7 +148,8 @@ pub const MOST_WAIT: Duration = Duration::from_secs(5);
 /// The wait before a new connect of a stream after a connect failed.
 pub const STREAM_RETRY: Duration = Duration::from_secs(5);
 
-/// A call shows [`WAITING`] when it waited this long for a new try.
+/// A call shows [`WAITING`] when its waits for a new try, with the wait
+/// that comes, add up to this.
 pub const LINE_AFTER: Duration = Duration::from_secs(1);
 
 /// The line that a call shows while it waits for a new try
@@ -273,11 +274,20 @@ impl Budget {
 /// }
 /// ```
 pub fn waits(limits: &Limits) -> impl Iterator<Item = Duration> + use<> {
+    waits_with(limits, random_below)
+}
+
+/// The waits of [`waits`], with `part` as the random part: it gets half
+/// of the full wait and gives a time from zero to it.
+fn waits_with<F: FnMut(Duration) -> Duration>(
+    limits: &Limits,
+    mut part: F,
+) -> impl Iterator<Item = Duration> + use<F> {
     let (mut next, most) = (limits.first_wait, limits.most_wait);
     std::iter::from_fn(move || {
         let full = next.min(most);
         next = (next * 2).min(most);
-        Some(full - random_below(full / 2))
+        Some(full - part(full / 2))
     })
 }
 
@@ -542,9 +552,20 @@ impl Link {
         self.wait_shown.store(false, Ordering::SeqCst);
     }
 
-    /// Shows [`WAITING`] with `show`, or on stderr, when a call waited
-    /// [`LINE_AFTER`] for a new try, one time for each gap.
-    pub fn show_wait(&self, waited: Duration, show: Option<&WaitLine>) {
+    /// Waits `wait` for a new try of a call. `waited` is the time of the
+    /// waits of the call before this one. It counts this wait before the
+    /// check of [`Link::show_wait`], so the line shows before the wait
+    /// that takes the gap past [`LINE_AFTER`]
+    /// (01M3THEE5V3RFHF9QTA8MA8QDF).
+    pub async fn wait(&self, waited: &mut Duration, wait: Duration, show: Option<&WaitLine>) {
+        *waited += wait;
+        self.show_wait(*waited, show);
+        tokio::time::sleep(wait).await;
+    }
+
+    /// Shows [`WAITING`] with `show`, or on stderr, when the waits of a
+    /// call add up to [`LINE_AFTER`], one time for each gap.
+    fn show_wait(&self, waited: Duration, show: Option<&WaitLine>) {
         if waited < LINE_AFTER || self.wait_shown.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -631,5 +652,72 @@ impl Reply {
             return Ok(self);
         }
         anyhow::bail!("riff-server replied {}: {}", self.status, self.text())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    /// A link of its own for each test, and the lines that it shows.
+    fn link_and_lines(name: &str) -> (Arc<Link>, WaitLine, Arc<StdMutex<Vec<String>>>) {
+        let link = with(&format!("http://wait.test/{name}"), Limits::default());
+        let lines = Arc::new(StdMutex::new(Vec::new()));
+        let into = lines.clone();
+        let show: WaitLine = Arc::new(move |line: &str| into.lock().unwrap().push(line.to_owned()));
+        (link, show, lines)
+    }
+
+    /// Waits as `Api::tries` does until the server is away no more:
+    /// `gap` after the first fault. Gives the count of the lines.
+    async fn wait_through(
+        name: &str,
+        gap: Duration,
+        part: impl FnMut(Duration) -> Duration,
+    ) -> usize {
+        let (link, show, lines) = link_and_lines(name);
+        let start = tokio::time::Instant::now();
+        let mut waits = waits_with(&Limits::default(), part);
+        let mut waited = Duration::ZERO;
+        while start.elapsed() < gap {
+            let wait = waits.next().unwrap();
+            link.wait(&mut waited, wait, Some(&show)).await;
+        }
+        link.ended_wait();
+        let count = lines.lock().unwrap().len();
+        count
+    }
+
+    /// The lowest random parts: 125, 250, 500, 1000 ms. The first three
+    /// add up to 875 ms. The line shows before the fourth wait, which
+    /// takes the gap past 1 s.
+    #[tokio::test(start_paused = true)]
+    async fn a_gap_of_2_s_shows_one_line_with_the_lowest_waits() {
+        assert_eq!(wait_through("lowest", Duration::from_secs(2), |half| half).await, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_gap_of_2_s_shows_one_line_with_the_highest_waits() {
+        let none = |_| Duration::ZERO;
+        assert_eq!(wait_through("highest", Duration::from_secs(2), none).await, 1);
+    }
+
+    /// Two waits of at most 250 and 500 ms show no line.
+    #[tokio::test(start_paused = true)]
+    async fn a_gap_of_less_than_1_s_shows_no_line() {
+        let none = |_| Duration::ZERO;
+        let short = Duration::from_millis(750);
+        assert_eq!(wait_through("short-highest", short, none).await, 0);
+        assert_eq!(wait_through("short-lowest", short, |half| half).await, 0);
+    }
+
+    #[test]
+    fn the_lowest_waits_are_half_of_the_full_waits() {
+        let waits: Vec<u64> = waits_with(&Limits::default(), |half| half)
+            .take(5)
+            .map(|wait| u64::try_from(wait.as_millis()).unwrap())
+            .collect();
+        assert_eq!(waits, [125, 250, 500, 1000, 2000]);
     }
 }

@@ -964,9 +964,7 @@ impl Api {
                     Err(error) => error,
                 });
             }
-            self.link.show_wait(waited, self.waits.as_ref());
-            waited += wait;
-            tokio::time::sleep(wait).await;
+            self.link.wait(&mut waited, wait, self.waits.as_ref()).await;
         }
     }
 
