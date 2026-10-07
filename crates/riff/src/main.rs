@@ -214,7 +214,7 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// Hold, free or check the work items of the plan of your repository
+    /// Hold, free or check the work items of your repository
     ///
     /// A held item is no free work: no worker can claim it. A hold is
     /// not a claim. Only a lead, the owner or an admin can hold and free
