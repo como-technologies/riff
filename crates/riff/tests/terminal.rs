@@ -658,7 +658,7 @@ async fn workers_lists_each_worker() {
     );
     assert!(!out.contains("PANE"), "{out}");
     assert!(out.contains("  score "), "{out}");
-    assert_eq!(out.lines().count(), 4, "{out}");
+    assert_eq!(out.lines().count(), 3, "{out}");
 }
 
 /// `riff workers stop` ends each worker: within 10 seconds, no worker is
