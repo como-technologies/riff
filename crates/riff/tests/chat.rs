@@ -1002,13 +1002,13 @@ async fn marked_until(
     mark: &str,
     end: &str,
 ) -> Vec<String> {
-    let deadline = Instant::now() + WAIT;
+    let span = Span::start();
     let mut seen = Vec::new();
     loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        let line = tokio::time::timeout(left, lines.next_line())
+        assert!(span.within(WAIT), "no line with {end:?} in time; seen {seen:#?}");
+        let line = in_time(WAIT, lines.next_line())
             .await
-            .unwrap_or_else(|_| panic!("no line with {end:?} in time; seen {seen:#?}"))
+            .unwrap_or_else(|late| panic!("no line with {end:?}: {late}; seen {seen:#?}"))
             .unwrap()
             .expect("riff runs");
         if line.contains(mark) {
@@ -1139,10 +1139,10 @@ async fn a_break_longer_than_the_kept_messages_shows_the_lost_number() {
     }
     proxy.open();
     let lost = riff::text::lost_messages(10);
-    let deadline = Instant::now() + WAIT;
+    let span = Span::start();
     loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        let line = tokio::time::timeout(left, err.next_line())
+        assert!(span.within(WAIT), "the line of the lost messages in time");
+        let line = in_time(WAIT, err.next_line())
             .await
             .expect("the line of the lost messages in time")
             .unwrap()
