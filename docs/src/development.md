@@ -183,7 +183,7 @@ line `slow under load` with the CPU pressure. To see it, run the test
 with its output:
 
 ```sh
-cargo test -p riff --test hosts -- --nocapture 2>&1 | grep 'slow under load'
+cargo test -p riff --test all hosts:: -- --nocapture 2>&1 | grep 'slow under load'
 ```
 
 ## Run the tests of one file

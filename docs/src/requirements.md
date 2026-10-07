@@ -877,11 +877,11 @@
   a dir outside the riff repository. So no command of a test writes
   settings in a repository above the dirs of the test.
 - **01M3W98PMDPZW1CR3KJYMPHVQZ** A test server starts with no old
-  sign-in at its URL. The tests of one test binary share one mock keyring,
-  and the OS can give the port of an earlier test to a later test. A
-  test in process that puts a new riff at its URL keeps its listener.
-  A test that needs a URL where nothing listens holds the port with a
-  socket that does not listen.
+  sign-in at its URL. The tests of one test binary share one mock
+  keyring, and the OS can give the port of an earlier test to a later
+  test. A test in process that puts a new riff at its URL keeps its
+  listener. A test that needs a URL where nothing listens holds the
+  port with a socket that does not listen.
 - **01M41A0M2XWCWTWGF7T9DR03W0** A test waits for the fact that it
   checks, for example a message, a line in a log or a look of a host.
   It does not wait for a fixed time. A time limit of a wait only ends
