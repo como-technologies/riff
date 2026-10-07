@@ -6,7 +6,8 @@
 //! So the start of work does not wait for an agent that remembers a
 //! step. Once each interval ([`crate::settings::workers_interval`],
 //! 10 seconds by default, 01M3Q5QE9H42FQKEDC5G9GKCWD), it looks at the
-//! riff, and starts at most one worker:
+//! riff, gives free work to the idle workers, and starts at most one
+//! worker:
 //!
 //! ```mermaid
 //! flowchart TD
@@ -14,10 +15,11 @@
 //!     L -- no --> T
 //!     L -- yes --> R{"the riff runs?"}
 //!     R -- "no: paused" --> T
-//!     R -- yes --> P{"a machine with room?"}
+//!     R -- yes --> P{"a machine with room,<br/>or an idle worker that joined?"}
 //!     P -- no --> T
 //!     P -- yes --> W["free work (gh): free items of the current wave,<br/>pull requests that wait for a verify"]
-//!     W --> I{"free work, and no idle worker?"}
+//!     W --> O["each idle worker with no open request:<br/>tell it request: claim ITEM"]
+//!     O --> I{"free work, and no idle worker?<br/>(a worker that refused does not count)"}
 //!     I -- no --> T
 //!     I -- yes --> S["start 1 worker on the machine<br/>with the most free capacity"]
 //!     S --> N["a note to the lead: host, pane, session"]
@@ -53,6 +55,13 @@
 //!   claim before the next one starts. When no worker takes the counted work, one
 //!   worker waits idle, the server keeps it (#259), and riff starts no
 //!   more: no loop of starts and stops.
+//! - **Requests** ([`Offers`], 01M49ZK19GQP79Z8HH14PK85QQ to
+//!   01M49ZK1EG52YAKG974XH201RK). An idle worker that joined sleeps on
+//!   its watch: only a wake makes it read. So the rollout gives it free
+//!   work with a request of the lead, as the lead does by hand. A
+//!   worker that does not claim in [`offer_wait`] refused the item: it
+//!   does not block a start. An item that two workers refused starts no
+//!   more workers.
 //! - **Machines** ([`Place`], [`pick`], 01M3Q5QE76BZ27SZ14FFE8HM1G).
 //!   The machine of the lead, when the lead runs in tmux, and each live
 //!   workers host of the user. A machine has room when its workers are
@@ -421,7 +430,9 @@ impl Offers {
                         .refused
                         .get(*item)
                         .is_some_and(|r| r.contains(&idler.session))
-                    && idler.worktree.as_deref() != item.strip_prefix("verify-")
+                    && item
+                        .strip_prefix("verify-")
+                        .is_none_or(|own| idler.worktree.as_deref() != Some(own))
             });
             match item {
                 Some(item) => {
@@ -2467,7 +2478,7 @@ mod tests {
                 {"number":268,"headRefName":"worktree-issue-262","isDraft":false,"statusCheckRollup":[]}]"#,
         )
         .unwrap();
-        assert_eq!(waiting_verifies(&pulls, &HashSet::new()), [268]);
+        assert_eq!(waiting_verifies(&pulls, &HashSet::new()), [262]);
         // The pull request of 265 waits for the merge: no build.
         assert!(free_items(&issues, "Wave 13", &HashSet::new(), &pulls).is_empty());
     }
@@ -2502,7 +2513,7 @@ mod tests {
         };
         // Asked: one verify, no build.
         let asked = pulls("");
-        assert_eq!(work(&asked, &[]), (vec![], vec![40]));
+        assert_eq!(work(&asked, &[]), (vec![], vec![12]));
         // A verifier holds it: no work.
         assert_eq!(work(&asked, &["verify-issue-12"]), (vec![], vec![]));
         // Passed: the merge waits, no work.

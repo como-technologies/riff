@@ -6,6 +6,9 @@
 //!
 //! The lead gets a message for each change of a worker setting
 //! (01M3X30KHKB6W11C3NBAW7KCGW to 01M3X30RA3X08JBJ2JBVCCNEH3).
+//!
+//! An idle worker that joined gets free work with a request of the lead
+//! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK).
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
@@ -154,15 +157,18 @@ impl Lead {
 
     /// The unread text of the lead, when it contains `needle`.
     async fn reads(&self, needle: &str) -> String {
-        let start = Instant::now();
-        let mut read = String::new();
-        while !read.contains(needle) {
-            let inbox = self.api.inbox(&self.me, None, false).await.unwrap();
-            read.push_str(&riff::text::inbox(&inbox, &self.me));
-            assert!(start.elapsed() < WAIT, "timed out: {needle}\n{read}");
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        read
+        reads(&self.api, &self.me, needle).await
+    }
+
+    /// The worker `n` (from 1) of the fake tmux joins the riff and
+    /// claims nothing. It is live while its watch stream, the second
+    /// value, stays.
+    async fn join_idle(&self, n: usize) -> (SessionUri, impl Sized) {
+        self.until_workers(n).await;
+        let (_, worker) = self.worker(n);
+        self.api.register_as(&worker, true).await.unwrap();
+        let stream = self.api.watch(&worker).await.unwrap();
+        (worker, stream)
     }
 
     /// Waits until `n` workers run.
@@ -210,6 +216,19 @@ impl Lead {
             assert!(start.elapsed() < WAIT, "the count of workers grows");
         }
     }
+}
+
+/// The unread text of `me`, when it contains `needle`.
+async fn reads(api: &Api, me: &SessionUri, needle: &str) -> String {
+    let start = Instant::now();
+    let mut read = String::new();
+    while !read.contains(needle) {
+        let inbox = api.inbox(me, None, false).await.unwrap();
+        read.push_str(&riff::text::inbox(&inbox, me));
+        assert!(start.elapsed() < WAIT, "timed out: {needle}\n{read}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    read
 }
 
 fn script(dir: &Path, name: &str, text: &str) {
@@ -460,6 +479,68 @@ async fn a_pull_request_that_waits_for_a_verify_counts_one_time() {
         "a second worker for the build: {}",
         lead.tmux_log()
     );
+}
+
+/// An idle worker that joined gets a request of the lead for a pull
+/// request that waits for a verify, with no step of the lead
+/// (01M49ZK19GQP79Z8HH14PK85QQ). It gets the request one time
+/// (01M49ZK1C1P817KE63EXV3EJDC). It claims, and no worker starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_worker_gets_a_request_for_a_waiting_verify() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    lead.pull(None);
+    lead.riff(RiffState::Running).await;
+    let (worker, _stream) = lead.join_idle(1).await;
+    let read = reads(&lead.api, &worker, "request: claim verify-issue-1").await;
+    assert!(read.contains("lead=true"), "{read}");
+    // More looks within the wait of 6 intervals: no second request.
+    lead.looked().await;
+    lead.looked().await;
+    let inbox = lead.api.inbox(&worker, None, false).await.unwrap();
+    let later = riff::text::inbox(&inbox, &worker);
+    assert!(!later.contains("request: claim"), "{later}");
+    let thread = lead.me.default_thread().unwrap();
+    let reply = lead
+        .api
+        .claim(&worker, &thread, "verify-issue-1")
+        .await
+        .unwrap();
+    assert!(reply.granted, "{reply:?}");
+    assert_eq!(lead.settled().await, 1, "{}", lead.tmux_log());
+}
+
+/// An idle worker that joined gets a request for a free item of the
+/// current wave (01M49ZK19GQP79Z8HH14PK85QQ).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_worker_gets_a_request_for_a_free_item() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    lead.riff(RiffState::Running).await;
+    let (worker, _stream) = lead.join_idle(1).await;
+    reads(&lead.api, &worker, "request: claim issue-1").await;
+}
+
+/// The worker does not claim in 6 intervals: it refused the item, and
+/// the rollout starts a new worker (01M49ZK1C1P817KE63EXV3EJDC). The new
+/// worker gets the request and also does not claim. Two workers refused
+/// the item: no third worker starts (01M49ZK1EG52YAKG974XH201RK).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_does_not_claim_does_not_block_a_new_worker() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    lead.riff(RiffState::Running).await;
+    let (first, _first) = lead.join_idle(1).await;
+    reads(&lead.api, &first, "request: claim issue-1").await;
+    let start = Instant::now();
+    lead.until_workers(2).await;
+    // The interval is 1 second: the wait is 6 seconds.
+    assert!(start.elapsed() >= Duration::from_secs(5), "{:?}", start.elapsed());
+    let (second, _second) = lead.join_idle(2).await;
+    reads(&lead.api, &second, "request: claim issue-1").await;
+    // The second worker refuses too.
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert_eq!(lead.settled().await, 2, "{}", lead.tmux_log());
 }
 
 /// The rollout starts no worker where riff is off in the main clone

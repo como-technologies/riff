@@ -3902,16 +3902,18 @@ host. Only you change it: the lead never does.
 
 ### riff starts workers by itself
 
-When the riff runs and the current wave has free work, riff starts
-workers by itself. You do not ask, and the lead does not remember a
-step. The `riff mcp` of your lead does it, once each 10 seconds:
+When the riff runs and the current wave has free work, riff gives it
+to the idle workers and starts workers by itself. You do not ask, and
+the lead does not remember a step. The `riff mcp` of your lead does
+it, once each 10 seconds:
 
 ```mermaid
 flowchart TD
     T["each 10 seconds"] --> R{"the riff runs?"}
     R -- "no: paused" --> T
     R -- yes --> W["count the free work with gh"]
-    W --> I{"free work, and no idle worker?"}
+    W --> O["tell each idle worker: request: claim ITEM"]
+    O --> I{"free work, and no idle worker?"}
     I -- no --> T
     I -- yes --> P["pick the machine with the most free capacity"]
     P --> S["start 1 worker there"]
@@ -3934,6 +3936,15 @@ flowchart TD
   when no worker is idle. So the next worker starts after the new one
   claims. When no worker takes the free work, one worker waits idle,
   the server keeps it, and riff starts no more.
+- **Requests.** riff gives free work to each idle worker of your user
+  that joined the riff. The worker gets a request of the lead, for
+  example `request: claim verify-issue-12`. A verify comes first. Each
+  worker gets one item, and each item goes to one worker. A worker in
+  the worktree `issue-12` gets no request for `verify-issue-12`: it can
+  be the author. riff never sends the same request to the same worker
+  again. A worker that does not claim in 60 seconds (6 intervals)
+  refused the item. Then riff can start a new worker for it. When two
+  workers refused an item, riff starts no more workers for it.
 - **Machines.** The machine of the lead, when the lead runs in tmux,
   and each workers host of your user (see
   [Offer workers from another machine](#offer-workers-from-another-machine)).
@@ -3943,8 +3954,8 @@ flowchart TD
   starts the rollout again.
 
 Each start gives the lead a note with the host, the pane and the
-session. A note does not wake the lead. Your lead gives an idle worker
-a free item with a request. The server stops idle workers.
+session. A note does not wake the lead. Your lead can also give an
+idle worker a free item with a request. The server stops idle workers.
 
 #### Which machine gets a worker
 
