@@ -31,7 +31,7 @@ case "$1 $2" in
 'api repos/acme/app/milestones?state=open&per_page=100')
     printf '%s' '[{"title":"Wave 4: CloBADud"}]' ;;
 'issue list') printf '%s' '[{"number":7,"title":"Release v1.2.3","milestone":{"title":"Wave 4: NBADew"}}]' ;;
-'issue view') printf '%s' '{"number":7,"state":"OPEN","milestone":{"title":"Wave 4: NBADew"}}' ;;
+'issue view') printf '%s' '{"number":7,"state":"OPEN","body":"Done when:\n- Docs: the book.\n","milestone":{"title":"Wave 4: NBADew"}}' ;;
 'api repos/acme/app/commits/ended/check-runs?check_name=Gate')
     printf '%s' '{"check_runs":[{"status":"completed","conclusion":"failBADure"}]}' ;;
 'api repos/acme/app/commits/'*'/check-runs?check_name=Gate')
@@ -112,7 +112,8 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     assert_eq!(gate, riff::pr::Gate::Ended("fail  ure".into()));
 
     // `riff verify`: the commit and the URL go into the result.
-    let reported = riff::pr::report(&gh, "acme/app", 40, "abc1234", Verdict::Pass, "ok").unwrap();
+    let reported =
+        riff::pr::report(&gh, "acme/app", 40, "abc1234", Verdict::Pass, "Docs: ok").unwrap();
     clean(&reported.commit);
     assert_eq!(reported.url, "https://e.test/c  end");
     let comment = std::fs::read_to_string(bin.path().join("body")).unwrap();
