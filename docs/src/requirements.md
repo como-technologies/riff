@@ -4179,6 +4179,9 @@
 - **01M4BSSX66A2NNVQK48KQH8BEZ** Outside tmux, a riff command that
   lists, stops or types into the panes of the workers uses the tmux
   server of riff.
+- **01M4BW2SW96JS62ZYQNW6804TV** `riff` writes the permission rules of
+  the lead to a settings file in the local folder of riff at each start
+  of a lead, and passes the file to `claude` with `--settings`.
 
 ## Open
 

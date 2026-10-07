@@ -2257,7 +2257,9 @@ async fn start(server: &str) -> Result<()> {
         println!("{}", text::lead_runs(&clone.repo));
     } else {
         let env = vec![("RIFF_SERVER".to_owned(), server.to_owned())];
-        let command = start::lead_command(std::path::Path::new("claude"));
+        let claude = std::path::Path::new("claude");
+        let settings = lead_settings(&dir, &name, &clone.path, claude, server);
+        let command = start::lead_command(claude, settings.as_deref());
         tmux.new_session(&name, &clone.path, &env, &command)?;
         println!("{}", text::lead_started(&clone.repo, &clone.path));
     }
@@ -2270,6 +2272,34 @@ async fn start(server: &str) -> Result<()> {
         anyhow::bail!("tmux could not show the session {name}");
     }
     Ok(())
+}
+
+/// Writes the permission rules of the lead of `clone` to its file in
+/// `dir`, and gives the file. With no rules, it says why and gives
+/// `None` (01M4BT33Z914GBHCGCAXFVQ2X7).
+fn lead_settings(
+    dir: &std::path::Path,
+    name: &str,
+    clone: &std::path::Path,
+    claude: &std::path::Path,
+    server: &str,
+) -> Option<std::path::PathBuf> {
+    let role = riff::profile::Role::Lead;
+    let rules = riff::role_rules::clone_session(clone, &std::env::temp_dir(), claude, server)
+        .ok_or_else(|| text::no_role_rules(role, "it has no HOME, or the server URL has no host"))
+        .and_then(|session| riff::role_rules::here(role, &session));
+    let file = start::lead_settings_file(dir, name);
+    let written = rules.and_then(|rules| {
+        start::write_lead_settings(&file, &rules)
+            .map_err(|e| text::no_role_rules(role, &format!("{e:#}")))
+    });
+    match written {
+        Ok(()) => Some(file),
+        Err(why) => {
+            eprintln!("{why}");
+            None
+        }
+    }
 }
 
 /// The pauses and the sessions of the riff at `server`, as the person

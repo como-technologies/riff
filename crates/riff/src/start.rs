@@ -39,7 +39,9 @@
 //!   repository runs, `riff` attaches to it and starts no second lead
 //!   (01M4BSSX3RSK79ZSJZZB1S0NYF).
 //! - **The lead.** It is `claude` with the flags of the lead
-//!   ([`lead_args`]) in the main clone. The `riff mcp` of the lead adds
+//!   ([`lead_args`]) in the main clone. Its flag settings hold the
+//!   permission rules of the profile of the lead
+//!   ([`write_lead_settings`]). The `riff mcp` of the lead adds
 //!   the `riff tail` pane beside it, as before (see
 //!   [`crate::terminal`]). The workers start in the same tmux server,
 //!   because each pane has the `TMUX` of the riff server.
@@ -123,26 +125,62 @@ pub fn session_name(repo: &str) -> String {
 }
 
 /// The flags of `claude` for the lead: Remote Control, so that the
-/// person can answer the lead from the Claude app.
+/// person can answer the lead from the Claude app, and the file of its
+/// flag settings, when it has one ([`write_lead_settings`]).
 ///
 /// ```
-/// assert_eq!(riff::start::lead_args(), ["--remote-control"]);
+/// assert_eq!(riff::start::lead_args(None), ["--remote-control"]);
+/// assert_eq!(
+///     riff::start::lead_args(Some("/s/lead.json".as_ref())),
+///     ["--remote-control", "--settings", "/s/lead.json"],
+/// );
 /// ```
-pub fn lead_args() -> Vec<String> {
-    vec!["--remote-control".into()]
+pub fn lead_args(settings: Option<&Path>) -> Vec<String> {
+    let mut args = vec!["--remote-control".to_owned()];
+    if let Some(settings) = settings {
+        args.push("--settings".to_owned());
+        args.push(settings.to_string_lossy().into_owned());
+    }
+    args
+}
+
+/// The file of the flag settings of the lead of the tmux session
+/// `name` in the folder `dir`.
+///
+/// ```
+/// assert_eq!(
+///     riff::start::lead_settings_file("/s".as_ref(), "como/riff"),
+///     std::path::Path::new("/s/lead/como/riff.json"),
+/// );
+/// ```
+pub fn lead_settings_file(dir: &Path, name: &str) -> PathBuf {
+    dir.join("lead").join(format!("{name}.json"))
+}
+
+/// Writes the permission rules of the profile of the lead to `file`,
+/// as flag settings of `claude` (01M4BT33R71HXAVQGHFD4ZFGR5,
+/// 01M4BW2SW96JS62ZYQNW6804TV). A file
+/// keeps the command of the tmux session short: the rules can be many.
+pub fn write_lead_settings(file: &Path, rules: &crate::permissions::Rules) -> Result<()> {
+    let args = crate::role_rules::flag(&[], rules);
+    let json = args.get(1).context("no flag settings")?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    }
+    std::fs::write(file, json).with_context(|| format!("cannot write {}", file.display()))
 }
 
 /// The shell command of the lead: `claude` and [`lead_args`].
 ///
 /// ```
 /// assert_eq!(
-///     riff::start::lead_command("claude".as_ref()),
+///     riff::start::lead_command("claude".as_ref(), None),
 ///     "'claude' '--remote-control'",
 /// );
 /// ```
-pub fn lead_command(claude: &Path) -> String {
+pub fn lead_command(claude: &Path, settings: Option<&Path>) -> String {
     std::iter::once(claude.to_string_lossy().into_owned())
-        .chain(lead_args())
+        .chain(lead_args(settings))
         .map(|a| quote(&a))
         .collect::<Vec<_>>()
         .join(" ")

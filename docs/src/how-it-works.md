@@ -3558,7 +3558,12 @@ riff then shows the tmux session of that repository. When it does not
 run yet, riff starts it with the lead in the main clone, with Remote
 Control (see
 [Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
-`claude --remote-control`. When the session runs, riff shows it and
+`claude --remote-control`. The lead also gets the permission rules of
+its profile (see [The sandbox of each role](#the-sandbox-of-each-role)).
+riff writes them to a file in its local folder, at each start of a
+lead, for example `lead/como-technologies/riff.json`. When riff cannot
+make them, it says why in one line and starts the lead with no rules
+of a profile. When the session runs, riff shows it and
 starts no second lead. To leave the session and keep it running, press
 `Ctrl-b d`. Run `riff` again to come back.
 

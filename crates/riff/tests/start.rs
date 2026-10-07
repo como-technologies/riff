@@ -175,15 +175,20 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     );
     let log = m.read("log");
     let lines: Vec<&str> = log.lines().collect();
+    let settings = riff::start::lead_settings_file(
+        &m.home.path().join("state"),
+        "como-technologies/riff",
+    );
     assert_eq!(
         lines,
         [
             format!("-L riff -f {config} has-session -t =como-technologies/riff"),
             format!(
                 "-L riff -f {config} new-session -d -s como-technologies/riff -c {} \
-                 -e RIFF_SERVER={} 'claude' '--remote-control'",
+                 -e RIFF_SERVER={} 'claude' '--remote-control' '--settings' '{}'",
                 riff.display(),
-                api.base()
+                api.base(),
+                settings.display(),
             ),
             format!("-L riff -f {config} attach-session -t =como-technologies/riff"),
         ],
@@ -191,8 +196,28 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     // The fake claude ran with the flags of the lead and the server.
     assert_eq!(
         m.read("claude.log"),
-        format!("--remote-control\n{}\n", api.base())
+        format!(
+            "--remote-control --settings {}\n{}\n",
+            settings.display(),
+            api.base()
+        )
     );
+    // Its flag settings hold the permission rules of the profile of the
+    // lead (01M4BT33R71HXAVQGHFD4ZFGR5): it edits the clone, and the
+    // rules deny the rest of the home.
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    let rules = |list: &str| -> Vec<String> {
+        settings["permissions"][list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let edit = format!("Edit(/{}/**)", riff.display());
+    assert!(rules("allow").contains(&edit), "{settings}");
+    assert!(!rules("deny").is_empty(), "{settings}");
     let text = std::fs::read_to_string(m.home.path().join("state").join("tmux.conf")).unwrap();
     assert_eq!(text, riff::start::CONFIG);
 
