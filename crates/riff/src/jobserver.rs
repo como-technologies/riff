@@ -751,9 +751,7 @@ pub async fn test_run(program: &Path, args: &[String]) -> anyhow::Result<i32> {
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
     let fifo = std::env::var("MAKEFLAGS").ok().and_then(|m| fifo_of(&m));
-    let want: Option<u16> = std::env::var(THREADS_VAR)
-        .ok()
-        .and_then(|n| n.parse().ok());
+    let want: Option<u16> = std::env::var(THREADS_VAR).ok().and_then(|n| n.parse().ok());
     let tokens = match fifo.filter(|_| is_test_program(program)) {
         Some(fifo) => tokio::task::spawn_blocking(move || match want {
             Some(want) => take(&fifo, want, WAIT),
@@ -813,7 +811,10 @@ mod tests {
             for limit in 1..threads / 2 - 1 {
                 // Each build has one job with no token.
                 let most = tokens(threads, limit) + limit;
-                assert!(most <= threads - 2, "{threads} threads, {limit} workers: {most}");
+                assert!(
+                    most <= threads - 2,
+                    "{threads} threads, {limit} workers: {most}"
+                );
             }
         }
     }

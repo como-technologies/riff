@@ -304,7 +304,10 @@ pub fn workers_jobs(
         let threads = format!("{} hardware threads", cores.logical);
         let cores = match cores.said() {
             Some(said) => format!("{said} The machine has {threads}."),
-            None => format!("The machine has {} physical cores and {threads}.", cores.physical),
+            None => format!(
+                "The machine has {} physical cores and {threads}.",
+                cores.physical
+            ),
         };
         let limit = crate::jobserver::PRESSURE_LIMIT;
         let pressure = match pressure {

@@ -296,7 +296,10 @@ fn wait_for_free(dir: &Path, free: u16) {
         if now == Some(free) {
             return;
         }
-        assert!(std::time::Instant::now() < end, "free tokens: {now:?}, not {free}");
+        assert!(
+            std::time::Instant::now() < end,
+            "free tokens: {now:?}, not {free}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
