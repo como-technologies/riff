@@ -950,7 +950,8 @@ fn the_skill_says_the_pool_shares_the_cores() {
     let part = &part[..part[3..].find("\n## ").map_or(part.len(), |n| n + 3)];
     for text in [
         "one pool of build jobs",
-        "`MAKEFLAGS`, `RUST_TEST_THREADS` and the\n  cargo test runner",
+        "`MAKEFLAGS` and the cargo test runner",
+        "the free jobs of the pool as its test\n  threads",
         "do not replace the test runner",
         "run that test by its name in a loop",
         "not the full `just ci`",

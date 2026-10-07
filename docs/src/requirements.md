@@ -3366,17 +3366,17 @@
 - **01M3WFYZRK5CT22GJW6ZHYT9CC** The fixed share of a worker is the
   physical cores of the machine less 1, divided by the workers, and 1
   or more. The workers are the worker limit, or the workers that run on
-  the machine when they are more. Each worker gets it in
-  `RUST_TEST_THREADS`. With no pool, it also gets it in
-  `CARGO_BUILD_JOBS`. The setting `workers.jobs` replaces the number
+  the machine when they are more. With no pool, each worker gets it in
+  `RUST_TEST_THREADS` and `CARGO_BUILD_JOBS`. The setting `workers.jobs` replaces the number
   and turns the pool off. 0, the default, means the number from the
   machine and the pool.
 - **01M3ZGZMJ9RF1C4AHG78GQ2NM4** Each `riff workers run` holds one pool
   of build jobs for its machine: a named pipe in the GNU make 4.4
-  jobserver form. It holds the physical cores less 1, less the
-  workers, and 1 or more tokens. The first worker makes it. The pool
-  ends with the last worker. The worker gets `MAKEFLAGS` with
-  `--jobserver-auth=fifo:PATH` and no `CARGO_BUILD_JOBS`.
+  jobserver form. It holds the hardware threads (the logical CPUs) less
+  2, less the workers, and 1 or more tokens. The first worker makes it.
+  The pool ends with the last worker. The worker gets `MAKEFLAGS` with
+  `--jobserver-auth=fifo:PATH`, and no `CARGO_BUILD_JOBS` and no
+  `RUST_TEST_THREADS`.
 - **01M3ZZGRB5NDAA419ZNEWN0811** When riff cannot read the physical
   cores of a machine, it counts half of the logical CPUs, and 1 or
   more. `riff workers start` says so one time. `riff workers jobs` says
@@ -3389,10 +3389,20 @@
 - **01M3ZGZMNH1YM56GYNYBMH7AWM** With a pool, each worker gets
   `riff workers test-run` as its cargo test runner in
   `CARGO_TARGET_<TRIPLE>_RUNNER`. For a program in a `deps` directory,
-  it takes `RUST_TEST_THREADS` tokens, at most the pool, and gives them
-  back when the program ends, also when a signal kills it. One runner
-  at a time collects tokens. A runner waits at most 10 minutes, then
-  runs with the tokens that it has.
+  it waits for one token, then takes each free token, at most the pool.
+  It runs the program with one test thread for each token, in
+  `RUST_TEST_THREADS`. When `RUST_TEST_THREADS` is set, it takes that
+  number of tokens and does not change it. It gives the tokens back
+  when the program ends, also when a signal kills it. One runner at a
+  time collects tokens. A runner waits at most 10 minutes, then runs
+  with the tokens that it has.
+- **01M49XNPMXD3SF6JHBYV9DN59M** The first worker of a machine reads
+  the memory pressure of the machine (`some avg10` of
+  `/proc/pressure/memory`) each 5 seconds. While it is above 10 %, the
+  worker keeps each free token out of the pool, also each token that
+  comes back. When it is 10 % or less, or riff cannot read it, the
+  worker gives the tokens back. `riff workers jobs` shows the pressure
+  and the limit.
 - **01M3ZGZMRHXRBP762QPVCV0YX8** When riff cannot make the pool, each
   worker gets the fixed share. `riff workers start` says so one time.
 - **01M41CR2HJRFW6R7YMJTPVEMJ1** With no pool, the wrapper of a worker

@@ -3609,7 +3609,7 @@ flowchart TD
 | Limit | Default | Command |
 |---|---|---|
 | The most workers | 0 | `riff workers limit` |
-| The compile jobs and test threads of all workers | one pool: physical cores - 1 - workers (the limit, or the workers that run when they are more), 1 or more | `riff workers jobs` |
+| The compile jobs and test threads of all workers | one pool: hardware threads - 2 - workers (the limit, or the workers that run when they are more), 1 or more; no new token while the memory pressure is above 10 % | `riff workers jobs` |
 | The priority of the workers | nice 10 | `riff workers nice` |
 | The memory of all workers | three quarters of the memory | `riff workers memory` |
 | The available memory that a new worker needs | 4 GB | `riff workers floor` |
@@ -3617,28 +3617,30 @@ flowchart TD
 | The most size of the compile cache of the workers | `40G` | `riff workers cache` |
 
 riff sets the limits when a worker starts. It does not change them
-while the workers run.
+while the workers run. Only the pool watches the memory pressure.
 
 #### Choose the limit from the memory
 
-All workers together run at most the physical cores of the machine
-less 1 compile jobs (see
+All workers together run at most the hardware threads of the machine
+less 2 compile jobs (see
 [See the pool of build jobs](#see-the-pool-of-build-jobs)). Plan 1 GB
 of memory for each compile job, and 1 GB for each worker:
 
 ```text
-memory of the workers in GB = physical cores - 1 + limit
+memory of the workers in GB = hardware threads - 2 + limit
 ```
 
 This number must be less than the memory of the workers: three
 quarters of the memory of the machine. Leave the last quarter for your
-own work. For example, pangolin has 8 physical cores and 30 GB. With 3
-workers, the workers need 10 GB of the 23 GB that they get:
+own work. For example, pangolin has 16 hardware threads and 30 GB.
+With 4 workers, the workers need 18 GB of the 23 GB that they get:
 
 ```sh
-riff workers limit 3
+riff workers limit 4
 ```
 
+When the memory gets short, the pool slows the builds down by itself
+(see [The pool and the memory pressure](#the-pool-and-the-memory-pressure)).
 `riff workers` shows the cores, the memory and the available memory of
 the machine. When the number does not fit, set fewer jobs (see
 [Set the jobs of a worker](#set-the-jobs-of-a-worker)). Each worker
@@ -3655,36 +3657,37 @@ token for one job.
 
 ```mermaid
 flowchart LR
-    P[("pool of the machine<br/>pangolin: 4 tokens")]
+    P[("pool of the machine<br/>pangolin: 10 tokens")]
     A["worker 1: cargo build<br/>1 job of its own + tokens"] <--> P
     B["worker 2: cargo build<br/>1 job of its own + tokens"] <--> P
-    C["worker 3: cargo test<br/>riff workers test-run takes<br/>RUST_TEST_THREADS tokens"] <--> P
+    C["worker 3: cargo test<br/>riff workers test-run takes<br/>each free token:<br/>one test thread for each"] <--> P
 ```
 
 Each cargo has one job of its own, with no token. So the pool holds
-the physical cores less 1, less the workers. The workers are the limit
-of workers, or the workers that run when they are more. Then all
-builds together run at most the physical cores less 1 jobs. pangolin
-has 8 physical cores and a limit of 3:
+the hardware threads less 2, less the workers. The hardware threads
+are the logical CPUs: a compile job also waits for the disk and the
+memory, so the second thread of a core does work too. The workers are
+the limit of workers, or the workers that run when they are more. Then
+all builds together run at most the hardware threads less 2 jobs.
+pangolin has 16 hardware threads and a limit of 4:
 
 ```text
-tokens = 8 - 1 - 3 = 4
-one build alone:       4 + 1 = 5 jobs
-three builds at once:  4 + 3 = 7 jobs
+tokens = 16 - 2 - 4 = 10
+one build alone:      10 + 1 = 11 jobs
+four builds at once:  10 + 4 = 14 jobs
 ```
 
 A test program runs its tests as threads, and Rust does not read the
-pool. So riff gives each worker a test runner. It takes
-`RUST_TEST_THREADS` tokens for each test program, and gives them back
-at the end, also when the test is killed. `RUST_TEST_THREADS` is the
-fixed share: the physical cores less 1, divided by the workers.
-pangolin with a limit of 2 gives each worker 7 / 2 = 3 threads. With a
-limit of 4, each worker gets 1.
+pool. So riff gives each worker a test runner. For each test program,
+it waits for one token, then takes each free token. It runs the
+program with one test thread for each token, and gives the tokens back
+at the end, also when the test is killed. When you set
+`RUST_TEST_THREADS` yourself, the runner takes that number of tokens,
+and the test runs with your number:
 
-riff reads the physical cores in `/proc/cpuinfo`. pangolin has 16
-logical CPUs, but 8 physical cores. On a machine where riff cannot read
-them, riff counts half of the logical CPUs. `riff workers start` says
-so one time, and `riff workers jobs` says so each time.
+```sh
+RUST_TEST_THREADS=1 cargo test -p riff --test limits
+```
 
 When you lower the limit, the workers that run go on (see
 [Limit the workers of a machine](#limit-the-workers-of-a-machine)). Then
@@ -3693,13 +3696,13 @@ keeps one token out of the pool, and gives it back when other workers
 end. So 4 workers with a limit of 2 do not get twice the cores:
 
 ```text
-pool for 2 workers = 8 - 1 - 2 = 5 tokens
+pool for 2 workers = 16 - 2 - 2 = 12 tokens
 4 workers run:       2 tokens kept out
-four builds at once: (5 - 2) + 4 = 7 jobs
+four builds at once: (12 - 2) + 4 = 14 jobs
 ```
 
 The first worker makes the pool, and it ends with the last worker. See
-the pool and the tokens in use:
+the pool, the tokens in use and the memory pressure:
 
 ```sh
 riff workers jobs
@@ -3707,8 +3710,38 @@ riff workers jobs
 
 ```text
 workers.jobs  0  (/home/mike/.config/riff/config.toml)
-The machine has 8 physical cores. All workers take their compile jobs from one pool of 4 tokens: the physical cores less 1, less 3 workers (the limit, or the workers that run when they are more). Each build also has one job of its own. Now 3 tokens are in use. Each worker tests with 2 threads, from the same pool. Set it with: riff workers jobs N (N turns the pool off; 0: the pool)
+The machine has 8 physical cores and 16 hardware threads. All workers take their compile jobs and test threads from one pool of 10 tokens: the hardware threads less 2, less 4 workers (the limit, or the workers that run when they are more). Each build also has one job of its own. A test program takes each free token, and runs one test thread for each. Now 3 tokens are in use. While the memory pressure is above 10%, the pool gives out no new token. Now it is 0.5%. Set it with: riff workers jobs N (N turns the pool off; 0: the pool)
 ```
+
+#### The pool and the memory pressure
+
+The memory pressure is the part of the time in which a program waits
+for memory. Linux shows it in `/proc/pressure/memory`. systemd-oomd
+kills a worker when the pressure stays high. So the pool stops the
+new jobs first. The first worker of the machine reads the pressure
+(`some avg10`) each 5 seconds:
+
+```mermaid
+flowchart TD
+    R["the first worker, each 5 s:<br/>read /proc/pressure/memory"] --> Q{"some avg10<br/>above 10 %?"}
+    Q -- yes --> K["keep each free token out of the pool,<br/>also each token that comes back"]
+    Q -- "no, or riff cannot read it" --> G["give the tokens back to the pool"]
+    K --> J["the jobs that run end;<br/>each build goes on with its own job"]
+```
+
+While the pressure is high, each build and each test goes on with its
+own job only. When the pressure is 10 % or less, the builds get their
+tokens again. See the pressure now:
+
+```sh
+cat /proc/pressure/memory
+```
+
+riff reads the physical cores in `/proc/cpuinfo` for the fixed share.
+pangolin has 16 logical CPUs, but 8 physical cores. On a machine where
+riff cannot read them, riff counts half of the logical CPUs. `riff
+workers start` says so one time, and `riff workers jobs` says so each
+time.
 
 When riff cannot make the pool, each worker gets the fixed share in
 `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`. `riff workers start` says
