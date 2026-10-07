@@ -227,6 +227,12 @@ of `tests` is in no test binary. To run that check:
 cargo test -p hygiene --test all test_files::
 ```
 
+The tests of one binary run in parallel, in one process. So a test does
+not change the environment of its process with `set_var` or
+`remove_var`. Give the variable to the child process with
+`Command::env` or `Command::env_remove`, or give the value to the code
+as a parameter. The same command checks it.
+
 The dev and test builds keep only the line tables of the code of the
 workspace, and no debug info for the dependencies. A backtrace still
 names the file and the line.

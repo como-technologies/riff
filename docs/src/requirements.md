@@ -4105,6 +4105,13 @@
 - **01M4A4T6C5DH311AXMM6AG54DV** A test fails when a file of `tests`
   of a crate is in no test binary: not a module of `tests/all.rs`, and
   not the path of a `[[test]]` in the `Cargo.toml` of the crate.
+- **01M4BPJBJXB9KH3TTYAXK36R4M** A test of a shared test binary does
+  not change the environment of its process. It gives a variable to its
+  child process (`Command::env`, `Command::env_remove`), or it gives the
+  value to the code as a parameter.
+- **01M4BPJBTJ221A960NSVMPW8XM** A test fails when a file of `tests` of
+  a crate calls `set_var` or `remove_var`, except a file that is a test
+  binary of its own.
 - **01M49W17GGV1K5FZEKJRPV0GNA** A type of the log, the wire or the
   checkpoint has one struct. A reader, a saved form or a reply that
   carries the data of a type holds that type, not a second struct
