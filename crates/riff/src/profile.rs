@@ -515,6 +515,92 @@ impl Profile {
     }
 }
 
+/// The variables of the parent that reach `claude` in a session
+/// (01M4BYVSR06B9HNX4SP83SY2SX). riff starts `claude` with an empty
+/// environment, and then sets only these and the variables of riff
+/// itself, so no credential of the person reaches a session
+/// (01M4BYVSNQ5SY2GRGT73FV0Z3E). A name that ends in `_` is a prefix.
+///
+/// - The account and the shell: `HOME`, `USER`, `LOGNAME`, `SHELL`,
+///   `PATH`.
+/// - The language and the terminal: `LANG`, `LANGUAGE`, `LC_`, `TZ`,
+///   `TERM`, `COLORTERM`, `NO_COLOR`, `CLICOLOR_FORCE`.
+/// - tmux, for the pane of the worker: `TMUX`, `TMUX_PANE`.
+/// - The folders of the person: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+///   `XDG_STATE_HOME`, `XDG_CACHE_HOME`.
+/// - The user manager of systemd, for the scope of the worker, and the
+///   keyring of riff until the secrets come in the environment (#611):
+///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`.
+/// - The network: the proxy and the certificates.
+/// - Claude Code: `CLAUDE_CONFIG_DIR` and `ANTHROPIC_`, the model
+///   access of the person.
+/// - riff: the server, the session, the person and the machine.
+pub const KEPT_VARS: &[&str] = &[
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "PATH",
+    "LANG",
+    "LANGUAGE",
+    "LC_",
+    "TZ",
+    "TERM",
+    "COLORTERM",
+    "NO_COLOR",
+    "CLICOLOR_FORCE",
+    "TMUX",
+    "TMUX_PANE",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "CLAUDE_CONFIG_DIR",
+    "ANTHROPIC_",
+    "RIFF_SERVER",
+    "RIFF_SESSION",
+    "RIFF_HOME",
+    "RIFF_USER",
+    "RIFF_HOST",
+    "RIFF_ON",
+    "RIFF_MACHINE",
+    "RIFF_WORKER_SLICE",
+];
+
+/// True when the variable `name` of the parent reaches `claude`
+/// ([`KEPT_VARS`]).
+///
+/// ```
+/// use riff::profile::kept;
+///
+/// assert!(kept("PATH"));
+/// assert!(kept("LC_ALL"));
+/// assert!(kept("RIFF_SESSION"));
+/// assert!(!kept("GH_TOKEN"));
+/// assert!(!kept("GITHUB_TOKEN"));
+/// assert!(!kept("SSH_AUTH_SOCK"));
+/// assert!(!kept("GIT_CONFIG_COUNT"));
+/// assert!(!kept("RIFF_TEST_MARKER"));
+/// assert!(!kept("LC"), "a prefix names no variable by itself");
+/// ```
+pub fn kept(name: &str) -> bool {
+    KEPT_VARS.iter().any(|k| match k.strip_suffix('_') {
+        Some(_) => name.len() > k.len() && name.starts_with(k),
+        None => name == *k,
+    })
+}
+
 /// Refuses a path that is not absolute or that has a `..` component:
 /// [`Path::starts_with`] compares components and does not resolve
 /// them. A symlink is the same gap: the apply step (#607) resolves each

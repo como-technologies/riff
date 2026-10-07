@@ -298,9 +298,21 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         (_, member) => (None, member),
     };
     let riff = crate::binary::this_on_disk()?;
-    let mut cmd = tokio::process::Command::new(&command[0]);
-    cmd.args(&command[1..])
-        .env(WORKER, "1")
+    // The forge token of the role of this session. `claude` gets an empty
+    // environment with only the kept variables and the forge variables,
+    // so no credential of the person reaches it, also with no token
+    // (01M4BV707FYHJDNC1499YAWR8D, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
+    let (given, files, keep) = forge_token(folder.as_ref(), session.as_deref(), server).await;
+    let _keep = keep.map(AbortOnDrop);
+    let forge = forge::ForgeEnv::of(&given, &files, &riff);
+    if let Some(why) = forge.no_token() {
+        eprintln!("{}", crate::text::forge_no_token(why));
+    }
+    let (program, args) = command
+        .split_first()
+        .context("the command of claude is empty")?;
+    let mut cmd = forge.command(program, args, std::env::vars_os());
+    cmd.env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
         // A tmux server that a context started gives each pane the
         // variable of that context. `claude` is of no context
@@ -311,20 +323,6 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
             cmd.env(var, folder.path());
         }
     }
-    // The forge token of the role of this session, in place of the token
-    // of the person (01M4BV707FYHJDNC1499YAWR8D, 01M4BV709WGHZ57AM3STC15B69).
-    let _keep = match forge_keeper(folder.as_ref(), session.as_deref(), server, &riff).await {
-        Some((env, keep)) => {
-            for (var, value) in env {
-                match value {
-                    Some(value) => cmd.env(var, value),
-                    None => cmd.env_remove(var),
-                };
-            }
-            keep.map(AbortOnDrop)
-        }
-        None => None,
-    };
     let makeflags = pool.as_ref().map(jobserver::Pool::makeflags);
     for (var, value) in limits::jobs_env(&limit, makeflags.as_deref(), &riff) {
         match value {
@@ -398,56 +396,40 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// The settings file at `path` when it names a GitHub App, `None` when
-/// it names none, and the fault when riff cannot read it. A fault is no
-/// `None`: the session then gets no token (01M4BV709WGHZ57AM3STC15B69).
-fn forge_settings(path: Result<PathBuf>) -> Option<Result<PathBuf>> {
-    match path.and_then(|path| Ok((settings::forge_app(&path)?, path))) {
-        Ok((None, _)) => None,
-        Ok((Some(_), path)) => Some(Ok(path)),
-        Err(e) => Some(Err(e)),
-    }
-}
-
-/// The forge token of a worker session, when the settings name a GitHub
-/// App ([`forge`]): the environment of `claude` and the task that keeps
-/// the token. The environment holds no token of the person also when
-/// riff cannot make a token, so a session never falls back to the
-/// rights of the person. `None` with no App.
-async fn forge_keeper(
+/// The first forge token of a worker session ([`forge`]), its token
+/// files, and the task that keeps the token. With no token, the result
+/// names the cause, and the files hold no token.
+async fn forge_token(
     folder: Option<&temp::Folder>,
     session: Option<&str>,
     server: &str,
-    riff: &Path,
-) -> Option<(
-    Vec<(&'static str, Option<String>)>,
+) -> (
+    std::result::Result<forge::Token, forge::Error>,
+    forge::Files,
     Option<tokio::task::JoinHandle<()>>,
-)> {
-    let settings = forge_settings(settings::path())?;
-    let no_token = |why: String| eprintln!("{}", crate::text::forge_no_token(&why));
+) {
     let Some(folder) = folder else {
-        no_token("the worker has no temp folder".into());
-        // Files in no folder: `gh` and git find no token.
+        // Files in no folder: no program finds a token.
         let none = forge::Files::in_temp(Path::new("/nonexistent"));
-        return Some((none.env(riff), None));
+        return (Err(forge::Error::NoFolder), none, None);
     };
     let files = forge::Files::in_temp(folder.path());
-    let env = files.env(riff);
-    let made = (|| {
-        let settings = settings?;
-        let app = forge::App::here(&settings)?.context("no forge.app")?;
-        let place = identity::here(None)?;
+    let made = forge::App::of(settings::path()).and_then(|app| {
+        let place = identity::here(None).map_err(forge::Error::Place)?;
         let repo = place.repo_text();
-        anyhow::ensure!(repo != "-", "this folder is in no repository");
-        let session = session.context("the worker has no session ID")?.to_owned();
-        anyhow::Ok((app, repo, place, session))
-    })();
+        if repo == "-" {
+            let why = anyhow::anyhow!("this folder is in no repository");
+            return Err(forge::Error::Place(why));
+        }
+        let session = session
+            .context("the worker has no session ID")
+            .map_err(forge::Error::Place)?
+            .to_owned();
+        Ok((app, repo, place, session))
+    });
     let (app, repo, place, id) = match made {
         Ok(made) => made,
-        Err(e) => {
-            no_token(format!("{e:#}"));
-            return Some((env, None));
-        }
+        Err(e) => return (Err(e), files, None),
     };
     let server = server.to_owned();
     let claims = move || {
@@ -459,12 +441,10 @@ async fn forge_keeper(
             Some(info.session?.uri.claims().to_vec())
         }
     };
-    let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files);
+    let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files.clone());
     // The first token comes before `claude` starts.
-    if let Err(e) = keeper.step(claims().await.as_deref()).await {
-        no_token(format!("{e:#}"));
-    }
-    Some((env, Some(tokio::spawn(forge::keep(keeper, claims)))))
+    let first = keeper.first(claims().await.as_deref()).await;
+    (first, files, Some(tokio::spawn(forge::keep(keeper, claims))))
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].
@@ -744,33 +724,4 @@ pub fn reap(tmux: &dyn Terminal, pane: Option<&str>, dir: &Path) -> Result<Vec<S
         lines.extend(stopped.iter().map(|p| text::reaped(&worker.pane, p)));
     }
     Ok(lines)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_settings_with_no_app_leave_the_environment_of_the_session() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.toml");
-        let at = |text: &str| {
-            std::fs::write(&path, text).unwrap();
-            forge_settings(Ok(path.clone()))
-        };
-        assert!(forge_settings(Ok(dir.path().join("none.toml"))).is_none());
-        assert!(at("[forge]\n").is_none());
-        assert_eq!(at("[forge]\napp = 123\n").unwrap().unwrap(), path);
-        // Each fault gives the environment with no token, not the
-        // environment of the person.
-        assert!(at("[forge]\napp = \"123\"\n").unwrap().is_err());
-        assert!(at("[forge]\napp = -1\n").unwrap().is_err());
-        assert!(at("not toml [").unwrap().is_err());
-        assert!(forge_settings(Ok(dir.path().into())).unwrap().is_err());
-        assert!(
-            forge_settings(Err(anyhow::anyhow!("no HOME")))
-                .unwrap()
-                .is_err()
-        );
-    }
 }

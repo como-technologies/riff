@@ -13,7 +13,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use isolated::Isolated;
-use riff::forge::{self, Access, App, Files, GitHub, Keeper};
+use riff::forge::{self, Access, App, Files, ForgeEnv, GitHub, Keeper};
 use riff::profile::Role;
 use serde_json::{Value, json};
 
@@ -285,17 +285,18 @@ async fn a_change_of_role_revokes_the_old_token_before_it_asks_for_the_new_one()
     let verifier = keeper.step(Some(&verify)).await.unwrap().unwrap();
     assert_eq!(verifier.role, Role::Verifier);
     assert_eq!(files.token().unwrap(), verifier.token);
-    let calls = fake.calls.lock().unwrap();
-    let revoked = calls
-        .iter()
-        .rposition(|c| c.path == "/installation/token" && c.body == json!(worker.token))
-        .unwrap();
-    let asked_new = calls
-        .iter()
-        .rposition(|c| c.path.ends_with("access_tokens"))
-        .unwrap();
-    assert!(revoked < asked_new, "{calls:?}");
-    drop(calls);
+    {
+        let calls = fake.calls.lock().unwrap();
+        let revoked = calls
+            .iter()
+            .rposition(|c| c.path == "/installation/token" && c.body == json!(worker.token))
+            .unwrap();
+        let asked_new = calls
+            .iter()
+            .rposition(|c| c.path.ends_with("access_tokens"))
+            .unwrap();
+        assert!(revoked < asked_new, "{calls:?}");
+    }
 
     // The same role and a fresh token: no call.
     let n = fake.calls.lock().unwrap().len();
@@ -318,16 +319,24 @@ fn git_and_gh_in_a_session_use_the_token_of_the_files() {
             permissions: BTreeMap::new(),
         })
         .unwrap();
-    let vars = files.env(&env.riff_path());
-    let mut git = env.command("git");
-    git.args(["credential", "fill"])
-        .env("GH_TOKEN", "ghp_person");
-    for (var, value) in &vars {
-        match value {
-            Some(value) => git.env(var, value),
-            None => git.env_remove(var),
-        };
-    }
+    let token = files.token().map(|token| forge::Token {
+        role: Role::Worker,
+        token,
+        ends: std::time::SystemTime::now(),
+        permissions: BTreeMap::new(),
+    });
+    let given = token.map_err(forge::Error::Files);
+    let forge_env = ForgeEnv::of(&given, &files, &env.riff_path());
+    let mut parent: Vec<_> = env
+        .command("git")
+        .get_envs()
+        .filter_map(|(k, v)| Some((k.to_owned(), v?.to_owned())))
+        .collect();
+    parent.push(("PATH".into(), std::env::var_os("PATH").unwrap()));
+    parent.push(("GH_TOKEN".into(), "ghp_person".into()));
+    let mut git = forge_env
+        .command("git".as_ref(), &["credential".into(), "fill".into()], parent)
+        .into_std();
     git.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped());
     let mut child = git.spawn().unwrap();
@@ -344,19 +353,9 @@ fn git_and_gh_in_a_session_use_the_token_of_the_files() {
     assert!(text.contains("username=x-access-token"), "{text}");
     assert!(text.contains("password=ghs_session"), "{text}");
 
-    let gh_dir = vars
-        .iter()
-        .find(|(v, _)| *v == "GH_CONFIG_DIR")
-        .and_then(|(_, v)| v.clone())
-        .unwrap();
-    let hosts = std::fs::read_to_string(std::path::Path::new(&gh_dir).join("hosts.yml")).unwrap();
+    let gh_dir = forge_env.get("GH_CONFIG_DIR").unwrap();
+    let hosts = std::fs::read_to_string(std::path::Path::new(gh_dir).join("hosts.yml")).unwrap();
     assert!(hosts.contains("oauth_token: ghs_session"), "{hosts}");
-    for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
-        assert!(
-            vars.contains(&(var, None)),
-            "the session has no {var} of the person"
-        );
-    }
 }
 
 /// A clone of `como-technologies/riff` in a temp dir.
@@ -479,4 +478,193 @@ fn riff_forge_credential_gives_the_token_only_for_github() {
         "username=x-access-token\npassword=ghs_cred\n"
     );
     assert_eq!(run("protocol=https\nhost=gitlab.com\n\n"), "");
+}
+
+/// The marker of each credential of the person in the marker test.
+const MARKER: &str = "person_marker";
+
+/// One outcome of the token step for the marker test: its settings, a
+/// key file, a clone or no repository, a session ID, the GitHub API.
+struct Outcome {
+    name: &'static str,
+    settings: Option<&'static str>,
+    key: bool,
+    repo: bool,
+    session: bool,
+    api: Option<String>,
+    /// The words of the line of the wrapper, or `None` with a token.
+    line: Option<&'static str>,
+}
+
+/// Runs `riff workers run` with a fake `claude` for `outcome`, with a
+/// credential of the person in each place that a program reads: the
+/// token variables, an unknown variable, the agent of ssh, the `gh`
+/// config and a git helper. Returns what `claude` saw and the stderr
+/// of the wrapper.
+async fn run_worker(server: &str, outcome: &Outcome) -> (String, String) {
+    let dir = if outcome.repo {
+        clone()
+    } else {
+        tempfile::tempdir().unwrap()
+    };
+    let root = dir.path();
+    let home = root.join("home");
+    std::fs::create_dir_all(home.join(".config/gh")).unwrap();
+    std::fs::write(
+        home.join(".config/gh/hosts.yml"),
+        format!("github.com:\n    oauth_token: {MARKER}\n"),
+    )
+    .unwrap();
+    let gitconfig = home.join(".gitconfig");
+    std::fs::write(
+        &gitconfig,
+        format!("[credential]\n\thelper = \"!f() {{ echo username=me; echo password={MARKER}; }}; f\"\n"),
+    )
+    .unwrap();
+    let riff_home = root.join("riff-home");
+    std::fs::create_dir_all(&riff_home).unwrap();
+    if let Some(settings) = outcome.settings {
+        std::fs::write(riff_home.join("config.toml"), settings).unwrap();
+    }
+    if outcome.key {
+        let key = App::key_path(&riff_home.join("config.toml"));
+        std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+        std::fs::write(key, KEY).unwrap();
+    }
+    let out = root.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let claude = root.join("claude");
+    let o = out.display();
+    std::fs::write(
+        &claude,
+        format!(
+            "#!/bin/sh\nenv > '{o}/env'\n\
+             printf 'protocol=https\\nhost=github.com\\n\\n' | \
+             GIT_TERMINAL_PROMPT=0 git credential fill > '{o}/git' 2>&1\n\
+             cat \"$GH_CONFIG_DIR/hosts.yml\" > '{o}/gh' 2>&1\n"
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = Isolated::shared().riff();
+    cmd.current_dir(root)
+        .env("RIFF_SERVER", server)
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_HOME", &riff_home)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("GIT_CONFIG_GLOBAL", &gitconfig)
+        .env("TMUX_PANE", "%5")
+        .env("GH_TOKEN", MARKER)
+        .env("GITHUB_TOKEN", MARKER)
+        .env("RIFF_TEST_MARKER", MARKER)
+        .env("SSH_AUTH_SOCK", root.join(MARKER))
+        .env_remove("RIFF_WORKER")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    match &outcome.api {
+        Some(api) => cmd.env(forge::API_VAR, api),
+        None => cmd.env_remove(forge::API_VAR),
+    };
+    if outcome.session {
+        cmd.env("RIFF_SESSION", format!("w-{}", outcome.name));
+    } else {
+        cmd.env_remove("RIFF_SESSION");
+    }
+    let run = cmd.args(["workers", "run"]).arg(&claude).output().unwrap();
+    let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
+    let seen = ["env", "git", "gh"]
+        .map(|f| std::fs::read_to_string(out.join(f)).unwrap_or_default())
+        .join("\n");
+    assert!(!seen.is_empty(), "{}: claude did not run: {stderr}", outcome.name);
+    (seen, stderr)
+}
+
+/// No outcome of the token step gives `claude` a credential of the
+/// person: not with a token, not with no App, not with a fault
+/// (01M4BYVSNQ5SY2GRGT73FV0Z3E, 01M4BYVSR06B9HNX4SP83SY2SX).
+#[tokio::test(flavor = "multi_thread")]
+async fn no_outcome_of_the_token_step_gives_claude_a_credential_of_the_person() {
+    let (_fake, github) = fake_github().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
+    let app = "[forge]\napp = 123\n";
+    let base = || Outcome {
+        name: "",
+        settings: Some(app),
+        key: true,
+        repo: true,
+        session: true,
+        api: Some(github.clone()),
+        line: None,
+    };
+    let outcomes = [
+        Outcome {
+            name: "token",
+            ..base()
+        },
+        Outcome {
+            name: "no-settings",
+            settings: None,
+            line: Some("the settings name no GitHub App"),
+            ..base()
+        },
+        Outcome {
+            name: "no-app",
+            settings: Some("[forge]\n"),
+            line: Some("the settings name no GitHub App"),
+            ..base()
+        },
+        Outcome {
+            name: "bad-setting",
+            settings: Some("[forge]\napp = \"123\"\n"),
+            line: Some("is not a number"),
+            ..base()
+        },
+        Outcome {
+            name: "no-key",
+            key: false,
+            line: Some("cannot read the key of the App"),
+            ..base()
+        },
+        Outcome {
+            name: "no-repository",
+            repo: false,
+            line: Some("in no repository"),
+            ..base()
+        },
+        Outcome {
+            name: "no-session",
+            session: false,
+            line: Some("the session has no temp folder"),
+            ..base()
+        },
+        Outcome {
+            name: "api",
+            api: Some("http://127.0.0.1:9".into()),
+            line: Some("cannot reach the GitHub API"),
+            ..base()
+        },
+    ];
+    for outcome in &outcomes {
+        let (seen, stderr) = run_worker(&server, outcome).await;
+        let name = outcome.name;
+        assert!(!seen.contains(MARKER), "{name}: claude saw: {seen}");
+        assert!(!seen.contains("SSH_AUTH_SOCK"), "{name}: {seen}");
+        assert!(seen.contains("RIFF_FORGE_DIR="), "{name}: {seen}");
+        match outcome.line {
+            None => {
+                assert!(seen.contains("password=ghs_test_"), "{name}: {seen}");
+                assert!(!stderr.contains("no forge token"), "{name}: {stderr}");
+            }
+            Some(line) => {
+                assert!(!seen.contains("password="), "{name}: {seen}");
+                assert!(stderr.contains("no forge token"), "{name}: {stderr}");
+                assert!(stderr.contains(line), "{name}: {stderr}");
+            }
+        }
+    }
 }

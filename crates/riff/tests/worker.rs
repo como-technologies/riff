@@ -70,7 +70,6 @@ fn riff(api: &Api, dir: &Path, session: &str) -> Command {
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SESSION", session)
-        .env("RIFF_BIN", Isolated::shared().riff_path())
         .env("TMUX_PANE", "%5")
         .env("RIFF_HOME", dir)
         .env_remove("CLAUDE_CODE_SESSION_ID")
@@ -577,7 +576,7 @@ async fn the_server_stops_an_idle_worker_through_its_wrapper() {
     let idle = api.idle(&person(&lead), Some(0), Some(1)).await.unwrap();
     assert_eq!((idle.per_host, idle.after_secs), (0, 1));
     let dir = repo();
-    let claude = fake_claude(dir.path(), "exec \"$RIFF_BIN\" mcp");
+    let claude = fake_claude(dir.path(), &format!("exec '{}' mcp", Isolated::shared().riff_path().display()));
     let mut child = riff(&api, dir.path(), "w6")
         .args(["workers", "run"])
         .arg(&claude)
@@ -698,7 +697,7 @@ async fn the_watch_of_a_worker_with_no_riff_mcp_stops_its_wrapper() {
         .unwrap();
     api.register_as(&w8, true).await.unwrap();
     let dir = repo();
-    let claude = fake_claude(dir.path(), "exec \"$RIFF_BIN\" watch --once");
+    let claude = fake_claude(dir.path(), &format!("exec '{}' watch --once", Isolated::shared().riff_path().display()));
     let child = riff(&api, dir.path(), "w8")
         .args(["workers", "run"])
         .arg(&claude)

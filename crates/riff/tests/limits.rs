@@ -994,8 +994,9 @@ fn the_skill_says_the_pool_shares_the_cores() {
 
 /// 01M4BQA5K7DQHQ4DSJGQJH8ZQE: riff gives a worker no compile cache.
 /// With an `sccache` on the `PATH`, the wrapper runs no `sccache` and
-/// sets no variable of a cache: `claude` gets the variables of the
-/// person as they are. `riff workers` shows no cache, and `riff workers
+/// sets no variable of a cache. A cache variable of the person is not
+/// on the list of kept variables (01M4BYVSR06B9HNX4SP83SY2SX), so
+/// `claude` gets none. `riff workers` shows no cache, and `riff workers
 /// cache` is no command.
 #[test]
 fn the_wrapper_gives_claude_no_compile_cache() {
@@ -1010,17 +1011,13 @@ fn the_wrapper_gives_claude_no_compile_cache() {
         "sccache",
         "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/sccache.log\"\n",
     );
-    let person = [("RUSTC_WRAPPER", "/person/sccache")];
+    let person = [
+        ("RUSTC_WRAPPER", "/person/sccache"),
+        ("SCCACHE_DIR", "/person/cache"),
+    ];
     let out = m.wrapper(&claude, &person);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    // The other two variables are as this test got them.
-    let own = |var| std::env::var(var).unwrap_or_default();
-    let want = format!(
-        "[/person/sccache] [{}] [{}]\n",
-        own("SCCACHE_DIR"),
-        own("SCCACHE_SERVER_PORT")
-    );
-    assert_eq!(read(&seen), want);
+    assert_eq!(read(&seen), "[] [] []\n");
     assert!(!stderr(&out).contains("sccache"), "{out:?}");
     assert!(!m.bin().join("sccache.log").exists(), "riff ran sccache");
 

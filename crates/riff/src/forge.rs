@@ -250,15 +250,26 @@ impl App {
     /// The App of the settings file `settings`. `None` when it has no
     /// `forge.app`: then riff gives no forge token.
     pub fn here(settings: &Path) -> Result<Option<App>> {
-        let Some(id) = crate::settings::forge_app(settings)? else {
-            return Ok(None);
-        };
-        let path = Self::key_path(settings);
+        match App::of(Ok(settings.to_owned())) {
+            Ok(app) => Ok(Some(app)),
+            Err(Error::NotSet) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The App of the settings file `settings`, or why there is none.
+    pub fn of(settings: Result<PathBuf>) -> std::result::Result<App, Error> {
+        let settings = settings.map_err(Error::BadSetting)?;
+        let id = crate::settings::forge_app(&settings)
+            .map_err(Error::BadSetting)?
+            .ok_or(Error::NotSet)?;
+        let path = Self::key_path(&settings);
         let pem = std::fs::read(&path)
-            .with_context(|| format!("cannot read the key of the App in {}", path.display()))?;
+            .with_context(|| format!("cannot read the key of the App in {}", path.display()))
+            .map_err(Error::Key)?;
         App::new(id, &pem)
             .with_context(|| format!("{}", path.display()))
-            .map(Some)
+            .map_err(Error::Key)
     }
 
     /// Saves the App: its key from `pem_file` to [`App::key_path`], with
@@ -311,6 +322,43 @@ impl App {
         jsonwebtoken::encode(&header, &claims, &self.key).context("cannot sign the JWT of the App")
     }
 }
+
+/// Why a session has no forge token. Each cause gives the same
+/// [`ForgeEnv`] as a token, with no credential of the person
+/// (01M4BYVSNQ5SY2GRGT73FV0Z3E).
+#[derive(Debug)]
+pub enum Error {
+    /// The settings name no GitHub App.
+    NotSet,
+    /// riff cannot read the settings, or `forge.app` is no App ID.
+    BadSetting(anyhow::Error),
+    /// riff cannot read the key of the App.
+    Key(anyhow::Error),
+    /// The session has no temp folder for the token files.
+    NoFolder,
+    /// The session has no ID, or its folder is in no repository.
+    Place(anyhow::Error),
+    /// GitHub gave no token of the role.
+    Api(anyhow::Error),
+    /// riff cannot write the token files.
+    Files(anyhow::Error),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::NotSet => f.write_str("the settings name no GitHub App"),
+            Error::NoFolder => f.write_str("the session has no temp folder"),
+            Error::BadSetting(e)
+            | Error::Key(e)
+            | Error::Place(e)
+            | Error::Api(e)
+            | Error::Files(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// A token of a role for one repository.
 #[derive(Clone, PartialEq, Eq)]
@@ -602,44 +650,103 @@ impl Files {
         std::fs::metadata(self.ask_path()).ok()?.modified().ok()
     }
 
-    /// The environment of `claude` for these files, with `riff` the
-    /// path of the riff binary. `None` removes the variable. It removes
-    /// each token variable of the person: `gh` reads them first.
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// use riff::forge::Files;
-    ///
-    /// let env = Files::in_temp(Path::new("/t")).env(Path::new("/bin/riff"));
-    /// let get = |k: &str| env.iter().find(|(v, _)| *v == k).map(|(_, v)| v.clone());
-    /// assert_eq!(get("GH_CONFIG_DIR"), Some(Some("/t/forge/gh".into())));
-    /// assert_eq!(get("GH_TOKEN"), Some(None));
-    /// assert_eq!(get("GIT_CONFIG_VALUE_1"), Some(Some("!'/bin/riff' forge credential".into())));
-    /// ```
-    pub fn env(&self, riff: &Path) -> Vec<(&'static str, Option<String>)> {
+    /// The forge variables of these files, with `riff` the path of the
+    /// riff binary ([`ForgeEnv`]).
+    fn vars(&self, riff: &Path) -> Vec<(&'static str, String)> {
         let helper = "credential.https://github.com.helper";
         let quoted = riff.to_string_lossy().replace('\'', r"'\''");
         vec![
-            (DIR_VAR, Some(self.dir.to_string_lossy().into_owned())),
+            (DIR_VAR, self.dir.to_string_lossy().into_owned()),
             (
                 "GH_CONFIG_DIR",
-                Some(self.gh_dir().to_string_lossy().into_owned()),
+                self.gh_dir().to_string_lossy().into_owned(),
             ),
-            ("GH_TOKEN", None),
-            ("GITHUB_TOKEN", None),
-            ("GH_ENTERPRISE_TOKEN", None),
-            ("GITHUB_ENTERPRISE_TOKEN", None),
-            // The empty helper drops each helper of the person for
-            // github.com; then riff gives the token.
-            ("GIT_CONFIG_COUNT", Some("2".into())),
-            ("GIT_CONFIG_KEY_0", Some(helper.into())),
-            ("GIT_CONFIG_VALUE_0", Some(String::new())),
-            ("GIT_CONFIG_KEY_1", Some(helper.into())),
-            (
-                "GIT_CONFIG_VALUE_1",
-                Some(format!("!'{quoted}' forge credential")),
-            ),
+            // An empty helper drops each helper of the person before it;
+            // then riff gives the token for github.com.
+            ("GIT_CONFIG_COUNT", "3".into()),
+            ("GIT_CONFIG_KEY_0", "credential.helper".into()),
+            ("GIT_CONFIG_VALUE_0", String::new()),
+            ("GIT_CONFIG_KEY_1", helper.into()),
+            ("GIT_CONFIG_VALUE_1", String::new()),
+            ("GIT_CONFIG_KEY_2", helper.into()),
+            ("GIT_CONFIG_VALUE_2", format!("!'{quoted}' forge credential")),
         ]
+    }
+}
+
+/// The environment of `claude` in a session: the only way to make its
+/// command ([`ForgeEnv::command`]). The command starts with an empty
+/// environment. It gets only the [`crate::profile::KEPT_VARS`] of the
+/// parent and the forge variables, so no credential of the person
+/// reaches it, with a token and with no token
+/// (01M4BYVSNQ5SY2GRGT73FV0Z3E).
+///
+/// ```
+/// use std::path::Path;
+/// use riff::forge::{Error, Files, ForgeEnv};
+///
+/// let files = Files::in_temp(Path::new("/t"));
+/// let env = ForgeEnv::of(&Err(Error::NotSet), &files, Path::new("/bin/riff"));
+/// assert_eq!(env.get("GH_CONFIG_DIR"), Some("/t/forge/gh"));
+/// assert_eq!(env.get("GIT_CONFIG_VALUE_2"), Some("!'/bin/riff' forge credential"));
+/// assert_eq!(env.no_token(), Some("the settings name no GitHub App"));
+/// let parent = [("PATH".into(), "/bin".into()), ("GH_TOKEN".into(), "ghp_person".into())];
+/// let cmd = env.command("claude".as_ref(), &[], parent);
+/// let set: Vec<String> =
+///     cmd.as_std().get_envs().map(|(k, _)| k.to_string_lossy().into_owned()).collect();
+/// assert!(set.contains(&"PATH".to_owned()));
+/// assert!(!set.contains(&"GH_TOKEN".to_owned()));
+/// ```
+#[derive(Debug)]
+pub struct ForgeEnv {
+    vars: Vec<(&'static str, String)>,
+    no_token: Option<String>,
+}
+
+impl ForgeEnv {
+    /// The environment for `given`, the first token step of the
+    /// session, and its token `files`. Each outcome gives the same
+    /// variables: with no token, the files hold none.
+    pub fn of(given: &std::result::Result<Token, Error>, files: &Files, riff: &Path) -> ForgeEnv {
+        ForgeEnv {
+            vars: files.vars(riff),
+            no_token: given.as_ref().err().map(ToString::to_string),
+        }
+    }
+
+    /// The value of the forge variable `name`.
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.vars
+            .iter()
+            .find(|(v, _)| *v == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Why the session has no token, if it has none.
+    pub fn no_token(&self) -> Option<&str> {
+        self.no_token.as_deref()
+    }
+
+    /// The command `program` with `args`: an empty environment, then
+    /// each variable of `parent` that [`crate::profile::kept`] keeps,
+    /// then the forge variables.
+    pub fn command(
+        &self,
+        program: &std::ffi::OsStr,
+        args: &[std::ffi::OsString],
+        parent: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    ) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args).env_clear();
+        for (name, value) in parent {
+            if name.to_str().is_some_and(crate::profile::kept) {
+                cmd.env(name, value);
+            }
+        }
+        for (name, value) in &self.vars {
+            cmd.env(name, value);
+        }
+        cmd
     }
 }
 
@@ -722,25 +829,43 @@ impl Keeper {
     /// old token first, so the session never holds the rights of two
     /// roles. When the revoke fails, the session has no token, and the
     /// next step tries again.
-    pub async fn step(&mut self, claims: Option<&[String]>) -> Result<Option<Token>> {
-        let role = match (claims, &self.held) {
-            (Some(claims), _) => role_of(claims),
-            (None, Some(held)) => held.role,
-            (None, None) => Role::Worker,
-        };
+    pub async fn step(&mut self, claims: Option<&[String]>) -> Result<Option<Token>, Error> {
+        let role = self.role(claims);
         let held = self.held.as_ref().map(|t| (t.role, t.ends));
         if !due(held, role, SystemTime::now()) {
             return Ok(None);
         }
+        self.make(role).await.map(Some)
+    }
+
+    /// The first token of the session, for the role of `claims`.
+    pub async fn first(&mut self, claims: Option<&[String]>) -> Result<Token, Error> {
+        let role = self.role(claims);
+        self.make(role).await
+    }
+
+    fn role(&self, claims: Option<&[String]>) -> Role {
+        match (claims, &self.held) {
+            (Some(claims), _) => role_of(claims),
+            (None, Some(held)) => held.role,
+            (None, None) => Role::Worker,
+        }
+    }
+
+    async fn make(&mut self, role: Role) -> Result<Token, Error> {
         if let Some(old) = self.held.as_ref().filter(|old| old.role != role) {
-            self.files.clear()?;
-            self.github.revoke(&old.token).await?;
+            self.files.clear().map_err(Error::Files)?;
+            self.github.revoke(&old.token).await.map_err(Error::Api)?;
             self.held = None;
         }
-        let token = self.github.token(&self.app, &self.repo, role).await?;
-        self.files.write(&token)?;
+        let token = self
+            .github
+            .token(&self.app, &self.repo, role)
+            .await
+            .map_err(Error::Api)?;
+        self.files.write(&token).map_err(Error::Files)?;
         self.held = Some(token.clone());
-        Ok(Some(token))
+        Ok(token)
     }
 }
 
@@ -757,7 +882,7 @@ where
     loop {
         let now = claims().await;
         if let Err(e) = keeper.step(now.as_deref()).await {
-            eprintln!("{}", crate::text::forge_no_token(&format!("{e:#}")));
+            eprintln!("{}", crate::text::forge_no_token(&e.to_string()));
         }
         let mut waited = Duration::ZERO;
         while waited < LOOK_EVERY {
@@ -849,6 +974,36 @@ mod tests {
         let mode = std::fs::metadata(&key).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         assert_eq!(App::here(&settings).unwrap().unwrap().id(), 7);
+    }
+
+    #[test]
+    fn each_cause_of_no_app_has_its_own_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join("config.toml");
+        let of = |text: Option<&str>| {
+            if let Some(text) = text {
+                std::fs::write(&settings, text).unwrap();
+            }
+            App::of(Ok(settings.clone()))
+        };
+        assert!(matches!(of(None), Err(Error::NotSet)));
+        assert!(matches!(of(Some("[forge]\n")), Err(Error::NotSet)));
+        assert!(matches!(of(Some("[forge]\napp = \"1\"\n")), Err(Error::BadSetting(_))));
+        assert!(matches!(of(Some("[forge]\napp = -1\n")), Err(Error::BadSetting(_))));
+        assert!(matches!(of(Some("not toml [")), Err(Error::BadSetting(_))));
+        assert!(matches!(of(Some("[forge]\napp = 1\n")), Err(Error::Key(_))));
+        let no_home = App::of(Err(anyhow::anyhow!("no HOME")));
+        assert!(matches!(no_home, Err(Error::BadSetting(_))));
+        let key = App::key_path(&settings);
+        std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+        std::fs::write(&key, "not a key").unwrap();
+        assert!(matches!(of(None), Err(Error::Key(_))));
+        std::fs::write(
+            &key,
+            include_str!("../../riff-server/testdata/test-only-rsa-key.pem"),
+        )
+        .unwrap();
+        assert_eq!(of(None).unwrap().id(), 1);
     }
 
     #[test]
