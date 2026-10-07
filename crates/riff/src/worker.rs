@@ -100,8 +100,7 @@ use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
 use crate::{
-    enable, forge, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp,
-    worker_mcp, workload,
+    forge, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, workload,
 };
 
 /// The variable that marks a worker session.
@@ -273,15 +272,18 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         Some(folder) => temp::with_env(args, folder.path()),
         None => args.to_vec(),
     };
-    // The permission rules of the profile of a worker
+    // The rules of riff work (01M4BYH874WQ16Q0337WQA8AMV), and the
+    // permission rules of the profile of a worker
     // (01M4BT33R71HXAVQGHFD4ZFGR5).
-    let args = match profile_rules(claude, folder.as_ref().map(temp::Folder::path), server) {
-        Ok(rules) => crate::role_rules::flag(&args, &rules),
+    let riff_rules = crate::launch::riff_rules(&std::env::current_dir()?);
+    let rules = match profile_rules(claude, folder.as_ref().map(temp::Folder::path), server) {
+        Ok(rules) => crate::launch::merge(riff_rules, &rules),
         Err(why) => {
             eprintln!("{why}");
-            args
+            riff_rules
         }
     };
+    let args = crate::role_rules::flag(&args, &rules);
     // The scope has the name of the worker, so the clear, the reap and
     // the stop find each of its processes (01M49SV9W4S1HJ4BYANA388VD2).
     let session = std::env::var(identity::SESSION_VARS[0]).ok();
@@ -589,30 +591,6 @@ pub struct Started {
     pub no_cores: Option<String>,
 }
 
-/// The refusal of a start of workers for `dir`, when riff is off where
-/// a worker starts: the main clone of the repository of `dir`
-/// ([`enable::State::of_workers`], 01M3XY2T542DCHBN95H9PX4AGQ). A
-/// worker there is a plain session: it never joins the riff, so the
-/// rollout would start the next one.
-pub fn off(dir: &Path) -> Option<String> {
-    let user = crate::plugin::user_settings();
-    let state = enable::State::of_workers(dir, user.as_deref(), enable::forced());
-    (!state.on).then(|| text::workers_off(&state))
-}
-
-/// The variables that a new worker gets from a process with `forced`:
-/// `RIFF_ON=1` turned riff on for the process, so it turns riff on for
-/// its workers (01M3XY2SWEK0N8MC3MY4TMYTD3). A tmux pane does not get
-/// the variables of the process that makes it.
-///
-/// ```
-/// assert_eq!(riff::worker::on_env(true), Some(("RIFF_ON".into(), "1".into())));
-/// assert_eq!(riff::worker::on_env(false), None);
-/// ```
-pub fn on_env(forced: bool) -> Option<(String, String)> {
-    forced.then(|| (enable::VAR.into(), "1".into()))
-}
-
 /// Starts at most `count` workers in `tmux`, in the main worktree of
 /// `dir` (01M3JD392Q5ANX0FPZ51W7B0E3): at most the limit of the machine
 /// minus the workers that run (01M3JPQT57PJCRBQYJNDVESS04). Each loads
@@ -621,12 +599,12 @@ pub fn on_env(forced: bool) -> Option<(String, String)> {
 /// starts none while the available memory is less than the floor
 /// (01M3WFZ01PTAYYKG3T5CFA2W4D), and while the disk of the main clone is
 /// low (01M41A11DX1QRP48YPTDNT67W4). It makes the slice of the workers ready
-/// first (01M3WFYZX6GVFYW6NTTTKF144R). It starts none where riff is off
-/// in the main clone ([`off`], 01M3XY2T542DCHBN95H9PX4AGQ): the command,
-/// the rollout of the lead and a workers host all start workers here.
-/// A worker of a process with `RIFF_ON=1` gets `RIFF_ON=1`. The inner
-/// error is the refusal to show when it started nothing. The caller
-/// checks who may start workers.
+/// first (01M3WFYZX6GVFYW6NTTTKF144R). It gives each worker the plugin,
+/// the MCP config and `RIFF_ON=1` (01M4BYH7Y3P1JMQR51TWFGVZ39, see
+/// [`crate::launch`]): the command, the rollout of the lead and a
+/// workers host all start workers here. The inner error is the refusal
+/// to show when it started nothing. The caller checks who may start
+/// workers.
 pub fn start(
     tmux: &dyn Terminal,
     count: u16,
@@ -634,9 +612,6 @@ pub fn start(
     server: &str,
     dir: &Path,
 ) -> Result<std::result::Result<Started, String>> {
-    if let Some(why) = off(dir) {
-        return Ok(Err(why));
-    }
     let settings = settings::path()?;
     let limit = settings::workers_limit(&settings)?;
     if limit == 0 {
@@ -660,16 +635,17 @@ pub fn start(
     let fresh = hygiene::fast_forward(&main).line();
     let base = Api::new(server).base().to_owned();
     let riff = crate::binary::this_on_disk()?;
-    let mcp = worker_mcp::prepare(&main, &riff)?;
+    let given = crate::launch::Given::prepare(&main, &riff)?;
     let flags = terminal::worker_settings(&worker_lsp::here());
     let claude = terminal::Claude {
         bin: claude,
-        mcp: &mcp,
+        plugin: &given.plugin,
+        mcp: &given.mcp,
         settings: &flags,
     };
     let programs: Vec<Program> = (0..start)
         .map(|_| {
-            let mut worker = Program::worker(
+            Program::worker(
                 &riff,
                 &claude,
                 &main,
@@ -678,9 +654,7 @@ pub fn start(
                 // The wrapper sets the slice: it runs outside each
                 // sandbox (01M4C2PXZ5WNE4C2CJW2HABPY0).
                 Some(limits::SLICE),
-            );
-            worker.env.extend(on_env(enable::forced()));
-            worker
+            )
         })
         .collect();
     let (window, panes) = tmux.workers(&programs)?;

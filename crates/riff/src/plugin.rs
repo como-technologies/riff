@@ -2,66 +2,39 @@
 //!
 //! # Design
 //!
-//! The plugin files live in `crates/riff/claude-plugin/`. That directory
-//! is a local marketplace with one plugin, `riff`. The binary holds a copy
-//! of each file, so the plugin always matches the binary.
-//! [`connect()`] writes the files with [`write()`] to [`dir()`] and
-//! installs them through the `claude` command:
-//!
-//! 1. `claude mcp remove --scope user riff` removes an old entry, if any.
-//! 2. `claude plugin marketplace add DIR` adds the marketplace `riff`.
-//! 3. It adds the riff status line to the user settings of Claude Code
-//!    when they have no `statusLine` ([`add_statusline`]). A plugin
-//!    cannot set it.
-//!
-//! It does not turn the plugin on. The marketplace makes the plugin
-//! known on the machine, and the entry `riff@riff` in the key
-//! `enabledPlugins` of a settings file turns it on: for one repository
-//! in its local or project settings, or for each repository in the user
-//! settings. `riff enable` writes that entry (see [`crate::enable`]).
-//! Claude Code then loads the plugin with no `claude plugin install`.
-//! This is what Claude Code 2 does with the entry (tested with a config
-//! directory of its own):
-//!
-//! | The entry | The plugin loads |
-//! |---|---|
-//! | `true` in the local or project settings of a project, no install | Only in that project. |
-//! | `false` or none in the user settings, `true` in a project | Only in that project. |
-//! | `true` in the user settings, `false` in the local settings of a project | In each directory but that project. |
-//! | `true` in the user settings, written by hand, no install record | In each directory, also outside a repository (Claude Code 2.1.287). |
-//!
-//! `claude plugin install --scope local` writes the same entry, but it
-//! also keeps a record of the install for each scope, and `claude plugin
-//! enable --scope project` then fails for a plugin with a local
-//! install. So riff writes the entry itself.
-//!
-//! Claude Code loads a plugin from a local marketplace in place. So a new
-//! `riff` binary and one more `riff connect claude` update the plugin.
-//! The `marketplace add` step succeeds when it has nothing to do.
+//! The plugin files live in `crates/riff/claude-plugin/riff/`. The
+//! binary holds a copy of each file, so the plugin always matches the
+//! binary. riff is not in the Claude config of the person
+//! (01M4BYH7Y3P1JMQR51TWFGVZ39): no install, no marketplace, no
+//! `enabledPlugins` entry. At each start of `claude`, riff writes the
+//! files with [`write()`] to [`dir()`], and gives `claude` the flag
+//! `--plugin-dir` with [`root()`] (see [`crate::launch`]). So a new
+//! `riff` binary updates the plugin at the next start.
 //!
 //! | File | Gives the session |
 //! |---|---|
-//! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. |
 //! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
+//! The riff tools do not come from the plugin: riff gives `claude` the
+//! riff MCP server with `--mcp-config` (see [`crate::worker_mcp`]).
+//!
 //! ```
 //! let dir = tempfile::tempdir()?;
 //! riff::plugin::write(dir.path())?;
-//! assert!(dir.path().join("riff/.mcp.json").is_file());
+//! assert!(dir.path().join("riff/.claude-plugin/plugin.json").is_file());
 //! assert!(dir.path().join("riff/skills/riff/SKILL.md").is_file());
+//! assert!(!dir.path().join("riff/.mcp.json").exists());
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
-use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-/// The name of the marketplace and of the plugin.
+/// The name of the plugin.
 pub const NAME: &str = "riff";
 
 macro_rules! embed {
@@ -135,9 +108,7 @@ macro_rules! embed {
 /// }
 /// ```
 pub const FILES: &[(&str, &str)] = &[
-    embed!(".claude-plugin/marketplace.json"),
     embed!("riff/.claude-plugin/plugin.json"),
-    embed!("riff/.mcp.json"),
     embed!("riff/skills/riff/SKILL.md"),
     embed!("riff/hooks/hooks.json"),
     embed!("riff/commands/leave.md"),
@@ -185,33 +156,12 @@ pub fn dir() -> Result<PathBuf> {
     dir_from(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
 }
 
-/// What [`connect()`] did.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Connected {
-    /// The marketplace directory.
-    pub dir: PathBuf,
-    /// True when it removed an old `riff` MCP server entry (R75).
-    pub removed_old: bool,
-    /// What it did with the status line.
-    pub statusline: Statusline,
-}
-
-/// The `statusLine` setting of the riff status line
-/// (01M3JFFJEW8BSRBZ9JQPKT0S8Z).
-pub const STATUSLINE: &str =
-    "\"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"riff statusline\"\n  }";
-
-/// What [`add_statusline`] did with the settings file at `path`.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Statusline {
-    /// It added the riff status line.
-    Added(PathBuf),
-    /// The riff status line was set already.
-    Set,
-    /// Another status line is set. riff left it.
-    Other(PathBuf),
-    /// riff could not read or write the settings, and left them.
-    Failed(String),
+/// Writes the plugin to [`dir()`] and gives its root, for the flag
+/// `--plugin-dir` of `claude` (01M4BYH7Y3P1JMQR51TWFGVZ39).
+pub fn root() -> Result<PathBuf> {
+    let dir = dir()?;
+    write(&dir).with_context(|| format!("cannot write the plugin to {}", dir.display()))?;
+    Ok(dir.join(NAME))
 }
 
 /// The user settings of Claude Code: `$CLAUDE_CONFIG_DIR/settings.json`,
@@ -244,129 +194,6 @@ pub fn user_settings() -> Option<PathBuf> {
     )
 }
 
-/// The settings text with the riff status line, or None when the
-/// settings have a `statusLine` already. It adds the key as text before
-/// the last `}`, so each other key keeps its place and its format
-/// (01M3JFFJEW8BSRBZ9JQPKT0S8Z).
-///
-/// ```
-/// use riff::plugin::with_statusline;
-///
-/// let text = with_statusline("{\n  \"model\": \"opus\"\n}\n")?.unwrap();
-/// assert!(text.starts_with("{\n  \"model\": \"opus\",\n  \"statusLine\": {"));
-/// assert!(text.ends_with("}\n}\n"));
-/// assert_eq!(with_statusline(&text)?, None);
-/// assert!(with_statusline("{}")?.unwrap().starts_with("{\n  \"statusLine\""));
-/// assert!(with_statusline("[1]").is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn with_statusline(text: &str) -> Result<Option<String>> {
-    let value: serde_json::Value =
-        serde_json::from_str(text).context("the settings are not valid JSON")?;
-    let object = value
-        .as_object()
-        .context("the settings are not a JSON object")?;
-    if object.contains_key("statusLine") {
-        return Ok(None);
-    }
-    let end = text
-        .rfind('}')
-        .context("the settings have no closing brace")?;
-    let head = text[..end].trim_end();
-    let comma = if object.is_empty() { "" } else { "," };
-    let out = format!("{head}{comma}\n  {STATUSLINE}\n}}{}", &text[end + 1..]);
-    serde_json::from_str::<serde_json::Value>(&out).context("riff made invalid settings")?;
-    Ok(Some(out))
-}
-
-/// Adds the riff status line to the settings file at `path`, when the
-/// settings have no `statusLine`. It makes the file when it is not
-/// there. It writes the file only when it changes.
-pub fn add_statusline(path: &Path) -> Statusline {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => "{}\n".to_owned(),
-        Err(e) => return Statusline::Failed(format!("read {}: {e}", path.display())),
-    };
-    let new = match with_statusline(&text) {
-        Ok(Some(new)) => new,
-        Ok(None) => {
-            let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-            return if value["statusLine"]["command"] == "riff statusline" {
-                Statusline::Set
-            } else {
-                Statusline::Other(path.to_owned())
-            };
-        }
-        Err(e) => return Statusline::Failed(format!("{}: {e:#}", path.display())),
-    };
-    let written = path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| std::fs::write(path, new));
-    match written {
-        Ok(()) => Statusline::Added(path.to_owned()),
-        Err(e) => Statusline::Failed(format!("write {}: {e}", path.display())),
-    }
-}
-
-/// Writes the marketplace to `dir` and adds it to Claude Code with the
-/// `claude` command at `claude` (R53). It first removes an old
-/// user-scope MCP server entry named `riff`, from `claude mcp add`, so a
-/// session does not get the riff tools twice (R75). Then it adds the
-/// riff status line to the settings at `settings`
-/// ([`add_statusline`]). It turns the plugin on nowhere: see
-/// [`crate::enable::scope`].
-pub fn connect(claude: &Path, dir: &Path, settings: Option<&Path>) -> Result<Connected> {
-    write(dir).with_context(|| format!("write the plugin to {}", dir.display()))?;
-    let removed_old = run(
-        claude,
-        ["mcp", "remove", "--scope", "user", NAME].map(OsStr::new),
-    )
-    .is_ok();
-    run(
-        claude,
-        [
-            OsStr::new("plugin"),
-            OsStr::new("marketplace"),
-            OsStr::new("add"),
-            dir.as_os_str(),
-        ],
-    )?;
-    let statusline = match settings {
-        Some(path) => add_statusline(path),
-        None => Statusline::Failed("set HOME or CLAUDE_CONFIG_DIR".into()),
-    };
-    Ok(Connected {
-        dir: dir.to_owned(),
-        removed_old,
-        statusline,
-    })
-}
-
-/// Runs `claude` with `args`. It fails with the output of `claude` when
-/// the command fails.
-fn run<'a>(claude: &Path, args: impl IntoIterator<Item = &'a OsStr>) -> Result<()> {
-    let args: Vec<&OsStr> = args.into_iter().collect();
-    let line = || {
-        let args: Vec<_> = args.iter().map(|a| a.to_string_lossy()).collect();
-        format!("{} {}", claude.display(), args.join(" "))
-    };
-    let out = Command::new(claude)
-        .args(&args)
-        .output()
-        .with_context(|| format!("run {}", line()))?;
-    if !out.status.success() {
-        bail!(
-            "{} failed: {}{}",
-            line(),
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,14 +221,6 @@ mod tests {
         let plugin = json("riff/.claude-plugin/plugin.json");
         assert_eq!(plugin["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(plugin["name"], NAME);
-    }
-
-    #[test]
-    fn marketplace_lists_the_plugin() {
-        let market = json(".claude-plugin/marketplace.json");
-        assert_eq!(market["name"], NAME);
-        assert_eq!(market["plugins"][0]["name"], NAME);
-        assert_eq!(market["plugins"][0]["source"], "./riff");
     }
 
     #[test]
@@ -581,21 +400,6 @@ mod tests {
     #[test]
     fn no_home_is_an_error() {
         assert!(dir_from(None, None).is_err());
-    }
-
-    #[test]
-    fn a_missing_claude_command_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = connect(Path::new("/no/such/claude"), dir.path(), None).unwrap_err();
-        assert!(format!("{err:#}").contains("/no/such/claude plugin marketplace add"));
-        assert!(dir.path().join("riff/.mcp.json").is_file());
-    }
-
-    #[test]
-    fn the_mcp_server_is_riff_mcp() {
-        let mcp = json("riff/.mcp.json");
-        assert_eq!(mcp[NAME]["command"], "riff");
-        assert_eq!(mcp[NAME]["args"], serde_json::json!(["mcp"]));
     }
 
     #[test]

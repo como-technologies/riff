@@ -11,7 +11,7 @@
 //! | `riff watch` | Keeps a watch stream open and prints one line for each wake. With `--once`, it exits after the first wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
-//! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
+//! | `riff` | Starts the riff: the picker, then the lead in the tmux server of riff. See [`start`], and [`launch`] for what riff gives each `claude` that it starts. |
 //! | `riff workers` | Starts, lists and stops the worker sessions of this machine in tmux, with [`terminal`]. Its limit is in [`settings`]. The `riff mcp` of the lead starts workers by itself, with [`rollout`]. [`monitor`] tells the lead about the health of a machine. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
@@ -30,9 +30,10 @@
 //! its pushed branch and its worktree (see [`dropped`]).
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
-//! `riff hook session-start` (see [`hook`]). riff is off in a session
-//! until a person turns it on for the repository, with `riff enable`
-//! (see [`enable`]).
+//! `riff hook session-start` (see [`hook`]). riff is on only in a
+//! session that riff started (see [`enable`]). `riff` removes the riff
+//! entries that older releases wrote to the Claude config (see
+//! [`old_config`]).
 //!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
 //! agree on the session because both read its session ID from the
@@ -96,6 +97,7 @@ pub mod host;
 pub mod hygiene;
 pub mod identity;
 pub mod jobserver;
+pub mod launch;
 pub mod leave;
 pub mod lifecycle;
 pub mod limits;
@@ -107,6 +109,7 @@ pub mod machine;
 pub mod mcp;
 pub mod monitor;
 pub mod next;
+pub mod old_config;
 pub mod permissions;
 pub mod plugin;
 pub mod pr;

@@ -1417,33 +1417,6 @@ pub struct Live<M> {
     pub tmux: Option<Tmux>,
     pub claude: PathBuf,
     pub gh: Arc<Gh>,
-    /// True when the lead has the note that riff is off in the main
-    /// clone of its machine (01M3YCGKKRDNFC338K1JSK30JK).
-    pub off_told: std::sync::atomic::AtomicBool,
-}
-
-impl<M: Fn() -> SessionUri + Send + Sync> Live<M> {
-    /// True when riff is on where a worker of this machine starts: the
-    /// main clone of the lead. When it is off, a worker there is a plain
-    /// session, so the machine of the lead is no place for a worker
-    /// (01M3XY2T542DCHBN95H9PX4AGQ), and the lead gets one note with
-    /// the reason (01M3YCGKKRDNFC338K1JSK30JK). The next note comes
-    /// only after riff was on again.
-    async fn on_here(&self, me: &SessionUri) -> Result<bool> {
-        use std::sync::atomic::Ordering;
-        let Some(why) = worker::off(&identity::working_dir()?) else {
-            self.off_told.store(false, Ordering::Relaxed);
-            return Ok(true);
-        };
-        if !self.off_told.swap(true, Ordering::Relaxed) {
-            let note = text::rollout_off(me.place().host(), &why);
-            if let Err(e) = note_lead(self.api.base(), me, &note).await {
-                self.off_told.store(false, Ordering::Relaxed);
-                return Err(e);
-            }
-        }
-        Ok(false)
-    }
 }
 
 impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
@@ -1506,7 +1479,6 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         let limit = settings::workers_limit(&settings)?;
         if let Some(tmux) = &self.tmux
             && limit > 0
-            && self.on_here(&me).await?
         {
             let here = tmux.worker_panes()?;
             places.push(Place {

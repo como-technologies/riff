@@ -669,42 +669,6 @@ pub fn set_watch_limit(path: &Path, secs: u64) -> Result<()> {
     set(path, "watch", "limit", value(secs))
 }
 
-/// The answer of the person to the scope question of `riff connect
-/// claude`: `connect.scope` (01M3XY2SNXQJRSH5QX82AFVM2S). `None` when
-/// the file or the key is missing: nobody answered yet.
-///
-/// ```
-/// use riff::enable::Scope;
-///
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::connect_scope(&path)?, None);
-/// riff::settings::set_connect_scope(&path, Scope::Global)?;
-/// assert_eq!(riff::settings::connect_scope(&path)?, Some(Scope::Global));
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn connect_scope(path: &Path) -> Result<Option<crate::enable::Scope>> {
-    let doc = read(path)?;
-    let Some(scope) = doc.get("connect").and_then(|c| c.get("scope")) else {
-        return Ok(None);
-    };
-    scope
-        .as_str()
-        .and_then(crate::enable::Scope::parse)
-        .map(Some)
-        .with_context(|| {
-            format!(
-                "connect.scope in {} is not repo, global or none",
-                path.display()
-            )
-        })
-}
-
-/// Sets `connect.scope`. It keeps each other key.
-pub fn set_connect_scope(path: &Path, scope: crate::enable::Scope) -> Result<()> {
-    set(path, "connect", "scope", value(scope.as_str()))
-}
-
 /// The question about `update.auto` on a new machine.
 pub const ASK_UPDATE_AUTO: &str = "Update riff by itself when the riff gets a new release? [Y/n] ";
 

@@ -50,7 +50,7 @@ pub const GROUPS: &[Group] = &[
     Group {
         heading: "Get started",
         commands: &[
-            "connect", "enable", "disable", "setup", "login", "logout", "update", "server",
+            "login", "logout", "update", "server",
         ],
     },
     Group {
