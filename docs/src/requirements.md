@@ -4254,10 +4254,11 @@
   `workflows`.
 - **01M4BV70GQ42MY0YHMRS47EK1E** Only the verifier token sets a commit
   status, and it does not write the code. The lead and worker tokens
-  write the code and set no status. GitHub keeps the waves and the labels
-  in the permission of the comments on issues, so the lead and worker
-  tokens have the same permissions. The ruleset `main` stops each push
-  to `main`, and the ruleset `releases` stops each `v*` tag of a token.
+  write the code and set no status. GitHub keeps the waves and the
+  labels in the permission of the comments on issues, so the lead and
+  worker tokens have the same permissions. The ruleset `main` stops
+  each push to `main`, and the ruleset `releases` stops each `v*`
+  tag of a token.
 - **01M4BV70JZNMT3X99E77GC58K9** The wrapper makes a new token 10
   minutes before the old one ends, and when the role changes. It reads
   the claims each minute, and at once after a claim or a release.
