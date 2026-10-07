@@ -856,7 +856,7 @@ enum Workers {
     /// On a machine with systemd, all workers run in the slice
     /// riff-workers.slice with this memory limit. The default is 0:
     /// three quarters of the memory of this machine. The next
-    /// `riff workers start` sets the new limit. It is in
+    /// worker that starts sets the new limit. It is in
     /// $XDG_CONFIG_HOME/riff/config.toml, key workers.memory.
     Memory {
         /// The new limit in GB. Leave it out to show it.

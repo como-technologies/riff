@@ -202,10 +202,12 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     // Each pane runs claude through the wrapper (01M493YZVZGA7TSRJH6F67VN0H).
     // `RIFF_ON=1` of the test environment turned riff on for the
     // command, so each worker gets it (01M3XY2SWEK0N8MC3MY4TMYTD3).
+    // Each worker names the slice: its wrapper sets the slice
+    // (01M4C2PXZ5WNE4C2CJW2HABPY0).
     let env = |id: &str| {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
-             -e RIFF_ON=1 '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
+             -e RIFF_WORKER_SLICE=riff-workers.slice -e RIFF_ON=1 '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
              '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}}}}' 'Join the riff.'",
             Isolated::shared().riff_path().display(),
             m.mcp_file().display(),
