@@ -2942,6 +2942,26 @@ pub fn forge_de_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Str
     <Option<String> as serde::Deserialize>::deserialize(d).map(|s| s.as_deref().map(forge))
 }
 
+/// The line of `riff tail` and `riff chat` for a break that lost `n`
+/// messages: the server no longer keeps them
+/// (01M49Z4EB7T972BHEP6T92P574). See [`crate::catch_up`].
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lost_messages(1),
+///     "riff: 1 message of the break is lost. The server keeps only the last messages of a thread."
+/// );
+/// assert!(riff::text::lost_messages(250).starts_with("riff: 250 messages of the break are lost."));
+/// ```
+pub fn lost_messages(n: u64) -> String {
+    let what = if n == 1 {
+        "1 message of the break is".to_owned()
+    } else {
+        format!("{n} messages of the break are")
+    };
+    format!("riff: {what} lost. The server keeps only the last messages of a thread.")
+}
+
 /// A message for people, as `riff tail` shows it
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). It has ANSI styles: print it through
 /// `anstream`, which removes them when the output has no color.

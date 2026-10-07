@@ -1577,8 +1577,29 @@ impl Api {
         thread: &ThreadName,
         all: bool,
     ) -> Result<Vec<Checked>> {
+        self.read_pages(me, thread, all, None).await
+    }
+
+    /// Each kept message of one thread after the seq `after`, checked
+    /// like [`Api::read`]. It reads each page. `riff tail` and
+    /// `riff chat` read with it after a break (see [`crate::catch_up`]).
+    pub async fn read_after(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        after: u64,
+    ) -> Result<Vec<Checked>> {
+        self.read_pages(me, thread, true, Some(after)).await
+    }
+
+    async fn read_pages(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        all: bool,
+        mut after: Option<u64>,
+    ) -> Result<Vec<Checked>> {
         let mut out = Vec::new();
-        let mut after = None;
         loop {
             let (mut messages, next) = self.read_page(me, thread, all, after).await?;
             out.append(&mut messages);
