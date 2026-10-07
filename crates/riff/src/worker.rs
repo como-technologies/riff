@@ -398,6 +398,17 @@ impl Drop for AbortOnDrop {
     }
 }
 
+/// The settings file at `path` when it names a GitHub App, `None` when
+/// it names none, and the fault when riff cannot read it. A fault is no
+/// `None`: the session then gets no token (01M4BV709WGHZ57AM3STC15B69).
+fn forge_settings(path: Result<PathBuf>) -> Option<Result<PathBuf>> {
+    match path.and_then(|path| Ok((settings::forge_app(&path)?, path))) {
+        Ok((None, _)) => None,
+        Ok((Some(_), path)) => Some(Ok(path)),
+        Err(e) => Some(Err(e)),
+    }
+}
+
 /// The forge token of a worker session, when the settings name a GitHub
 /// App ([`forge`]): the environment of `claude` and the task that keeps
 /// the token. The environment holds no token of the person also when
@@ -412,10 +423,7 @@ async fn forge_keeper(
     Vec<(&'static str, Option<String>)>,
     Option<tokio::task::JoinHandle<()>>,
 )> {
-    let settings = settings::path().ok()?;
-    if !matches!(settings::forge_app(&settings), Ok(Some(_))) {
-        return None;
-    }
+    let settings = forge_settings(settings::path())?;
     let no_token = |why: String| eprintln!("{}", crate::text::forge_no_token(&why));
     let Some(folder) = folder else {
         no_token("the worker has no temp folder".into());
@@ -426,6 +434,7 @@ async fn forge_keeper(
     let files = forge::Files::in_temp(folder.path());
     let env = files.env(riff);
     let made = (|| {
+        let settings = settings?;
         let app = forge::App::here(&settings)?.context("no forge.app")?;
         let place = identity::here(None)?;
         let repo = place.repo_text();
@@ -735,4 +744,33 @@ pub fn reap(tmux: &dyn Terminal, pane: Option<&str>, dir: &Path) -> Result<Vec<S
         lines.extend(stopped.iter().map(|p| text::reaped(&worker.pane, p)));
     }
     Ok(lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_settings_with_no_app_leave_the_environment_of_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let at = |text: &str| {
+            std::fs::write(&path, text).unwrap();
+            forge_settings(Ok(path.clone()))
+        };
+        assert!(forge_settings(Ok(dir.path().join("none.toml"))).is_none());
+        assert!(at("[forge]\n").is_none());
+        assert_eq!(at("[forge]\napp = 123\n").unwrap().unwrap(), path);
+        // Each fault gives the environment with no token, not the
+        // environment of the person.
+        assert!(at("[forge]\napp = \"123\"\n").unwrap().is_err());
+        assert!(at("[forge]\napp = -1\n").unwrap().is_err());
+        assert!(at("not toml [").unwrap().is_err());
+        assert!(forge_settings(Ok(dir.path().into())).unwrap().is_err());
+        assert!(
+            forge_settings(Err(anyhow::anyhow!("no HOME")))
+                .unwrap()
+                .is_err()
+        );
+    }
 }

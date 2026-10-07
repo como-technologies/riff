@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use isolated::Isolated;
 use riff::forge::{self, Access, App, Files, GitHub, Keeper};
@@ -35,6 +35,8 @@ struct Fake {
     calls: Arc<Mutex<Vec<Call>>>,
     /// Permissions that the fake gives on top of the asked ones.
     extra: Arc<Mutex<BTreeMap<String, String>>>,
+    /// The fake refuses each revoke while this is true.
+    refuse_revoke: Arc<Mutex<bool>>,
 }
 
 /// The claims of a JWT of the App, checked with the public key of the
@@ -97,12 +99,32 @@ async fn access_tokens(
     })))
 }
 
+/// A revoke: its call has the path, and the revoked token as its body.
+async fn revoke(State(fake): State<Fake>, headers: HeaderMap) -> StatusCode {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    fake.calls.lock().unwrap().push(Call {
+        path: "/installation/token".into(),
+        iss: String::new(),
+        body: json!(token),
+    });
+    if *fake.refuse_revoke.lock().unwrap() {
+        StatusCode::INTERNAL_SERVER_ERROR
+    } else {
+        StatusCode::NO_CONTENT
+    }
+}
+
 /// A fake GitHub API on a free port, and its URL.
 async fn fake_github() -> (Fake, String) {
     let fake = Fake::default();
     let app = Router::new()
         .route("/repos/{owner}/{repo}/installation", get(installation))
         .route("/app/installations/{id}/access_tokens", post(access_tokens))
+        .route("/installation/token", delete(revoke))
         .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -225,6 +247,60 @@ async fn a_worker_session_gets_the_token_of_its_claims_and_never_of_the_lead() {
             assert!(*p == worker || *p == verifier, "{p}");
         }
     }
+}
+
+#[tokio::test]
+async fn a_change_of_role_revokes_the_old_token_before_it_asks_for_the_new_one() {
+    let (fake, url) = fake_github().await;
+    let dir = tempfile::tempdir().unwrap();
+    let files = Files::in_temp(dir.path());
+    let mut keeper = Keeper::new(
+        app(),
+        GitHub::new(&url),
+        "como-technologies/riff".into(),
+        files.clone(),
+    );
+    let verify = ["verify-issue-12".to_owned()];
+    let worker = keeper.step(Some(&[])).await.unwrap().unwrap();
+
+    // GitHub refuses the revoke: the session has no token, and no
+    // verifier token is made.
+    *fake.refuse_revoke.lock().unwrap() = true;
+    let asks = |fake: &Fake| {
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.path.ends_with("access_tokens"))
+            .count()
+    };
+    let before = asks(&fake);
+    let err = keeper.step(Some(&verify)).await.unwrap_err();
+    assert!(format!("{err:#}").contains("revoke"), "{err:#}");
+    assert!(files.token().is_err(), "no token while the old one lives");
+    assert_eq!(asks(&fake), before, "no new token before the revoke");
+
+    // The next step revokes the old token, then asks for the new one.
+    *fake.refuse_revoke.lock().unwrap() = false;
+    let verifier = keeper.step(Some(&verify)).await.unwrap().unwrap();
+    assert_eq!(verifier.role, Role::Verifier);
+    assert_eq!(files.token().unwrap(), verifier.token);
+    let calls = fake.calls.lock().unwrap();
+    let revoked = calls
+        .iter()
+        .rposition(|c| c.path == "/installation/token" && c.body == json!(worker.token))
+        .unwrap();
+    let asked_new = calls
+        .iter()
+        .rposition(|c| c.path.ends_with("access_tokens"))
+        .unwrap();
+    assert!(revoked < asked_new, "{calls:?}");
+    drop(calls);
+
+    // The same role and a fresh token: no call.
+    let n = fake.calls.lock().unwrap().len();
+    assert!(keeper.step(Some(&verify)).await.unwrap().is_none());
+    assert_eq!(fake.calls.lock().unwrap().len(), n);
 }
 
 /// The token of `files` for each program of a session: git through the

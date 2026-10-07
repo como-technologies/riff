@@ -4263,6 +4263,10 @@
   minutes before the old one ends, and when the role changes. It reads
   the claims each minute, and at once after a claim or a release.
 - **01M4BV70N7HRW7KQ9ER9D9CDT9** The test run gets no forge token.
+- **01M4BYGV74T1R2H9D1RX6RTC6Z** At a change of role, the wrapper
+  removes the token files and revokes the old token before it asks for
+  the token of the new role. While the revoke fails, the session has no
+  token.
 
 ## Open
 

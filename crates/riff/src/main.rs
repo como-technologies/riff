@@ -1583,7 +1583,7 @@ async fn main() -> Result<()> {
     if let Command::Cloud { command } = &command {
         return cloud(command).await;
     }
-    if let Command::Forge { command } = &cli.command {
+    if let Command::Forge { command } = &command {
         return forge(command).await;
     }
     if let Command::Pr {

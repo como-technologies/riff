@@ -36,7 +36,8 @@
 //! once when `riff mcp` asks after a claim or a release
 //! ([`Files::ask`]). It makes a new token when the role changes, or
 //! [`RENEW_BEFORE`] before the token ends ([`due`],
-//! 01M4BV70JZNMT3X99E77GC58K9).
+//! 01M4BV70JZNMT3X99E77GC58K9). At a change of role, it revokes the
+//! old token first ([`GitHub::revoke`], 01M4BYGV74T1R2H9D1RX6RTC6Z).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -283,6 +284,9 @@ impl App {
             .mode(0o600)
             .open(&path)
             .with_context(fail)?;
+        // A file that exists keeps its mode at the open.
+        file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))
+            .with_context(fail)?;
         std::io::Write::write_all(&mut file, &pem).with_context(fail)?;
         crate::settings::set_forge_app(settings, id)?;
         Ok(path)
@@ -416,18 +420,26 @@ impl GitHub {
         GitHub::new(base.as_deref().unwrap_or(GITHUB_API))
     }
 
-    async fn send<T: serde::de::DeserializeOwned>(
+    async fn reply(
         &self,
         request: reqwest::RequestBuilder,
         what: &str,
-    ) -> Result<T> {
-        let response = request
+    ) -> Result<reqwest::Response> {
+        request
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
             .header("User-Agent", "riff")
             .send()
             .await
-            .with_context(|| format!("cannot reach the GitHub API for {what}"))?;
+            .with_context(|| format!("cannot reach the GitHub API for {what}"))
+    }
+
+    async fn send<T: serde::de::DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+        what: &str,
+    ) -> Result<T> {
+        let response = self.reply(request, what).await?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -479,6 +491,22 @@ impl GitHub {
             ends: given.expires_at.into(),
             permissions: given.permissions,
         })
+    }
+
+    /// Revokes `token`. A token that GitHub does not take any more
+    /// (401) counts as revoked.
+    pub async fn revoke(&self, token: &str) -> Result<()> {
+        let url = format!("{}/installation/token", self.base);
+        let what = "the revoke of a token";
+        let response = self
+            .reply(self.http.delete(url).bearer_auth(token), what)
+            .await?;
+        let status = response.status();
+        if status.is_success() || status == reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(());
+        }
+        let body = response.text().await.unwrap_or_default();
+        bail!("the GitHub API refused {what}: {status}: {}", body.trim());
     }
 }
 
@@ -539,6 +567,20 @@ impl Files {
             token.token
         );
         put(&gh.join("hosts.yml"), &hosts)
+    }
+
+    /// Removes the token for git and for `gh`. A file that is not there
+    /// is no fault.
+    pub fn clear(&self) -> Result<()> {
+        for path in [self.token_path(), self.gh_dir().join("hosts.yml")] {
+            match std::fs::remove_file(&path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(e).with_context(|| format!("cannot remove {}", path.display()));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     /// The token that [`Files::write`] wrote last.
@@ -657,7 +699,7 @@ pub struct Keeper {
     pub repo: String,
     /// The token files of the session.
     pub files: Files,
-    held: Option<(Role, SystemTime)>,
+    held: Option<Token>,
 }
 
 impl Keeper {
@@ -675,18 +717,29 @@ impl Keeper {
     /// Makes a new token when it is [`due`] for the role of `claims`
     /// (`None` when riff-server did not answer: then the role stays).
     /// Returns the new token, if any.
+    ///
+    /// At a change of role, it removes the token files and revokes the
+    /// old token first, so the session never holds the rights of two
+    /// roles. When the revoke fails, the session has no token, and the
+    /// next step tries again.
     pub async fn step(&mut self, claims: Option<&[String]>) -> Result<Option<Token>> {
-        let role = match (claims, self.held) {
+        let role = match (claims, &self.held) {
             (Some(claims), _) => role_of(claims),
-            (None, Some((role, _))) => role,
+            (None, Some(held)) => held.role,
             (None, None) => Role::Worker,
         };
-        if !due(self.held, role, SystemTime::now()) {
+        let held = self.held.as_ref().map(|t| (t.role, t.ends));
+        if !due(held, role, SystemTime::now()) {
             return Ok(None);
+        }
+        if let Some(old) = self.held.as_ref().filter(|old| old.role != role) {
+            self.files.clear()?;
+            self.github.revoke(&old.token).await?;
+            self.held = None;
         }
         let token = self.github.token(&self.app, &self.repo, role).await?;
         self.files.write(&token)?;
-        self.held = Some((token.role, token.ends));
+        self.held = Some(token.clone());
         Ok(Some(token))
     }
 }
@@ -775,6 +828,27 @@ mod tests {
             !format!("{token:?}").contains("ghs_one"),
             "Debug hides the token"
         );
+    }
+
+    #[test]
+    fn the_saved_key_is_for_the_person_only_also_over_an_old_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join("settings.toml");
+        let pem = dir.path().join("app.pem");
+        std::fs::write(
+            &pem,
+            include_str!("../../riff-server/testdata/test-only-rsa-key.pem"),
+        )
+        .unwrap();
+        let key = App::key_path(&settings);
+        std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+        std::fs::write(&key, "old").unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(App::save(&settings, 7, &pem).unwrap(), key);
+        let mode = std::fs::metadata(&key).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(App::here(&settings).unwrap().unwrap().id(), 7);
     }
 
     #[test]

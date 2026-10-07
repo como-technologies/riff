@@ -3293,8 +3293,9 @@ only the token, never the key of the App.
   to the lead.
 
 A worker that claims a `verify-` item gets the verifier token. After
-the release, it gets the worker token again. A token lasts one hour;
-riff makes a new one 10 minutes before the end.
+the release, it gets the worker token again. At each change of role,
+riff revokes the old token first, so a session never holds two tokens.
+A token lasts one hour; riff makes a new one 10 minutes before the end.
 
 ```mermaid
 sequenceDiagram
@@ -3307,6 +3308,7 @@ sequenceDiagram
     G-->>W: a token for one hour
     W->>C: the token, in the temp folder of the session
     C->>W: a claim or a release
+    W->>G: revoke the old token
     W->>G: a token of the new role
 ```
 
