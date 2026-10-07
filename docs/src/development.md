@@ -197,9 +197,10 @@ name its module:
 cargo test -p riff --test all chat::
 ```
 
-Two files of `riff` are test binaries of their own: `back_in` and
-`join_a_riff`. Their tests set the keyring store of the process. Run
-them by their names:
+Three files of `riff` are test binaries of their own, because their
+tests change a thing of the whole process: `back_in` and `join_a_riff`
+set the keyring store, and `isolation` listens on the port of the riff
+of the machine. Run them by their names:
 
 ```sh
 cargo test -p riff --test back_in
@@ -212,6 +213,7 @@ flowchart LR
     A --> M3[mod ...]
     M1 & M2 & M3 --> B[one binary: all]
     K[tests/back_in.rs] --> C[binary: back_in]
+    I[tests/isolation.rs] --> D[binary: isolation]
 ```
 
 ### Add a test file

@@ -60,3 +60,7 @@ path = "tests/back_in.rs"
 [[test]]
 name = "join_a_riff"
 path = "tests/join_a_riff.rs"
+
+[[test]]
+name = "isolation"
+path = "tests/isolation.rs"

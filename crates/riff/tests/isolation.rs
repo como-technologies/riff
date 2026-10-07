@@ -126,7 +126,7 @@ fn run_child(server: Option<&str>, call_machine: bool) -> String {
         RUNS.fetch_add(1, Ordering::SeqCst)
     );
     let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
-    cmd.args(["--exact", "isolation::child_runs_riff", "--nocapture"])
+    cmd.args(["--exact", "child_runs_riff", "--nocapture"])
         .env(CHILD, &marker);
     match server {
         Some(server) => cmd.env("RIFF_SERVER", server),
@@ -270,7 +270,7 @@ fn a_call_of_another_process_does_not_count() {
     };
     let _noise = Kill(
         std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "isolation::noise_calls_the_machine", "--nocapture"])
+            .args(["--exact", "noise_calls_the_machine", "--nocapture"])
             .env(NOISE, "1")
             .env_remove(CHILD)
             .stdout(std::process::Stdio::null())

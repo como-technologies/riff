@@ -1,7 +1,8 @@
 //! The integration tests of riff in one test binary: a build links
 //! one binary, not one for each file. Each file is a module.
 //! A file that sets the keyring store of the process is a binary of
-//! its own: `back_in.rs`, `join_a_riff.rs`.
+//! its own: `back_in.rs`, `join_a_riff.rs`. So is `isolation.rs`: it
+//! listens on the port of the riff of the machine.
 
 mod book;
 mod common;
@@ -28,7 +29,6 @@ mod help;
 mod hosts;
 mod hygiene;
 mod identity;
-mod isolation;
 mod jobserver;
 mod lead_book;
 mod lead_step;

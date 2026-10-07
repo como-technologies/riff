@@ -76,7 +76,7 @@ fn a_file_with_no_module_is_left_out() {
         "mod common;\n\nmod a;\n#[path = \"loop.rs\"]\nmod loops;\n",
     )
     .unwrap();
-    for file in ["all.rs", "a.rs", "loop.rs", "alone.rs", "new.rs"] {
+    for file in ["a.rs", "loop.rs", "alone.rs", "new.rs"] {
         fs::write(dir.path().join("tests").join(file), "").unwrap();
     }
     assert_eq!(left_out(dir.path()), ["new.rs"]);

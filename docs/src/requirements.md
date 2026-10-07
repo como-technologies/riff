@@ -4050,10 +4050,11 @@
   file and the line.
 - **01M4A4T69XGN1XVJHGHVZN1MRJ** The integration tests of a crate are
   one test binary, `all`: `tests/all.rs` has one module for each file
-  of `tests`. A file whose tests set the keyring store of the process
+  of `tests`. A file whose tests change a thing of the whole process
   is a test binary of its own: `back_in.rs` and `join_a_riff.rs` of
-  `riff`. Each other test of `riff` that needs a mock keyring uses
-  `common::mock_keyring`.
+  `riff` set the keyring store, and `isolation.rs` listens on the port
+  of the riff of the machine. Each other test of `riff` that needs a
+  mock keyring uses `common::mock_keyring`.
 - **01M4A4T6C5DH311AXMM6AG54DV** A test fails when a file of `tests`
   of a crate is in no test binary: not a module of `tests/all.rs`, and
   not the path of a `[[test]]` in the `Cargo.toml` of the crate.
