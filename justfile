@@ -98,6 +98,8 @@ test *ARGS:
 
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
+# 01M4CVXJGYCT2HKHJP3BWBV0HC: the markers GH_TOKEN and RIFF_TEST_PARENT_MARKER
+# must not reach a test (tests/sandbox.rs).
 # 01M4BTG77E656440W5JSGTK4E5: the build runs outside, with the cache and
 # the network; the tests run in the sandbox of riff test-run, built from
 # this tree.
@@ -105,7 +107,7 @@ test *ARGS:
 cargo-test *ARGS:
     cargo test --no-run {{ARGS}}
     cargo build -q -p riff --bin riff
-    RIFF_SERVER=http://127.0.0.1:9 "${CARGO_TARGET_DIR:-target}/debug/riff" test-run -- cargo test {{ARGS}}
+    RIFF_SERVER=http://127.0.0.1:9 GH_TOKEN=riff-test-marker RIFF_TEST_PARENT_MARKER=riff-test-marker "${CARGO_TARGET_DIR:-target}/debug/riff" test-run -- cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:

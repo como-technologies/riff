@@ -129,6 +129,30 @@ fn the_run_has_the_loopback_network_only() {
     assert!(TcpStream::connect(listener.local_addr().unwrap()).is_ok());
 }
 
+
+/// No variable of the parent reaches a test, but the allow list
+/// (01M4CVXJGYCT2HKHJP3BWBV0HC): `just test` gives `riff test-run` a
+/// marker `GH_TOKEN` and an unknown marker variable, and neither is
+/// here. The runtime folder and the agent of ssh are gone too.
+#[test]
+fn no_credential_and_no_unknown_variable_of_the_parent_reaches_a_test() {
+    if !in_a_test_run() {
+        return;
+    }
+    for name in [
+        "GH_TOKEN",
+        "RIFF_TEST_PARENT_MARKER",
+        "XDG_RUNTIME_DIR",
+        "SSH_AUTH_SOCK",
+        "RIFF_SESSION_GRANT",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ] {
+        assert_eq!(std::env::var_os(name), None, "{name} reached the test");
+    }
+    let bus = std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap();
+    assert_eq!(bus, riff::sandbox::NO_BUS);
+}
+
 /// `riff test-run -- true` with only `bin` on the `PATH`.
 fn test_run_with_path(bin: &Path) -> std::process::Output {
     let env = isolated::Isolated::new();

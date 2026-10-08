@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isolated::Isolated;
-use riff::forge::App;
+use riff::forge::TokenRole;
 use riff::grant::{CLAUDE_TOKEN_SECRET, GRANT_VAR, KEY_VAR};
 use riff::login::SignIn;
 use riff::secrets::file_set;
@@ -23,13 +23,14 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::store::Memory;
 
-use crate::forge::{KEY, clone, fake_github};
+use crate::forge::{clone, reply};
 
 const MARKER: &str = "person_marker";
 const CLAUDE_TOKEN: &str = "sk-ant-oat01-plan-of-mike";
 const SESSION: &str = "w-grant";
 
-/// A riff-server that needs sign-in, and its URL.
+/// A riff-server that needs sign-in, and its URL. Its forge route gives
+/// a worker token: the test answers in place of the GitHub App.
 async fn signed_server() -> (Service, String) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -47,7 +48,20 @@ async fn signed_server() -> (Service, String) {
     let service = Service::load(config, Arc::new(Memory::default()))
         .await
         .unwrap();
-    let router = service.router();
+    let token = reply(TokenRole::Worker, 1);
+    let router = axum::Router::new()
+        .route(
+            "/v1/forge/token",
+            axum::routing::post(move || async move { axum::Json(token) }),
+        )
+        .layer(axum::middleware::map_response(
+            |mut r: axum::response::Response| async move {
+                let build = riff_core::build::VERSION.parse().unwrap();
+                r.headers_mut().insert(riff_core::build::HEADER, build);
+                r
+            },
+        ))
+        .fallback_service(service.router());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (service, url)
 }
@@ -116,9 +130,14 @@ fn files_with(dir: &Path, secret: &str, skip: &[&Path]) -> Vec<String> {
             if skip.iter().any(|s| path.starts_with(s)) {
                 continue;
             }
-            if path.is_dir() {
+            // No link and no FIFO: the pool of build jobs is a FIFO.
+            let Ok(kind) = e.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
                 stack.push(path);
-            } else if std::fs::read(&path)
+            } else if kind.is_file()
+                && std::fs::read(&path)
                 .is_ok_and(|b| String::from_utf8_lossy(&b).contains(secret))
             {
                 found.push(path.display().to_string());
@@ -131,17 +150,12 @@ fn files_with(dir: &Path, secret: &str, skip: &[&Path]) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_session_works_with_only_its_environment_and_leaks_no_secret() {
     let (service, url) = signed_server().await;
-    let (_fake, github) = fake_github().await;
     let dir = clone();
     let root = dir.path();
     let home = root.join("home");
     std::fs::create_dir_all(&home).unwrap();
     let riff_home = root.join("riff-home");
     std::fs::create_dir_all(&riff_home).unwrap();
-    std::fs::write(riff_home.join("config.toml"), "[forge]\napp = 123\n").unwrap();
-    let key = App::key_path(&riff_home.join("config.toml"));
-    std::fs::create_dir_all(key.parent().unwrap()).unwrap();
-    std::fs::write(key, KEY).unwrap();
     sign_in(&service, &url, &riff_home).await;
     let out = root.join("out");
     std::fs::create_dir_all(&out).unwrap();
@@ -155,7 +169,6 @@ async fn a_session_works_with_only_its_environment_and_leaks_no_secret() {
         .env("RIFF_HOME", &riff_home)
         .env("RIFF_SESSION", SESSION)
         .env("HOME", &home)
-        .env(riff::forge::API_VAR, &github)
         .env("TMUX_PANE", "%5")
         .env("GH_TOKEN", MARKER)
         .env("ANTHROPIC_API_KEY", MARKER)
