@@ -506,6 +506,18 @@ pub enum Refused {
     /// A write path of the profile, with each link resolved, is outside
     /// its root: the second path (01M4DWJ0KT7G2RX05X00YGVN21).
     OutOfRoot(PathBuf, PathBuf),
+    /// The dir where the sandbox starts has a link below the worktree
+    /// folder of its clone: the second path is where the link goes
+    /// (01M4EPNXVSA592BFRKG4ZB9AWB).
+    Link(PathBuf, PathBuf),
+    /// The clone of git, the first path, is not the dir where the
+    /// sandbox starts, the second path, or a folder above it
+    /// (01M4EPNY387PPG93H7HYNZ07N5).
+    OtherClone(PathBuf, PathBuf),
+    /// The worktree of git, the first path, is not the clone, the second
+    /// path, its worktree folder or one folder in it
+    /// (01M4EPNYARVEJXA5419QGQMHD5).
+    NotInClone(PathBuf, PathBuf),
 }
 
 impl fmt::Display for Refused {
@@ -528,6 +540,24 @@ impl fmt::Display for Refused {
                 "the write path {} is a link out of its root {}",
                 p.display(),
                 root.display()
+            ),
+            Refused::Link(p, to) => write!(
+                f,
+                "the start dir {} has a link in the worktree folder of its clone, to {}",
+                p.display(),
+                to.display()
+            ),
+            Refused::OtherClone(clone, start) => write!(
+                f,
+                "the git dir is of the clone {}, and the start dir {} is not in it",
+                clone.display(),
+                start.display()
+            ),
+            Refused::NotInClone(p, clone) => write!(
+                f,
+                "the worktree {} is not the clone {}, its worktree folder, or one folder in it",
+                p.display(),
+                clone.display()
             ),
             Refused::Rules(p) => write!(
                 f,

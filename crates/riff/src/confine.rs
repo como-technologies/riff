@@ -383,13 +383,17 @@ pub struct Here {
     pub tools: Vec<PathBuf>,
     /// The riff server.
     pub server: Endpoint,
+    /// The dir where the sandbox starts, as riff got it: absolute, with
+    /// no link resolved. [`Here::session`] checks the worktree and the
+    /// clone against it (01M4EPNXVSA592BFRKG4ZB9AWB).
+    pub start: PathBuf,
 }
 
 impl Here {
     /// The facts of this process in its current dir, with the riff
     /// server `server`.
     pub fn of_process(server: &str) -> Result<Self> {
-        Self::of_dir(&std::env::current_dir()?, server, None)
+        Self::of_dir(&start_dir()?, server, None)
     }
 
     /// The facts of this process in the dir `cwd`, with the riff server
@@ -457,6 +461,8 @@ impl Here {
         }
         let server = Endpoint::of_url(server)
             .with_context(|| format!("the sandbox cannot read the server URL {server}"))?;
+        let start =
+            std::path::absolute(cwd).with_context(|| format!("no path {}", cwd.display()))?;
         Ok(Self {
             session,
             home,
@@ -470,6 +476,7 @@ impl Here {
             own,
             tools,
             server,
+            start,
         })
     }
 
@@ -493,8 +500,9 @@ impl Here {
     /// The [`Session`] of these facts, with each path resolved
     /// ([`resolve`]). A tool path that gives the home of the person or a
     /// secret is left out (01M4BTB7757XF8RZ6MRXKTM8SB). Each other path
-    /// goes as it is: [`Profile::of`] checks it. A target in the worktree
-    /// that a link takes out of the worktree is refused
+    /// goes as it is: [`Profile::of`] checks it. A worktree or a clone
+    /// that a session can plant is refused ([`in_clone`]), and so is a
+    /// target in the worktree that a link takes out of the worktree
     /// (01M4DWJ0KT7G2RX05X00YGVN21).
     ///
     /// ```
@@ -514,6 +522,7 @@ impl Here {
     ///     own: "/nowhere/run/riff/sessions/s1".into(),
     ///     tools: vec!["/usr/bin".into(), "/nowhere/h".into(), "/nowhere/h/.ssh".into()],
     ///     server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
+    ///     start: "/nowhere/h/app".into(),
     /// };
     /// let s = here.session().unwrap();
     /// assert_eq!(s.clone, std::path::Path::new("/nowhere/h/app"));
@@ -536,6 +545,7 @@ impl Here {
         };
         let worktrees = clone.join(".claude/worktrees");
         let mut worktree = resolve(&self.worktree);
+        in_clone(&self.start, &clone, &worktree)?;
         if worktree == clone {
             worktree = worktrees.clone();
         }
@@ -571,6 +581,90 @@ impl Here {
         session.tools = tools;
         Ok(session)
     }
+}
+
+/// Checks the place where a sandbox starts: `start`, the dir as riff
+/// got it, and `clone` and `worktree`, the clone and the worktree that
+/// git resolved there. A session writes the worktree folder of its
+/// clone, so it can put a link or a `.git` file there. [`git_in`]
+/// refuses a link in the place of a worktree, but takes a folder in a
+/// worktree with a `.git` for a repository of the session, for example
+/// the clone of a test. riff refuses:
+///
+/// - a link in `start` below the first worktree folder
+///   (01M4EPNXVSA592BFRKG4ZB9AWB);
+/// - a `clone` that is not `start` or a folder above it, for example
+///   from a `.git` file that names the git dir of another repository
+///   (01M4EPNY387PPG93H7HYNZ07N5);
+/// - a `worktree` that is not `clone`, its worktree folder or one
+///   folder in it (01M4EPNYARVEJXA5419QGQMHD5).
+///
+/// ```
+/// use riff::confine::in_clone;
+/// use riff::profile::Refused;
+///
+/// let dir = tempfile::tempdir()?;
+/// let app = dir.path().canonicalize()?.join("app");
+/// let tree = app.join(".claude/worktrees/w");
+/// std::fs::create_dir_all(&tree)?;
+/// in_clone(&app, &app, &app)?;
+/// in_clone(&tree, &app, &tree)?;
+/// // A link in the worktree folder to another repository.
+/// let other = dir.path().canonicalize()?.join("other");
+/// std::fs::create_dir_all(&other)?;
+/// let link = app.join(".claude/worktrees/x");
+/// std::os::unix::fs::symlink(&other, &link)?;
+/// assert!(matches!(in_clone(&link, &other, &other), Err(Refused::Link(..))));
+/// // A `.git` file of the worktree that names another clone.
+/// assert!(matches!(in_clone(&tree, &other, &tree), Err(Refused::OtherClone(..))));
+/// // A repository below a worktree.
+/// let deep = tree.join("sub");
+/// assert!(matches!(in_clone(&deep, &app, &deep), Err(Refused::NotInClone(..))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn in_clone(start: &Path, clone: &Path, worktree: &Path) -> Result<(), Refused> {
+    use std::path::Component;
+    let real = resolve(start);
+    let parts: Vec<Component> = start.components().collect();
+    let first = parts.windows(2).position(|w| {
+        matches!(w, [Component::Normal(a), Component::Normal(b)] if *a == ".claude" && *b == "worktrees")
+    });
+    if let Some(i) = first {
+        let top: PathBuf = parts[..i].iter().collect();
+        let rest: PathBuf = parts[i..].iter().collect();
+        if real != resolve(&top).join(&rest) {
+            return Err(Refused::Link(start.to_owned(), real));
+        }
+    }
+    if !real.starts_with(clone) {
+        return Err(Refused::OtherClone(clone.to_owned(), real));
+    }
+    let worktrees = clone.join(crate::worktrees::AGENT_DIR);
+    let fits = worktree == clone
+        || worktree == worktrees
+        || (worktree.parent() == Some(&worktrees)
+            && matches!(worktree.file_name(), Some(n) if n != ".." && n != "."));
+    match fits {
+        true => Ok(()),
+        false => Err(Refused::NotInClone(worktree.to_owned(), clone.to_owned())),
+    }
+}
+
+/// The dir where this process starts, as its path text: `PWD` when it
+/// names the current dir, else the current dir. The kernel resolves
+/// each link of the current dir, so only `PWD` keeps a link that a shell
+/// went through, for [`in_clone`] (01M4EPNXVSA592BFRKG4ZB9AWB).
+pub fn start_dir() -> Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let cwd = std::env::current_dir().context("no current dir")?;
+    let same = |p: &Path| match (std::fs::metadata(p), std::fs::metadata(&cwd)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    };
+    Ok(std::env::var_os("PWD")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && same(p))
+        .unwrap_or(cwd))
 }
 
 /// The path `name` in the folder `root`, with each link resolved. A
@@ -1085,6 +1179,11 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
 /// let e = riff::confine::git_in_tree(&main, dir.path()).unwrap_err();
 /// assert!(format!("{e:#}").contains("not in the worktree folder"), "{e:#}");
 /// assert!(riff::confine::git_in_tree(&main, &main.join(".claude/worktrees/w/sub")).is_err());
+/// // A link in the worktree folder to another repository.
+/// let other = tempfile::tempdir().unwrap();
+/// std::os::unix::fs::symlink(other.path(), main.join(".claude/worktrees/x")).unwrap();
+/// let e = riff::confine::git_in_tree(&main, &main.join(".claude/worktrees/x")).unwrap_err();
+/// assert!(format!("{e:#}").contains("it is a link"), "{e:#}");
 /// ```
 pub fn git_in_tree(main: &Path, tree: &Path) -> Result<std::process::Command> {
     let main = main
@@ -1193,7 +1292,7 @@ pub fn run(
     args: &[OsString],
 ) -> Result<()> {
     use std::os::unix::process::CommandExt;
-    let here = Here::of_dir(&std::env::current_dir()?, server, name)?.with_program(program);
+    let here = Here::of_dir(&start_dir()?, server, name)?.with_program(program);
     let profile = profile(role, &here)?;
     let session = here.session()?;
     // No crash in the session or its test runs starts the crash helper
@@ -1244,7 +1343,7 @@ pub fn run(
 /// of it. The apply runs in a thread of its own: Landlock restricts
 /// only that thread, so this process stays free.
 pub fn show(role: Role, server: &str, name: Option<&str>) -> Result<String> {
-    let here = Here::of_dir(&std::env::current_dir()?, server, name)?;
+    let here = Here::of_dir(&start_dir()?, server, name)?;
     let profile = profile(role, &here)?;
     let ports = ports(&profile);
     let applied = std::thread::scope(|s| s.spawn(|| apply(&profile, &ports)).join())

@@ -641,6 +641,95 @@ fn a_link_out_of_the_worktree_gives_no_sandbox_and_no_write() {
     assert!(!away.join("new").exists(), "claude ran: {err}");
 }
 
+/// `riff workers sandbox` in `start`, from a shell that went to `start`
+/// (`PWD`), refuses with `refusal`. It shows no profile, and it runs no
+/// program, so the repository `other` gets no file `new`.
+fn refuses_at(m: &Machine, start: &Path, other: &Path, refusal: &str) {
+    let sandbox = |more: &[&str]| {
+        m.env
+            .riff()
+            .args(["workers", "sandbox", "--role", "worker"])
+            .args(more)
+            .current_dir(start)
+            .env("PWD", start)
+            .env("RIFF_SESSION", "w1")
+            .output()
+            .unwrap()
+    };
+    let out = sandbox(&["--show"]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(!out.status.success(), "{out:?}");
+    assert!(err.contains(refusal), "{err}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+
+    let new = other.join("new");
+    let out = sandbox(&["--", "touch", new.to_str().unwrap()]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(!out.status.success(), "{out:?}");
+    assert!(err.contains(refusal), "{err}");
+    assert!(!new.exists(), "the program ran: {err}");
+}
+
+/// Another repository of the person, outside the clone.
+fn other_repository(m: &Machine) -> PathBuf {
+    let other = m.clone().parent().unwrap().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "-q"]);
+    other
+}
+
+/// 01M4EPNXVSA592BFRKG4ZB9AWB: a session writes the worktree folder, so
+/// it can put a link there to another repository of the person. A
+/// sandbox that starts at the link gets no profile: the other
+/// repository and its git dir get no write.
+#[test]
+fn a_link_in_the_worktree_folder_to_another_repository_gives_no_sandbox() {
+    let m = Machine::new();
+    let other = other_repository(&m);
+    // A link in a worktree: the folder has a `.git`, so it looks like a
+    // repository of the session.
+    let link = m.worktrees().join("issue-1/x");
+    std::os::unix::fs::symlink(&other, &link).unwrap();
+    refuses_at(&m, &link, &other, "has a link in the worktree folder");
+    // A link in the place of a worktree.
+    let link = m.worktrees().join("x");
+    std::os::unix::fs::symlink(&other, &link).unwrap();
+    refuses_at(&m, &link, &other, "is a link or not a folder");
+}
+
+/// 01M4EPNY387PPG93H7HYNZ07N5: a `.git` file in a worktree that names
+/// the git dir of another repository gives no profile.
+#[test]
+fn a_git_file_that_names_another_clone_gives_no_sandbox() {
+    let m = Machine::new();
+    let other = other_repository(&m);
+    let tree = m.worktrees().join("issue-1/y");
+    std::fs::create_dir_all(&tree).unwrap();
+    std::fs::write(
+        tree.join(".git"),
+        format!("gitdir: {}\n", other.join(".git").display()),
+    )
+    .unwrap();
+    refuses_at(&m, &tree, &other, "the git dir is of the clone");
+}
+
+/// 01M4EPNYARVEJXA5419QGQMHD5: a worktree of the clone in a folder below
+/// a worktree is not one folder of the worktree folder: no profile. The
+/// clone of the person gets no write.
+#[test]
+fn a_worktree_below_a_worktree_gives_no_sandbox() {
+    let m = Machine::new();
+    let deep = m.worktrees().join("issue-1/sub");
+    std::fs::create_dir_all(&deep).unwrap();
+    let clone = m.clone();
+    std::fs::write(
+        deep.join(".git"),
+        format!("gitdir: {}\n", clone.join(".git/worktrees/issue-1").display()),
+    )
+    .unwrap();
+    refuses_at(&m, &deep, &clone, "is not the clone");
+}
+
 /// 01M4DWJ0AQX8N7J9T02VJ0XHF1: the sandbox makes the own state folder
 /// of the session, and the wrapper deletes it when the session ends.
 #[test]
