@@ -62,6 +62,8 @@ struct Ran {
     calls: String,
     /// Each argument of each call, on one line.
     args: String,
+    /// The stdin of the last `secrets versions add`.
+    stdin: String,
 }
 
 impl Ran {
@@ -200,6 +202,7 @@ impl Cloud {
             out,
             calls: fs::read_to_string(&log).unwrap_or_default(),
             args: fs::read_to_string(&each).unwrap_or_default(),
+            stdin: fs::read_to_string(logs.path().join("calls.stdin")).unwrap_or_default(),
         }
     }
 
@@ -267,7 +270,7 @@ fn create_makes_the_bucket_and_sets_the_rules() {
 #[test]
 fn create_makes_the_secret_of_the_github_app() {
     let ran = Cloud::new().run(&["create", "shared"]).ok();
-    ran.line("secrets create riff-forge-app-key ");
+    ran.line("secrets describe riff-forge-app-key ");
     assert!(
         !ran.calls.contains("secrets versions add riff-forge-app-key"),
         "{}",
@@ -1093,6 +1096,8 @@ fn forge_stores_the_app_in_its_secret_and_the_deploy_names_the_secret() {
     ran.line("secrets describe riff-forge-app-key ");
     let add = ran.line("secrets versions add riff-forge-app-key --data-file=- ");
     assert!(!add.contains("the-key"), "{add}");
+    let version: serde_json::Value = serde_json::from_str(&ran.stdin).unwrap();
+    assert_eq!(version, serde_json::json!({ "app": 123, "key": pem }));
     let account = "serviceAccount:riff-server@como-riff.iam.gserviceaccount.com";
     for role in [
         "roles/secretmanager.secretAccessor",
