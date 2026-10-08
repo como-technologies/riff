@@ -3133,8 +3133,8 @@ flowchart LR
 
 | | lead | worker | verifier | test run |
 |---|---|---|---|---|
-| Write | the clone, the riff state, its temp, its Claude folder | its worktree, its target, the objects, refs, logs and worktrees of the git dir of the clone, the riff state, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
-| Read | the system, its tools, its permission rules, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, and its worktree |
+| Write | the worktrees of the clone, the objects, refs, logs and worktrees of the git dir of the clone, the riff state, its temp, its Claude folder | its worktree, its target, the objects, refs, logs and worktrees of the git dir of the clone, the riff state, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
+| Read | the system, its tools, its permission rules, the clone, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, and its worktree |
 | Network | riff server, forge, registries, model | the same | the same | loopback only |
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
@@ -3150,6 +3150,15 @@ that is not absolute or that has a `..` part.
 - **Its permission rules.** The file of the permission rules of a
   session is `~/.local/share/riff/rules/SESSION.json`. The session
   reads it and cannot write it.
+- **The files of each start.** riff writes the MCP config of the lead
+  and the workers to `~/.local/share/riff/given/workers-mcp.json`, and
+  the plugin to `~/.local/share/riff/claude-plugin`. Each session
+  reads them, and no session writes them. So no session changes the
+  MCP servers or the hooks of the next `claude`.
+- **The git dir of the clone.** No session writes the `config`, the
+  `hooks`, the `info` or the `packed-refs` of the git dir of the
+  clone: git runs or reads them later, outside each sandbox. The lead
+  writes no file of the clone: its workers change the code.
 - **Ports.** A session connects to the TCP ports of its profile (443
   and the port of the riff server), and to the local port range of
   the kernel, so that a test server on port 0 works.
@@ -3181,8 +3190,9 @@ cargo login
 #### How riff applies the sandbox
 
 Each worker pane runs `riff workers run`. It starts `claude` through
-`riff workers sandbox`, the last step before `claude`. The lead does
-not run in a sandbox yet. `riff workers
+`riff workers sandbox`, the last step before `claude`. The pane of the
+lead runs `riff workers lead`, and it starts `claude` through `riff
+workers sandbox --role lead` too. `riff workers
 sandbox` makes the profile from the paths of the session, follows each
 symlink, and restricts itself with Landlock. Then it runs `claude` in
 its place. Each child of `claude` (Bash, `cargo`, the tests) gets the
@@ -3397,6 +3407,67 @@ clone:
 riff workers git --worktree .claude/worktrees/issue-12 -- status
 ```
 
+#### The lead in its sandbox
+
+The lead starts workers, stops them, reaps their old processes and
+opens the `riff tail` pane. In its sandbox, it reaches no tmux server
+and sends no signal to a process outside. So the broker of the lead
+does these steps outside the sandbox. You use the same commands in the
+lead as before:
+
+```sh
+riff workers start 2
+riff workers stop %7
+riff workers reap
+```
+
+```mermaid
+sequenceDiagram
+    participant L as riff in the lead (sandbox)
+    participant B as broker of the lead (outside)
+    participant T as tmux, the processes of a worker
+    L->>B: workers-stop %7
+    B->>T: is %7 a worker of this clone?
+    B->>T: kill-pane %7, stop its processes
+    B-->>L: Stopped 1 worker.
+```
+
+The broker of the lead runs only its list of operations. The broker of
+a worker refuses each of them.
+
+| Operation | What the broker does |
+|---|---|
+| `worker-panes` | lists the worker panes of the machine |
+| `tail-pane` | adds the `riff tail` pane beside the lead |
+| `workers-start` | starts 1 to 64 workers, with the `claude`, the riff server and the clone of the broker |
+| `workers-stop` | stops a worker of this clone, or each worker of this clone |
+| `workers-reap` | stops the old processes of a worker of this clone |
+| `oom-journal` | reads the lines of `systemd-oomd`, to find why a worker died |
+| `pane-screen`, `pane-type` | reads and types into the pane of the lead, for the compact at the end of a wave |
+
+tmux marks each worker pane with its main clone (`@riff-clone`). The
+broker of a lead stops and reaps only the workers of its own clone,
+also when you name the pane of a worker of another repository. A
+worker that riff started before this release has no mark: stop it
+with `riff workers stop` in a terminal outside the lead.
+
+The lead has its own Claude folder,
+`~/.local/share/riff/claude/lead-OWNER-REPO`. Its memory starts empty
+there. To keep the memory of the lead of an older riff, copy it one
+time before you start the riff. Put the folder name of your clone in
+`~/.claude/projects` in place of `-home-ada-src-riff`:
+
+```sh
+mkdir -p ~/.local/share/riff/claude/lead-como-technologies-riff/projects
+cp -r ~/.claude/projects/-home-ada-src-riff ~/.local/share/riff/claude/lead-como-technologies-riff/projects/
+```
+
+To see the sandbox of the lead, run this in the main clone:
+
+```sh
+riff workers sandbox --show --role lead --name lead-como-technologies-riff
+```
+
 #### See the sandbox of a worker
 
 Each worker pane shows one line when its sandbox is on:
@@ -3421,10 +3492,9 @@ example `--name lead-como-technologies-riff`.
 #### Not yet in the sandbox
 
 The sandbox wave (Wave 22) puts the profiles to work, one part at a
-time. The lead does not run in a sandbox yet. "The shared surfaces
-with no control yet" in "The threat model of the sandbox" lists each
-part that is left, with its issue. The release 2.0.0 comes with each
-part.
+time. "The shared surfaces with no control yet" in "The threat model
+of the sandbox" lists each part that is left, with its issue. The
+release 2.0.0 comes with each part.
 
 ### See the permission rules of a worker
 
@@ -4354,8 +4424,8 @@ Control (see
 `claude --remote-control`. The lead gets a temp folder of its own and
 the forge token of the lead, and none of your credentials (see
 [The forge token of each role](#the-forge-token-of-each-role)). The
-lead also gets the permission rules of its profile (see
-[The sandbox of each role](#the-sandbox-of-each-role)). riff writes
+lead runs in the sandbox of its role, and gets the permission rules of
+its profile (see [The lead in its sandbox](#the-lead-in-its-sandbox)). riff writes
 the rules at each start of a lead, to its rules file, for example
 `~/.local/share/riff/rules/lead-como-technologies-riff.json`. When riff
 cannot make the rules, it says why in one line and starts the lead

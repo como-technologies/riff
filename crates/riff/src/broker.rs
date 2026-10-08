@@ -19,6 +19,11 @@
 //! | `test-run` | `riff test-run -- PROGRAM ARGS` of the riff outside, in a folder of the worktree of the session |
 //! | `outside` | the one command of a request that an admin approved (`riff outside ask`) |
 //!
+//! The broker of a lead (`--role lead`) also runs the operations of the
+//! lead in tmux and on the processes of its workers
+//! ([`crate::door::OPS`], 01M4DDWPC693RNWHY7P7XBZ9TB). The broker of
+//! each other role refuses them.
+//!
 //! - **One request, one reply socket.** The session sends each request
 //!   as one message with four file descriptors: the reply end of a
 //!   socket pair of its own, and its stdin, stdout and stderr. So many

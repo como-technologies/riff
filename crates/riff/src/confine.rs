@@ -11,7 +11,10 @@
 //! [`Profile`] of the role, restricts itself with Landlock, and then
 //! runs `claude` in its place. Each child of `claude` (the Bash
 //! commands, `cargo`, the tests) inherits the sandbox. No child can
-//! remove it or make it wider.
+//! remove it or make it wider. `riff workers lead` starts the lead the
+//! same way, with `--role lead` (01M4DDWP9XSA14E0YF211XZYKR). Its steps
+//! in tmux and on the processes of its workers go through its broker
+//! ([`crate::door`]).
 //!
 //! | Landlock limits | From |
 //! |---|---|
