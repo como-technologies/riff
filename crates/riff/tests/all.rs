@@ -64,6 +64,7 @@ mod rollout;
 mod sandbox;
 mod secrets;
 mod session;
+mod session_secrets;
 mod signed;
 mod smoke;
 mod start;

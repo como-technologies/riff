@@ -799,8 +799,11 @@ mod tests {
             subject_token: Some(text("s")),
             subject_token_type: Some(text("t")),
             session: Some(text("s1")),
+            requested_token_type: Some(text("g")),
+            session_proof: Some(text("p")),
             resource: Some(text("https://riff.example")),
         });
+        c.trip(&GrantEnd { token: text("g") });
         c.trip(&TokenReply {
             access_token: text("a"),
             token_type: text("DPoP"),

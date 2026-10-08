@@ -209,7 +209,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use riff_core::name::Who;
-use riff_core::wire::TokenReply;
+use riff_core::wire::{GRANT_TOKEN_TYPE, TokenReply};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -220,6 +220,9 @@ pub const ACCESS_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// A sign-in ends when no refresh token of it is used this long (R80).
 pub const REFRESH_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// A session grant ends when no swap uses it this long (01M4CVXJ5RHHMPE4AYH7KV6E2R).
+pub const GRANT_IDLE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// The USER of the riff server itself. The server posts its own notes as
 /// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
@@ -302,12 +305,29 @@ pub struct Tokens {
 
 struct SignIn {
     user: String,
-    /// The thumbprint of the device key.
+    /// The thumbprint of the device key, or of the session key of a
+    /// grant.
     jkt: String,
     /// The position of the log at the start of the sign-in.
     position: u64,
     /// The sign-in ends at this time, unless a refresh comes first.
     idle_until: Instant,
+    /// The session grant of a sign-in that a grant made
+    /// ([`Tokens::grant`]). `None` for the sign-in of a device.
+    grant: Option<Grant>,
+}
+
+/// The part of a sign-in that only a session grant has
+/// (01M4CVXJ3GCEB7B4632J7DD84A).
+#[derive(Clone)]
+struct Grant {
+    /// The session that each access token of the grant acts as.
+    session: String,
+    /// The hash of the grant.
+    hash: Hash,
+    /// The sign-in of the device that made the grant. The grant ends
+    /// with it.
+    parent: u64,
 }
 
 struct Access {
@@ -447,6 +467,7 @@ impl Tokens {
                 jkt: jkt.to_owned(),
                 position,
                 idle_until: now + REFRESH_IDLE,
+                grant: None,
             },
         );
         Ok(self.start_chain(id, now))
@@ -480,7 +501,7 @@ impl Tokens {
         let ids: Vec<u64> = self
             .sign_ins
             .iter()
-            .filter(|(_, s)| s.user == user && s.position < position)
+            .filter(|(_, s)| s.user == user && s.position < position && s.grant.is_none())
             .map(|(id, _)| *id)
             .collect();
         for id in &ids {
@@ -545,7 +566,7 @@ impl Tokens {
         let ids: Vec<u64> = self
             .sign_ins
             .iter()
-            .filter(|(_, s)| s.position > end || !known(&s.user))
+            .filter(|(_, s)| (s.position > end || !known(&s.user)) && s.grant.is_none())
             .map(|(id, _)| *id)
             .collect();
         for id in &ids {
@@ -633,6 +654,7 @@ impl Tokens {
                     jkt: s.jkt,
                     position,
                     idle_until,
+                    grant: None,
                 };
                 tokens.sign_ins.insert(s.id, sign_in);
             }
@@ -774,6 +796,171 @@ impl Tokens {
         })
     }
 
+    /// Swaps a live person access token for a session grant
+    /// (01M4CVXJ3GCEB7B4632J7DD84A). The wrapper of a session asks for it outside the
+    /// sandbox: `token` is the person access token, `jkt` the device key
+    /// of its sign-in, and `session_jkt` the thumbprint of a new session
+    /// key. The grant is a new sign-in on the session key, with no
+    /// chain. It does not rotate, so each process of the session can
+    /// swap it ([`Tokens::from_grant`]). It acts only as `session`. It
+    /// ends with the sign-in that made it, or after [`GRANT_IDLE`] with
+    /// no swap. The reply holds the grant in `access_token`, and no
+    /// refresh token.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{GRANT_IDLE, Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let person = tokens.sign_in("mike@comotechnologies.io", "device", now).unwrap();
+    /// let grant = tokens.grant(&person.access_token, "device", "a6cf", "session", now).unwrap();
+    /// assert_eq!(grant.expires_in, GRANT_IDLE.as_secs());
+    /// assert_eq!(grant.refresh_token, "");
+    ///
+    /// // Only the session key swaps the grant, and the token acts only
+    /// // as the session.
+    /// assert_eq!(tokens.from_grant(&grant.access_token, "device", now), Err(Refused::WrongKey));
+    /// let access = tokens.from_grant(&grant.access_token, "session", now).unwrap();
+    /// let who = tokens.caller(&access.access_token, "session", now).unwrap();
+    /// assert_eq!(who.to_string(), "mike/a6cf");
+    ///
+    /// // A token of the grant gives no other token.
+    /// let other = tokens.for_session(&access.access_token, "session", "b7d0", now);
+    /// assert_eq!(other, Err(Refused::NotPerson));
+    /// let again = tokens.grant(&access.access_token, "session", "b7d0", "k2", now);
+    /// assert_eq!(again, Err(Refused::NotPerson));
+    ///
+    /// // The session key signs the posts of the session.
+    /// assert_eq!(tokens.keys("mike", now), ["device", "session"]);
+    ///
+    /// // The grant ends with the sign-in that made it.
+    /// assert_eq!(tokens.revoke_user("mike"), 1);
+    /// assert_eq!(tokens.from_grant(&grant.access_token, "session", now), Err(Refused::Unknown));
+    /// assert!(tokens.keys("mike", now).is_empty());
+    /// ```
+    pub fn grant(
+        &mut self,
+        token: &str,
+        jkt: &str,
+        session: &str,
+        session_jkt: &str,
+        now: Instant,
+    ) -> Result<TokenReply, Refused> {
+        let who = self.caller(token, jkt, now)?;
+        if who.session().is_some() {
+            return Err(Refused::NotPerson);
+        }
+        Who::new(who.user(), Some(session)).map_err(|_| Refused::Unknown)?;
+        self.sweep(now);
+        let parent = self.access[&hash(token)].sign_in;
+        let position = self.sign_ins[&parent].position;
+        let id = self.next_sign_in;
+        self.next_sign_in += 1;
+        let grant = format!("g{id}.{}", random_token());
+        self.sign_ins.insert(
+            id,
+            SignIn {
+                user: who.user().to_owned(),
+                jkt: session_jkt.to_owned(),
+                position,
+                idle_until: now + GRANT_IDLE,
+                grant: Some(Grant {
+                    session: session.to_owned(),
+                    hash: hash(&grant),
+                    parent,
+                }),
+            },
+        );
+        Ok(TokenReply {
+            access_token: grant,
+            token_type: GRANT_TOKEN_TYPE.into(),
+            expires_in: GRANT_IDLE.as_secs(),
+            refresh_token: String::new(),
+            user: who.user().to_owned(),
+        })
+    }
+
+    /// Swaps a session grant for a session access token of its session
+    /// (01M4CVXJ3GCEB7B4632J7DD84A). It works only with the session key `jkt` of the
+    /// grant. Each swap keeps the grant live for [`GRANT_IDLE`] more.
+    /// See [`Tokens::grant`].
+    pub fn from_grant(
+        &mut self,
+        grant: &str,
+        jkt: &str,
+        now: Instant,
+    ) -> Result<TokenReply, Refused> {
+        self.sweep(now);
+        let (id, session) = self.granted(grant, jkt, now)?;
+        let Some(sign_in) = self.sign_ins.get_mut(&id) else {
+            unreachable!("granted found the sign-in")
+        };
+        sign_in.idle_until = now + GRANT_IDLE;
+        let user = sign_in.user.clone();
+        let access_token = self.issue_access(id, Some(session), now);
+        Ok(TokenReply {
+            access_token,
+            token_type: "DPoP".into(),
+            expires_in: ACCESS_TTL.as_secs(),
+            refresh_token: String::new(),
+            user,
+        })
+    }
+
+    /// The sign-in and the session of a live session grant, used with
+    /// the session key `jkt`. It changes nothing.
+    pub fn granted(&self, grant: &str, jkt: &str, now: Instant) -> Result<(u64, String), Refused> {
+        let id = grant_id(grant).ok_or(Refused::Unknown)?;
+        let sign_in = self.sign_ins.get(&id).ok_or(Refused::Unknown)?;
+        let Some(given) = sign_in.grant.as_ref().filter(|g| g.hash == hash(grant)) else {
+            return Err(Refused::Unknown);
+        };
+        if sign_in.jkt != jkt {
+            return Err(Refused::WrongKey);
+        }
+        if now >= sign_in.idle_until {
+            return Err(Refused::Expired);
+        }
+        Ok((id, given.session.clone()))
+    }
+
+    /// Ends the session grant `grant`, used with its session key `jkt`,
+    /// and each token of it (01M4D0FTC5CCRBVNDBEXK2B4RJ). The wrapper of
+    /// the session calls it when `claude` ends. True when the grant was
+    /// in the store. A grant that is gone is no error; the wrong key is.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let person = tokens.sign_in("mike@comotechnologies.io", "device", now).unwrap();
+    /// let grant = tokens.grant(&person.access_token, "device", "a6cf", "session", now).unwrap();
+    /// let access = tokens.from_grant(&grant.access_token, "session", now).unwrap();
+    ///
+    /// // Only the session key ends the grant.
+    /// assert_eq!(tokens.end_grant(&grant.access_token, "device", now), Err(Refused::WrongKey));
+    /// assert_eq!(tokens.end_grant(&grant.access_token, "session", now), Ok(true));
+    /// assert_eq!(tokens.from_grant(&grant.access_token, "session", now), Err(Refused::Unknown));
+    /// assert!(tokens.caller(&access.access_token, "session", now).is_err());
+    /// assert_eq!(tokens.end_grant(&grant.access_token, "session", now), Ok(false));
+    ///
+    /// // The sign-in of the person stays.
+    /// assert!(tokens.caller(&person.access_token, "device", now).is_ok());
+    /// ```
+    pub fn end_grant(&mut self, grant: &str, jkt: &str, now: Instant) -> Result<bool, Refused> {
+        match self.granted(grant, jkt, now) {
+            Ok(_) | Err(Refused::Expired) => {
+                self.revoke(grant_id(grant).ok_or(Refused::Unknown)?);
+                Ok(true)
+            }
+            Err(Refused::WrongKey) => Err(Refused::WrongKey),
+            Err(_) => Ok(false),
+        }
+    }
+
     /// The number of live chains: one for each sign-in that got a pair
     /// from this store.
     pub fn chains(&self) -> usize {
@@ -848,7 +1035,7 @@ impl Tokens {
         let ids: Vec<u64> = self
             .sign_ins
             .iter()
-            .filter(|(_, s)| s.user == user)
+            .filter(|(_, s)| s.user == user && s.grant.is_none())
             .map(|(id, _)| *id)
             .collect();
         for id in &ids {
@@ -904,6 +1091,7 @@ impl Tokens {
                         jkt: s.jkt.clone(),
                         position: s.position,
                         idle_until: live(s.idle_until)?,
+                        grant: s.grant.as_ref().map(SavedGrant::of),
                     })
                 })
                 .collect(),
@@ -949,11 +1137,13 @@ impl Tokens {
                 )));
             }
             if let Some(idle_until) = clock.load(s.idle_until) {
+                let grant = s.grant.map(SavedGrant::load).transpose()?;
                 let sign_in = SignIn {
                     user: s.user,
                     jkt: s.jkt,
                     position: s.position,
                     idle_until,
+                    grant,
                 };
                 tokens.sign_ins.insert(s.id, sign_in);
             }
@@ -1045,7 +1235,11 @@ impl Tokens {
     /// Ends one sign-in and each token of it.
     fn revoke(&mut self, sign_in: u64) {
         self.sign_ins.remove(&sign_in);
-        self.access.retain(|_, a| a.sign_in != sign_in);
+        // Each grant of the sign-in ends with it.
+        self.sign_ins
+            .retain(|_, s| s.grant.as_ref().is_none_or(|g| g.parent != sign_in));
+        let live = &self.sign_ins;
+        self.access.retain(|_, a| live.contains_key(&a.sign_in));
         self.chains.retain(|_, c| c.sign_in != sign_in);
         self.old.retain(|_, id| *id != sign_in);
     }
@@ -1054,6 +1248,9 @@ impl Tokens {
     /// chains.
     fn sweep(&mut self, now: Instant) {
         self.sign_ins.retain(|_, s| now < s.idle_until);
+        let parents: BTreeSet<u64> = self.sign_ins.keys().copied().collect();
+        self.sign_ins
+            .retain(|_, s| s.grant.as_ref().is_none_or(|g| parents.contains(&g.parent)));
         let live = &self.sign_ins;
         self.access
             .retain(|_, a| now < a.expires && live.contains_key(&a.sign_in));
@@ -1135,6 +1332,36 @@ struct SavedSignIn {
     #[serde(default)]
     position: u64,
     idle_until: u64,
+    /// The grant of a sign-in that a session grant made. A form from
+    /// before the grants has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grant: Option<SavedGrant>,
+}
+
+/// The grant part of a saved sign-in.
+#[derive(Serialize, Deserialize)]
+struct SavedGrant {
+    session: String,
+    hash: String,
+    parent: u64,
+}
+
+impl SavedGrant {
+    fn of(grant: &Grant) -> Self {
+        SavedGrant {
+            session: grant.session.clone(),
+            hash: URL_SAFE_NO_PAD.encode(grant.hash),
+            parent: grant.parent,
+        }
+    }
+
+    fn load(self) -> Result<Grant, LoadError> {
+        Ok(Grant {
+            session: self.session,
+            hash: unhash(&self.hash)?,
+            parent: self.parent,
+        })
+    }
 }
 
 /// One chain: the hash of the refresh token of its current generation,
@@ -1196,6 +1423,14 @@ pub(crate) fn random_token() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
+/// The sign-in ID in a session grant `g{id}.{secret}`.
+fn grant_id(grant: &str) -> Option<u64> {
+    grant
+        .strip_prefix('g')
+        .and_then(|rest| rest.split_once('.'))
+        .and_then(|(id, _)| id.parse().ok())
+}
+
 fn hash(token: &str) -> Hash {
     Sha256::digest(token.as_bytes()).into()
 }
@@ -1211,6 +1446,81 @@ mod tests {
             .sign_in("mike@comotechnologies.io", "k", now)
             .unwrap();
         (tokens, pair, now)
+    }
+
+    /// A grant lives through a save and a load, with only its hash in
+    /// the saved form (01M4CVXJ5RHHMPE4AYH7KV6E2R).
+    #[test]
+    fn a_grant_lives_through_a_save_and_a_load() {
+        let (mut tokens, person, now) = signed_in();
+        let grant = tokens
+            .grant(&person.access_token, "k", "a6cf", "s", now)
+            .unwrap();
+        let wall = SystemTime::now();
+        let bytes = tokens.to_bytes(now, wall);
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains(&grant.access_token), "{text}");
+        let mut loaded = Tokens::from_bytes(&bytes, now, wall).unwrap();
+        let access = loaded.from_grant(&grant.access_token, "s", now).unwrap();
+        let who = loaded.caller(&access.access_token, "s", now).unwrap();
+        assert_eq!(who.to_string(), "mike/a6cf");
+        assert_eq!(loaded.keys("mike", now), ["k", "s"]);
+    }
+
+    /// A grant ends after GRANT_IDLE with no swap, and each swap keeps
+    /// it live (01M4CVXJ5RHHMPE4AYH7KV6E2R).
+    #[test]
+    fn a_grant_ends_when_no_swap_uses_it() {
+        let (mut tokens, person, now) = signed_in();
+        let grant = tokens
+            .grant(&person.access_token, "k", "a6cf", "s", now)
+            .unwrap();
+        let later = now + GRANT_IDLE - Duration::from_secs(1);
+        tokens.refresh(&person.refresh_token, "k", later).unwrap();
+        tokens.from_grant(&grant.access_token, "s", later).unwrap();
+        let still = later + GRANT_IDLE - Duration::from_secs(1);
+        assert!(tokens.from_grant(&grant.access_token, "s", still).is_ok());
+        let gone = still + GRANT_IDLE;
+        assert!(tokens.from_grant(&grant.access_token, "s", gone).is_err());
+    }
+
+    /// The end of the sign-ins of a person ends each grant of them, and
+    /// counts only the sign-ins of the devices.
+    #[test]
+    fn the_end_of_a_sign_in_ends_its_grants() {
+        let now = Instant::now();
+        let mut tokens = Tokens::default();
+        let person = tokens.start("bob", "k", 7, now).unwrap();
+        let grant = tokens
+            .grant(&person.access_token, "k", "a6cf", "s", now)
+            .unwrap();
+        let access = tokens.from_grant(&grant.access_token, "s", now).unwrap();
+        assert_eq!(tokens.end("bob", 8), 1);
+        assert_eq!(
+            tokens.from_grant(&grant.access_token, "s", now),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(
+            tokens.caller(&access.access_token, "s", now),
+            Err(Refused::Unknown)
+        );
+        assert!(tokens.keys("bob", now).is_empty());
+    }
+
+    /// A grant with a wrong secret is not known.
+    #[test]
+    fn a_grant_with_a_wrong_secret_is_not_known() {
+        let (mut tokens, person, now) = signed_in();
+        let grant = tokens
+            .grant(&person.access_token, "k", "a6cf", "s", now)
+            .unwrap();
+        let (id, _) = grant.access_token.split_once('.').unwrap();
+        let wrong = format!("{id}.wrong");
+        assert_eq!(tokens.from_grant(&wrong, "s", now), Err(Refused::Unknown));
+        assert_eq!(
+            tokens.from_grant("nonsense", "s", now),
+            Err(Refused::Unknown)
+        );
     }
 
     #[test]

@@ -2406,6 +2406,26 @@ pub const ID_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:id_token";
 /// person access token for a session access token (R19).
 pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 
+/// The token type of a session grant (01M4CVXJ3GCEB7B4632J7DD84A): the
+/// `requested_token_type` of a [`TOKEN_EXCHANGE`] that makes one, and the
+/// `subject_token_type` of a [`TOKEN_EXCHANGE`] that swaps one for a
+/// session access token. The reply that makes a grant has it as
+/// `token_type`.
+pub const GRANT_TOKEN_TYPE: &str = "urn:riff:token-type:session-grant";
+
+/// The path of [`GrantEnd`].
+pub const GRANT_END_PATH: &str = "/v1/token/end";
+
+/// `POST /v1/token/end`, as `application/x-www-form-urlencoded`: ends a
+/// session grant and each token of it (01M4D0FTC5CCRBVNDBEXK2B4RJ). The
+/// `DPoP` header is the proof of the session key of the grant. As in
+/// RFC 7009, a grant that is gone gets a success too.
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GrantEnd {
+    /// The session grant.
+    pub token: String,
+}
+
 /// `POST /v1/token`, as `application/x-www-form-urlencoded`.
 ///
 /// | `grant_type` | Fields |
@@ -2413,6 +2433,8 @@ pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_tok
 /// | `refresh_token` | `refresh_token` |
 /// | [`TOKEN_EXCHANGE`] | `subject_token` (an ID token), `subject_token_type` = [`ID_TOKEN_TYPE`] |
 /// | [`TOKEN_EXCHANGE`] | `subject_token` (a person access token), `subject_token_type` = [`ACCESS_TOKEN_TYPE`], `session` |
+/// | [`TOKEN_EXCHANGE`] | the same, and `requested_token_type` = [`GRANT_TOKEN_TYPE`], `session_proof` (a DPoP proof of the session key): a session grant |
+/// | [`TOKEN_EXCHANGE`] | `subject_token` (a session grant), `subject_token_type` = [`GRANT_TOKEN_TYPE`], the DPoP proof of the session key |
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TokenRequest {
     pub grant_type: String,
@@ -2425,6 +2447,13 @@ pub struct TokenRequest {
     /// The session ID of a session token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    /// [`GRANT_TOKEN_TYPE`] to ask for a session grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_token_type: Option<String>,
+    /// A DPoP proof of the session key of a new session grant, for the
+    /// same request as the proof of the device key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_proof: Option<String>,
     /// The server that the token is for (RFC 8707). When it is set, it
     /// must be the public URL of the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]

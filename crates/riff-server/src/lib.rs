@@ -218,13 +218,14 @@ use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
-    ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Read, ReadReply,
-    Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery,
-    RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan, SetStatus,
-    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
-    TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    Claim, DenyOwner, End, FactError, Free, GRANT_END_PATH, GRANT_TOKEN_TYPE, GrantEnd, Hold,
+    ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery,
+    LogReply, MeReply, Members, MembersReply, PassOwner, Pause, Person, PlanOff, PlanReply,
+    PlanSeen, PlanShow, Post, Read, ReadReply, Register, Release, ReleaseFor, Remove,
+    ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata,
+    SetAdmin, SetBlocked, SetIdle, SetPlan, SetStatus, SetStep, SignInConfig, Start,
+    TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest,
+    Unanswered, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -1990,6 +1991,7 @@ impl Service {
             // `riff login` and a refresh work with each version
             // (01M3MX4V43SF2XFCZWANHD19WV).
             .route(auth::TOKEN_PATH, post(token))
+            .route(GRANT_END_PATH, post(end_grant))
             .route("/v1/sign-in", get(sign_in_config))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
@@ -2743,7 +2745,21 @@ async fn token(
                     }
                 }
             }
+            Some(ACCESS_TOKEN_TYPE)
+                if r.requested_token_type.as_deref() == Some(GRANT_TOKEN_TYPE) =>
+            {
+                let mark = s.tokens_changes.load(Ordering::SeqCst);
+                let reply = grant(&s, &r, &proof).await;
+                match s.save_tokens_since(mark).await {
+                    Ok(()) => reply,
+                    Err(error) => {
+                        tracing::error!("the token store was not saved: {error}");
+                        Err(no(UNAVAILABLE))
+                    }
+                }
+            }
             Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof).await,
+            Some(GRANT_TOKEN_TYPE) => from_grant(&s, &r, &proof).await,
             _ => Err(no("invalid_request")),
         },
         _ => Err(no("unsupported_grant_type")),
@@ -2980,6 +2996,104 @@ async fn for_session(
     s.tokens()
         .for_session(token, &proof.jkt, session, now)
         .map_err(|_| no("invalid_grant"))
+}
+
+/// Swaps a person access token for a session grant on a new session
+/// key (01M4CVXJ3GCEB7B4632J7DD84A). The request carries two proofs: the `DPoP` header
+/// from the device key of the person token, and `session_proof` from
+/// the session key. The reply comes after the write of the token store,
+/// so the grant lives through a restart of the server.
+async fn grant(
+    s: &Server,
+    r: &TokenRequest,
+    proof: &dpop::Proof,
+) -> Result<TokenReply, TokenError> {
+    let (Some(token), Some(session), Some(session_proof)) =
+        (&r.subject_token, &r.session, &r.session_proof)
+    else {
+        return Err(no("invalid_request"));
+    };
+    let url = s.config.url(auth::TOKEN_PATH);
+    let session_key = dpop::verify(session_proof, "POST", &url, None, now_ms() / 1000)
+        .map_err(|_| no("invalid_dpop_proof"))?;
+    if session_key.jkt == proof.jkt {
+        return Err(no("invalid_dpop_proof"));
+    }
+    let now = Instant::now();
+    if s.tokens().caller(token, &proof.jkt, now).is_err() {
+        return Err(no("invalid_grant"));
+    }
+    s.tokens_written().await?;
+    s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
+    s.first_use(&session_key)
+        .map_err(|_| no("invalid_dpop_proof"))?;
+    let reply = s
+        .tokens_change()
+        .grant(token, &proof.jkt, session, &session_key.jkt, now)
+        .map_err(|_| no("invalid_grant"))?;
+    // The line names the session, never the grant.
+    tracing::info!("{} made a session grant for {session}", reply.user);
+    Ok(reply)
+}
+
+/// Swaps a session grant for a session access token (01M4CVXJ3GCEB7B4632J7DD84A). The
+/// `DPoP` header is the proof of the session key of the grant.
+async fn from_grant(
+    s: &Server,
+    r: &TokenRequest,
+    proof: &dpop::Proof,
+) -> Result<TokenReply, TokenError> {
+    let Some(grant) = &r.subject_token else {
+        return Err(no("invalid_request"));
+    };
+    if s.tokens()
+        .granted(grant, &proof.jkt, Instant::now())
+        .is_err()
+    {
+        return Err(no("invalid_grant"));
+    }
+    s.tokens_written().await?;
+    s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
+    s.tokens_change()
+        .from_grant(grant, &proof.jkt, Instant::now())
+        .map_err(|_| no("invalid_grant"))
+}
+
+/// Ends a session grant and each token of it
+/// (01M4D0FTC5CCRBVNDBEXK2B4RJ). The `DPoP` header is the proof of the
+/// session key of the grant. The end is saved before the reply.
+async fn end_grant(
+    AxumState(s): AxumState<Shared>,
+    headers: HeaderMap,
+    Form(r): Form<GrantEnd>,
+) -> Response {
+    let refuse = |error: TokenError| {
+        let status = match error.error.as_str() {
+            UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        (status, Json(error)).into_response()
+    };
+    let Ok(proof) = s.proof(&headers, "POST", GRANT_END_PATH, None) else {
+        return refuse(no("invalid_dpop_proof"));
+    };
+    if s.first_use(&proof).is_err() {
+        return refuse(no("invalid_dpop_proof"));
+    }
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let ended = s.tokens().end_grant(&r.token, &proof.jkt, Instant::now());
+    match ended {
+        Err(_) => return refuse(no("invalid_grant")),
+        Ok(true) => {
+            s.tokens_changes.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(false) => {}
+    }
+    if let Err(error) = s.save_tokens_since(mark).await {
+        tracing::error!("the token store was not saved: {error}");
+        return refuse(no(UNAVAILABLE));
+    }
+    StatusCode::OK.into_response()
 }
 
 /// Names the sign-in provider and the riff ID, for `riff login`. The

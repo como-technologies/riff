@@ -19,9 +19,13 @@
 //! | Network | a network namespace with the loopback interface only |
 //! | End | the first process of the run ends each process of the run when it ends; the run ends when riff ends |
 //!
-//! The run gets `TMPDIR=/tmp` and [`TEST_RUN_VAR`], and loses
-//! `XDG_RUNTIME_DIR` and `SSH_AUTH_SOCK`. riff removes the folder of
-//! the run at the end (01M4BTG72XPKSTDF4KYRKS4Z0D).
+//! The run gets its environment from nothing (`--clearenv`), then only
+//! the variables of [`crate::profile::TEST_RUN_VARS`] of the parent
+//! ([`env_args`]), `TMPDIR=/tmp`, [`TEST_RUN_VAR`] and a session bus
+//! that fails each call ([`NO_BUS`]). So no credential of the person,
+//! for example `GH_TOKEN`, and no secret of a session reaches a test
+//! (01M4CVXJGYCT2HKHJP3BWBV0HC). riff removes the folder of the run at the end
+//! (01M4BTG72XPKSTDF4KYRKS4Z0D).
 //!
 //! Before each run, [`check`] looks for `bwrap` and makes one empty
 //! sandbox. When one fails, riff runs nothing and prints one line with
@@ -91,9 +95,31 @@ pub const APPARMOR_PROFILE: &str = "/etc/apparmor.d/bwrap-userns-restrict";
 /// value is `1`.
 pub const TEST_RUN_VAR: &str = "RIFF_TEST_RUN";
 
-/// The variables that a test run loses: they name the places of the
-/// person outside the run.
-pub const DROPPED: [&str; 2] = ["XDG_RUNTIME_DIR", "SSH_AUTH_SOCK"];
+/// The session bus of a test run: an address where no bus listens, so
+/// that a test never reaches a keyring.
+pub const NO_BUS: &str = "unix:path=/nonexistent/riff-test-bus";
+
+/// The `--setenv` arguments of `bwrap` for each variable of `parent`
+/// that a test run keeps ([`crate::profile::test_run_kept`],
+/// 01M4CVXJGYCT2HKHJP3BWBV0HC).
+///
+/// ```
+/// use std::ffi::OsString;
+/// let parent = [("PATH", "/bin"), ("GH_TOKEN", "ghp_x"), ("CARGO_HOME", "/c"), ("RIFF_TEST_MARKER", "m")]
+///     .map(|(k, v)| (OsString::from(k), OsString::from(v)));
+/// assert_eq!(
+///     riff::sandbox::env_args(parent),
+///     ["--setenv", "PATH", "/bin", "--setenv", "CARGO_HOME", "/c"],
+/// );
+/// ```
+pub fn env_args(parent: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<String> {
+    parent
+        .into_iter()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(name, _)| crate::profile::test_run_kept(name))
+        .flat_map(|(name, value)| ["--setenv".to_owned(), name, value])
+        .collect()
+}
 
 /// What a host needs before a test run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -345,11 +371,14 @@ pub fn args(
     for at in ["/tmp", "/var/tmp"] {
         args.extend(["--bind".into(), tmp.clone(), at.into()]);
     }
+    args.push("--clearenv".into());
     args.extend(["--setenv".into(), "TMPDIR".into(), "/tmp".into()]);
     args.extend(["--setenv".into(), TEST_RUN_VAR.into(), "1".into()]);
-    for name in DROPPED {
-        args.extend(["--unsetenv".into(), name.into()]);
-    }
+    args.extend([
+        "--setenv".into(),
+        "DBUS_SESSION_BUS_ADDRESS".into(),
+        NO_BUS.into(),
+    ]);
     args.extend(["--chdir".into(), text(cwd)]);
     args
 }
@@ -394,6 +423,7 @@ pub fn test_run(program: &OsStr, program_args: &[OsString]) -> Result<i32> {
         .and_then(|f| f.parent().map(Path::to_owned));
     let status = Command::new(bwrap)
         .args(args(&profile, &session, run.path(), &cwd, pool.as_deref()))
+        .args(env_args(std::env::vars_os()))
         .arg("--")
         .arg(program)
         .args(program_args)
@@ -454,8 +484,9 @@ mod tests {
         for gone in ["/home/ada/.claude", "/run/user/1000/riff", "/run/user/1000"] {
             assert!(!a.iter().any(|x| x == gone), "{gone}");
         }
-        assert!(line.contains("--unsetenv XDG_RUNTIME_DIR --unsetenv SSH_AUTH_SOCK"));
-        assert!(line.contains("--setenv TMPDIR /tmp --setenv RIFF_TEST_RUN 1"));
+        assert!(line.contains("--clearenv --setenv TMPDIR /tmp --setenv RIFF_TEST_RUN 1"));
+        assert!(line.contains("--setenv DBUS_SESSION_BUS_ADDRESS unix:path=/nonexistent/"));
+        assert!(!line.contains("XDG_RUNTIME_DIR"), "{line}");
     }
 
     #[test]

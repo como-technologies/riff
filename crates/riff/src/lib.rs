@@ -90,6 +90,7 @@ pub mod docs;
 pub mod dropped;
 pub mod enable;
 pub mod forge;
+pub mod grant;
 pub mod help;
 pub mod home;
 pub mod hook;

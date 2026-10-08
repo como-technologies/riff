@@ -528,13 +528,13 @@ impl Profile {
 /// - tmux, for the pane of the worker: `TMUX`, `TMUX_PANE`.
 /// - The folders of the person: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
 ///   `XDG_STATE_HOME`, `XDG_CACHE_HOME`.
-/// - The runtime folder and the session bus of the person:
-///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`. No process in the
-///   session calls systemd: only the wrapper, outside the sandbox,
-///   does (01M4C2PY1DRWVWENJBM42D60M9). The `riff` of the session
-///   needs them for its local folder `$XDG_RUNTIME_DIR/riff`
-///   ([`crate::local`]) and for its keyring, until the secrets come
-///   in the environment (#611).
+/// - The runtime folder of the person: `XDG_RUNTIME_DIR`. No process
+///   in the session calls systemd: only the wrapper, outside the
+///   sandbox, does (01M4C2PY1DRWVWENJBM42D60M9). The `riff` of the
+///   session needs it for its local folder `$XDG_RUNTIME_DIR/riff`
+///   ([`crate::local`]). No session bus: the secrets of a session come
+///   in its environment, so no process of a session opens the keyring
+///   of the person ([`crate::grant`], 01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
 /// - The network: the proxy and the certificates.
 /// - Claude Code: `CLAUDE_CONFIG_DIR`. No `ANTHROPIC_` variable: a
 ///   session gets its model access only from the plan sign-in of the
@@ -562,7 +562,6 @@ pub const KEPT_VARS: &[&str] = &[
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR",
-    "DBUS_SESSION_BUS_ADDRESS",
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "NO_PROXY",
@@ -583,6 +582,97 @@ pub const KEPT_VARS: &[&str] = &[
     "RIFF_WORKER_SLICE",
 ];
 
+/// The variables of the parent that reach a test run
+/// (01M4CVXJGYCT2HKHJP3BWBV0HC). `riff test-run` starts the run with an empty
+/// environment, and then sets only these ([`crate::sandbox`]). A name
+/// that ends in `_` is a prefix.
+///
+/// - The account, the language and the terminal, as in [`KEPT_VARS`].
+/// - The tools of the build and the tests: cargo, rustup, rustc and the
+///   pool of build jobs. Each name is exact. A prefix stays only when no
+///   name under it can hold a credential or name a credential program:
+///   so no `CARGO_REGISTRY_TOKEN` and no `CARGO_REGISTRIES_` variable.
+/// - riff: the server of the tests.
+///
+/// No runtime folder, no session bus, no agent socket, no credential
+/// of the person and no secret of a session.
+pub const TEST_RUN_VARS: &[&str] = &[
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "PATH",
+    "LANG",
+    "LANGUAGE",
+    "LC_",
+    "TZ",
+    "TERM",
+    "COLORTERM",
+    "NO_COLOR",
+    "CLICOLOR_FORCE",
+    "CARGO",
+    "CARGO_HOME",
+    "CARGO_TARGET_DIR",
+    "CARGO_TARGET_",
+    "CARGO_BUILD_JOBS",
+    "CARGO_MAKEFLAGS",
+    "CARGO_INCREMENTAL",
+    "CARGO_NET_OFFLINE",
+    "CARGO_TERM_",
+    "RUSTUP_HOME",
+    "RUSTUP_TOOLCHAIN",
+    "RUSTC",
+    "RUSTC_WRAPPER",
+    "RUSTFLAGS",
+    "RUSTDOCFLAGS",
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "RUST_MIN_STACK",
+    "RUST_TEST_THREADS",
+    "MAKEFLAGS",
+    "MFLAGS",
+    "RIFF_SERVER",
+];
+
+/// True when the variable `name` of the parent reaches a test run
+/// ([`TEST_RUN_VARS`]).
+///
+/// ```
+/// use riff::profile::test_run_kept;
+///
+/// assert!(test_run_kept("PATH"));
+/// assert!(test_run_kept("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER"));
+/// assert!(test_run_kept("MAKEFLAGS"));
+/// assert!(!test_run_kept("GH_TOKEN"));
+/// assert!(!test_run_kept("CARGO_REGISTRY_TOKEN"));
+/// assert!(!test_run_kept("CARGO_REGISTRIES_X_TOKEN"));
+/// assert!(!test_run_kept("CARGO_REGISTRY_CREDENTIAL_PROVIDER"));
+/// assert!(!test_run_kept("RIFF_TEST_MARKER"));
+/// assert!(!test_run_kept("XDG_RUNTIME_DIR"));
+/// assert!(!test_run_kept("SSH_AUTH_SOCK"));
+/// assert!(!test_run_kept("DBUS_SESSION_BUS_ADDRESS"));
+/// assert!(!test_run_kept("RIFF_SESSION_GRANT"));
+/// assert!(!test_run_kept("RIFF_SESSION_KEY"));
+/// assert!(!test_run_kept("CLAUDE_CODE_OAUTH_TOKEN"));
+/// ```
+pub fn test_run_kept(name: &str) -> bool {
+    in_list(TEST_RUN_VARS, name)
+}
+
+/// True when `list` names `name`: a name that ends in `_` is a prefix.
+fn in_list(list: &[&str], name: &str) -> bool {
+    list.iter().any(|k| match k.strip_suffix('_') {
+        Some(_) => name.len() > k.len() && name.starts_with(k),
+        None => name == *k,
+    })
+}
+
+/// The variables that the wrapper of a session keeps and `claude` does
+/// not get: the session bus of the person, for the keyring of the
+/// person (01M4CVXJ7ZDAVRKJ8Y59R3KPDV). The tmux server of riff keeps them for the
+/// wrapper in each pane.
+pub const WRAPPER_VARS: &[&str] = &["DBUS_SESSION_BUS_ADDRESS"];
+
 /// True when the variable `name` of the parent reaches `claude`
 /// ([`KEPT_VARS`]).
 ///
@@ -601,12 +691,12 @@ pub const KEPT_VARS: &[&str] = &[
 /// assert!(!kept("ANTHROPIC_API_KEY"), "no API billing");
 /// assert!(!kept("ANTHROPIC_AUTH_TOKEN"));
 /// assert!(!kept("ANTHROPIC_BASE_URL"));
+/// assert!(!kept("DBUS_SESSION_BUS_ADDRESS"), "no keyring in a session");
+/// assert!(!kept("RIFF_SESSION_GRANT"), "only the wrapper sets the secrets");
+/// assert!(!kept("CLAUDE_CODE_OAUTH_TOKEN"));
 /// ```
 pub fn kept(name: &str) -> bool {
-    KEPT_VARS.iter().any(|k| match k.strip_suffix('_') {
-        Some(_) => name.len() > k.len() && name.starts_with(k),
-        None => name == *k,
-    })
+    in_list(KEPT_VARS, name)
 }
 
 /// Refuses a path that is not absolute or that has a `..` component:
