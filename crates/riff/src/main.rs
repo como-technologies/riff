@@ -396,8 +396,9 @@ enum Command {
     },
     /// Print the status line of a Claude Code session
     ///
-    /// It shows the short session ID, the claims, and `lead` or
-    /// `blocked`. Claude Code runs it with the session on stdin. It always
+    /// It shows the label of the session as `riff top` names it
+    /// (`USER@HOST:REPO#WORKTREE (ID)`), its role, its state and its
+    /// claims. Claude Code runs it with the session on stdin. It always
     /// exits with status 0.
     #[command(hide = true)]
     Statusline,

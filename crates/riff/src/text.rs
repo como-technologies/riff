@@ -373,7 +373,7 @@ pub struct Label {
     pub repo: Option<String>,
     /// The worktree, or None in the main clone.
     pub worktree: Option<String>,
-    /// The first [`ID_CHARS`] characters of the session ID.
+    /// The first 8 characters of the session ID, as in `riff who`.
     pub id: Option<String>,
 }
 
