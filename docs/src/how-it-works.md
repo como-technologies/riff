@@ -3111,8 +3111,8 @@ profile.
 
 No role reads your home as a whole, your keyring, your D-Bus, your
 SSH or GnuPG keys, or the sign-in of `gh`. The key of the GitHub App
-of riff is never on your machine. riff refuses a path of a session that is not absolute or that
-has a `..` part.
+of riff is never on your machine. riff refuses a path of a session
+that is not absolute or that has a `..` part.
 
 ```mermaid
 flowchart LR

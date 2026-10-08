@@ -232,8 +232,6 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
 use crate::engine::{Admitted, Authenticated, Engine, Failed, Routed, SignIns, command};
-use riff_core::forge::{TokenRole, role_of};
-use riff_core::wire::{ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply};
 use crate::import::Old;
 use crate::lease::Lease;
 use crate::oidc::Identity;
@@ -244,6 +242,8 @@ use crate::state::{
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
 use crate::trace::DeniedCode;
+use riff_core::forge::{TokenRole, role_of};
+use riff_core::wire::{ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply};
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -2356,7 +2356,9 @@ async fn forge_token(
         return Err(forge::Refusal::NoSignIn.into());
     }
     let caller = admit(&s, &proof, &r.me)?;
-    let (role, repo) = s.engine.peek(&caller, |state| forge_facts(state, &r.me))??;
+    let (role, repo) = s
+        .engine
+        .peek(&caller, |state| forge_facts(state, &r.me))??;
     Ok(Json(s.forge.give(r.me.who(), &repo, role).await?))
 }
 
@@ -2370,11 +2372,10 @@ async fn forge_check(
         return Err(forge::Refusal::NoSignIn.into());
     }
     admit(&s, &proof, &r.me)?;
-    let repo = r
-        .me
-        .default_thread()
-        .ok_or(forge::Refusal::NoRepository)?
-        .to_string();
+    let repo =
+        r.me.default_thread()
+            .ok_or(forge::Refusal::NoRepository)?
+            .to_string();
     Ok(Json(s.forge.check(&repo).await?))
 }
 

@@ -483,9 +483,18 @@ async fn no_outcome_of_the_token_step_gives_claude_a_credential_of_the_person() 
         let (seen_by_claude, stderr) = run_worker(outcome).await;
         let name = outcome.name;
         let seen_by_claude = seen_by_claude.as_str();
-        assert!(!seen_by_claude.contains(MARKER), "{name}: claude saw: {seen_by_claude}");
-        assert!(!seen_by_claude.contains("SSH_AUTH_SOCK"), "{name}: {seen_by_claude}");
-        assert!(seen_by_claude.contains("RIFF_FORGE_DIR="), "{name}: {seen_by_claude}");
+        assert!(
+            !seen_by_claude.contains(MARKER),
+            "{name}: claude saw: {seen_by_claude}"
+        );
+        assert!(
+            !seen_by_claude.contains("SSH_AUTH_SOCK"),
+            "{name}: {seen_by_claude}"
+        );
+        assert!(
+            seen_by_claude.contains("RIFF_FORGE_DIR="),
+            "{name}: {seen_by_claude}"
+        );
         match outcome.line {
             None => {
                 assert!(
@@ -495,7 +504,10 @@ async fn no_outcome_of_the_token_step_gives_claude_a_credential_of_the_person() 
                 assert!(!stderr.contains("no forge token"), "{name}: {stderr}");
             }
             Some(line) => {
-                assert!(!seen_by_claude.contains("password="), "{name}: {seen_by_claude}");
+                assert!(
+                    !seen_by_claude.contains("password="),
+                    "{name}: {seen_by_claude}"
+                );
                 assert!(stderr.contains("no forge token"), "{name}: {stderr}");
                 assert!(stderr.contains(line), "{name}: {stderr}");
             }

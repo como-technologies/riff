@@ -119,7 +119,8 @@ impl Mike {
 
     async fn forge(&self, base: &str, uri: &str) -> (u16, String) {
         let me = uri.split('#').next().unwrap();
-        self.call(base, uri, "forge/token", json!({ "me": me })).await
+        self.call(base, uri, "forge/token", json!({ "me": me }))
+            .await
     }
 
     async fn forge_token(&self, base: &str, uri: &str) -> ForgeTokenReply {
@@ -310,5 +311,9 @@ async fn riff_forge_check_makes_a_token_of_each_role_and_revokes_it() {
         let error = role.error.as_deref().unwrap_or_default();
         assert!(error.contains("administration"), "{error}");
     }
-    assert_eq!(github.revoked().len(), 6, "a token with too many rights ends at once");
+    assert_eq!(
+        github.revoked().len(),
+        6,
+        "a token with too many rights ends at once"
+    );
 }

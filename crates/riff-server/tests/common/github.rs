@@ -119,7 +119,11 @@ async fn access_token(
     }
     let repositories = body["repositories"]
         .as_array()
-        .map(|r| r.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .map(|r| {
+            r.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default();
     inner.asked.push(Asked {
         installation: id,

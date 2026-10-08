@@ -20,9 +20,9 @@
 //! the session in the facts of the server. The server finds the
 //! installation of the App on that repository, and makes a token there
 //! for that one repository and the
-//! [`permissions`](riff_core::forge::permissions) of the role. It
+//! [`permissions`] of the role. It
 //! refuses a token with other rights
-//! ([`check_given`](riff_core::forge::check_given)).
+//! ([`check_given`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -51,7 +51,7 @@
 //!   the server revokes each one at once ([`Forge::check`],
 //!   01M4CHQREYBFR465528EYTVDYE).
 //! - The server keeps the last token of each session in memory
-//!   ([`Forge::held`]). At a claim, a release or the end of a session,
+//!   ([`Forge::held_role`]). At a claim, a release or the end of a session,
 //!   it compares the role of each held token with the facts, and
 //!   revokes each token whose role changed ([`Forge::settle`],
 //!   01M4CHQR87K30DXD1W2ZZFMDBX). The wrapper then asks for a new one.
@@ -479,9 +479,7 @@ impl Forge {
         let old: Vec<((Who, String), Held)> = {
             let mut held = self.held();
             let other = |(w, r): &(Who, String), h: &Held| {
-                w == who
-                    && (r == repo || who.session().is_some())
-                    && (r != repo || h.role != role)
+                w == who && (r == repo || who.session().is_some()) && (r != repo || h.role != role)
             };
             let keys: Vec<(Who, String)> = held
                 .iter()
@@ -610,7 +608,7 @@ mod tests {
             .give(&w, "acme/app", TokenRole::Verifier)
             .await
             .unwrap();
-        assert_eq!(github.revoked(), [worker.token.clone()]);
+        assert_eq!(github.revoked(), std::slice::from_ref(&worker.token));
         let lines = capture.lines();
         let tokens = capture.results("token");
         assert_eq!(tokens.len(), 2, "{lines:?}");
@@ -642,7 +640,10 @@ mod tests {
             .give(&v, "acme/app", TokenRole::Verifier)
             .await
             .unwrap();
-        let led = forge.give(&lead, "acme/app", TokenRole::Lead).await.unwrap();
+        let led = forge
+            .give(&lead, "acme/app", TokenRole::Lead)
+            .await
+            .unwrap();
         // w1 claimed a verify; v1 still verifies; the lead has no facts.
         forge
             .settle(|who| match who.session() {

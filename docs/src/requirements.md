@@ -4209,8 +4209,9 @@
   each push to `main`, and the ruleset `releases` stops each `v*`
   tag of a token.
 - **01M4BV70JZNMT3X99E77GC58K9** The wrapper asks riff-server for a new
-  token 10 minutes before the old one ends, and when the role changes. It reads
-  the claims each minute, and at once after a claim or a release.
+  token 10 minutes before the old one ends, and when the role
+  changes. It reads the claims each minute, and at once after a claim
+  or a release.
 - **01M4BV70N7HRW7KQ9ER9D9CDT9** The test run gets no forge token.
 - **01M4BYGV74T1R2H9D1RX6RTC6Z** Replaced by 01M4CHQR87K30DXD1W2ZZFMDBX.
 - **01M4BYVSNQ5SY2GRGT73FV0Z3E** No worker or AI session ever gets a
