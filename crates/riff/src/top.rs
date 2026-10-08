@@ -99,7 +99,7 @@ use serde::Deserialize;
 use crate::host::HostStatus;
 use crate::state;
 use crate::style::{BOLD, ERROR, MUTED, WARNING, session as session_style, styled};
-use crate::text::safe;
+use crate::text::{self, safe};
 use crate::view;
 
 /// The time between two draws of `riff top` with no message.
@@ -1293,11 +1293,12 @@ impl Top<'_> {
         if s.worker {
             tags.push("worker");
         }
-        let worktree = s
-            .uri
-            .place()
-            .worktree()
-            .map(|w| format!("#{}", safe(w)))
+        // The parts of the label of the session that its rows above do
+        // not show (01M4CPVJ9ANPEBTWY9GETE2DGW).
+        let label = text::Label::of(&s.uri);
+        let worktree = label
+            .worktree
+            .map(|w| format!("#{}", safe(&w)))
             .unwrap_or_default();
         let head = Line::new(
             pre,
@@ -1383,10 +1384,9 @@ fn blocked(s: &SessionInfo) -> bool {
     state::of(s) == SessionState::Blocked
 }
 
-/// The short session ID of `riff who`.
+/// The short session ID of the [`text::Label`] of `s`.
 fn short(s: &SessionInfo) -> String {
-    let id = s.uri.who().session().unwrap_or_default();
-    id.chars().take(8).collect()
+    text::Label::of(&s.uri).id.unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1465,6 +1465,47 @@ mod tests {
             ),
             info("riff://brett@kadomony/o/strata?session=b2&lead=true", Idle),
         ]
+    }
+
+    /// `riff top` and `riff statusline` give one label for one session:
+    /// the user, the host and the repository of the rows of the tree,
+    /// then the short ID and the worktree of the row of the session
+    /// make the start of the status line (01M4CPVJ9ANPEBTWY9GETE2DGW).
+    #[test]
+    fn top_and_the_status_line_give_one_label() {
+        use SessionState::{Busy, Idle};
+        let id = "8c7f26da-5cd6-4ce9";
+        let mut worker = info(
+            &format!("riff://mike@pangolin/o/riff?session={id}&claim=issue-604#issue-604"),
+            Busy,
+        );
+        worker.worker = true;
+        let lead = info(
+            "riff://mike@pangolin/o/riff?session=74758398-31cb&lead=true",
+            Idle,
+        );
+        for s in [worker, lead] {
+            let text = shown(std::slice::from_ref(&s), &BTreeMap::new(), &Show::default());
+            let rows = tree(&text);
+            let words = |row: &str| -> Vec<String> {
+                row.split_whitespace()
+                    .filter(|w| !matches!(*w, "›" | "├─" | "└─"))
+                    .map(str::to_owned)
+                    .collect()
+            };
+            let top = words(&rows[0]);
+            let session = words(&rows[1]);
+            let (user, host, repo, short) = (&top[0], &top[2], &top[3], &session[0]);
+            let worktree = session
+                .get(1)
+                .filter(|w| w.starts_with('#'))
+                .map_or("", String::as_str);
+            let label = format!("{user}@{host}:{repo}{worktree} ({short})");
+            assert_eq!(label, text::name(&s.uri), "{text}");
+            let id = s.uri.who().session().unwrap();
+            let line = text::statusline(id, Some(&s));
+            assert!(line.starts_with(&format!("{label} ")), "{line} {text}");
+        }
     }
 
     /// The tree has four levels with the counts on each person, host

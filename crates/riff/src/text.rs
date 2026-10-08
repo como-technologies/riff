@@ -329,7 +329,8 @@ pub fn joined(me: &SessionUri) -> String {
 const ID_CHARS: usize = 8;
 
 /// A session for display: the short form, and the start of the session
-/// ID when there is one. The short form alone is not unique.
+/// ID when there is one. The short form alone is not unique. It is the
+/// text of [`Label`].
 ///
 /// ```
 /// let uri = "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-d54a#api".parse()?;
@@ -339,9 +340,82 @@ const ID_CHARS: usize = 8;
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn name(uri: &SessionUri) -> String {
-    match uri.who().session() {
-        Some(id) => format!("{} ({})", uri.short(), &id[..id.len().min(ID_CHARS)]),
-        None => uri.short(),
+    Label::of(uri).to_string()
+}
+
+/// The label of a session: `USER@HOST:REPO#WORKTREE (ID)`. One label
+/// names a session in `riff who`, `riff whoami`, the tree of
+/// `riff top` and `riff statusline`, so they cannot differ
+/// (01M4CPVJ9ANPEBTWY9GETE2DGW). `riff top` shows its parts along the tree: the user and the
+/// host on their rows, the repository on its row, then [`Label::id`]
+/// and [`Label::worktree`] on the row of the session.
+///
+/// ```
+/// use riff::text::Label;
+///
+/// let uri = "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-d54a#api".parse()?;
+/// let label = Label::of(&uri);
+/// assert_eq!(label.person, "mike@pangolin");
+/// assert_eq!(label.repo.as_deref(), Some("riff"));
+/// assert_eq!(label.worktree.as_deref(), Some("api"));
+/// assert_eq!(label.id.as_deref(), Some("a6cf2205"));
+/// assert_eq!(label.to_string(), "mike@pangolin:riff#api (a6cf2205)");
+/// // The short form drops the user and the host.
+/// assert_eq!(label.place(), "riff#api (a6cf2205)");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Label {
+    /// `USER@HOST`.
+    pub person: String,
+    /// The short name of the repository, `-` outside git, or None for
+    /// a person with no place.
+    pub repo: Option<String>,
+    /// The worktree, or None in the main clone.
+    pub worktree: Option<String>,
+    /// The first [`ID_CHARS`] characters of the session ID.
+    pub id: Option<String>,
+}
+
+impl Label {
+    /// The label of `uri`.
+    pub fn of(uri: &SessionUri) -> Self {
+        let place = uri.place();
+        let repo = match place.repo() {
+            riff_core::name::Repo::Git { name, .. } => Some(name.clone()),
+            riff_core::name::Repo::None => place.worktree().map(|_| "-".to_owned()),
+        };
+        Label {
+            person: format!("{}@{}", uri.who().user(), place.host()),
+            repo,
+            worktree: place.worktree().map(str::to_owned),
+            id: uri
+                .who()
+                .session()
+                .map(|id| id.chars().take(ID_CHARS).collect()),
+        }
+    }
+
+    /// The label with no user and no host: `REPO#WORKTREE (ID)`.
+    pub fn place(&self) -> String {
+        let mut out = self.repo.clone().unwrap_or_default();
+        if let Some(worktree) = &self.worktree {
+            let _ = write!(out, "#{worktree}");
+        }
+        if let Some(id) = &self.id {
+            let _ = write!(out, " ({id})");
+        }
+        out
+    }
+}
+
+impl std::fmt::Display for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (&self.repo, &self.id) {
+            (Some(_), _) => write!(f, "{}:{}", self.person, self.place()),
+            (None, Some(id)) => write!(f, "{} ({id})", self.person),
+            (None, None) => f.write_str(&self.person),
+        }
     }
 }
 
@@ -2481,18 +2555,25 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
     out
 }
 
-/// The line that `riff statusline` prints for the agent session `id`:
-/// `riff`, the short session ID of [`name`], `lead` for the lead, each
-/// claim, and `blocked` when the session is blocked. So a person finds
-/// the pane of each session of `riff who`. `info` is the session in
+/// The most characters of the line of [`statusline`] with its full
+/// label. A longer line drops the user and the host of the label: the
+/// repository and the worktree stay.
+pub const STATUSLINE_COLS: usize = 80;
+
+/// The line that `riff statusline` prints for the agent session `id`
+/// (01M4CPVJ9ANPEBTWY9GETE2DGW): the [`Label`] of the session, its role (`lead`, `worker`),
+/// its state as `riff top` shows it (for example `busy`, `paused`,
+/// `blocked`), and each claim. So a person finds the pane of each
+/// session of `riff top`. A line longer than [`STATUSLINE_COLS`] has
+/// the label with no user and no host. `info` is the session in
 /// `riff who`, or None when riff cannot find it.
 ///
 /// ```
-/// use riff_core::wire::{BlockedInfo, SessionInfo};
+/// use riff_core::wire::{SessionInfo, SessionState};
 ///
 /// let id = "2a880834-3707-4672";
 /// let mut info = SessionInfo {
-///     uri: "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78#issue-78"
+///     uri: "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&lead=true"
 ///         .parse()?,
 ///     live: true,
 ///     idle_secs: 0,
@@ -2502,47 +2583,64 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     claims_secs: 0,
 ///     must_clear: false,
 ///     fresh_secs: None,
-///     state: Some(riff_core::wire::SessionState::Idle),
+///     state: Some(SessionState::Idle),
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
 /// };
-/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
-/// info.uri = info.uri.with_lead(true);
-/// info.blocked = Some(BlockedInfo {
-///     reason: "which design?".into(),
-///     secs: 5,
-///     answered: false,
-///     woken_again: false,
-///     unanswered: false,
-/// });
+/// // A lead in the main clone.
 /// assert_eq!(
 ///     riff::text::statusline(id, Some(&info)),
-///     "riff 2a880834 lead issue-78 blocked"
+///     "mike@pangolin:riff (2a880834) lead idle"
 /// );
-/// info.blocked = None;
-/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 lead issue-78");
+/// // A worker in a worktree.
+/// info.uri = "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78#issue-78"
+///     .parse()?;
+/// info.worker = true;
+/// info.state = Some(SessionState::Busy);
+/// assert_eq!(
+///     riff::text::statusline(id, Some(&info)),
+///     "mike@pangolin:riff#issue-78 (2a880834) worker busy issue-78"
+/// );
+/// info.state = Some(SessionState::Blocked);
+/// assert_eq!(
+///     riff::text::statusline(id, Some(&info)),
+///     "mike@pangolin:riff#issue-78 (2a880834) worker blocked issue-78"
+/// );
+/// // A long line keeps the repository and the worktree.
+/// info.uri = "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78&claim=issue-79&claim=verify-issue-123#issue-78"
+///     .parse()?;
+/// assert_eq!(
+///     riff::text::statusline(id, Some(&info)),
+///     "riff#issue-78 (2a880834) worker blocked issue-78 issue-79 verify-issue-123"
+/// );
 /// assert_eq!(riff::text::statusline(id, None), "riff 2a880834 (not in the riff)");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn statusline(id: &str, info: Option<&SessionInfo>) -> String {
-    let short: String = id.chars().take(ID_CHARS).collect();
-    let mut out = format!("riff {short}");
     let Some(info) = info else {
-        out.push_str(" (not in the riff)");
-        return out;
+        let short: String = id.chars().take(ID_CHARS).collect();
+        return format!("riff {short} (not in the riff)");
     };
+    let mut rest = String::new();
     if info.uri.lead() {
-        out.push_str(" lead");
+        rest.push_str(" lead");
     }
+    if info.worker {
+        rest.push_str(" worker");
+    }
+    let _ = write!(rest, " {}", crate::state::of(info).word());
     for claim in info.uri.claims() {
-        let _ = write!(out, " {claim}");
+        let _ = write!(rest, " {claim}");
     }
-    if info.blocked.is_some() {
-        out.push_str(" blocked");
+    let label = Label::of(&info.uri);
+    let full = format!("{label}{rest}");
+    if full.chars().count() <= STATUSLINE_COLS {
+        full
+    } else {
+        format!("{}{rest}", label.place())
     }
-    out
 }
 
 /// The tag of the status line for a newer release
