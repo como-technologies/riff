@@ -243,7 +243,10 @@ use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
 use crate::trace::DeniedCode;
 use riff_core::forge::TokenRole;
-use riff_core::wire::{ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply};
+use riff_core::wire::{
+    ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate, ForgeCreateReply, ForgeCreated,
+    ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken, ForgeTokenReply,
+};
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -1463,7 +1466,11 @@ impl Service {
             engine.name_owner(&owner);
         }
         let save_every = config.save_every;
-        let forge = forge::Forge::new(config.forge.clone());
+        let forge = forge::Forge::with_store(
+            config.forge.clone(),
+            config.forge_store.clone(),
+            &config.github_api,
+        );
         let service = Service(Arc::new(Server {
             forge,
             config,
@@ -1969,6 +1976,9 @@ impl Service {
             .route(DenyOwner::PATH, post(command::<DenyOwner>))
             .route(Members::PATH, post(members))
             .route(LogQuery::PATH, post(log_records))
+            .route(ForgeCreate::PATH, post(forge_create))
+            .route(ForgeCreated::PATH, post(forge_created))
+            .route(ForgeInstall::PATH, post(forge_install))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -1983,6 +1993,10 @@ impl Service {
             .route("/v1/sign-in", get(sign_in_config))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
+            // The pages of `riff forge create` in the browser: the
+            // `state` is their check (#627).
+            .route(forge::manifest::NEW_PATH, get(forge_new_page))
+            .route(forge::manifest::CREATED_PATH, get(forge_created_page))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
             // The facts answer also while the gate replies 503, and to a
             // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).
@@ -2434,6 +2448,129 @@ async fn forge_check(
         .engine
         .peek(&caller, |state| forge_facts(state, &r.me))??;
     Ok(Json(s.forge.check(&repo).await?))
+}
+
+/// Refuses `user` when it is not the owner or an admin.
+fn need_admin(s: &Server, user: &str, what: &str) -> Result<(), (StatusCode, String)> {
+    if s.engine.read(|state| state.role(user)) < Role::Admin {
+        let reason = format!("only the owner and the admins can {what}");
+        return Err(Failed::Refused(Refused::new(Code::NotAllowed, &reason)).into());
+    }
+    Ok(())
+}
+
+/// `POST /v1/forge/create`: `riff forge create` (#627). Only the owner
+/// or an admin. The reply is the start page of a new `state`.
+async fn forge_create(
+    AxumState(s): AxumState<Shared>,
+    Extension(signed_in): Extension<SignedIn>,
+    Json(r): Json<ForgeCreate>,
+) -> Reply<ForgeCreateReply> {
+    let user = signed_in.who.user();
+    need_admin(&s, user, "make the GitHub App of riff")?;
+    if !forge::manifest::account_name(&r.org) {
+        let text = format!(
+            "{:?} is no GitHub organization: give its name, for example acme",
+            r.org
+        );
+        return Err((StatusCode::BAD_REQUEST, text));
+    }
+    if !s.forge.has_store() {
+        let text = "this riff-server has no store for the App: give it RIFF_FORGE_SECRET";
+        return Err((StatusCode::CONFLICT, text.to_owned()));
+    }
+    let state = s.forge.starts().begin(&r.org, user, Instant::now());
+    let url = format!(
+        "{}{}?state={state}",
+        s.config.public_url,
+        forge::manifest::NEW_PATH
+    );
+    Ok(Json(ForgeCreateReply { url, state }))
+}
+
+/// `POST /v1/forge/created`: how far a start of `riff forge create` is.
+/// Only the admin that made the `state` sees it.
+async fn forge_created(
+    AxumState(s): AxumState<Shared>,
+    Extension(signed_in): Extension<SignedIn>,
+    Json(r): Json<ForgeCreated>,
+) -> Reply<ForgeCreatedReply> {
+    let user = signed_in.who.user();
+    need_admin(&s, user, "make the GitHub App of riff")?;
+    s.forge
+        .progress(&r.state, user)
+        .await
+        .map(Json)
+        .map_err(|text| (StatusCode::BAD_REQUEST, text))
+}
+
+/// `POST /v1/forge/install`: `riff forge install OWNER` (#627).
+async fn forge_install(
+    AxumState(s): AxumState<Shared>,
+    Json(r): Json<ForgeInstall>,
+) -> Reply<ForgeInstallReply> {
+    if !forge::manifest::account_name(&r.owner) {
+        let text = format!(
+            "{:?} is no GitHub account: give the name of an organization or a person, for \
+             example acme",
+            r.owner
+        );
+        return Err((StatusCode::BAD_REQUEST, text));
+    }
+    Ok(Json(s.forge.install(&r.owner).await?))
+}
+
+/// The query of the pages of `riff forge create`.
+#[derive(Deserialize)]
+struct ForgePage {
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    code: String,
+}
+
+/// A page for the browser.
+fn page(status: StatusCode, body: String) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        body,
+    )
+        .into_response()
+}
+
+/// `GET /forge/new?state=`: the start page of `riff forge create`. It
+/// posts the manifest to GitHub.
+async fn forge_new_page(AxumState(s): AxumState<Shared>, Query(q): Query<ForgePage>) -> Response {
+    let Some(org) = s.forge.starts().org(&q.state, Instant::now()) else {
+        let text = forge::manifest::text_page(forge::manifest::BAD_STATE);
+        return page(StatusCode::BAD_REQUEST, text);
+    };
+    let manifest = forge::manifest::manifest(&s.config.public_url, &org);
+    page(
+        StatusCode::OK,
+        forge::manifest::start_page(&org, &q.state, &manifest),
+    )
+}
+
+/// `GET /forge/created?code=&state=`: GitHub sends the browser here
+/// after the admin made the App. The server swaps the code for the App,
+/// and sends the browser to the install page of the App.
+async fn forge_created_page(
+    AxumState(s): AxumState<Shared>,
+    Query(q): Query<ForgePage>,
+) -> Response {
+    match s.forge.created(&q.code, &q.state).await {
+        Ok(install) => (
+            StatusCode::SEE_OTHER,
+            [(header::LOCATION, install)],
+        )
+            .into_response(),
+        Err(why) => page(
+            StatusCode::BAD_REQUEST,
+            forge::manifest::text_page(&why),
+        ),
+    }
 }
 
 /// The facts of this instance, for `riff server`

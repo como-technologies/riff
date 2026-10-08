@@ -1331,7 +1331,7 @@ pub fn signin(gcloud: &Gcloud, s: &Settings, path: &Path, id: &str, secret: &str
 /// Stores the GitHub App of riff for the instance in `path` (#628): the
 /// private key `pem` in Secret Manager, which only the service account
 /// of riff-server reads, and the ID `app` in the settings file. The key
-/// goes to no other file (01M4CHQR1E5HFV6KSTSM72H0QV). The next
+/// goes to no other file (01M4CTAYRSC27Q6AAGTH9CBD7Q). The next
 /// `deploy` gives both to riff-server.
 pub fn forge(gcloud: &Gcloud, s: &Settings, path: &Path, app: u64, pem: &str) -> Result<()> {
     if !pem.contains("-----BEGIN") || !pem.contains("PRIVATE KEY-----") {
@@ -1536,7 +1536,7 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
         "--no-invoker-iam-check",
     ]));
     // The GitHub App, when the instance has one: its ID, and its key
-    // from Secret Manager (01M4CHQR1E5HFV6KSTSM72H0QV).
+    // from Secret Manager (01M4CTAYRSC27Q6AAGTH9CBD7Q).
     let mut env = format!(
         "RIFF_PUBLIC_URL={},RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID={},RIFF_BUCKET={},RIFF_OWNER={owner}",
         s.url, s.client_id, s.bucket

@@ -1044,7 +1044,7 @@ fn signin_stores_the_secret_and_writes_the_client_id() {
 /// `riff cloud forge` stores the private key of the GitHub App in Secret
 /// Manager through stdin, lets only the server account read it, and
 /// writes the App ID to the settings file. The key goes to no file
-/// (01M4CHQR1E5HFV6KSTSM72H0QV). The next deploy gives both to the
+/// (01M4CTAYRSC27Q6AAGTH9CBD7Q). The next deploy gives both to the
 /// server.
 #[test]
 fn forge_stores_the_app_key_and_the_deploy_gives_it_to_the_server() {

@@ -479,7 +479,7 @@ fn the_log_of_the_plans_gives_its_checkpoint_at_each_position() {
 /// The log of the forge accounts: this build writes its bytes, a replay
 /// gives `replayed.json` with the field `forge_accounts`, and a load of
 /// the checkpoint at each position gives the state of a replay
-/// (01M4CHQR1E5HFV6KSTSM72H0QV).
+/// (01M4CTAYRSC27Q6AAGTH9CBD7Q).
 #[test]
 fn the_log_of_the_forge_accounts_gives_its_checkpoint_at_each_position() {
     let records = records_of(FORGE, "log.jsonl");

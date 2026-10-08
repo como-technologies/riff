@@ -101,6 +101,35 @@ pub fn permissions(role: TokenRole) -> BTreeMap<&'static str, Access> {
     all
 }
 
+/// The permissions of the GitHub App itself: each permission of a role,
+/// at the highest level that a role needs, and no more. `riff forge
+/// create` puts them in the manifest of the App (#627). Each token then
+/// asks for the [`permissions`] of its role only.
+///
+/// ```
+/// use riff_core::forge::{Access, TokenRole, app_permissions, permissions};
+///
+/// let app = app_permissions();
+/// assert_eq!(app["contents"], Access::Write);
+/// assert_eq!(app["statuses"], Access::Write);
+/// assert_eq!(app["actions"], Access::Read);
+/// assert!(!app.contains_key("administration"));
+/// for role in TokenRole::ALL {
+///     assert!(permissions(role).iter().all(|(name, level)| app[name] >= *level));
+/// }
+/// assert_eq!(app.len(), permissions(TokenRole::Worker).len());
+/// ```
+pub fn app_permissions() -> BTreeMap<&'static str, Access> {
+    let mut all = BTreeMap::new();
+    for role in TokenRole::ALL {
+        for (name, level) in permissions(role) {
+            let at = all.entry(name).or_insert(level);
+            *at = (*at).max(level);
+        }
+    }
+    all
+}
+
 /// The role of the token of a session: the lead, else a session with a
 /// `verify-` claim is the verifier, else the worker. The server gives
 /// `lead` and `claims` from its own facts, so a session cannot ask for

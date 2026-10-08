@@ -5,7 +5,7 @@
 //!
 //! riff-server holds the GitHub App of riff and makes each token
 //! (`riff_server::forge`). The private key of the App is never on a
-//! machine (01M4CHQR1E5HFV6KSTSM72H0QV).
+//! machine (01M4CTAYRSC27Q6AAGTH9CBD7Q).
 //!
 //! `riff workers run` stays outside the sandbox of `claude`. It asks
 //! riff-server for the token of its session ([`Keeper`]): `POST

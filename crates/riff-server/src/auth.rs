@@ -108,6 +108,11 @@ pub struct Config {
     /// The GitHub App that makes the forge tokens (#628). Without it,
     /// the server gives no forge token.
     pub forge: Option<crate::forge::Settings>,
+    /// Where the server keeps the App: `riff forge create` writes a new
+    /// App there (#627). Without it, `riff forge create` is refused.
+    pub forge_store: Option<crate::forge::store::Store>,
+    /// The base URL of the GitHub API, for a server with no App yet.
+    pub github_api: String,
 }
 
 impl Default for Config {
@@ -132,6 +137,8 @@ impl Config {
             checkpoint: crate::checkpoint::Settings::default(),
             save_every: crate::SAVE_EVERY,
             forge: None,
+            forge_store: None,
+            github_api: crate::forge::GITHUB_API.to_owned(),
         }
     }
 

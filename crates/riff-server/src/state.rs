@@ -1908,7 +1908,7 @@ impl State {
 
     /// True when the owner or an admin allowed the GitHub account
     /// `owner`: the server makes forge tokens for its repositories
-    /// (01M4CHQR1E5HFV6KSTSM72H0QV).
+    /// (01M4CTAYRSC27Q6AAGTH9CBD7Q).
     ///
     /// ```
     /// use std::time::Instant;

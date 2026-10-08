@@ -4,11 +4,14 @@
 //! # Design
 //!
 //! One GitHub App of riff serves many accounts: organizations and
-//! personal accounts install it on their repositories. Its private key
-//! is in Secret Manager. Only the service account of riff-server reads
-//! it: the deploy gives it to the server in [`KEY_VAR`], with the ID of
-//! the App in [`APP_VAR`] (`riff cloud forge`). The key is never on the
-//! machine of a person (01M4CHQR1E5HFV6KSTSM72H0QV).
+//! personal accounts install it on their repositories. Its ID and its
+//! private key are one secret in Secret Manager ([`store`]). Only the
+//! service account of riff-server reads it and adds a version. The
+//! server reads it at its start. `riff forge create` makes the App and
+//! puts it there ([`manifest`]), so the key never goes to the machine of
+//! a person (01M4CTAYRSC27Q6AAGTH9CBD7Q). A server for a test or a
+//! person can take the App from [`APP_VAR`] and [`KEY_VAR`] in place of
+//! the store.
 //!
 //! The wrapper of a session (`riff workers run`, outside the sandbox)
 //! asks `POST /v1/forge/token` with the URI of its session. The server
@@ -74,9 +77,12 @@
 //!   gives one line with `result` `revoked`. A line never holds the
 //!   token (01M4CHQRAFPQDVB67XGDD4N9GB).
 
+pub mod manifest;
+pub mod store;
+
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::http::StatusCode;
@@ -337,7 +343,14 @@ struct Given {
 
 /// The forge tokens of a server. See the module docs.
 pub struct Forge {
-    settings: Option<Settings>,
+    /// The App. `riff forge create` sets a new one at run time.
+    settings: RwLock<Option<Settings>>,
+    /// The base URL of the GitHub API.
+    api: String,
+    /// Where the server keeps the App ([`store`]), if anywhere.
+    store: Option<store::Store>,
+    /// The starts of `riff forge create` ([`manifest`]).
+    starts: manifest::Starts,
     http: reqwest::Client,
     held: Mutex<HashMap<(Who, String), Held>>,
 }
@@ -346,6 +359,7 @@ impl fmt::Debug for Forge {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Forge")
             .field("settings", &self.settings)
+            .field("store", &self.store)
             .finish_non_exhaustive()
     }
 }
@@ -361,8 +375,26 @@ impl Forge {
     /// The forge tokens of `settings`. With no settings, each ask is
     /// refused with [`Refusal::NoApp`].
     pub fn new(settings: Option<Settings>) -> Forge {
+        Forge::with_store(settings, None, GITHUB_API)
+    }
+
+    /// The forge tokens of `settings`, with the App kept in `store`, and
+    /// the GitHub API at `api` when `settings` has none.
+    pub fn with_store(
+        settings: Option<Settings>,
+        store: Option<store::Store>,
+        api: &str,
+    ) -> Forge {
+        let api = settings
+            .as_ref()
+            .map_or(api, |s| s.api.as_str())
+            .trim_end_matches('/')
+            .to_owned();
         Forge {
-            settings,
+            settings: RwLock::new(settings),
+            api,
+            store,
+            starts: manifest::Starts::default(),
             http: crate::oidc::client(TIMEOUT),
             held: Mutex::new(HashMap::new()),
         }
@@ -370,11 +402,28 @@ impl Forge {
 
     /// The ID of the App, if the server has one.
     pub fn app(&self) -> Option<u64> {
-        self.settings.as_ref().map(|s| s.app.id)
+        self.current().map(|s| s.app.id)
     }
 
-    fn settings(&self) -> Result<&Settings, Refusal> {
-        self.settings.as_ref().ok_or(Refusal::NoApp)
+    /// The App now, if the server has one.
+    fn current(&self) -> Option<Settings> {
+        self.settings
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// From now on, the server makes each token with `app`.
+    pub fn set_app(&self, app: App) {
+        let settings = Settings {
+            app,
+            api: self.api.clone(),
+        };
+        *self.settings.write().unwrap_or_else(|p| p.into_inner()) = Some(settings);
+    }
+
+    fn settings(&self) -> Result<Settings, Refusal> {
+        self.current().ok_or(Refusal::NoApp)
     }
 
     fn held(&self) -> std::sync::MutexGuard<'_, HashMap<(Who, String), Held>> {
@@ -436,7 +485,7 @@ impl Forge {
     /// of the role.
     async fn make(&self, repo: &str, role: TokenRole) -> Result<ForgeTokenReply, Refusal> {
         let s = self.settings()?;
-        let installation = self.installation(s, repo).await?;
+        let installation = self.installation(&s, repo).await?;
         let name = repo.rsplit('/').next().unwrap_or(repo);
         let url = format!("{}/app/installations/{installation}/access_tokens", s.api);
         let jwt = s.app.jwt(now_secs()).map_err(Refusal::GitHub)?;
