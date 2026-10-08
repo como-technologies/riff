@@ -963,7 +963,10 @@ impl Server {
     /// The URI of the session `id` of mike on pangolin in the main clone.
     fn uri(&self, m: &Machine, id: &str) -> riff_core::name::SessionUri {
         let place = riff::identity::place_in(&m.clone(), "pangolin").unwrap();
-        riff_core::name::SessionUri::new(riff_core::name::Who::new("mike", Some(id)).unwrap(), place)
+        riff_core::name::SessionUri::new(
+            riff_core::name::Who::new("mike", Some(id)).unwrap(),
+            place,
+        )
     }
 
     /// The worker `id` starts and claims `issue-1`.
@@ -1011,9 +1014,19 @@ impl Server {
 /// `issue-1`, runs the Stop hook, and waits until the fake tmux got the
 /// start prompt or closed a pane. Gives the log of the fake tmux, and
 /// the output of the fake.
-fn worker_ends_its_item(m: &Machine, server: &Server, id: &str, limit: u16, workers: &str) -> (String, String) {
+fn worker_ends_its_item(
+    m: &Machine,
+    server: &Server,
+    id: &str,
+    limit: u16,
+    workers: &str,
+) -> (String, String) {
     let home = m.home();
-    std::fs::write(home.join(format!(".local/share/riff/rules/{id}.json")), "{}\n").unwrap();
+    std::fs::write(
+        home.join(format!(".local/share/riff/rules/{id}.json")),
+        "{}\n",
+    )
+    .unwrap();
     let out = m
         .env
         .riff()

@@ -833,7 +833,10 @@ mod tests {
         }
         assert!(!log.exists(), "tmux ran for a refused request");
 
-        assert_eq!(ask(&worker, "pane-id", &[]), (Reply::Code(0), "\"%5\"".into()));
+        assert_eq!(
+            ask(&worker, "pane-id", &[]),
+            (Reply::Code(0), "\"%5\"".into())
+        );
         let (reply, screen) = ask(&worker, "pane-screen", &[]);
         assert_eq!(reply, Reply::Code(0));
         assert!(screen.contains("the screen"), "{screen}");
@@ -852,7 +855,10 @@ mod tests {
         assert!(log.contains("send-keys -t %5 -l /clear"), "{log}");
 
         // Outside tmux, the broker of a worker says so.
-        let outside = Here { tmux: None, ..worker };
+        let outside = Here {
+            tmux: None,
+            ..worker
+        };
         let (reply, _) = ask(&outside, "pane-type", &["/clear"]);
         assert!(
             matches!(&reply, Reply::Refused(why) if why.contains("tmux")),

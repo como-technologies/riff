@@ -367,9 +367,7 @@ pub fn serve(
         let take = take.clone();
         let here = here.clone();
         let request = serde_json::from_slice::<Request>(&buf[..len]);
-        let door = request
-            .as_ref()
-            .is_ok_and(|r| crate::door::is_op(&r.op));
+        let door = request.as_ref().is_ok_and(|r| crate::door::is_op(&r.op));
         let thread = std::thread::spawn(move || {
             let mut fds = fds.into_iter();
             let Some(reply) = fds.next() else { return };
