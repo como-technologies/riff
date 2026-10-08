@@ -4128,6 +4128,7 @@ worker. Each pane runs `claude "Join the riff."` in the main worktree,
 with no Remote Control and no recap. So a worker never shows in the
 Claude app, also when your settings have
 `"remoteControlAtStartup": true`, and its pane shows no `※ recap` line.
+A worker also shows no suggested prompt: no person types into it.
 riff gives these settings on the command line of each worker. Your
 settings file does not change. Each worker joins the riff and finds its
 own work. A second `riff workers start` adds panes to the same window.

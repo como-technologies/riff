@@ -2967,6 +2967,10 @@
 - **01M3MN0D429T4Q80DYBE9S9XR7** `riff workers start` runs each worker
   with the flag settings `{"awaySummaryEnabled":false}` too. So a worker
   shows no recap of Claude Code. The user settings file does not change.
+- **01M4CGFMX16JY8W2P9JJDDTSFC** Each worker and each verifier gets
+  `"promptSuggestionEnabled": false` in its flag settings: no person
+  types into a worker, so it shows no suggested prompt. The lead keeps
+  the setting of the person.
 - **01M3ZJ1FAF7EJXP9CSET8ZY1K3** `riff workers start` turns off each
   installed plugin with a language server in the flag settings of each
   worker: `"enabledPlugins": {"PLUGIN": false}`. A plugin has a

@@ -217,7 +217,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
              -e RIFF_SESSION={id} -e RIFF_WORKER_SLICE=riff-workers.slice '{}' workers run \
              'claude' '--plugin-dir' '{plugin}' \
              '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
-             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"statusLine\":{{\"type\":\"command\",\"command\":\"riff statusline\"}},\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}}}}' 'Join the riff.'",
+             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"promptSuggestionEnabled\":false,\"statusLine\":{{\"type\":\"command\",\"command\":\"riff statusline\"}},\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}}}}' 'Join the riff.'",
             Isolated::shared().riff_path().display(),
             m.mcp_file().display(),
         )
@@ -249,7 +249,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert!(!log.contains("remote-control"), "{log}");
     assert_eq!(
         log.matches(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}'"#
         )
         .count(),
         3,
@@ -324,7 +324,7 @@ fn a_worker_starts_with_each_plugin_with_a_language_server_off() {
     assert!(out.status.success(), "{out:?}");
     assert!(
         m.log().contains(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
         ),
         "{}",
         m.log()

@@ -261,6 +261,8 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     let tmp = dir.path().join("tmp/w1").display().to_string();
     assert_eq!(settings["remoteControlAtStartup"], false);
     assert_eq!(settings["awaySummaryEnabled"], false);
+    // No suggested prompt: no person types into a worker (01M4CGFMX16JY8W2P9JJDDTSFC).
+    assert_eq!(settings["promptSuggestionEnabled"], false);
     assert_eq!(settings["enabledPlugins"]["rust-lsp@m"], false);
     assert_eq!(settings["env"]["TMPDIR"], tmp.as_str());
     assert_eq!(settings["env"]["CLAUDE_CODE_TMPDIR"], tmp.as_str());
