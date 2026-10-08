@@ -1503,7 +1503,10 @@ mod tests {
             "riff://mike@pangolin/o/riff?session=8c7f26da-5cd6&claim=issue-604#issue-604",
             Busy,
         );
-        let other = info("riff://mike@pangolin/n/dotfiles?session=dbb36565-00e9", Idle);
+        let other = info(
+            "riff://mike@pangolin/n/dotfiles?session=dbb36565-00e9",
+            Idle,
+        );
         let sessions = [worker, other];
         let text = shown(&sessions, &BTreeMap::new(), &Show::default());
         let rows = tree(&text);

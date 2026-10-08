@@ -2111,10 +2111,10 @@
   the line of its repository. A repository line has the name of the
   repository in the label of its sessions
   (01M4CPVJ9ANPEBTWY9GETE2DGW): the short name, also when the
-  repositories of the sessions have more than one owner. The wave line names the repository of its board:
-  `Wave N (OWNER/REPO)`. Only a claim in that repository is on its
-  board, and a session shows the title of an issue of its own
-  repository.
+  repositories of the sessions have more than one owner. The wave
+  line names the repository of its board: `Wave N (OWNER/REPO)`.
+  Only a claim in that repository is on its board, and a session
+  shows the title of an issue of its own repository.
 - **01M42KHN33M4K13GKTX2WM6CMM** The tree of `riff top` has four
   levels: person, host, repository, session. A person, host or
   repository line ends with its counts: the sessions, then the busy,
