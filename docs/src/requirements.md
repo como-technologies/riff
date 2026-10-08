@@ -4523,6 +4523,17 @@
   `profile::TEST_RUN_VARS` of the parent, `TMPDIR`, `RIFF_TEST_RUN`
   and a session bus where no bus listens. No credential of the person
   and no secret of a session reaches a test.
+- **01M4DDZ8B3QBZATBPNHVFDH7BR** No process outside a sandbox runs a
+  thing that a session wrote, or reads it as config, with no check. A
+  trusted service (the broker, riff-server) takes no path, role or
+  repository from a request: it takes them from its own facts.
+- **01M4DDZ8DFY1SP1AVVRSD0DRV4** Each shared surface is a row of one
+  table: what a session writes or asks, who reads or runs it outside,
+  the control and its test. The table is in the rustdoc of
+  `riff::confine` and in the book, with the same rows. Each row names
+  a test that exists. A surface with no control yet is a row of a
+  second table, with its risk and its decision: an issue before the
+  release, or an accept. `hygiene` checks the two tables.
 
 ## Open
 
