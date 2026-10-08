@@ -25,7 +25,6 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::identity::parse_remote;
 
@@ -132,12 +131,7 @@ impl Project {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()?;
+    let out = crate::confine::git_in(dir).ok()?.args(args).output().ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
@@ -149,7 +143,7 @@ mod tests {
     use super::*;
 
     fn git_in(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
+        let ok = crate::confine::git()
             .arg("-C")
             .arg(dir)
             .args(args)

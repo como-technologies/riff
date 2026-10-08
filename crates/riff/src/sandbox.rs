@@ -15,9 +15,17 @@
 //! | Home | a new empty folder at the path of the home, in the temp folder ([`Run`]) |
 //! | `/tmp` and `/var/tmp` | one new empty folder, in the temp folder |
 //! | Files | the system, the tools and the worktree with no write, the target with write ([`args`]) |
+//! | Target | bound from an open folder, so no symlink changes it after the check ([`open_target`]) |
 //! | Processes | a PID namespace: the run sees only its own processes |
 //! | Network | a network namespace with the loopback interface only |
 //! | End | the first process of the run ends each process of the run when it ends; the run ends when riff ends |
+//!
+//! In a sandbox of a session, the broker ([`crate::broker`]) runs the
+//! test run, and sets [`WITHIN_VAR`]: the target must be in that
+//! folder (01M4CN0RRJF5EWGE0VDSX3442B). It also sets [`WORKTREE_VAR`]
+//! and [`CLONE_VAR`]: the test run takes its worktree and its clone
+//! from riff, not from git in the folder of the request ([`place`],
+//! 01M4D7TB7FZAMASMQG9K7M3Q0D).
 //!
 //! The run gets its environment from nothing (`--clearenv`), then only
 //! the variables of [`crate::profile::TEST_RUN_VARS`] of the parent
@@ -63,13 +71,14 @@
 //!     target: "/home/ada/src/app/target".into(),
 //!     temp: "/var/tmp".into(),
 //!     claude: "/home/ada/.claude".into(),
+//!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
-//!     tools: vec!["/home/ada/.cargo".into()],
+//!     tools: vec!["/home/ada/.cargo/bin".into()],
 //!     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
 //! };
 //! let profile = Profile::of(Role::TestRun, &session)?;
 //! let run = Path::new("/var/tmp/riff-test-run.x");
-//! let args = riff::sandbox::args(&profile, &session, run, Path::new("/home/ada/src/app"), None);
+//! let args = riff::sandbox::args(&profile, &session, run, Path::new("/home/ada/src/app"), None, None);
 //! let line = args.join(" ");
 //! assert!(line.starts_with("--unshare-all --die-with-parent"));
 //! assert!(line.contains("--bind /var/tmp/riff-test-run.x/home /home/ada "));
@@ -82,6 +91,7 @@
 use crate::profile::{Endpoint, Profile, Role, Session};
 use anyhow::{Context, Result, bail};
 use std::ffi::{OsStr, OsString};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -120,6 +130,21 @@ pub fn env_args(parent: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<S
         .flat_map(|(name, value)| ["--setenv".to_owned(), name, value])
         .collect()
 }
+
+/// The variable that names the folder that must hold the target of a
+/// test run. The broker sets it, never the request of a session
+/// (01M4CN0RRJF5EWGE0VDSX3442B).
+pub const WITHIN_VAR: &str = "RIFF_TEST_RUN_WITHIN";
+
+/// The variable that names the worktree of the session of a test run:
+/// the root of the broker. The broker sets it, never the request of a
+/// session (01M4D7TB7FZAMASMQG9K7M3Q0D).
+pub const WORKTREE_VAR: &str = "RIFF_TEST_RUN_WORKTREE";
+
+/// The variable that names the clone of the session of a test run. The
+/// broker sets it, never the request of a session
+/// (01M4D7TB7FZAMASMQG9K7M3Q0D).
+pub const CLONE_VAR: &str = "RIFF_TEST_RUN_CLONE";
 
 /// What a host needs before a test run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,23 +239,79 @@ pub fn check_in(path: Option<OsString>, profile: &Path) -> Result<PathBuf, Missi
     }
 }
 
-/// The session of a test run in `dir`, from the environment and from
-/// git: the worktree is the top of the git worktree of `dir` (else
-/// `dir`), the clone is the folder of its common git dir, the target is
-/// `CARGO_TARGET_DIR` (else the `target` of the worktree), and the temp
-/// folder is the temp folder of the process.
-pub fn here(dir: &Path) -> Result<Session> {
-    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
-    let home = PathBuf::from(var("HOME").context("riff test-run needs HOME")?);
+/// The worktree and the clone of a test run in `dir`
+/// (01M4D7TB7FZAMASMQG9K7M3Q0D). They come from riff, never from a
+/// `.git` file or folder that a session writes:
+///
+/// - `given`: the worktree and the clone of the session, from the
+///   broker. When the worktree is the folder of the worktrees of the
+///   clone, the worktree of the run is its folder `NAME` that holds
+///   `dir`.
+/// - Else, the top of the git worktree of `dir` (else `dir`) and the
+///   folder of its common git dir. With no broker, `riff test-run`
+///   runs outside each sandbox: a person or a test starts it. A session
+///   in its sandbox cannot start one with no broker: it cannot make
+///   the namespaces of `bwrap`.
+///
+/// ```
+/// use riff::sandbox::place;
+/// use std::path::{Path, PathBuf};
+///
+/// let given = Some((PathBuf::from("/src/app/.claude/worktrees"), PathBuf::from("/src/app")));
+/// let dir = Path::new("/src/app/.claude/worktrees/issue-1/n");
+/// assert_eq!(
+///     place(dir, given.clone()),
+///     (PathBuf::from("/src/app/.claude/worktrees/issue-1"), PathBuf::from("/src/app"))
+/// );
+/// // The folder of the worktrees itself is the worktree of the run.
+/// assert_eq!(
+///     place(Path::new("/src/app/.claude/worktrees"), given),
+///     (PathBuf::from("/src/app/.claude/worktrees"), PathBuf::from("/src/app"))
+/// );
+/// // A worktree of an item is the worktree of each run in it.
+/// let given = Some((PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app")));
+/// assert_eq!(
+///     place(Path::new("/src/app/.claude/worktrees/w/n"), given),
+///     (PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app"))
+/// );
+/// // A folder of the worktree with a `.git` of its own changes nothing.
+/// let given = Some((PathBuf::from("/src/app/.claude/worktrees"), PathBuf::from("/src/app")));
+/// let dir = Path::new("/src/app/.claude/worktrees/w/a/.claude/worktrees/x");
+/// assert_eq!(
+///     place(dir, given),
+///     (PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app"))
+/// );
+/// ```
+pub fn place(dir: &Path, given: Option<(PathBuf, PathBuf)>) -> (PathBuf, PathBuf) {
+    if let Some((root, clone)) = given {
+        let worktrees = clone.join(crate::worktrees::AGENT_DIR);
+        let worktree = match dir.strip_prefix(&worktrees).map(Path::components) {
+            Ok(mut parts) if root == worktrees => parts
+                .next()
+                .map_or_else(|| root.clone(), |name| worktrees.join(name)),
+            _ => root,
+        };
+        return (worktree, clone);
+    }
     let worktree = git(dir, &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| dir.to_owned());
-    let common = git(
+    let clone = git(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    );
-    let clone = common
-        .as_deref()
-        .and_then(Path::parent)
-        .map_or_else(|| worktree.clone(), Path::to_owned);
+    )
+    .as_deref()
+    .and_then(Path::parent)
+    .map_or_else(|| worktree.clone(), Path::to_owned);
+    (worktree, clone)
+}
+
+/// The session of a test run in `dir`, from the environment and from
+/// riff: the worktree and the clone of [`place`] with `given`, the
+/// target is `CARGO_TARGET_DIR` (else the `target` of the worktree),
+/// and the temp folder is the temp folder of the process.
+pub fn here(dir: &Path, given: Option<(PathBuf, PathBuf)>) -> Result<Session> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    let home = PathBuf::from(var("HOME").context("riff test-run needs HOME")?);
+    let (worktree, clone) = place(dir, given);
     let target = var("CARGO_TARGET_DIR").map_or_else(|| worktree.join("target"), PathBuf::from);
     let target = if target.is_absolute() {
         target
@@ -245,16 +326,19 @@ pub fn here(dir: &Path) -> Result<Session> {
         },
         PathBuf::from,
     );
-    let tools = vec![
-        var("CARGO_HOME").map_or_else(|| home.join(".cargo"), PathBuf::from),
-        var("RUSTUP_HOME").map_or_else(|| home.join(".rustup"), PathBuf::from),
-    ];
+    // Not the cargo home itself: it holds the registry tokens
+    // (01M4D4BZ41AH29KSA9B0VZB8DQ).
+    let cargo = var("CARGO_HOME").map_or_else(|| home.join(".cargo"), PathBuf::from);
+    let mut tools = crate::profile::cargo_reads(&cargo);
+    tools.push(var("RUSTUP_HOME").map_or_else(|| home.join(".rustup"), PathBuf::from));
     let server = var("RIFF_SERVER")
         .and_then(|s| Endpoint::of_url(&s.to_string_lossy()))
         .or_else(|| Endpoint::of_url("http://127.0.0.1:9"))
         .context("no endpoint")?;
     Ok(Session {
         claude: var("CLAUDE_CONFIG_DIR").map_or_else(|| home.join(".claude"), PathBuf::from),
+        // A test run has no permission rules: no AI runs in it.
+        rules: home.join(".local/share/riff/rules/test-run.json"),
         state: crate::local::dir().unwrap_or_else(|| runtime.join("riff")),
         temp: std::env::temp_dir(),
         home,
@@ -268,9 +352,9 @@ pub fn here(dir: &Path) -> Result<Session> {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
-    let out = Command::new("git")
+    let out = crate::confine::git_in(dir)
+        .ok()?
         .args(args)
-        .current_dir(dir)
         .stderr(Stdio::null())
         .output()
         .ok()
@@ -283,7 +367,9 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 /// The arguments of `bwrap` for a test run of `profile`, with the run
 /// folder `run` (it holds `home` and `tmp`), the working folder `cwd`,
 /// and the folder of the pipe of the pool of build jobs, when there is
-/// one. The arguments end before the program.
+/// one. `target` is an open file descriptor of the target
+/// ([`open_target`]): with one, the run binds the target from it. The
+/// arguments end before the program.
 ///
 /// - The run has new namespaces: user, PID, network, IPC, UTS and
 ///   cgroup. It dies with riff, in a new session.
@@ -305,8 +391,9 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 ///     target: "/h/app/.claude/worktrees/w/target".into(),
 ///     temp: "/h/.cache/tmp".into(),
 ///     claude: "/h/.claude".into(),
+///     rules: "/h/.local/share/riff/rules/s1.json".into(),
 ///     state: "/run/user/7/riff".into(),
-///     tools: vec!["/h/.cargo".into()],
+///     tools: vec!["/h/.cargo/bin".into()],
 ///     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
 /// };
 /// let profile = Profile::of(Role::TestRun, &session)?;
@@ -316,14 +403,17 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 ///     Path::new("/h/.cache/tmp/r"),
 ///     Path::new("/h/app/.claude/worktrees/w"),
 ///     Some(Path::new("/run/riff/jobs")),
+///     Some(9),
 /// );
 /// let at = |s: &str| args.iter().position(|a| a == s).unwrap();
 /// // The home comes before the tools, the worktree before its target.
-/// assert!(at("/h/.cache/tmp/r/home") < at("/h/.cargo"));
+/// assert!(at("/h/.cache/tmp/r/home") < at("/h/.cargo/bin"));
 /// assert!(at("/h/app/.claude/worktrees/w") < at("/h/app/.claude/worktrees/w/target"));
 /// // The run reads the git dir of the clone, and writes the pool.
 /// assert!(args.windows(3).any(|w| w == ["--ro-bind-try", "/h/app/.git", "/h/app/.git"]));
 /// assert!(args.windows(3).any(|w| w == ["--bind", "/run/riff/jobs", "/run/riff/jobs"]));
+/// // The target comes from its open file descriptor.
+/// assert!(args.windows(3).any(|w| w == ["--bind-fd", "9", "/h/app/.claude/worktrees/w/target"]));
 /// // No bind gives the temp folder as a whole.
 /// assert!(!args.iter().any(|a| a == "/h/.cache/tmp"));
 /// assert_eq!(args[args.len() - 2..], ["--chdir", "/h/app/.claude/worktrees/w"]);
@@ -335,6 +425,7 @@ pub fn args(
     run: &Path,
     cwd: &Path,
     pool: Option<&Path>,
+    target: Option<RawFd>,
 ) -> Vec<String> {
     #[derive(Clone, Copy)]
     enum Mount {
@@ -363,6 +454,10 @@ pub fn args(
             (_, "/dev") => args.extend(["--dev".into(), path]),
             (_, "/proc") => args.extend(["--proc".into(), path]),
             (Mount::Read, _) => args.extend(["--ro-bind-try".into(), path.clone(), path]),
+            (Mount::Write, _) if Path::new(&path) == session.target && target.is_some() => {
+                let fd = target.map(|fd| fd.to_string()).unwrap_or_default();
+                args.extend(["--bind-fd".into(), fd, path])
+            }
             (Mount::Write, _) => args.extend(["--bind".into(), path.clone(), path]),
             (Mount::Home, _) => args.extend(["--bind".into(), text(&run.join("home")), path]),
         }
@@ -381,6 +476,85 @@ pub fn args(
     ]);
     args.extend(["--chdir".into(), text(cwd)]);
     args
+}
+
+/// Makes the target `target` of a test run and opens it. Returns the
+/// open folder and its real path, from the file descriptor
+/// (01M4CN0RRJF5EWGE0VDSX3442B). The run binds the target from the
+/// file descriptor ([`args`]), so a symlink that a session puts in the
+/// path after the check changes nothing. With `within`, the real path
+/// must be in that folder, before riff makes a folder and after it
+/// opens it.
+///
+/// ```
+/// let dir = tempfile::tempdir().unwrap();
+/// let root = dir.path().canonicalize().unwrap();
+/// let (_fd, real) = riff::sandbox::open_target(&root.join("w/target"), Some(&root.join("w"))).unwrap();
+/// assert_eq!(real, root.join("w/target"));
+/// // A link in the worktree to a folder outside it gives no target.
+/// std::fs::create_dir_all(root.join("out")).unwrap();
+/// std::os::unix::fs::symlink(root.join("out"), root.join("w/link")).unwrap();
+/// let err = riff::sandbox::open_target(&root.join("w/link"), Some(&root.join("w"))).unwrap_err();
+/// assert!(err.to_string().contains("not in"), "{err}");
+/// ```
+pub fn open_target(target: &Path, within: Option<&Path>) -> Result<(OwnedFd, PathBuf)> {
+    let within = within.map(crate::confine::resolve);
+    let check = |real: &Path| match &within {
+        Some(within) if !real.starts_with(within) => {
+            bail!("{}", crate::text::target_not_in(real, within))
+        }
+        _ => Ok(()),
+    };
+    check(&crate::confine::resolve(target))?;
+    std::fs::create_dir_all(target)
+        .with_context(|| format!("make the target {}", target.display()))?;
+    use nix::fcntl::OFlag;
+    let fd = nix::fcntl::open(
+        target,
+        OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC,
+        nix::sys::stat::Mode::empty(),
+    )
+    .with_context(|| format!("open the target {}", target.display()))?;
+    let real = std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+        .with_context(|| format!("find the real path of the target {}", target.display()))?;
+    check(&real)?;
+    Ok((fd, real))
+}
+
+/// The session of a test run with the run folder `run` as its temp
+/// folder (01M4CRC7VP5EVEE2F9HVRKYCX1). The run writes only its run
+/// folder in the temp folder, so the profile checks the run folder. A
+/// temp folder such as `/tmp` holds the tmux sockets of the person, a
+/// secret, and gives no profile.
+///
+/// ```
+/// use riff::profile::{Endpoint, Profile, Role, Session};
+/// use riff::sandbox::for_run;
+///
+/// let tmp = riff::profile::tmux_dir().parent().unwrap().to_path_buf();
+/// let session = Session {
+///     home: "/home/ada".into(),
+///     runtime: "/run/user/1000".into(),
+///     clone: "/home/ada/src/app".into(),
+///     worktree: "/home/ada/src/app".into(),
+///     target: "/home/ada/src/app/target".into(),
+///     temp: tmp.clone(),
+///     claude: "/home/ada/.claude".into(),
+///     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
+///     state: "/run/user/1000/riff".into(),
+///     tools: vec![],
+///     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
+/// };
+/// assert!(Profile::of(Role::TestRun, &session).is_err());
+/// let run = for_run(session, &tmp.join("riff-test-run.x"));
+/// assert_eq!(run.temp, tmp.join("riff-test-run.x"));
+/// assert!(Profile::of(Role::TestRun, &run).is_ok());
+/// ```
+pub fn for_run(session: Session, run: &Path) -> Session {
+    Session {
+        temp: run.to_path_buf(),
+        ..session
+    }
 }
 
 /// A run folder in the temp folder: `home` and `tmp`, both empty. riff
@@ -410,25 +584,56 @@ impl Run {
 /// run, in the current folder. Returns its exit code: the code of the
 /// program, or 128 and the signal.
 pub fn test_run(program: &OsStr, program_args: &[OsString]) -> Result<i32> {
+    // No crash of a test starts the crash helper of the system
+    // (01M4C6HE4D4ADJVBCC6EW8FP0X).
+    crate::confine::no_core_dumps()?;
     let bwrap = check()?;
     let cwd = std::env::current_dir()?;
-    let session = here(&cwd)?;
-    let profile = Profile::of(Role::TestRun, &session)?;
-    std::fs::create_dir_all(&session.target)
-        .with_context(|| format!("make the target {}", session.target.display()))?;
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    let given = var(WORKTREE_VAR)
+        .zip(var(CLONE_VAR))
+        .map(|(w, c)| (PathBuf::from(w), PathBuf::from(c)));
+    let mut session = here(&cwd, given)?;
+    let within = std::env::var_os(WITHIN_VAR)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let (target, real) = open_target(&session.target, within.as_deref())?;
+    session.target = real;
     let run = Run::new(&session.temp)?;
+    let session = for_run(session, run.path());
+    let profile = Profile::of(Role::TestRun, &session)?;
     let pool = std::env::var("MAKEFLAGS")
         .ok()
         .and_then(|m| crate::jobserver::fifo_of(&m))
         .and_then(|f| f.parent().map(Path::to_owned));
-    let status = Command::new(bwrap)
-        .args(args(&profile, &session, run.path(), &cwd, pool.as_deref()))
-        .args(env_args(std::env::vars_os()))
-        .arg("--")
-        .arg(program)
-        .args(program_args)
-        .status()
-        .context("start bwrap")?;
+    let fd = target.as_raw_fd();
+    let mut cmd = Command::new(bwrap);
+    cmd.args(args(
+        &profile,
+        &session,
+        run.path(),
+        &cwd,
+        pool.as_deref(),
+        Some(fd),
+    ))
+    .args(env_args(std::env::vars_os()))
+    .arg("--")
+    .arg(program)
+    .args(program_args);
+    // Only bwrap gets the target: the file descriptor loses its
+    // close-on-exec flag in the child, after the fork.
+    // SAFETY: the closure calls only fcntl, which is safe after a fork.
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(move || {
+            if nix::libc::fcntl(fd, nix::libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let status = cmd.status().context("start bwrap")?;
+    drop(target);
     use std::os::unix::process::ExitStatusExt;
     match (status.code(), status.signal()) {
         (Some(code), _) => Ok(code),
@@ -450,8 +655,9 @@ mod tests {
             target: "/home/ada/src/app/.claude/worktrees/issue-12/target".into(),
             temp: "/var/tmp".into(),
             claude: "/home/ada/.claude".into(),
+            rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
-            tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+            tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
         }
     }
@@ -459,7 +665,7 @@ mod tests {
     fn of(pool: Option<&Path>) -> Vec<String> {
         let s = session();
         let p = Profile::of(Role::TestRun, &s).unwrap();
-        args(&p, &s, Path::new("/var/tmp/r"), &s.worktree, pool)
+        args(&p, &s, Path::new("/var/tmp/r"), &s.worktree, pool, None)
     }
 
     #[test]
@@ -533,7 +739,7 @@ mod tests {
         let top = temp.path().canonicalize().unwrap();
         let ok = |args: &[&str], dir: &Path| {
             assert!(
-                Command::new("git")
+                crate::confine::git()
                     .args(args)
                     .current_dir(dir)
                     .output()
@@ -544,7 +750,7 @@ mod tests {
         };
         ok(&["init", "-q"], &top);
         std::fs::create_dir(top.join("src")).unwrap();
-        let s = here(&top.join("src")).unwrap();
+        let s = here(&top.join("src"), None).unwrap();
         assert_eq!(s.worktree, top);
         assert_eq!(s.clone, top);
     }

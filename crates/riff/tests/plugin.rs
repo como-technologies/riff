@@ -349,7 +349,7 @@ fn the_plugin_has_the_skill_with_git_hygiene() {
             fresh,
             rebase,
             &[
-                "```sh\ngit fetch -q --prune origin\n```",
+                "```sh\ngit fetch -q origin\n```",
                 "```sh\ngit reset -q --hard origin/main\n```",
             ][..],
         ),
@@ -364,7 +364,7 @@ fn the_plugin_has_the_skill_with_git_hygiene() {
             clean,
             threads,
             &[
-                "```sh\ngit -C MAIN fetch -q --prune origin\ngit -C MAIN worktree prune\n\
+                "```sh\ngit -C MAIN fetch -q origin\ngit -C MAIN worktree prune\n\
                  git -C MAIN worktree list | grep issue-12\ngit -C MAIN branch --list '*issue-12*'\n```",
                 "```sh\ngit worktree list\ngit branch --list 'worktree-*'\n```",
             ][..],

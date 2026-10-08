@@ -124,6 +124,14 @@ impl Machine {
         std::fs::canonicalize(self.root.path().join("main")).unwrap()
     }
 
+    /// The folder of the worktrees of the clone: the sandbox of a worker
+    /// with no item writes there (01M4BT341H1M1N1MT947HXNXDR).
+    fn worktrees(&self) -> PathBuf {
+        let dir = self.main().join(".claude/worktrees");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     fn bin(&self) -> PathBuf {
         self.root.path().join("bin")
     }
@@ -248,7 +256,7 @@ fn nice_here() -> u8 {
 #[test]
 fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!(
         "echo \"[$CARGO_BUILD_JOBS] $RUST_TEST_THREADS [$MAKEFLAGS] [${}]\" > '{}'\n\
          cat '{}/state/jobs/size' >> '{}'",
@@ -356,7 +364,7 @@ fn with_no_pool_the_worker_gets_the_fixed_share() {
     std::fs::create_dir_all(&state).unwrap();
     // A file where the pool must go.
     std::fs::write(state.join("jobs"), "").unwrap();
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let runner = riff::limits::runner_var();
     let claude = m.claude(&format!(
         "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS [$MAKEFLAGS] [$CARGO_MAKEFLAGS] [${runner}]\" > '{}'",
@@ -389,7 +397,7 @@ fn with_no_pool_the_worker_gets_the_fixed_share() {
 #[test]
 fn the_wrapper_starts_claude_with_no_variable_of_a_context() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!(
         "echo \"pid=${{CLAUDE_PID-none}}\" > '{}'",
         seen.display()
@@ -420,7 +428,7 @@ fn with_no_physical_cores_riff_counts_half_of_the_logical_cpus() {
     assert!(jobs.contains(said), "{jobs}");
     assert!(jobs.contains("one pool of 12 tokens"), "16 - 2 - 2: {jobs}");
 
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!(
         "echo \"$RUST_TEST_THREADS\" > '{}'\ncat '{}/state/jobs/size' >> '{}'",
         seen.display(),
@@ -457,7 +465,7 @@ fn the_numbers_count_the_workers_over_the_limit() {
     let running: Vec<_> = (0..3)
         .map(|_| riff::jobserver::Member::join(&dir).unwrap())
         .collect();
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!(
         "echo \"$RUST_TEST_THREADS $(cat '{}/size') $(cat '{}/counted')\" > '{}'",
         dir.display(),
@@ -491,7 +499,7 @@ fn the_numbers_count_the_workers_over_the_limit() {
 #[test]
 fn the_wrapper_starts_claude_with_nice() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!("nice > '{}'", seen.display()));
     let base = nice_here();
     let at = |nice: u8, wrapper: u8| nice.max(wrapper).to_string();
@@ -533,7 +541,7 @@ fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     let m = Machine::new(isolated::DEAD_SERVER);
     script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!(
         "echo \"$RIFF_WORKER $RUST_TEST_THREADS $1\" > '{}'",
         seen.display()
@@ -580,7 +588,7 @@ fn with_no_scope_in_the_pane_the_worker_starts_with_no_scope() {
     let m = Machine::new(isolated::DEAD_SERVER);
     script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", NO_BUS);
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!("echo \"$RIFF_WORKER $1\" > '{}'", seen.display()));
     let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
 
@@ -719,7 +727,7 @@ fn a_machine_with_no_systemd_says_so_one_time() {
     let m = Machine::new(isolated::DEAD_SERVER);
     script(&m.bin(), "systemctl", NO_SYSTEMD);
     script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!("echo \"$RIFF_WORKER $1\" > '{}'", seen.display()));
     let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
 
@@ -995,13 +1003,14 @@ fn the_skill_says_the_pool_shares_the_cores() {
 /// 01M4BQA5K7DQHQ4DSJGQJH8ZQE: riff gives a worker no compile cache.
 /// With an `sccache` on the `PATH`, the wrapper runs no `sccache` and
 /// sets no variable of a cache. A cache variable of the person is not
-/// on the list of kept variables (01M4BYVSR06B9HNX4SP83SY2SX), so
-/// `claude` gets none. `riff workers` shows no cache, and `riff workers
-/// cache` is no command.
+/// on the list of kept variables (01M4BYVSR06B9HNX4SP83SY2SX), and the
+/// sandbox empties `RUSTC_WRAPPER`: its server is outside the sandbox
+/// (01M4C5RV4J4G0H46GTRVNP5YED). So `claude` gets none. `riff workers`
+/// shows no cache, and `riff workers cache` is no command.
 #[test]
 fn the_wrapper_gives_claude_no_compile_cache() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.bin().join("seen");
+    let seen = m.worktrees().join("seen");
     let claude = m.claude(&format!(
         "echo \"[$RUSTC_WRAPPER] [$SCCACHE_DIR] [$SCCACHE_SERVER_PORT]\" > '{}'",
         seen.display()

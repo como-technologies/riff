@@ -205,6 +205,38 @@ pub fn this_on_disk() -> std::io::Result<PathBuf> {
     std::env::current_exe().map(on_disk)
 }
 
+/// The riff binary for a child of riff: this binary when it is `riff`.
+/// A test binary of cargo (`target/debug/deps/NAME-HASH`) runs the
+/// tools of riff in its own process: it gets the riff binary of its
+/// target, `target/debug/riff`. Else it is an error.
+///
+/// ```
+/// let riff = riff::binary::riff_of(std::path::Path::new("/opt/bin/riff")).unwrap();
+/// assert_eq!(riff, std::path::Path::new("/opt/bin/riff"));
+/// assert!(riff::binary::riff_of(std::path::Path::new("/nowhere/deps/all-1a2b")).is_err());
+/// ```
+pub fn riff() -> std::io::Result<PathBuf> {
+    riff_of(&this_on_disk()?)
+}
+
+/// [`riff`] for the binary `this`.
+pub fn riff_of(this: &Path) -> std::io::Result<PathBuf> {
+    if this.file_name().is_some_and(|n| n == "riff") {
+        return Ok(this.to_path_buf());
+    }
+    this.parent()
+        .filter(|deps| deps.file_name().is_some_and(|n| n == "deps"))
+        .and_then(Path::parent)
+        .map(|target| target.join("riff"))
+        .filter(|riff| riff.is_file())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no riff binary for {}", this.display()),
+            )
+        })
+}
+
 /// `args` with [`identity::PLACE_ARG`] and `place` first. It drops the
 /// place of an earlier update.
 ///

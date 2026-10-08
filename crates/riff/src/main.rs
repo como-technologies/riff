@@ -773,6 +773,24 @@ impl From<VerdictArg> for riff::pr::Verdict {
     }
 }
 
+/// The role of a session in a sandbox.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum SandboxRole {
+    Lead,
+    Worker,
+    Verifier,
+}
+
+impl From<SandboxRole> for riff::profile::Role {
+    fn from(role: SandboxRole) -> Self {
+        match role {
+            SandboxRole::Lead => Self::Lead,
+            SandboxRole::Worker => Self::Worker,
+            SandboxRole::Verifier => Self::Verifier,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Pr {
     /// Open the pull request of this branch
@@ -1060,6 +1078,58 @@ enum Workers {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Show or apply the sandbox of a session
+    ///
+    /// riff builds the profile of the role from the paths of this
+    /// session, and restricts the files, the TCP ports and the signals
+    /// with Landlock. With PROGRAM, it then runs PROGRAM in its place,
+    /// with its own Claude folder: each worker pane runs claude this way.
+    /// With --show, it prints the sandbox and what the kernel applies of
+    /// it, and runs nothing.
+    Sandbox {
+        /// The role of the session.
+        #[arg(long, value_enum, default_value_t = SandboxRole::Worker)]
+        role: SandboxRole,
+        /// The name of the Claude folder and the rules file of the
+        /// session (default: RIFF_SESSION).
+        #[arg(long)]
+        name: Option<String>,
+        /// Print the sandbox of the role here, and run nothing.
+        #[arg(long, conflicts_with = "program")]
+        show: bool,
+        /// The program to run in the sandbox.
+        #[arg(required_unless_present = "show")]
+        program: Option<std::path::PathBuf>,
+        /// The arguments of PROGRAM.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
+    /// Serve the broker of a sandbox on stdin
+    ///
+    /// riff workers sandbox starts it outside the sandbox. It runs only
+    /// the operations of its list, in the folder ROOT.
+    #[command(hide = true)]
+    Broker {
+        /// The worktree of the session.
+        #[arg(long)]
+        root: std::path::PathBuf,
+        /// The clone of the session.
+        #[arg(long)]
+        clone: std::path::PathBuf,
+    },
+    /// Run git in a worktree with the sandbox of a worker
+    ///
+    /// riff runs its git steps that read the files of a worktree this
+    /// way, for example in riff worktrees clean.
+    #[command(hide = true)]
+    Git {
+        /// The worktree, in .claude/worktrees of the clone.
+        #[arg(long)]
+        worktree: std::path::PathBuf,
+        /// The arguments of git.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Run PROGRAM as the test runner of a worker, and wait
     ///
     /// For a test program of cargo, it takes the free tokens of the pool
@@ -1323,6 +1393,10 @@ async fn main() -> Result<()> {
     }
     // A test run needs no riff server (01M4BTG72XPKSTDF4KYRKS4Z0D).
     if let Command::TestRun { program, args } = &command {
+        // In a sandbox, the broker runs it outside (01M4C5AQGCA3TFZDW23HYKS83S).
+        if let Some(broker) = riff::broker::here() {
+            std::process::exit(riff::broker::test_run(broker, program, args)?);
+        }
         match riff::sandbox::test_run(program, args) {
             Ok(code) => std::process::exit(code),
             Err(e) => match e.downcast_ref::<riff::sandbox::Missing>() {
@@ -2219,6 +2293,29 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
         Some(Workers::Lead { name, claude, args }) => {
             std::process::exit(worker::run_lead(claude, args, server, name).await?)
         }
+        Some(Workers::Sandbox {
+            role,
+            name,
+            show,
+            program,
+            args,
+        }) => {
+            let role = (*role).into();
+            let name = name.as_deref();
+            match program {
+                Some(program) if !show => riff::confine::run(role, server, name, program, args),
+                _ => {
+                    print!("{}", riff::confine::show(role, server, name)?);
+                    Ok(())
+                }
+            }
+        }
+        Some(Workers::Broker { root, clone }) => {
+            use std::os::fd::AsFd;
+            let socket = std::io::stdin().as_fd().try_clone_to_owned()?;
+            riff::broker::serve(socket, root, clone, &riff::binary::this_on_disk()?)
+        }
+        Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
         Some(Workers::TestRun { program, args }) => {
             std::process::exit(riff::jobserver::test_run(program, args).await?)
         }
@@ -2320,7 +2417,7 @@ async fn start(server: &str) -> Result<()> {
         let temp = riff::temp::here(&lead).unwrap_or_else(std::env::temp_dir);
         let riff = riff::binary::this_on_disk()?;
         let given = launch::Given::prepare(&clone.path, &riff)?;
-        let settings = lead_settings(&dir, &name, &clone.path, &temp, claude, server)?;
+        let settings = lead_settings(&lead, &clone.path, &temp, claude, server)?;
         let command = start::lead_command(&riff, &lead, claude, &given, &settings);
         tmux.new_session(&name, &clone.path, &env, &command)?;
         println!("{}", text::lead_started(&clone.repo, &clone.path));
@@ -2336,13 +2433,13 @@ async fn start(server: &str) -> Result<()> {
     Ok(())
 }
 
-/// Writes the flag settings of the lead of `clone`, with the temp
-/// folder `temp`, to its file in `dir`, and gives the file: the status
+/// Writes the flag settings of the lead `name` of `clone`, with the
+/// temp folder `temp`, to its rules file, outside each write path of
+/// the lead (01M4BTB7DY1Y74PP3JWKVX58JQ), and gives the file: the status
 /// line, the rules of riff work (01M4BYH874WQ16Q0337WQA8AMV) and the
 /// permission rules of the profile of the lead. With no rules of the
 /// profile, it says why (01M4BT33Z914GBHCGCAXFVQ2X7).
 fn lead_settings(
-    dir: &std::path::Path,
     name: &str,
     clone: &std::path::Path,
     temp: &std::path::Path,
@@ -2350,19 +2447,17 @@ fn lead_settings(
     server: &str,
 ) -> Result<std::path::PathBuf> {
     let role = riff::profile::Role::Lead;
-    let profile = riff::role_rules::clone_session(clone, temp, claude, server)
-        .ok_or_else(|| text::no_role_rules(role, "it has no HOME, or the server URL has no host"))
-        .and_then(|session| riff::role_rules::here(role, &session));
-    let rules = match profile {
+    let session = riff::role_rules::clone_session(clone, temp, claude, server, name)
+        .map_err(|why| anyhow::anyhow!(text::no_role_rules(role, &why)))?;
+    let rules = match riff::role_rules::here(role, &session) {
         Ok(profile) => launch::merge(launch::riff_rules(clone), &profile),
         Err(why) => {
             eprintln!("{why}");
             launch::riff_rules(clone)
         }
     };
-    let file = start::lead_settings_file(dir, name);
-    start::write_lead_settings(&file, &rules)?;
-    Ok(file)
+    start::write_lead_settings(&session.rules, &rules)?;
+    Ok(session.rules)
 }
 
 /// Finds the riff entries that older releases wrote to the Claude
@@ -3571,7 +3666,7 @@ async fn draw_top(
 /// each minute while it runs ([`api::keep_alive`],
 /// 01M3WG240PNMQYZ7TX6Z7ZF6M9). In a worker it sends one each 10
 /// seconds. When the reply asks the worker to stop, it stops the wrapper
-/// of the worker and ends (01M4385Z5BN03E6HTEB5GQVZ8X).
+/// of the worker and ends (01M4BTB7JGK4BASDVR5WMRTGPM).
 ///
 /// With a `limit`, it ends with one line and status 0 when no wake came
 /// in that time (01M3Z64J08GW6N1H42AR2FZQZ4). On a new binary, it runs
@@ -3621,14 +3716,14 @@ async fn watch(
         std::future::pending().await
     };
     // The watch of a worker acts on the ask to stop too, so a worker
-    // whose riff mcp ended stops (01M4385Z5BN03E6HTEB5GQVZ8X).
+    // whose riff mcp ended stops (01M4BTB7JGK4BASDVR5WMRTGPM).
     let alive = async {
-        match riff::worker::wrapper_of_worker() {
-            Some(wrapper) => {
+        match riff::worker::stop_file_of_worker() {
+            Some(stop) => {
                 let every = riff_core::wire::WORKER_ALIVE_EVERY;
                 api::keep_alive_until_stop(api, me, every).await;
                 println!("riff: {}", text::IDLE_STOP);
-                riff::worker::stop_wrapper(wrapper);
+                riff::worker::ask_stop(&stop);
             }
             None => api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY).await,
         }

@@ -862,10 +862,13 @@
   and writes nothing, also when `TMPDIR` is in a repository, for
   example the home of the person.
 - **01M43B491Z25KT0XBC7CANFS5G** Replaced by 01M49NP2907J4SH4S6MAY09VXE.
-- **01M49NP2907J4SH4S6MAY09VXE** Each cargo run in the riff repository,
-  also a plain `cargo test`, has `TMPDIR` set to `/var/tmp`:
-  `.cargo/config.toml` sets it with `force`. So no test of a worker
-  finds the repository of the home, or writes to it.
+- **01M49NP2907J4SH4S6MAY09VXE** Replaced by 01M4C5WFP1CGG4PYPEP2NVRGKQ.
+- **01M4C5WFP1CGG4PYPEP2NVRGKQ** A cargo run in the riff repository with
+  no `TMPDIR` gets `/var/tmp`: `.cargo/config.toml` sets it with no
+  `force`. A session in the sandbox keeps its own temp folder, because
+  the sandbox lets it write only there. A test run of a session gets
+  its own `/tmp`. So no test of a worker writes to the repository of
+  the home.
 - **01M49NP2JW8JFWYY56K7AK3H05** The temp dir of the test helper
   `isolated` is outside each git repository, also when cargo runs from
   a dir outside the riff repository. So no command of a test writes
@@ -1891,7 +1894,8 @@
   tool: each branch of `origin` with its last commit, and each worktree
   on the machine with the count of its files that are not committed
   and of its commits that are not pushed. riff runs
-  `git fetch --prune origin` first, for at most 5 seconds. A branch or
+  `git fetch origin` first, with no `--prune`, for at most 5 seconds.
+  A branch or
   a worktree belongs to the item when its name holds the item as a
   whole word. A verify claim gets no such line. riff does not show the
   subject of a commit.
@@ -3206,13 +3210,16 @@
   user, host and repository. An idle worker in one repository does not
   stop the idle worker of the same user and host in another
   repository.
-- **01M3Q5A0QZTSTXHHNYCE8HFJSB** The reply to a keep-alive tells a
+- **01M3Q5A0QZTSTXHHNYCE8HFJSB** Replaced by 01M4BTB7G5Q0HPP057KMBXBTE1.
+- **01M4BTB7G5Q0HPP057KMBXBTE1** The reply to a keep-alive tells a
   worker that the server asks it to stop. `riff mcp` in a worker sends
-  a keep-alive each 10 seconds. On the ask, it sends SIGTERM to the
-  `riff workers run` wrapper of its worker, which the variable
-  `RIFF_WORKER_WRAPPER` names. The wrapper stops `claude` and sends no
-  message, so the pane closes. `riff mcp` sends the end call, so the
-  session leaves `riff who`.
+  a keep-alive each 10 seconds. On the ask, it writes the stop file
+  that the variable `RIFF_WORKER_STOP` names, in the temp folder of
+  the worker. The `riff workers run` wrapper of the worker looks for
+  the file each 250 ms. Then it stops `claude` and sends no message,
+  so the pane closes. `riff mcp` sends the end call, so the session
+  leaves `riff who`. A signal cannot do it: the sandbox stops each
+  signal to a process outside it.
 - **01M3Q5A0TF9K49V8Z1ZY9NDF74** The riff keeps the settings of idle
   workers: `per_host` (default 1) and `after_secs` (default 60, at
   least 1). The server saves them. `riff workers idle` shows them.
@@ -3242,10 +3249,11 @@
   names the first line of each unread request of the lead to the
   worker (01M49KT28N4B07P4G80Z74GRAH), so that the lead can give it
   to another session.
-- **01M4385Z5BN03E6HTEB5GQVZ8X** `riff watch` in a worker
-  (`RIFF_WORKER=1` and `RIFF_WORKER_WRAPPER` set) sends its keep-alive
+- **01M4385Z5BN03E6HTEB5GQVZ8X** Replaced by 01M4BTB7JGK4BASDVR5WMRTGPM.
+- **01M4BTB7JGK4BASDVR5WMRTGPM** `riff watch` in a worker
+  (`RIFF_WORKER=1` and `RIFF_WORKER_STOP` set) sends its keep-alive
   each 10 seconds. When the reply asks the worker to stop, it prints
-  one line, sends SIGTERM to the wrapper and ends. So a worker whose
+  one line, writes the stop file and ends. So a worker whose
   `riff mcp` ended also stops.
 - **01M3Q5A0Z5DK0YV1MWTM4AQD5Z** `riff workers stop PANE --host HOST`
   asks the workers host on HOST to stop only the worker in PANE. PANE
@@ -4106,7 +4114,8 @@
   registries and the model API. On the forge, it reads, plans,
   comments, pushes a branch and opens a pull request.
 - **01M4BPK7AKTJD9Y9WVJQKTQY6M** A worker writes its worktree, its
-  target folder, the git dir of the clone, the local files of riff,
+  target folder, a part of the git dir of the clone
+  (01M4CN0W3V733V6R2SG1YYZRCN), the local files of riff,
   its temp folder and its Claude Code folder. It does not write the
   rest of the clone. Its network is the network of the lead. On the
   forge, it reads, comments, pushes a branch and opens a pull request.
@@ -4170,9 +4179,160 @@
 - **01M4BSSX66A2NNVQK48KQH8BEZ** Outside tmux, a riff command that
   lists, stops or types into the panes of the workers uses the tmux
   server of riff.
-- **01M4BW2SW96JS62ZYQNW6804TV** `riff` writes the permission rules of
-  the lead to a settings file in the local folder of riff at each start
-  of a lead, and passes the file to `claude` with `--settings`.
+- **01M4BW2SW96JS62ZYQNW6804TV** Replaced by 01M4C1QS79MM15F852SW6W7671.
+- **01M4C1QS79MM15F852SW6W7671** `riff` writes the permission rules of
+  the lead to its rules file (01M4BTB7DY1Y74PP3JWKVX58JQ) at each start
+  of a lead, and passes the file to `claude` with `--settings`. The
+  name of the Claude folder and of the rules file of the lead is
+  `lead-OWNER-REPO`.
+- **01M4BTB72DY0C5Y0EJVR0ZH6FZ** `riff workers run` starts `claude`
+  through `riff workers sandbox`, after `systemd-run` and `nice`.
+  `riff workers sandbox` builds the profile of the worker from the
+  paths of its session. It restricts itself with Landlock to the files
+  and the TCP ports of the profile, and with the scopes of signals and
+  of abstract unix sockets. Then it runs `claude` in its place. Each
+  child of `claude` inherits the sandbox.
+- **01M4BTB74RD24WH59FA65KZ8J0** The sandbox asks for each right of
+  Landlock ABI 9, and the kernel applies the rights of its own ABI. On
+  a kernel with no Landlock, `riff workers sandbox` prints one error
+  line and starts no program.
+- **01M4BTB7757XF8RZ6MRXKTM8SB** The sandbox resolves each path of the
+  session before riff makes the profile. A tool path that gives the
+  home of the person or a secret is left out. Each other path that
+  gives one of them stops the start.
+- **01M4BTB79FZ5RAFXMZRRJZNCH9** A session connects to the TCP ports
+  of its profile and to the local port range of the kernel
+  (`ip_local_port_range`), so that a test server on port 0 works in a
+  worker.
+- **01M4BTB7BPA38ARM789WBV507D** Each AI session has its own Claude
+  Code folder, `CLAUDE_CONFIG_DIR`: `claude/SESSION` in the data folder
+  of riff (`$XDG_DATA_HOME/riff`, else `~/.local/share/riff`). No
+  profile gives the Claude folder of the person.
+- **01M4BTB7DY1Y74PP3JWKVX58JQ** The file of the permission rules of a
+  session is `rules/SESSION.json` in the data folder of riff. Each AI
+  role reads it. riff makes no profile whose write paths hold it.
+- **01M4BTB7MSEWG4XY1CRRNBNRPH** Each session writes the device files
+  `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`,
+  `/dev/urandom`, `/dev/tty`, `/dev/ptmx` and the terminals in
+  `/dev/pts`.
+- **01M4C5AQGCA3TFZDW23HYKS83S** `riff workers sandbox` starts the
+  broker `riff workers broker` before it restricts itself, so the
+  broker runs outside the sandbox. The session gets its end of a
+  socket pair in `RIFF_BROKER`. `riff test-run` in a session with
+  `RIFF_BROKER` asks the broker to run the test run outside the
+  sandbox, with the stdin, stdout and stderr of the session, and gives
+  its exit code.
+- **01M4C5AQM63F58YQ9VA391513D** The broker runs only the operations of
+  its one list, today `test-run`, and refuses each other operation.
+  The folder of a request must be in the worktree of the session. From
+  the variables of a request, it keeps only those of cargo and of the
+  Rust tests, and the riff server of the tests.
+- **01M4CN0W1F0Y7955C6Q1XB601G** The folders that a test run of the
+  broker writes come from the broker, never from the request. A
+  request sets no `CARGO_HOME`, `CARGO_TARGET_DIR`,
+  `CARGO_BUILD_TARGET_DIR`, `CARGO_BUILD_BUILD_DIR`, `CARGO_MAKEFLAGS`,
+  `CARGO_BUILD_RUSTC_WRAPPER` or `MAKEFLAGS`: the test run gets the
+  values of the broker. The broker sets `RIFF_TEST_RUN_WITHIN` to the
+  `CARGO_TARGET_DIR` of the session, else to the worktree of the
+  session.
+- **01M4CN0RRJF5EWGE0VDSX3442B** `riff test-run` makes its target,
+  opens it, and finds its real path from the open folder. With
+  `RIFF_TEST_RUN_WITHIN`, it runs nothing when the real path of the
+  target is not in that folder, before it makes a folder and after it
+  opens the target. bubblewrap binds the target from the open folder,
+  so a symlink that a session puts in the path later changes nothing.
+- **01M4CRC7VP5EVEE2F9HVRKYCX1** The profile of a test run checks its
+  run folder as its temp folder, not the temp folder that holds it. So
+  a test run works with the temp folder `/tmp`, which holds the tmux
+  sockets of the person.
+- **01M4CN0W3V733V6R2SG1YYZRCN** A worker and a verifier write only
+  `objects`, `refs`, `logs`, `worktrees` and the file `FETCH_HEAD` of
+  the git dir of the clone. They read the rest of it. So no session
+  writes the `config`, the `hooks` or the `packed-refs` of the clone.
+  The git settings of a session turn off `branch.autoSetupMerge`,
+  `gc.auto` and `maintenance.auto`. A session pushes with no `-u`, and
+  fetches with no `--prune`. riff prunes the main clone outside the
+  sandbox.
+- **01M4CN0W644V72YY74WH3KRMMQ** Each git command that riff runs
+  outside a sandbox runs with `core.hooksPath=/dev/null` and
+  `core.fsmonitor=false`.
+- **01M4CXPPVEPFYD86PN9V2Q6EKB** Each git command that riff runs
+  outside a sandbox goes into no submodule:
+  `diff.ignoreSubmodules=all`, `submodule.recurse=false`,
+  `fetch.recurseSubmodules=false`, `push.recurseSubmodules=no` and
+  `status.submoduleSummary=false`.
+- **01M4CW0CEV2ZT3FRET36EB0GMM** Each git command that riff runs in a
+  worktree `MAIN/.claude/worktrees/NAME`, or below it, gets
+  `GIT_DIR=MAIN/.git/worktrees/NAME`, `GIT_COMMON_DIR=MAIN/.git` and
+  `GIT_WORK_TREE=MAIN/.claude/worktrees/NAME` from riff, not from the
+  `.git`, `commondir` or `gitdir` file. Before the run, riff checks
+  that no part of these paths is a link, that `MAIN/.git` and
+  `MAIN/.git/worktrees/NAME` are folders, that the clone does not set
+  `extensions.worktreeConfig`, and that a `commondir` file there names
+  `MAIN/.git`. riff runs no git in a path with a `..` part. A folder
+  between the worktree and the path with its own `.git` is a
+  repository of its own: riff runs git there with no git dirs of the
+  worktree. When a check fails, riff runs no
+  git there, and the error names the worktree. A git command in each
+  other folder gets `GIT_COMMON_DIR` of the `.git` folder of that
+  folder, when it has one. A `riff claim` fetches with no `--prune`.
+- **01M4D06XN4D19G1B2NBRFH34B3** riff runs each git step that reads
+  the files of a worktree (`status`, `add`, `commit`, `merge-tree`) in
+  a child, `riff workers git`, with the Landlock and seccomp profile of
+  a worker on that worktree, and with the git settings of a session
+  (01M4C5RV4J4G0H46GTRVNP5YED). A program that git starts there gets no
+  more rights than a worker. With no Landlock, the step does not run.
+  The push of a WIP commit stays outside, with the git dirs of riff
+  and no hook.
+- **01M4D7TB7FZAMASMQG9K7M3Q0D** A test run takes its clone and its
+  worktree from riff. In a session, the broker gives the clone and the
+  worktree of the session, from its start. The folder of the request
+  only picks where the command runs in that worktree. No `.git` file or
+  folder in the worktree changes the clone, the worktree or the git dir
+  that the profile of the test run reads. When the worktree of the
+  session is the folder of the worktrees of the clone, the worktree of
+  the run is its folder `NAME` that holds the folder of the request.
+  With no broker, `riff test-run` runs outside each sandbox, and takes
+  them from git in its folder.
+- **01M4D4BZ41AH29KSA9B0VZB8DQ** No role and no test run reads
+  `credentials.toml` or `credentials` of a cargo home: they hold the
+  registry tokens of the person, and `Session::secrets` names them in
+  `~/.cargo`. A profile and a test run read only `bin`, `registry`,
+  `git`, `config.toml` and `config` of the cargo home, not the cargo
+  home itself.
+- **01M4CW0CH4F861MWQSQACEX54X** riff runs git in a worktree from
+  `git worktree list` only when it is in `.claude/worktrees` of the
+  clone. `riff worktrees clean` keeps each other linked worktree and
+  runs no git in it. The earlier work of a start does not list it.
+- **01M4C5AQQX543ZFJ7J005HC5E9** The folder of the tmux sockets of the
+  person (`$TMUX_TMPDIR/tmux-UID`, else `/tmp/tmux-UID`) is a place of
+  a secret: no profile gives it.
+- **01M4C5AQV8AT8F5WKNF1C9CE5F** After Landlock, the sandbox applies a
+  seccomp filter: `socket(AF_UNIX, ...)` and `io_uring_setup` fail
+  with `EACCES`. A pair of sockets still works. So no session connects
+  to a unix socket with a name, for example tmux or D-Bus, also on a
+  Landlock ABI before 9.
+- **01M4C5AQYT6V1MJ37JXJ3PNYQ2** `riff workers sandbox` removes `TMUX`
+  and `TMUX_PANE` from the environment of the program.
+- **01M4C6HE4D4ADJVBCC6EW8FP0X** `riff workers sandbox` and `riff
+  test-run` set the core size limit (`RLIMIT_CORE`) to 1 byte, soft and
+  hard. So a crash in a session or in a test run makes no core file and
+  starts no crash helper of the system, for example apport. A limit of
+  0 is not enough: with a pipe in `core_pattern`, the kernel starts the
+  helper for each limit but 1.
+- **01M4C5RTX728DS9FHF7HE14G6T** A session reads the folder of the
+  `claude` that is on its `PATH`, the file that `/etc/resolv.conf`
+  links to, and the cargo settings of its clone (`.cargo`).
+- **01M4C5RV4J4G0H46GTRVNP5YED** `riff workers sandbox` changes what
+  of the environment of the person cannot work in the sandbox: git
+  reads no exclude file of the person and signs no commit or tag
+  (`GIT_CONFIG_*`), `RUSTC_WRAPPER` and `CARGO_BUILD_RUSTC_WRAPPER`
+  are empty, and a `BASH_ENV` that the session cannot read goes.
+- **01M4BTB7Q1ZT1WD2NMF6BAVWPB** `riff workers sandbox --show` prints
+  the sandbox of the role for the session here: the write paths, the
+  read paths, the devices, the ports, and what the kernel applies of
+  it. It applies the sandbox only in a thread of its own, and runs no
+  program.
 - **01M4BTG70M8MPPCNTJCJ649BW1** The sandbox of a test run is
   bubblewrap. riff builds its arguments from the profile of the test
   run.

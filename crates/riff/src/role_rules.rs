@@ -53,7 +53,8 @@
 //!     worktree: "/home/ada/app/.claude/worktrees".into(),
 //!     target: "/home/ada/app/.claude/worktrees".into(),
 //!     temp: "/var/tmp/s1".into(),
-//!     claude: "/home/ada/.claude".into(),
+//!     claude: "/home/ada/.local/share/riff/claude/s1".into(),
+//!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
 //!     tools: vec![],
 //!     server: Endpoint::of_url("https://riff.example.com").unwrap(),
@@ -69,7 +70,7 @@
 //! assert!(rules.deny.contains(&"Read(//home/ada/.bashrc)".to_owned()));
 //! assert!(rules.deny.contains(&"Edit(//home/ada/app/README.md)".to_owned()));
 //! assert!(rules.deny.contains(&"Read(//run/user/1000/bus)".to_owned()));
-//! assert!(rules.deny.contains(&"Edit(//home/ada/.claude/settings.json)".to_owned()));
+//! assert!(rules.deny.contains(&"Edit(//home/ada/.local/share/riff/claude/s1/settings.json)".to_owned()));
 //! # Ok::<(), riff::profile::Refused>(())
 //! ```
 
@@ -77,7 +78,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::permissions::Rules;
-use crate::profile::{Endpoint, Profile, Role, Session};
+use crate::profile::{Profile, Role, Session};
 
 /// A file or a folder that a walk of the home finds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,68 +230,22 @@ pub fn pattern(path: &Path) -> String {
 }
 
 /// The session of a worker or of the lead in the main clone `clone`,
-/// with the temp folder `temp`, from the variables of this process. A
-/// worker starts with no item, so its worktree is the folder of the
-/// worktrees of the clone, and its target is in it
-/// (01M4BT341H1M1N1MT947HXNXDR). The lead gets no path from them. The
-/// tools are the toolchain of Rust, the binaries of riff and of
-/// `claude`, the plugin of riff and the settings of riff. `None` with no
-/// `HOME`, or with a server URL that has no host.
-pub fn clone_session(clone: &Path, temp: &Path, claude: &Path, server: &str) -> Option<Session> {
-    let home = PathBuf::from(std::env::var_os("HOME").filter(|h| !h.is_empty())?);
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|r| !r.is_empty())
-        .map_or_else(
-            || PathBuf::from(format!("/run/user/{}", nix::unistd::getuid())),
-            PathBuf::from,
-        );
-    let worktrees = clone.join(".claude/worktrees");
-    let mut tools = vec![
-        home.join(".cargo"),
-        home.join(".rustup"),
-        home.join(".local/share/riff"),
-    ];
-    let bins = [crate::binary::this_on_disk().ok(), on_path(claude)];
-    for bin in bins.into_iter().flatten() {
-        for path in [Some(bin.clone()), bin.canonicalize().ok()]
-            .into_iter()
-            .flatten()
-        {
-            tools.extend(path.parent().map(Path::to_path_buf));
-        }
-    }
-    if let Some(dir) = crate::settings::path()
-        .ok()
-        .and_then(|p| p.parent().map(Path::to_path_buf))
-    {
-        tools.push(dir);
-    }
-    tools.retain(|t| !home.starts_with(t));
-    let mut seen = HashSet::new();
-    tools.retain(|t| seen.insert(t.clone()));
-    Some(Session {
-        claude: crate::worker_lsp::claude_dir().unwrap_or_else(|| home.join(".claude")),
-        state: crate::local::dir().unwrap_or_else(|| runtime.join("riff")),
-        home,
-        runtime,
-        clone: clone.to_path_buf(),
-        worktree: worktrees.clone(),
-        target: worktrees,
-        temp: temp.to_path_buf(),
-        tools,
-        server: Endpoint::of_url(server)?,
-    })
-}
-
-/// The path of `bin`: itself when it has a folder, else the first match
-/// in `PATH`.
-fn on_path(bin: &Path) -> Option<PathBuf> {
-    if bin.components().count() > 1 {
-        return Some(bin.to_path_buf());
-    }
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(bin))
-        .find(|p| p.is_file())
+/// with the temp folder `temp`, the program `claude` and the name
+/// `name` of its Claude folder: the same session that its sandbox gets
+/// ([`crate::confine::Here`]). A worker starts with no item, so its
+/// worktree is the folder of the worktrees of the clone, and its target
+/// is in it (01M4BT341H1M1N1MT947HXNXDR). The lead gets no path from
+/// them. The error says why there is none.
+pub fn clone_session(
+    clone: &Path,
+    temp: &Path,
+    claude: &Path,
+    server: &str,
+    name: &str,
+) -> Result<Session, String> {
+    let here =
+        crate::confine::Here::of_dir(clone, server, Some(name)).map_err(|e| format!("{e:#}"))?;
+    Ok(here.with_temp(temp).with_program(claude).session())
 }
 
 /// The rules of `role` for `session`, from the disk, or the line that
@@ -344,6 +299,7 @@ pub fn flag(args: &[String], rules: &Rules) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::Endpoint;
 
     fn session() -> Session {
         Session {
@@ -353,9 +309,10 @@ mod tests {
             worktree: "/home/ada/src/app/.claude/worktrees/issue-12".into(),
             target: "/home/ada/src/app/.claude/worktrees/issue-12/target".into(),
             temp: "/home/ada/.cache/riff/tmp/s1".into(),
-            claude: "/home/ada/.claude".into(),
+            claude: "/home/ada/.local/share/riff/claude/s1".into(),
+            rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
-            tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+            tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("https://riff.example.com").unwrap(),
         }
     }
@@ -494,7 +451,7 @@ mod tests {
         for role in Role::ALL {
             let rules = rules(role);
             for name in SETTINGS {
-                let mine = format!("Edit(//home/ada/.claude/{name})");
+                let mine = format!("Edit(//home/ada/.local/share/riff/claude/s1/{name})");
                 assert!(rules.deny.contains(&mine), "{role}: {mine}");
                 let any = format!("Edit(//**/.claude/{name})");
                 assert!(rules.deny.contains(&any), "{role}: {any}");
@@ -510,6 +467,7 @@ mod tests {
             target: "/srv/app/.claude/worktrees".into(),
             temp: "/var/tmp/s1".into(),
             claude: "/srv/claude".into(),
+            rules: "/srv/rules.json".into(),
             tools: vec!["/opt/rust".into()],
             ..session()
         };

@@ -157,12 +157,16 @@ async fn a_session_works_with_only_its_environment_and_leaks_no_secret() {
     let (service, url) = signed_server().await;
     let dir = clone();
     let root = dir.path();
-    let home = root.join("home");
+    // The home of the person is not in the clone: no profile has a
+    // folder above the home.
+    let person = tempfile::tempdir().unwrap();
+    let home = person.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let riff_home = root.join("riff-home");
     std::fs::create_dir_all(&riff_home).unwrap();
     sign_in(&service, &url, &riff_home).await;
-    let out = root.join("out");
+    // The worker writes the folder of the worktrees of the clone.
+    let out = root.join(".claude/worktrees/out");
     std::fs::create_dir_all(&out).unwrap();
     let claude = fake_claude(root, &out, &riff_home);
 

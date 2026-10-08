@@ -29,7 +29,7 @@
 //! the clear.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// What [`fast_forward`] did to the main clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,9 +203,8 @@ pub fn fast_forward(dir: &Path) -> Fresh {
 /// Runs git in `dir` with no prompt. The error names the command and
 /// its message.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = crate::confine::git_in(dir)
+        .map_err(|e| format!("{e:#}"))?
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())

@@ -17,8 +17,8 @@
 //!
 //! | | lead | worker | verifier | test run |
 //! |---|---|---|---|---|
-//! | Write | the clone, its worktrees, the riff state, its temp, its Claude folder | its worktree, its target, the git dir of the clone, the riff state, its temp, its Claude folder | its verify worktree, its target, the git dir of the clone, the riff state, its temp, its Claude folder | its temp, its target |
-//! | Read | the system, its tools, and what it writes | the same | the same | the same, its worktree and the git dir of the clone |
+//! | Write | the clone, its worktrees, the riff state, its temp, its Claude folder | its worktree, its target, a part of the git dir of the clone ([`GIT_WRITES`]), the riff state, its temp, its Claude folder | its verify worktree, its target, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its temp, its target |
+//! | Read | the system, its tools, its permission rules, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, its worktree and the git dir of the clone |
 //! | Read the home of the person | no, except the paths above | no | no | no |
 //! | Network | riff server, forge, registries, model | the same | the same | loopback only |
 //! | Keyring, D-Bus and systemd of the person | no | no | no | no |
@@ -40,13 +40,22 @@
 //!   repository can never be the clone.
 //! - [`Profile::of`] refuses a path that is not absolute or that has a
 //!   `..` component (01M4BR61PPQV7JJE5Y2G9Q90AF): it compares
-//!   components and does not resolve them. The apply step (#607)
-//!   resolves each symlink on the disk before it grants a path.
+//!   components and does not resolve them. The sandbox
+//!   ([`crate::confine`]) resolves each symlink on the disk before it
+//!   makes the profile.
+//! - The Claude folder of a session is its own, not the Claude folder
+//!   of the person (01M4BTB7BPA38ARM789WBV507D). The file of its
+//!   permission rules is outside each write path: [`Profile::of`]
+//!   refuses a session that writes it (01M4BTB7DY1Y74PP3JWKVX58JQ).
 //! - Each role writes its temp folder, so no role writes nothing
 //!   ([`Writes`]).
 //! - A git worktree keeps its objects and its refs in the git dir of
-//!   the clone. So a worker and a verifier write that dir, and not the
-//!   rest of the clone.
+//!   the clone. So a worker and a verifier write the parts of that dir
+//!   that a commit, a fetch and a push need ([`GIT_WRITES`],
+//!   [`GIT_WRITE_FILES`]), and not the rest of the clone. The `config`
+//!   and the `hooks` of the clone name programs that git runs later
+//!   outside each sandbox: no session writes them
+//!   (01M4CN0W3V733V6R2SG1YYZRCN).
 //! - A test run has the loopback network only, in a network namespace
 //!   of its own (#612). Each other role connects only to the TCP ports
 //!   of [`Network::ports`].
@@ -75,9 +84,10 @@
 //!     worktree: "/home/ada/src/app/.claude/worktrees/issue-12".into(),
 //!     target: "/home/ada/src/app/.claude/worktrees/issue-12/target".into(),
 //!     temp: "/home/ada/.cache/riff/tmp/s1".into(),
-//!     claude: "/home/ada/.claude".into(),
+//!     claude: "/home/ada/.local/share/riff/claude/s1".into(),
+//!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
-//!     tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+//!     tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
 //!     server: Endpoint::of_url("https://riff.example.com").unwrap(),
 //! };
 //! let worker = Profile::of(Role::Worker, &session)?;
@@ -288,8 +298,12 @@ pub struct Session {
     pub target: PathBuf,
     /// The temp folder of the session (see [`temp`](crate::temp)).
     pub temp: PathBuf,
-    /// The Claude Code folder of the session.
+    /// The Claude Code folder of the session: its own, never the
+    /// Claude folder of the person (01M4BTB7BPA38ARM789WBV507D).
     pub claude: PathBuf,
+    /// The file of the permission rules of the session (#613). Each AI
+    /// role reads it, and no role writes it (01M4BTB7DY1Y74PP3JWKVX58JQ).
+    pub rules: PathBuf,
     /// The local files of riff (see [`local::dir`](crate::local::dir)).
     pub state: PathBuf,
     /// The other paths that each role reads: the toolchain, the
@@ -317,7 +331,8 @@ impl Session {
     ///     worktree: "/h/app".into(),
     ///     target: "/h/app/target".into(),
     ///     temp: "/h/tmp".into(),
-    ///     claude: "/h/.claude".into(),
+    ///     claude: "/h/.local/share/riff/claude/s1".into(),
+    ///     rules: "/h/.local/share/riff/rules/s1.json".into(),
     ///     state: "/run/user/7/riff".into(),
     ///     tools: vec![],
     ///     server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
@@ -327,11 +342,14 @@ impl Session {
     /// assert!(s.secrets().contains(&Path::new("/run/user/7/systemd").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/dbus").to_path_buf()));
     /// assert!(!s.secrets().iter().any(|p| p.ends_with("riff/forge")), "no key of the App is on a machine");
+    /// assert!(s.secrets().contains(&Path::new("/h/.cargo/credentials.toml").to_path_buf()));
+    /// assert!(s.secrets().contains(&Path::new("/h/.cargo/credentials").to_path_buf()));
     /// ```
     pub fn secrets(&self) -> Vec<PathBuf> {
         let home = |p: &str| self.home.join(p);
         let runtime = |p: &str| self.runtime.join(p);
-        vec![
+        let cargo = CARGO_CREDENTIALS.map(|f| self.home.join(".cargo").join(f));
+        let mut secrets = vec![
             home(".local/share/keyrings"),
             home(".ssh"),
             home(".gnupg"),
@@ -341,7 +359,43 @@ impl Session {
             runtime("keyring"),
             runtime("gnupg"),
             SYSTEM_BUS.into(),
-        ]
+            tmux_dir(),
+        ];
+        secrets.extend(cargo);
+        secrets
+    }
+
+    /// Why no profile may hold `path`, or `None`: the path is not
+    /// absolute or has a `..` component, gives the home of the person
+    /// or a folder above it, or gives a secret ([`Session::secrets`]).
+    ///
+    /// ```
+    /// # use riff::profile::{Endpoint, Refused, Session};
+    /// # let s = Session {
+    /// #     home: "/h".into(), runtime: "/run/user/7".into(), clone: "/h/app".into(),
+    /// #     worktree: "/h/app".into(), target: "/h/app/target".into(), temp: "/h/tmp".into(),
+    /// #     claude: "/h/c".into(), rules: "/h/r.json".into(), state: "/run/user/7/riff".into(),
+    /// #     tools: vec![], server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
+    /// # };
+    /// assert_eq!(s.refuses("/usr/bin".as_ref()), None);
+    /// assert_eq!(s.refuses("/".as_ref()), Some(Refused::Home("/".into())));
+    /// assert_eq!(s.refuses("/h/.ssh/id".as_ref()), Some(Refused::Secret("/h/.ssh/id".into())));
+    /// ```
+    pub fn refuses(&self, p: &Path) -> Option<Refused> {
+        if let Err(refused) = plain(p) {
+            return Some(refused);
+        }
+        if self.home.starts_with(p) {
+            return Some(Refused::Home(p.to_owned()));
+        }
+        if self
+            .secrets()
+            .iter()
+            .any(|x| x.starts_with(p) || p.starts_with(x))
+        {
+            return Some(Refused::Secret(p.to_owned()));
+        }
+        None
     }
 }
 
@@ -351,14 +405,28 @@ impl Session {
 pub struct Writes {
     temp: PathBuf,
     more: Vec<PathBuf>,
+    files: Vec<PathBuf>,
 }
 
 impl Writes {
-    /// Each path, the temp folder first.
+    /// Each path, the temp folder first, the files last.
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
-        std::iter::once(self.temp.as_path()).chain(self.more.iter().map(PathBuf::as_path))
+        std::iter::once(self.temp.as_path())
+            .chain(self.more.iter().map(PathBuf::as_path))
+            .chain(self.files.iter().map(PathBuf::as_path))
     }
 }
+
+/// The parts of the git dir of the clone that a worker and a verifier
+/// write: what a commit, a fetch and a push of their own worktree need
+/// (01M4CN0W3V733V6R2SG1YYZRCN). The rest of the git dir has no write:
+/// `config` and `hooks` name programs that git runs later outside each
+/// sandbox.
+pub const GIT_WRITES: [&str; 4] = ["objects", "refs", "logs", "worktrees"];
+
+/// The files of the git dir of the clone that a worker and a verifier
+/// write: a `git fetch` in the main clone writes `FETCH_HEAD`.
+pub const GIT_WRITE_FILES: [&str; 1] = ["FETCH_HEAD"];
 
 /// What a process of a role may do. Only [`Profile::of`] makes one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,6 +439,29 @@ pub struct Profile {
 
 /// The folder of the socket of the D-Bus system bus.
 pub const SYSTEM_BUS: &str = "/run/dbus";
+
+/// The files of a cargo home that hold the registry tokens of the
+/// person (01M4D4BZ41AH29KSA9B0VZB8DQ).
+pub const CARGO_CREDENTIALS: [&str; 2] = ["credentials.toml", "credentials"];
+
+/// The parts of a cargo home that cargo reads in a session or a test
+/// run (01M4D4BZ41AH29KSA9B0VZB8DQ): its programs, the crates that it
+/// fetched, and its settings. Not the cargo home itself, so that no
+/// role reads [`CARGO_CREDENTIALS`].
+///
+/// ```
+/// let parts = riff::profile::cargo_reads(std::path::Path::new("/h/.cargo"));
+/// assert!(parts.contains(&"/h/.cargo/bin".into()));
+/// assert!(parts.contains(&"/h/.cargo/registry".into()));
+/// assert!(parts.contains(&"/h/.cargo/config.toml".into()));
+/// assert!(!parts.contains(&"/h/.cargo".into()));
+/// assert!(!parts.iter().any(|p| p.ends_with("credentials.toml")));
+/// ```
+pub fn cargo_reads(cargo: &Path) -> Vec<PathBuf> {
+    ["bin", "registry", "git", "config.toml", "config"]
+        .map(|part| cargo.join(part))
+        .into()
+}
 
 /// The folders of the system that each role reads.
 pub const SYSTEM: [&str; 10] = [
@@ -391,6 +482,9 @@ pub enum Refused {
     /// A path of the profile is a place of a secret, is in one, or is a
     /// folder above one (see [`Session::secrets`]).
     Secret(PathBuf),
+    /// A write path of the profile holds the file of the permission
+    /// rules of the session (01M4BTB7DY1Y74PP3JWKVX58JQ).
+    Rules(PathBuf),
 }
 
 impl fmt::Display for Refused {
@@ -408,6 +502,11 @@ impl fmt::Display for Refused {
                 "the path {} gives a secret of the person; no role may have it",
                 p.display()
             ),
+            Refused::Rules(p) => write!(
+                f,
+                "the write path {} holds the permission rules of the session; no role may write them",
+                p.display()
+            ),
         }
     }
 }
@@ -421,21 +520,32 @@ impl Profile {
         let s = session;
         let git = s.clone.join(".git");
         let ai = || vec![s.state.clone(), s.claude.clone()];
+        let agent = matches!(role, Role::Worker | Role::Verifier);
         let more = match role {
             Role::Lead => [vec![s.clone.clone()], ai()].concat(),
-            Role::Worker | Role::Verifier => {
-                [vec![s.worktree.clone(), s.target.clone(), git], ai()].concat()
-            }
+            Role::Worker | Role::Verifier => [
+                vec![s.worktree.clone(), s.target.clone()],
+                GIT_WRITES.iter().map(|p| git.join(p)).collect(),
+                ai(),
+            ]
+            .concat(),
             Role::TestRun => vec![s.target.clone()],
+        };
+        let files = match agent {
+            true => GIT_WRITE_FILES.iter().map(|p| git.join(p)).collect(),
+            false => vec![],
         };
         let writes = Writes {
             temp: s.temp.clone(),
             more,
+            files,
         };
         let mut reads: Vec<PathBuf> = SYSTEM.iter().map(PathBuf::from).collect();
         reads.extend(s.tools.iter().cloned());
-        if role == Role::TestRun {
-            reads.extend([s.worktree.clone(), s.clone.join(".git")]);
+        match role {
+            Role::TestRun => reads.extend([s.worktree.clone(), git]),
+            Role::Worker | Role::Verifier => reads.extend([git, s.rules.clone()]),
+            Role::Lead => reads.push(s.rules.clone()),
         }
         let network = match role {
             Role::TestRun => Network::Loopback,
@@ -456,21 +566,22 @@ impl Profile {
     fn check(&self, s: &Session) -> Result<(), Refused> {
         plain(&s.home)?;
         plain(&s.runtime)?;
-        let secrets = s.secrets();
-        for p in self
-            .writes
-            .paths()
+        plain(&s.rules)?;
+        // The clone and the worktree count for each role, also when the
+        // role writes only a part of them: the home is never a clone.
+        for p in [s.clone.as_path(), s.worktree.as_path()]
+            .into_iter()
+            .chain(self.writes.paths())
             .chain(self.reads.iter().map(PathBuf::as_path))
         {
-            plain(p)?;
-            if s.home.starts_with(p) {
-                return Err(Refused::Home(p.to_owned()));
-            }
-            if secrets.iter().any(|x| x.starts_with(p) || p.starts_with(x)) {
-                return Err(Refused::Secret(p.to_owned()));
+            if let Some(refused) = s.refuses(p) {
+                return Err(refused);
             }
         }
-        Ok(())
+        match self.writes.paths().find(|p| s.rules.starts_with(p)) {
+            Some(p) => Err(Refused::Rules(p.to_owned())),
+            None => Ok(()),
+        }
     }
 
     /// The role of the profile.
@@ -481,6 +592,11 @@ impl Profile {
     /// The paths that the role writes (and reads).
     pub fn write_paths(&self) -> impl Iterator<Item = &Path> {
         self.writes.paths()
+    }
+
+    /// The write paths that are files, not folders.
+    pub fn write_files(&self) -> impl Iterator<Item = &Path> {
+        self.writes.files.iter().map(PathBuf::as_path)
     }
 
     /// The paths that the role only reads.
@@ -525,7 +641,9 @@ impl Profile {
 ///   `PATH`.
 /// - The language and the terminal: `LANG`, `LANGUAGE`, `LC_`, `TZ`,
 ///   `TERM`, `COLORTERM`, `NO_COLOR`, `CLICOLOR_FORCE`.
-/// - tmux, for the pane of the worker: `TMUX`, `TMUX_PANE`.
+/// - tmux, for the pane of the worker: `TMUX`, `TMUX_PANE`, and
+///   `TMUX_TMPDIR`, for the folder of the tmux sockets that no profile
+///   gives ([`tmux_dir`]). The sandbox removes `TMUX` and `TMUX_PANE`.
 /// - The folders of the person: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
 ///   `XDG_STATE_HOME`, `XDG_CACHE_HOME`.
 /// - The runtime folder of the person: `XDG_RUNTIME_DIR`. No process
@@ -557,6 +675,7 @@ pub const KEPT_VARS: &[&str] = &[
     "CLICOLOR_FORCE",
     "TMUX",
     "TMUX_PANE",
+    "TMUX_TMPDIR",
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
@@ -699,10 +818,37 @@ pub fn kept(name: &str) -> bool {
     in_list(KEPT_VARS, name)
 }
 
+/// The folder of the tmux sockets of the person, also of the tmux
+/// server of riff: `$TMUX_TMPDIR/tmux-UID`, else `/tmp/tmux-UID`. A
+/// session that reaches a tmux server can run a command outside its
+/// sandbox, so the folder is a secret (01M4C5AQQX543ZFJ7J005HC5E9).
+pub fn tmux_dir() -> PathBuf {
+    use std::os::unix::fs::MetadataExt;
+    let uid = std::fs::metadata("/proc/self").map_or(0, |m| m.uid());
+    tmux_dir_from(std::env::var_os("TMUX_TMPDIR"), uid)
+}
+
+/// [`tmux_dir`] from the value of `TMUX_TMPDIR` and the user ID.
+///
+/// ```
+/// use riff::profile::tmux_dir_from;
+/// use std::path::Path;
+///
+/// assert_eq!(tmux_dir_from(None, 1000), Path::new("/tmp/tmux-1000"));
+/// assert_eq!(tmux_dir_from(Some("".into()), 7), Path::new("/tmp/tmux-7"));
+/// assert_eq!(tmux_dir_from(Some("/run/t".into()), 7), Path::new("/run/t/tmux-7"));
+/// ```
+pub fn tmux_dir_from(tmux_tmpdir: Option<std::ffi::OsString>, uid: u32) -> PathBuf {
+    tmux_tmpdir
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from)
+        .join(format!("tmux-{uid}"))
+}
+
 /// Refuses a path that is not absolute or that has a `..` component:
 /// [`Path::starts_with`] compares components and does not resolve
-/// them. A symlink is the same gap: the apply step (#607) resolves each
-/// path on the disk before it grants it.
+/// them. A symlink is the same gap: the sandbox ([`crate::confine`])
+/// resolves each path on the disk before it makes the profile.
 fn plain(p: &Path) -> Result<(), Refused> {
     if !p.is_absolute() {
         return Err(Refused::Relative(p.to_owned()));
@@ -725,9 +871,10 @@ mod tests {
             worktree: "/home/ada/src/app/.claude/worktrees/issue-12".into(),
             target: "/home/ada/src/app/.claude/worktrees/issue-12/target".into(),
             temp: "/home/ada/.cache/riff/tmp/s1".into(),
-            claude: "/home/ada/.claude".into(),
+            claude: "/home/ada/.local/share/riff/claude/s1".into(),
+            rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
-            tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+            tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("https://riff.example.com").unwrap(),
         }
     }
@@ -749,12 +896,25 @@ mod tests {
         let wt = "/home/ada/src/app/.claude/worktrees/issue-12";
         let target = "/home/ada/src/app/.claude/worktrees/issue-12/target";
         let (temp, git) = ("/home/ada/.cache/riff/tmp/s1", "/home/ada/src/app/.git");
-        let (state, claude) = ("/run/user/1000/riff", "/home/ada/.claude");
+        let (state, claude) = (
+            "/run/user/1000/riff",
+            "/home/ada/.local/share/riff/claude/s1",
+        );
         assert_eq!(
             writes(Role::Lead),
             paths(&[temp, "/home/ada/src/app", state, claude])
         );
-        let agent = paths(&[temp, wt, target, git, state, claude]);
+        let g = |p: &str| format!("{git}/{p}");
+        let (objects, refs, logs, worktrees, fetch) = (
+            g("objects"),
+            g("refs"),
+            g("logs"),
+            g("worktrees"),
+            g("FETCH_HEAD"),
+        );
+        let agent = paths(&[
+            temp, wt, target, &objects, &refs, &logs, &worktrees, state, claude, &fetch,
+        ]);
         assert_eq!(writes(Role::Worker), agent);
         assert_eq!(writes(Role::Verifier), agent);
         assert_eq!(writes(Role::TestRun), paths(&[temp, target]));
@@ -764,6 +924,16 @@ mod tests {
     fn a_worker_writes_its_worktree_and_the_git_dir_not_the_clone() {
         let w = Profile::of(Role::Worker, &session()).unwrap();
         assert!(w.writes(Path::new("/home/ada/src/app/.git/refs/heads/x")));
+        assert!(w.writes(Path::new("/home/ada/src/app/.git/worktrees/issue-12/HEAD")));
+        // 01M4CN0W3V733V6R2SG1YYZRCN: no file that git runs later.
+        for runs in [
+            ".git/config",
+            ".git/hooks/post-merge",
+            ".git/info/attributes",
+        ] {
+            let path = Path::new("/home/ada/src/app").join(runs);
+            assert!(!w.writes(&path) && w.reads(&path), "{runs}");
+        }
         assert!(w.writes(Path::new(
             "/home/ada/src/app/.claude/worktrees/issue-12/Cargo.toml"
         )));
@@ -879,10 +1049,14 @@ mod tests {
             clone: "/home/ada".into(),
             ..session()
         };
-        assert_eq!(
-            Profile::of(Role::Lead, &home),
-            Err(Refused::Home("/home/ada".into()))
-        );
+        // Also for a role that writes only the git dir of the clone.
+        for role in Role::ALL {
+            assert_eq!(
+                Profile::of(role, &home),
+                Err(Refused::Home("/home/ada".into())),
+                "{role}"
+            );
+        }
         let root = Session {
             tools: vec!["/".into()],
             ..session()
@@ -944,5 +1118,38 @@ mod tests {
             Profile::of(Role::Worker, &home),
             Err(Refused::Up("/home/ada/x/..".into()))
         );
+    }
+
+    #[test]
+    fn no_role_writes_the_permission_rules_of_its_session() {
+        let s = session();
+        for role in [Role::Lead, Role::Worker, Role::Verifier] {
+            let p = Profile::of(role, &s).unwrap();
+            assert!(p.reads(&s.rules), "{role}");
+            assert!(!p.writes(&s.rules), "{role}");
+        }
+        let in_worktree = Session {
+            rules: "/home/ada/src/app/.claude/worktrees/issue-12/.claude/rules.json".into(),
+            ..session()
+        };
+        assert_eq!(
+            Profile::of(Role::Worker, &in_worktree),
+            Err(Refused::Rules(
+                "/home/ada/src/app/.claude/worktrees/issue-12".into()
+            ))
+        );
+        let in_claude = Session {
+            rules: "/home/ada/.local/share/riff/claude/s1/settings.json".into(),
+            ..session()
+        };
+        for role in [Role::Lead, Role::Worker, Role::Verifier] {
+            assert_eq!(
+                Profile::of(role, &in_claude),
+                Err(Refused::Rules(
+                    "/home/ada/.local/share/riff/claude/s1".into()
+                )),
+                "{role}"
+            );
+        }
     }
 }

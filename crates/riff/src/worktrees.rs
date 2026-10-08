@@ -59,7 +59,7 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -376,11 +376,11 @@ pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -
         .map(|tree| {
             let lock = Lock::of(tree.lock.as_deref(), start);
             let here = here.starts_with(&tree.path);
-            let changed = git(&tree.path, &["status", "--porcelain"])
+            let changed = sandboxed_git(main, &tree, &["status", "--porcelain"])
                 .map(|out| !out.trim().is_empty())
                 .unwrap_or(true);
             let mut facts = Facts {
-                agent: tree.path.starts_with(main.join(AGENT_DIR)),
+                agent: crate::confine::git_in_tree(main, &tree.path).is_ok(),
                 lock,
                 owned: here || owned(&tree),
                 changed,
@@ -431,7 +431,7 @@ pub fn ownerless(main: &Path, here: &Path, owned: impl Fn(&Tree) -> bool) -> Vec
     parse(&list)
         .into_iter()
         .filter(|tree| {
-            tree.path.starts_with(main.join(AGENT_DIR))
+            crate::confine::git_in_tree(main, &tree.path).is_ok()
                 && matches!(
                     Lock::of(tree.lock.as_deref(), start),
                     Lock::None | Lock::Dead
@@ -453,7 +453,7 @@ fn act(main: &Path, tree: &Tree, facts: &Facts) -> Done {
             Step::Unlock => git(main, &["worktree", "unlock", path_arg])
                 .map(|_| "unlocked: the process of its lock is gone".to_owned()),
             Step::Remove(why) => remove(main, tree, why),
-            Step::Save => save(tree).inspect(|_| saved = true),
+            Step::Save => save(main, tree).inspect(|_| saved = true),
             Step::Keep(why) => Ok(format!("kept: {why}")),
         };
         match did {
@@ -485,11 +485,12 @@ fn remove(main: &Path, tree: &Tree, why: &str) -> std::result::Result<String, St
 }
 
 /// Commits the work of the worktree as WIP, and pushes its branch.
-fn save(tree: &Tree) -> std::result::Result<String, String> {
+fn save(main: &Path, tree: &Tree) -> std::result::Result<String, String> {
     let branch = tree.branch.as_deref().unwrap_or_default();
-    git(&tree.path, &["add", "-A"])?;
-    git(
-        &tree.path,
+    sandboxed_git(main, tree, &["add", "-A"])?;
+    sandboxed_git(
+        main,
+        tree,
         &[
             "commit",
             "-q",
@@ -498,16 +499,34 @@ fn save(tree: &Tree) -> std::result::Result<String, String> {
             "WIP: riff worktrees clean saved the work of a session that ended",
         ],
     )?;
-    git(&tree.path, &["push", "-q", "-u", "origin", "HEAD"])?;
+    tree_git(main, tree, &["push", "-q", "-u", "origin", "HEAD"])?;
     Ok(format!(
         "saved: a WIP commit on {branch}, pushed to origin. No live session owns it"
     ))
 }
 
 fn git(dir: &Path, args: &[&str]) -> std::result::Result<String, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    run(crate::confine::git_in(dir), args)
+}
+
+/// [`git`] in the worktree `tree` of the clone `main`
+/// (01M4CW0CH4F861MWQSQACEX54X).
+fn tree_git(main: &Path, tree: &Tree, args: &[&str]) -> std::result::Result<String, String> {
+    run(crate::confine::git_in_tree(main, &tree.path), args)
+}
+
+/// [`tree_git`] with the sandbox of a worker, for a step that reads the
+/// files of the worktree (01M4D06XN4D19G1B2NBRFH34B3).
+fn sandboxed_git(main: &Path, tree: &Tree, args: &[&str]) -> std::result::Result<String, String> {
+    run(crate::confine::worker_git(main, &tree.path), args)
+}
+
+fn run(
+    git: anyhow::Result<std::process::Command>,
+    args: &[&str],
+) -> std::result::Result<String, String> {
+    let out = git
+        .map_err(|e| crate::text::safe(&format!("{e:#}")))?
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())

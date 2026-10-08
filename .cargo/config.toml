@@ -1,6 +1,6 @@
-# 01M49NP2907J4SH4S6MAY09VXE: each cargo run in this repository, also a
-# plain `cargo test`, gets a TMPDIR outside each git repository. The
-# TMPDIR of a worker is in the home of the person, and a home can be a
-# git repository.
+# 01M4C5WFP1CGG4PYPEP2NVRGKQ: a cargo run with no TMPDIR gets /var/tmp,
+# outside each git repository. A session in its sandbox keeps its own
+# temp folder: a build there writes only that folder, and a test run
+# gets its own /tmp.
 [env]
-TMPDIR = { value = "/var/tmp", force = true }
+TMPDIR = { value = "/var/tmp", force = false }

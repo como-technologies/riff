@@ -275,7 +275,7 @@ pub fn newest_tag(ls_remote: &str) -> Option<String> {
 /// The newest release tag of the repository, from `git ls-remote`
 /// (01M3MRMAVVKJ5WS8GWCJHWH0R4).
 pub fn newest_release() -> Result<String> {
-    let out = Command::new("git")
+    let out = crate::confine::git()
         .args([
             "ls-remote",
             "--tags",

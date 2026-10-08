@@ -25,6 +25,8 @@ clap.workspace = true
 futures.workspace = true
 getrandom.workspace = true
 gethostname.workspace = true
+landlock.workspace = true
+seccompiler.workspace = true
 keyring.workspace = true
 keyring-core.workspace = true
 open.workspace = true
@@ -36,7 +38,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 sha2.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-nix = { workspace = true, features = ["fs", "signal", "user"] }
+nix = { workspace = true, features = ["fs", "resource", "signal", "socket", "uio", "user"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true

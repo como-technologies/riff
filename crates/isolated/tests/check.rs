@@ -72,12 +72,11 @@ fn the_helper_sets_each_dir_in_its_temp_dir() {
     );
 }
 
-/// `.cargo/config.toml` gives each test a `TMPDIR` outside each git
-/// repository, also a plain `cargo test` in a worker whose home is a
-/// repository (01M49NP2907J4SH4S6MAY09VXE).
+/// A test gets a `TMPDIR` outside each git repository: `/var/tmp` from
+/// `.cargo/config.toml`, or the `/tmp` of a test run
+/// (01M4C5WFP1CGG4PYPEP2NVRGKQ).
 #[test]
 fn a_test_of_this_repository_has_its_tmpdir_outside_each_repository() {
-    assert_eq!(std::env::var_os("TMPDIR"), Some("/var/tmp".into()));
     assert!(!isolated::in_git(&std::env::temp_dir()));
 }
 

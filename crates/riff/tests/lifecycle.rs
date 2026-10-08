@@ -669,7 +669,12 @@ async fn update_with_the_riff_of_this_machine_installs_the_newest_release() {
     assert_eq!(
         log(bin.path(), "git"),
         format!(
-            "ls-remote --tags --refs {} v*\n",
+            // 01M4CN0W644V72YY74WH3KRMMQ: no hook and no fsmonitor.
+            // 01M4CXPPVEPFYD86PN9V2Q6EKB: no submodule.
+            "-c core.hooksPath=/dev/null -c core.fsmonitor=false \
+             -c diff.ignoreSubmodules=all -c submodule.recurse=false \
+             -c fetch.recurseSubmodules=false -c push.recurseSubmodules=no \
+             -c status.submoduleSummary=false ls-remote --tags --refs {} v*\n",
             env!("CARGO_PKG_REPOSITORY")
         )
     );
