@@ -69,18 +69,38 @@ pub async fn ask(server: &str, reason: &str, program: &OsString, args: &[OsStrin
 }
 
 /// The step of the broker that takes a request from riff-server as the
-/// session `me` ([`broker::Take`]). Each call runs on a runtime of its
-/// own: the broker serves each request in a thread.
-pub fn take(server: &str, me: SessionUri) -> Result<broker::Take> {
+/// session of the clone here ([`broker::Take`]). It does no work when
+/// the broker starts (01M4DEF6N91TDDK6201BBNNDTC): the first request
+/// finds the session and signs in, and the step keeps the result. Each
+/// call runs on a runtime of its own: the broker serves each request in
+/// a thread.
+///
+/// ```
+/// // No session and no server: the step is made at once, and it fails
+/// // only when a request comes.
+/// let take = riff::outside::take("http://127.0.0.1:9");
+/// assert!(take("01M4DEF6N91TDDK6201BBNNDTC").is_err());
+/// ```
+pub fn take(server: &str) -> broker::Take {
+    let server = server.to_owned();
+    let signed = std::sync::OnceLock::<std::result::Result<(Api, SessionUri), String>>::new();
+    std::sync::Arc::new(move |id: &str| -> Result<OutsideRequest> {
+        let (api, me) = signed
+            .get_or_init(|| sign_in(&server).map_err(|e| format!("{e:#}")))
+            .as_ref()
+            .map_err(|why| anyhow::anyhow!("{why}"))?;
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(api.outside_take(me, id))
+    })
+}
+
+/// The session of the clone here, signed in to `server`.
+fn sign_in(server: &str) -> Result<(Api, SessionUri)> {
+    let me = crate::identity::session(&crate::identity::here(None)?, server)?;
     let api = Api::new(server).signed_in(me.who().session())?;
-    Ok(std::sync::Arc::new(
-        move |id: &str| -> Result<OutsideRequest> {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?
-                .block_on(api.outside_take(&me, id))
-        },
-    ))
+    Ok((api, me))
 }
 
 /// `riff outside list`, `riff outside approve` and `riff outside deny`

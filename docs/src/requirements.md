@@ -4223,8 +4223,9 @@
   sandbox, with the stdin, stdout and stderr of the session, and gives
   its exit code.
 - **01M4C5AQM63F58YQ9VA391513D** The broker runs only the operations of
-  its one list, today `test-run`, and refuses each other operation.
-  The folder of a request must be in the worktree of the session. From
+  its one list, `test-run` and `outside`, and refuses each other
+  operation. The folder of a request must be in the worktree of the
+  session. From
   the variables of a request, it keeps only those of cargo and of the
   Rust tests, and the riff server of the tests.
 - **01M4CN0W1F0Y7955C6Q1XB601G** The folders that a test run of the
@@ -4546,6 +4547,9 @@
 - **01M4DA9PRPZ2JDKC2PK79AT5AA** The broker refuses a request folder
   with a `..` part. It runs each operation in the resolved folder that
   it checked, not in the folder of the request, and sets `PWD` to it.
+- **01M4DEF6N91TDDK6201BBNNDTC** The broker does no work when it
+  starts. It finds its session and signs in to riff-server at the
+  first `outside` request, so it ends at once when its session ends.
 
 ## Open
 

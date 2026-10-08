@@ -2379,15 +2379,8 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             use std::os::fd::AsFd;
             let socket = std::io::stdin().as_fd().try_clone_to_owned()?;
             // The session of the sandbox: the broker takes its requests
-            // of `riff outside` (#614). With no session, a test run
-            // still works.
-            let take = identity::here(None)
-                .and_then(|here| identity::session(&here, server))
-                .and_then(|me| riff::outside::take(server, me))
-                .unwrap_or_else(|e| {
-                    let why = format!("{e:#}");
-                    std::sync::Arc::new(move |_: &str| anyhow::bail!("{why}"))
-                });
+            // of `riff outside` (#614), at the first request.
+            let take = riff::outside::take(server);
             riff::broker::serve(socket, root, clone, &riff::binary::this_on_disk()?, take)
         }
         Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
