@@ -228,6 +228,17 @@ fn a_worker_does_only_what_its_profile_allows() {
             ),
         ),
         (
+            "plugin",
+            format!(
+                "echo x > '{}/.local/share/riff/claude-plugin/probe'",
+                home.display()
+            ),
+        ),
+        (
+            "gitconfig",
+            format!("echo x >> '{}/.gitconfig'", home.display()),
+        ),
+        (
             "own-claude",
             "echo x > \"$CLAUDE_CONFIG_DIR/settings.json\"".into(),
         ),
@@ -265,6 +276,12 @@ fn a_worker_does_only_what_its_profile_allows() {
     ));
     let claude = m.claude(&body);
     std::fs::create_dir_all(m.env.riff_home().join("state")).unwrap();
+    // The plugin and the git config of the person are there, so that a
+    // "no" comes from the sandbox, not from a missing folder.
+    std::fs::create_dir_all(home.join(".local/share/riff/claude-plugin")).unwrap();
+    let gitconfig = home.join(".gitconfig");
+    let before = std::fs::read(&gitconfig).unwrap_or_default();
+    std::fs::write(&gitconfig, &before).unwrap();
 
     let out = m.run(&m.clone(), &claude, &[]);
     let err = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -286,6 +303,8 @@ fn a_worker_does_only_what_its_profile_allows() {
         "ssh no",
         "person-claude no",
         "rules no",
+        "plugin no",
+        "gitconfig no",
         "own-claude yes",
         "state yes",
         "open-port yes",
@@ -308,6 +327,8 @@ fn a_worker_does_only_what_its_profile_allows() {
         format!("claude-dir {}", claude_dir.display())
     );
     assert!(!home.join("new").exists());
+    assert!(!home.join(".local/share/riff/claude-plugin/probe").exists());
+    assert_eq!(std::fs::read(&gitconfig).unwrap(), before);
     assert_eq!(
         std::fs::read_to_string(home.join(".claude/settings.json")).unwrap(),
         "{}\n"
