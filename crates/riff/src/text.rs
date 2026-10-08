@@ -1962,28 +1962,30 @@ pub fn start_no_sign_in(server: &str, error: &anyhow::Error) -> String {
 ///     "An older riff wrote these entries to the Claude config:\n  \
 ///      /h/.claude/settings.json: statusLine\n\
 ///      riff gives Claude its plugin and settings at each start now, so it needs none \
-///      of them. Remove them? [Y/n] "
+///      of them. Remove them? [y/N] "
 /// );
 /// ```
 pub fn old_config(lines: &[String]) -> String {
     let lines: String = lines.iter().map(|l| format!("\n  {l}")).collect();
     format!(
         "An older riff wrote these entries to the Claude config:{lines}\nriff gives Claude its \
-         plugin and settings at each start now, so it needs none of them. Remove them? [Y/n] "
+         plugin and settings at each start now, so it needs none of them. Remove them? [y/N] "
     )
 }
 
-/// True for an answer that says yes: Enter, `y` or `yes`.
+/// True for an answer that says yes: `y` or `yes`. Enter is no
+/// (01M4BYH82P03FTXZBYC72BJ6F3).
 ///
 /// ```
-/// assert!(riff::text::yes("\n"));
+/// assert!(!riff::text::yes("\n"));
+/// assert!(!riff::text::yes(""));
 /// assert!(riff::text::yes("Y\n"));
 /// assert!(riff::text::yes("yes"));
 /// assert!(!riff::text::yes("n\n"));
 /// assert!(!riff::text::yes("no"));
 /// ```
 pub fn yes(answer: &str) -> bool {
-    matches!(answer.trim().to_lowercase().as_str(), "" | "y" | "yes")
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 /// The answer of `riff` when the person keeps the old entries.

@@ -48,10 +48,11 @@
   `riff` command, in the user settings and in `.claude/settings.json`
   and `.claude/settings.local.json` of each clone that riff knows (there
   also each rule that `riff setup` wrote), the install of `riff@riff`
-  and the marketplace `riff`. It lists them, and asks `[Y/n]`. On yes,
-  it removes them with `claude plugin uninstall`, `claude plugin
-  marketplace remove` and an edit of each settings file. It keeps each
-  other entry. On no, it asks again at the next start.
+  and the marketplace `riff`. It lists them, and asks `[y/N]`. Only
+  `y` or `yes` is yes: Enter is no. On yes, it removes them with
+  `claude plugin uninstall`, `claude plugin marketplace remove` and an
+  edit of each settings file. It keeps each other entry. On no, it
+  asks again at the next start.
 - **01M4BYH84X7B2D9EFYGP11GP8Y** `riff connect`, `riff enable`, `riff
   disable` and `riff setup` are gone. `riff connect` stays as a hidden
   command that does nothing, so that `riff update` of riff 1.3, which

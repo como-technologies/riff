@@ -127,12 +127,12 @@ An older riff wrote these entries to the Claude config:
   /home/ada/.claude/settings.json: enabledPlugins."riff@riff"
   /home/ada/.claude/settings.json: statusLine
   the plugin marketplace riff
-riff gives Claude its plugin and settings at each start now, so it needs none of them. Remove them? [Y/n]
+riff gives Claude its plugin and settings at each start now, so it needs none of them. Remove them? [y/N]
 ```
 
-Press Enter to remove them. riff keeps each other entry. When it
-changes `.claude/settings.json` of a clone, commit that file. Type `n`
-to keep them: riff asks again at the next start.
+Type `y` and press Enter to remove them. riff keeps each other entry.
+When it changes `.claude/settings.json` of a clone, commit that file.
+Press Enter to keep them: riff asks again at the next start.
 
 ### Move from riff 1.3 to 2.0
 
@@ -148,7 +148,7 @@ machine:
 2. End each Claude Code session of riff: your lead, and each worker
    (`riff workers stop`). A session that riff 1.3 started has no
    `RIFF_ON=1`, so its hooks do nothing now.
-3. Start the riff. Press Enter when riff asks to remove the old
+3. Start the riff. Type `y` when riff asks to remove the old
    entries:
 
    ```sh

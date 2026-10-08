@@ -369,11 +369,18 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
         &claude.join("plugins/known_marketplaces.json"),
         r#"{"riff": {}}"#,
     );
+    // The edit keeps the mode of each file of the person.
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    for path in [&user, &shared] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let before = |path: &Path| std::fs::read_to_string(path).unwrap();
     let (user_text, local_text, shared_text) = (before(&user), before(&local), before(&shared));
 
-    // A no keeps each entry. The person then picks no repository.
-    let out = m.riff(&riff, &[], "n\n\n");
+    // Enter is no, and keeps each entry. The person then picks no
+    // repository.
+    let out = m.riff(&riff, &[], "\n\n");
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let shown = stdout(&out);
     for line in [
@@ -407,7 +414,7 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
     assert_eq!(m.read("claude.log"), "");
 
     // A yes removes them, and riff starts the lead.
-    let out = m.riff(&riff, &[], "\n1\n");
+    let out = m.riff(&riff, &[], "y\n1\n");
     assert!(out.status.success(), "{out:?}");
     assert!(
         stdout(&out).contains(riff::text::OLD_CONFIG_REMOVED),
@@ -424,6 +431,8 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
         json(&shared),
         serde_json::json!({"permissions": {"allow": ["Bash(make)"]}})
     );
+    assert_eq!(mode(&user), 0o600);
+    assert_eq!(mode(&shared), 0o600);
     let calls = m.read("claude.log");
     let plugin: Vec<&str> = calls.lines().filter(|l| l.starts_with("plugin ")).collect();
     assert_eq!(
