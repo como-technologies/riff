@@ -582,6 +582,79 @@ pub const KEPT_VARS: &[&str] = &[
     "RIFF_WORKER_SLICE",
 ];
 
+/// The variables of the parent that reach a test run
+/// (RID_TEST_RUN_ENV). `riff test-run` starts the run with an empty
+/// environment, and then sets only these ([`crate::sandbox`]). A name
+/// that ends in `_` is a prefix.
+///
+/// - The account, the language and the terminal, as in [`KEPT_VARS`].
+/// - The tools of the build and the tests: cargo, rustup, rustc and the
+///   pool of build jobs.
+/// - riff: the server of the tests.
+///
+/// No runtime folder, no session bus, no agent socket, no credential
+/// of the person and no secret of a session.
+pub const TEST_RUN_VARS: &[&str] = &[
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "PATH",
+    "LANG",
+    "LANGUAGE",
+    "LC_",
+    "TZ",
+    "TERM",
+    "COLORTERM",
+    "NO_COLOR",
+    "CLICOLOR_FORCE",
+    "CARGO",
+    "CARGO_",
+    "RUSTUP_HOME",
+    "RUSTUP_TOOLCHAIN",
+    "RUSTC",
+    "RUSTC_WRAPPER",
+    "RUSTFLAGS",
+    "RUSTDOCFLAGS",
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "RUST_MIN_STACK",
+    "RUST_TEST_THREADS",
+    "MAKEFLAGS",
+    "MFLAGS",
+    "RIFF_SERVER",
+];
+
+/// True when the variable `name` of the parent reaches a test run
+/// ([`TEST_RUN_VARS`]).
+///
+/// ```
+/// use riff::profile::test_run_kept;
+///
+/// assert!(test_run_kept("PATH"));
+/// assert!(test_run_kept("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER"));
+/// assert!(test_run_kept("MAKEFLAGS"));
+/// assert!(!test_run_kept("GH_TOKEN"));
+/// assert!(!test_run_kept("RIFF_TEST_MARKER"));
+/// assert!(!test_run_kept("XDG_RUNTIME_DIR"));
+/// assert!(!test_run_kept("SSH_AUTH_SOCK"));
+/// assert!(!test_run_kept("DBUS_SESSION_BUS_ADDRESS"));
+/// assert!(!test_run_kept("RIFF_SESSION_GRANT"));
+/// assert!(!test_run_kept("RIFF_SESSION_KEY"));
+/// assert!(!test_run_kept("CLAUDE_CODE_OAUTH_TOKEN"));
+/// ```
+pub fn test_run_kept(name: &str) -> bool {
+    in_list(TEST_RUN_VARS, name)
+}
+
+/// True when `list` names `name`: a name that ends in `_` is a prefix.
+fn in_list(list: &[&str], name: &str) -> bool {
+    list.iter().any(|k| match k.strip_suffix('_') {
+        Some(_) => name.len() > k.len() && name.starts_with(k),
+        None => name == *k,
+    })
+}
+
 /// The variables that the wrapper of a session keeps and `claude` does
 /// not get: the session bus of the person, for the keyring of the
 /// person (RID_NO_KEYRING). The tmux server of riff keeps them for the
@@ -611,10 +684,7 @@ pub const WRAPPER_VARS: &[&str] = &["DBUS_SESSION_BUS_ADDRESS"];
 /// assert!(!kept("CLAUDE_CODE_OAUTH_TOKEN"));
 /// ```
 pub fn kept(name: &str) -> bool {
-    KEPT_VARS.iter().any(|k| match k.strip_suffix('_') {
-        Some(_) => name.len() > k.len() && name.starts_with(k),
-        None => name == *k,
-    })
+    in_list(KEPT_VARS, name)
 }
 
 /// Refuses a path that is not absolute or that has a `..` component:

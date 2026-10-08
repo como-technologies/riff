@@ -92,7 +92,7 @@ build:
     cargo build --workspace
 
 # 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
-# Run all tests, with a RIFF_SERVER where nothing listens and a D-Bus that fails each call
+# Run all tests, with a RIFF_SERVER where nothing listens; riff test-run gives a D-Bus that fails each call
 test *ARGS:
     {{just_executable()}} cargo-test --workspace {{ARGS}}
 
@@ -105,7 +105,7 @@ test *ARGS:
 cargo-test *ARGS:
     cargo test --no-run {{ARGS}}
     cargo build -q -p riff --bin riff
-    RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus "${CARGO_TARGET_DIR:-target}/debug/riff" test-run -- cargo test {{ARGS}}
+    RIFF_SERVER=http://127.0.0.1:9 "${CARGO_TARGET_DIR:-target}/debug/riff" test-run -- cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:

@@ -330,6 +330,18 @@ enum Command {
         #[arg(long, hide = true)]
         check: bool,
     },
+    /// Keep your Claude plan token for the sessions of this machine
+    ///
+    /// Run `claude setup-token` first. Then paste its output here, or
+    /// pipe it in. riff keeps the token in your keyring, and gives it
+    /// to each session that riff starts as CLAUDE_CODE_OAUTH_TOKEN. A
+    /// session never reads your keyring. The token never goes to
+    /// riff-server.
+    ClaudeToken {
+        /// Remove the token from this machine.
+        #[arg(long)]
+        remove: bool,
+    },
     /// Sign out of the riff on this device
     ///
     /// It removes the sign-in at riff-server from this device. With
@@ -1305,6 +1317,10 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
+    // The Claude plan token needs no riff server (RID_CLAUDE_TOKEN).
+    if let Command::ClaudeToken { remove } = &command {
+        return claude_token(*remove);
+    }
     // A test run needs no riff server (01M4BTG72XPKSTDF4KYRKS4Z0D).
     if let Command::TestRun { program, args } = &command {
         match riff::sandbox::test_run(program, args) {
@@ -1927,10 +1943,32 @@ async fn main() -> Result<()> {
             command: PlanCommand::Check,
         }
         | Command::TestRun { .. }
+        | Command::ClaudeToken { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
         | Command::Owner { .. } => unreachable!("handled before the identity"),
     }
+    Ok(())
+}
+
+/// `riff claude-token`: keeps the Claude plan token from stdin, or
+/// removes it (RID_CLAUDE_TOKEN). The output names no token.
+fn claude_token(remove: bool) -> Result<()> {
+    if remove {
+        let had = riff::grant::remove_claude_token()?;
+        println!("{}", text::claude_token_removed(had));
+        return Ok(());
+    }
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!("{}", text::CLAUDE_TOKEN_PASTE);
+    }
+    let mut input = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+    let Some(token) = riff::grant::token_of(&input) else {
+        anyhow::bail!(text::CLAUDE_TOKEN_NONE);
+    };
+    riff::grant::keep_claude_token(&token)?;
+    println!("{}", text::CLAUDE_TOKEN_KEPT);
     Ok(())
 }
 

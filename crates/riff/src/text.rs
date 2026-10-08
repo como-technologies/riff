@@ -4643,3 +4643,30 @@ mod tests {
         assert_eq!(ago(5 * 86_400), "5d");
     }
 }
+
+/// The line of `riff claude-token` before it reads a terminal
+/// (RID_CLAUDE_TOKEN).
+pub const CLAUDE_TOKEN_PASTE: &str = "Paste the output of claude setup-token, then press \
+     Enter and Ctrl-D.";
+
+/// The error of `riff claude-token` when the input has no token.
+pub const CLAUDE_TOKEN_NONE: &str = "riff found no Claude token (a word that starts with \
+     sk-ant-) in the input. Run claude setup-token, and paste its output";
+
+/// The line of `riff claude-token` after it kept the token.
+pub const CLAUDE_TOKEN_KEPT: &str = "riff keeps your Claude plan token in your keyring. Each \
+     session that riff starts on this machine gets it.";
+
+/// The line of `riff claude-token --remove`.
+///
+/// ```
+/// assert!(riff::text::claude_token_removed(true).starts_with("riff removed"));
+/// assert!(riff::text::claude_token_removed(false).starts_with("riff keeps no"));
+/// ```
+pub fn claude_token_removed(had: bool) -> String {
+    if had {
+        "riff removed your Claude plan token from this machine.".into()
+    } else {
+        "riff keeps no Claude plan token on this machine.".into()
+    }
+}
