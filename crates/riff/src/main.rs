@@ -626,7 +626,7 @@ enum CloudCommand {
         /// The name of the instance.
         name: String,
         /// The App ID, from the settings page of the App.
-        app: u64,
+        app: String,
         /// The private key file that GitHub gave you (.pem).
         key: std::path::PathBuf,
     },
@@ -2417,7 +2417,10 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
             let s = cloud::load(&dir, name)?;
             let pem = std::fs::read_to_string(key)
                 .with_context(|| format!("cannot read {}", key.display()))?;
-            cloud::forge(&gcloud, &s, &cloud::file(&dir, name), *app, &pem)
+            let app = app
+                .parse()
+                .with_context(|| format!("{app} is no App ID: give the number of the App"))?;
+            cloud::forge(&gcloud, &s, &cloud::file(&dir, name), app, &pem)
         }
         CloudCommand::Deploy { name, tag, confirm } => {
             let s = cloud::load(&dir, name)?;
