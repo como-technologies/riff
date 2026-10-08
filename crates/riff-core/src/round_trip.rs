@@ -761,7 +761,7 @@ mod tests {
                 app: Some(7),
                 slug: Some("riff-acme".into()),
                 installed: true,
-                error: None,
+                error: Some("no".into()),
             });
             c.trip(&ForgeInstall {
                 me: me(),
